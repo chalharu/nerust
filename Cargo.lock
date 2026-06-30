@@ -3446,6 +3446,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_snes_core"
+version = "0.1.0-dev"
+dependencies = [
+ "bitflags 2.13.0",
+ "nerust_core_traits",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nerust_sound_cpal"
 version = "0.1.0-dev"
 dependencies = [

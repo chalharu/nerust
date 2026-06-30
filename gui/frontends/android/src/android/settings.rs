@@ -63,6 +63,9 @@ impl AndroidSettings {
             .get(&SystemId::new("nes"))
             .map(|s| match s {
                 SystemSettings::Nes(n) => n.video.filter,
+                SystemSettings::Snes(_) => {
+                    unreachable!("expected NES settings, found Snes")
+                }
             })
             .unwrap_or_default();
 
@@ -91,7 +94,9 @@ impl AndroidSettings {
             .systems
             .entry(SystemId::new("nes"))
             .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
-        let SystemSettings::Nes(nes) = system;
+        let SystemSettings::Nes(nes) = system else {
+            unreachable!("expected NES settings");
+        };
         nes.video.filter = self.nes_filter;
     }
 

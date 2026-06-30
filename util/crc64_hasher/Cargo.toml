@@ -1,0 +1,13 @@
+[package]
+name = "nerust_crc64_hasher"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crc.workspace = true

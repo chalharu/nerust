@@ -22,6 +22,7 @@ members = [
   "render/ntsc",
   "render/wgpu",
   "serialize",
+  "snes/core",
   "sound/cpal",
   "sound/openal",
   "sound/filter",
@@ -125,6 +126,7 @@ nerust_glwrap = { path = "render/glwrap" }
 nerust_render_gl = { path = "render/gl" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_render_base = { path = "render/base" }
+nerust_snes_core = { path = "snes/core" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
@@ -144,6 +146,7 @@ rfd = { version = "=0.17.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
 serde_yaml = { version = "=0.9.34" }
+sevenz-rust2 = { version = "=0.21.0", default-features = false }
 shared_library = { version = "=0.1.9" }
 simple_logger = { version = "=5.2.0" }
 strum = { version = "=0.28.0" }

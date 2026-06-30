@@ -257,9 +257,16 @@ pub mod nes {
     }
 }
 
+pub mod snes {
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(default)]
+    pub struct SnesSettings {}
+}
+
 pub mod shared {
     use super::{
         BTreeMap, PathBuf, SystemId, input::InputSettings, language::AppLanguage, nes::NesSettings,
+        snes::SnesSettings,
     };
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
@@ -321,12 +328,15 @@ pub mod shared {
     #[serde(tag = "system", content = "settings", rename_all = "snake_case")]
     pub enum SystemSettings {
         Nes(NesSettings),
+        Snes(SnesSettings),
     }
 
     impl SystemSettings {
         pub fn requires_live_session_rebuild(&self, next: &Self) -> bool {
             match (self, next) {
                 (Self::Nes(before), Self::Nes(after)) => before.video.filter != after.video.filter,
+                (Self::Snes(_), Self::Snes(_)) => false,
+                _ => true,
             }
         }
     }

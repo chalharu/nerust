@@ -1,0 +1,3134 @@
+# yamllint disable rule:line-length
+rom_root: ../../roms
+cases:
+  - id: cputest-basic-final-state
+    description: >
+      The upstream gilyon basic 65C816 CPU test ROM reaches the published final state from cputest/tests-basic.txt.
+
+    rom: snes-tests/cputest/cputest-basic.sfc
+    max_steps: 6651904
+    check_interval_steps: 6651904
+    expected_screen_hash: "0xB6B9DE953F18A401"
+    assertions:
+      - kind: bus_u16
+        address: "0x0010"
+        expected: "0x0452"
+      - kind: bus_u16
+        address: "0x0012"
+        expected: "0xCC19"
+      - kind: bus_u16
+        address: "0x0014"
+        expected: "0x3456"
+      - kind: bus_u16
+        address: "0x0016"
+        expected: "0x5678"
+      - kind: bus_u16
+        address: "0x0018"
+        expected: "0x0028"
+      - kind: bus_u16
+        address: "0x001A"
+        expected: "0x01EF"
+      - kind: bus_u16
+        address: "0x001C"
+        expected: "0x0000"
+      - kind: bus_u8
+        address: "0x001E"
+        expected: "0x00"
+  - id: cputest-full-final-state
+    description: >
+      The upstream gilyon full 65C816 CPU test ROM reaches the published final state from cputest/tests-full.txt.
+
+    rom: snes-tests/cputest/cputest-full.sfc
+    max_steps: 9633792
+    check_interval_steps: 9633792
+    expected_screen_hash: "0xA05D7EE0B5E1FD17"
+    assertions:
+      - kind: bus_u16
+        address: "0x0010"
+        expected: "0x0649"
+      - kind: bus_u16
+        address: "0x0012"
+        expected: "0xCC5A"
+      - kind: bus_u16
+        address: "0x0014"
+        expected: "0x3456"
+      - kind: bus_u16
+        address: "0x0016"
+        expected: "0x5678"
+      - kind: bus_u16
+        address: "0x0018"
+        expected: "0x0028"
+      - kind: bus_u16
+        address: "0x001A"
+        expected: "0x01EF"
+      - kind: bus_u16
+        address: "0x001C"
+        expected: "0x0000"
+      - kind: bus_u8
+        address: "0x001E"
+        expected: "0x00"
+  - id: spctest-opcodes-final-state
+    description: >
+      The public SPC-700 instruction test ROM completes all non-SLEEP/STOP opcode cases, leaves the CPU-visible result port clear, and preserves the final APU-side test/result state with a deterministic final screen capture.
+
+    rom: snes-tests/spctest/spctest.sfc
+    max_steps: 4000000
+    check_interval_steps: 4000000
+    expected_screen_hash: "0x6355F99FAC09A849"
+    assertions:
+      - kind: bus_u16
+        address: "0x002142"
+        expected: "0x0000"
+      - kind: apu_ram_u16
+        address: "0x0010"
+        expected: "0x0557"
+      - kind: apu_ram_u8
+        address: "0x0012"
+        expected: "0x58"
+      - kind: apu_ram_u8
+        address: "0x0015"
+        expected: "0x48"
+  - id: apu-dsp-register-smoke-final-state
+    description: >
+      The self-authored APU DSP register smoke ROM uploads an SPC700 program through the IPL protocol and verifies DSP data register round-trips, DSP address reads, auxiliary APU IO bytes, and CPU-visible APU result ports.
+
+    rom: snes-apu-tests/dsp-register-smoke/build/ApuDspRegisterSmoke.sfc
+    max_steps: 2400
+    check_interval_steps: 2400
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0xA5"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x7F"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x40"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x2C"
+      - kind: apu_ram_u8
+        address: "0x0020"
+        expected: "0x7F"
+      - kind: apu_ram_u8
+        address: "0x0021"
+        expected: "0x40"
+      - kind: apu_ram_u8
+        address: "0x0022"
+        expected: "0x2C"
+      - kind: apu_ram_u8
+        address: "0x0023"
+        expected: "0x12"
+      - kind: apu_ram_u8
+        address: "0x0024"
+        expected: "0x34"
+  - id: arguments-after-jsr-300k-screen-state
+    description: >
+      The undisbeliever 65816 arguments-after-JSR example renders a deterministic text screen at 300000 steps after repeatedly reading fixed 16-bit and 24-bit arguments following JSR/JSL calls.
+
+    rom: snes-test-roms/bin/65816-examples/arguments-after-jsr.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x5EE4948C7C61C2A5"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: textbuffer-hello-world-300k-screen-state
+    description: >
+      The undisbeliever TextBuffer hello-world example renders a deterministic frame counter and greeting at 300000 steps, covering LoROM bank-81 resource reads together with NMI-driven TextBuffer VRAM updates.
+
+    rom: snes-test-roms/bin/examples/textbuffer-hello-world.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x0519133F376900A8"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vram-writes-without-dma-final-state
+    description: >
+      The undisbeliever VRAM write example populates CGRAM color 1 and writes the expected second 2bpp tile into VRAM.
+
+    rom: snes-test-roms/bin/examples/vram-writes-without-dma.sfc
+    max_steps: 300000
+    check_interval_steps: 256
+    expected_screen_hash: "0x164C473087C35D5D"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x42"
+      - kind: vram_u8
+        address: "0x2016"
+        expected: "0x7E"
+      - kind: vram_u8
+        address: "0x2018"
+        expected: "0x42"
+      - kind: vram_u8
+        address: "0x201C"
+        expected: "0x42"
+  - id: hdma-to-cgram-final-state
+    description: >
+      The undisbeliever HDMA example drives CGRAM color 1 to the final gradient entry produced by the direct HDMA tables.
+
+    rom: snes-test-roms/bin/examples/hdma-to-cgram.sfc
+    max_steps: 500000
+    check_interval_steps: 256
+    expected_screen_hash: "0x573DA5CCE4D37653"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0400"
+  - id: hdma-repeat-entry-300k-screen-state
+    description: >
+      The undisbeliever HDMA repeat-entry example uses HDMA to update BG1HOFS for each scanline, producing a horizontal scroll gradient.
+
+    rom: snes-test-roms/bin/examples/hdma-repeat-entry.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xA70C4BB46FFD192F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-double-buffered-parallax-300k-screen-state
+    description: >
+      The undisbeliever double-buffered HDMA parallax example updates BG1HOFS through alternating direct HDMA tables.
+
+    rom: snes-test-roms/bin/examples/hdma-double-buffered-parallax.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xDC8BB6AB64B78DB4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-double-buffered-indirect-shear-300k-screen-state
+    description: >
+      The undisbeliever double-buffered indirect HDMA shear example updates BG1HOFS through indirect scanline arrays.
+
+    rom: >-
+      snes-test-roms/bin/examples/hdma-double-buffered-indirect-shear.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x15E6EE7BD6A90B95"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-160scanline-entry-300k-screen-state
+    description: >
+      The undisbeliever 160-scanline HDMA entry example renders a deterministic BG1 horizontal-offset step pattern at 300000 steps, covering split long non-repeat HDMA entries that target BG1HOFS.
+
+    rom: snes-test-roms/bin/examples/hdma-160scanline-hdma-entry.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xCA867431445F45F8"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-indirect-mapping-300k-screen-state
+    description: >
+      The undisbeliever indirect HDMA mapping example renders a deterministic BG1 horizontal scroll gradient at 300000 steps, covering contiguous indirect BG1HOFS tables split across HDMA entries.
+
+    rom: snes-test-roms/bin/examples/hdma-indirect-mapping.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xA54807DAE4E757BC"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-indirect-repeating-pattern-300k-screen-state
+    description: >
+      The undisbeliever indirect repeating-pattern HDMA example renders deterministic repeated BG1 horizontal scroll waves at 300000 steps, covering repeated indirect table pointers.
+
+    rom: >-
+      snes-test-roms/bin/examples/hdma-indirect-repeating-pattern.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x741CCA01312348AC"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-2bpp-remapping-final-state
+    description: >
+      The undisbeliever VMAIN 2bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0000"
+        expected: "0x81"
+      - kind: vram_u8
+        address: "0x0002"
+        expected: "0x40"
+      - kind: vram_u8
+        address: "0x0006"
+        expected: "0x18"
+      - kind: vram_u8
+        address: "0x0010"
+        expected: "0x01"
+      - kind: vram_u8
+        address: "0x0012"
+        expected: "0x80"
+      - kind: vram_u8
+        address: "0x001C"
+        expected: "0x06"
+      - kind: vram_u8
+        address: "0x001E"
+        expected: "0x81"
+  - id: vmain-1bpp-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp no-remapping ROM renders the deterministic radial test image at 8500000 steps after writing bitplane 0 through VMDATAL and clearing bitplane 1 through fixed VMDATAH DMA.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-1bpp-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x71C78EC78270F557"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-1bpp-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing bitplane 0 through remapped VMDATAL and clearing bitplane 1 through fixed VMDATAH DMA.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-1bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x71C78EC78270F557"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-2bpp-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 2bpp no-remapping ROM renders the deterministic radial test image at 8500000 steps after writing its linear 2bpp tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-2bpp-split-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 2bpp split-bitplane remapping ROM renders the deterministic radial test image at 8500000 steps after writing separate bitplanes through remapped VMDATA DMA transfers.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-2bpp-split-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x9C85794034B6E29D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-4bpp-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 4bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x97DCE715B9555BA2"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+  - id: vmain-4bpp-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 4bpp no-remapping ROM renders the deterministic radial test image at 8500000 steps after writing its linear tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x97DCE715B9555BA2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-4bpp-no-remapping-word-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 4bpp no-remapping word-write ROM renders the deterministic radial test image at 8500000 steps after writing its linear tile buffer through paired $2118/$2119 writes.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-no-remapping-word.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x97DCE715B9555BA2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-4bpp-with-remapping-word-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 4bpp remapping word-write ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through paired $2118/$2119 writes.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-4bpp-with-remapping-word.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x97DCE715B9555BA2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-8bpp-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 8bpp remapping ROM renders the deterministic radial test image at 8500000 steps after writing its remapped tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xFDED1B889D95799F"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+  - id: vmain-8bpp-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN 8bpp no-remapping ROM renders the deterministic radial test image at 8500000 steps after writing its linear tile buffer through $2118/$2119.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-8bpp-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0xFDED1B889D95799F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x03"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-no-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 no-remapping ROM renders the deterministic diagonal line image at 8500000 steps after writing tilemap bytes through VMDATAL and tile pixels through VMDATAH.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-8bit-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 8-bit remapping ROM renders the same deterministic diagonal image through remapped VMDATAH row uploads.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-8bit-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-10bit-remapping-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 10-bit remapping ROM renders the same deterministic diagonal image through remapped VMDATAH column uploads.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-with-10bit-remapping.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-tilemap-8500k-screen-state
+    description: >
+      The undisbeliever VMAIN Mode 7 tilemap-image ROM renders a deterministic radial image by using tilemap bytes as chunky pixel data.
+
+    rom: >-
+      snes-test-roms/bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc
+    max_steps: 8500000
+    check_interval_steps: 8500000
+    expected_screen_hash: "0x2DEE4A88526CD0C2"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: inidisp-forgot-to-force-blank-final-state
+    description: >
+      The undisbeliever INIDISP force-blank hardware test reaches its steady IRQ-driven loop after loading VRAM, OAM, and CGRAM assets.
+
+    rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank.sfc
+    max_steps: 69632
+    check_interval_steps: 69632
+    expected_screen_hash: "0x27B04E15F9FEB305"
+    assertions:
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x0000"
+        expected: "0x18"
+      - kind: vram_u8
+        address: "0x0004"
+        expected: "0x1A"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x00"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x00"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x00"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"
+  - id: inidisp-forgot-to-force-blank-2-final-state
+    description: >
+      The undisbeliever follow-up force-blank hardware test reaches its steady HV-IRQ loop after re-uploading PPU data during active display.
+
+    rom: snes-test-roms/bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc
+    max_steps: 5000
+    check_interval_steps: 5000
+    expected_screen_hash: "0x2A3E0C7153EFF887"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x7F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"
+  - id: inidisp-enable-display-mid-frame-final-state
+    description: >
+      The undisbeliever mid-frame display-enable hardware test reaches its steady loop with the configured IRQ position and loaded PPU resources.
+
+    rom: snes-test-roms/bin/hardware-tests/inidisp_enable_display_mid_frame.sfc
+    max_steps: 114688
+    check_interval_steps: 114688
+    expected_screen_hash: "0x256BB929C92455FA"
+    assertions:
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0xB1"
+      - kind: bus_u16
+        address: "0x004207"
+        expected: "0x000F"
+      - kind: bus_u16
+        address: "0x004209"
+        expected: "0x0059"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0C87"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0x7F"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0x7F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x5040"
+      - kind: oam_u16
+        address: "0x0004"
+        expected: "0x5060"
+      - kind: oam_u16
+        address: "0x0200"
+        expected: "0xAAAA"
+      - kind: oam_u16
+        address: "0x0202"
+        expected: "0x5555"
+  - id: inidisp-extend-vblank-300k-screen-state
+    description: >
+      The undisbeliever extend-VBlank demo reaches a deterministic paced-timing screen state at 7626752 steps with the current IRQ-driven forced-blank flow, and should keep matching that rendered frame hash when screenshots are captured from the final checked state.
+
+    rom: snes-test-roms/bin/effects/inidisp_extend_vblank.sfc
+    max_steps: 7626752
+    check_interval_steps: 7626752
+    expected_screen_hash: "0xDD3BE684D8AE384B"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x09"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x11"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x31"
+      - kind: bus_u16
+        address: "0x004207"
+        expected: "0x00F0"
+      - kind: bus_u16
+        address: "0x004209"
+        expected: "0x00D6"
+  - id: inidisp-fadein-fadeout-300k-screen-state
+    description: >
+      The undisbeliever INIDISP fade demo renders a deterministic low-brightness map image at 300000 steps, covering VBlank brightness updates while the screen remains enabled.
+
+    rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x6863F6EDAE5267ED"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: inidisp-fadein-fadeout-1000k-screen-state
+    description: >
+      The undisbeliever INIDISP fade demo renders a deterministic higher brightness map image at 1000000 steps, covering the software fade-in loop.
+
+    rom: snes-test-roms/bin/effects/inidisp_fadein_fadeout.sfc
+    max_steps: 1000000
+    check_interval_steps: 1000000
+    expected_screen_hash: "0xD662D016385E123F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x03"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: hdma-textbox-wipe-300k-screen-state
+    description: >
+      The undisbeliever HDMA textbox wipe effect uses HDMA to switch main-screen layers between BG1/BG2/OBJ and BG3 scanline regions.
+
+    rom: snes-test-roms/bin/effects/hdma-textbox-wipe.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x12CDB162BB7BE9F1"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+  - id: repeating-hdma-pattern-300k-screen-state
+    description: >
+      The undisbeliever repeating HDMA pattern effect renders deterministic BG3 cloud waves at 300000 steps, covering double-buffered indirect HDMA data reused across the visible display.
+
+    rom: snes-test-roms/bin/effects/repeating_hdma_pattern.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x98F06010DC2F2DA5"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x04"
+  - id: window-shapes-single-300k-screen-state
+    description: >
+      The undisbeliever single window shapes effect renders a deterministic color-window triangle at 300000 steps using HDMA-updated WH0/WH1 and fixed-color math on the backdrop.
+
+    rom: snes-test-roms/bin/effects/window-shapes-single.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xCD6FBF100DF02484"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x90"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x20"
+  - id: window-precalculated-single-300k-screen-state
+    description: >
+      The undisbeliever precalculated single-window effect renders a deterministic color-window exclamation mark at 300000 steps using a double-buffered HDMA table targeting WH0/WH1.
+
+    rom: snes-test-roms/bin/effects/window-precalculated-single.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xF6742E5F14A62CF4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x70"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x00"
+  - id: window-precalculated-symmetrical-300k-screen-state
+    description: >
+      The undisbeliever precalculated symmetrical single-window effect renders deterministic color-window shapes at 300000 steps using a generated HDMA table targeting WH0/WH1.
+
+    rom: snes-test-roms/bin/effects/window-precalculated-symmetrical.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xBA0B0EE07528FDC6"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0x20"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x70"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x00"
+  - id: window-mask-logic-300k-screen-state
+    description: >
+      The undisbeliever window mask logic effect renders deterministic overlapping color-window regions behind BG1 text at 300000 steps, covering WOBJSEL/WOBJLOG backdrop color math while main-screen layers remain enabled.
+
+    rom: snes-test-roms/bin/effects/window-mask-logic.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x2917479C919BB726"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002125"
+        expected: "0xA0"
+      - kind: bus_u8
+        address: "0x00212B"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x002130"
+        expected: "0x90"
+      - kind: bus_u8
+        address: "0x002131"
+        expected: "0x20"
+  - id: vmain-1bpp-tiles-0-300k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp tiles-0 demo renders deterministic text at 300000 steps after converting 1bpp tile data into transparent 2bpp tiles with VMDATAL and VMDATAH DMA transfers.
+
+    rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-0.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x9E1FB4791831EA80"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-1bpp-tiles-1-300k-screen-state
+    description: >
+      The undisbeliever VMAIN 1bpp tiles-1 demo renders deterministic text at 300000 steps after converting 1bpp tile data into opaque 2bpp tiles with fixed-source VMDATAH DMA.
+
+    rom: snes-test-roms/bin/effects/vmain-1bpp-tiles-1.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x7C8B0EE8F1650C4F"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-horizontal-scrolling-5000k-screen-state
+    description: >
+      The undisbeliever horizontal scrolling VMAIN demo renders a deterministic BG1 tilemap state at 5000000 steps after repeatedly uploading columns with VMAIN increment-by-32 DMA transfers.
+
+    rom: snes-test-roms/bin/effects/vmain-horizontal-scrolling.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xCBE9FCCE3E06CB19"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-vertical-scrolling-5000k-screen-state
+    description: >
+      The undisbeliever vertical scrolling VMAIN demo renders the deterministic BG1 tilemap state at 5000000 steps after repeatedly uploading split rows into a 64x32 tilemap.
+
+    rom: snes-test-roms/bin/effects/vmain-vertical-scrolling.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xBF3ECAC5F3DB8EB4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-vertical-scrolling-2-rows-5000k-screen-state
+    description: >
+      The undisbeliever vertical scrolling two-row VMAIN demo renders the deterministic BG1 tilemap state at 5000000 steps after transferring two split tilemap rows through paired DMA channels.
+
+    rom: snes-test-roms/bin/effects/vmain-vertical-scrolling-2-rows.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0x16AB6302EF753358"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-tilemap-columns-5000k-screen-state
+    description: >
+      The undisbeliever Mode 7 tilemap-columns VMAIN demo renders a deterministic set of vertical bars at 5000000 steps after VBlank DMA transfers whole Mode 7 tilemap columns with increment-by-128.
+
+    rom: snes-test-roms/bin/effects/vmain-mode7-tilemap-columns.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0xB03B6DA399D20694"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: vmain-mode7-tilemap-rows-5000k-screen-state
+    description: >
+      The undisbeliever Mode 7 tilemap-rows VMAIN demo renders a deterministic set of horizontal bars at 5000000 steps after VBlank DMA transfers whole Mode 7 tilemap rows with increment-by-1.
+
+    rom: snes-test-roms/bin/effects/vmain-mode7-tilemap-rows.sfc
+    max_steps: 5000000
+    check_interval_steps: 5000000
+    expected_screen_hash: "0x742C899411F142F9"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x07"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: inidisp-brightness-0-screen-state
+    description: >
+      The undisbeliever INIDISP brightness-0 hardware test reaches a stable black-screen wait state with brightness forced to zero, and should keep matching that rendered frame hash when captured at 30000 steps.
+
+    rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_0.sfc
+    max_steps: 30000
+    check_interval_steps: 30000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0000"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: hirom-gsu-test-300k-screen-state
+    description: >
+      The public-domain HiROM+GSU-2 integration test reaches a deterministic rendered report at 300000 steps while exercising Super FX VCR reads, Game Pak RAM access, and R15-triggered GSU execution used by its pixel and demo programs.
+
+    rom: snes-coprocessor-tests/hirom-gsu-test/build/HiRomGsuTest.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFC95F36A460D3625"
+    assertions:
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0005"
+        expected: "0x04"
+      - kind: wram_u8
+        address: "0x0007"
+        expected: "0x3E"
+      - kind: wram_u8
+        address: "0x000A"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x00303B"
+        expected: "0x04"
+      - kind: bus_u8
+        address: "0x003039"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002000"
+        expected: "0x0A"
+      - kind: bus_u8
+        address: "0x002002"
+        expected: "0x53"
+      - kind: bus_u8
+        address: "0x002003"
+        expected: "0x2D"
+      - kind: bus_u8
+        address: "0x002004"
+        expected: "0x4D"
+      - kind: bus_u8
+        address: "0x002005"
+        expected: "0x53"
+      - kind: bus_u8
+        address: "0x002006"
+        expected: "0x55"
+      - kind: bus_u8
+        address: "0x002007"
+        expected: "0x31"
+      - kind: vram_u16
+        address: "0x8000"
+        expected: "0x66AA"
+      - kind: vram_u16
+        address: "0x8002"
+        expected: "0xCC55"
+      - kind: vram_u16
+        address: "0x8004"
+        expected: "0x99AA"
+      - kind: vram_u16
+        address: "0x8006"
+        expected: "0x3355"
+      - kind: vram_u16
+        address: "0x801E"
+        expected: "0xFF0F"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0x9C78"
+      - kind: oam_u16
+        address: "0x0002"
+        expected: "0x3000"
+  - id: sa1-bwram-smoke-final-state
+    description: >
+      The self-authored SA-1 BWRAM smoke ROM declares an SA-1 cartridge header and verifies host-visible BWRAM protection/write-enable behavior plus BMAPS page selection from S-CPU code.
+
+    rom: snes-coprocessor-tests/sa1-bwram-smoke/build/Sa1BwramSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x5A"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0xA5"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x5A"
+      - kind: bus_u8
+        address: "0x002224"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002226"
+        expected: "0x80"
+  - id: cx4-smoke-final-state
+    description: >
+      The self-authored CX4 smoke ROM declares a CX4 cartridge header and verifies host-visible CX4 multiply, identification, and busy-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/cx4-smoke/build/Cx4Smoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x8C"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x04"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x36"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x43"
+      - kind: wram_u8
+        address: "0x0005"
+        expected: "0x05"
+      - kind: wram_u8
+        address: "0x0006"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x007F5E"
+        expected: "0x00"
+  - id: dsp1-smoke-final-state
+    description: >
+      The self-authored DSP-1 smoke ROM declares a DSP-1 LoROM cartridge header and verifies host-visible DSP-1 multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1Smoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1a-smoke-final-state
+    description: >
+      The self-authored DSP-1A-compatible smoke ROM declares a DSP-1A-style LoROM cartridge header and verifies the shared DSP-1 multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1aSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1b-smoke-final-state
+    description: >
+      The self-authored DSP-1B smoke ROM declares a DSP-1B HiROM cartridge header and verifies host-visible DSP-1B multiply, ROM-version, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1bSmoke.sfc
+    max_steps: 1200
+    check_interval_steps: 1200
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u8
+        address: "0x0000"
+        expected: "0x00"
+      - kind: wram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: wram_u8
+        address: "0x0002"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0003"
+        expected: "0x01"
+      - kind: wram_u8
+        address: "0x0004"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x007000"
+        expected: "0x84"
+  - id: dsp1-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1 geometry smoke ROM declares a DSP-1 LoROM cartridge header and verifies host-visible trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1GeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1a-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1A-compatible geometry smoke ROM declares a DSP-1A-style LoROM cartridge header and verifies the shared DSP-1 trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1aGeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x20C000"
+        expected: "0x84"
+  - id: dsp1b-geometry-smoke-final-state
+    description: >
+      The self-authored DSP-1B geometry smoke ROM declares a DSP-1B HiROM cartridge header and verifies host-visible DSP-1B trigonometric, 2D/3D rotation, vector-length, radius, inverse, and ready-status behavior from S-CPU code.
+
+    rom: snes-coprocessor-tests/dsp1-smoke/build/Dsp1bGeometrySmoke.sfc
+    max_steps: 3000
+    check_interval_steps: 3000
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: wram_u16
+        address: "0x0010"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0012"
+        expected: "0x4000"
+      - kind: wram_u16
+        address: "0x0014"
+        expected: "0x0123"
+      - kind: wram_u16
+        address: "0x0016"
+        expected: "0xFEDC"
+      - kind: wram_u16
+        address: "0x0018"
+        expected: "0x0003"
+      - kind: wram_u16
+        address: "0x001A"
+        expected: "0xFFFC"
+      - kind: wram_u16
+        address: "0x001C"
+        expected: "0x000C"
+      - kind: wram_u16
+        address: "0x001E"
+        expected: "0x000D"
+      - kind: wram_u16
+        address: "0x0020"
+        expected: "0x00A9"
+      - kind: wram_u16
+        address: "0x0022"
+        expected: "0x0000"
+      - kind: wram_u16
+        address: "0x0024"
+        expected: "0x7FFF"
+      - kind: wram_u16
+        address: "0x0026"
+        expected: "0x0001"
+      - kind: wram_u8
+        address: "0x0028"
+        expected: "0x84"
+      - kind: bus_u8
+        address: "0x007000"
+        expected: "0x84"
+  - id: inidisp-brightness-delay-100k-screen-state
+    description: >
+      The undisbeliever INIDISP brightness-delay hardware test reaches a deterministic paced-timing screen state at 16384 steps while the delayed brightness writes are still holding the display at zero brightness.
+
+    rom: snes-test-roms/bin/hardware-tests/inidisp_brightness_delay.sfc
+    max_steps: 16384
+    check_interval_steps: 16384
+    expected_screen_hash: "0xBD1C16C241905E87"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x90"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0xFFFF"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: vram-mid-scanline-100k-white-screen-state
+    description: >
+      The undisbeliever mid-scanline VRAM write hardware test keeps its BG1 tile data intact and renders a deterministic white screen at 100000 steps while active-display writes through $2118/$2119 stay ignored.
+
+    rom: snes-test-roms/bin/hardware-tests/vram-mid-scanline-test.sfc
+    max_steps: 100000
+    check_interval_steps: 100000
+    expected_screen_hash: "0xA7140ABD926FF413"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x002115"
+        expected: "0x80"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: cgram_u16
+        address: "0x0006"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x2003"
+        expected: "0xFF"
+      - kind: vram_u8
+        address: "0x2005"
+        expected: "0xFF"
+      - kind: vram_u8
+        address: "0x200F"
+        expected: "0xFF"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: hdmaen-latch-test-300k-screen-state
+    description: >
+      The undisbeliever HDMAEN latch hardware test renders the alternating backdrop stripe pattern at 300000 steps once HIRQ, WAI, and mid-frame HDMA activation are paced against the current CPU timing model.
+
+    rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+  - id: hdmaen-latch-test-2-300k-screen-state
+    description: >
+      The undisbeliever HDMAEN latch timing sweep test reaches the same alternating backdrop stripe pattern at 300000 steps while keeping HIRQ enabled for the next per-delay sweep.
+
+    rom: snes-test-roms/bin/hardware-tests/hdmaen_latch_test_2.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFE59F82F1E93CFA4"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x10"
+  - id: wrmpyb-in-flight-300k-screen-state
+    description: >
+      The undisbeliever WRMPYB in-flight hardware test renders the modelled 5A22 multiply timing table at 300000 steps, including the hardware-observed zero result when the second WRMPYB write lands seven CPU cycles after the previous multiply start.
+
+    rom: snes-test-roms/bin/hardware-tests/wrmpyb-in-flight.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3DE75D479A103EF6"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: reset-position-300k-screen-state
+    description: >
+      The undisbeliever reset-position hardware test reaches a deterministic text output at 300000 steps, covering software counter latch, OPHCT/OPVCT byte order, and coarse HVBJOY H/V timing from reset.
+
+    rom: snes-test-roms/bin/hardware-tests/reset-position-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3A1FF072F7F6F82C"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: hdma-timing-demonstration-300k-screen-state
+    description: >
+      The undisbeliever HDMA timing demonstration renders a deterministic backdrop gradient at 300000 steps, covering paired HDMA channels that update CGADD and CGDATA during active display.
+
+    rom: snes-test-roms/bin/hardware-tests/hdma-timing-demonstration.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x618B2CAF9D84F5AD"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: object-dropout-300k-screen-state
+    description: >
+      The undisbeliever object dropout hardware test renders the deterministic OBJ overflow pattern at 300000 steps, covering the per-scanline sprite and tile-sliver limits including offscreen sprites at X=-256.
+
+    rom: snes-test-roms/bin/hardware-tests/object-dropout-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x3347C7633FF81D85"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: joypad-bounce-200k-screen-state
+    description: >
+      The undisbeliever joypad bounce hardware test renders deterministic Mode 0 BG1-BG4 line indicators at 200000 steps while HDMA updates each BG vertical scroll register.
+
+    rom: snes-test-roms/bin/hardware-tests/joypad_bounce_test.sfc
+    max_steps: 200000
+    check_interval_steps: 200000
+    expected_screen_hash: "0x5B99D0174EAB1953"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x1F"
+  - id: joypad-rapid-read-no-input-final-state
+    description: >
+      The undisbeliever joypad rapid read hardware test reaches a stable no-input display state once JOYOUT and JOYSER reads are implemented for a standard controller.
+
+    rom: snes-test-roms/bin/hardware-tests/joypad_rapid_read_test.sfc
+    max_steps: 53248
+    check_interval_steps: 53248
+    expected_screen_hash: "0x00B9B6854716FB49"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x0000"
+      - kind: vram_u8
+        address: "0x0002"
+        expected: "0x01"
+      - kind: vram_u8
+        address: "0x0007"
+        expected: "0x08"
+      - kind: vram_u8
+        address: "0x0015"
+        expected: "0x1C"
+      - kind: vram_u8
+        address: "0x2001"
+        expected: "0xC0"
+      - kind: vram_u8
+        address: "0x2011"
+        expected: "0x0C"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: clear-autojoy-after-active-no-input-final-state
+    description: >
+      The undisbeliever clear-autojoy-after-autojoy-active hardware test reaches a stable no-input display state once autojoy completion leaves manual JOYSER reads exhausted until relatched.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc
+    max_steps: 16384
+    check_interval_steps: 16384
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: bus_u16
+        address: "0x004218"
+        expected: "0x0000"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x001F"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x2010"
+        expected: "0x38"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x6C"
+      - kind: vram_u8
+        address: "0x2014"
+        expected: "0xC6"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: clear-autojoy-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever clear-autojoy-during-autojoy hardware test reaches a stable no-input display state once clearing autojoy during the active window does not corrupt the final no-input JOY state.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc
+    max_steps: 16384
+    check_interval_steps: 16384
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x00"
+      - kind: bus_u16
+        address: "0x004218"
+        expected: "0x0000"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x001F"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x2010"
+        expected: "0x38"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x6C"
+      - kind: vram_u8
+        address: "0x2014"
+        expected: "0xC6"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: joyser0-read-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever JOYSER0 read during autojoy hardware test reaches a stable no-input display state once JOYSER reads share state with the active autojoy window.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/joyser0-read-during-autojoy.sfc
+    max_steps: 49152
+    check_interval_steps: 49152
+    expected_screen_hash: "0xC5F8C8BED7A97DF3"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x31"
+      - kind: bus_u16
+        address: "0x004207"
+        expected: "0x00C8"
+      - kind: bus_u16
+        address: "0x004209"
+        expected: "0x00E0"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x001F"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x2010"
+        expected: "0x38"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x6C"
+      - kind: vram_u8
+        address: "0x2014"
+        expected: "0xC6"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: auto-joy-timing-300k-screen-state
+    description: >
+      The undisbeliever HVBJOY autojoy timing hardware test renders deterministic OPHCT start/end timing bounds at 300000 steps, covering the autojoy active flag's coarse start and clear windows.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/auto-joy-timing-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xA88B5A2C44D7FD34"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: clear-autojoy-timing-300k-screen-state
+    description: >
+      The undisbeliever clear-autojoy-timing hardware test renders deterministic HVBJOY poll counts at 300000 steps, covering active-window behavior when NMITIMEN clears autojoy mid-read.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-timing-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x1C509DCEC3A8A475"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-test-300k-screen-state
+    description: >
+      The undisbeliever AUTOJOY blip hardware test renders a deterministic no-input IRQ timing table at 300000 steps, covering rapid NMITIMEN autojoy disable/re-enable during active autojoy.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x1F6EE8AC51D1A874"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-test-automatic-300k-screen-state
+    description: >
+      The undisbeliever automatic AUTOJOY blip hardware test renders a deterministic no-input HVBJOY.0 count screen at 300000 steps, covering automatic rapid autojoy disable/re-enable loops.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-test-automatic.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x4C53A210FB34C019"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-timing-test-300k-screen-state
+    description: >
+      The undisbeliever blip AUTOJOY timing hardware test renders deterministic HVBJOY count bounds at 300000 steps, covering short NMITIMEN autojoy-off windows during the first autojoy cycle.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-timing-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0x33C79963D63E7B29"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: blip-autojoy-latches-joypad-300k-screen-state
+    description: >
+      The undisbeliever blipping AUTOJOY enable latches-joypad hardware test renders a deterministic no-input serial-read table at 300000 steps, covering rapid autojoy disable/re-enable around manual JOYSER0 reads.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/blip-autojoy-latches-joypad-test.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFEAFDE8611AD723D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: clear-autojoy-1st-vb-sl-300k-screen-state
+    description: >
+      The undisbeliever clear-AUTOJOY-on-first-VBlank-scanline hardware test renders a deterministic no-input IRQ timing table at 300000 steps, covering early VBlank autojoy disable behavior.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/clear-autojoy-1st-vb-sl.sfc
+    max_steps: 300000
+    check_interval_steps: 300000
+    expected_screen_hash: "0xFA8ECF09843DDE0D"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x002105"
+        expected: "0x00"
+      - kind: bus_u8
+        address: "0x00212C"
+        expected: "0x01"
+  - id: joypad-latch-clear-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever joypad-latch-clear-during-autojoy hardware test reaches a deterministic no-input display state once manual JOYSER latch clearing during active autojoy does not corrupt the final JOY state.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-clear-during-autojoy.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x99E592A55875DB6A"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: joypad-latch-set-during-autojoy-no-input-final-state
+    description: >
+      The undisbeliever joypad-latch-set-during-autojoy hardware test reaches a deterministic no-input display state once manual JOYSER latch setting during active autojoy is shared with the serial controller state.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/joypad-latch-set-during-autojoy.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x16D2DE27375F62FE"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: enable-autojoy-late-no-input-final-state
+    description: >
+      The undisbeliever enable-autojoy-late hardware test reaches a deterministic no-input display state once IRQ-timed same-frame autojoy arming is covered across the tested H/V positions.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0x08080EBE1D43AF88"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+  - id: enable-autojoy-late-2-no-input-final-state
+    description: >
+      The undisbeliever enable-autojoy-late-test-2 hardware test reaches a stable no-input display state once same-frame autojoy arming is supported in the coarse timing model.
+
+    rom: >-
+      snes-test-roms/bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc
+    max_steps: 110592
+    check_interval_steps: 110592
+    expected_screen_hash: "0xC62139DA6C909817"
+    assertions:
+      - kind: bus_u8
+        address: "0x002100"
+        expected: "0x0F"
+      - kind: bus_u8
+        address: "0x004200"
+        expected: "0x01"
+      - kind: cgram_u16
+        address: "0x0002"
+        expected: "0x7FFF"
+      - kind: vram_u8
+        address: "0x0001"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x001F"
+        expected: "0x20"
+      - kind: vram_u8
+        address: "0x2010"
+        expected: "0x38"
+      - kind: vram_u8
+        address: "0x2012"
+        expected: "0x6C"
+      - kind: vram_u8
+        address: "0x2014"
+        expected: "0xC6"
+      - kind: oam_u16
+        address: "0x0000"
+        expected: "0xF080"
+  - id: peter-lemon-snes-cpu-cmp
+    description: |
+      The self-authored CPU CMP test ROM verifies correct CMP instruction behavior across all addressing modes, including edge cases for negative results, zero results, and unsigned underflow.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.sfc
+    max_steps: 4764880
+    check_interval_steps: 4764880
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/CMP/CPUCMP.png
+    expected_screen_hash: 0x9FA423204172007E
+  - id: peter-lemon-snes-cpu-adc
+    description: |
+      The self-authored CPU ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.sfc
+    max_steps: 3454538
+    check_interval_steps: 3454538
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ADC/CPUADC.png
+    expected_screen_hash: 0x4A6307060A412176
+  - id: peter-lemon-snes-cpu-and
+    description: |
+      The self-authored CPU AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.sfc
+    max_steps: 2799367
+    check_interval_steps: 2799367
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/AND/CPUAND.png
+    expected_screen_hash: 0x1B76573A8CDE5B29
+  - id: peter-lemon-snes-cpu-asl
+    description: |
+      The self-authored CPU ASL test ROM verifies correct ASL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.sfc
+    max_steps: 3692782
+    check_interval_steps: 3692782
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ASL/CPUASL.png
+    expected_screen_hash: 0x270B715ED335207B
+  - id: peter-lemon-snes-cpu-bit
+    description: |
+      The self-authored CPU BIT test ROM verifies correct BIT instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.sfc
+    max_steps: 3692782
+    check_interval_steps: 3692782
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BIT/CPUBIT.png
+    expected_screen_hash: 0x291284D0A7AD833E
+  - id: peter-lemon-snes-cpu-bra
+    description: |
+      The self-authored CPU BRA test ROM verifies correct BRA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.sfc
+    max_steps: 3692782
+    check_interval_steps: 3692782
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/BRA/CPUBRA.png
+    expected_screen_hash: 0x643A00BDEFB4F30D
+  - id: peter-lemon-snes-cpu-dec
+    description: |
+      The self-authored CPU DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/DEC/CPUDEC.sfc
+    max_steps: 1310342
+    check_interval_steps: 1310342
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/DEC/CPUDEC.png
+  - id: peter-lemon-snes-cpu-eor
+    description: |
+      The self-authored CPU EOR test ROM verifies correct EOR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.sfc
+    max_steps: 2322879
+    check_interval_steps: 2322879
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/EOR/CPUEOR.png
+    expected_screen_hash: 0x9E3FA5C99C10BD68
+  - id: peter-lemon-snes-cpu-inc
+    description: |
+      The self-authored CPU INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/INC/CPUINC.sfc
+    max_steps: 1310342
+    check_interval_steps: 1310342
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/INC/CPUINC.png
+  - id: peter-lemon-snes-cpu-jmp
+    description: |
+      The self-authored CPU JMP test ROM verifies correct JMP instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.sfc
+    max_steps: 1072098
+    check_interval_steps: 1072098
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/JMP/CPUJMP.png
+    expected_screen_hash: 0x0013810BB30450A3
+  - id: peter-lemon-snes-cpu-ldr
+    description: |
+      The self-authored CPU LDR test ROM verifies correct LDR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.sfc
+    max_steps: 3335416
+    check_interval_steps: 3335416
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LDR/CPULDR.png
+    expected_screen_hash: 0xBF4684BD3981DC35
+  - id: peter-lemon-snes-cpu-lsr
+    description: |
+      The self-authored CPU LSR test ROM verifies correct LSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.sfc
+    max_steps: 1072098
+    check_interval_steps: 1072098
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/LSR/CPULSR.png
+    expected_screen_hash: 0xD24E9136BDDF2416
+  - id: peter-lemon-snes-cpu-mov
+    description: |
+      The self-authored CPU MOV test ROM verifies correct MOV instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/MOV/CPUMOV.sfc
+    max_steps: 1072098
+    check_interval_steps: 1072098
+    reference_png: snes/peter-lemon-snes/CPUTest/CPU/MOV/CPUMOV.png
+  - id: peter-lemon-snes-cpu-msc
+    description: |
+      The self-authored CPU MSC test ROM verifies correct MSC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/MSC/CPUMSC.png
+    expected_screen_hash: 0xF57D3F255B69C0D3
+    reset_at_steps: [100000]
+  - id: peter-lemon-snes-cpu-ora
+    description: |
+      The self-authored CPU ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ORA/CPUORA.png
+    expected_screen_hash: 0x02A73EF65F92CEA2
+  - id: peter-lemon-snes-cpu-phl
+    description: |
+      The self-authored CPU PHL test ROM verifies correct PHL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.sfc
+    max_steps: 2978050
+    check_interval_steps: 2978050
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PHL/CPUPHL.png
+    expected_screen_hash: 0x832F2C322B814DAA
+  - id: peter-lemon-snes-cpu-psr
+    description: |
+      The self-authored CPU PSR test ROM verifies correct PSR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.sfc
+    max_steps: 1250781
+    check_interval_steps: 1250781
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/PSR/CPUPSR.png
+    expected_screen_hash: 0x47250BC0A20F1244
+  - id: peter-lemon-snes-cpu-ret
+    description: |
+      The self-authored CPU RET test ROM verifies correct RET instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/RET/CPURET.png
+    expected_screen_hash: 0xB0A1A127D4AB3A28
+  - id: peter-lemon-snes-cpu-rol
+    description: |
+      The self-authored CPU ROL test ROM verifies correct ROL instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROL/CPUROL.png
+    expected_screen_hash: 0x833F3680D0538274
+  - id: peter-lemon-snes-cpu-ror
+    description: |
+      The self-authored CPU ROR test ROM verifies correct ROR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.sfc
+    max_steps: 1012537
+    check_interval_steps: 1012537
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/ROR/CPUROR.png
+    expected_screen_hash: 0xB809D1ED9753496E
+  - id: peter-lemon-snes-cpu-sbc
+    description: |
+      The self-authored CPU SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.sfc
+    max_steps: 3097172
+    check_interval_steps: 3097172
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/SBC/CPUSBC.png
+    expected_screen_hash: 0x7BCF082D0B67D0B6
+  - id: peter-lemon-snes-cpu-str
+    description: |
+      The self-authored CPU STR test ROM verifies correct STR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.sfc
+    max_steps: 4228831
+    check_interval_steps: 4228831
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/STR/CPUSTR.png
+    expected_screen_hash: 0x03B5E2805B76FD30
+  - id: peter-lemon-snes-cpu-trn
+    description: |
+      The self-authored CPU TRN test ROM verifies correct TRN instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.sfc
+    max_steps: 3394977
+    check_interval_steps: 3394977
+    # reference_png: snes/peter-lemon-snes/CPUTest/CPU/TRN/CPUTRN.png
+    expected_screen_hash: 0xC7A76245F825519E
+  - id: peter-lemon-snes-spc700-adc
+    description: |
+      The self-authored SPC700 ADC test ROM verifies correct ADC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/ADC/SPC700ADC.sfc
+    max_steps: 92736477
+    check_interval_steps: 92736477
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/ADC/SPC700ADC.png
+  - id: peter-lemon-snes-spc700-and
+    description: |
+      The self-authored SPC700 AND test ROM verifies correct AND instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/AND/SPC700AND.sfc
+    max_steps: 100777212
+    check_interval_steps: 100777212
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/AND/SPC700AND.png
+  - id: peter-lemon-snes-spc700-dec
+    description: |
+      The self-authored SPC700 DEC test ROM verifies correct DEC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.sfc
+    max_steps: 50000000
+    check_interval_steps: 50000000
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/DEC/SPC700DEC.png
+  - id: peter-lemon-snes-spc700-eor
+    description: |
+      The self-authored SPC700 EOR test ROM verifies correct EOR instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/EOR/SPC700EOR.sfc
+    max_steps: 92557794
+    check_interval_steps: 92557794
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/EOR/SPC700EOR.png
+  - id: peter-lemon-snes-spc700-inc
+    description: |
+      The self-authored SPC700 INC test ROM verifies correct INC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.sfc
+    max_steps: 50000000
+    check_interval_steps: 50000000
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/INC/SPC700INC.png
+  - id: peter-lemon-snes-spc700-ora
+    description: |
+      The self-authored SPC700 ORA test ROM verifies correct ORA instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/ORA/SPC700ORA.sfc
+    max_steps: 100777212
+    check_interval_steps: 100777212
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/ORA/SPC700ORA.png
+  - id: peter-lemon-snes-spc700-sbc
+    description: |
+      The self-authored SPC700 SBC test ROM verifies correct SBC instruction behavior across all addressing modes, including edge cases for negative results, zero results, unsigned overflow, and carry flag behavior.
+    rom: snes/peter-lemon-snes/CPUTest/SPC700/SBC/SPC700SBC.sfc
+    max_steps: 93570331
+    check_interval_steps: 93570331
+    reference_png: snes/peter-lemon-snes/CPUTest/SPC700/SBC/SPC700SBC.png
+  - id: peter-lemon-snes-bank-hiromfastrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
+    rom: snes/peter-lemon-snes/BANK/HiROMFastROM/BANKHiROMFastROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    reference_png: snes/peter-lemon-snes/BANK/HiROMFastROM/BANKHiROMFastROM.png
+  - id: peter-lemon-snes-bank-hiromslowrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
+    rom: snes/peter-lemon-snes/BANK/HiROMSlowROM/BANKHiROMSlowROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    reference_png: snes/peter-lemon-snes/BANK/HiROMSlowROM/BANKHiROMSlowROM.png
+  - id: peter-lemon-snes-bank-loromfastrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode.
+    rom: snes/peter-lemon-snes/BANK/LoROMFastROM/BANKLoROMFastROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    reference_png: snes/peter-lemon-snes/BANK/LoROMFastROM/BANKLoROMFastROM.png
+  - id: peter-lemon-snes-bank-loromslowrom
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to slow mode.
+    rom: snes/peter-lemon-snes/BANK/LoROMSlowROM/BANKLoROMSlowROM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    reference_png: snes/peter-lemon-snes/BANK/LoROMSlowROM/BANKLoROMSlowROM.png
+  - id: peter-lemon-snes-bank-wram
+    description: |
+      Test that the CPU master clock rate is correct when MEMSEL is set to fast mode and WRAM is accessed.
+    rom: snes/peter-lemon-snes/BANK/WRAM/BANKWRAM.sfc
+    max_steps: 952976
+    check_interval_steps: 952976
+    reference_png: snes/peter-lemon-snes/BANK/WRAM/BANKWRAM.png
+  - id: peter-lemon-snes-gsu-adc
+    description: |
+      Peter Lemon's GSU ADC test verifies SuperFX add-with-carry instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADC/GSUADC.sfc
+    max_steps: 4705319
+    check_interval_steps: 4705319
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADC/GSUADC.png
+  - id: peter-lemon-snes-gsu-add
+    description: |
+      Peter Lemon's GSU ADD test verifies SuperFX addition instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADD/GSUADD.sfc
+    max_steps: 3990587
+    check_interval_steps: 3990587
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ADD/GSUADD.png
+  - id: peter-lemon-snes-gsu-asr
+    description: |
+      Peter Lemon's GSU ASR test verifies SuperFX arithmetic shift right instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ASR/GSUASR.sfc
+    max_steps: 2918489
+    check_interval_steps: 2918489
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ASR/GSUASR.png
+  - id: peter-lemon-snes-gsu-cmp
+    description: |
+      Peter Lemon's GSU CMP test verifies SuperFX compare instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CMP/GSUCMP.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CMP/GSUCMP.png
+  - id: peter-lemon-snes-gsu-dec
+    description: |
+      Peter Lemon's GSU DEC test verifies SuperFX decrement instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DEC/GSUDEC.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DEC/GSUDEC.png
+  - id: peter-lemon-snes-gsu-div2
+    description: |
+      Peter Lemon's GSU DIV2 test verifies SuperFX divide by 2 instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DIV2/GSUDIV2.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/DIV2/GSUDIV2.png
+  - id: peter-lemon-snes-gsu-hib
+    description: |
+      Peter Lemon's GSU HIB test verifies SuperFX high byte instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/HIB/GSUHIB.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/HIB/GSUHIB.png
+  - id: peter-lemon-snes-gsu-ibt
+    description: |
+      Peter Lemon's GSU IBT test verifies SuperFX instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IBT/GSUIBT.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IBT/GSUIBT.png
+  - id: peter-lemon-snes-gsu-inc
+    description: |
+      Peter Lemon's GSU INC test verifies SuperFX increment instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/INC/GSUINC.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/INC/GSUINC.png
+  - id: peter-lemon-snes-gsu-iwt
+    description: |
+      Peter Lemon's GSU IWT test verifies SuperFX instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IWT/GSUIWT.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/IWT/GSUIWT.png
+  - id: peter-lemon-snes-gsu-lob
+    description: |
+      Peter Lemon's GSU LOB test verifies SuperFX low byte instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LOB/GSULOB.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LOB/GSULOB.png
+  - id: peter-lemon-snes-gsu-lsr
+    description: |
+      Peter Lemon's GSU LSR test verifies SuperFX logical shift right instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LSR/GSULSR.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LSR/GSULSR.png
+  - id: peter-lemon-snes-gsu-merge
+    description: |
+      Peter Lemon's GSU MERGE test verifies SuperFX merge instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MERGE/GSUMERGE.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MERGE/GSUMERGE.png
+  - id: peter-lemon-snes-gsu-move
+    description: |
+      Peter Lemon's GSU MOVE test verifies SuperFX move instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVE/GSUMOVE.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVE/GSUMOVE.png
+  - id: peter-lemon-snes-gsu-moves
+    description: |
+      Peter Lemon's GSU MOVES test verifies SuperFX moves instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVES/GSUMOVES.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MOVES/GSUMOVES.png
+  - id: peter-lemon-snes-gsu-not
+    description: |
+      Peter Lemon's GSU NOT test verifies SuperFX NOT instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/NOT/GSUNOT.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/NOT/GSUNOT.png
+  - id: peter-lemon-snes-gsu-rol
+    description: |
+      Peter Lemon's GSU ROL test verifies SuperFX rotate left instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROL/GSUROL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROL/GSUROL.png
+  - id: peter-lemon-snes-gsu-ror
+    description: |
+      Peter Lemon's GSU ROR test verifies SuperFX rotate right instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROR/GSUROR.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/ROR/GSUROR.png
+  - id: peter-lemon-snes-gsu-sbc
+    description: |
+      Peter Lemon's GSU SBC test verifies SuperFX subtract with carry instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SBC/GSUSBC.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SBC/GSUSBC.png
+  - id: peter-lemon-snes-gsu-sex
+    description: |
+      Peter Lemon's GSU SEX test verifies SuperFX sign extend instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SEX/GSUSEX.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SEX/GSUSEX.png
+  - id: peter-lemon-snes-gsu-sub
+    description: |
+      Peter Lemon's GSU SUB test verifies SuperFX subtract instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SUB/GSUSUB.sfc
+    max_steps: 3990587
+    check_interval_steps: 3990587
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SUB/GSUSUB.png
+  - id: peter-lemon-snes-gsu-swap
+    description: |
+      Peter Lemon's GSU SWAP test verifies SuperFX swap instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SWAP/GSUSWAP.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/SWAP/GSUSWAP.png
+  - id: peter-lemon-snes-gsu-umult
+    description: |
+      Peter Lemon's GSU UMULT test verifies SuperFX unsigned multiply instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/UMULT/GSUUMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/UMULT/GSUUMULT.png
+  - id: peter-lemon-snes-gsu-and
+    description: |
+      Peter Lemon's GSU AND test verifies SuperFX logical AND instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/AND/GSUAND.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/AND/GSUAND.png
+  - id: peter-lemon-snes-gsu-bic
+    description: |
+      Peter Lemon's GSU BIC test verifies SuperFX bit clear instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/BIC/GSUBIC.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/BIC/GSUBIC.png
+  - id: peter-lemon-snes-gsu-cacheinject
+    description: |
+      Peter Lemon's GSU CACHEINJECT test verifies SuperFX cache injection instruction.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CACHEINJECT/GSUCACHEINJECT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/CACHEINJECT/GSUCACHEINJECT.png
+  - id: peter-lemon-snes-gsu-fmult
+    description: |
+      Peter Lemon's GSU FMULT test verifies SuperFX fractional multiply instruction
+      across all registers, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/FMULT/GSUFMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/FMULT/GSUFMULT.png
+  - id: peter-lemon-snes-gsu-lmult
+    description: |
+      Peter Lemon's GSU LMULT test verifies SuperFX long multiply instruction
+      across all registers, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LMULT/GSULMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/LMULT/GSULMULT.png
+  - id: peter-lemon-snes-gsu-mult
+    description: |
+      Peter Lemon's GSU MULT test verifies SuperFX multiply instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MULT/GSUMULT.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/MULT/GSUMULT.png
+  - id: peter-lemon-snes-gsu-or
+    description: |
+      Peter Lemon's GSU OR test verifies SuperFX logical OR instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/OR/GSUOR.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/OR/GSUOR.png
+  - id: peter-lemon-snes-gsu-xor
+    description: |
+      Peter Lemon's GSU XOR test verifies SuperFX logical XOR instruction
+      across all registers and immediate values, checking VSCZ flags.
+    rom: snes/peter-lemon-snes/CHIP/GSU/GSUTest/XOR/GSUXOR.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/GSUTest/XOR/GSUXOR.png
+  - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x128
+    description: |
+      Peter Lemon's GSU 2BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x128/GSU2BPP256x128FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x128/GSU2BPP256x128FillPoly.png
+  - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x160
+    description: |
+      Peter Lemon's GSU 2BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x160/GSU2BPP256x160FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x160/GSU2BPP256x160FillPoly.png
+  - id: peter-lemon-snes-gsu-2bpp-fillpoly-256x192
+    description: |
+      Peter Lemon's GSU 2BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x192/GSU2BPP256x192FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/FillPoly/256x192/GSU2BPP256x192FillPoly.png
+  - id: peter-lemon-snes-gsu-2bpp-plotline-256x128
+    description: |
+      Peter Lemon's GSU 2BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x128/GSU2BPP256x128PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x128/GSU2BPP256x128PlotLine.png
+  - id: peter-lemon-snes-gsu-2bpp-plotline-256x160
+    description: |
+      Peter Lemon's GSU 2BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x160/GSU2BPP256x160PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x160/GSU2BPP256x160PlotLine.png
+  - id: peter-lemon-snes-gsu-2bpp-plotline-256x192
+    description: |
+      Peter Lemon's GSU 2BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x192/GSU2BPP256x192PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotLine/256x192/GSU2BPP256x192PlotLine.png
+  - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x128
+    description: |
+      Peter Lemon's GSU 2BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x128/GSU2BPP256x128PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x128/GSU2BPP256x128PlotPixel.png
+  - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x160
+    description: |
+      Peter Lemon's GSU 2BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x160/GSU2BPP256x160PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x160/GSU2BPP256x160PlotPixel.png
+  - id: peter-lemon-snes-gsu-2bpp-plotpixel-256x192
+    description: |
+      Peter Lemon's GSU 2BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 2BPP (4-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x192/GSU2BPP256x192PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/2BPP/PlotPixel/256x192/GSU2BPP256x192PlotPixel.png
+  - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x128
+    description: |
+      Peter Lemon's GSU 4BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x128/GSU4BPP256x128FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x128/GSU4BPP256x128FillPoly.png
+  - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x160
+    description: |
+      Peter Lemon's GSU 4BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x160/GSU4BPP256x160FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x160/GSU4BPP256x160FillPoly.png
+  - id: peter-lemon-snes-gsu-4bpp-fillpoly-256x192
+    description: |
+      Peter Lemon's GSU 4BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x192/GSU4BPP256x192FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/FillPoly/256x192/GSU4BPP256x192FillPoly.png
+  - id: peter-lemon-snes-gsu-4bpp-plotline-256x128
+    description: |
+      Peter Lemon's GSU 4BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x128/GSU4BPP256x128PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x128/GSU4BPP256x128PlotLine.png
+  - id: peter-lemon-snes-gsu-4bpp-plotline-256x160
+    description: |
+      Peter Lemon's GSU 4BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x160/GSU4BPP256x160PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x160/GSU4BPP256x160PlotLine.png
+  - id: peter-lemon-snes-gsu-4bpp-plotline-256x192
+    description: |
+      Peter Lemon's GSU 4BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x192/GSU4BPP256x192PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotLine/256x192/GSU4BPP256x192PlotLine.png
+  - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x128
+    description: |
+      Peter Lemon's GSU 4BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x128/GSU4BPP256x128PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x128/GSU4BPP256x128PlotPixel.png
+  - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x160
+    description: |
+      Peter Lemon's GSU 4BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x160/GSU4BPP256x160PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x160/GSU4BPP256x160PlotPixel.png
+  - id: peter-lemon-snes-gsu-4bpp-plotpixel-256x192
+    description: |
+      Peter Lemon's GSU 4BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 4BPP (16-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x192/GSU4BPP256x192PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/4BPP/PlotPixel/256x192/GSU4BPP256x192PlotPixel.png
+  - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x128
+    description: |
+      Peter Lemon's GSU 8BPP 256x128 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x128/GSU8BPP256x128FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x128/GSU8BPP256x128FillPoly.png
+  - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x160
+    description: |
+      Peter Lemon's GSU 8BPP 256x160 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x160/GSU8BPP256x160FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x160/GSU8BPP256x160FillPoly.png
+  - id: peter-lemon-snes-gsu-8bpp-fillpoly-256x192
+    description: |
+      Peter Lemon's GSU 8BPP 256x192 Fill Poly test verifies SuperFX PLOT instruction
+      with polygon fill rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.png
+  - id: peter-lemon-snes-gsu-8bpp-plotline-256x128
+    description: |
+      Peter Lemon's GSU 8BPP 256x128 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x128/GSU8BPP256x128PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x128/GSU8BPP256x128PlotLine.png
+  - id: peter-lemon-snes-gsu-8bpp-plotline-256x160
+    description: |
+      Peter Lemon's GSU 8BPP 256x160 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x160/GSU8BPP256x160PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x160/GSU8BPP256x160PlotLine.png
+  - id: peter-lemon-snes-gsu-8bpp-plotline-256x192
+    description: |
+      Peter Lemon's GSU 8BPP 256x192 Plot Line test verifies SuperFX PLOT instruction
+      with line rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x192/GSU8BPP256x192PlotLine.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotLine/256x192/GSU8BPP256x192PlotLine.png
+  - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x128
+    description: |
+      Peter Lemon's GSU 8BPP 256x128 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x128/GSU8BPP256x128PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x128/GSU8BPP256x128PlotPixel.png
+  - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x160
+    description: |
+      Peter Lemon's GSU 8BPP 256x160 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x160/GSU8BPP256x160PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x160/GSU8BPP256x160PlotPixel.png
+  - id: peter-lemon-snes-gsu-8bpp-plotpixel-256x192
+    description: |
+      Peter Lemon's GSU 8BPP 256x192 Plot Pixel test verifies SuperFX PLOT instruction
+      with pixel rendering in 8BPP (256-color) mode.
+    rom: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.sfc
+    max_steps: 4586197
+    check_interval_steps: 4586197
+    reference_png: snes/peter-lemon-snes/CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg1-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG1Map2BPP32x328PAL/8x8BG1Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG1Map2BPP32x328PAL/8x8BG1Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg2-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG2Map2BPP32x328PAL/8x8BG2Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG2Map2BPP32x328PAL/8x8BG2Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg3-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG3Map2BPP32x328PAL/8x8BG3Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG3Map2BPP32x328PAL/8x8BG3Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-2bpp-bg4-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 2BPP 32x328 PAL test verifies correct rendering of
+      background maps in 2BPP (4-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG4Map2BPP32x328PAL/8x8BG4Map2BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/2BPP/8x8BG4Map2BPP32x328PAL/8x8BG4Map2BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-4bpp-32x328-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 4BPP 32x328 PAL test verifies correct rendering of
+      background maps in 4BPP (16-color) mode with a 32x328 tilemap and palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/4BPP/8x8BGMap4BPP32x328PAL/8x8BGMap4BPP32x328PAL.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/4BPP/8x8BGMap4BPP32x328PAL/8x8BGMap4BPP32x328PAL.png
+  - id: peter-lemon-snes-ppu-bgmap-8x8-8bpp-tileflip-pal
+    description: |
+      Peter Lemon's PPU BG Map 8x8 8BPP Tile Flip PAL test verifies correct rendering of
+      background maps in 8BPP (256-color) mode with tile flipping and a palette.
+    rom: snes/peter-lemon-snes/PPU/BGMAP/8x8/8BPP/TileFlip/8x8BGMapTileFlip.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/BGMAP/8x8/8BPP/TileFlip/8x8BGMapTileFlip.png
+  - id: peter-lemon-snes-ppu-blend-hicolor-1241dlair
+    description: |
+      Peter Lemon's PPU Blend HiColor 1241 D'Lair test verifies correct rendering of
+      SuperFX HiColor blending effects in the 1241 D'Lair demo.
+    rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor1241DLair/HiColor1241DLair.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor1241DLair/HiColor1241DLair.png
+  - id: peter-lemon-snes-ppu-blend-hicolor-3840
+    description: |
+      Peter Lemon's PPU Blend HiColor 3840 test verifies correct rendering of
+      SuperFX HiColor blending effects in the 3840 demo.
+    rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor3840/HiColor3840.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor3840/HiColor3840.png
+  - id: peter-lemon-snes-ppu-blend-hicolor-575myst
+    description: |
+      Peter Lemon's PPU Blend HiColor 575 Myst test verifies correct rendering of
+      SuperFX HiColor blending effects in the 575 Myst demo.
+    rom: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor575Myst/HiColor575Myst.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Blend/HiColor/HiColor575Myst/HiColor575Myst.png
+  - id: peter-lemon-snes-ppu-greenspace
+    description: |
+      Peter Lemon's PPU Green Space test verifies correct rendering of the green space
+      demo, which tests various PPU features and effects.
+    rom: snes/peter-lemon-snes/PPU/GreenSpace/GreenSpace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/GreenSpace/GreenSpace.png
+  - id: peter-lemon-snes-ppu-interlace-font
+    description: |
+      Peter Lemon's PPU Interlace Font test verifies correct rendering of interlaced
+      text in the interlace font demo, which tests PPU interlace mode and text rendering.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceFont/InterlaceFont.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceFont/InterlaceFont.png
+  - id: peter-lemon-snes-ppu-interlace-moogle
+    description: |
+      Peter Lemon's PPU Interlace Moogle test verifies correct rendering of interlaced
+      sprites in the interlace moogle demo, which tests PPU interlace mode and sprite rendering.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceMoogle/InterlaceMoogle.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceMoogle/InterlaceMoogle.png
+  - id: peter-lemon-snes-ppu-interlace-rpg
+    description: |
+      Peter Lemon's PPU Interlace RPG test verifies correct rendering of interlaced
+      backgrounds and sprites in the interlace RPG demo, which tests PPU interlace mode and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceRPG/InterlaceRPG.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceRPG/InterlaceRPG.png
+  - id: peter-lemon-snes-ppu-interlace-scroll
+    description: |
+      Peter Lemon's PPU Interlace Scroll test verifies correct rendering of interlaced
+      scrolling backgrounds in the interlace scroll demo, which tests PPU interlace mode and scrolling features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceScroll/InterlaceScroll.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceScroll/InterlaceScroll.png
+  - id: peter-lemon-snes-compress-lz77-lz77wramgfx
+    description: |
+      Peter Lemon's Compress LZ77 LZ77 WRAM GFX test verifies correct decompression of
+      LZ77 compressed graphics data from WRAM, testing the SuperFX's LZ77 decompression capabilities.
+    rom: snes/peter-lemon-snes/Compress/LZ77/LZ77WRAMGFX/LZ77WRAMGFX.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/Compress/LZ77/LZ77WRAMGFX/LZ77WRAMGFX.png
+  - id: peter-lemon-snes-helloworld
+    description: |
+      Peter Lemon's Hello World test verifies basic SuperFX functionality by rendering
+      a simple "Hello World" message on the screen, testing core CPU and PPU features.
+    rom: snes/peter-lemon-snes/HelloWorld/HelloWorld.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/HelloWorld/HelloWorld.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS15Col16Pal-VIDEO15FPS15Col16Pal
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 15 Color 16 Pal test verifies correct playback of
+      a 15 frames per second video with 15 colors and a 16-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col16Pal/VIDEO15FPS15Col16Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col16Pal/VIDEO15FPS15Col16Pal.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16Col8Pal-VIDEO15FPS16Col8Pal
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color 8 Pal test verifies correct playback of
+      a 15 frames per second video with 16 colors and an 8-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col8Pal/VIDEO15FPS16Col8Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col8Pal/VIDEO15FPS16Col8Pal.png
+  - id: snes-peter-lemon-snes-MSU-Touhou-BadApple!15FPS16ColInterlace-Touhou-BadApple!15FPS16ColInterlace
+    description: |
+      Peter Lemon's MSU Touhou Bad Apple! 15FPS 16 Color Interlace test verifies correct playback of
+      a 15 frames per second interlaced video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/Touhou-BadApple!15FPS16ColInterlace/Touhou-BadApple!15FPS16ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/Touhou-BadApple!15FPS16ColInterlace/Touhou-BadApple!15FPS16ColInterlace.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS15Col8Pal-VIDEO15FPS15Col8Pal
+    description: |  
+      Peter Lemon's MSU VIDEO 15FPS 15 Color 8 Pal test verifies correct playback of
+      a 15 frames per second video with 15 colors and an 8-color palette using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col8Pal/VIDEO15FPS15Col8Pal.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS15Col8Pal/VIDEO15FPS15Col8Pal.png
+  - id: snes-peter-lemon-snes-MSU-Touhou-BadApple!30FPS4ColInterlace-Touhou-BadApple!30FPS4ColInterlace
+    description: |
+      Peter Lemon's MSU Touhou Bad Apple! 30FPS 4 Color Interlace test verifies correct playback of
+      a 30 frames per second interlaced video with 4 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/Touhou-BadApple!30FPS4ColInterlace/Touhou-BadApple!30FPS4ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/Touhou-BadApple!30FPS4ColInterlace/Touhou-BadApple!30FPS4ColInterlace.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16Col-VIDEO15FPS16Col
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color test verifies correct playback of
+      a 15 frames per second video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col/VIDEO15FPS16Col.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16Col/VIDEO15FPS16Col.png
+  - id: snes-peter-lemon-snes-MSU-VIDEO15FPS16ColInterlace-VIDEO15FPS16ColInterlace
+    description: |
+      Peter Lemon's MSU VIDEO 15FPS 16 Color Interlace test verifies correct playback of
+      a 15 frames per second interlaced video with 16 colors using the MSU-1 audio expansion, testing SuperFX's MSU-1 capabilities and interlaced video rendering.
+    rom: snes/peter-lemon-snes/MSU/VIDEO15FPS16ColInterlace/VIDEO15FPS16ColInterlace.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/MSU/VIDEO15FPS16ColInterlace/VIDEO15FPS16ColInterlace.png
+  - id: snes-peter-lemon-snes-INPUT-XBandKeyboard-XBandKeyboard
+    description: |
+      Peter Lemon's INPUT XBand Keyboard test verifies correct input handling of the
+      XBand keyboard peripheral, testing SuperFX's input capabilities and compatibility with the XBand keyboard.
+    rom: snes/peter-lemon-snes/INPUT/XBandKeyboard/XBandKeyboard.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/INPUT/XBandKeyboard/XBandKeyboard.png
+  - id: snes-peter-lemon-snes-INPUT-ControllerLatency-ControllerLatency
+    description: |
+      Peter Lemon's INPUT Controller Latency test verifies correct input handling of the
+      controller, testing SuperFX's input capabilities and controller latency.
+    rom: snes/peter-lemon-snes/INPUT/ControllerLatency/ControllerLatency.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/INPUT/ControllerLatency/ControllerLatency.png
+  - id: snes-peter-lemon-snes-PPU-Interlace-InterlaceSimpsonsHDMA-InterlaceSimpsonsHDMA
+    description: |  
+      Peter Lemon's PPU Interlace Simpsons HDMA test verifies correct rendering of interlaced
+      backgrounds and sprites with HDMA effects in the interlace Simpsons HDMA demo, which tests PPU interlace mode, HDMA functionality, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceSimpsonsHDMA/InterlaceSimpsonsHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Interlace-InterlaceMystHDMA-InterlaceMystHDMA
+    description: |  
+      Peter Lemon's PPU Interlace Myst HDMA test verifies correct rendering of interlaced
+      backgrounds and sprites with HDMA effects in the interlace Myst HDMA demo, which tests PPU interlace mode, HDMA functionality, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Interlace/InterlaceMystHDMA/InterlaceMystHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Interlace/InterlaceMystHDMA/InterlaceMystHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Rings-Rings
+    description: |  
+      Peter Lemon's PPU Rings test verifies correct rendering of the rings demo, which
+      tests various PPU features and effects, including sprite rendering, color math, and transformations.
+    rom: snes/peter-lemon-snes/PPU/Rings/Rings.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Rings/Rings.png
+  - id: snes-peter-lemon-snes-PPU-Window-WindowMultiHDMA-WindowMultiHDMA
+    description: |  
+      Peter Lemon's PPU Window Multi HDMA test verifies correct rendering of multiple
+      HDMA effects applied to the window layer in the Window Multi HDMA demo, which tests PPU window functionality, HDMA capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Window/WindowMultiHDMA/WindowMultiHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Window/WindowMultiHDMA/WindowMultiHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Window-WindowHDMA-WindowHDMA
+    description: |  
+      Peter Lemon's PPU Window HDMA test verifies correct rendering of HDMA effects applied
+      to the window layer in the Window HDMA demo, which tests PPU window functionality, HDMA capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/Window/WindowHDMA/WindowHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Window/WindowHDMA/WindowHDMA.png
+  - id: snes-peter-lemon-snes-PPU-Mode7-Perspective-Perspective
+    description: |  
+      Peter Lemon's PPU Mode7 Perspective test verifies correct rendering of perspective
+      transformations in the Mode 7 Perspective demo, which tests PPU Mode 7 capabilities and perspective transformation effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    # reference_png: snes/peter-lemon-snes/PPU/Mode7/Perspective/Perspective.png
+    expected_screen_hash: 0x5A2E5D38B6AD2A33
+  - id: snes-peter-lemon-snes-PPU-Mode7-RotZoom-RotZoom
+    description: |  
+      Peter Lemon's PPU Mode7 RotZoom test verifies correct rendering of rotation and zoom
+      transformations in the Mode 7 RotZoom demo, which tests PPU Mode 7 capabilities and rotation/zoom effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/RotZoom/RotZoom.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mode7/RotZoom/RotZoom.png
+  - id: snes-peter-lemon-snes-PPU-Mode7-StarWars-StarWars
+    description: |  
+      Peter Lemon's PPU Mode7 StarWars test verifies correct rendering of the StarWars demo,
+      which tests PPU Mode 7 capabilities and various rendering effects.
+    rom: snes/peter-lemon-snes/PPU/Mode7/StarWars/StarWars.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mode7/StarWars/StarWars.png
+  - id: snes-peter-lemon-snes-PPU-Mosaic-Mode3-MosaicMode3
+    description: |  
+      Peter Lemon's PPU Mosaic Mode 3 test verifies correct rendering of mosaic effects
+      in Mode 3 in the Mosaic Mode 3 demo, which tests PPU mosaic functionality and Mode 3 rendering capabilities.
+    rom: snes/peter-lemon-snes/PPU/Mosaic/Mode3/MosaicMode3.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mosaic/Mode3/MosaicMode3.png
+  - id: snes-peter-lemon-snes-PPU-Mosaic-Mode5-MosaicMode5
+    description: |  
+      Peter Lemon's PPU Mosaic Mode 5 test verifies correct rendering of mosaic effects
+      in Mode 5 in the Mosaic Mode 5 demo, which tests PPU mosaic functionality and Mode 5 rendering capabilities.
+    rom: snes/peter-lemon-snes/PPU/Mosaic/Mode5/MosaicMode5.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/Mosaic/Mode5/MosaicMode5.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpaceIndirectHDMA-RedSpaceIndirectHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space Indirect HDMA test verifies correct rendering of
+      indirect HDMA effects in the Red Space Indirect HDMA demo, which tests PPU HDMA functionality, indirect addressing modes, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedSpaceIndirectHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceIndirectHDMA/RedspaceIndirectHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-WaveHDMA-WaveHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Wave HDMA test verifies correct rendering of wave HDMA effects
+      in the Wave HDMA demo, which tests PPU HDMA functionality, wave transformations, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/WaveHDMA/WaveHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/WaveHDMA/WaveHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-Mode7HDMA-Mode7HDMA
+    description: |  
+      Peter Lemon's PPU HDMA Mode 7 HDMA test verifies correct rendering of HDMA effects
+      applied to Mode 7 transformations in the Mode 7 HDMA demo, which tests PPU HDMA functionality, Mode 7 capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/Mode7HDMA/Mode7HDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/Mode7HDMA/Mode7HDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-HiColor128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row in the HiColor 128 Per Tile Row demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/HiColor128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/HiColor128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-RGB_24bits_palette_color_test_chart128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a 24-bit RGB palette color test chart in the HiColor 128 Per Tile Row RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/RGB_24bits_palette_color_test_chart128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/RGB_24bits_palette_color_test_chart128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-mandrill128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a mandrill image in the HiColor 128 Per Tile Row Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/mandrill128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/mandrill128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-lenna128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a Lenna image in the HiColor 128 Per Tile Row Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/lenna128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/lenna128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor128PerTileRow-TEST-DQ128PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 128 Per Tile Row DQ test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 128 colors per tile row using a DQ image in the HiColor 128 Per Tile Row DQ demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/DQ128PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor128PerTileRow/TEST/DQ128PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpace9BitHDMA-RedSpace9BitHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space 9 Bit HDMA test verifies correct rendering of
+      9-bit color HDMA effects in the Red Space 9 Bit HDMA demo, which tests PPU HDMA functionality, 9-bit color rendering capabilities, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpace9BitHDMA/RedSpace9BitHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpace9BitHDMA/RedSpace9BitHDMA.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-lenna64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a Lenna image in the HiColor 64 Per Tile Row Pseudo HiRes Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/lenna64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-mandrill64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a mandrill image in the HiColor 64 Per Tile Row Pseudo HiRes Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/mandrill64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-TEST-RGB_24bits_palette_color_test_chart64PerTileRowHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a 24-bit RGB palette color test chart in the HiColor 64 Per Tile Row Pseudo HiRes RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/TEST/RGB_24bits_palette_color_test_chart64PerTileRowHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRowPseudoHiRes-HiColor64PerTileRowPseudoHiRes
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Pseudo HiRes test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode in the HiColor 64 Per Tile Row Pseudo HiRes demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and various rendering features.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-RGB_24bits_palette_color_test_chart64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row RGB 24bits Palette Color Test Chart test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a 24-bit RGB palette color test chart in the HiColor 64 Per Tile Row RGB 24bits Palette Color Test Chart demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/RGB_24bits_palette_color_test_chart64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/RGB_24bits_palette_color_test_chart64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-mandrill64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Mandrill test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in pseudo hi-res mode using a mandrill image in the HiColor 64 Per Tile Row Mandrill demo, which tests PPU HDMA functionality, HiColor rendering capabilities, pseudo hi-res mode, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/mandrill64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/mandrill64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-DQ64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row DQ test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a DQ image in the HiColor 64 Per Tile Row DQ demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/DQ64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/DQ64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-TEST-lenna64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row Lenna test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row using a Lenna image in the HiColor 64 Per Tile Row Lenna demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/lenna64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/TEST/lenna64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-HiColor64PerTileRow-HiColor64PerTileRow
+    description: |  
+      Peter Lemon's PPU HDMA HiColor 64 Per Tile Row test verifies correct rendering of
+      HiColor (15-bit color) HDMA effects with 64 colors per tile row in the HiColor 64 Per Tile Row demo, which tests PPU HDMA functionality, HiColor rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/HiColor64PerTileRow.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/HiColor64PerTileRow/HiColor64PerTileRow.png
+  - id: snes-peter-lemon-snes-PPU-HDMA-RedSpaceHDMA-RedSpaceHDMA
+    description: |  
+      Peter Lemon's PPU HDMA Red Space test verifies correct rendering of
+      HDMA effects in the Red Space demo, which tests PPU HDMA functionality and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedSpaceHDMA.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PPU/HDMA/RedSpaceHDMA/RedspaceHDMA.png
+  - id: snes-peter-lemon-snes-Games-MonsterFarmJump-MonsterFarmJump
+    description: |  
+      Peter Lemon's Monster Farm Jump test verifies correct rendering of
+      gameplay and graphics in the Monster Farm Jump demo, which tests game mechanics, PPU functionality, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/Games/MonsterFarmJump/MonsterFarmJump.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/Games/MonsterFarmJump/MonsterFarmJump.png
+  - id: snes-peter-lemon-snes-PlotPixel-Mode7-PlotPixelMode7
+    description: |  
+      Peter Lemon's Plot Pixel Mode 7 test verifies correct rendering of
+      Mode 7 graphics in the Plot Pixel Mode 7 demo, which tests PPU functionality, Mode 7 rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PlotPixel/Mode7/PlotPixelMode7.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PlotPixel/Mode7/PlotPixelMode7.png
+  - id: snes-peter-lemon-snes-PlotLine-Mode7-PlotLineMode7
+    description: |  
+      Peter Lemon's Plot Line Mode 7 test verifies correct rendering of
+      Mode 7 graphics in the Plot Line Mode 7 demo, which tests PPU functionality, Mode 7 rendering capabilities, and accurate color reproduction.
+    rom: snes/peter-lemon-snes/PlotLine/Mode7/PlotLineMode7.sfc
+    max_steps: 1667708
+    check_interval_steps: 1667708
+    reference_png: snes/peter-lemon-snes/PlotLine/Mode7/PlotLineMode7.png

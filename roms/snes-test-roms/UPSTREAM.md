@@ -1,0 +1,78 @@
+# Upstream provenance
+
+Source: <https://github.com/undisbeliever/snes-test-roms>
+
+- Upstream repository commit: `ac6ef80`
+- Local artifact branch: `release-artifacts`
+- Included generated ROMs:
+  - `bin/65816-examples/arguments-after-jsr.sfc`
+  - `bin/examples/hdma-double-buffered-indirect-shear.sfc`
+  - `bin/examples/hdma-double-buffered-parallax.sfc`
+  - `bin/examples/hdma-160scanline-hdma-entry.sfc`
+  - `bin/examples/hdma-indirect-mapping.sfc`
+  - `bin/examples/hdma-indirect-repeating-pattern.sfc`
+  - `bin/examples/hdma-to-cgram.sfc`
+  - `bin/examples/hdma-repeat-entry.sfc`
+  - `bin/examples/textbuffer-hello-world.sfc`
+  - `bin/examples/vram-writes-without-dma.sfc`
+  - `bin/effects/inidisp_extend_vblank.sfc`
+  - `bin/effects/inidisp_fadein_fadeout.sfc`
+  - `bin/effects/hdma-textbox-wipe.sfc`
+  - `bin/effects/repeating_hdma_pattern.sfc`
+  - `bin/effects/window-precalculated-single.sfc`
+  - `bin/effects/window-precalculated-symmetrical.sfc`
+  - `bin/effects/window-shapes-single.sfc`
+  - `bin/effects/window-mask-logic.sfc`
+  - `bin/effects/vmain-1bpp-tiles-0.sfc`
+  - `bin/effects/vmain-1bpp-tiles-1.sfc`
+  - `bin/effects/vmain-horizontal-scrolling.sfc`
+  - `bin/effects/vmain-mode7-tilemap-columns.sfc`
+  - `bin/effects/vmain-mode7-tilemap-rows.sfc`
+  - `bin/effects/vmain-vertical-scrolling-2-rows.sfc`
+  - `bin/effects/vmain-vertical-scrolling.sfc`
+  - `bin/hardware-tests/auto-joypad/auto-joy-timing-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-latches-joypad-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-test-automatic.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-test.sfc`
+  - `bin/hardware-tests/auto-joypad/blip-autojoy-timing-test.sfc`
+  - `bin/hardware-tests/auto-joypad/clear-autojoy-after-autojoy-active.sfc`
+  - `bin/hardware-tests/auto-joypad/clear-autojoy-during-autojoy.sfc`
+  - `bin/hardware-tests/auto-joypad/clear-autojoy-1st-vb-sl.sfc`
+  - `bin/hardware-tests/auto-joypad/clear-autojoy-timing-test.sfc`
+  - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test.sfc`
+  - `bin/hardware-tests/auto-joypad/enable-autojoy-late-test-2.sfc`
+  - `bin/hardware-tests/auto-joypad/joypad-latch-clear-during-autojoy.sfc`
+  - `bin/hardware-tests/auto-joypad/joypad-latch-set-during-autojoy.sfc`
+  - `bin/hardware-tests/auto-joypad/joyser0-read-during-autojoy.sfc`
+  - `bin/hardware-tests/hdma-timing-demonstration.sfc`
+  - `bin/hardware-tests/hdmaen_latch_test.sfc`
+  - `bin/hardware-tests/hdmaen_latch_test_2.sfc`
+  - `bin/hardware-tests/inidisp_brightness_0.sfc`
+  - `bin/hardware-tests/inidisp_brightness_delay.sfc`
+  - `bin/hardware-tests/inidisp_enable_display_mid_frame.sfc`
+  - `bin/hardware-tests/inidisp_forgot_to_force_blank.sfc`
+  - `bin/hardware-tests/inidisp_forgot_to_force_blank_2.sfc`
+  - `bin/hardware-tests/joypad_bounce_test.sfc`
+  - `bin/hardware-tests/joypad_rapid_read_test.sfc`
+  - `bin/hardware-tests/object-dropout-test.sfc`
+  - `bin/hardware-tests/reset-position-test.sfc`
+  - `bin/hardware-tests/vram-mid-scanline-test.sfc`
+  - `bin/hardware-tests/wrmpyb-in-flight.sfc`
+  - `bin/vmain-address-remapping/vmain-1bpp-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-1bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-2bpp-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-2bpp-split-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-2bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-no-remapping-word.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-4bpp-with-remapping-word.sfc`
+  - `bin/vmain-address-remapping/vmain-8bpp-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-8bpp-with-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-no-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-tilemap.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-with-10bit-remapping.sfc`
+  - `bin/vmain-address-remapping/vmain-mode7-image-with-8bit-remapping.sfc`
+- Local build inputs: upstream sources plus the already vendored `bass-untech`
+  toolchain from this repository and the Python environment prepared in this
+  session for asset generation.

@@ -6,12 +6,23 @@ use nerust_gui_settings::shared::SystemSettings;
 fn system_settings_to_bytes(s: &SystemSettings) -> Vec<u8> {
     match s {
         SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).unwrap_or_default(),
+        SystemSettings::Snes(snes) => rmp_serde::to_vec(snes).unwrap_or_default(),
     }
 }
 
-fn system_settings_from_bytes(bytes: &[u8]) -> Option<SystemSettings> {
-    let nes = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(bytes).ok()?;
-    Some(SystemSettings::Nes(nes))
+fn system_settings_from_bytes(system_id: &SystemId, bytes: &[u8]) -> Option<SystemSettings> {
+    match *system_id {
+        id if id == SystemId::new("nes") => {
+            let nes = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(bytes).ok()?;
+            Some(SystemSettings::Nes(nes))
+        }
+        id if id == SystemId::new("snes") => {
+            let snes =
+                rmp_serde::from_slice::<nerust_gui_settings::snes::SnesSettings>(bytes).ok()?;
+            Some(SystemSettings::Snes(snes))
+        }
+        _ => None,
+    }
 }
 
 pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
@@ -42,7 +53,7 @@ pub fn apply_settings_choice(
     let mut view = settings_view(snapshot, &system_id);
     factory.apply_settings_choice(&mut view, field, choice)?;
     // Write back system config to snapshot
-    if let Some(settings) = system_settings_from_bytes(&view.system_config_bytes) {
+    if let Some(settings) = system_settings_from_bytes(&system_id, &view.system_config_bytes) {
         snapshot.shared.systems.insert(system_id, settings);
     }
     Ok(())

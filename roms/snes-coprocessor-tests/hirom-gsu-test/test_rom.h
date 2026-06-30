@@ -1,0 +1,13 @@
+; test_rom.h — HiROM+GSU+MSU-1 Test ROM
+; Memory map and configuration for WLA-DX v9.3
+
+.MEMORYMAP
+  DEFAULTSLOT 0
+  SLOTSIZE $10000
+  SLOT 0 $0000
+.ENDME
+
+.ROMBANKSIZE $10000
+.ROMBANKS 64
+
+.EMPTYFILL $00

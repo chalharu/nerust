@@ -1,0 +1,77 @@
+name: Build and Release
+'on':
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+      - name: Build WLA-DX v9.12
+        run: |
+          git clone --depth 1 --branch v9.12 \
+            https://github.com/vhelin/wla-dx.git /tmp/wla-dx
+          cd /tmp/wla-dx && mkdir build && cd build
+          cmake ..
+          make -j"$(nproc)"
+          mkdir -p tools/wla-dx
+          cp /tmp/wla-dx/build/binaries/wla-65816 tools/wla-dx/wla-65816
+          cp /tmp/wla-dx/build/binaries/wlalink tools/wla-dx/wlalink
+          chmod +x tools/wla-dx/*
+      - name: Download Bass v18
+        run: |
+          mkdir -p tools/bass
+          gh release download v18 \
+            --repo ARM9/bass \
+            --pattern bass-ubuntu.zip \
+            --dir /tmp
+          unzip /tmp/bass-ubuntu.zip -d /tmp/bass-release
+          cp /tmp/bass-release/bass tools/bass/bass.exe
+          chmod +x tools/bass/bass.exe
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build ROM
+        run: |
+          chmod +x tools/wla-dx/* tools/bass/bass.exe
+          make clean && make
+      - name: Verify ROM
+        run: |
+          ls -la build/HiRomGsuTest.sfc build/HiRomGsuTest.msu
+          python3 -c "
+          data = open('build/HiRomGsuTest.sfc','rb').read()
+          assert len(data) == 4194304, f'Wrong size: {len(data)}'
+          print(f'Size: {len(data)} bytes')
+          print(f'Title: {data[0xFFC0:0xFFD5].decode(\"ascii\")}')
+          print(f'Mapping: 0x{data[0xFFD5]:02X}')
+          print('ROM OK')
+          "
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          cp build/HiRomGsuTest.sfc \
+            build/HiRomGsuTest.msu \
+            hirom_gsu_test.bml \
+            release/
+          cd release && zip ../HiRomGsuTest-${{ github.ref_name }}.zip *
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            HiRomGsuTest-${{ github.ref_name }}.zip
+            build/HiRomGsuTest.sfc
+          body: |
+            ## HiROM+GSU+MSU-1 Test ROM ${{ github.ref_name }}
+
+            4 MB standalone SNES test ROM for validating HiROM + SuperFX
+            (GSU-2) + MSU-1.
+
+            **Download `HiRomGsuTest-${{ github.ref_name }}.zip`** — contains
+            `.sfc`, `.msu`, and `.bml` files. Place all three in the same
+            directory.
