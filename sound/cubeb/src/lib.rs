@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    mem::ManuallyDrop,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use cubeb::{MonoFrame, SampleFormat, StreamParamsBuilder};
@@ -9,15 +12,30 @@ use log::{info, warn};
 use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 pub struct CubebAudio {
-    stream: cubeb::Stream<MonoFrame<f32>>,
+    stream: ManuallyDrop<cubeb::Stream<MonoFrame<f32>>>,
     data_sender: Sender<f32>,
     playing: Arc<AtomicBool>,
     sample_rate: u32,
+    ctx: ManuallyDrop<cubeb::Context>,
 }
 
 // SAFETY: cubeb::Stream wraps a C API handle that is safe to send between
 // threads. Stream operations (start/stop) are thread-safe in cubeb.
 unsafe impl Send for CubebAudio {}
+
+impl Drop for CubebAudio {
+    fn drop(&mut self) {
+        // Stop the stream before dropping it to avoid potential issues.
+        if let Err(e) = self.stream.stop() {
+            warn!("cubeb stream stop failed during drop: {e}");
+        }
+        // Manually drop the stream and context to ensure proper cleanup.
+        unsafe {
+            ManuallyDrop::drop(&mut self.stream);
+            ManuallyDrop::drop(&mut self.ctx);
+        }
+    }
+}
 
 impl CubebAudio {
     pub fn new(sample_rate: u32, latency_ms: u32) -> Result<Self, String> {
@@ -66,10 +84,11 @@ impl CubebAudio {
         );
 
         Ok(Self {
-            stream,
+            stream: ManuallyDrop::new(stream),
             data_sender: sender,
             playing,
             sample_rate,
+            ctx: ManuallyDrop::new(ctx),
         })
     }
 }
