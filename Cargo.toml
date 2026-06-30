@@ -89,6 +89,7 @@ cpal = { version = "=0.18.1" }
 cubeb = { version = "=0.35.3" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
+flume = { version = "=0.12.0" }
 fs2 = { version = "=0.4.3" }
 gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }

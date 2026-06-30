@@ -1,16 +1,16 @@
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    mpsc::{SyncSender, TrySendError, sync_channel},
 };
 
 use cubeb::{MonoFrame, SampleFormat, StreamParamsBuilder};
+use flume::{Sender, TrySendError, bounded};
 use log::{info, warn};
 use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 pub struct CubebAudio {
-    stream: cubeb::Stream<MonoFrame<f32>>,
-    data_sender: SyncSender<f32>,
+    stream: Mutex<cubeb::Stream<MonoFrame<f32>>>,
+    data_sender: Sender<f32>,
     playing: Arc<AtomicBool>,
     sample_rate: u32,
 }
@@ -36,8 +36,7 @@ impl CubebAudio {
         let playing = Arc::new(AtomicBool::new(true));
         let playing_clone = playing.clone();
 
-        let (sender, receiver) = sync_channel::<f32>(sample_rate as usize);
-        let receiver = Arc::new(receiver);
+        let (sender, receiver) = bounded::<f32>(sample_rate as usize);
 
         let mut builder = cubeb::StreamBuilder::<MonoFrame<f32>>::new();
         builder
@@ -67,7 +66,7 @@ impl CubebAudio {
         );
 
         Ok(Self {
-            stream,
+            stream: Mutex::new(stream),
             data_sender: sender,
             playing,
             sample_rate,
@@ -77,17 +76,17 @@ impl CubebAudio {
 
 impl AudioBackend for CubebAudio {
     fn start(&mut self) {
-        self.playing.store(true, Ordering::Relaxed);
-        if let Err(e) = self.stream.start() {
+        if let Err(e) = self.stream.lock().unwrap().start() {
             warn!("cubeb stream start failed: {e}");
         }
+        self.playing.store(true, Ordering::Release);
     }
 
     fn pause(&mut self) {
-        self.playing.store(false, Ordering::Relaxed);
-        if let Err(e) = self.stream.stop() {
+        if let Err(e) = self.stream.lock().unwrap().stop() {
             warn!("cubeb stream stop failed: {e}");
         }
+        self.playing.store(false, Ordering::Release);
     }
 
     fn sample_rate(&self) -> u32 {
@@ -95,8 +94,11 @@ impl AudioBackend for CubebAudio {
     }
 
     fn push(&mut self, sample: f32) {
-        if let Err(TrySendError::Full(_)) = self.data_sender.try_send(sample) {
-            // buffer full; sample dropped
+        match self.data_sender.try_send(sample) {
+            Ok(()) | Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                log::warn!("cubeb audio: channel send failed (receiver dropped)");
+            }
         }
     }
 }
