@@ -1,0 +1,14 @@
+[package]
+name = "nerust_gui_settings"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_core_traits.workspace = true
+serde = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+serde_yaml.workspace = true

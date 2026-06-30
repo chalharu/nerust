@@ -1,38 +1,57 @@
 mod library;
 mod menu;
 mod picker;
-mod renderer;
 mod settings;
 mod storage;
-mod surface;
 
-use self::library::LibraryDialogResult;
-use self::menu::MenuAction;
-use self::picker::RomPickerResult;
-use self::renderer::WgpuRenderer;
-use self::settings::{AndroidSettings, SettingsDialogResult};
-use self::storage::AndroidStorage;
-use jni::jni_str;
-use nerust_backend_wgpu::RenderResult;
-use nerust_gui_runtime::settings::HostBackendIdentity;
-use nerust_gui_runtime::shell::NativeShellState;
-use nerust_gui_session::commands::SessionCommand;
-use nerust_gui_shell::load::{LoadRequest, MediaObject};
-use nerust_gui_shell::session::SessionHandle;
-use nerust_gui_shell::touch::{
-    PortraitTouchOverlay, TouchOverlayAction, TouchPoint, TouchTarget, actions_for_target,
+use std::{
+    collections::HashMap,
+    ffi::c_void,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{Touch, TouchPhase, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::platform::android::EventLoopBuilderExtAndroid;
-use winit::platform::android::activity::AndroidApp;
-use winit::window::{Window, WindowId};
+
+use jni::{jni_sig, jni_str};
+use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint};
+use nerust_gui_runtime::{
+    settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsPaths, SettingsSnapshot,
+    },
+    shell::NativeShellState,
+};
+use nerust_gui_shell::{
+    factory::CoreFactory,
+    load::MediaObject,
+    session::{
+        SessionError, SessionHandle,
+        access::{FrontendSession, SettingsResult},
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
+};
+use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
+use nerust_nes_factory::NesFactory;
+use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
+use nerust_render_wgpu::WgpuFactory;
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::{Touch, TouchPhase, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
+    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    window::{Window, WindowId},
+};
+
+use self::{
+    library::LibraryDialogResult,
+    menu::MenuAction,
+    picker::RomPickerResult,
+    settings::{AndroidSettings, SettingsDialogResult},
+    storage::AndroidStorage,
+};
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
 const FOREGROUND_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -102,11 +121,35 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(frontend_app, storage);
+    let mut state = AndroidFrontend::new(frontend_app, storage, storage_root.join("nerust"));
     log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
         .map_err(|error| format!("Android event loop failed: {error}"))
+}
+
+fn show_toast(app: &AndroidApp, message: &str) {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+
+        let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
+        let text = env.new_string(message)?;
+        let toast = env.call_static_method(
+            &toast_class,
+            jni_str!("makeText"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"),
+            &[
+                jni::objects::JValue::Object(&activity),
+                jni::objects::JValue::Object(text.as_ref()),
+                jni::objects::JValue::Int(0),
+            ],
+        )?;
+        let toast_obj = toast.l()?;
+        let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
+        Ok(())
+    });
 }
 
 struct AndroidFrontend {
@@ -116,7 +159,7 @@ struct AndroidFrontend {
     shell: NativeShellState,
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
-    renderer: Option<WgpuRenderer>,
+    renderer: Option<Box<dyn GpuRenderer>>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
     is_resumed: bool,
@@ -129,14 +172,36 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    fn new(app: AndroidApp, storage: AndroidStorage) -> Self {
+    fn new(app: AndroidApp, storage: AndroidStorage, settings_root: PathBuf) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: Some(BackendPresentationCapabilities {
+                supports_vsync: true,
+            }),
+        };
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let descriptor = factory.system_descriptor();
+        let settings_paths =
+            SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
+        let mut audio_registry = AudioBackendRegistry::new();
+        audio_registry.register(0, &nerust_sound_cpal::CPAL);
+        let audio_registry = Arc::new(audio_registry);
+        let session = SessionHandle::new_with_settings_paths(
+            capabilities,
+            descriptor,
+            Arc::clone(&factory),
+            audio_registry,
+            settings_paths,
+        );
+        let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
-            session: SessionHandle::new_with_settings_manager(
-                HostBackendIdentity::android_wgpu(),
-                storage.settings.clone(),
-            ),
+            session,
             storage,
             shell: NativeShellState::new(),
             window: None,
@@ -150,9 +215,13 @@ impl AndroidFrontend {
             foreground_retry_at: None,
             last_foreground_error: None,
             lifecycle_auto_paused: false,
-            lifecycle_restore_pending: false,
+            lifecycle_restore_pending: restore_pending,
         };
-        // Skip automatic last-ROM restore on cold start; restore will happen on warm resume.
+        if frontend.lifecycle_restore_pending {
+            log::info!(
+                "AndroidFrontend::new: restore_pending flag found; will attempt lifecycle state restore at foreground resume"
+            );
+        }
         frontend.refresh_dialog_caches();
         log::info!("AndroidFrontend::new: ready");
         frontend
@@ -186,10 +255,18 @@ impl AndroidFrontend {
             .map_err(|error| format!("failed to load ROM from library: {error}"))?
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let path = self.storage.rom_library.rom_path(id);
-        if let Err(error) = self
-            .session
-            .load(MediaObject::new(path, bytes), LoadRequest::Auto)
-        {
+        let media = MediaObject::new(path, bytes);
+        let options = self.session.default_load_options();
+        let system_id = self.session.factory().system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
+            Ok(r) => r,
+            Err(error) => {
+                return Err(format!("failed to start ROM {id} from library: {error}"));
+            }
+        };
+        if let Err(error) = self.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
         self.finish_rom_load(event_loop, id, restore_hidden_state);
@@ -247,10 +324,21 @@ impl AndroidFrontend {
                     entry.id
                 )
             })?;
-        if let Err(error) = self
-            .session
-            .load(MediaObject::new(Some(path), bytes), LoadRequest::Auto)
-        {
+        let media = MediaObject::new(Some(path), bytes);
+        let options = self.session.default_load_options();
+        let system_id = self.session.factory().system_id();
+        let view =
+            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        let resolved = match self.session.factory().resolve_load_request(&view, options) {
+            Ok(r) => r,
+            Err(error) => {
+                return Err(format!(
+                    "failed to load imported Android ROM {}: {error}",
+                    entry.display_name
+                ));
+            }
+        };
+        if let Err(error) = self.session.load_resolved(media, resolved) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
                     "failed to roll back Android ROM import {} after load error: {remove_error}",
@@ -294,9 +382,9 @@ impl AndroidFrontend {
         };
         let mut next = self.session.settings_snapshot().clone();
         android_settings.apply_to_snapshot(&mut next);
-        match self.session.apply_settings(next) {
-            Ok(plan) => {
-                if plan.renderer_rebuild_required {
+        match self.apply_settings(next) {
+            Ok(result) => {
+                if result.renderer_needs_rebuild {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
                     if let Some(window) = self.window.as_ref().cloned() {
@@ -313,13 +401,6 @@ impl AndroidFrontend {
         }
     }
 
-    fn run_session_command(&mut self, command: SessionCommand) {
-        let outcome = self.session.run_command(command).unwrap_or_default();
-        if outcome.needs_redraw {
-            self.request_redraw();
-        }
-    }
-
     fn save_lifecycle_state(&mut self) {
         log::info!(
             "save_lifecycle_state: paused={} lifecycle_auto_paused={} restore_pending={}",
@@ -328,23 +409,19 @@ impl AndroidFrontend {
             self.lifecycle_restore_pending
         );
         if !self.lifecycle_auto_paused && !self.session.paused() {
-            let _ = self.session.run_command(SessionCommand::Pause);
+            self.pause();
             self.lifecycle_auto_paused = true;
             log::info!("save_lifecycle_state: auto-paused session");
         }
-        if let Err(error) = self.session.clear_input() {
-            log::warn!("skipping hidden lifecycle state save because input clear failed: {error}");
-            self.lifecycle_restore_pending = false;
-            self.session.clear_hidden_lifecycle_state();
-            self.session.flush_before_exit();
-            return;
-        }
+        self.session.clear_input();
         self.active_touches.clear();
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
+            self.storage.clear_restore_pending();
             log::info!("save_lifecycle_state: no hidden lifecycle state was produced");
         } else {
+            self.storage.touch_restore_pending();
             log::info!("save_lifecycle_state: hidden lifecycle state saved");
         }
         self.session.flush_before_exit();
@@ -401,12 +478,51 @@ impl AndroidFrontend {
     fn handle_menu_action(&mut self, action: MenuAction) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
-            MenuAction::LoadState => self.run_session_command(SessionCommand::LoadActiveSlot),
+            MenuAction::Exit => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    if let Err(error) = self.session.unload() {
+                        log::warn!("failed to unload session on exit: {error}");
+                    }
+                }
+                self.session.flush_before_exit();
+                // Finish the activity and kill the process so the next launch
+                // starts with a clean slate (swipe-kill semantics).
+                let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
+                let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+                    let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
+                    let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+                    let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
+                    let system = env.find_class(jni_str!("java/lang/System"))?;
+                    let _ = env.call_static_method(
+                        &system,
+                        jni_str!("exit"),
+                        jni_sig!("(I)V"),
+                        &[jni::objects::JValue::Int(0)],
+                    );
+                    Ok(())
+                });
+            }
+            MenuAction::Unload => {
+                if self.session.loaded() {
+                    self.session.clear_hidden_lifecycle_state();
+                    self.storage.clear_restore_pending();
+                    let _ = self.session.unload();
+                }
+                self.session.clear_display();
+                self.request_redraw();
+            }
+            MenuAction::LoadState => {
+                if !self.load_active_slot() {
+                    show_toast(&self.app, "No save state to load");
+                }
+            }
             MenuAction::OpenLibrary => self.request_library_dialog(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
-            MenuAction::Reset => self.run_session_command(SessionCommand::Reset),
-            MenuAction::SaveState => self.run_session_command(SessionCommand::SaveActiveSlotOrNew),
-            MenuAction::TogglePause => self.run_session_command(SessionCommand::TogglePause),
+            MenuAction::Reset => self.reset(),
+            MenuAction::SaveState => self.save_active_slot(),
+            MenuAction::TogglePause => self.toggle_pause(),
         }
     }
 
@@ -457,13 +573,39 @@ impl AndroidFrontend {
             size.height
         );
         drop(self.renderer.take());
-        self.renderer = match WgpuRenderer::new(window, &self.session) {
+        let vsync = self
+            .session
+            .settings_snapshot()
+            .local
+            .video
+            .presentation
+            .vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .expect("failed to get window handle")
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .expect("failed to get display handle")
+            .as_raw();
+        let config = RendererConfig {
+            render_profile: self.session.render_profile().clone(),
+            vsync,
+        };
+        let renderer_result = WgpuFactory
+            .create_renderer(&config, raw_display_handle)
+            .and_then(|mut r| {
+                let ws = SurfaceSize::new(size.width, size.height);
+                r.attach(raw_window_handle, raw_display_handle, ws)
+                    .map(|_| r)
+            });
+        self.renderer = match renderer_result {
             Ok(renderer) => {
                 log::info!("rebuild_renderer: renderer ready");
                 Some(renderer)
             }
-            Err(error) => {
-                log::error!("failed to initialize Android renderer: {error}");
+            Err(e) => {
+                log::error!("failed to initialize Android renderer: {e}");
                 None
             }
         };
@@ -494,9 +636,8 @@ impl AndroidFrontend {
         }
         self.lifecycle_auto_paused = false;
         self.lifecycle_restore_pending = false;
-        if let Err(error) = self.session.run_command(SessionCommand::Resume) {
-            log::warn!("finish_rom_load: failed to resume session for id={id}: {error}");
-        }
+        self.storage.clear_restore_pending();
+        self.resume();
 
         // Ensure a window and renderer exist immediately when resuming so that
         // request_redraw() takes effect without requiring a user tap.
@@ -593,6 +734,7 @@ impl AndroidFrontend {
                             if self.storage.rom_library.rom_path(&id).is_none() {
                                 log::warn!("try_resume_foreground: stored ROM id={id} is missing");
                                 self.session.clear_hidden_lifecycle_state();
+                                self.storage.clear_restore_pending();
                                 self.lifecycle_restore_pending = false;
                             } else {
                                 match self.load_from_library_with_autosave(event_loop, &id, true) {
@@ -606,8 +748,9 @@ impl AndroidFrontend {
                                         log::warn!(
                                             "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
                                         );
-                                        self.lifecycle_restore_pending = false;
                                         self.session.clear_hidden_lifecycle_state();
+                                        self.storage.clear_restore_pending();
+                                        self.lifecycle_restore_pending = false;
                                     }
                                 }
                             }
@@ -615,6 +758,7 @@ impl AndroidFrontend {
                         Ok(None) => {
                             log::info!("try_resume_foreground: no last ROM recorded");
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                         Err(error) => {
@@ -622,12 +766,13 @@ impl AndroidFrontend {
                                 "try_resume_foreground: failed to read last ROM id: {error}"
                             );
                             self.session.clear_hidden_lifecycle_state();
+                            self.storage.clear_restore_pending();
                             self.lifecycle_restore_pending = false;
                         }
                     }
                 }
                 if self.lifecycle_auto_paused {
-                    let _ = self.session.run_command(SessionCommand::Resume);
+                    self.resume();
                     self.lifecycle_auto_paused = false;
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
@@ -660,30 +805,36 @@ impl AndroidFrontend {
 
     fn render(&mut self) {
         let Some(window) = self.window.as_ref() else {
+            self.shell.needs_redraw = false;
             return;
         };
         let Some(renderer) = self.renderer.as_mut() else {
             self.shell.needs_redraw = false;
             return;
         };
-        let size = window.inner_size();
-        match renderer.render(
-            &self.session,
-            nerust_screen_wgpu::surface::SurfaceSize::new(size.width, size.height),
-        ) {
+        // If the session has no loaded ROM, clear the display just before
+        // rendering to guard against a stale frame that the emuthread may
+        // have written into shared_fb between the last clear_display() call
+        // and now (race between Unload processing and render_frame completion).
+        if !self.session.loaded() {
+            self.session.clear_display();
+        }
+        self.session.swap_frame_buffer();
+        let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+        match renderer.render(self.session.frame_buffer()) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
+                self.request_redraw();
             }
             RenderResult::Skipped => {
                 self.shell.needs_redraw = true;
             }
             RenderResult::Error => {
-                log::warn!(
-                    "render: renderer reported an error for {}x{}",
-                    size.width,
-                    size.height
-                );
+                log::warn!("render: renderer reported an error");
                 self.shell.needs_redraw = true;
             }
         }
@@ -701,7 +852,7 @@ impl AndroidFrontend {
         for action in actions {
             match action {
                 TouchOverlayAction::Input(event) => {
-                    let _ = self.session.apply_input_event(event);
+                    self.session.apply_input_event(event);
                     self.request_redraw();
                 }
             }
@@ -738,6 +889,102 @@ impl AndroidFrontend {
                 self.sync_touch_target(touch.id, None);
             }
         }
+    }
+
+    fn exec(&mut self, cmd: SessionCommand) -> Option<SessionCommandOutcome> {
+        match self.session.run_command(cmd) {
+            Ok(o) => {
+                if o.needs_redraw {
+                    self.request_redraw();
+                }
+                Some(o)
+            }
+            Err(e) => {
+                log::warn!("command {cmd:?} failed: {e}");
+                None
+            }
+        }
+    }
+}
+
+impl FrontendSession for AndroidFrontend {
+    fn run_command(&mut self, command: SessionCommand) {
+        self.exec(command);
+    }
+
+    fn pause(&mut self) {
+        self.exec(SessionCommand::Pause);
+    }
+
+    fn resume(&mut self) {
+        self.exec(SessionCommand::Resume);
+    }
+
+    fn toggle_pause(&mut self) {
+        self.exec(SessionCommand::TogglePause);
+    }
+
+    fn save_active_slot(&mut self) {
+        self.exec(SessionCommand::SaveActiveSlotOrNew);
+    }
+
+    fn load_active_slot(&mut self) -> bool {
+        self.exec(SessionCommand::LoadActiveSlot)
+            .unwrap_or_default()
+            .executed
+    }
+
+    fn select_next_slot(&mut self) {
+        self.exec(SessionCommand::SelectNextSlot);
+    }
+
+    fn select_previous_slot(&mut self) {
+        self.exec(SessionCommand::SelectPreviousSlot);
+    }
+
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.exec(SessionCommand::LoadSlot(slot_id))
+            .unwrap_or_default()
+            .executed
+    }
+
+    fn save_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::SaveSlot(slot_id));
+    }
+
+    fn delete_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::DeleteSlot(slot_id));
+    }
+
+    fn select_slot(&mut self, slot_id: u64) {
+        self.exec(SessionCommand::SelectActiveSlot(slot_id));
+    }
+
+    fn create_slot(&mut self) {
+        self.exec(SessionCommand::CreateSlot);
+    }
+
+    fn reset(&mut self) {
+        self.exec(SessionCommand::Reset);
+    }
+
+    fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<SettingsResult, SessionError> {
+        let plan = self.session.apply_settings(settings)?;
+        Ok(SettingsResult {
+            renderer_needs_rebuild: plan.renderer_rebuild_required,
+            fullscreen_default_changed: plan.fullscreen_default_changed,
+            scaling_changed: plan.scaling_changed,
+        })
+    }
+
+    fn set_fullscreen_default(
+        &mut self,
+        _fullscreen: bool,
+    ) -> Result<SettingsResult, SessionError> {
+        Ok(SettingsResult::default())
     }
 }
 
@@ -781,15 +1028,12 @@ impl ApplicationHandler for AndroidFrontend {
             }
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
-                let _ = self.session.clear_input();
+                self.session.clear_input();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
                 if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.reconfigure(nerust_screen_wgpu::surface::SurfaceSize::new(
-                        size.width,
-                        size.height,
-                    ));
+                    renderer.resize(SurfaceSize::new(size.width, size.height));
                 }
                 self.rebuild_overlay();
                 self.request_redraw();
@@ -818,22 +1062,15 @@ impl ApplicationHandler for AndroidFrontend {
         self.maybe_refresh_title(now);
 
         if let Some(window) = self.window.as_ref() {
-            let metrics = self.session.metrics();
-            if self.shell.wants_redraw(metrics.frame_counter) {
+            let frame_counter = self.session.metrics().frame_counter;
+            if self.shell.wants_redraw(frame_counter) {
                 window.request_redraw();
             }
-            if self.shell.wants_poll(metrics.loaded, metrics.paused) {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    now + NativeShellState::FRAME_POLL_INTERVAL,
-                ));
-            } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
-            }
+            // Render loop is self-sustaining via request_redraw() after each present.
+            event_loop.set_control_flow(ControlFlow::Wait);
         } else {
             if self.is_resumed || self.foreground_resume_pending {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    now + NativeShellState::FRAME_POLL_INTERVAL,
-                ));
+                event_loop.set_control_flow(ControlFlow::Poll);
             } else {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }

@@ -72,9 +72,7 @@ Run support-crate unit tests explicitly when touching cartridge parsing,
 filters, buffers, or timing:
 
 ```sh
-cargo test -p nerust_cartridge_data --lib
-cargo test -p nerust_screen_buffer --lib
-cargo test -p nerust_screen_filter --lib
+cargo test -p nerust_screen_video --lib
 cargo test -p nerust_timer --lib
 ```
 

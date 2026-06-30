@@ -1,10 +1,13 @@
-use super::error::RomTestError;
-use super::events::RomEvent;
-use nerust_contract_options::{CoreOptions, Mmc3IrqVariant};
-use serde_derive::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+use serde::{Deserialize, Serialize};
+
+use super::{error::RomTestError, events::RomEvent};
 
 pub const DEFAULT_AUDIO_SAMPLE_RATE: u32 = 48_000;
 

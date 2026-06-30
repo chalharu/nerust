@@ -1,5 +1,3 @@
-#![cfg_attr(not(target_os = "android"), allow(dead_code))]
-
 use std::path::Path;
 
 const DEFAULT_IMPORTED_ROM_NAME: &str = "Imported ROM";

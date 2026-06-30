@@ -1,60 +1,75 @@
 [workspace]
 resolver = "3"
 members = [
-  "backend/opengl",
-  "backend/wgpu",
-  "cartridge/data",
-  "console",
-  "contract/audio",
-  "contract/core",
-  "contract/device",
-  "contract/controller_runtime",
-  "contract/mirror",
-  "contract/options",
-  "contract/persistence",
-  "contract/rom",
-  "contract/settings",
-  "core",
+  "traits/core",
+  "traits/emu-thread",
+  "traits/input",
+  "nes/core",
   "nes/device",
-  "input/schema",
-  "input/nes",
-  "input/nes_runtime",
-  "persistence",
-  "rom_test",
+  "nes/factory",
+  "nes/controller",
+  "gui/settings",
+  "gui/run-options",
+  "gui/runtime",
+  "gui/shell",
   "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/tao",
-  "gui/shared/runtime",
-  "gui/shared/shell",
-  "gui/shared/session",
-  "nes_ntsc",
-  "screen/buffer",
-  "screen/filter",
-  "screen/glwrap",
-  "screen/logical",
-  "screen/opengl",
-  "screen/physical",
-  "screen/rgb",
-  "screen/wgpu",
-  "screen/video",
-  "snes/device",
+  "persistence",
+  "render/base",
+  "render/gl",
+  "render/glwrap",
+  "render/ntsc",
+  "render/wgpu",
   "serialize",
+  "snes/core",
+  "sound/cpal",
   "sound/openal",
   "sound/filter",
-  "sound/traits",
-  "snes/core",
-  "snes/render",
-  "snes/rom_test",
-  "sound/android",
   "timer",
-  "util/crc64_hasher",
+  "rom_test",
 ]
-default-members = ["core", "persistence", "console"]
+default-members = [".", "nes/core"]
+
+[package]
+name = "nerust"
+version.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clap.workspace = true
+log.workspace = true
+nerust_nes_factory.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
+nerust_run_options.workspace = true
+nerust_gtk = { workspace = true, optional = true }
+nerust_tao = { workspace = true, optional = true }
+nerust_render_gl = { workspace = true, optional = true }
+nerust_render_wgpu = { workspace = true, optional = true }
+nerust_core_traits.workspace = true
+nerust_render_base.workspace = true
+nerust_sound_cpal = { workspace = true, optional = true }
+nerust_sound_openal = { workspace = true, optional = true }
+simple_logger.workspace = true
+
+[features]
+default = ["wgpu"]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_openal"]
+tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_openal"]
+wgpu = ["nerust_render_wgpu"]
+opengl = ["nerust_render_gl"]
 
 [profile.release]
 debug = false
 
-[profile.release.package.nerust_core]
+[profile.release.package.nerust_nes_core]
 codegen-units = 1
 
 [workspace.package]
@@ -72,61 +87,57 @@ alto = { version = "=3.0.4" }
 android_logger = { version = "=0.15.1" }
 bitflags = { version = "=2.13.0", features = ["serde"] }
 clap = { version = "=4.6.1" }
-cpal = { version = "=0.17.3" }
+cpal = { version = "=0.18.1" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
-epoxy = { version = "=0.1.0" }
 fs2 = { version = "=0.4.3" }
 gdk = { version = "=0.11.2", package = "gdk4" }
 gio = { version = "=0.22.6" }
 gl = { version = "=0.14.0" }
+glutin = { version = "=0.32.3" }
 gtk = { version = "=0.11.3", package = "gtk4" }
+gdk-macos = { version = "=0.11.0", package = "gdk4-macos" }
+gdk-win32 = { version = "=0.11.0", package = "gdk4-win32" }
+gdk4-wayland-sys = { version = "=0.11.0" }
+gdk4-x11-sys = { version = "=0.11.0" }
 hound = { version = "=3.5.1" }
 iced = { version = "=0.14.0" }
+time = { version = "=0.3.51" }
+iced_tiny_skia = { version = "=0.14.0" }
+iced_winit = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
 lazy_static = { version = "=1.5.0" }
-libc = { version = "=0.2.186" }
-log = { version = "=0.4.32", default-features = false }
-muda = { version = "=0.19.2", default-features = false, features = ["gtk"] }
-nerust_cartridge_data = { path = "cartridge/data" }
-nerust_console = { path = "console" }
-nerust_contract_controller_runtime = { path = "contract/controller_runtime" }
-nerust_contract_mirror = { path = "contract/mirror" }
-nerust_contract_options = { path = "contract/options" }
-nerust_contract_persistence = { path = "contract/persistence" }
-nerust_contract_rom = { path = "contract/rom" }
-nerust_contract_settings = { path = "contract/settings" }
-nerust_core = { path = "core" }
-nerust_crc64_hasher = { path = "util/crc64_hasher" }
-nerust_gui_runtime = { path = "gui/shared/runtime" }
-nerust_gui_shell = { path = "gui/shared/shell" }
-nerust_gui_session = { path = "gui/shared/session" }
-nerust_input_schema = { path = "input/schema" }
-nerust_input_nes = { path = "input/nes" }
-nerust_input_nes_runtime = { path = "input/nes_runtime" }
+log = { version = "=0.4.33", default-features = false }
+muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
+nerust_core_traits = { path = "traits/core" }
+nerust_emu_thread = { path = "traits/emu-thread" }
+nerust_nes_factory = { path = "nes/factory" }
+nerust_gui_settings = { path = "gui/settings" }
+nerust_run_options = { path = "gui/run-options" }
+nerust_nes_core = { path = "nes/core" }
+nerust_nes_device = { path = "nes/device" }
+nerust_gui_runtime = { path = "gui/runtime" }
+nerust_gui_shell = { path = "gui/shell" }
+nerust_input_traits = { path = "traits/input" }
+nerust_nes_controller = { path = "nes/controller" }
 nerust_persistence = { path = "persistence" }
 nerust_rom_test = { path = "rom_test" }
-nerust_backend_opengl = { path = "backend/opengl" }
-nerust_backend_wgpu = { path = "backend/wgpu" }
-nerust_glwrap = { path = "screen/glwrap" }
-nerust_screen_buffer = { path = "screen/buffer" }
-nerust_screen_filter = { path = "screen/filter" }
-nerust_screen_logical = { path = "screen/logical" }
-nerust_screen_opengl = { path = "screen/opengl" }
-nerust_screen_physical = { path = "screen/physical" }
-nerust_screen_rgb = { path = "screen/rgb" }
-nerust_screen_wgpu = { path = "screen/wgpu" }
-nerust_screen_video = { path = "screen/video" }
+nerust_glwrap = { path = "render/glwrap" }
+nerust_render_gl = { path = "render/gl" }
+nerust_render_wgpu = { path = "render/wgpu" }
+nerust_render_base = { path = "render/base" }
 nerust_snes_core = { path = "snes/core" }
-nerust_snes_render = { path = "snes/render" }
-nerust_snes_rom_test = { path = "snes/rom_test" }
 nerust_serialize = { path = "serialize" }
+nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_openal = { path = "sound/openal" }
-nerust_sound_android = { path = "sound/android" }
-nerust_sound_traits = { path = "sound/traits" }
-nerust_soundfilter = { path = "sound/filter" }
+nerust_sound_filter = { path = "sound/filter" }
 nerust_timer = { path = "timer" }
-nes_ntsc = { path = "nes_ntsc" }
+nerust_gtk = { path = "gui/frontends/gtk" }
+nerust_tao = { path = "gui/frontends/tao" }
+nerust_android = { path = "gui/frontends/android" }
+nerust_render_ntsc = { path = "render/ntsc" }
+objc2 = { version = "=0.6.4" }
+objc2-app-kit = { version = "=0.3.2" }
 pollster = { version = "=0.4.0" }
 png = { version = "=0.18.1" }
 rmp-serde = { version = "=1.3.1" }
@@ -134,7 +145,6 @@ raw-window-handle = { version = "=0.6.2" }
 rfd = { version = "=0.17.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
-serde_derive = { version = "=1.0.228", default-features = false }
 serde_yaml = { version = "=0.9.34" }
 sevenz-rust2 = { version = "=0.21.0", default-features = false }
 shared_library = { version = "=0.1.9" }
@@ -146,4 +156,5 @@ thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.22" }
 wgpu = { version = "=29.0.3" }
 winit = { version = "=0.30.13" }
+zerocopy = { version = "=0.8.52", features = ["derive"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }

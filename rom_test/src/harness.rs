@@ -1,8 +1,11 @@
-use super::error::RomTestError;
-use super::events::{ButtonCode, ControllerPad, PadState, RomAssertion, RomEventKind};
-use super::manifest::RomCase;
-use super::results::ExecutionTotals;
-use nerust_input_nes::frame::Buttons;
+use nerust_nes_core::input_types::Buttons;
+
+use super::{
+    error::RomTestError,
+    events::{ButtonCode, ControllerPad, PadState, RomAssertion, RomEventKind},
+    manifest::RomCase,
+    results::ExecutionTotals,
+};
 
 pub trait CaseHarness {
     fn run_frame(&mut self) -> u64;

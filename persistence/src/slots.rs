@@ -1,18 +1,22 @@
-use crate::archive::{
-    build_state_archive, load_state_archive, read_state_summary, summary_from_metadata,
+use std::{
+    fs::{self, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
-use crate::error::PersistenceError;
-use crate::fs_ops::write_atomic;
-use crate::metadata::encode_slot_metadata;
-use crate::model::{LoadedStateSlot, StateSlotSummary};
-use crate::thumbnail::{ThumbnailSource, encode_thumbnail_png};
-use crate::time::{system_time_from_millis, unix_millis};
+
 use fs2::FileExt;
-use nerust_contract_persistence::PersistenceIdentity;
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use nerust_core_traits::identity::SystemIdentity;
+
+use crate::{
+    archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
+    error::PersistenceError,
+    fs_ops::write_atomic,
+    metadata::encode_slot_metadata,
+    model::{LoadedStateSlot, StateSlotSummary},
+    thumbnail::{ThumbnailSource, encode_thumbnail_png},
+    time::{system_time_from_millis, unix_millis},
+};
 
 const AUTOSAVE_SLOT_ENTRY: &str = ".autosave_slot";
 const AUTOSAVE_SLOT_ID: u64 = 0;
@@ -24,7 +28,7 @@ pub fn scan_state_slots(states_dir: &Path) -> Result<Vec<StateSlotSummary>, Pers
 
 pub fn scan_state_slots_for_identity(
     states_dir: &Path,
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
     scan_state_slots_matching(states_dir, Some(identity))
 }
@@ -114,7 +118,7 @@ pub fn write_state_slot(
     states_dir: &Path,
     slot_id: u64,
     machine_state: &[u8],
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
     write_state_slot_to_path(
@@ -129,7 +133,7 @@ pub fn write_state_slot(
 pub fn write_autosave_state_slot(
     states_dir: &Path,
     machine_state: &[u8],
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
     write_state_slot_to_path(
@@ -143,7 +147,7 @@ pub fn write_autosave_state_slot(
 
 pub fn load_state_slot_for_identity(
     path: &Path,
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
 ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
     let archive = load_state_archive(path)?;
     if !crate::metadata::slot_matches_identity(&archive.metadata, identity) {
@@ -156,7 +160,7 @@ fn write_state_slot_to_path(
     path: PathBuf,
     slot_id: u64,
     machine_state: &[u8],
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
     preview: Option<&ThumbnailSource>,
 ) -> Result<StateSlotSummary, PersistenceError> {
     if let Some(parent) = path.parent() {
@@ -218,7 +222,7 @@ pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {
 
 fn scan_state_slots_matching(
     states_dir: &Path,
-    identity: Option<PersistenceIdentity>,
+    identity: Option<&SystemIdentity>,
 ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
     if !states_dir.exists() {
         return Ok(Vec::new());

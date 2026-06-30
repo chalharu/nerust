@@ -1,17 +1,19 @@
-use alto::*;
-use nerust_sound_traits::{AudioFilterProfile, MixerInput, Sound};
-use nerust_soundfilter::resampler::{Resampler, SimpleDownSampler};
-use nerust_soundfilter::{Filter, NesFilter, SnesFilter};
 #[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::Once;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread::JoinHandle;
-use std::time::Duration;
-use std::{f64, thread};
+use std::{
+    f64,
+    sync::mpsc::{Receiver, Sender, channel},
+    thread,
+    thread::JoinHandle,
+    time::Duration,
+};
+
+use alto::*;
+use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
 
 #[cfg(any(target_os = "macos", test))]
 const DYLD_ENV_VARS: [&str; 2] = ["DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
@@ -56,7 +58,7 @@ fn present_dyld_env_vars(mut is_present: impl FnMut(&str) -> bool) -> Vec<&'stat
         .collect()
 }
 
-pub fn prepare_macos_runtime() {
+fn prepare_macos_runtime() {
     #[cfg(target_os = "macos")]
     PREPARE_MACOS_RUNTIME_ONCE.call_once(|| {
         let guard_present = std::env::var_os(MACOS_RUNTIME_SANITIZED_ENV).is_some();
@@ -107,8 +109,6 @@ fn reexec_process_without_dyld_env(dyld_env_vars_present: &[&'static str]) -> ! 
     log::error!("failed to re-execute process without DYLD environment variables: {err}");
     std::process::exit(1);
 }
-
-const CORE_AUDIO_OVERSAMPLE: u32 = 4;
 
 #[derive(Debug)]
 struct FadeBuffer {
@@ -441,76 +441,22 @@ impl OpenAlState {
 }
 
 #[derive(Debug)]
-enum OpenAlFilter {
-    Nes(NesFilter),
-    Snes(SnesFilter),
-}
-
-impl OpenAlFilter {
-    fn new(profile: AudioFilterProfile, sample_rate: f32) -> Self {
-        match profile {
-            AudioFilterProfile::Nes => Self::Nes(NesFilter::new(sample_rate)),
-            AudioFilterProfile::Snes => Self::Snes(SnesFilter::new(sample_rate)),
-        }
-    }
-}
-
-impl Filter for OpenAlFilter {
-    fn step(&mut self, data: f32) -> f32 {
-        match self {
-            Self::Nes(filter) => filter.step(data),
-            Self::Snes(filter) => filter.step(data),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct OpenAl {
     stop_sender: Sender<()>,
     playing_sender: Sender<bool>,
     data_sender: Sender<f32>,
-    filter: OpenAlFilter,
-    gain: f32,
     thread: Option<JoinHandle<()>>,
-    source_sample_rate: u32,
-    resampler: SimpleDownSampler,
+    playback_sample_rate: u32,
 }
 
 impl OpenAl {
-    pub fn new(
-        sample_rate: i32,
-        output_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-    ) -> Self {
-        Self::with_gain(sample_rate, output_rate, buffer_width, buffer_count, 1.0)
+    pub fn new(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
+        Self::with_gain(sample_rate, buffer_width, buffer_count)
     }
 
-    pub fn with_gain(
-        sample_rate: i32,
-        output_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-        gain: f32,
-    ) -> Self {
-        Self::with_gain_and_filter(
-            sample_rate,
-            output_rate,
-            buffer_width,
-            buffer_count,
-            gain,
-            AudioFilterProfile::Nes,
-        )
-    }
+    pub fn with_gain(sample_rate: i32, buffer_width: usize, buffer_count: usize) -> Self {
+        prepare_macos_runtime();
 
-    pub fn with_gain_and_filter(
-        sample_rate: i32,
-        output_rate: i32,
-        buffer_width: usize,
-        buffer_count: usize,
-        gain: f32,
-        filter_profile: AudioFilterProfile,
-    ) -> Self {
         let requested_playback_sample_rate = sample_rate;
         let (src, playback_sample_rate) =
             match OpenAlState::create_streaming_source(sample_rate, buffer_width, buffer_count) {
@@ -522,12 +468,6 @@ impl OpenAl {
             };
         let playback_sample_rate_u32 = u32::try_from(playback_sample_rate)
             .expect("OpenAL playback sample_rate must be non-negative");
-        let requested_source_rate =
-            u32::try_from(output_rate).expect("OpenAL output_rate must be non-negative");
-        let source_sample_rate = requested_source_rate
-            .min(playback_sample_rate_u32.saturating_mul(CORE_AUDIO_OVERSAMPLE))
-            .max(playback_sample_rate_u32);
-        let filter = OpenAlFilter::new(filter_profile, playback_sample_rate as f32);
         let (playing_sender, playing_recv) = channel();
         let (data_sender, data_recv) = channel();
         let (stop_sender, stop_recv) = channel();
@@ -551,52 +491,80 @@ impl OpenAl {
         });
 
         Self {
-            filter,
-            gain,
             playing_sender,
             data_sender,
             stop_sender,
             thread: Some(thread),
-            source_sample_rate,
-            resampler: SimpleDownSampler::new(
-                f64::from(source_sample_rate),
-                f64::from(playback_sample_rate_u32),
-            ),
+            playback_sample_rate: playback_sample_rate_u32,
         }
     }
 }
 
-impl Sound for OpenAl {
+impl nerust_core_traits::audio::AudioBackend for OpenAl {
+    fn start(&mut self) {
+        if self.playing_sender.send(true).is_err() {
+            log::warn!("OpenAL channel (playing) send failed");
+        }
+    }
+
     fn pause(&mut self) {
         if self.playing_sender.send(false).is_err() {
             log::warn!("OpenAL channel (playing) send failed");
         }
     }
 
-    fn start(&mut self) {
-        if self.playing_sender.send(true).is_err() {
-            log::warn!("OpenAL channel (playing) send failed");
-        }
-    }
-}
-
-impl MixerInput for OpenAl {
-    // 0.0 ~ 1.0 => -1.0 ~ 1.0
     fn push(&mut self, data: f32) {
-        if let Some(resampled_data) = self.resampler.step(data)
-            && self
-                .data_sender
-                .send(self.filter.step((resampled_data * 2.0 - 1.0) * self.gain))
-                .is_err()
-        {
+        if self.data_sender.send(data).is_err() {
             log::warn!("OpenAL channel (data) send failed");
         }
     }
 
     fn sample_rate(&self) -> u32 {
-        self.source_sample_rate
+        self.playback_sample_rate
     }
 }
+
+fn nearest_power_of_two(value: usize) -> usize {
+    if value <= 1 {
+        return 1;
+    }
+    let lower = value.next_power_of_two() >> 1;
+    let upper = value.next_power_of_two();
+    if value - lower <= upper - value {
+        lower.max(1)
+    } else {
+        upper
+    }
+}
+
+/// Factory for creating and probing OpenAL audio backends.
+pub struct OpenAlFactory;
+
+impl AudioBackendFactory for OpenAlFactory {
+    fn name(&self) -> &'static str {
+        "OpenAL"
+    }
+
+    fn probe(&self) -> Vec<u32> {
+        vec![44_100, 48_000]
+    }
+
+    fn build(&self, sample_rate: u32, latency_ms: u32) -> Option<Box<dyn AudioBackend>> {
+        let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+            .div_ceil(1_000)
+            .max(1);
+        let raw_buffer_width = (target_total_frames / 16).max(1);
+        let buffer_width = nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
+        let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
+            .unwrap_or(32)
+            .clamp(4, 32);
+        let sr = sample_rate as i32;
+        Some(Box::new(OpenAl::with_gain(sr, buffer_width, buffer_count)) as Box<dyn AudioBackend>)
+    }
+}
+
+/// Static singleton for use with [`AudioBackendRegistry`](nerust_core_traits::audio::AudioBackendRegistry).
+pub static OPENAL: OpenAlFactory = OpenAlFactory;
 
 impl Drop for OpenAl {
     fn drop(&mut self) {
@@ -648,5 +616,28 @@ mod tests {
             macos_runtime_action(true, &DYLD_ENV_VARS),
             MacosRuntimeAction::Abort
         );
+    }
+
+    #[test]
+    fn compute_buffer_params_at_48khz_50ms() {
+        let sample_rate: u32 = 48_000;
+        let latency_ms: u32 = 50;
+        let target_total_frames = (u64::from(sample_rate) * u64::from(latency_ms))
+            .div_ceil(1_000)
+            .max(1);
+        let raw_buffer_width = (target_total_frames / 16).max(1);
+        let buffer_width = super::nearest_power_of_two(raw_buffer_width as usize).clamp(64, 1024);
+        let buffer_count = usize::try_from(target_total_frames.div_ceil(buffer_width as u64))
+            .unwrap_or(32)
+            .clamp(4, 32);
+        let achieved_latency_ms = u32::try_from(
+            (u64::try_from(buffer_width * buffer_count).unwrap_or(0) * 1_000)
+                .div_ceil(u64::from(sample_rate.max(1))),
+        )
+        .unwrap_or(u32::MAX);
+
+        assert_eq!(buffer_width, 128);
+        assert_eq!(buffer_count, 19);
+        assert!(achieved_latency_ms >= 50);
     }
 }

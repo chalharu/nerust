@@ -1,0 +1,71 @@
+use super::{
+    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
+    exit_addressing_mode,
+};
+
+pub(crate) struct IndexedIndirect;
+
+impl CpuStepState for IndexedIndirect {
+    fn exec(
+        core: &mut Core,
+        ppu: &mut Ppu,
+        cartridge: &mut dyn CpuCartridgeBus,
+        controller: &mut dyn Controller,
+        apu: &mut Apu,
+    ) -> CpuStepStateEnum {
+        match core.internal_stat.get_step() {
+            1 => {
+                let pc = core.register.get_pc() as usize;
+                core.internal_stat.set_data(core.memory.read(
+                    pc,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+            }
+            2 => {
+                let _ = core.memory.read_next(
+                    &mut core.register,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                );
+                core.internal_stat.set_address(usize::from(
+                    core.internal_stat
+                        .get_data()
+                        .wrapping_add(core.register.get_x()),
+                ));
+            }
+            3 => {
+                core.internal_stat.set_data(core.memory.read(
+                    core.internal_stat.get_address(),
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+            }
+            4 => {
+                let address_high = usize::from(core.memory.read(
+                    core.internal_stat.get_address().wrapping_add(1) & 0xFF,
+                    ppu,
+                    cartridge,
+                    controller,
+                    apu,
+                    &mut core.interrupt,
+                ));
+                core.internal_stat
+                    .set_address((address_high << 8) | usize::from(core.internal_stat.get_data()));
+            }
+            _ => {
+                return exit_addressing_mode(core);
+            }
+        }
+        CpuStepStateEnum::Continue
+    }
+}

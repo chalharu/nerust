@@ -1,6 +1,6 @@
 use crate::bus::{Bus, CpuBus, ScheduledCpuBus};
 use crate::cpu::{Cpu, CpuFault, CpuState};
-use nerust_sound_traits::MixerInput;
+use nerust_core_traits::audio::AudioBackend;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
@@ -91,7 +91,7 @@ impl Scheduler {
         Ok(())
     }
 
-    pub(crate) fn run_for_cycles_with_audio<M: MixerInput>(
+    pub(crate) fn run_for_cycles_with_audio<M: AudioBackend>(
         &mut self,
         cpu: &mut Cpu,
         bus: &mut Bus,

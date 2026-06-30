@@ -1,40 +1,51 @@
+use std::{fs, path::PathBuf};
+
 use nerust_gui_runtime::rom_library::{RomLibrary, RomLibraryPaths};
-use nerust_gui_runtime::settings::manager::SettingsManager;
-use nerust_gui_runtime::settings::{HostBackendIdentity, SettingsPaths};
-use nerust_gui_shell::settings::defaults::seed::{
-    default_app_state, default_local_settings, default_shared_settings,
-};
-use std::fs;
-use std::path::PathBuf;
 
 const LAST_ROM_ID_FILE_NAME: &str = "last-rom-id";
-const SETTINGS_ROOT_DIR_NAME: &str = "settings";
+const RESTORE_PENDING_FILE_NAME: &str = ".restore_pending";
 const ROM_LIBRARY_ROOT_DIR_NAME: &str = "rom-library";
 
 pub(crate) struct AndroidStorage {
-    pub(crate) settings: SettingsManager,
     pub(crate) rom_library: RomLibrary,
     last_rom_id_file: PathBuf,
+    restore_pending_file: PathBuf,
 }
 
 impl AndroidStorage {
     pub(crate) fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
-        let identity = HostBackendIdentity::android_wgpu();
-        let settings = SettingsManager::load_or_ephemeral_with_paths(
-            SettingsPaths::from_root(root.join(SETTINGS_ROOT_DIR_NAME), &identity),
-            default_shared_settings(),
-            default_local_settings(),
-            default_app_state(),
-        );
         let rom_library =
             RomLibrary::open(RomLibraryPaths::new(root.join(ROM_LIBRARY_ROOT_DIR_NAME)))
                 .map_err(|error| format!("failed to open Android ROM library: {error}"))?;
         Ok(Self {
-            settings,
             rom_library,
             last_rom_id_file: root.join(LAST_ROM_ID_FILE_NAME),
+            restore_pending_file: root.join(RESTORE_PENDING_FILE_NAME),
         })
+    }
+
+    pub(crate) fn has_restore_pending(&self) -> bool {
+        self.restore_pending_file.exists()
+    }
+
+    pub(crate) fn touch_restore_pending(&self) {
+        if let Some(parent) = self.restore_pending_file.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            log::warn!("failed to create restore pending dir: {error}");
+        }
+        if let Err(error) = fs::write(&self.restore_pending_file, []) {
+            log::warn!("failed to write restore pending file: {error}");
+        }
+    }
+
+    pub(crate) fn clear_restore_pending(&self) {
+        if let Err(error) = fs::remove_file(&self.restore_pending_file)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("failed to clear restore pending file: {error}");
+        }
     }
 
     pub(crate) fn load_last_rom_id(&self) -> Result<Option<String>, String> {

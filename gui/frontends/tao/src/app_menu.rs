@@ -1,8 +1,6 @@
-use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_session::commands::SessionCommand;
+use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::model::StateSlotSummary;
-use std::sync::mpsc;
 use tao::window::Window as TaoWindow;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -16,11 +14,6 @@ pub(crate) enum MenuCommand {
 #[derive(Debug)]
 pub(crate) enum UserEvent {
     Menu(MenuCommand),
-    ApplySettings {
-        snapshot: SettingsSnapshot,
-        reply: mpsc::Sender<Result<(), String>>,
-    },
-    SettingsClosed,
 }
 
 #[cfg(any(
@@ -33,7 +26,8 @@ pub(crate) enum UserEvent {
     target_os = "windows"
 ))]
 pub(crate) mod imp {
-    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
+    use std::sync::{Arc, RwLock};
+
     #[cfg(any(
         target_os = "linux",
         target_os = "dragonfly",
@@ -43,9 +37,8 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
-    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_settings::language::AppLanguage;
     use nerust_gui_shell::settings::i18n::{UiText, text};
-    use std::sync::{Arc, RwLock};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
@@ -59,6 +52,8 @@ pub(crate) mod imp {
     use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
+
+    use super::{MenuCommand, SessionCommand, StateSlotSummary, TaoWindow, UserEvent, slot_label};
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
@@ -359,9 +354,10 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use super::{StateSlotSummary, TaoWindow, UserEvent};
-    use nerust_contract_settings::language::AppLanguage;
+    use nerust_gui_settings::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
+
+    use super::{StateSlotSummary, TaoWindow, UserEvent};
 
     pub(crate) struct AppMenu;
 

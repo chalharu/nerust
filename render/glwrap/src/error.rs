@@ -1,0 +1,80 @@
+use std::{fmt, fmt::Display};
+
+use gl::types::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ErrorKind {
+    #[error("An enumeration parameter is not a legal enumeration for that function.")]
+    InvalidEnum,
+    #[error("A value parameter is not a legal value for that function.")]
+    InvalidValue,
+    #[error(
+        "The set of state for a command is not legal for the parameters given to that command."
+    )]
+    InvalidOperation,
+    #[error("Stack pushing operation cannot be done")]
+    StackOverflow,
+    #[error("Stack popping operation cannot be done")]
+    StackUnderflow,
+    #[error(
+        "Performing an operation that can allocate memory, and the memory cannot be allocated."
+    )]
+    OutOfMemory,
+    #[error(
+        "Doing anything that would attempt to read from or write/render to a framebuffer that is not complete."
+    )]
+    InvalidFramebufferOperation,
+    #[error("OpenGL context has been lost")]
+    ContextLost,
+    // #[error("Table too large")]
+    // TableTooLarge,
+    #[error("unexpected error: 0x{0:04X}")]
+    Unexpected(GLuint),
+}
+
+impl From<GLuint> for ErrorKind {
+    fn from(error_code: GLuint) -> ErrorKind {
+        match error_code {
+            gl::INVALID_ENUM => ErrorKind::InvalidEnum,
+            gl::INVALID_VALUE => ErrorKind::InvalidValue,
+            gl::INVALID_OPERATION => ErrorKind::InvalidOperation,
+            gl::STACK_OVERFLOW => ErrorKind::StackOverflow,
+            gl::STACK_UNDERFLOW => ErrorKind::StackUnderflow,
+            gl::OUT_OF_MEMORY => ErrorKind::OutOfMemory,
+            gl::INVALID_FRAMEBUFFER_OPERATION => ErrorKind::InvalidFramebufferOperation,
+            gl::CONTEXT_LOST => ErrorKind::ContextLost,
+            // gl::TABLE_TOO_LARGE => GlError::TableTooLarge,
+            _ => ErrorKind::Unexpected(error_code),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error(Vec<ErrorKind>);
+
+impl std::error::Error for Error {}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.0.is_empty() {
+            write!(f, "{}", self.0[0])?;
+            for e in self.0.iter().skip(1) {
+                writeln!(f)?;
+                write!(f, "{}", e)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Error {
+    pub fn new(inner: Vec<ErrorKind>) -> Error {
+        Error(inner)
+    }
+}
+
+impl From<Vec<ErrorKind>> for Error {
+    fn from(error: Vec<ErrorKind>) -> Error {
+        Error::new(error)
+    }
+}

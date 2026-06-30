@@ -88,12 +88,14 @@ private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
 private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
+private const val MENU_ACTION_EXIT = "exit"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
 private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
 private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
+private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
@@ -120,6 +122,8 @@ private val DRAWER_ACTIONS = listOf(
     DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
     DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
     DrawerAction("Reset", MENU_ACTION_RESET),
+    DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
+    DrawerAction("Exit", MENU_ACTION_EXIT),
 )
 
 private fun createRomPickerIntent(): Intent =
@@ -238,6 +242,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         super.onDestroy()
     }
 
+    @Deprecated("Deprecated upstream in Activity; NativeActivity cannot use OnBackPressedDispatcher")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (removeDrawerOverlay()) {

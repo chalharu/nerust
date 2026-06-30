@@ -1,0 +1,47 @@
+use super::{
+    Cartridge,
+    shared::{Mapper4Config, Mapper4Shared, Mapper4Wrapper},
+};
+use crate::{
+    cartridge_rom::CartridgeData, cartridge_runtime_state::CartridgeRuntimeState,
+    persistence_error::PersistenceError,
+};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct Mmc3Nec {
+    pub(super) shared: Mapper4Shared,
+}
+
+impl Mmc3Nec {
+    pub(super) fn new(data: CartridgeData, bus_conflicts: bool) -> Self {
+        Self {
+            shared: Mapper4Shared::new(data, Mapper4Config::mmc3_nec(bus_conflicts)),
+        }
+    }
+}
+
+#[typetag::serde]
+impl Cartridge for Mmc3Nec {
+    fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {
+        self.shared.export_runtime_state()
+    }
+
+    fn import_runtime_state(
+        &mut self,
+        state: CartridgeRuntimeState,
+    ) -> Result<(), PersistenceError> {
+        self.shared.import_runtime_state(state)
+    }
+}
+
+impl Mapper4Wrapper for Mmc3Nec {
+    const NAME: &'static str = "MMC3 NEC (Mapper4)";
+
+    fn shared_ref(&self) -> &Mapper4Shared {
+        &self.shared
+    }
+
+    fn shared_mut(&mut self) -> &mut Mapper4Shared {
+        &mut self.shared
+    }
+}

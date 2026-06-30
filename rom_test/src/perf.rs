@@ -1,17 +1,22 @@
-use crate::error::RomTestError;
-use crate::events::{ButtonCode, ControllerPad, PadState, RomAssertion};
-use crate::harness::{CaseHarness, apply_button_state, drive_case};
-use crate::manifest::{RomCase, load_default_manifest, read_rom};
-use crate::results::{CaseOutcome, ValidationOptions};
-use crate::runner::validate_case;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use clap::{Arg, ArgAction, Command};
-use nerust_cartridge_data::parse_cartridge_bytes;
-use nerust_core::Core;
-use nerust_input_nes::frame::Buttons;
-use nerust_input_nes_runtime::StandardController;
-use nerust_screen_video::Screen;
-use nerust_sound_traits::MixerInput;
-use std::time::{Duration, Instant};
+use nerust_core_traits::audio::AudioBackend;
+use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
+use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
+
+use crate::{
+    error::RomTestError,
+    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
+    harness::{CaseHarness, apply_button_state, drive_case},
+    manifest::{RomCase, load_default_manifest, read_rom},
+    results::{CaseOutcome, ValidationOptions},
+    runner::validate_case,
+};
 
 pub fn run_cli() {
     if let Err(message) = run() {
@@ -232,20 +237,25 @@ impl Aggregate {
     }
 }
 
+use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
+
 struct PerfRunner {
     core: Core,
-    screen: PerfScreen,
-    controller: StandardController,
+    screen: FrameBuffer,
+    checksum: u64,
+    controller: NesPadDevice<SharedNesInputCell>,
+    cell: Arc<NesInputCell>,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,
+    mic: bool,
 }
 
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
         let cartridge_data =
-            parse_cartridge_bytes(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
+            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             })?;
@@ -256,14 +266,36 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
+        let cell = Arc::new(NesInputCell::new());
+        let mut palette = [0u32; 256];
+        let assets = FilterType::NtscComposite.palette_console_video_assets();
+        let rgba8 = assets.palette_rgba8();
+        for (i, entry) in palette.iter_mut().enumerate().take(64) {
+            let pos = i * 4;
+            *entry = u32::from(rgba8[pos]) << 24
+                | u32::from(rgba8[pos + 1]) << 16
+                | u32::from(rgba8[pos + 2]) << 8
+                | u32::from(rgba8[pos + 3]);
+        }
+        let mut screen = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new(palette),
+            },
+        );
+        screen.resize(256, 240);
         Ok(Self {
             core,
-            screen: PerfScreen::new(),
-            controller: StandardController::new(),
+            screen,
+            checksum: 0,
+            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
+            cell,
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
             pad2: Buttons::empty(),
+            mic: false,
         })
     }
 
@@ -272,7 +304,7 @@ impl PerfRunner {
         Ok(PerfRunResult {
             frames: totals.frames,
             steps: totals.steps,
-            final_marker: self.screen.checksum(),
+            final_marker: self.checksum,
         })
     }
 }
@@ -282,6 +314,10 @@ impl CaseHarness for PerfRunner {
         let steps = self
             .core
             .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
+        // Per-frame checksum: PPU が FrameBuffer に書き込んだ全ピクセルから計算
+        for &b in self.screen.as_ref() {
+            self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
+        }
         self.frame_counter += 1;
         steps
     }
@@ -309,19 +345,20 @@ impl CaseHarness for PerfRunner {
         match pad {
             ControllerPad::Pad1 => {
                 self.pad1 = apply_button_state(self.pad1, buttons, state);
-                self.controller.set_pad1(self.pad1);
             }
             ControllerPad::Pad2 => {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
-                self.controller.set_pad2(self.pad2);
             }
         }
+        self.cell
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
-        self.controller
-            .set_microphone(matches!(state, PadState::Pressed));
+        self.mic = matches!(state, PadState::Pressed);
+        self.cell
+            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
         Ok(())
     }
 }
@@ -343,54 +380,13 @@ impl PerfMixer {
     }
 }
 
-impl MixerInput for PerfMixer {
+impl AudioBackend for PerfMixer {
+    fn start(&mut self) {}
+    fn pause(&mut self) {}
     fn push(&mut self, _data: f32) {}
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate
-    }
-}
-
-struct PerfScreen {
-    checksum: u64,
-    frame_pixels: u32,
-}
-
-impl PerfScreen {
-    const FNV_OFFSET_BASIS: u64 = 0xCBF2_9CE4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
-
-    fn new() -> Self {
-        Self {
-            checksum: Self::FNV_OFFSET_BASIS,
-            frame_pixels: 0,
-        }
-    }
-
-    fn checksum(&self) -> u64 {
-        self.checksum
-    }
-}
-
-impl Screen for PerfScreen {
-    fn push(&mut self, value: u8) {
-        self.checksum ^= u64::from(value);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels += 1;
-    }
-
-    fn push_many(&mut self, value: u8, count: u16) {
-        for _ in 0..count {
-            self.checksum ^= u64::from(value);
-            self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        }
-        self.frame_pixels += u32::from(count);
-    }
-
-    fn render(&mut self) {
-        self.checksum ^= u64::from(self.frame_pixels);
-        self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
-        self.frame_pixels = 0;
     }
 }
 

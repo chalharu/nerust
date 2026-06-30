@@ -1,16 +1,22 @@
-use crate::error::PersistenceError;
-use crate::metadata::{
-    METADATA_ENTRY, STATE_ENTRY, StateArchiveMetadata, THUMBNAIL_ENTRY, read_metadata,
-    slot_matches_identity,
+use std::{
+    fs::File,
+    io::{Cursor, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
 };
-use crate::model::StateSlotSummary;
-use crate::time::system_time_from_millis;
-use nerust_contract_persistence::PersistenceIdentity;
-use std::fs::File;
-use std::io::{Cursor, Write};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+
+use nerust_core_traits::identity::SystemIdentity;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+use crate::{
+    error::PersistenceError,
+    metadata::{
+        METADATA_ENTRY, STATE_ENTRY, StateArchiveMetadata, THUMBNAIL_ENTRY, read_metadata,
+        slot_matches_identity,
+    },
+    model::StateSlotSummary,
+    time::system_time_from_millis,
+};
 
 const MAX_MACHINE_STATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES: usize = 8 * 1024 * 1024;
@@ -23,7 +29,7 @@ pub(crate) struct LoadedArchive {
 
 pub(crate) fn read_state_summary(
     path: &Path,
-    identity: Option<PersistenceIdentity>,
+    identity: Option<&SystemIdentity>,
 ) -> Result<Option<StateSlotSummary>, PersistenceError> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file)?;

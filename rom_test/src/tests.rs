@@ -1,14 +1,19 @@
-use super::error::RomTestError;
-use super::events::{
-    ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent, RomEventKind,
-};
-use super::harness::{CaseHarness, drive_case};
-use super::manifest::{
-    RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
-    load_default_manifest,
-};
-use nerust_contract_options::Mmc3IrqVariant;
 use std::path::{Path, PathBuf};
+
+use nerust_nes_core::core_options::Mmc3IrqVariant;
+
+use super::{
+    error::RomTestError,
+    events::{
+        ButtonCode, ControllerPad, MemoryAssertionSpace, PadState, RomAssertion, RomEvent,
+        RomEventKind,
+    },
+    harness::{CaseHarness, drive_case},
+    manifest::{
+        RomCase, RomCategory, RomManifest, apply_case_rom_overrides, default_manifest_path,
+        load_default_manifest,
+    },
+};
 
 #[test]
 fn parse_manifest_with_hex_values() {

@@ -1,0 +1,69 @@
+use std::time::{Duration, Instant};
+
+#[derive(Debug)]
+pub struct NativeShellState {
+    pub needs_redraw: bool,
+    last_presented_frame_counter: u64,
+    last_title_update: Instant,
+}
+
+impl NativeShellState {
+    pub const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+
+    pub fn new() -> Self {
+        Self {
+            needs_redraw: true,
+            last_presented_frame_counter: 0,
+            last_title_update: Instant::now(),
+        }
+    }
+
+    pub fn on_frame_presented(&mut self, frame_counter: u64) {
+        self.last_presented_frame_counter = frame_counter;
+        self.needs_redraw = false;
+    }
+
+    /// Returns true if a redraw should be requested.
+    pub fn wants_redraw(&self, current_frame_counter: u64) -> bool {
+        self.needs_redraw || current_frame_counter != self.last_presented_frame_counter
+    }
+
+    pub fn should_refresh_title(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.last_title_update) >= Self::TITLE_UPDATE_INTERVAL {
+            self.last_title_update = now;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for NativeShellState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::NativeShellState;
+
+    #[test]
+    fn native_shell_state_tracks_frame_presentation() {
+        let mut shell = NativeShellState::new();
+        assert!(shell.wants_redraw(0));
+        shell.on_frame_presented(1);
+        assert!(!shell.wants_redraw(1));
+        assert!(shell.wants_redraw(2));
+    }
+
+    #[test]
+    fn native_shell_state_refreshes_title_after_interval() {
+        let mut shell = NativeShellState::new();
+        let now = Instant::now();
+        assert!(!shell.should_refresh_title(now));
+        assert!(shell.should_refresh_title(now + NativeShellState::TITLE_UPDATE_INTERVAL));
+    }
+}

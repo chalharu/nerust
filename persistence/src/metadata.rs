@@ -1,25 +1,44 @@
-use crate::error::PersistenceError;
-use crate::time::unix_millis;
-use nerust_contract_mirror::MirrorMode;
-use nerust_contract_persistence::{CanonicalMediaIdentity, PersistenceIdentity};
-use nerust_contract_rom::RomFormat;
-use nerust_input_schema::SystemId;
-use std::io::{Read, Seek};
-use std::time::SystemTime;
+use std::{
+    io::{Read, Seek},
+    time::SystemTime,
+};
+
+use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemIdentity;
 use zip::ZipArchive;
+
+use crate::{error::PersistenceError, time::unix_millis};
 
 pub(crate) const METADATA_ENTRY: &str = "metadata.msgpack";
 pub(crate) const STATE_ENTRY: &str = "state.bin";
 pub(crate) const THUMBNAIL_ENTRY: &str = "thumbnail.png";
-pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 2;
 
-#[derive(serde_derive::Serialize, serde_derive::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct StateArchiveMetadata {
     pub(crate) schema_version: u32,
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
-    #[serde(default = "default_system_id")]
+    pub(crate) system_id: SystemId,
+    #[serde(with = "serde_bytes")]
+    pub(crate) identity_bytes: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub(crate) options_bytes: Vec<u8>,
+    pub(crate) emulator_version: String,
+}
+
+// ---------------------------------------------------------------------------
+// v1 backward compat — deserialize old format and convert to v2
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub(crate) struct StateArchiveMetadataV1 {
+    pub(crate) schema_version: u32,
+    pub(crate) slot_id: u64,
+    pub(crate) saved_at_unix_ms: u64,
+    pub(crate) has_thumbnail: bool,
     pub(crate) system_id: SystemId,
     pub(crate) mapper_type: u32,
     pub(crate) sub_mapper_type: u32,
@@ -41,9 +60,131 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) save_chr_ram_len: u64,
 }
 
-const fn default_system_id() -> SystemId {
-    SystemId::Nes
+impl Default for StateArchiveMetadataV1 {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            slot_id: 0,
+            saved_at_unix_ms: 0,
+            has_thumbnail: false,
+            system_id: default_system_id(),
+            mapper_type: 0,
+            sub_mapper_type: 0,
+            prg_rom_crc64: 0,
+            chr_rom_crc64: 0,
+            trainer_crc64: 0,
+            emulator_version: String::new(),
+            rom_format: 0,
+            mirror_mode_kind: 0,
+            mirror_mode_custom_lut: Vec::new(),
+            has_battery: false,
+            trainer_len: 0,
+            prg_rom_len: 0,
+            chr_rom_len: 0,
+            prg_ram_len: 0,
+            save_prg_ram_len: 0,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        }
+    }
 }
+
+#[derive(serde::Serialize)]
+enum RomFormatConv {
+    INes,
+    Nes20,
+}
+
+#[derive(serde::Serialize)]
+enum MirrorModeConv {
+    Horizontal,
+    Vertical,
+    Single0,
+    Single1,
+    Four,
+    Custom([u8; 4]),
+}
+
+/// Struct matching the serde field names of `nes_core::rom_identity::RomIdentity`
+/// so that v1→v2 conversion produces the same `identity_bytes` as a freshly loaded ROM.
+#[derive(serde::Serialize)]
+struct V1RomIdentity {
+    format: RomFormatConv,
+    mapper_type: u16,
+    sub_mapper_type: u8,
+    mirror_mode: MirrorModeConv,
+    has_battery: bool,
+    trainer_len: usize,
+    prg_rom_len: usize,
+    chr_rom_len: usize,
+    prg_ram_len: usize,
+    save_prg_ram_len: usize,
+    chr_ram_len: usize,
+    save_chr_ram_len: usize,
+    prg_rom_crc64: u64,
+    chr_rom_crc64: u64,
+    trainer_crc64: u64,
+}
+
+pub(crate) fn convert_v1_to_v2(
+    v1: StateArchiveMetadataV1,
+) -> Result<StateArchiveMetadata, PersistenceError> {
+    let mirror_mode = match (v1.mirror_mode_kind, v1.mirror_mode_custom_lut.as_slice()) {
+        (0, _) => MirrorModeConv::Horizontal,
+        (1, _) => MirrorModeConv::Vertical,
+        (2, _) => MirrorModeConv::Single0,
+        (3, _) => MirrorModeConv::Single1,
+        (4, _) => MirrorModeConv::Four,
+        (5, lut) if lut.len() == 4 => {
+            let mut arr = [0u8; 4];
+            arr.copy_from_slice(lut);
+            MirrorModeConv::Custom(arr)
+        }
+        _ => MirrorModeConv::Horizontal,
+    };
+    let format = match v1.rom_format {
+        0 => RomFormatConv::INes,
+        1 => RomFormatConv::Nes20,
+        _ => RomFormatConv::INes,
+    };
+    let identity = V1RomIdentity {
+        format,
+        mapper_type: v1.mapper_type as u16,
+        sub_mapper_type: v1.sub_mapper_type as u8,
+        mirror_mode,
+        has_battery: v1.has_battery,
+        trainer_len: v1.trainer_len as usize,
+        prg_rom_len: v1.prg_rom_len as usize,
+        chr_rom_len: v1.chr_rom_len as usize,
+        prg_ram_len: v1.prg_ram_len as usize,
+        save_prg_ram_len: v1.save_prg_ram_len as usize,
+        chr_ram_len: v1.chr_ram_len as usize,
+        save_chr_ram_len: v1.save_chr_ram_len as usize,
+        prg_rom_crc64: v1.prg_rom_crc64,
+        chr_rom_crc64: v1.chr_rom_crc64,
+        trainer_crc64: v1.trainer_crc64,
+    };
+    let identity_bytes = rmp_serde::to_vec_named(&identity)
+        .map_err(|e| PersistenceError::Validation(format!("v1 identity encoding failed: {e}")))?;
+    Ok(StateArchiveMetadata {
+        schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+        slot_id: v1.slot_id,
+        saved_at_unix_ms: v1.saved_at_unix_ms,
+        has_thumbnail: v1.has_thumbnail,
+        system_id: v1.system_id,
+        identity_bytes,
+        options_bytes: Vec::new(),
+        emulator_version: v1.emulator_version,
+    })
+}
+
+const fn default_system_id() -> SystemId {
+    SystemId::new("nes")
+}
+
+// ---------------------------------------------------------------------------
+// v2 read/write
+// ---------------------------------------------------------------------------
 
 pub(crate) fn read_metadata<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
@@ -53,95 +194,55 @@ pub(crate) fn read_metadata<R: Read + Seek>(
     let mut metadata_file = archive.by_name(METADATA_ENTRY)?;
     let metadata_bytes =
         crate::fs_ops::read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
-    let metadata: StateArchiveMetadata = rmp_serde::from_slice(metadata_bytes.as_slice())?;
-    if metadata.schema_version != STATE_ARCHIVE_SCHEMA_VERSION {
+
+    // Try v2.
+    if let Ok(meta) = rmp_serde::from_slice::<StateArchiveMetadata>(metadata_bytes.as_slice()) {
+        if meta.schema_version == STATE_ARCHIVE_SCHEMA_VERSION {
+            return Ok(meta);
+        }
         return Err(PersistenceError::Validation(format!(
             "unsupported state archive schema version: {}",
-            metadata.schema_version
+            meta.schema_version
         )));
     }
-    Ok(metadata)
+
+    // Fall back to v1 conversion.
+    if let Ok(v1) = rmp_serde::from_slice::<StateArchiveMetadataV1>(metadata_bytes.as_slice()) {
+        if v1.schema_version == 1 {
+            return convert_v1_to_v2(v1);
+        }
+        return Err(PersistenceError::Validation(format!(
+            "unsupported state archive schema version: {}",
+            v1.schema_version
+        )));
+    }
+
+    Err(PersistenceError::Validation(
+        "unrecognized state archive metadata format".into(),
+    ))
 }
 
 pub(crate) fn encode_slot_metadata(
     slot_id: u64,
     saved_at: SystemTime,
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
     has_thumbnail: bool,
 ) -> Result<StateArchiveMetadata, PersistenceError> {
-    let CanonicalMediaIdentity::Rom(rom_identity) = identity.media;
     Ok(StateArchiveMetadata {
         schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
         has_thumbnail,
         system_id: identity.system_id,
-        mapper_type: u32::from(rom_identity.mapper_type),
-        sub_mapper_type: u32::from(rom_identity.sub_mapper_type),
-        prg_rom_crc64: rom_identity.prg_rom_crc64,
-        chr_rom_crc64: rom_identity.chr_rom_crc64,
-        trainer_crc64: rom_identity.trainer_crc64,
+        identity_bytes: identity.identity_bytes.clone(),
+        options_bytes: Vec::new(),
         emulator_version: env!("CARGO_PKG_VERSION").to_string(),
-        rom_format: rom_format_to_u32(rom_identity.format),
-        mirror_mode_kind: mirror_mode_kind_to_u32(rom_identity.mirror_mode),
-        mirror_mode_custom_lut: mirror_mode_custom_lut(rom_identity.mirror_mode),
-        has_battery: rom_identity.has_battery,
-        trainer_len: rom_identity.trainer_len as u64,
-        prg_rom_len: rom_identity.prg_rom_len as u64,
-        chr_rom_len: rom_identity.chr_rom_len as u64,
-        prg_ram_len: rom_identity.prg_ram_len as u64,
-        save_prg_ram_len: rom_identity.save_prg_ram_len as u64,
-        chr_ram_len: rom_identity.chr_ram_len as u64,
-        save_chr_ram_len: rom_identity.save_chr_ram_len as u64,
     })
 }
 
 pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
-    identity: PersistenceIdentity,
+    identity: &SystemIdentity,
 ) -> bool {
-    let CanonicalMediaIdentity::Rom(rom_identity) = identity.media;
-    let mirror_mode_lut = mirror_mode_custom_lut(rom_identity.mirror_mode);
-    metadata.system_id == identity.system_id
-        && metadata.mapper_type == u32::from(rom_identity.mapper_type)
-        && metadata.sub_mapper_type == u32::from(rom_identity.sub_mapper_type)
-        && metadata.prg_rom_crc64 == rom_identity.prg_rom_crc64
-        && metadata.chr_rom_crc64 == rom_identity.chr_rom_crc64
-        && metadata.trainer_crc64 == rom_identity.trainer_crc64
-        && metadata.rom_format == rom_format_to_u32(rom_identity.format)
-        && metadata.mirror_mode_kind == mirror_mode_kind_to_u32(rom_identity.mirror_mode)
-        && metadata.mirror_mode_custom_lut == mirror_mode_lut
-        && metadata.has_battery == rom_identity.has_battery
-        && metadata.trainer_len == rom_identity.trainer_len as u64
-        && metadata.prg_rom_len == rom_identity.prg_rom_len as u64
-        && metadata.chr_rom_len == rom_identity.chr_rom_len as u64
-        && metadata.prg_ram_len == rom_identity.prg_ram_len as u64
-        && metadata.save_prg_ram_len == rom_identity.save_prg_ram_len as u64
-        && metadata.chr_ram_len == rom_identity.chr_ram_len as u64
-        && metadata.save_chr_ram_len == rom_identity.save_chr_ram_len as u64
-}
-
-fn rom_format_to_u32(format: RomFormat) -> u32 {
-    match format {
-        RomFormat::INes => 0,
-        RomFormat::Nes20 => 1,
-    }
-}
-
-fn mirror_mode_kind_to_u32(mode: MirrorMode) -> u32 {
-    match mode {
-        MirrorMode::Horizontal => 0,
-        MirrorMode::Vertical => 1,
-        MirrorMode::Single0 => 2,
-        MirrorMode::Single1 => 3,
-        MirrorMode::Four => 4,
-        MirrorMode::Custom(_) => 5,
-    }
-}
-
-fn mirror_mode_custom_lut(mode: MirrorMode) -> Vec<u8> {
-    match mode {
-        MirrorMode::Custom(lut) => lut.to_vec(),
-        _ => Vec::new(),
-    }
+    metadata.system_id == identity.system_id && metadata.identity_bytes == identity.identity_bytes
 }
