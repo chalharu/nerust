@@ -32,9 +32,9 @@ fn create_audio_registry() -> AudioBackendRegistry {
     #[cfg_attr(not(any(feature = "gtk", feature = "tao")), allow(unused_mut))]
     let mut reg = AudioBackendRegistry::new();
     #[cfg(any(feature = "gtk", feature = "tao"))]
-    reg.register(0, &nerust_sound_cpal::CPAL);
+    reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
     #[cfg(any(feature = "gtk", feature = "tao"))]
-    reg.register(1, &nerust_sound_cubeb::CUBEB);
+    reg.register(1, Box::new(nerust_sound_cubeb::CubebFactory));
     reg
 }
 
