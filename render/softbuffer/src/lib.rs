@@ -214,12 +214,12 @@ impl GpuRenderer for SoftbufferRenderer {
                         height: src_h,
                     };
                     let mut filter = FilterType::NtscComposite.generate(source_size);
-                    let ntsc_w = filter.logical_size().width;
-                    let ntsc_h = filter.logical_size().height;
                     let ntsc_phys = filter.physical_size();
+                    let out_w = ntsc_phys.width as usize;
+                    let out_h = ntsc_phys.height as usize;
 
                     let mut collector = RgbaCollector {
-                        buf: Vec::with_capacity(ntsc_w * ntsc_h),
+                        buf: Vec::with_capacity(out_w * out_h),
                     };
                     for y in 0..src_h {
                         let base = y * src_stride;
@@ -227,14 +227,8 @@ impl GpuRenderer for SoftbufferRenderer {
                             filter.push(src[base + x], &mut collector);
                         }
                     }
-                    Self::render_rgba(
-                        dst,
-                        dst_w,
-                        dst_h,
-                        &collector.buf,
-                        ntsc_phys.width as usize,
-                        ntsc_phys.height as usize,
-                    );
+
+                    Self::render_rgba(dst, dst_w, dst_h, &collector.buf, out_w, out_h);
                 }
             }
         }
