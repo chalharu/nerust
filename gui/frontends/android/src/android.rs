@@ -189,7 +189,7 @@ impl AndroidFrontend {
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
         let mut audio_registry = AudioBackendRegistry::new();
-        audio_registry.register(0, &nerust_sound_cpal::CPAL);
+        audio_registry.register(0, Box::new(nerust_sound_cpal::CpalFactory));
         let audio_registry = Arc::new(audio_registry);
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
