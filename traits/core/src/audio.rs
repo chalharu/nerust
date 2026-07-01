@@ -18,7 +18,7 @@ pub trait AudioBackend: Send {
 ///
 /// Implementations should be zero-sized types (ZST) stored as `&'static`
 /// references so that registration requires no heap allocation.
-pub trait AudioBackendFactory {
+pub trait AudioBackendFactory: Send + Sync {
     fn name(&self) -> &'static str;
     /// Returns the sample rates this backend supports on the current hardware.
     fn probe(&self) -> Vec<u32>;
