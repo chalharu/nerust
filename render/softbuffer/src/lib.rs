@@ -218,6 +218,7 @@ impl GpuRenderer for SoftbufferRenderer {
                     };
                     let mut filter = FilterType::NtscComposite.generate(source_size);
                     let ntsc_phys = filter.physical_size();
+                    let ntsc_log = filter.logical_size();
                     let out_w = ntsc_phys.width as usize;
                     let out_h = ntsc_phys.height as usize;
 
@@ -231,7 +232,16 @@ impl GpuRenderer for SoftbufferRenderer {
                         }
                     }
 
-                    Self::render_rgba(dst, dst_w, dst_h, &collector.buf, out_w, out_h);
+                    // Decimate double-height NTSC (interlaced fields) to
+                    // single-height logical resolution for display.
+                    let log_w = ntsc_log.width;
+                    let log_h = ntsc_log.height;
+                    let mut rgba = Vec::<u32>::with_capacity(log_w * log_h);
+                    for sy in (0..out_h).step_by(2) {
+                        let base = sy * out_w;
+                        rgba.extend_from_slice(&collector.buf[base..base + out_w.min(log_w)]);
+                    }
+                    Self::render_rgba(dst, dst_w, dst_h, &rgba, log_w, log_h);
                 }
             }
         }
