@@ -66,8 +66,12 @@ impl CubebAudio {
                     if !playing_clone.load(Ordering::Relaxed) {
                         return 0;
                     }
+                    let mut last = 0.0f32;
                     for frame in output.iter_mut() {
-                        frame.m = receiver.try_recv().unwrap_or(0.0);
+                        if let Ok(sample) = receiver.try_recv() {
+                            last = sample;
+                        }
+                        frame.m = last;
                     }
                     output.len() as isize
                 },
