@@ -20,6 +20,7 @@ members = [
   "render/gl",
   "render/glwrap",
   "render/ntsc",
+  "render/softbuffer",
   "render/wgpu",
   "serialize",
   "sound/cpal",
@@ -51,6 +52,7 @@ nerust_run_options.workspace = true
 nerust_gtk = { workspace = true, optional = true }
 nerust_tao = { workspace = true, optional = true }
 nerust_render_gl = { workspace = true, optional = true }
+nerust_render_softbuffer = { workspace = true, optional = true }
 nerust_render_wgpu = { workspace = true, optional = true }
 nerust_core_traits.workspace = true
 nerust_render_base.workspace = true
@@ -63,6 +65,7 @@ default = ["wgpu"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
 tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb"]
 wgpu = ["nerust_render_wgpu"]
+softbuffer = ["nerust_render_softbuffer"]
 opengl = ["nerust_render_gl"]
 
 [profile.release]
@@ -126,6 +129,7 @@ nerust_glwrap = { path = "render/glwrap" }
 nerust_render_gl = { path = "render/gl" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_render_base = { path = "render/base" }
+nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_serialize = { path = "serialize" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }
@@ -147,6 +151,7 @@ serde_bytes = { version = "=0.11.19" }
 serde_yaml = { version = "=0.9.34" }
 shared_library = { version = "=0.1.9" }
 simple_logger = { version = "=5.2.0" }
+softbuffer = { version = "=0.4.8" }
 strum = { version = "=0.28.0" }
 strum_macros = { version = "=0.28.0" }
 tao = { version = "=0.35.3" }

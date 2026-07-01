@@ -1,0 +1,13 @@
+[package]
+name = "nerust_render_softbuffer"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_render_base.workspace = true
+raw-window-handle.workspace = true
+softbuffer = "=0.4.8"
