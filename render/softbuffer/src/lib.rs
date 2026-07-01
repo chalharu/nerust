@@ -108,9 +108,9 @@ impl GpuRenderer for SoftbufferRenderer {
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };
-        let w = self.size.width as usize;
-        let h = self.size.height as usize;
-        if w == 0 || h == 0 {
+        let dst_w = self.size.width as usize;
+        let dst_h = self.size.height as usize;
+        if dst_w == 0 || dst_h == 0 {
             return RenderResult::Skipped;
         }
 
@@ -122,31 +122,36 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         };
 
+        let src_w = frame.width();
+        let src_h = frame.height();
+        let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
-        let len = dst.len().min(src.len() / 4);
+        let copy_w = src_w.min(dst_w);
+        let copy_h = src_h.min(dst_h);
 
         match frame.format() {
             PixelFormat::Rgba => {
-                for i in 0..len {
-                    let base = i * 4;
-                    dst[i] = u32::from_ne_bytes([
-                        src[base],
-                        src[base + 1],
-                        src[base + 2],
-                        src[base + 3],
-                    ]);
+                for y in 0..copy_h {
+                    for x in 0..copy_w {
+                        let si = y * src_stride + x * 4;
+                        dst[y * dst_w + x] =
+                            u32::from_ne_bytes([src[si], src[si + 1], src[si + 2], src[si + 3]]);
+                    }
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
-                for i in 0..len {
-                    let c = palette[src[i] as usize];
-                    dst[i] = u32::from_ne_bytes([
-                        (c >> 16) as u8,
-                        (c >> 8) as u8,
-                        c as u8,
-                        (c >> 24) as u8,
-                    ]);
+                for y in 0..copy_h {
+                    for x in 0..copy_w {
+                        let si = y * src_stride + x;
+                        let c = palette[src[si] as usize];
+                        dst[y * dst_w + x] = u32::from_ne_bytes([
+                            (c >> 16) as u8,
+                            (c >> 8) as u8,
+                            c as u8,
+                            (c >> 24) as u8,
+                        ]);
+                    }
                 }
             }
         }
