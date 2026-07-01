@@ -127,26 +127,53 @@ impl GpuRenderer for SoftbufferRenderer {
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
+
+        let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
+        let render_w = (src_w as f64 * scale) as usize;
+        let render_h = (src_h as f64 * scale) as usize;
+        let off_x = (dst_w - render_w) / 2;
+        let off_y = (dst_h - render_h) / 2;
+
         match frame.format() {
             PixelFormat::Rgba => {
                 for dy in 0..dst_h {
-                    let sy = dy * src_h / dst_h;
+                    let row = dy * dst_w;
+                    if dy < off_y || dy >= off_y + render_h {
+                        dst[row..row + dst_w].fill(0);
+                        continue;
+                    }
+                    let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
+                    let base = sy * src_stride;
                     for dx in 0..dst_w {
-                        let sx = dx * src_w / dst_w;
-                        let si = sy * src_stride + sx * 4;
-                        dst[dy * dst_w + dx] =
+                        if dx < off_x || dx >= off_x + render_w {
+                            dst[row + dx] = 0;
+                            continue;
+                        }
+                        let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
+                        let si = base + sx * 4;
+                        dst[row + dx] =
                             u32::from_ne_bytes([src[si + 2], src[si + 1], src[si], src[si + 3]]);
                     }
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
                 for dy in 0..dst_h {
-                    let sy = dy * src_h / dst_h;
+                    let row = dy * dst_w;
+                    if dy < off_y || dy >= off_y + render_h {
+                        dst[row..row + dst_w].fill(0);
+                        continue;
+                    }
+                    let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
+                    let base = sy * src_stride;
                     for dx in 0..dst_w {
-                        let sx = dx * src_w / dst_w;
-                        let si = sy * src_stride + sx;
+                        if dx < off_x || dx >= off_x + render_w {
+                            dst[row + dx] = 0;
+                            continue;
+                        }
+                        let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
+                        let si = base + sx;
                         let c = palette[src[si] as usize];
-                        dst[dy * dst_w + dx] = u32::from_ne_bytes([
+                        dst[row + dx] = u32::from_ne_bytes([
                             (c >> 8) as u8,
                             (c >> 16) as u8,
                             (c >> 24) as u8,
