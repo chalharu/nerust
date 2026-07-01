@@ -62,45 +62,22 @@ impl SoftbufferRenderer {
         Self {
             ctx: None,
             surface: None,
-            ntsc_active: profile.ntsc_packed_rgba8.is_some(),
+            ntsc_active: profile.frame_format
             size: SurfaceSize::new(0, 0),
             rgba: Vec::new(),
         }
     }
 
-    fn render_rgba(
-        dst: &mut [u32],
-        dst_w: usize,
-        dst_h: usize,
-        rgba: &[u32],
-        src_w: usize,
-        src_h: usize,
-    ) {
-        if src_w == 0 || src_h == 0 {
-            return;
-        }
-        let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
-        let render_w = (src_w as f64 * scale).max(1.0) as usize;
-        let render_h = (src_h as f64 * scale).max(1.0) as usize;
-        let off_x = (dst_w - render_w) / 2;
-        let off_y = (dst_h - render_h) / 2;
+    fn inv_scale(&self, src_width: u32, src_height: u32) -> f32 {
+        let window_aspect = self.size.width as f32 / self.size.height as f32;
+        let content_aspect = src_width as f32 / src_height as f32;
 
-        for dy in 0..dst_h {
-            let row = dy * dst_w;
-            if dy < off_y || dy >= off_y + render_h {
-                dst[row..row + dst_w].fill(0);
-                continue;
-            }
-            let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
-            let src_row = sy * src_w;
-            for dx in 0..dst_w {
-                if dx < off_x || dx >= off_x + render_w {
-                    dst[row + dx] = 0;
-                    continue;
-                }
-                let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
-                dst[row + dx] = rgba.get(src_row + sx).copied().unwrap_or(0);
-            }
+        if window_aspect > content_aspect {
+            // Window is wider than content → letterbox (black bars on sides)
+            src_height as f32 / self.size.height as f32
+        } else {
+            // Window is taller than content → pillarbox (black bars on top/bottom)
+            src_width as f32 / self.size.width as f32
         }
     }
 }
@@ -156,6 +133,10 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
+        let src_w = frame.width();
+        let src_h = frame.height();
+        let scale = self.inv_scale(src_w as u32, src_h as u32);
+
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };
@@ -173,85 +154,75 @@ impl GpuRenderer for SoftbufferRenderer {
             }
         };
 
-        let src_w = frame.width();
-        let src_h = frame.height();
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
 
         match frame.format() {
             PixelFormat::Rgba => {
-                self.rgba.clear();
-                self.rgba.reserve(src_w * src_h);
-                for y in 0..src_h {
-                    let base = y * src_stride;
-                    for x in 0..src_w {
-                        let si = base + x * 4;
-                        self.rgba.push(u32::from_ne_bytes([
-                            src[si + 2],
-                            src[si + 1],
-                            src[si],
-                            src[si + 3],
-                        ]));
+                for y in 0..dst_h {
+                    for x in 0..dst_w {
+                        let dst_index = y * dst_w + x;
+
+                        // Center the source pixel coordinates based on the destination size and scaling factors
+                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale) as isize
+                            + (src_w >> 1) as isize;
+                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale) as isize
+                            + (src_h >> 1) as isize;
+                        if src_x < 0
+                            || src_x >= src_w as isize
+                            || src_y < 0
+                            || src_y >= src_h as isize
+                        {
+                            dst[dst_index] = 0; // Fill with black if out of bounds
+                            continue;
+                        }
+                        let src_index = src_y as usize * src_stride + src_x as usize * 4;
+
+                        dst[dst_index] = u32::from_le_bytes([
+                            src[src_index + 2], // Blue
+                            src[src_index + 1], // Green
+                            src[src_index],     // Red
+                            src[src_index + 3], // Alpha
+                        ]);
                     }
                 }
-                Self::render_rgba(dst, dst_w, dst_h, &self.rgba, src_w, src_h);
             }
             PixelFormat::PaletteIndex { palette } => {
                 if !self.ntsc_active {
-                    self.rgba.clear();
-                    self.rgba.reserve(src_w * src_h);
-                    for y in 0..src_h {
-                        let base = y * src_stride;
-                        for x in 0..src_w {
-                            let si = base + x;
-                            let c = palette[src[si] as usize];
-                            self.rgba.push(u32::from_ne_bytes([
-                                (c >> 8) as u8,
-                                (c >> 16) as u8,
-                                (c >> 24) as u8,
-                                c as u8,
-                            ]));
-                        }
-                    }
-                    Self::render_rgba(dst, dst_w, dst_h, &self.rgba, src_w, src_h);
-                } else {
-                    let source_size = LogicalSize {
-                        width: src_w,
-                        height: src_h,
-                    };
-                    let mut filter = FilterType::NtscComposite.generate(source_size);
-                    let ntsc_phys = filter.physical_size();
-                    let ntsc_log = filter.logical_size();
-                    let out_w = ntsc_phys.width as usize;
-                    let out_h = ntsc_phys.height as usize;
+                    for y in 0..dst_h {
+                        for x in 0..dst_w {
+                            let dst_index = y * dst_w + x;
 
-                    self.rgba.clear();
-                    self.rgba.reserve(out_w * out_h);
-                    {
-                        let mut collector = RgbaCollector {
-                            buf: &mut self.rgba,
-                        };
-                        for y in 0..src_h {
-                            let base = y * src_stride;
-                            for x in 0..src_w {
-                                filter.push(src[base + x], &mut collector);
+                            // Center the source pixel coordinates based on the destination size and scaling factors
+                            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale)
+                                as isize
+                                + (src_w >> 1) as isize;
+                            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale)
+                                as isize
+                                + (src_h >> 1) as isize;
+                            if src_x < 0
+                                || src_x >= src_w as isize
+                                || src_y < 0
+                                || src_y >= src_h as isize
+                            {
+                                dst[dst_index] = 0; // Fill with black if out of bounds
+                                continue;
                             }
+                            let src_index = src_y as usize * src_stride + src_x as usize;
+                            let c = palette[src[src_index] as usize];
+
+                            // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
+                            dst[dst_index] = c.rotate_right(8);
                         }
                     }
-
-                    // Decimate double-height NTSC (interlaced fields) to
-                    // single-height logical resolution in-place.
-                    let log_w = ntsc_log.width;
-                    let log_h = ntsc_log.height;
-                    for sy in (0..out_h).step_by(2) {
-                        let src_base = sy * out_w;
-                        let dst_base = (sy / 2) * log_w;
-                        let count = out_w.min(log_w);
-                        self.rgba.copy_within(src_base..src_base + count, dst_base);
-                    }
-                    self.rgba.truncate(log_w * log_h);
-                    Self::render_rgba(dst, dst_w, dst_h, &self.rgba, log_w, log_h);
+                } else {
+                    // let source_size = LogicalSize {
+                    //     width: src_w,
+                    //     height: src_h,
+                    // };
+                    // let mut filter = FilterType::NtscComposite.generate(source_size);
+                    // filter.push(value, filter_func);
                 }
             }
         }
