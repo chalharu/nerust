@@ -127,29 +127,30 @@ impl GpuRenderer for SoftbufferRenderer {
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
-        let copy_w = src_w.min(dst_w);
-        let copy_h = src_h.min(dst_h);
-
         match frame.format() {
             PixelFormat::Rgba => {
-                for y in 0..copy_h {
-                    for x in 0..copy_w {
-                        let si = y * src_stride + x * 4;
-                        dst[y * dst_w + x] =
+                for dy in 0..dst_h {
+                    let sy = dy * src_h / dst_h;
+                    for dx in 0..dst_w {
+                        let sx = dx * src_w / dst_w;
+                        let si = sy * src_stride + sx * 4;
+                        dst[dy * dst_w + dx] =
                             u32::from_ne_bytes([src[si], src[si + 1], src[si + 2], src[si + 3]]);
                     }
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
-                for y in 0..copy_h {
-                    for x in 0..copy_w {
-                        let si = y * src_stride + x;
+                for dy in 0..dst_h {
+                    let sy = dy * src_h / dst_h;
+                    for dx in 0..dst_w {
+                        let sx = dx * src_w / dst_w;
+                        let si = sy * src_stride + sx;
                         let c = palette[src[si] as usize];
-                        dst[y * dst_w + x] = u32::from_ne_bytes([
+                        dst[dy * dst_w + dx] = u32::from_ne_bytes([
+                            (c >> 24) as u8,
                             (c >> 16) as u8,
                             (c >> 8) as u8,
                             c as u8,
-                            (c >> 24) as u8,
                         ]);
                     }
                 }
