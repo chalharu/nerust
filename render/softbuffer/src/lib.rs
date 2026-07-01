@@ -30,11 +30,11 @@ impl HasDisplayHandle for WindowHandlePair {
     }
 }
 
-struct RgbaCollector {
-    buf: Vec<u32>,
+struct RgbaCollector<'a> {
+    buf: &'a mut Vec<u32>,
 }
 
-impl FilterFunc for RgbaCollector {
+impl FilterFunc for RgbaCollector<'_> {
     fn filter_func(&mut self, color: RGB) {
         self.buf.push(u32::from_ne_bytes([
             color.blue,
@@ -51,6 +51,7 @@ pub struct SoftbufferRenderer {
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
     ntsc_active: bool,
     size: SurfaceSize,
+    rgba: Vec<u32>,
 }
 
 unsafe impl Send for SoftbufferRenderer {}
@@ -63,6 +64,7 @@ impl SoftbufferRenderer {
             surface: None,
             ntsc_active: profile.ntsc_packed_rgba8.is_some(),
             size: SurfaceSize::new(0, 0),
+            rgba: Vec::new(),
         }
     }
 
@@ -179,12 +181,13 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
-                let mut rgba = Vec::<u32>::with_capacity(src_w * src_h);
+                self.rgba.clear();
+                self.rgba.reserve(src_w * src_h);
                 for y in 0..src_h {
                     let base = y * src_stride;
                     for x in 0..src_w {
                         let si = base + x * 4;
-                        rgba.push(u32::from_ne_bytes([
+                        self.rgba.push(u32::from_ne_bytes([
                             src[si + 2],
                             src[si + 1],
                             src[si],
@@ -192,17 +195,18 @@ impl GpuRenderer for SoftbufferRenderer {
                         ]));
                     }
                 }
-                Self::render_rgba(dst, dst_w, dst_h, &rgba, src_w, src_h);
+                Self::render_rgba(dst, dst_w, dst_h, &self.rgba, src_w, src_h);
             }
             PixelFormat::PaletteIndex { palette } => {
                 if !self.ntsc_active {
-                    let mut rgba = Vec::<u32>::with_capacity(src_w * src_h);
+                    self.rgba.clear();
+                    self.rgba.reserve(src_w * src_h);
                     for y in 0..src_h {
                         let base = y * src_stride;
                         for x in 0..src_w {
                             let si = base + x;
                             let c = palette[src[si] as usize];
-                            rgba.push(u32::from_ne_bytes([
+                            self.rgba.push(u32::from_ne_bytes([
                                 (c >> 8) as u8,
                                 (c >> 16) as u8,
                                 (c >> 24) as u8,
@@ -210,7 +214,7 @@ impl GpuRenderer for SoftbufferRenderer {
                             ]));
                         }
                     }
-                    Self::render_rgba(dst, dst_w, dst_h, &rgba, src_w, src_h);
+                    Self::render_rgba(dst, dst_w, dst_h, &self.rgba, src_w, src_h);
                 } else {
                     let source_size = LogicalSize {
                         width: src_w,
@@ -222,26 +226,32 @@ impl GpuRenderer for SoftbufferRenderer {
                     let out_w = ntsc_phys.width as usize;
                     let out_h = ntsc_phys.height as usize;
 
-                    let mut collector = RgbaCollector {
-                        buf: Vec::with_capacity(out_w * out_h),
-                    };
-                    for y in 0..src_h {
-                        let base = y * src_stride;
-                        for x in 0..src_w {
-                            filter.push(src[base + x], &mut collector);
+                    self.rgba.clear();
+                    self.rgba.reserve(out_w * out_h);
+                    {
+                        let mut collector = RgbaCollector {
+                            buf: &mut self.rgba,
+                        };
+                        for y in 0..src_h {
+                            let base = y * src_stride;
+                            for x in 0..src_w {
+                                filter.push(src[base + x], &mut collector);
+                            }
                         }
                     }
 
                     // Decimate double-height NTSC (interlaced fields) to
-                    // single-height logical resolution for display.
+                    // single-height logical resolution in-place.
                     let log_w = ntsc_log.width;
                     let log_h = ntsc_log.height;
-                    let mut rgba = Vec::<u32>::with_capacity(log_w * log_h);
                     for sy in (0..out_h).step_by(2) {
-                        let base = sy * out_w;
-                        rgba.extend_from_slice(&collector.buf[base..base + out_w.min(log_w)]);
+                        let src_base = sy * out_w;
+                        let dst_base = (sy / 2) * log_w;
+                        let count = out_w.min(log_w);
+                        self.rgba.copy_within(src_base..src_base + count, dst_base);
                     }
-                    Self::render_rgba(dst, dst_w, dst_h, &rgba, log_w, log_h);
+                    self.rgba.truncate(log_w * log_h);
+                    Self::render_rgba(dst, dst_w, dst_h, &self.rgba, log_w, log_h);
                 }
             }
         }
