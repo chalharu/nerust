@@ -135,7 +135,7 @@ impl GpuRenderer for SoftbufferRenderer {
                         let sx = dx * src_w / dst_w;
                         let si = sy * src_stride + sx * 4;
                         dst[dy * dst_w + dx] =
-                            u32::from_ne_bytes([src[si], src[si + 1], src[si + 2], src[si + 3]]);
+                            u32::from_ne_bytes([src[si + 2], src[si + 1], src[si], src[si + 3]]);
                     }
                 }
             }
@@ -147,9 +147,9 @@ impl GpuRenderer for SoftbufferRenderer {
                         let si = sy * src_stride + sx;
                         let c = palette[src[si] as usize];
                         dst[dy * dst_w + dx] = u32::from_ne_bytes([
-                            (c >> 24) as u8,
-                            (c >> 16) as u8,
                             (c >> 8) as u8,
+                            (c >> 16) as u8,
+                            (c >> 24) as u8,
                             c as u8,
                         ]);
                     }
