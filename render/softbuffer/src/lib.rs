@@ -2,8 +2,9 @@ use std::num::NonZeroU32;
 
 use log::warn;
 use nerust_render_base::{
-    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat, RenderResult, RendererConfig,
-    RendererError, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, GpuFactory, GpuRenderer, LogicalSize, OpaqueError, PixelFormat, RGB, RenderResult,
+    RendererConfig, RendererError, SurfaceSize, VideoRenderProfile,
+    filter::{FilterFunc, FilterType},
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -29,27 +30,72 @@ impl HasDisplayHandle for WindowHandlePair {
     }
 }
 
+struct RgbaCollector {
+    buf: Vec<u32>,
+}
+
+impl FilterFunc for RgbaCollector {
+    fn filter_func(&mut self, color: RGB) {
+        self.buf.push(u32::from_ne_bytes([
+            color.blue,
+            color.green,
+            color.red,
+            u8::MAX,
+        ]));
+    }
+}
+
 #[derive(Debug)]
 pub struct SoftbufferRenderer {
     ctx: Option<Context<WindowHandlePair>>,
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
-    render_profile: VideoRenderProfile,
+    ntsc_active: bool,
     size: SurfaceSize,
 }
 
-// SAFETY: SoftbufferRenderer only accesses the native window through softbuffer
-// API calls that are thread-safe. The raw window handles are never dereferenced
-// directly; they are only passed to softbuffer which handles platform safety.
 unsafe impl Send for SoftbufferRenderer {}
 unsafe impl Sync for SoftbufferRenderer {}
 
 impl SoftbufferRenderer {
-    fn new(render_profile: VideoRenderProfile) -> Self {
+    fn new(profile: &VideoRenderProfile) -> Self {
         Self {
             ctx: None,
             surface: None,
-            render_profile,
+            ntsc_active: profile.ntsc_packed_rgba8.is_some(),
             size: SurfaceSize::new(0, 0),
+        }
+    }
+
+    fn render_rgba(
+        dst: &mut [u32],
+        dst_w: usize,
+        dst_h: usize,
+        rgba: &[u32],
+        src_w: usize,
+        src_h: usize,
+    ) {
+        let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
+        let render_w = (src_w as f64 * scale) as usize;
+        let render_h = (src_h as f64 * scale) as usize;
+        let off_x = (dst_w - render_w) / 2;
+        let off_y = (dst_h - render_h) / 2;
+
+        for dy in 0..dst_h {
+            let row = dy * dst_w;
+            if dy < off_y || dy >= off_y + render_h {
+                dst[row..row + dst_w].fill(0);
+                continue;
+            }
+            let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
+            let src_row = sy * src_w;
+            for dx in 0..dst_w {
+                if dx < off_x || dx >= off_x + render_w {
+                    dst[row + dx] = 0;
+                    continue;
+                }
+                let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
+                dst[row + dx] = rgba[src_row + sx];
+            }
         }
     }
 }
@@ -100,7 +146,7 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        self.render_profile = profile.clone();
+        self.ntsc_active = profile.ntsc_packed_rgba8.is_some();
         Ok(())
     }
 
@@ -128,58 +174,67 @@ impl GpuRenderer for SoftbufferRenderer {
         let src = frame.as_ref();
         let dst = buffer.as_mut();
 
-        let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
-        let render_w = (src_w as f64 * scale) as usize;
-        let render_h = (src_h as f64 * scale) as usize;
-        let off_x = (dst_w - render_w) / 2;
-        let off_y = (dst_h - render_h) / 2;
-
         match frame.format() {
             PixelFormat::Rgba => {
-                for dy in 0..dst_h {
-                    let row = dy * dst_w;
-                    if dy < off_y || dy >= off_y + render_h {
-                        dst[row..row + dst_w].fill(0);
-                        continue;
-                    }
-                    let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
-                    let base = sy * src_stride;
-                    for dx in 0..dst_w {
-                        if dx < off_x || dx >= off_x + render_w {
-                            dst[row + dx] = 0;
-                            continue;
-                        }
-                        let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
-                        let si = base + sx * 4;
-                        dst[row + dx] =
-                            u32::from_ne_bytes([src[si + 2], src[si + 1], src[si], src[si + 3]]);
+                let mut rgba = Vec::<u32>::with_capacity(src_w * src_h);
+                for y in 0..src_h {
+                    let base = y * src_stride;
+                    for x in 0..src_w {
+                        let si = base + x * 4;
+                        rgba.push(u32::from_ne_bytes([
+                            src[si + 2],
+                            src[si + 1],
+                            src[si],
+                            src[si + 3],
+                        ]));
                     }
                 }
+                Self::render_rgba(dst, dst_w, dst_h, &rgba, src_w, src_h);
             }
             PixelFormat::PaletteIndex { palette } => {
-                for dy in 0..dst_h {
-                    let row = dy * dst_w;
-                    if dy < off_y || dy >= off_y + render_h {
-                        dst[row..row + dst_w].fill(0);
-                        continue;
-                    }
-                    let sy = ((dy - off_y) * src_h / render_h).min(src_h - 1);
-                    let base = sy * src_stride;
-                    for dx in 0..dst_w {
-                        if dx < off_x || dx >= off_x + render_w {
-                            dst[row + dx] = 0;
-                            continue;
+                if !self.ntsc_active {
+                    let mut rgba = Vec::<u32>::with_capacity(src_w * src_h);
+                    for y in 0..src_h {
+                        let base = y * src_stride;
+                        for x in 0..src_w {
+                            let si = base + x;
+                            let c = palette[src[si] as usize];
+                            rgba.push(u32::from_ne_bytes([
+                                (c >> 8) as u8,
+                                (c >> 16) as u8,
+                                (c >> 24) as u8,
+                                c as u8,
+                            ]));
                         }
-                        let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
-                        let si = base + sx;
-                        let c = palette[src[si] as usize];
-                        dst[row + dx] = u32::from_ne_bytes([
-                            (c >> 8) as u8,
-                            (c >> 16) as u8,
-                            (c >> 24) as u8,
-                            c as u8,
-                        ]);
                     }
+                    Self::render_rgba(dst, dst_w, dst_h, &rgba, src_w, src_h);
+                } else {
+                    let source_size = LogicalSize {
+                        width: src_w,
+                        height: src_h,
+                    };
+                    let mut filter = FilterType::NtscComposite.generate(source_size);
+                    let ntsc_w = filter.logical_size().width;
+                    let ntsc_h = filter.logical_size().height;
+                    let ntsc_phys = filter.physical_size();
+
+                    let mut collector = RgbaCollector {
+                        buf: Vec::with_capacity(ntsc_w * ntsc_h),
+                    };
+                    for y in 0..src_h {
+                        let base = y * src_stride;
+                        for x in 0..src_w {
+                            filter.push(src[base + x], &mut collector);
+                        }
+                    }
+                    Self::render_rgba(
+                        dst,
+                        dst_w,
+                        dst_h,
+                        &collector.buf,
+                        ntsc_phys.width as usize,
+                        ntsc_phys.height as usize,
+                    );
                 }
             }
         }
@@ -203,8 +258,6 @@ impl GpuFactory for SoftbufferFactory {
         config: &RendererConfig,
         _display_handle: raw_window_handle::RawDisplayHandle,
     ) -> Result<Box<dyn GpuRenderer>, RendererError> {
-        Ok(Box::new(SoftbufferRenderer::new(
-            config.render_profile.clone(),
-        )))
+        Ok(Box::new(SoftbufferRenderer::new(&config.render_profile)))
     }
 }
