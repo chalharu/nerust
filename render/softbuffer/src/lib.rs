@@ -74,9 +74,12 @@ impl SoftbufferRenderer {
         src_w: usize,
         src_h: usize,
     ) {
+        if src_w == 0 || src_h == 0 {
+            return;
+        }
         let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
-        let render_w = (src_w as f64 * scale) as usize;
-        let render_h = (src_h as f64 * scale) as usize;
+        let render_w = (src_w as f64 * scale).max(1.0) as usize;
+        let render_h = (src_h as f64 * scale).max(1.0) as usize;
         let off_x = (dst_w - render_w) / 2;
         let off_y = (dst_h - render_h) / 2;
 
@@ -94,7 +97,7 @@ impl SoftbufferRenderer {
                     continue;
                 }
                 let sx = ((dx - off_x) * src_w / render_w).min(src_w - 1);
-                dst[row + dx] = rgba[src_row + sx];
+                dst[row + dx] = rgba.get(src_row + sx).copied().unwrap_or(0);
             }
         }
     }
