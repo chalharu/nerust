@@ -146,5 +146,3 @@ impl AudioBackendFactory for CubebFactory {
             .map(|a| Box::new(a) as Box<dyn AudioBackend>)
     }
 }
-
-pub static CUBEB: CubebFactory = CubebFactory;
