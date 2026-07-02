@@ -49,7 +49,7 @@ impl FilterFunc for RgbaCollector<'_> {
 pub struct SoftbufferRenderer {
     ctx: Option<Context<WindowHandlePair>>,
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
-    ntsc_active: bool,
+    ntsc_packed_rgba8: Option<Box<[u8]>>,
     size: SurfaceSize,
     rgba: Vec<u32>,
 }
@@ -62,7 +62,7 @@ impl SoftbufferRenderer {
         Self {
             ctx: None,
             surface: None,
-            ntsc_active: profile.frame_format
+            ntsc_packed_rgba8: profile.ntsc_packed_rgba8.clone(),
             size: SurfaceSize::new(0, 0),
             rgba: Vec::new(),
         }
@@ -128,7 +128,7 @@ impl GpuRenderer for SoftbufferRenderer {
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        self.ntsc_active = profile.ntsc_packed_rgba8.is_some();
+        self.ntsc_packed_rgba8 = profile.ntsc_packed_rgba8.clone();
         Ok(())
     }
 
@@ -165,9 +165,11 @@ impl GpuRenderer for SoftbufferRenderer {
                         let dst_index = y * dst_w + x;
 
                         // Center the source pixel coordinates based on the destination size and scaling factors
-                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale) as isize
+                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5)
+                            as isize
                             + (src_w >> 1) as isize;
-                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale) as isize
+                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5)
+                            as isize
                             + (src_h >> 1) as isize;
                         if src_x < 0
                             || src_x >= src_w as isize
@@ -189,41 +191,41 @@ impl GpuRenderer for SoftbufferRenderer {
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
-                if !self.ntsc_active {
-                    for y in 0..dst_h {
-                        for x in 0..dst_w {
-                            let dst_index = y * dst_w + x;
+                // if self.ntsc_packed_rgba8.is_none() {
+                for y in 0..dst_h {
+                    for x in 0..dst_w {
+                        let dst_index = y * dst_w + x;
 
-                            // Center the source pixel coordinates based on the destination size and scaling factors
-                            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale)
-                                as isize
-                                + (src_w >> 1) as isize;
-                            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale)
-                                as isize
-                                + (src_h >> 1) as isize;
-                            if src_x < 0
-                                || src_x >= src_w as isize
-                                || src_y < 0
-                                || src_y >= src_h as isize
-                            {
-                                dst[dst_index] = 0; // Fill with black if out of bounds
-                                continue;
-                            }
-                            let src_index = src_y as usize * src_stride + src_x as usize;
-                            let c = palette[src[src_index] as usize];
-
-                            // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
-                            dst[dst_index] = c.rotate_right(8);
+                        // Center the source pixel coordinates based on the destination size and scaling factors
+                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5)
+                            as isize
+                            + (src_w >> 1) as isize;
+                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5)
+                            as isize
+                            + (src_h >> 1) as isize;
+                        if src_x < 0
+                            || src_x >= src_w as isize
+                            || src_y < 0
+                            || src_y >= src_h as isize
+                        {
+                            dst[dst_index] = 0; // Fill with black if out of bounds
+                            continue;
                         }
+                        let src_index = src_y as usize * src_stride + src_x as usize;
+                        let c = palette[src[src_index] as usize];
+
+                        // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
+                        dst[dst_index] = c.rotate_right(8);
                     }
-                } else {
-                    // let source_size = LogicalSize {
-                    //     width: src_w,
-                    //     height: src_h,
-                    // };
-                    // let mut filter = FilterType::NtscComposite.generate(source_size);
-                    // filter.push(value, filter_func);
                 }
+                // } else {
+                // let source_size = LogicalSize {
+                //     width: src_w,
+                //     height: src_h,
+                // };
+                // let mut filter = FilterType::NtscComposite.generate(source_size);
+                // filter.push(value, filter_func);
+                // }
             }
         }
 
