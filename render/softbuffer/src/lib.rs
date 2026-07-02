@@ -35,8 +35,130 @@ pub struct SoftbufferRenderer {
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
     render_profile: VideoRenderProfile,
     size: SurfaceSize,
-    x_lut: Vec<Option<usize>>,
-    y_lut: Vec<Option<usize>>,
+    lut: LutEntry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResizeKernel {
+    NearestNeighbor,
+    Bilinear,
+}
+
+// LUT (Look-Up Table) entry
+#[derive(Debug)]
+struct LutEntry {
+    x_lut: Vec<Vec<Option<usize>>>,
+    y_lut: Vec<Vec<Option<usize>>>,
+    kernel: ResizeKernel,
+}
+
+impl LutEntry {
+    fn new() -> Self {
+        Self {
+            x_lut: Vec::new(),
+            y_lut: Vec::new(),
+            kernel: ResizeKernel::NearestNeighbor,
+        }
+    }
+
+    fn inv_scale(
+        source_size: SurfaceSize,
+        source_aspect_ratio: f32,
+        destination_size: SurfaceSize,
+    ) -> (f32, f32) {
+        let window_aspect = destination_size.width as f32 / destination_size.height as f32;
+        let content_aspect = source_size.width as f32 / source_size.height as f32;
+
+        let base_scale = if window_aspect > source_aspect_ratio {
+            // Window is wider than content → letterbox (black bars on sides)
+            source_size.height as f32 / destination_size.height as f32
+        } else {
+            // Window is taller than content → pillarbox (black bars on top/bottom)
+            source_size.width as f32 / destination_size.width as f32
+        };
+        if content_aspect > source_aspect_ratio {
+            (
+                base_scale,
+                base_scale * (content_aspect / source_aspect_ratio),
+            )
+        } else {
+            (
+                base_scale * (source_aspect_ratio / content_aspect),
+                base_scale,
+            )
+        }
+    }
+
+    fn lut_reserve(lut: &mut Vec<Vec<Option<usize>>>, len: usize, inner_len: usize) {
+        for (i, inner) in lut.iter_mut().enumerate() {
+            if i < len {
+                inner.reserve_exact(inner_len);
+                inner.clear();
+            }
+        }
+        while lut.len() < len {
+            lut.push(Vec::with_capacity(inner_len));
+        }
+        if lut.len() > len {
+            lut.truncate(len);
+        }
+    }
+
+    fn resize_lut_nearest_neighbor(
+        &mut self,
+        dst_w: usize,
+        dst_h: usize,
+        src_w: usize,
+        src_h: usize,
+        scale: (f32, f32),
+    ) {
+        Self::lut_reserve(&mut self.x_lut, 1, dst_w);
+        Self::lut_reserve(&mut self.y_lut, 1, dst_h);
+
+        for x in 0..dst_w {
+            // Center the source pixel coordinates based on the destination size and scaling factors
+            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0 + 0.5) as isize
+                + (src_w >> 1) as isize;
+            if src_x < 0 || src_x >= src_w as isize {
+                self.x_lut[0].push(None);
+            } else {
+                self.x_lut[0].push(Some(src_x as usize));
+            }
+        }
+        for y in 0..dst_h {
+            // Center the source pixel coordinates based on the destination size and scaling factors
+            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1 + 0.5) as isize
+                + (src_h >> 1) as isize;
+            if src_y < 0 || src_y >= src_h as isize {
+                self.y_lut[0].push(None);
+            } else {
+                self.y_lut[0].push(Some(src_y as usize));
+            }
+        }
+    }
+
+    fn resize_lut(
+        &mut self,
+        source_size: SurfaceSize,
+        source_aspect_ratio: f32,
+        destination_size: SurfaceSize,
+    ) {
+        let dst_w = destination_size.width as usize;
+        let dst_h = destination_size.height as usize;
+        let src_w = source_size.width as usize;
+        let src_h = source_size.height as usize;
+
+        let scale = Self::inv_scale(source_size, source_aspect_ratio, destination_size);
+
+        match self.kernel {
+            ResizeKernel::NearestNeighbor => {
+                self.resize_lut_nearest_neighbor(dst_w, dst_h, src_w, src_h, scale);
+            }
+            ResizeKernel::Bilinear => {
+                // self.resize_lut_bilinear(dst_w, dst_h, src_w, src_h, scale);
+            }
+        }
+    }
 }
 
 unsafe impl Send for SoftbufferRenderer {}
@@ -49,57 +171,19 @@ impl SoftbufferRenderer {
             surface: None,
             render_profile: profile.clone(),
             size: SurfaceSize::new(0, 0),
-            x_lut: Vec::new(),
-            y_lut: Vec::new(),
-        }
-    }
-
-    fn inv_scale(&self, src_width: u32, src_height: u32) -> f32 {
-        let window_aspect = self.size.width as f32 / self.size.height as f32;
-        let content_aspect = src_width as f32 / src_height as f32;
-
-        if window_aspect > content_aspect {
-            // Window is wider than content → letterbox (black bars on sides)
-            src_height as f32 / self.size.height as f32
-        } else {
-            // Window is taller than content → pillarbox (black bars on top/bottom)
-            src_width as f32 / self.size.width as f32
+            lut: LutEntry::new(),
         }
     }
 
     fn resize_lut(&mut self) {
-        let dst_w = self.size.width as usize;
-        let dst_h = self.size.height as usize;
-        let src_w = self.render_profile.source_logical_size.width as usize;
-        let src_h = self.render_profile.source_logical_size.height as usize;
-
-        self.x_lut.reserve_exact(dst_w);
-        self.y_lut.reserve_exact(dst_h);
-        self.x_lut.clear();
-        self.y_lut.clear();
-
-        let scale = self.inv_scale(src_w as u32, src_h as u32);
-
-        for x in 0..dst_w {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5) as isize
-                + (src_w >> 1) as isize;
-            if src_x < 0 || src_x >= src_w as isize {
-                self.x_lut.push(None);
-            } else {
-                self.x_lut.push(Some(src_x as usize));
-            }
-        }
-        for y in 0..dst_h {
-            // Center the source pixel coordinates based on the destination size and scaling factors
-            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5) as isize
-                + (src_h >> 1) as isize;
-            if src_y < 0 || src_y >= src_h as isize {
-                self.y_lut.push(None);
-            } else {
-                self.y_lut.push(Some(src_y as usize));
-            }
-        }
+        self.lut.resize_lut(
+            SurfaceSize {
+                width: self.render_profile.source_logical_size.width as u32,
+                height: self.render_profile.source_logical_size.height as u32,
+            },
+            1.0, // TODO: NTSCフィルタ適用後はアスペクト比が変わるので、ここで計算する必要がある
+            self.size.clone(),
+        );
     }
 }
 
@@ -190,53 +274,74 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
-                for (y, &src_y) in self.y_lut.iter().enumerate() {
-                    let dst_y_index = y * dst_w;
-                    let Some(src_y) = src_y else {
-                        for x in 0..dst_w {
-                            dst[dst_y_index + x] = 0;
-                        }
-                        continue;
-                    };
-                    let src_y_index = src_y * src_stride;
-                    for (x, &src_x) in self.x_lut.iter().enumerate() {
-                        let dst_index = dst_y_index + x;
-                        let Some(src_x) = src_x else {
-                            dst[dst_index] = 0;
+                for (i, (x_lut, y_lut)) in
+                    self.lut.x_lut.iter().zip(self.lut.y_lut.iter()).enumerate()
+                {
+                    for (y, &src_y) in y_lut.iter().enumerate() {
+                        let dst_y_index = y * dst_w;
+                        let Some(src_y) = src_y else {
+                            if i == 0 {
+                                for x in 0..dst_w {
+                                    dst[dst_y_index + x] = 0;
+                                }
+                            }
                             continue;
                         };
-                        let src_index = src_y_index + src_x * 4;
+                        let src_y_index = src_y * src_stride;
+                        for (x, &src_x) in x_lut.iter().enumerate() {
+                            let dst_index = dst_y_index + x;
+                            let Some(src_x) = src_x else {
+                                dst[dst_index] = 0;
+                                continue;
+                            };
+                            let src_index = src_y_index + src_x * 4;
 
-                        dst[dst_index] = u32::from_le_bytes([
-                            src[src_index + 2], // Blue
-                            src[src_index + 1], // Green
-                            src[src_index],     // Red
-                            src[src_index + 3], // Alpha
-                        ]);
+                            let c = u32::from_le_bytes([
+                                src[src_index + 2], // Blue
+                                src[src_index + 1], // Green
+                                src[src_index],     // Red
+                                src[src_index + 3], // Alpha
+                            ]);
+                            if i == 0 {
+                                dst[dst_index] = c;
+                            } else {
+                                dst[dst_index] += c;
+                            }
+                        }
                     }
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
                 // if self.ntsc_packed_rgba8.is_none() {
-                for (y, &src_y) in self.y_lut.iter().enumerate() {
-                    let dst_y_index = y * dst_w;
-                    let Some(src_y) = src_y else {
-                        for x in 0..dst_w {
-                            dst[dst_y_index + x] = 0;
-                        }
-                        continue;
-                    };
-                    let src_y_index = src_y * src_stride;
-                    for (x, &src_x) in self.x_lut.iter().enumerate() {
-                        let dst_index = dst_y_index + x;
-                        let Some(src_x) = src_x else {
-                            dst[dst_index] = 0;
+                for (i, (x_lut, y_lut)) in
+                    self.lut.x_lut.iter().zip(self.lut.y_lut.iter()).enumerate()
+                {
+                    for (y, &src_y) in y_lut.iter().enumerate() {
+                        let dst_y_index = y * dst_w;
+                        let Some(src_y) = src_y else {
+                            if i == 0 {
+                                for x in 0..dst_w {
+                                    dst[dst_y_index + x] = 0;
+                                }
+                            }
                             continue;
                         };
-                        let src_index = src_y_index + src_x;
-                        let c = palette[src[src_index] as usize];
-                        // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
-                        dst[dst_index] = c.rotate_right(8);
+                        let src_y_index = src_y * src_stride;
+                        for (x, &src_x) in x_lut.iter().enumerate() {
+                            let dst_index = dst_y_index + x;
+                            let Some(src_x) = src_x else {
+                                dst[dst_index] = 0;
+                                continue;
+                            };
+                            let src_index = src_y_index + src_x;
+                            let c = palette[src[src_index] as usize];
+                            // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
+                            if i == 0 {
+                                dst[dst_index] = c.rotate_right(8);
+                            } else {
+                                dst[dst_index] += c.rotate_right(8);
+                            }
+                        }
                     }
                 }
                 // } else {
