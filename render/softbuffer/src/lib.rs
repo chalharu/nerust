@@ -49,6 +49,7 @@ enum ResizeKernel {
 struct LutEntry {
     x_lut: Vec<Vec<Option<usize>>>,
     y_lut: Vec<Vec<Option<usize>>>,
+    weight_lut: Vec<Vec<Option<usize>>>, // 0 - 255 で重みを表す
     kernel: ResizeKernel,
 }
 
@@ -57,6 +58,7 @@ impl LutEntry {
         Self {
             x_lut: Vec::new(),
             y_lut: Vec::new(),
+            weight_lut: Vec::new(),
             kernel: ResizeKernel::NearestNeighbor,
         }
     }
@@ -114,6 +116,7 @@ impl LutEntry {
     ) {
         Self::lut_reserve(&mut self.x_lut, 1, dst_w);
         Self::lut_reserve(&mut self.y_lut, 1, dst_h);
+        Self::lut_reserve(&mut self.weight_lut, 1, dst_h * dst_w);
 
         for x in 0..dst_w {
             // Center the source pixel coordinates based on the destination size and scaling factors
@@ -133,6 +136,63 @@ impl LutEntry {
                 self.y_lut[0].push(None);
             } else {
                 self.y_lut[0].push(Some(src_y as usize));
+            }
+        }
+        for y in 0..dst_h {
+            for x in 0..dst_w {
+                if self.x_lut[0][x].is_none() || self.y_lut[0][y].is_none() {
+                    self.weight_lut[0].push(None);
+                } else {
+                    self.weight_lut[0].push(Some(255));
+                }
+            }
+        }
+    }
+
+    fn resize_lut_bilinear(
+        &mut self,
+        dst_w: usize,
+        dst_h: usize,
+        src_w: usize,
+        src_h: usize,
+        scale: (f32, f32),
+    ) {
+        Self::lut_reserve(&mut self.x_lut, 4, dst_w);
+        Self::lut_reserve(&mut self.y_lut, 4, dst_h);
+        Self::lut_reserve(&mut self.weight_lut, 4, dst_h * dst_w);
+
+        for y in 0..dst_h {
+            let src_y =
+                ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1) + (src_h >> 1) as f32;
+            let diff_y = src_y - src_y.floor();
+            let base_y = src_y.floor() as isize;
+            for x in 0..dst_w {
+                let src_x =
+                    ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0) + (src_w >> 1) as f32;
+                let diff_x = src_x - src_x.floor();
+                let base_x = src_x.floor() as isize;
+
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let src_x = base_x + dx;
+                        let src_y = base_y + dy;
+                        let d = (dy * 2 + dx) as usize;
+                        if src_x < 0
+                            || src_x >= src_w as isize
+                            || src_y < 0
+                            || src_y >= src_h as isize
+                        {
+                            self.x_lut[d].push(None);
+                            self.y_lut[d].push(None);
+                            self.weight_lut[d].push(None);
+                        } else {
+                            self.x_lut[d].push(Some(src_x as usize));
+                            self.y_lut[d].push(Some(src_y as usize));
+                            let weight = ((1.0 - diff_x) * (1.0 - diff_y) * 255.0) as usize;
+                            self.weight_lut[d].push(Some(weight));
+                        }
+                    }
+                }
             }
         }
     }
