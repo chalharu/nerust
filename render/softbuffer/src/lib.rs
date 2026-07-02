@@ -1,10 +1,9 @@
 use std::num::NonZeroU32;
 
-use log::warn;
+use log::{error, warn};
 use nerust_render_base::{
-    FrameBuffer, GpuFactory, GpuRenderer, LogicalSize, OpaqueError, PixelFormat, RGB, RenderResult,
-    RendererConfig, RendererError, SurfaceSize, VideoRenderProfile,
-    filter::{FilterFunc, FilterType},
+    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat, RenderResult, RendererConfig,
+    RendererError, SurfaceSize, VideoRenderProfile,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -30,28 +29,14 @@ impl HasDisplayHandle for WindowHandlePair {
     }
 }
 
-struct RgbaCollector<'a> {
-    buf: &'a mut Vec<u32>,
-}
-
-impl FilterFunc for RgbaCollector<'_> {
-    fn filter_func(&mut self, color: RGB) {
-        self.buf.push(u32::from_ne_bytes([
-            color.blue,
-            color.green,
-            color.red,
-            u8::MAX,
-        ]));
-    }
-}
-
 #[derive(Debug)]
 pub struct SoftbufferRenderer {
     ctx: Option<Context<WindowHandlePair>>,
     surface: Option<Surface<WindowHandlePair, WindowHandlePair>>,
-    ntsc_packed_rgba8: Option<Box<[u8]>>,
+    render_profile: VideoRenderProfile,
     size: SurfaceSize,
-    rgba: Vec<u32>,
+    x_lut: Vec<Option<usize>>,
+    y_lut: Vec<Option<usize>>,
 }
 
 unsafe impl Send for SoftbufferRenderer {}
@@ -62,9 +47,10 @@ impl SoftbufferRenderer {
         Self {
             ctx: None,
             surface: None,
-            ntsc_packed_rgba8: profile.ntsc_packed_rgba8.clone(),
+            render_profile: profile.clone(),
             size: SurfaceSize::new(0, 0),
-            rgba: Vec::new(),
+            x_lut: Vec::new(),
+            y_lut: Vec::new(),
         }
     }
 
@@ -78,6 +64,41 @@ impl SoftbufferRenderer {
         } else {
             // Window is taller than content → pillarbox (black bars on top/bottom)
             src_width as f32 / self.size.width as f32
+        }
+    }
+
+    fn resize_lut(&mut self) {
+        let dst_w = self.size.width as usize;
+        let dst_h = self.size.height as usize;
+        let src_w = self.render_profile.source_logical_size.width as usize;
+        let src_h = self.render_profile.source_logical_size.height as usize;
+
+        self.x_lut.reserve_exact(dst_w);
+        self.y_lut.reserve_exact(dst_h);
+        self.x_lut.clear();
+        self.y_lut.clear();
+
+        let scale = self.inv_scale(src_w as u32, src_h as u32);
+
+        for x in 0..dst_w {
+            // Center the source pixel coordinates based on the destination size and scaling factors
+            let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5) as isize
+                + (src_w >> 1) as isize;
+            if src_x < 0 || src_x >= src_w as isize {
+                self.x_lut.push(None);
+            } else {
+                self.x_lut.push(Some(src_x as usize));
+            }
+        }
+        for y in 0..dst_h {
+            // Center the source pixel coordinates based on the destination size and scaling factors
+            let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5) as isize
+                + (src_h >> 1) as isize;
+            if src_y < 0 || src_y >= src_h as isize {
+                self.y_lut.push(None);
+            } else {
+                self.y_lut.push(Some(src_y as usize));
+            }
         }
     }
 }
@@ -125,18 +146,27 @@ impl GpuRenderer for SoftbufferRenderer {
                 warn!("softbuffer resize failed: {e}");
             }
         }
+        self.resize_lut();
     }
 
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        self.ntsc_packed_rgba8 = profile.ntsc_packed_rgba8.clone();
+        self.render_profile = profile.clone();
+        self.resize_lut();
         Ok(())
     }
 
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
-        let src_w = frame.width();
-        let src_h = frame.height();
-        let scale = self.inv_scale(src_w as u32, src_h as u32);
-
+        if frame.width() != self.render_profile.source_logical_size.width
+            || frame.height() != self.render_profile.source_logical_size.height
+        {
+            error!(
+                "Frame size mismatch: expected {}x{}, got {}x{}",
+                self.render_profile.source_logical_size.width,
+                self.render_profile.source_logical_size.height,
+                frame.width(),
+                frame.height()
+            );
+        }
         let Some(surface) = self.surface.as_mut() else {
             return RenderResult::Skipped;
         };
@@ -160,60 +190,39 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
-                for y in 0..dst_h {
+                for (y, &src_y) in self.y_lut.iter().flatten().enumerate() {
                     for x in 0..dst_w {
                         let dst_index = y * dst_w + x;
 
-                        // Center the source pixel coordinates based on the destination size and scaling factors
-                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5)
-                            as isize
-                            + (src_w >> 1) as isize;
-                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5)
-                            as isize
-                            + (src_h >> 1) as isize;
-                        if src_x < 0
-                            || src_x >= src_w as isize
-                            || src_y < 0
-                            || src_y >= src_h as isize
-                        {
+                        if let Some(src_x) = self.x_lut[x] {
+                            let src_index = src_y * src_stride + src_x * 4;
+                            dst[dst_index] = u32::from_le_bytes([
+                                src[src_index + 2], // Blue
+                                src[src_index + 1], // Green
+                                src[src_index],     // Red
+                                src[src_index + 3], // Alpha
+                            ]);
+                        } else {
                             dst[dst_index] = 0; // Fill with black if out of bounds
-                            continue;
                         }
-                        let src_index = src_y as usize * src_stride + src_x as usize * 4;
-
-                        dst[dst_index] = u32::from_le_bytes([
-                            src[src_index + 2], // Blue
-                            src[src_index + 1], // Green
-                            src[src_index],     // Red
-                            src[src_index + 3], // Alpha
-                        ]);
                     }
                 }
             }
             PixelFormat::PaletteIndex { palette } => {
                 // if self.ntsc_packed_rgba8.is_none() {
-                for y in 0..dst_h {
-                    for x in 0..dst_w {
-                        let dst_index = y * dst_w + x;
-
-                        // Center the source pixel coordinates based on the destination size and scaling factors
-                        let src_x = ((x as isize - (dst_w >> 1) as isize) as f32 * scale + 0.5)
-                            as isize
-                            + (src_w >> 1) as isize;
-                        let src_y = ((y as isize - (dst_h >> 1) as isize) as f32 * scale + 0.5)
-                            as isize
-                            + (src_h >> 1) as isize;
-                        if src_x < 0
-                            || src_x >= src_w as isize
-                            || src_y < 0
-                            || src_y >= src_h as isize
-                        {
-                            dst[dst_index] = 0; // Fill with black if out of bounds
+                for (y, &src_y) in self.y_lut.iter().enumerate() {
+                    let Some(src_y) = src_y else {
+                        continue;
+                    };
+                    let src_y_index = src_y * src_stride;
+                    let dst_y_index = y * dst_w;
+                    for (x, &src_x) in self.x_lut.iter().enumerate() {
+                        let Some(src_x) = src_x else {
                             continue;
-                        }
-                        let src_index = src_y as usize * src_stride + src_x as usize;
+                        };
+                        let dst_index = dst_y_index + x;
+                        let src_index = src_y_index + src_x;
                         let c = palette[src[src_index] as usize];
-
                         // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
                         dst[dst_index] = c.rotate_right(8);
                     }
