@@ -191,16 +191,20 @@ impl GpuRenderer for SoftbufferRenderer {
         match frame.format() {
             PixelFormat::Rgba => {
                 for (y, &src_y) in self.y_lut.iter().enumerate() {
+                    let dst_y_index = y * dst_w;
                     let Some(src_y) = src_y else {
+                        for x in 0..dst_w {
+                            dst[dst_y_index + x] = 0;
+                        }
                         continue;
                     };
                     let src_y_index = src_y * src_stride;
-                    let dst_y_index = y * dst_w;
                     for (x, &src_x) in self.x_lut.iter().enumerate() {
+                        let dst_index = dst_y_index + x;
                         let Some(src_x) = src_x else {
+                            dst[dst_index] = 0;
                             continue;
                         };
-                        let dst_index = dst_y_index + x;
                         let src_index = src_y_index + src_x * 4;
 
                         dst[dst_index] = u32::from_le_bytes([
@@ -215,16 +219,20 @@ impl GpuRenderer for SoftbufferRenderer {
             PixelFormat::PaletteIndex { palette } => {
                 // if self.ntsc_packed_rgba8.is_none() {
                 for (y, &src_y) in self.y_lut.iter().enumerate() {
+                    let dst_y_index = y * dst_w;
                     let Some(src_y) = src_y else {
+                        for x in 0..dst_w {
+                            dst[dst_y_index + x] = 0;
+                        }
                         continue;
                     };
                     let src_y_index = src_y * src_stride;
-                    let dst_y_index = y * dst_w;
                     for (x, &src_x) in self.x_lut.iter().enumerate() {
+                        let dst_index = dst_y_index + x;
                         let Some(src_x) = src_x else {
+                            dst[dst_index] = 0;
                             continue;
                         };
-                        let dst_index = dst_y_index + x;
                         let src_index = src_y_index + src_x;
                         let c = palette[src[src_index] as usize];
                         // Convert from 0xRRGGBBAA to 0xAARRGGBB for softbuffer
