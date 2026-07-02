@@ -65,10 +65,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev \
-            libopenal-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -84,6 +84,8 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -108,8 +110,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev \
             libepoxy-dev \
-            libopenal-dev \
-            libasound2-dev
+            libasound2-dev \
+            libcubeb-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -125,6 +127,8 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust (GTK + opengl)
         run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -18,16 +18,6 @@ pub trait AudioBackend: Send {
 ///
 /// Implementations should be zero-sized types (ZST) stored as `&'static`
 /// references so that registration requires no heap allocation.
-///
-/// # Safety (Send + Sync)
-///
-/// `Send + Sync` is required because factories are stored in a static
-/// [`OnceLock`] and accessed from any thread. `probe()` and `build()` are
-/// called under `&self` and must not rely on mutable state.
-/// Implementations that delegate to platform APIs (cpal, OpenAL, etc.) must
-/// ensure those calls are safe under shared ownership — in practice they are
-/// called at most once during registry initialisation, so contention is
-/// impossible.
 pub trait AudioBackendFactory: Send + Sync {
     fn name(&self) -> &'static str;
     /// Returns the sample rates this backend supports on the current hardware.
@@ -51,7 +41,7 @@ pub struct AudioBackendRegistry {
 
 struct BackendEntry {
     priority: u8,
-    factory: &'static dyn AudioBackendFactory,
+    factory: Box<dyn AudioBackendFactory>,
 }
 
 impl AudioBackendRegistry {
@@ -59,7 +49,7 @@ impl AudioBackendRegistry {
         Self::default()
     }
 
-    pub fn register(&mut self, priority: u8, factory: &'static dyn AudioBackendFactory) {
+    pub fn register(&mut self, priority: u8, factory: Box<dyn AudioBackendFactory>) {
         self.entries.push(BackendEntry { priority, factory });
     }
 
