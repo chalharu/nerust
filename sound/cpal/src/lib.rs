@@ -199,6 +199,3 @@ impl AudioBackendFactory for CpalFactory {
             .map(|a| Box::new(a) as Box<dyn AudioBackend>)
     }
 }
-
-/// Static singleton for use with [`AudioBackendRegistry`](nerust_core_traits::audio::AudioBackendRegistry).
-pub static CPAL: CpalFactory = CpalFactory;
