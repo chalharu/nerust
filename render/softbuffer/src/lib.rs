@@ -190,21 +190,25 @@ impl GpuRenderer for SoftbufferRenderer {
 
         match frame.format() {
             PixelFormat::Rgba => {
-                for (y, &src_y) in self.y_lut.iter().flatten().enumerate() {
-                    for x in 0..dst_w {
-                        let dst_index = y * dst_w + x;
+                for (y, &src_y) in self.y_lut.iter().enumerate() {
+                    let Some(src_y) = src_y else {
+                        continue;
+                    };
+                    let src_y_index = src_y * src_stride;
+                    let dst_y_index = y * dst_w;
+                    for (x, &src_x) in self.x_lut.iter().enumerate() {
+                        let Some(src_x) = src_x else {
+                            continue;
+                        };
+                        let dst_index = dst_y_index + x;
+                        let src_index = src_y_index + src_x * 4;
 
-                        if let Some(src_x) = self.x_lut[x] {
-                            let src_index = src_y * src_stride + src_x * 4;
-                            dst[dst_index] = u32::from_le_bytes([
-                                src[src_index + 2], // Blue
-                                src[src_index + 1], // Green
-                                src[src_index],     // Red
-                                src[src_index + 3], // Alpha
-                            ]);
-                        } else {
-                            dst[dst_index] = 0; // Fill with black if out of bounds
-                        }
+                        dst[dst_index] = u32::from_le_bytes([
+                            src[src_index + 2], // Blue
+                            src[src_index + 1], // Green
+                            src[src_index],     // Red
+                            src[src_index + 3], // Alpha
+                        ]);
                     }
                 }
             }
