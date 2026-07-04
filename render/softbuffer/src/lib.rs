@@ -311,11 +311,7 @@ impl SoftbufferRenderer {
                     })
                     .map(|v| u32::from_ne_bytes(v)); // NEを使うことで、速度を優先する
 
-                let Some(c) = c else {
-                    resize_buffer[dst_index] = 0;
-                    continue;
-                };
-                resize_buffer[dst_index] = c;
+                resize_buffer[dst_index] = c.unwrap_or(0);
             }
         }
 
@@ -353,11 +349,7 @@ impl SoftbufferRenderer {
                     })
                     .map(|v| u32::from_le_bytes(v));
 
-                let Some(c) = c else {
-                    dst[dst_index] = 0;
-                    continue;
-                };
-                dst[dst_index] = c;
+                dst[dst_index] = c.unwrap_or(0);
             }
         }
     }
