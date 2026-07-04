@@ -146,8 +146,14 @@ impl LutEntry {
                 ((x as isize - (dst_w >> 1) as isize) as f32 * scale.0 + 0.5) + (src_w >> 1) as f32;
             let src_x_floor = src_x.floor() as isize;
             let src_x_ceil = src_x.ceil() as isize;
-            let mut weight_floor = ((src_x_ceil as f32 - src_x) * 256.0 + 0.5) as u16;
-            let mut weight_ceil = ((src_x - src_x_floor as f32) * 256.0 + 0.5) as u16;
+            let (mut weight_floor, mut weight_ceil) = if src_x_ceil == src_x_floor {
+                (256, 0) // 同一のピクセルに対しては、floor側に全ての重みを割り当てる
+            } else {
+                (
+                    ((src_x_ceil as f32 - src_x) * 256.0 + 0.5) as u16,
+                    ((src_x - src_x_floor as f32) * 256.0 + 0.5) as u16,
+                )
+            };
 
             if src_x_floor < 0 || src_x_floor >= src_w as isize {
                 weight_floor = 0;
@@ -294,10 +300,10 @@ impl SoftbufferRenderer {
                         let src_val = src_f(src_index);
                         // 重みを適用する
                         [
-                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
-                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
-                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
-                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
+                            ((src_val[1] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[2] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[3] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[0] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
@@ -332,10 +338,10 @@ impl SoftbufferRenderer {
                         let src_val = resize_buffer[src_index].to_ne_bytes(); // 格納時にNEを使ったので、ここでもNEを使う
                         // 重みを適用する, 横方向に拡大した結果を縦方向に拡大するので、横方向の色順序はそのまま使う
                         [
-                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
-                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
-                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
-                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
+                            ((src_val[0] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[1] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[2] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[3] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
