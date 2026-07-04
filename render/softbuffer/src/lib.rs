@@ -268,6 +268,99 @@ impl SoftbufferRenderer {
             0,
         );
     }
+
+    fn rendering<F: Fn(usize) -> [u8; 4]>(
+        dst: &mut [u32],
+        src_stride: usize,
+        src_h: usize,
+        dst_w: usize,
+        dst_h: usize,
+        src_f: F,
+        lut: &LutEntry,
+        resize_buffer: &mut [u32],
+    ) {
+        // 横方向に拡大
+        for y in 0..src_h {
+            let dst_y_index = y * dst_w;
+            let src_y_index = y * src_stride;
+            for x in 0..dst_w {
+                let dst_index = dst_y_index + x;
+                let lut_index = x * lut.lut_pixel_size();
+                let c = lut.x_lut[lut_index..lut_index + lut.lut_pixel_size()]
+                    .into_iter()
+                    .filter_map(|&x| x)
+                    .map(|(i, w)| {
+                        let src_index = src_y_index + i as usize;
+                        let src_val = src_f(src_index);
+                        // 重みを適用する
+                        [
+                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
+                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
+                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
+                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
+                        ]
+                    })
+                    .reduce(|acc, val| {
+                        // 4チャンネルの色を加算する
+                        [
+                            acc[0].saturating_add(val[0]), // Blue
+                            acc[1].saturating_add(val[1]), // Green
+                            acc[2].saturating_add(val[2]), // Red
+                            acc[3].saturating_add(val[3]), // Alpha
+                        ]
+                    })
+                    .map(|v| u32::from_ne_bytes(v)); // NEを使うことで、速度を優先する
+
+                let Some(c) = c else {
+                    resize_buffer[dst_index] = 0;
+                    continue;
+                };
+                resize_buffer[dst_index] = c;
+            }
+        }
+
+        // 縦方向に拡大
+        for y in 0..dst_h {
+            let lut_index = y * lut.lut_pixel_size();
+            let lut_values: Vec<_> = lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()]
+                .into_iter()
+                .filter_map(|&x| x)
+                .collect();
+            for x in 0..dst_w {
+                let dst_index = y * dst_w + x;
+                let c = lut_values
+                    .iter()
+                    .copied()
+                    .map(|(i, w)| {
+                        let src_index = i as usize * dst_w + x;
+                        let src_val = resize_buffer[src_index].to_ne_bytes(); // 格納時にNEを使ったので、ここでもNEを使う
+                        // 重みを適用する, 横方向に拡大した結果を縦方向に拡大するので、横方向の色順序はそのまま使う
+                        [
+                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
+                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
+                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
+                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
+                        ]
+                    })
+                    .reduce(|acc, val| {
+                        // 4チャンネルの色を加算する
+                        [
+                            acc[0].saturating_add(val[0]), // Blue
+                            acc[1].saturating_add(val[1]), // Green
+                            acc[2].saturating_add(val[2]), // Red
+                            acc[3].saturating_add(val[3]), // Alpha
+                        ]
+                    })
+                    .map(|v| u32::from_le_bytes(v));
+
+                let Some(c) = c else {
+                    dst[dst_index] = 0;
+                    continue;
+                };
+                dst[dst_index] = c;
+            }
+        }
+    }
 }
 
 impl GpuRenderer for SoftbufferRenderer {
@@ -357,88 +450,30 @@ impl GpuRenderer for SoftbufferRenderer {
         // let src_w = self.render_profile.source_logical_size.width as usize;
         let src_h = self.render_profile.source_logical_size.height as usize;
 
-        let src_f: Box<dyn Fn(usize) -> [u8; 4]> = match frame.format() {
-            PixelFormat::Rgba => Box::new(|i| src[i * 4..i * 4 + 4].try_into().unwrap()),
+        match frame.format() {
+            PixelFormat::Rgba => {
+                Self::rendering(
+                    dst,
+                    src_stride,
+                    src_h,
+                    dst_w,
+                    dst_h,
+                    move |i| src[i * 4..i * 4 + 4].try_into().unwrap(),
+                    &self.lut,
+                    &mut self.resize_buffer,
+                );
+            }
             PixelFormat::PaletteIndex { palette } => {
-                Box::new(|i| palette[src[i] as usize].to_le_bytes())
-            }
-        };
-
-        // 横方向に拡大
-        for y in 0..src_h {
-            let dst_y_index = y * dst_w;
-            let src_y_index = y * src_stride;
-            for x in 0..dst_w {
-                let dst_index = dst_y_index + x;
-                let lut_index = x * self.lut.lut_pixel_size();
-                let c = self.lut.x_lut[lut_index..lut_index + self.lut.lut_pixel_size()]
-                    .into_iter()
-                    .filter_map(|&x| x)
-                    .map(|(i, w)| {
-                        let src_index = src_y_index + i as usize;
-                        let src_val = src_f(src_index);
-                        // 重みを適用する
-                        [
-                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
-                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
-                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
-                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
-                        ]
-                    })
-                    .reduce(|acc, val| {
-                        // 4チャンネルの色を加算する
-                        [
-                            acc[0].saturating_add(val[0]), // Blue
-                            acc[1].saturating_add(val[1]), // Green
-                            acc[2].saturating_add(val[2]), // Red
-                            acc[3].saturating_add(val[3]), // Alpha
-                        ]
-                    })
-                    .map(|v| u32::from_le_bytes(v));
-
-                let Some(c) = c else {
-                    self.resize_buffer[dst_index] = 0;
-                    continue;
-                };
-                self.resize_buffer[dst_index] = c;
-            }
-        }
-
-        // 縦方向に拡大
-        for x in 0..dst_w {
-            for y in 0..dst_h {
-                let lut_index = y * self.lut.lut_pixel_size();
-                let dst_index = y * dst_w + x;
-                let c = self.lut.y_lut[lut_index..lut_index + self.lut.lut_pixel_size()]
-                    .into_iter()
-                    .filter_map(|&x| x)
-                    .map(|(i, w)| {
-                        let src_index = i as usize * dst_w + x;
-                        let src_val = self.resize_buffer[src_index].to_le_bytes();
-                        // 重みを適用する, 横方向に拡大した結果を縦方向に拡大するので、横方向の色順序はそのまま使う
-                        [
-                            ((src_val[0] as u16 * w as u16 + 0x80) >> 8) as u8, // Blue
-                            ((src_val[1] as u16 * w as u16 + 0x80) >> 8) as u8, // Green
-                            ((src_val[2] as u16 * w as u16 + 0x80) >> 8) as u8, // Red
-                            ((src_val[3] as u16 * w as u16 + 0x80) >> 8) as u8, // Alpha
-                        ]
-                    })
-                    .reduce(|acc, val| {
-                        // 4チャンネルの色を加算する
-                        [
-                            acc[0].saturating_add(val[0]), // Blue
-                            acc[1].saturating_add(val[1]), // Green
-                            acc[2].saturating_add(val[2]), // Red
-                            acc[3].saturating_add(val[3]), // Alpha
-                        ]
-                    })
-                    .map(|v| u32::from_le_bytes(v));
-
-                let Some(c) = c else {
-                    dst[dst_index] = 0;
-                    continue;
-                };
-                dst[dst_index] = c;
+                Self::rendering(
+                    dst,
+                    src_stride,
+                    src_h,
+                    dst_w,
+                    dst_h,
+                    move |i| palette[src[i] as usize].to_le_bytes(),
+                    &self.lut,
+                    &mut self.resize_buffer,
+                );
             }
         }
 
