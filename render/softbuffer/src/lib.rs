@@ -41,6 +41,7 @@ pub struct SoftbufferRenderer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResizeKernel {
+    #[allow(unused)]
     NearestNeighbor,
     Bilinear,
 }
@@ -185,8 +186,14 @@ impl LutEntry {
                 ((y as isize - (dst_h >> 1) as isize) as f32 * scale.1 + 0.5) + (src_h >> 1) as f32;
             let src_y_floor = src_y.floor() as isize;
             let src_y_ceil = src_y.ceil() as isize;
-            let mut weight_floor = ((src_y_ceil as f32 - src_y) * 256.0 + 0.5) as u16;
-            let mut weight_ceil = ((src_y - src_y_floor as f32) * 256.0 + 0.5) as u16;
+            let (mut weight_floor, mut weight_ceil) = if src_y_ceil == src_y_floor {
+                (256, 0) // 同一のピクセルに対しては、floor側に全ての重みを割り当てる
+            } else {
+                (
+                    ((src_y_ceil as f32 - src_y) * 256.0 + 0.5) as u16,
+                    ((src_y - src_y_floor as f32) * 256.0 + 0.5) as u16,
+                )
+            };
 
             if src_y_floor < 0 || src_y_floor >= src_h as isize {
                 weight_floor = 0;
@@ -267,10 +274,10 @@ impl SoftbufferRenderer {
                 height: self.render_profile.source_logical_size.height as u32,
             },
             1.0, // TODO: NTSCフィルタ適用後はアスペクト比が変わるので、ここで計算する必要がある
-            self.size.clone(),
+            self.size,
         );
         self.resize_buffer.resize(
-            self.size.width as usize * self.render_profile.source_logical_size.height as usize,
+            self.size.width as usize * self.render_profile.source_logical_size.height,
             0,
         );
     }
@@ -293,17 +300,17 @@ impl SoftbufferRenderer {
                 let dst_index = dst_y_index + x;
                 let lut_index = x * lut.lut_pixel_size();
                 let c = lut.x_lut[lut_index..lut_index + lut.lut_pixel_size()]
-                    .into_iter()
+                    .iter()
                     .filter_map(|&x| x)
                     .map(|(i, w)| {
                         let src_index = src_y_index + i as usize;
                         let src_val = src_f(src_index);
                         // 重みを適用する
                         [
-                            ((src_val[1] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[2] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[3] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[0] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Alpha
+                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
@@ -315,7 +322,7 @@ impl SoftbufferRenderer {
                             acc[3].saturating_add(val[3]), // Alpha
                         ]
                     })
-                    .map(|v| u32::from_ne_bytes(v)); // NEを使うことで、速度を優先する
+                    .map(u32::from_ne_bytes); // NEを使うことで、速度を優先する
 
                 resize_buffer[dst_index] = c.unwrap_or(0);
             }
@@ -325,7 +332,7 @@ impl SoftbufferRenderer {
         for y in 0..dst_h {
             let lut_index = y * lut.lut_pixel_size();
             let lut_values: Vec<_> = lut.y_lut[lut_index..lut_index + lut.lut_pixel_size()]
-                .into_iter()
+                .iter()
                 .filter_map(|&x| x)
                 .collect();
             for x in 0..dst_w {
@@ -338,10 +345,10 @@ impl SoftbufferRenderer {
                         let src_val = resize_buffer[src_index].to_ne_bytes(); // 格納時にNEを使ったので、ここでもNEを使う
                         // 重みを適用する, 横方向に拡大した結果を縦方向に拡大するので、横方向の色順序はそのまま使う
                         [
-                            ((src_val[0] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Blue
-                            ((src_val[1] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Green
-                            ((src_val[2] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Red
-                            ((src_val[3] as u16 * w as u16).saturating_add(0x80) >> 8) as u8, // Alpha
+                            ((src_val[0] as u16 * w).saturating_add(0x80) >> 8) as u8, // Blue
+                            ((src_val[1] as u16 * w).saturating_add(0x80) >> 8) as u8, // Green
+                            ((src_val[2] as u16 * w).saturating_add(0x80) >> 8) as u8, // Red
+                            ((src_val[3] as u16 * w).saturating_add(0x80) >> 8) as u8, // Alpha
                         ]
                     })
                     .reduce(|acc, val| {
@@ -353,7 +360,7 @@ impl SoftbufferRenderer {
                             acc[3].saturating_add(val[3]), // Alpha
                         ]
                     })
-                    .map(|v| u32::from_le_bytes(v));
+                    .map(u32::from_le_bytes);
 
                 dst[dst_index] = c.unwrap_or(0);
             }
@@ -445,8 +452,8 @@ impl GpuRenderer for SoftbufferRenderer {
         let src_stride = frame.stride();
         let src = frame.as_ref();
         let dst = buffer.as_mut();
-        // let src_w = self.render_profile.source_logical_size.width as usize;
-        let src_h = self.render_profile.source_logical_size.height as usize;
+        // let src_w = self.render_profile.source_logical_size.width;
+        let src_h = self.render_profile.source_logical_size.height;
 
         match frame.format() {
             PixelFormat::Rgba => {
