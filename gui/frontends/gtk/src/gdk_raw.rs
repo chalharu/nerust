@@ -23,7 +23,16 @@ pub(crate) fn with_raw_handles<R>(
     // SAFETY: Retain the NSWindow so it (and its NSView) stay alive for `f`.
     let ns_window =
         unsafe { objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(ns_window.cast()) }?;
+
+    let scale_factor = ns_window.backingScaleFactor();
+
     let ns_view = ns_window.contentView()?;
+    if let Some(layer) = ns_view.layer()
+        && let Some(layer) = layer.downcast_ref::<objc2_quartz_core::CALayer>()
+    {
+        layer.setContentsScale(scale_factor);
+    }
+
     let wh = RawWindowHandle::AppKit(raw_window_handle::AppKitWindowHandle::new(
         NonNull::new(objc2::rc::Retained::as_ptr(&ns_view).cast_mut().cast()).unwrap(),
     ));
