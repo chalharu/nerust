@@ -2,8 +2,8 @@ use std::num::NonZeroU32;
 
 use log::{error, warn};
 use nerust_render_base::{
-    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat, RenderResult, RendererConfig,
-    RendererError, SurfaceSize, VideoRenderProfile,
+    BLACK_PALETTE_INDEX, FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat,
+    RenderResult, RendererConfig, RendererError, SurfaceSize, VideoRenderProfile,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -37,6 +37,7 @@ pub struct SoftbufferRenderer {
     size: SurfaceSize,
     lut: LutEntry,
     resize_buffer: Vec<u32>,
+    ntsc_buffer: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +256,25 @@ impl LutEntry {
 unsafe impl Send for SoftbufferRenderer {}
 unsafe impl Sync for SoftbufferRenderer {}
 
+const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
+    [0, 19, 31, 7, 26, 38],
+    [1, 20, 32, 8, 27, 39],
+    [2, 14, 33, 9, 21, 40],
+    [3, 15, 34, 10, 22, 41],
+    [4, 16, 28, 11, 23, 35],
+    [5, 17, 29, 12, 24, 36],
+    [6, 18, 30, 13, 25, 37],
+];
+const NTSC_SOURCE_OFFSETS: [[i32; 6]; 7] = [
+    [1, -1, 0, -2, -4, -3],
+    [1, -1, 0, -2, -4, -3],
+    [1, 2, 0, -2, -1, -3],
+    [1, 2, 0, -2, -1, -3],
+    [1, 2, 3, -2, -1, 0],
+    [1, 2, 3, -2, -1, 0],
+    [1, 2, 3, -2, -1, 0],
+];
+
 impl SoftbufferRenderer {
     fn new(profile: &VideoRenderProfile) -> Self {
         Self {
@@ -264,20 +284,27 @@ impl SoftbufferRenderer {
             size: SurfaceSize::new(0, 0),
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
+            ntsc_buffer: Vec::new(),
         }
     }
 
     fn resize_lut(&mut self) {
         self.lut.resize_lut(
             SurfaceSize {
-                width: self.render_profile.source_logical_size.width as u32,
-                height: self.render_profile.source_logical_size.height as u32,
+                width: self.render_profile.logical_size.width as u32,
+                height: self.render_profile.logical_size.height as u32,
             },
-            1.0, // TODO: NTSCフィルタ適用後はアスペクト比が変わるので、ここで計算する必要がある
+            self.render_profile.physical_size.width as f32
+                / self.render_profile.physical_size.height as f32,
             self.size,
         );
+        self.ntsc_buffer.resize(
+            self.render_profile.logical_size.width as usize
+                * self.render_profile.logical_size.height as usize,
+            0,
+        );
         self.resize_buffer.resize(
-            self.size.width as usize * self.render_profile.source_logical_size.height,
+            self.size.width as usize * self.render_profile.logical_size.height,
             0,
         );
     }
@@ -363,6 +390,71 @@ impl SoftbufferRenderer {
                     .map(u32::from_le_bytes);
 
                 dst[dst_index] = c.unwrap_or(0);
+            }
+        }
+    }
+
+    fn palette_index(source_frame: &[u8], width: usize, x: i32, y: usize) -> u8 {
+        if x < 0 || x >= width as i32 {
+            return BLACK_PALETTE_INDEX;
+        }
+        source_frame[y * width + x as usize]
+    }
+
+    fn clamp_impl(io: u32) -> u32 {
+        const NTSC_CLAMP_MASK: u32 = 0x300c03;
+        const NTSC_CLAMP_ADD: u32 = 0x20280a02;
+
+        let sub = (io >> 9) & NTSC_CLAMP_MASK;
+        let clamp = NTSC_CLAMP_ADD.wrapping_sub(sub);
+        (io | clamp) & clamp.wrapping_sub(sub)
+    }
+
+    fn rgb_out_impl(raw: u32) -> u32 {
+        let rgb = ((raw >> 5) & 0x00ff0000) | ((raw >> 3) & 0x0000ff00) | ((raw >> 1) & 0x000000ff);
+        (rgb << 8) | 0xff
+    }
+
+    fn read_entry(buf: &[u8], color: u8, row: usize) -> u32 {
+        const PALETTE_WIDTH: usize = 64;
+        let offset = (row * PALETTE_WIDTH + color as usize) * 4;
+        u32::from_be_bytes(buf[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn simulate_gpu_ntsc_rgba(
+        src_h: usize,
+        source_frame: &[u8],
+        render_profile: &VideoRenderProfile,
+        ntsc_buffer: &mut [u32],
+    ) {
+        let packed_entries = render_profile.ntsc_packed_rgba8.as_ref().unwrap();
+        let src_w = render_profile.logical_size.width;
+
+        for y in 0..src_h {
+            let phase_row = (y % 3) * 42;
+            for x in 0..src_w {
+                let chunk = x / 7;
+                let sample = x - chunk * 7;
+                let base = (chunk * 3) as i32;
+                let row_offsets = NTSC_ROW_OFFSETS[sample];
+                let source_offsets = NTSC_SOURCE_OFFSETS[sample];
+                let mut sum = 0_u32;
+
+                for (source_offset, row_offset) in source_offsets.into_iter().zip(row_offsets) {
+                    let color = Self::palette_index(
+                        source_frame,
+                        render_profile.source_logical_size.width,
+                        base + source_offset,
+                        y,
+                    );
+                    sum = sum.wrapping_add(Self::read_entry(
+                        &packed_entries,
+                        color,
+                        phase_row + row_offset,
+                    ));
+                }
+
+                ntsc_buffer[y * src_w + x] = Self::rgb_out_impl(Self::clamp_impl(sum));
             }
         }
     }
@@ -469,16 +561,35 @@ impl GpuRenderer for SoftbufferRenderer {
                 );
             }
             PixelFormat::PaletteIndex { palette } => {
-                Self::rendering(
-                    dst,
-                    src_stride,
-                    src_h,
-                    dst_w,
-                    dst_h,
-                    move |i| palette[src[i] as usize].to_le_bytes(),
-                    &self.lut,
-                    &mut self.resize_buffer,
-                );
+                if self.render_profile.ntsc_packed_rgba8.is_some() {
+                    Self::simulate_gpu_ntsc_rgba(
+                        src_h,
+                        src,
+                        &self.render_profile,
+                        &mut self.ntsc_buffer,
+                    );
+                    Self::rendering(
+                        dst,
+                        self.render_profile.logical_size.width,
+                        src_h,
+                        dst_w,
+                        dst_h,
+                        |i| self.ntsc_buffer[i].to_ne_bytes(),
+                        &self.lut,
+                        &mut self.resize_buffer,
+                    );
+                } else {
+                    Self::rendering(
+                        dst,
+                        src_stride,
+                        src_h,
+                        dst_w,
+                        dst_h,
+                        move |i| palette[src[i] as usize].to_le_bytes(),
+                        &self.lut,
+                        &mut self.resize_buffer,
+                    );
+                }
             }
         }
 
