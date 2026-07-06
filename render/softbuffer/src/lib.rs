@@ -81,14 +81,16 @@ impl LutEntry {
             source_size.width as f32 / destination_size.width as f32
         };
         if content_aspect > source_aspect_ratio {
-            (
-                base_scale,
-                base_scale * (content_aspect / source_aspect_ratio),
-            )
-        } else {
+            // Content is wider than display → squeeze x
             (
                 base_scale * (source_aspect_ratio / content_aspect),
                 base_scale,
+            )
+        } else {
+            // Display is wider than content → squeeze y
+            (
+                base_scale,
+                base_scale * (content_aspect / source_aspect_ratio),
             )
         }
     }
@@ -294,8 +296,8 @@ impl SoftbufferRenderer {
                 width: self.render_profile.logical_size.width as u32,
                 height: self.render_profile.logical_size.height as u32,
             },
-            self.render_profile.logical_size.width as f32
-                / self.render_profile.logical_size.height as f32,
+            self.render_profile.source_logical_size.width as f32
+                / self.render_profile.source_logical_size.height as f32,
             self.size,
         );
         self.ntsc_buffer.resize(
