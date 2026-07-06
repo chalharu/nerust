@@ -104,7 +104,12 @@ gdk-win32 = { version = "=0.11.0", package = "gdk4-win32" }
 gdk4-wayland-sys = { version = "=0.11.0" }
 gdk4-x11-sys = { version = "=0.11.0" }
 hound = { version = "=3.5.1" }
-iced = { version = "=0.14.0" }
+iced = { version = "=0.14.0", default-features = false, features = [
+  "tiny-skia",
+  "thread-pool",
+  "x11",
+  "wayland",
+] }
 time = { version = "=0.3.53" }
 iced_tiny_skia = { version = "=0.14.0" }
 iced_winit = { version = "=0.14.0" }
@@ -152,12 +157,11 @@ serde_bytes = { version = "=0.11.19" }
 serde_yaml = { version = "=0.9.34" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
-strum = { version = "=0.28.0" }
-strum_macros = { version = "=0.28.0" }
+strum = { version = "=0.28.0", features = ["derive"] }
 tao = { version = "=0.35.3" }
 thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.22" }
-wgpu = { version = "=29.0.4" }
+wgpu = { version = "=30.0.0" }
 winit = { version = "=0.30.13" }
 zerocopy = { version = "=0.8.52", features = ["derive"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
