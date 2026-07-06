@@ -7,7 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-log.workspace = true
 nerust_core_traits.workspace = true
 nerust_gui_settings.workspace = true
 nerust_nes_controller.workspace = true
