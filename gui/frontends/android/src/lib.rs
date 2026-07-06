@@ -9,11 +9,17 @@ use std::{
     backtrace::Backtrace,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
+    rc::Rc,
+    sync::Arc,
     sync::Once,
 };
 
 use jni::JavaVM;
 use jni::sys::{JNI_VERSION_1_6, jint};
+use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_gui_shell::factory::CoreFactory;
+use nerust_nes_factory::NesFactory;
+use nerust_render_base::GpuFactory;
 use winit::platform::android::activity::AndroidApp;
 
 const ANDROID_LOG_TAG: &str = "Nerust";
@@ -38,6 +44,20 @@ fn init_android_logging() {
     });
 }
 
+fn create_core_factory() -> Arc<dyn CoreFactory> {
+    Arc::new(NesFactory)
+}
+
+fn create_audio_registry() -> Arc<AudioBackendRegistry> {
+    let mut reg = AudioBackendRegistry::new();
+    reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
+    Arc::new(reg)
+}
+
+fn create_gpu_factory() -> Rc<dyn GpuFactory> {
+    Rc::new(nerust_render_wgpu::WgpuFactory)
+}
+
 fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&'static str>() {
         (*message).to_owned()
@@ -58,7 +78,13 @@ pub fn android_main(app: AndroidApp) {
         .unwrap_or_else(|| "<unavailable>".to_owned());
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
-    match panic::catch_unwind(AssertUnwindSafe(|| android::run(app))) {
+    let core_factory = create_core_factory();
+    let audio_registry = create_audio_registry();
+    let gpu_factory = create_gpu_factory();
+
+    match panic::catch_unwind(AssertUnwindSafe(|| {
+        android::run(app, core_factory, audio_registry, gpu_factory)
+    })) {
         Ok(Ok(())) => {
             log::info!("android_main: exited cleanly");
         }
