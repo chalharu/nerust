@@ -172,7 +172,7 @@ impl RenderPipeline {
         }
 
         self.queue.submit(Some(encoder.finish()));
-        surface_texture.present();
+        self.queue.present(surface_texture);
         if suboptimal {
             self.reconfigure_surface(surface, surface_size);
         }
