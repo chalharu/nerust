@@ -16,6 +16,9 @@ ignore = [
   "RUSTSEC-2026-0192",
   # GTK3 macro dependencies have no patched release in the GTK3 line.
   "RUSTSEC-2024-0370",
+  # quick-xml
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
 ]
 
 [bans]
