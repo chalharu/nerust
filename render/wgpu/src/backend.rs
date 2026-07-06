@@ -186,6 +186,7 @@ impl GpuFactory for WgpuFactory {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|e| RendererError::new("request adapter", Box::new(OpaqueError(e.to_string()))))?;
         let limits = Self::device_limit_profile().required_limits();
