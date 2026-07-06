@@ -166,8 +166,8 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-softbuffer-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-softbuffer-
-      - name: Build nerust library (softbuffer)
-        run: cargo build -p nerust --no-default-features --features softbuffer --release --quiet
+      - name: Build softbuffer renderer crate
+        run: cargo build -p nerust_render_softbuffer --release --quiet
       - name: Softbuffer renderer tests
         run: cargo test -p nerust_render_softbuffer --lib --quiet
       - name: Save Cargo registry cache
