@@ -67,30 +67,24 @@ impl LutEntry {
 
     fn inv_scale(
         source_size: SurfaceSize,
-        source_aspect_ratio: f32,
+        physical_aspect_ratio: f32,
         destination_size: SurfaceSize,
     ) -> (f32, f32) {
         let window_aspect = destination_size.width as f32 / destination_size.height as f32;
-        let content_aspect = source_size.width as f32 / source_size.height as f32;
+        let source_aspect = source_size.width as f32 / source_size.height as f32;
 
-        let base_scale = if window_aspect > source_aspect_ratio {
+        if window_aspect > physical_aspect_ratio {
             // Window is wider than content → letterbox (black bars on sides)
-            source_size.height as f32 / destination_size.height as f32
-        } else {
-            // Window is taller than content → pillarbox (black bars on top/bottom)
-            source_size.width as f32 / destination_size.width as f32
-        };
-        if content_aspect > source_aspect_ratio {
-            // Content is wider than display → squeeze x
             (
-                base_scale * (source_aspect_ratio / content_aspect),
-                base_scale,
+                source_size.height as f32 / destination_size.height as f32
+                    * (source_aspect / physical_aspect_ratio),
+                source_size.height as f32 / destination_size.height as f32,
             )
         } else {
-            // Display is wider than content → squeeze y
             (
-                base_scale,
-                base_scale * (content_aspect / source_aspect_ratio),
+                source_size.width as f32 / destination_size.width as f32,
+                source_size.width as f32 / destination_size.width as f32
+                    * (physical_aspect_ratio / source_aspect),
             )
         }
     }
@@ -227,7 +221,7 @@ impl LutEntry {
     fn resize_lut(
         &mut self,
         source_size: SurfaceSize,
-        source_aspect_ratio: f32,
+        physical_aspect_ratio: f32,
         destination_size: SurfaceSize,
     ) {
         let dst_w = destination_size.width as usize;
@@ -235,7 +229,7 @@ impl LutEntry {
         let src_w = source_size.width as usize;
         let src_h = source_size.height as usize;
 
-        let scale = Self::inv_scale(source_size, source_aspect_ratio, destination_size);
+        let scale = Self::inv_scale(source_size, physical_aspect_ratio, destination_size);
 
         match self.kernel {
             ResizeKernel::NearestNeighbor => {
@@ -296,8 +290,8 @@ impl SoftbufferRenderer {
                 width: self.render_profile.logical_size.width as u32,
                 height: self.render_profile.logical_size.height as u32,
             },
-            self.render_profile.source_logical_size.width as f32
-                / self.render_profile.source_logical_size.height as f32,
+            self.render_profile.physical_size.width as f32
+                / self.render_profile.physical_size.height as f32,
             self.size,
         );
         self.ntsc_buffer.resize(
