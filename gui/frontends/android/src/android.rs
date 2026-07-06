@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     ffi::c_void,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,9 +33,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
-use nerust_nes_factory::NesFactory;
 use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
-use nerust_render_wgpu::WgpuFactory;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -91,7 +90,12 @@ pub(crate) fn register_main_activity_natives(
     unsafe { env.register_native_methods(class, &methods) }
 }
 
-pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
+pub(crate) fn run(
+    app: AndroidApp,
+    core_factory: Arc<dyn CoreFactory>,
+    audio_registry: Arc<AudioBackendRegistry>,
+    gpu_factory: Rc<dyn GpuFactory>,
+) -> Result<(), String> {
     // Best-effort re-registration from the native thread.  The primary
     // registration happens in JNI_OnLoad (called by System.loadLibrary on the
     // main thread with the app classloader).  This fallback may fail because
@@ -121,7 +125,14 @@ pub(crate) fn run(app: AndroidApp) -> Result<(), String> {
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut state = AndroidFrontend::new(frontend_app, storage, storage_root.join("nerust"));
+    let mut state = AndroidFrontend::new(
+        frontend_app,
+        storage,
+        storage_root.join("nerust"),
+        core_factory,
+        audio_registry,
+        gpu_factory,
+    );
     log::info!("android::run: entering Android event loop");
     event_loop
         .run_app(&mut state)
@@ -160,6 +171,7 @@ struct AndroidFrontend {
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
     renderer: Option<Box<dyn GpuRenderer>>,
+    gpu_factory: Rc<dyn GpuFactory>,
     overlay: Option<PortraitTouchOverlay>,
     active_touches: HashMap<u64, TouchTarget>,
     is_resumed: bool,
@@ -172,7 +184,14 @@ struct AndroidFrontend {
 }
 
 impl AndroidFrontend {
-    fn new(app: AndroidApp, storage: AndroidStorage, settings_root: PathBuf) -> Self {
+    fn new(
+        app: AndroidApp,
+        storage: AndroidStorage,
+        settings_root: PathBuf,
+        core_factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        gpu_factory: Rc<dyn GpuFactory>,
+    ) -> Self {
         log::info!("AndroidFrontend::new: building frontend state");
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
@@ -184,17 +203,13 @@ impl AndroidFrontend {
                 supports_vsync: true,
             }),
         };
-        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let descriptor = factory.system_descriptor();
+        let descriptor = core_factory.system_descriptor();
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
-        let mut audio_registry = AudioBackendRegistry::new();
-        audio_registry.register(0, Box::new(nerust_sound_cpal::CpalFactory));
-        let audio_registry = Arc::new(audio_registry);
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
             descriptor,
-            Arc::clone(&factory),
+            core_factory,
             audio_registry,
             settings_paths,
         );
@@ -207,6 +222,7 @@ impl AndroidFrontend {
             window: None,
             window_id: None,
             renderer: None,
+            gpu_factory,
             overlay: None,
             active_touches: HashMap::new(),
             is_resumed: false,
@@ -592,7 +608,8 @@ impl AndroidFrontend {
             render_profile: self.session.render_profile().clone(),
             vsync,
         };
-        let renderer_result = WgpuFactory
+        let renderer_result = self
+            .gpu_factory
             .create_renderer(&config, raw_display_handle)
             .and_then(|mut r| {
                 let ws = SurfaceSize::new(size.width, size.height);
