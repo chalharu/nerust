@@ -105,7 +105,7 @@ gdk4-wayland-sys = { version = "=0.11.0" }
 gdk4-x11-sys = { version = "=0.11.0" }
 hound = { version = "=3.5.1" }
 iced = { version = "=0.14.0" }
-time = { version = "=0.3.51" }
+time = { version = "=0.3.53" }
 iced_tiny_skia = { version = "=0.14.0" }
 iced_winit = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
