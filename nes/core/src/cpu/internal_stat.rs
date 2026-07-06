@@ -1,21 +1,9 @@
-// Copyright (c) 2019 Mitsuharu Seki
-//
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+use crate::persistence_error::PersistenceError;
 
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    PartialEq,
-    Eq,
-    Clone,
-    Copy,
-    Hash,
-    Debug,
-    Default,
-    strum_macros::EnumIter,
+    serde::Serialize, serde::Deserialize, PartialEq, Eq, Clone, Copy, Hash, Debug, Default,
 )]
+#[cfg_attr(test, derive(strum::EnumIter))]
 pub(crate) enum CpuStatesEnum {
     FetchOpCode,
     #[default]
@@ -340,4 +328,3 @@ impl TryFrom<usize> for CpuStatesEnum {
         })
     }
 }
-use crate::persistence_error::PersistenceError;

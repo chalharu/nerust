@@ -157,8 +157,7 @@ serde_bytes = { version = "=0.11.19" }
 serde_yaml = { version = "=0.9.34" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
-strum = { version = "=0.28.0" }
-strum_macros = { version = "=0.28.0" }
+strum = { version = "=0.28.0", features = ["derive"] }
 tao = { version = "=0.35.3" }
 thiserror = { version = "=2.0.18" }
 typetag = { version = "=0.2.22" }
