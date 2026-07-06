@@ -294,8 +294,8 @@ impl SoftbufferRenderer {
                 width: self.render_profile.logical_size.width as u32,
                 height: self.render_profile.logical_size.height as u32,
             },
-            self.render_profile.physical_size.width as f32
-                / self.render_profile.physical_size.height as f32,
+            self.render_profile.logical_size.width as f32
+                / self.render_profile.logical_size.height as f32,
             self.size,
         );
         self.ntsc_buffer.resize(
