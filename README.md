@@ -138,7 +138,7 @@ The Tao frontend is the official release target with wgpu-based rendering.
 #### Tao dependencies
 
 - Cargo + Rust
-- Linux: GTK3 development headers (`libgtk-3-dev`), OpenAL (`libopenal-dev`)
+- Linux: GTK3 development headers (`libgtk-3-dev`)
 - macOS: no additional system packages required
 
 #### Build Tao
@@ -163,7 +163,7 @@ Launch without arguments and use `File → Open` to load a ROM.
 #### GTK4 dependencies
 
 - Cargo + Rust
-- GTK 4.0 or greater (`libgtk-4-dev`), OpenAL (`libopenal-dev`)
+- GTK 4.0 or greater (`libgtk-4-dev`)
 
 #### Build GTK4
 
