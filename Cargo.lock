@@ -3249,7 +3249,6 @@ dependencies = [
 name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
- "log",
  "nerust_core_traits",
  "nerust_timer",
  "thiserror 2.0.18",
@@ -3299,7 +3298,6 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_gui_settings",
- "nerust_input_traits",
  "nerust_persistence",
  "nerust_render_base",
  "serde",
@@ -3330,7 +3328,6 @@ dependencies = [
  "nerust_render_base",
  "rmp-serde",
  "serde",
- "serde_bytes",
  "thiserror 2.0.18",
 ]
 
@@ -3361,7 +3358,6 @@ dependencies = [
  "hound",
  "log",
  "nerust_core_traits",
- "nerust_input_traits",
  "nerust_render_base",
  "nerust_serialize",
  "nerust_sound_filter",
@@ -3388,7 +3384,6 @@ name = "nerust_nes_factory"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
- "log",
  "nerust_core_traits",
  "nerust_gui_runtime",
  "nerust_gui_settings",
@@ -3408,7 +3403,6 @@ dependencies = [
  "fs2",
  "log",
  "nerust_core_traits",
- "nerust_input_traits",
  "png",
  "rmp-serde",
  "serde",
@@ -3427,7 +3421,6 @@ dependencies = [
  "nerust_render_ntsc",
  "raw-window-handle",
  "serde",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -3543,7 +3536,6 @@ dependencies = [
  "nerust_run_options",
  "raw-window-handle",
  "rfd",
- "serde",
  "tao",
 ]
 

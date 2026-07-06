@@ -10,7 +10,6 @@ rust-version.workspace = true
 fs2.workspace = true
 time = { workspace = true, features = ["local-offset", "formatting", "macros"] }
 nerust_core_traits.workspace = true
-nerust_input_traits.workspace = true
 png.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
@@ -18,6 +17,9 @@ serde_bytes.workspace = true
 thiserror.workspace = true
 zip.workspace = true
 log.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["serde_bytes"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
