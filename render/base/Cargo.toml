@@ -11,4 +11,3 @@ log.workspace = true
 nerust_render_ntsc.workspace = true
 raw-window-handle.workspace = true
 serde = { workspace = true, features = ["derive"] }
-thiserror.workspace = true
