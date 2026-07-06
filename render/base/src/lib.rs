@@ -171,6 +171,7 @@ impl PixelFormat {
 /// Console が `resize(w, h)` で準備し、`as_mut()` でピクセルを書き込む。
 /// GUI は `as_ref()` で読み取る。スレッド間の受け渡しは
 /// `Arc<Mutex<FrameBuffer>>` + `mem::swap` で行う（ゼロコピー）。
+/// stride とは 1行のバイト数で、RGBA 形式の場合は 256 バイト境界に揃える。
 #[derive(Debug)]
 pub struct FrameBuffer {
     data: Vec<u8>,

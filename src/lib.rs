@@ -18,14 +18,22 @@ use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
 
 fn create_factory() -> Box<dyn GpuFactory> {
-    #[cfg(all(feature = "wgpu", not(feature = "opengl")))]
+    #[cfg(all(feature = "wgpu", not(any(feature = "opengl", feature = "softbuffer"))))]
     return Box::new(nerust_render_wgpu::WgpuFactory);
-    #[cfg(all(feature = "opengl", not(feature = "wgpu")))]
+    #[cfg(all(feature = "opengl", not(any(feature = "wgpu", feature = "softbuffer"))))]
     return Box::new(nerust_render_gl::GlFactory);
-    #[cfg(not(any(feature = "wgpu", feature = "opengl")))]
-    compile_error!("No backend selected. Enable feature 'wgpu' or 'opengl'.");
-    #[cfg(all(feature = "wgpu", feature = "opengl"))]
-    compile_error!("Multiple backends selected. Enable only one of 'wgpu' or 'opengl'.");
+    #[cfg(all(feature = "softbuffer", not(any(feature = "wgpu", feature = "opengl"))))]
+    return Box::new(nerust_render_softbuffer::SoftbufferFactory);
+    #[cfg(not(any(feature = "wgpu", feature = "opengl", feature = "softbuffer")))]
+    compile_error!("No backend selected. Enable feature 'wgpu', 'opengl' or 'softbuffer'.");
+    #[cfg(any(
+        all(feature = "wgpu", feature = "opengl"),
+        all(feature = "wgpu", feature = "softbuffer"),
+        all(feature = "opengl", feature = "softbuffer"),
+    ))]
+    compile_error!(
+        "Multiple backends selected. Enable only one of 'wgpu', 'opengl' or 'softbuffer'."
+    );
 }
 
 fn create_audio_registry() -> AudioBackendRegistry {

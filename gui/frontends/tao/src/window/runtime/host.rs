@@ -220,7 +220,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                let _ = self.run_command(command);
+                self.run_command(command);
                 self.sync_menu_state();
                 self.refresh_window_title();
                 HostAction::None
