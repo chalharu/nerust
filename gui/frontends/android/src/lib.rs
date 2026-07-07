@@ -78,11 +78,10 @@ pub fn android_main(app: AndroidApp) {
         .unwrap_or_else(|| "<unavailable>".to_owned());
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
-    let core_factory = create_core_factory();
-    let audio_registry = create_audio_registry();
-    let gpu_factory = create_gpu_factory();
-
     match panic::catch_unwind(AssertUnwindSafe(|| {
+        let core_factory = create_core_factory();
+        let audio_registry = create_audio_registry();
+        let gpu_factory = create_gpu_factory();
         android::run(app, core_factory, audio_registry, gpu_factory)
     })) {
         Ok(Ok(())) => {
