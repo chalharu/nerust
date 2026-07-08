@@ -86,7 +86,7 @@ impl ControllerProfile for FamicomSet {
                 abstract_key: Some(Button2),
             },
             ControlInfo {
-                id: "mic",
+                id: "microphone",
                 label: "Microphone",
                 kind: Digital,
                 abstract_key: None,
@@ -176,7 +176,9 @@ impl InputSystemFactory for crate::NesFactory {
         for (gi, controls) in FAMICOM_SET.port_groups().iter().enumerate() {
             let slot = if gi == 0 { "player1" } else { "player2" };
             for (fi, ci) in controls.iter().enumerate() {
-                field_map.insert((slot, ci.id), gi * 8 + fi);
+                // Mic uses dedicated byte at field 16, not P2 byte at field 10.
+                let field = if ci.id == "mic" { 16 } else { gi * 8 + fi };
+                field_map.insert((slot, ci.id), field);
             }
         }
 
