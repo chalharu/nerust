@@ -80,7 +80,9 @@ fn dynamic_topology(
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else { continue };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+            continue;
+        };
         for ps in profile.port_sets() {
             if ps.ports.iter().any(|&p| p == slot_id) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
@@ -89,13 +91,16 @@ fn dynamic_topology(
                         devices.push(DeviceDescriptor {
                             kind: DeviceKindId::new(ctrl_id),
                             label: profile.label(),
-                            controls: controls.iter().map(|ci| {
-                                ControlDescriptor::Digital(DigitalControlDescriptor {
-                                    id: DigitalControlId::new(ctl(ci.id)),
-                                    label: ci.label,
-                                    description: ci.label,
+                            controls: controls
+                                .iter()
+                                .map(|ci| {
+                                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                                        id: DigitalControlId::new(ctl(ci.id)),
+                                        label: ci.label,
+                                        description: ci.label,
+                                    })
                                 })
-                            }).collect(),
+                                .collect(),
                         });
                     }
                     let full = att(port);
