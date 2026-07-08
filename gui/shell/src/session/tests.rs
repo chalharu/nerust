@@ -15,7 +15,11 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-use nerust_input_traits::{BufferError, GuiInput, InputSplit, InputStateBuffer, InputValue};
+use nerust_input_traits::{
+    AbstractKey, BufferError, ControlInfo, ControlKind, ControllerProfile, GuiInput, InputAssignments,
+    InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory, InputValue,
+    PortSet, SlotInfo, CreateSplitError,
+};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
 
@@ -142,6 +146,31 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
     }
 }
 
+#[derive(Debug)]
+struct MockInputFactory;
+impl InputPorts for MockInputFactory {
+    fn slots(&self) -> &[SlotInfo] { &[] }
+    fn controllers(&self) -> &[&'static dyn ControllerProfile] { &[] }
+}
+impl InputSystemFactory for MockInputFactory {
+    fn default_assignments(&self) -> InputAssignments {
+        InputAssignments { slots: vec![] }
+    }
+    fn create_split(&self, _: &InputAssignments) -> Result<InputResources, CreateSplitError> {
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
+        let flag = Arc::new(AtomicBool::new(false));
+        Ok(InputResources {
+            split: InputSplit {
+                shared: Arc::clone(&shared),
+                flag: Arc::clone(&flag),
+                new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
+            },
+            field_map: std::collections::HashMap::new(),
+        })
+    }
+}
+
 struct MockFactory;
 impl CoreFactory for MockFactory {
     fn system_id(&self) -> SystemId {
@@ -196,6 +225,10 @@ impl CoreFactory for MockFactory {
     }
     fn default_load_options(&self) -> SystemLoadOptions {
         SystemLoadOptions::default()
+    }
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        static MOCK_INPUT: MockInputFactory = MockInputFactory;
+        &MOCK_INPUT
     }
 }
 
