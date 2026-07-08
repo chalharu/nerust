@@ -925,7 +925,62 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 }
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
-    state.factory.system_descriptor().input_topology
+    use nerust_input_traits::*;
+    let input = state.factory.input_system_factory();
+    let mut ports = Vec::new();
+    let mut seen_devices = std::collections::HashSet::new();
+    let mut devices = Vec::new();
+
+    for (slot_id, ctrl_opt) in &state.controller_assignments {
+        let ctrl_id: &'static str = match ctrl_opt {
+            Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
+            Some(id) if id == "nes.famicom" => "nes.famicom",
+            _ => continue,
+        };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+            continue;
+        };
+        for ps in profile.port_sets() {
+            if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
+                if seen_devices.insert(ctrl_id) {
+                    let controls = profile.port_groups()[pos];
+                    devices.push(DeviceDescriptor {
+                        kind: DeviceKindId::new(ctrl_id),
+                        label: profile.label(),
+                        controls: controls
+                            .iter()
+                            .map(|ci| {
+                                ControlDescriptor::Digital(DigitalControlDescriptor {
+                                    id: DigitalControlId::new(ci.id),
+                                    label: ci.label,
+                                    description: ci.label,
+                                })
+                            })
+                            .collect(),
+                    });
+                }
+                for &port in ps.ports {
+                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == port) {
+                        ports.push(PortDescriptor {
+                            id: PortId::new(port),
+                            label: port,
+                            attachments: vec![AttachmentSlotDescriptor {
+                                id: AttachmentId::new(port),
+                                label: port,
+                                device: DeviceKindId::new(ctrl_id),
+                                supported_devices: vec![DeviceKindId::new(ctrl_id)],
+                            }],
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if ports.is_empty() {
+        state.factory.system_descriptor().input_topology
+    } else {
+        InputTopologyDescriptor { ports, devices }
+    }
 }
 
 pub(crate) fn keyboard_key_from_physical(
