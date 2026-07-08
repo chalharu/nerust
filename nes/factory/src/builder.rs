@@ -1,31 +1,44 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
-use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
+use nerust_input_traits::{EmuInput, GuiInput, InputStateBuffer, InputSplit, InputValue};
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
-
-use crate::adapter::NesAdapter;
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
     speaker: Box<dyn AudioBackend>,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
-    let cell = Arc::new(NesInputCell::new());
-    let device = NesPadDevice::new(SharedNesInputCell(cell.clone()));
+
+    // Create the shared triple buffer for input state
+    let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+        Arc::new(Mutex::new(Box::new([0u8; 3])));
+    let flag = Arc::new(AtomicBool::new(false));
+
+    let device = NesPadDevice::new();
+    let emu_input = EmuInput {
+        shared: Arc::clone(&shared),
+        flag: Arc::clone(&flag),
+        read_buf: Box::new([0u8; 3]),
+    };
+    let gui_input = GuiInput {
+        shared: Arc::clone(&shared),
+        flag: Arc::clone(&flag),
+        write_buf: Box::new([0u8; 3]),
+    };
 
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
-    let core = NesConsoleCore::new_empty(Box::new(device), speaker);
-    let adapter = Box::new(NesAdapter::new(cell));
+    let core = NesConsoleCore::new_empty(Box::new(device), speaker, emu_input);
     Ok(CoreParts {
         core: Box::new(core),
-        adapter,
+        gui_input,
         render_profile,
         palette,
     })

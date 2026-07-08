@@ -11,6 +11,7 @@ use nerust_core_traits::factory::CoreParts;
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
+use nerust_input_traits::{EmuInput, GuiInput, InputSplit};
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
@@ -26,6 +27,7 @@ pub struct EmuCore {
     disp_fb: FrameBuffer,
     frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
+    input_split: InputSplit,
 }
 
 impl EmuCore {
@@ -52,10 +54,8 @@ impl EmuCore {
     }
 
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
-    /// Returns the core and the input adapter separately.
-    pub fn from_parts(
-        parts: CoreParts,
-    ) -> (Self, Box<dyn nerust_input_traits::SystemInputAdapter>) {
+    /// Returns the core and the GuiInput separately.
+    pub fn from_parts(parts: CoreParts) -> (Self, GuiInput) {
         use std::sync::Mutex;
         let src_w = parts.render_profile.source_logical_size.width;
         let src_h = parts.render_profile.source_logical_size.height;
@@ -85,8 +85,23 @@ impl EmuCore {
             parts.palette,
         );
         (
-            Self::new(emu, parts.render_profile, shared_fb, disp_fb, frame_ready),
-            parts.adapter,
+            Self {
+                emu,
+                render_profile: parts.render_profile,
+                shared_fb,
+                disp_fb,
+                frame_ready,
+                metrics: Arc::new(Mutex::new(ConsoleMetrics {
+                    paused: true,
+                    ..ConsoleMetrics::default()
+                })),
+                input_split: InputSplit {
+                    shared: Arc::clone(&parts.gui_input.shared),
+                    flag: Arc::clone(&parts.gui_input.flag),
+                    new_buffer: Box::new(|| Box::new([0u8; 3])),
+                },
+            },
+            parts.gui_input,
         )
     }
 
