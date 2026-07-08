@@ -17,7 +17,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::GuiInput;
+use nerust_input_traits::{GuiInput, SlotInfo, ControllerProfile};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -243,6 +243,12 @@ impl SessionHandle {
 
     pub fn factory(&self) -> &dyn CoreFactory {
         &*self.factory
+    }
+
+    /// Negotiation #1: expose available slots and controllers for settings UI.
+    pub fn input_ports(&self) -> (&[SlotInfo], &[&'static dyn ControllerProfile]) {
+        let input = self.factory.input_system_factory();
+        (input.slots(), input.controllers())
     }
 
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
