@@ -192,7 +192,12 @@ pub(crate) fn present_preferences_dialog(
             }
         }
         for slot in slots {
-            if occupied.contains(slot.id) && !defaults.slots.iter().any(|(s, c)| s == slot.id && c.is_some()) {
+            if occupied.contains(slot.id)
+                && !defaults
+                    .slots
+                    .iter()
+                    .any(|(s, c)| s == slot.id && c.is_some())
+            {
                 // Occupied by another slot's multi-port controller
                 let label = gtk::Label::new(Some(&format!("{} — (occupied)", slot.label)));
                 label.set_xalign(0.0);
