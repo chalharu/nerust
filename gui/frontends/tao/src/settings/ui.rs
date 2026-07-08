@@ -514,7 +514,7 @@ impl SettingsAppState {
                     Some(id) => id.as_str(),
                     None => continue,
                 };
-                for p in input_factory
+                if let Some(p) = input_factory
                     .controllers()
                     .iter()
                     .find(|p| p.id() == ctrl_id)
