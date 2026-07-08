@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
-use nerust_input_traits::{EmuInput, GuiInput, InputStateBuffer, InputSplit, InputValue};
+use nerust_input_traits::{EmuInput, GuiInput, InputStateBuffer, InputSplit};
 use nerust_nes_controller::input_buffer::NesInputBuffer;
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;

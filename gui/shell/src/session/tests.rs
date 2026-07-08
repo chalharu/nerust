@@ -1,7 +1,9 @@
 use std::{
-    fs,
+    fs, sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     path::PathBuf,
-    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,7 +17,9 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-use nerust_input_traits::{InputStatePersistence, SystemInputAdapter};
+use nerust_input_traits::{
+    BufferError, GuiInput, InputSplit, InputStateBuffer, InputValue,
+};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
 
@@ -25,6 +29,19 @@ use crate::{
     session::{KeyboardShortcut, SessionHandle},
     test_support::single_port_topology,
 };
+
+/// Minimal InputStateBuffer for testing.
+#[derive(Debug, Default)]
+struct TestInputBuffer([u8; 2]);
+
+impl InputStateBuffer for TestInputBuffer {
+    fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
+        Ok(())
+    }
+    fn clear(&mut self) {
+        self.0 = [0; 2];
+    }
+}
 
 struct MockConsoleCore {
     loaded: bool,
@@ -83,6 +100,23 @@ impl ConsoleCore for MockConsoleCore {
     }
 }
 
+fn test_input_resources() -> (GuiInput, InputSplit) {
+    let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+        Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
+    let flag = Arc::new(AtomicBool::new(false));
+    let gui = GuiInput {
+        shared: Arc::clone(&shared),
+        flag: Arc::clone(&flag),
+        write_buf: Box::<TestInputBuffer>::default(),
+    };
+    let split = InputSplit {
+        shared: Arc::clone(&shared),
+        flag: Arc::clone(&flag),
+        new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
+    };
+    (gui, split)
+}
+
 fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
     use nerust_core_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
@@ -102,33 +136,13 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
         frame_format: nerust_render_base::VideoFrameFormat::Palette,
         ntsc_packed_rgba8: None,
     };
+    let (gui_input, input_split) = test_input_resources();
     CoreParts {
         core: Box::new(core),
-        adapter: Box::new(MockAdapter),
+        gui_input,
+        input_split,
         render_profile,
         palette: Box::new([0u32; 256]),
-    }
-}
-
-struct MockAdapter;
-impl SystemInputAdapter for MockAdapter {
-    fn apply_event(&mut self, _: nerust_input_traits::DigitalInputEvent) {}
-    fn clear(&mut self) {}
-    fn decode_persisted_input(
-        &self,
-        _: &str,
-        _: &str,
-        _: bool,
-    ) -> Option<nerust_input_traits::DigitalInputEvent> {
-        None
-    }
-}
-impl InputStatePersistence for MockAdapter {
-    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), nerust_input_traits::InputError> {
-        Ok(())
-    }
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_input_traits::InputError> {
-        Ok(Vec::new())
     }
 }
 
