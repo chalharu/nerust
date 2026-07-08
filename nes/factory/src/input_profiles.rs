@@ -232,8 +232,8 @@ impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments {
             slots: vec![
-                ("player1".to_string(), Some("nes.standard_pad".to_string())),
-                ("player2".to_string(), Some("nes.standard_pad".to_string())),
+                ("player1".to_string(), Some("nes.famicom".to_string())),
+                ("player2".to_string(), None),
             ],
         }
     }
