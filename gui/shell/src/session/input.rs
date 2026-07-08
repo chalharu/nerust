@@ -6,11 +6,19 @@ use crate::{
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
+/// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
+/// to the short form used in field_map keys.
+fn normalize_id(id: &str) -> &str {
+    id.trim_start_matches("nes.attachment.")
+        .trim_start_matches("nes.control.")
+        .trim_start_matches("famicom.")
+}
+
 impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        let slot = event.attachment.as_str();
-        let control = event.control.as_str();
+        let slot = normalize_id(event.attachment.as_str());
+        let control = normalize_id(event.control.as_str());
         if let Some(&field) = self.field_map.get(&(slot, control)) {
             let _ = self
                 .gui_input
@@ -42,8 +50,8 @@ impl SessionHandle {
         if let Some(profile) = profile
             && let Some(binding) = profile.bindings.iter().find(|b| b.key == key)
         {
-            let slot = binding.attachment.as_str();
-            let control = binding.control.as_str();
+            let slot = normalize_id(binding.attachment.as_str());
+            let control = normalize_id(binding.control.as_str());
             if let Some(&field) = self.field_map.get(&(slot, control)) {
                 let _ = self
                     .gui_input
