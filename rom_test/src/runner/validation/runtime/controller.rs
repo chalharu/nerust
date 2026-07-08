@@ -31,10 +31,7 @@ impl ValidationRuntime {
     }
 
     fn sync_input(&mut self) {
-        self.controller.sync_input(&[
-            self.pad1.bits(),
-            self.pad2.bits(),
-            self.mic as u8,
-        ]);
+        self.controller
+            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
     }
 }

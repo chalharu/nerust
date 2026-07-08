@@ -290,13 +290,11 @@ impl SoftbufferRenderer {
                 width: self.render_profile.logical_size.width as u32,
                 height: self.render_profile.logical_size.height as u32,
             },
-            self.render_profile.physical_size.width as f32
-                / self.render_profile.physical_size.height as f32,
+            self.render_profile.physical_size.width / self.render_profile.physical_size.height,
             self.size,
         );
         self.ntsc_buffer.resize(
-            self.render_profile.logical_size.width as usize
-                * self.render_profile.logical_size.height as usize,
+            self.render_profile.logical_size.width * self.render_profile.logical_size.height,
             0,
         );
         self.resize_buffer.resize(
@@ -444,7 +442,7 @@ impl SoftbufferRenderer {
                         y,
                     );
                     sum = sum.wrapping_add(Self::read_entry(
-                        &packed_entries,
+                        packed_entries,
                         color,
                         phase_row + row_offset,
                     ));

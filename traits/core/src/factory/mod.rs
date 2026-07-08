@@ -10,8 +10,8 @@ use crate::factory::descriptor::{
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
-use std::collections::HashMap;
 use nerust_input_traits::{GuiInput, InputSplit, InputSystemFactory};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

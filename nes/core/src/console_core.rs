@@ -1,11 +1,11 @@
 use std::any::Any;
 
+use crate::input_types::NesInputBuffer;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat,
     VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
-use crate::input_types::NesInputBuffer;
 
 use crate::{Controller, Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
 
@@ -164,12 +164,12 @@ impl ConsoleCore for NesConsoleCore {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
 
+    use crate::input_types::NesInputBuffer;
     use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{EmuInput, InputStateBuffer};
-use crate::input_types::NesInputBuffer;
+    use nerust_input_traits::EmuInput;
     use nerust_render_base::PixelFormat;
 
     use super::*;

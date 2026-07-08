@@ -345,21 +345,15 @@ impl CaseHarness for PerfRunner {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.controller.sync_input(&[
-            self.pad1.bits(),
-            self.pad2.bits(),
-            self.mic as u8,
-        ]);
+        self.controller
+            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
         self.mic = matches!(state, PadState::Pressed);
-        self.controller.sync_input(&[
-            self.pad1.bits(),
-            self.pad2.bits(),
-            self.mic as u8,
-        ]);
+        self.controller
+            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 }
