@@ -1,4 +1,4 @@
-use nerust_gui_settings::input::KeyboardKey;
+use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
 use nerust_input_traits::AbstractKey;
 
 /// System-agnostic default keyboard binding for an abstract key.
@@ -23,4 +23,32 @@ pub fn default_keyboard_key(abstract_key: AbstractKey) -> Vec<KeyboardKey> {
         AbstractKey::Axis1X | AbstractKey::Axis1Y => vec![],
         AbstractKey::Axis2X | AbstractKey::Axis2Y => vec![],
     }
+}
+
+/// Generate default NES keyboard bindings using abstract key mappings.
+/// Matches the hardcoded defaults previously in seed.rs.
+pub fn default_nes_bindings() -> Vec<KeyboardBinding> {
+    use AbstractKey::*;
+    let p1 = |control: &str, ak: AbstractKey| -> Vec<KeyboardBinding> {
+        default_keyboard_key(ak)
+            .into_iter()
+            .map(|key| {
+                KeyboardBinding::new(
+                    "nes.attachment.player1",
+                    PersistedControlId::digital(format!("nes.control.{control}")),
+                    key,
+                )
+            })
+            .collect()
+    };
+    let mut b = Vec::new();
+    b.extend(p1("a", Button1));
+    b.extend(p1("b", Button2));
+    b.extend(p1("select", Select));
+    b.extend(p1("start", Start));
+    b.extend(p1("up", DpadUp));
+    b.extend(p1("down", DpadDown));
+    b.extend(p1("left", DpadLeft));
+    b.extend(p1("right", DpadRight));
+    b
 }
