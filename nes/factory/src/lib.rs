@@ -4,8 +4,6 @@ mod settings;
 
 use clap::{Arg, ArgMatches, Command};
 
-use std::sync::Arc;
-
 use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::cli::CliProvider;
@@ -15,7 +13,7 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
-use nerust_input_traits::{EmuInput, GuiInput, InputSplit};
+use nerust_input_traits::{EmuInput, GuiInput};
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
@@ -39,7 +37,6 @@ impl CoreFactory for NesFactory {
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
     ) -> Result<CoreParts, FactoryError> {
-        use nerust_nes_controller::input_buffer::NesInputBuffer;
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
         let assignments = input_factory.default_assignments();
         let resources = input_factory
@@ -47,17 +44,11 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        let input_split = InputSplit {
-            shared: Arc::clone(&resources.split.shared),
-            flag: Arc::clone(&resources.split.flag),
-            new_buffer: Box::new(|| Box::<NesInputBuffer>::default()),
-        };
         builder::create_core_and_adapter(
             view,
             speaker,
             gui_input,
             emu_input,
-            input_split,
             resources.field_map,
         )
     }

@@ -132,11 +132,10 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
         frame_format: nerust_render_base::VideoFrameFormat::Palette,
         ntsc_packed_rgba8: None,
     };
-    let (gui_input, input_split) = test_input_resources();
+    let (gui_input, _input_split) = test_input_resources();
     CoreParts {
         core: Box::new(core),
         gui_input,
-        input_split,
         field_map: std::collections::HashMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),

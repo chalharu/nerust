@@ -10,8 +10,8 @@ use crate::factory::descriptor::{
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
-use nerust_input_traits::{GuiInput, InputSplit, InputSystemFactory};
 use std::collections::HashMap;
+use nerust_input_traits::{GuiInput, InputSystemFactory};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -28,7 +28,6 @@ pub enum FactoryError {
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
     pub gui_input: GuiInput,
-    pub input_split: InputSplit,
     /// (slot_id, control_id) → absolute field index
     pub field_map: HashMap<(&'static str, &'static str), usize>,
     pub render_profile: nerust_render_base::VideoRenderProfile,
