@@ -32,15 +32,15 @@ impl CoreFactory for NesFactory {
         "NES"
     }
 
-    fn create_core_and_adapter(
+    fn create_core_and_adapter_with_assignments(
         &self,
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
+        assignments: &nerust_input_traits::InputAssignments,
     ) -> Result<CoreParts, FactoryError> {
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
-        let assignments = input_factory.default_assignments();
         let resources = input_factory
-            .create_split(&assignments)
+            .create_split(assignments)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);

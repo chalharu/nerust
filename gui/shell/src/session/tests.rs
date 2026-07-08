@@ -184,10 +184,11 @@ impl CoreFactory for MockFactory {
         "NES (test)"
     }
 
-    fn create_core_and_adapter(
+    fn create_core_and_adapter_with_assignments(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,
         _speaker: Box<dyn AudioBackend>,
+        _: &InputAssignments,
     ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
         Ok(build_test_core_parts())
     }

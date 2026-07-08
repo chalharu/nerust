@@ -161,23 +161,22 @@ pub(crate) fn present_preferences_dialog(
     general_page.append(&storage_dir_row);
     general_page.append(&storage_error_label);
 
-    // Show controller assignment info
+    // Show controller assignment per slot (interactive selection in Phase 5)
     let input_factory = factory.input_system_factory();
-    let controller_info = {
-        let mut s = String::from("Controllers: ");
-        for c in input_factory.controllers() {
+    let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+    if !controllers.is_empty() {
+        for slot in slots {
             use std::fmt::Write;
-            let _ = write!(s, "{}, ", c.label());
+            let mut s = String::new();
+            let _ = write!(s, "{}: ", slot.label);
+            for c in controllers {
+                let _ = write!(s, "{} ", c.label());
+            }
+            let label = gtk::Label::new(Some(&s));
+            label.set_xalign(0.0);
+            input_page.append(&label);
         }
-        s.push_str("Slots: ");
-        for sl in input_factory.slots() {
-            let _ = write!(s, "{}, ", sl.label);
-        }
-        s
-    };
-    let controller_label = gtk::Label::new(Some(&controller_info));
-    controller_label.set_xalign(0.0);
-    input_page.append(&controller_label);
+    }
 
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);

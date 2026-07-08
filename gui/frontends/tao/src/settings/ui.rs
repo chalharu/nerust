@@ -34,7 +34,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text as ui_text},
     },
 };
-use nerust_input_traits::InputTopologyDescriptor;
+use nerust_input_traits::{InputAssignments, InputTopologyDescriptor};
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -89,6 +89,10 @@ pub(crate) enum Message {
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
+    SetControllerSlot {
+        slot: String,
+        controller_id: Option<String>,
+    },
     Submit,
     Cancel,
 }
@@ -99,6 +103,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
@@ -128,6 +133,7 @@ impl Program for SettingsAppProgram {
             self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
+            self.pending_assignments.clone(),
             self.capture_target.clone(),
         );
         (state, Task::none())
@@ -157,10 +163,12 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     factory: Arc<dyn CoreFactory>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
+    controller_assignments: Vec<(String, Option<String>)>,
     page: SettingsPage,
     input_section: InputPageSection,
     storage_directory_input: String,
@@ -180,10 +188,19 @@ impl SettingsAppState {
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
+        let controller_assignments = factory
+            .input_system_factory()
+            .default_assignments()
+            .slots
+            .iter()
+            .map(|(s, c)| (s.clone(), c.clone()))
+            .collect();
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
+            pending_assignments: Arc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
+            controller_assignments,
             factory,
             audio_registry,
             draft: snapshot.clone(),
@@ -200,11 +217,13 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+        pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
         let mut state = Self::new(snapshot, factory, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
+        state.pending_assignments = pending_assignments;
         state.capture_target = capture_target;
         state
     }
@@ -297,6 +316,18 @@ impl SettingsAppState {
                     ),
                 );
             }
+            Message::SetControllerSlot {
+                slot,
+                controller_id,
+            } => {
+                if let Some(entry) = self
+                    .controller_assignments
+                    .iter_mut()
+                    .find(|(s, _)| *s == slot)
+                {
+                    entry.1 = controller_id;
+                }
+            }
             Message::StartCapture(target) => {
                 *self.capture_target.lock().unwrap() = Some(target);
             }
@@ -315,6 +346,9 @@ impl SettingsAppState {
                     return Task::none();
                 }
                 *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
+                *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
+                    slots: self.controller_assignments.clone(),
+                });
                 self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
@@ -440,18 +474,33 @@ impl SettingsAppState {
             content = content.push(text(conflict));
         }
 
-        // Show controller assignment
+        // Show controller assignment pickers per slot
         let input_factory = self.factory.input_system_factory();
         let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
-        let mut controller_info = String::from("Controllers:");
-        for c in controllers {
-            controller_info.push_str(&format!(" {}", c.label()));
+        if !controllers.is_empty() {
+            let choices: Vec<Choice<String>> = controllers
+                .iter()
+                .map(|c| Choice {
+                    value: c.id().to_string(),
+                    label: c.label().to_string(),
+                })
+                .collect();
+            for slot in slots {
+                let current = self
+                    .controller_assignments
+                    .iter()
+                    .find(|(s, _)| s == slot.id)
+                    .and_then(|(_, c)| c.as_ref())
+                    .and_then(|id| choices.iter().find(|ch| ch.value == *id).cloned());
+                let pick = pick_list(choices.clone(), current, move |choice: Choice<String>| {
+                    Message::SetControllerSlot {
+                        slot: slot.id.to_string(),
+                        controller_id: Some(choice.value),
+                    }
+                });
+                content = content.push(text(slot.label)).push(pick);
+            }
         }
-        controller_info.push_str("  —  Slots:");
-        for s in slots {
-            controller_info.push_str(&format!(" {}", s.label));
-        }
-        content = content.push(text(controller_info));
 
         let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);

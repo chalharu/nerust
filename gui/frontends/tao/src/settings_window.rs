@@ -16,6 +16,7 @@ use iced_winit::{
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{factory::CoreFactory, settings::editor::CaptureTarget};
+use nerust_input_traits::InputAssignments;
 
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
@@ -143,6 +144,7 @@ pub(crate) struct SettingsWindowHandle {
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     cursor: mouse::Cursor,
@@ -185,6 +187,7 @@ impl SettingsWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
+        let pending_assignments = Arc::new(Mutex::new(None));
         let capture_target = Arc::new(Mutex::new(None));
 
         #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
@@ -210,6 +213,7 @@ impl SettingsWindowHandle {
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
+            pending_assignments: pending_assignments.clone(),
             capture_target: capture_target.clone(),
         };
         let (instance, _task) = program::Instance::new(program);
@@ -254,6 +258,7 @@ impl SettingsWindowHandle {
             scale_factor,
             modifiers: keyboard::Modifiers::default(),
             pending_apply,
+            pending_assignments,
             should_close,
             capture_target,
             cursor: mouse::Cursor::default(),
@@ -339,6 +344,10 @@ impl SettingsWindowHandle {
 
     pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
         self.pending_apply.lock().unwrap().take()
+    }
+
+    pub(crate) fn take_pending_assignments(&mut self) -> Option<InputAssignments> {
+        self.pending_assignments.lock().unwrap().take()
     }
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {

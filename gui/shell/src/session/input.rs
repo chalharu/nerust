@@ -1,5 +1,5 @@
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{DigitalInputEvent, InputValue};
+use nerust_input_traits::{DigitalInputEvent, InputAssignments, InputValue};
 
 use crate::{
     session::{KeyboardShortcut, SessionHandle},
@@ -15,6 +15,32 @@ fn normalize_id(id: &str) -> &str {
 }
 
 impl SessionHandle {
+    /// Reassign controllers and rebuild the core.
+    pub fn reassign_controllers(
+        &mut self,
+        assignments: &InputAssignments,
+    ) -> Result<(), crate::session::SessionError> {
+        let system_id = self.factory.system_id();
+        let view = crate::settings::settings_view(&self.settings_snapshot, &system_id);
+        let speaker =
+            crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
+        let parts =
+            self.factory
+                .create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
+        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
+        let was_paused = self.emu_core.metrics().paused;
+        if let Some(loaded_media) = self.loaded_media.clone() {
+            rebuilt_core.load(&loaded_media.media, Vec::new())?;
+            if !was_paused {
+                rebuilt_core.resume()?;
+            }
+        }
+        self.emu_core = rebuilt_core;
+        self.gui_input = gui_input;
+        self.field_map = field_map;
+        Ok(())
+    }
+
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
         let slot = normalize_id(event.attachment.as_str());

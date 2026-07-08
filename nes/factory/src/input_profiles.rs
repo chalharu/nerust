@@ -149,7 +149,10 @@ impl InputPorts for crate::NesFactory {
 impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments {
-            slots: vec![("player1", Some("nes.famicom")), ("player2", None)],
+            slots: vec![
+                ("player1".to_string(), Some("nes.famicom".to_string())),
+                ("player2".to_string(), None),
+            ],
         }
     }
 
@@ -164,7 +167,7 @@ impl InputSystemFactory for crate::NesFactory {
         let has_famicom = assignments
             .slots
             .iter()
-            .any(|(_, c)| c.is_some_and(|id| id == "nes.famicom"));
+            .any(|(_, c)| c.as_deref() == Some("nes.famicom"));
         if !has_famicom {
             return Err(CreateSplitError::ControllerNotFound {
                 controller: "nes.famicom".to_string(),
