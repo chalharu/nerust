@@ -42,7 +42,9 @@ struct InputRow {
 }
 
 /// Build a dynamic InputTopologyDescriptor from controller default assignments.
-fn dynamic_topology(factory: &dyn nerust_gui_shell::factory::CoreFactory) -> InputTopologyDescriptor {
+fn dynamic_topology(
+    factory: &dyn nerust_gui_shell::factory::CoreFactory,
+) -> InputTopologyDescriptor {
     use nerust_input_traits::*;
     let input = factory.input_system_factory();
     let defaults = input.default_assignments();
@@ -51,7 +53,11 @@ fn dynamic_topology(factory: &dyn nerust_gui_shell::factory::CoreFactory) -> Inp
     let mut devices = Vec::new();
 
     fn att(slot: &str) -> &'static str {
-        match slot { "player1" => "nes.attachment.player1", "player2" => "nes.attachment.player2", _ => "unknown" }
+        match slot {
+            "player1" => "nes.attachment.player1",
+            "player2" => "nes.attachment.player2",
+            _ => "unknown",
+        }
     }
 
     for (slot_id, ctrl_opt) in &defaults.slots {
@@ -60,7 +66,9 @@ fn dynamic_topology(factory: &dyn nerust_gui_shell::factory::CoreFactory) -> Inp
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else { continue };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+            continue;
+        };
         for ps in profile.port_sets() {
             if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
                 if seen_devices.insert(ctrl_id) {
@@ -68,13 +76,16 @@ fn dynamic_topology(factory: &dyn nerust_gui_shell::factory::CoreFactory) -> Inp
                     devices.push(DeviceDescriptor {
                         kind: DeviceKindId::new(ctrl_id),
                         label: profile.label(),
-                        controls: controls.iter().map(|ci| {
-                            ControlDescriptor::Digital(DigitalControlDescriptor {
-                                id: DigitalControlId::new(ci.id),
-                                label: ci.label,
-                                description: ci.label,
+                        controls: controls
+                            .iter()
+                            .map(|ci| {
+                                ControlDescriptor::Digital(DigitalControlDescriptor {
+                                    id: DigitalControlId::new(ci.id),
+                                    label: ci.label,
+                                    description: ci.label,
+                                })
                             })
-                        }).collect(),
+                            .collect(),
                     });
                 }
                 for &port in ps.ports {
