@@ -29,6 +29,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
+use std::collections::HashSet;
 
 use crate::State;
 
@@ -38,6 +39,68 @@ struct InputRow {
     value_label: gtk::Label,
     change_button: gtk::Button,
     clear_button: gtk::Button,
+}
+
+/// Build a dynamic InputTopologyDescriptor from controller assignments.
+fn dynamic_topology(
+    factory: &dyn nerust_gui_shell::factory::CoreFactory,
+) -> InputTopologyDescriptor {
+    use nerust_input_traits::*;
+    let input = factory.input_system_factory();
+    let defaults = input.default_assignments();
+    let mut ports = Vec::new();
+    let mut seen_devices = HashSet::new();
+    let mut devices = Vec::new();
+    for (slot_id, ctrl_opt) in &defaults.slots {
+        let ctrl_id: &'static str = match ctrl_opt {
+            Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
+            Some(id) if id == "nes.famicom" => "nes.famicom",
+            _ => continue,
+        };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+            continue;
+        };
+        for ps in profile.port_sets() {
+            if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
+                if seen_devices.insert(ctrl_id) {
+                    let controls = profile.port_groups()[pos];
+                    devices.push(DeviceDescriptor {
+                        kind: DeviceKindId::new(ctrl_id),
+                        label: profile.label(),
+                        controls: controls
+                            .iter()
+                            .map(|ci| {
+                                ControlDescriptor::Digital(DigitalControlDescriptor {
+                                    id: DigitalControlId::new(ci.id),
+                                    label: ci.label,
+                                    description: ci.label,
+                                })
+                            })
+                            .collect(),
+                    });
+                }
+                for &port in ps.ports {
+                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == port) {
+                        ports.push(PortDescriptor {
+                            id: PortId::new(port),
+                            label: port,
+                            attachments: vec![AttachmentSlotDescriptor {
+                                id: AttachmentId::new(port),
+                                label: port,
+                                device: DeviceKindId::new(ctrl_id),
+                                supported_devices: vec![DeviceKindId::new(ctrl_id)],
+                            }],
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if ports.is_empty() {
+        factory.system_descriptor().input_topology
+    } else {
+        InputTopologyDescriptor { ports, devices }
+    }
 }
 
 pub(crate) fn present_preferences_dialog(
@@ -227,7 +290,7 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let topology = state.borrow().input_topology_descriptor();
+    let topology = dynamic_topology(factory.as_ref());
     let input_rows = build_input_rows(language, &input_page, &topology, factory.system_id());
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
@@ -968,7 +1031,7 @@ fn refresh_validation(
         .map(|error| error.to_string());
     let conflicts = conflicting_keys(
         &snapshot.shared,
-        &factory.system_descriptor().input_topology,
+        &dynamic_topology(factory.as_ref()),
         system,
     );
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
@@ -999,7 +1062,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     }
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
-        &factory.system_descriptor().input_topology,
+        &dynamic_topology(factory),
         factory.system_id(),
     ) {
         errors.push(format!(
