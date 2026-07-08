@@ -41,25 +41,26 @@ struct InputRow {
     clear_button: gtk::Button,
 }
 
-/// Build a dynamic InputTopologyDescriptor from controller assignments.
-fn dynamic_topology(
-    factory: &dyn nerust_gui_shell::factory::CoreFactory,
-) -> InputTopologyDescriptor {
+/// Build a dynamic InputTopologyDescriptor from controller default assignments.
+fn dynamic_topology(factory: &dyn nerust_gui_shell::factory::CoreFactory) -> InputTopologyDescriptor {
     use nerust_input_traits::*;
     let input = factory.input_system_factory();
     let defaults = input.default_assignments();
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::new();
     let mut devices = Vec::new();
+
+    fn att(slot: &str) -> &'static str {
+        match slot { "player1" => "nes.attachment.player1", "player2" => "nes.attachment.player2", _ => "unknown" }
+    }
+
     for (slot_id, ctrl_opt) in &defaults.slots {
         let ctrl_id: &'static str = match ctrl_opt {
             Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
-            continue;
-        };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else { continue };
         for ps in profile.port_sets() {
             if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
                 if seen_devices.insert(ctrl_id) {
@@ -67,25 +68,23 @@ fn dynamic_topology(
                     devices.push(DeviceDescriptor {
                         kind: DeviceKindId::new(ctrl_id),
                         label: profile.label(),
-                        controls: controls
-                            .iter()
-                            .map(|ci| {
-                                ControlDescriptor::Digital(DigitalControlDescriptor {
-                                    id: DigitalControlId::new(ci.id),
-                                    label: ci.label,
-                                    description: ci.label,
-                                })
+                        controls: controls.iter().map(|ci| {
+                            ControlDescriptor::Digital(DigitalControlDescriptor {
+                                id: DigitalControlId::new(ci.id),
+                                label: ci.label,
+                                description: ci.label,
                             })
-                            .collect(),
+                        }).collect(),
                     });
                 }
                 for &port in ps.ports {
-                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == port) {
+                    let full = att(port);
+                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == full) {
                         ports.push(PortDescriptor {
-                            id: PortId::new(port),
+                            id: PortId::new(full),
                             label: port,
                             attachments: vec![AttachmentSlotDescriptor {
-                                id: AttachmentId::new(port),
+                                id: AttachmentId::new(full),
                                 label: port,
                                 device: DeviceKindId::new(ctrl_id),
                                 supported_devices: vec![DeviceKindId::new(ctrl_id)],
