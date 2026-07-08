@@ -5,6 +5,7 @@ use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
 use nerust_input_traits::{EmuInput, GuiInput, InputStateBuffer, InputSplit, InputValue};
+use nerust_nes_controller::input_buffer::NesInputBuffer;
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
@@ -17,28 +18,34 @@ pub(crate) fn create_core_and_adapter(
 
     // Create the shared triple buffer for input state
     let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-        Arc::new(Mutex::new(Box::new([0u8; 3])));
+        Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
     let flag = Arc::new(AtomicBool::new(false));
 
     let device = NesPadDevice::new();
     let emu_input = EmuInput {
         shared: Arc::clone(&shared),
         flag: Arc::clone(&flag),
-        read_buf: Box::new([0u8; 3]),
+        read_buf: Box::<NesInputBuffer>::default(),
     };
     let gui_input = GuiInput {
         shared: Arc::clone(&shared),
         flag: Arc::clone(&flag),
-        write_buf: Box::new([0u8; 3]),
+        write_buf: Box::<NesInputBuffer>::default(),
     };
 
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
     let core = NesConsoleCore::new_empty(Box::new(device), speaker, emu_input);
+    let input_split = InputSplit {
+        shared: Arc::clone(&gui_input.shared),
+        flag: Arc::clone(&gui_input.flag),
+        new_buffer: Box::new(|| Box::<NesInputBuffer>::default()),
+    };
     Ok(CoreParts {
         core: Box::new(core),
         gui_input,
+        input_split,
         render_profile,
         palette,
     })

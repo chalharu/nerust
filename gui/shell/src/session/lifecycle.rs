@@ -318,7 +318,7 @@ impl SessionHandle {
         let system_id = self.factory.system_id();
         let view = crate::settings::settings_view(next_settings, &system_id);
         let parts = self.factory.create_core_and_adapter(&view, speaker)?;
-        let (rebuilt_core, rebuilt_adapter) = crate::emu_core::EmuCore::from_parts(parts);
+        let (rebuilt_core, gui_input) = crate::emu_core::EmuCore::from_parts(parts);
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, Vec::new())?;
@@ -331,7 +331,7 @@ impl SessionHandle {
         }
 
         self.emu_core = rebuilt_core;
-        self.input_adapter = rebuilt_adapter;
+        self.gui_input = gui_input;
         if was_loaded {
             let rom_path = self
                 .loaded_media

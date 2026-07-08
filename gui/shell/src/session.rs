@@ -17,7 +17,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::SystemInputAdapter;
+use nerust_input_traits::GuiInput;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -56,7 +56,7 @@ pub struct SessionHandle {
     pub(super) descriptor: SystemDescriptor,
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
-    pub(super) input_adapter: Box<dyn SystemInputAdapter>,
+    pub(super) gui_input: GuiInput,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
@@ -72,7 +72,7 @@ impl SessionHandle {
         factory: &Arc<dyn CoreFactory>,
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
-    ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
+    ) -> (EmuCore, GuiInput) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = crate::settings::settings_view(snapshot, &system_id);
@@ -125,11 +125,11 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) =
+        let (emu_core, gui_input) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
-            input_adapter,
+            gui_input,
             descriptor,
             factory,
             capabilities,
@@ -179,11 +179,11 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) =
+        let (emu_core, gui_input) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
-            input_adapter,
+            gui_input,
             descriptor,
             factory,
             capabilities,
