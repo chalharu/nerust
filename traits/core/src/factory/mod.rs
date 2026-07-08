@@ -10,7 +10,7 @@ use crate::factory::descriptor::{
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
-use nerust_input_traits::SystemInputAdapter;
+use nerust_input_traits::GuiInput;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -26,7 +26,7 @@ pub enum FactoryError {
 /// Raw parts produced by a system factory before EmuCore wrapping.
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
-    pub adapter: Box<dyn SystemInputAdapter>,
+    pub gui_input: GuiInput,
     pub render_profile: nerust_render_base::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
 }

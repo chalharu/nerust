@@ -1,7 +1,10 @@
+use std::any::Any;
+
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat,
     VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
 };
+use nerust_input_traits::EmuInput;
 
 use crate::{Controller, Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
 
@@ -18,6 +21,7 @@ pub struct NesConsoleCore {
     core: SendCore,
     controller: Box<dyn Controller + Send>,
     audio: Box<dyn AudioBackend>,
+    emu_input: EmuInput,
     paused: bool,
 }
 
@@ -26,23 +30,30 @@ impl NesConsoleCore {
         cartridge_data: CartridgeData,
         controller: Box<dyn Controller + Send>,
         audio: Box<dyn AudioBackend>,
+        emu_input: EmuInput,
     ) -> Result<Self, CoreError> {
         let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
             core: SendCore(Some(core)),
             controller,
             audio,
+            emu_input,
             paused: false,
         })
     }
 
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
-    pub fn new_empty(controller: Box<dyn Controller + Send>, audio: Box<dyn AudioBackend>) -> Self {
+    pub fn new_empty(
+        controller: Box<dyn Controller + Send>,
+        audio: Box<dyn AudioBackend>,
+        emu_input: EmuInput,
+    ) -> Self {
         Self {
             core: SendCore(None),
             controller,
             audio,
+            emu_input,
             paused: false,
         }
     }
@@ -70,6 +81,14 @@ impl ConsoleCore for NesConsoleCore {
 
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
+
+        // Take latest input and sync to controller
+        self.emu_input.take();
+        let any: &dyn Any = &*self.emu_input.read_buf;
+        if let Some(state) = any.downcast_ref::<[u8; 3]>() {
+            self.controller.sync_input(state);
+        }
+
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
 
         Ok(())
@@ -144,12 +163,24 @@ impl ConsoleCore for NesConsoleCore {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::AtomicBool;
 
     use nerust_core_traits::CoreConfig;
+    use nerust_input_traits::{EmuInput, InputStateBuffer, InputValue};
     use nerust_render_base::PixelFormat;
 
     use super::*;
     use crate::{OpenBusReadResult, controller::Controller};
+
+    fn test_emu_input() -> EmuInput {
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new(Box::new([0u8; 3])));
+        EmuInput {
+            shared,
+            flag: Arc::new(AtomicBool::new(false)),
+            read_buf: Box::new([0u8; 3]),
+        }
+    }
 
     struct MockController;
     impl Controller for MockController {
@@ -181,6 +212,7 @@ mod tests {
             cartridge,
             Box::new(MockController),
             Box::new(nerust_core_traits::audio::NullAudio),
+            test_emu_input(),
         )
         .expect("NesConsoleCore::new should succeed");
 
@@ -202,6 +234,7 @@ mod tests {
         let mut core = NesConsoleCore::new_empty(
             Box::new(MockController),
             Box::new(nerust_core_traits::audio::NullAudio),
+            test_emu_input(),
         );
         let config = CoreConfig {
             region: None,

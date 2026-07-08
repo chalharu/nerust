@@ -2881,6 +2881,7 @@ dependencies = [
  "hound",
  "log",
  "nerust_core_traits",
+ "nerust_input_traits",
  "nerust_render_base",
  "nerust_serialize",
  "nerust_sound_filter",
