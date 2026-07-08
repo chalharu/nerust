@@ -211,6 +211,201 @@ pub trait InputStatePersistence: SystemInputAdapter {
     fn runtime_state_bytes(&self) -> Result<Vec<u8>, InputError>;
 }
 
+// ===== New Input Architecture Types =====
+
+use std::any::Any;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Values that can be written to an InputStateBuffer field.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputValue {
+    Digital(bool),
+    Analog(f32),
+    Position { x: f64, y: f64 },
+}
+
+/// Errors from InputStateBuffer operations.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum BufferError {
+    #[error("field {field} not found")]
+    FieldNotFound { field: usize },
+    #[error("field {field} does not support value type {expected}")]
+    UnsupportedFieldType { field: usize, expected: &'static str },
+}
+
+/// GUI-side write abstraction for input state.
+/// Emu side reads via `Any::downcast_ref`.
+pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
+    /// field: 0..N logical field index. Semantics defined by impl.
+    fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    /// Reset all fields to neutral/released state. Impl-defined.
+    fn clear(&mut self);
+}
+
+/// A set of port identifiers a controller can occupy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortSet {
+    pub ports: &'static [&'static str],
+}
+
+/// Identifies a single slot on the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+/// Describes one control on a controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub kind: ControlKind,
+    pub abstract_key: Option<AbstractKey>,
+}
+
+/// Classification of a control's physical behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    Digital,
+    Analog,
+    AnalogStick { clickable: bool },
+    Mouse,
+}
+
+/// System-agnostic logical key identifier for default binding resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AbstractKey {
+    Button1, Button2, Button3, Button4,
+    Button5, Button6, Button7, Button8,
+    Select, Start, Guide,
+    DpadUp, DpadDown, DpadLeft, DpadRight,
+    Axis1X, Axis1Y, Axis2X, Axis2Y,
+}
+
+/// Describes one controller type (metadata sent to Frontend).
+pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
+    fn id(&self) -> &'static str;
+    fn label(&self) -> &'static str;
+    fn port_sets(&self) -> &[PortSet];
+    fn port_groups(&self) -> &[&[ControlInfo]];
+    fn directional_ids(&self) -> &[&[&'static str; 4]];
+}
+
+/// System port layout query. Factory → Frontend.
+pub trait InputPorts: std::fmt::Debug {
+    fn slots(&self) -> &[SlotInfo];
+    fn controllers(&self) -> &[&'static dyn ControllerProfile];
+}
+
+/// Slot-to-controller assignments.
+#[derive(Debug, Clone)]
+pub struct InputAssignments {
+    pub slots: Vec<(&'static str, Option<&'static str>)>,
+}
+
+/// Errors from create_split.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CreateSplitError {
+    #[error("slot '{slot}' not found")]
+    SlotNotFound { slot: String },
+    #[error("controller '{controller}' not found")]
+    ControllerNotFound { controller: String },
+    #[error("controller '{controller}' cannot be assigned to slot '{slot}'")]
+    IncompatibleController { controller: String, slot: String },
+    #[error("slot conflict between {a} and {b}")]
+    SlotConflict { a: String, b: String },
+}
+
+/// Factory for creating input runtime state.
+pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
+    fn default_assignments(&self) -> InputAssignments;
+    fn create_split(
+        &self,
+        assignments: &InputAssignments,
+    ) -> Result<InputResources, CreateSplitError>;
+}
+
+/// Output of create_split.
+#[derive(Debug)]
+pub struct InputResources {
+    pub split: InputSplit,
+    /// (slot_id, control_id) → absolute field index
+    pub field_map: std::collections::HashMap<(&'static str, &'static str), usize>,
+}
+
+/// Thread-shared state reference.
+pub struct InputSplit {
+    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    pub flag: Arc<AtomicBool>,
+    pub new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+}
+
+impl std::fmt::Debug for InputSplit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputSplit")
+            .field("shared", &self.shared)
+            .field("flag", &self.flag)
+            .finish_non_exhaustive()
+    }
+}
+
+/// GUI thread input delivery.
+#[derive(Debug)]
+pub struct GuiInput {
+    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    pub flag: Arc<AtomicBool>,
+    pub write_buf: Box<dyn InputStateBuffer>,
+}
+
+impl GuiInput {
+    pub fn from_split(split: &InputSplit) -> Self {
+        Self {
+            shared: Arc::clone(&split.shared),
+            flag: Arc::clone(&split.flag),
+            write_buf: (split.new_buffer)(),
+        }
+    }
+
+    /// Must be called every frame. Swaps write_buf into shared and signals the Emu thread.
+    pub fn publish(&mut self) {
+        let mut lock = self.shared.lock().unwrap();
+        std::mem::swap(&mut *lock, &mut self.write_buf);
+        self.flag.store(true, Ordering::Release);
+    }
+
+    pub fn clear(&mut self) {
+        self.write_buf.clear();
+    }
+}
+
+/// Emu thread input consumer.
+#[derive(Debug)]
+pub struct EmuInput {
+    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    pub flag: Arc<AtomicBool>,
+    pub read_buf: Box<dyn InputStateBuffer>,
+}
+
+impl EmuInput {
+    pub fn from_split(split: &InputSplit) -> Self {
+        Self {
+            shared: Arc::clone(&split.shared),
+            flag: Arc::clone(&split.flag),
+            read_buf: (split.new_buffer)(),
+        }
+    }
+
+    /// Must be called every frame start. Takes latest input from GUI.
+    pub fn take(&mut self) {
+        if self.flag.swap(false, Ordering::Acquire) {
+            let mut lock = self.shared.lock().unwrap();
+            std::mem::swap(&mut *lock, &mut self.read_buf);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
