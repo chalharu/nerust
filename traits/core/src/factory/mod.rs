@@ -10,7 +10,8 @@ use crate::factory::descriptor::{
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
-use nerust_input_traits::{GuiInput, InputSplit};
+use std::collections::HashMap;
+use nerust_input_traits::{GuiInput, InputSplit, InputSystemFactory};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -28,6 +29,8 @@ pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
     pub gui_input: GuiInput,
     pub input_split: InputSplit,
+    /// (slot_id, control_id) → absolute field index
+    pub field_map: HashMap<(&'static str, &'static str), usize>,
     pub render_profile: nerust_render_base::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
 }
@@ -70,4 +73,8 @@ pub trait CoreFactory {
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
     ) -> Result<CoreParts, FactoryError>;
+
+    /// Returns this factory's input system factory for negotiation.
+    /// Implementations typically return `self`.
+    fn input_system_factory(&self) -> &dyn InputSystemFactory;
 }

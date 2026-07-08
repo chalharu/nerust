@@ -141,6 +141,7 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
         core: Box::new(core),
         gui_input,
         input_split,
+        field_map: std::collections::HashMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),
     }

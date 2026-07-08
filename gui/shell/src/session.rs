@@ -8,7 +8,7 @@ pub mod persistence;
 mod tests;
 pub mod title;
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::{BTreeSet, HashMap}, sync::Arc};
 
 pub use lifecycle::WindowSize;
 use nerust_core_traits::audio::AudioBackendRegistry;
@@ -57,6 +57,7 @@ pub struct SessionHandle {
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
+    pub(super) field_map: HashMap<(&'static str, &'static str), usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
@@ -72,13 +73,12 @@ impl SessionHandle {
         factory: &Arc<dyn CoreFactory>,
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
-    ) -> (EmuCore, GuiInput) {
+    ) -> (EmuCore, GuiInput, HashMap<(&'static str, &'static str), usize>) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = crate::settings::settings_view(snapshot, &system_id);
-        let result = factory.create_core_and_adapter(&view, speaker);
-        match result {
-            Ok(parts) => EmuCore::from_parts(parts),
+        let parts = match factory.create_core_and_adapter(&view, speaker) {
+            Ok(parts) => parts,
             Err(_) => {
                 log::warn!("core creation with loaded settings failed; using defaults");
                 use crate::settings::defaults::seed::{
@@ -91,12 +91,12 @@ impl SessionHandle {
                 };
                 let fallback_speaker = settings::build_speaker(registry, &fallback.local);
                 let fallback_view = crate::settings::settings_view(&fallback, &system_id);
-                let parts = factory
+                factory
                     .create_core_and_adapter(&fallback_view, fallback_speaker)
-                    .expect("failed to create core even with default settings");
-                EmuCore::from_parts(parts)
+                    .expect("failed to create core even with default settings")
             }
-        }
+        };
+        EmuCore::from_parts(parts)
     }
 
     fn new_inner(
@@ -125,11 +125,12 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input) =
+        let (emu_core, gui_input, field_map) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
             gui_input,
+            field_map,
             descriptor,
             factory,
             capabilities,
@@ -179,11 +180,12 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input) =
+        let (emu_core, gui_input, field_map) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
         Self {
             emu_core,
             gui_input,
+            field_map,
             descriptor,
             factory,
             capabilities,
