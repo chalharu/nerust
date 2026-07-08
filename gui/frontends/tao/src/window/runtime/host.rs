@@ -469,9 +469,15 @@ impl HostState {
         mut handle: crate::settings_window::SettingsWindowHandle,
     ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
+        let pending_assignments = handle.take_pending_assignments();
         drop(handle);
         self.on_settings_closed();
         if let Some(snapshot) = pending {
+            if let Some(assignments) = pending_assignments {
+                if let Err(error) = self.session.reassign_controllers(&assignments) {
+                    log::warn!("controller reassign failed: {error}");
+                }
+            }
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),
                 Err(error) => {

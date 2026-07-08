@@ -286,7 +286,7 @@ pub trait InputPorts: std::fmt::Debug {
 /// Slot-to-controller assignments.
 #[derive(Debug, Clone)]
 pub struct InputAssignments {
-    pub slots: Vec<(&'static str, Option<&'static str>)>,
+    pub slots: Vec<(String, Option<String>)>,
 }
 
 /// Errors from create_split.
