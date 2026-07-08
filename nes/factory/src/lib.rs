@@ -44,13 +44,7 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        builder::create_core_and_adapter(
-            view,
-            speaker,
-            gui_input,
-            emu_input,
-            resources.field_map,
-        )
+        builder::create_core_and_adapter(view, speaker, gui_input, emu_input, resources.field_map)
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
