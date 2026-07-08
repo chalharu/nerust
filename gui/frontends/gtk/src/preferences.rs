@@ -28,6 +28,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
+use std::fmt::Write;
 use nerust_input_traits::InputTopologyDescriptor;
 
 use crate::State;
@@ -159,6 +160,24 @@ pub(crate) fn present_preferences_dialog(
     storage_error_label.set_xalign(0.0);
     general_page.append(&storage_dir_row);
     general_page.append(&storage_error_label);
+
+    // Show controller assignment info
+    let input_factory = factory.input_system_factory();
+    let controller_info = {
+        let mut s = String::from("Controllers: ");
+        for c in input_factory.controllers() {
+            use std::fmt::Write;
+            let _ = write!(s, "{}, ", c.label());
+        }
+        s.push_str("Slots: ");
+        for sl in input_factory.slots() {
+            let _ = write!(s, "{}, ", sl.label);
+        }
+        s
+    };
+    let controller_label = gtk::Label::new(Some(&controller_info));
+    controller_label.set_xalign(0.0);
+    input_page.append(&controller_label);
 
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);

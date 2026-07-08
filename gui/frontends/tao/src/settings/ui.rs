@@ -440,6 +440,19 @@ impl SettingsAppState {
             content = content.push(text(conflict));
         }
 
+        // Show controller assignment
+        let input_factory = self.factory.input_system_factory();
+        let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+        let mut controller_info = String::from("Controllers:");
+        for c in controllers {
+            controller_info.push_str(&format!(" {}", c.label()));
+        }
+        controller_info.push_str("  —  Slots:");
+        for s in slots {
+            controller_info.push_str(&format!(" {}", s.label));
+        }
+        content = content.push(text(controller_info));
+
         let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
