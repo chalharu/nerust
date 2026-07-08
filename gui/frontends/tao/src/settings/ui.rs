@@ -474,10 +474,25 @@ impl SettingsAppState {
             content = content.push(text(conflict));
         }
 
-        // Show controller assignment pickers per slot
+        // Show controller assignment pickers per slot.
+        // Multi-port controllers (e.g. FamicomSet: {P1,P2}) mark consumed slots as occupied.
         let input_factory = self.factory.input_system_factory();
         let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
         if !controllers.is_empty() {
+            // Build a set of occupied slot IDs
+            let mut occupied = std::collections::HashSet::new();
+            for (s, c_opt) in &self.controller_assignments {
+                let ctrl_id = match c_opt { Some(id) => id.as_str(), None => continue };
+                for p in input_factory.controllers().iter().find(|p| p.id() == ctrl_id) {
+                    for ps in p.port_sets() {
+                        if ps.ports.contains(&s.as_str()) {
+                            for &port in ps.ports {
+                                occupied.insert(port);
+                            }
+                        }
+                    }
+                }
+            }
             let choices: Vec<Choice<String>> = controllers
                 .iter()
                 .map(|c| Choice {
@@ -486,6 +501,11 @@ impl SettingsAppState {
                 })
                 .collect();
             for slot in slots {
+                if occupied.contains(slot.id) && !self.controller_assignments.iter().any(|(s, _)| s == slot.id) {
+                    // Occupied by another slot's multi-port controller
+                    content = content.push(text(format!("{} — (occupied)", slot.label)));
+                    continue;
+                }
                 let current = self
                     .controller_assignments
                     .iter()
