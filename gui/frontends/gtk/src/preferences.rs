@@ -169,7 +169,29 @@ pub(crate) fn present_preferences_dialog(
     }
     let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
     if !controllers.is_empty() {
+        // Build occupied set from default assignments (multi-port controllers)
+        let defaults = input_factory.default_assignments();
+        let mut occupied = std::collections::HashSet::new();
+        for (s, c_opt) in &defaults.slots {
+            let ctrl_id = match c_opt { Some(id) => id.as_str(), None => continue };
+            for p in input_factory.controllers().iter().find(|p| p.id() == ctrl_id) {
+                for ps in p.port_sets() {
+                    if ps.ports.contains(&s.as_str()) {
+                        for &port in ps.ports {
+                            occupied.insert(port);
+                        }
+                    }
+                }
+            }
+        }
         for slot in slots {
+            if occupied.contains(slot.id) && !defaults.slots.iter().any(|(s, _)| s == slot.id) {
+                // Occupied by another slot's multi-port controller
+                let label = gtk::Label::new(Some(&format!("{} — (occupied)", slot.label)));
+                label.set_xalign(0.0);
+                input_page.append(&label);
+                continue;
+            }
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let label = gtk::Label::new(Some(slot.label));
             row.append(&label);
