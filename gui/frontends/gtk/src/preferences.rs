@@ -578,19 +578,15 @@ pub(crate) fn present_preferences_dialog(
                         .collect();
                     // Clear conflicting assignments from multi-port controllers
                     for i in 0..slots.len() {
-                        let Some(ref ctrl_id) = slots[i].1.clone() else {
-                            continue;
-                        };
+                        let Some(ref ctrl_id) = slots[i].1.clone() else { continue };
                         for p in input_factory.controllers().iter() {
-                            if p.id() != ctrl_id {
-                                continue;
-                            }
+                            if p.id() != ctrl_id { continue; }
                             for ps in p.port_sets() {
+                                if ps.ports.len() <= 1 { continue; }
+                                if !ps.ports.contains(&slots[i].0.as_str()) { continue; }
                                 for &port in ps.ports {
                                     if port != slots[i].0 {
-                                        if let Some(other) =
-                                            slots.iter_mut().find(|(s, _)| *s == port)
-                                        {
+                                        if let Some(other) = slots.iter_mut().find(|(s, _)| *s == port) {
                                             other.1 = None;
                                         }
                                     }
