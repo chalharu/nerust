@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
 use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
 use nerust_nes_device::nes_pad::NesPadDevice;
 
@@ -29,12 +26,10 @@ impl ValidationRuntime {
                 }
             })?;
 
-        let cell = Arc::new(NesInputCell::new());
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
             core,
-            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
-            cell,
+            controller: NesPadDevice::new(),
             mixer: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),

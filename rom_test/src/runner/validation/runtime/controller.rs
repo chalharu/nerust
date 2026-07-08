@@ -1,4 +1,4 @@
-use nerust_nes_core::input_types::Buttons;
+use nerust_nes_core::{controller::Controller, input_types::Buttons};
 
 use super::ValidationRuntime;
 use crate::{
@@ -22,13 +22,19 @@ impl ValidationRuntime {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.cell
-            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
+        self.sync_input();
     }
 
     pub(in crate::runner::validation) fn set_microphone(&mut self, state: PadState) {
         self.mic = matches!(state, PadState::Pressed);
-        self.cell
-            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
+        self.sync_input();
+    }
+
+    fn sync_input(&mut self) {
+        self.controller.sync_input(&[
+            self.pad1.bits(),
+            self.pad2.bits(),
+            self.mic as u8,
+        ]);
     }
 }
