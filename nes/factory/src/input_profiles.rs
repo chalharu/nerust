@@ -288,7 +288,7 @@ impl InputSystemFactory for crate::NesFactory {
                     // Occupies {P1,P2}. Generate field_map for both.
                     for (gi, controls) in FAMICOM_SET.port_groups().iter().enumerate() {
                         let s = if gi == 0 { "player1" } else { "player2" };
-                        if !assigned_ports.insert(s) {
+                        if s != slot && !assigned_ports.insert(s) {
                             return Err(CreateSplitError::SlotConflict {
                                 a: s.to_string(),
                                 b: slot.to_string(),
