@@ -473,10 +473,10 @@ impl HostState {
         drop(handle);
         self.on_settings_closed();
         if let Some(snapshot) = pending {
-            if let Some(assignments) = pending_assignments {
-                if let Err(error) = self.session.reassign_controllers(&assignments) {
-                    log::warn!("controller reassign failed: {error}");
-                }
+            if let Some(assignments) = pending_assignments
+                && let Err(error) = self.session.reassign_controllers(&assignments)
+            {
+                log::warn!("controller reassign failed: {error}");
             }
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),

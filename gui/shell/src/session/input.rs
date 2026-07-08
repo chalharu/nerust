@@ -38,6 +38,7 @@ impl SessionHandle {
         self.emu_core = rebuilt_core;
         self.gui_input = gui_input;
         self.field_map = field_map;
+        self.current_assignments = assignments.clone();
         Ok(())
     }
 
