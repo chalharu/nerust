@@ -4,6 +4,8 @@ mod settings;
 
 use clap::{Arg, ArgMatches, Command};
 
+use std::sync::Arc;
+
 use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::cli::CliProvider;
@@ -13,6 +15,7 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
+use nerust_input_traits::{GuiInput, EmuInput, InputSplit};
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
@@ -36,7 +39,27 @@ impl CoreFactory for NesFactory {
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
     ) -> Result<CoreParts, FactoryError> {
-        builder::create_core_and_adapter(view, speaker)
+        use nerust_nes_controller::input_buffer::NesInputBuffer;
+        let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
+        let assignments = input_factory.default_assignments();
+        let resources = input_factory
+            .create_split(&assignments)
+            .map_err(|e| FactoryError::Create(e.to_string()))?;
+        let gui_input = GuiInput::from_split(&resources.split);
+        let emu_input = EmuInput::from_split(&resources.split);
+        let input_split = InputSplit {
+            shared: Arc::clone(&resources.split.shared),
+            flag: Arc::clone(&resources.split.flag),
+            new_buffer: Box::new(|| Box::<NesInputBuffer>::default()),
+        };
+        builder::create_core_and_adapter(
+            view,
+            speaker,
+            gui_input,
+            emu_input,
+            input_split,
+            resources.field_map,
+        )
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
@@ -76,6 +99,10 @@ impl CoreFactory for NesFactory {
 
     fn default_load_options(&self) -> SystemLoadOptions {
         SystemLoadOptions::default()
+    }
+
+    fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
+        self
     }
 }
 

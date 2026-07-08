@@ -56,8 +56,9 @@ impl EmuCore {
     }
 
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
-    /// Returns the core and the GuiInput separately.
-    pub fn from_parts(parts: CoreParts) -> (Self, GuiInput) {
+    /// Returns (EmuCore, GuiInput, field_map).
+    pub fn from_parts(parts: CoreParts) -> (Self, GuiInput, std::collections::HashMap<(&'static str, &'static str), usize>) {
+        let field_map = parts.field_map;
         use std::sync::Mutex;
         let src_w = parts.render_profile.source_logical_size.width;
         let src_h = parts.render_profile.source_logical_size.height;
@@ -100,6 +101,7 @@ impl EmuCore {
                 input_split: parts.input_split,
             },
             parts.gui_input,
+            field_map,
         )
     }
 
