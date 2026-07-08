@@ -6,21 +6,18 @@ use nerust_input_traits::{
 use nerust_nes_controller::input_buffer::NesInputBuffer;
 
 #[derive(Debug)]
-struct StandardPad;
+struct FamicomSet;
 
-impl ControllerProfile for StandardPad {
-    fn id(&self) -> &'static str { "nes.standard_pad" }
-    fn label(&self) -> &'static str { "NES Standard Controller" }
+impl ControllerProfile for FamicomSet {
+    fn id(&self) -> &'static str { "nes.famicom" }
+    fn label(&self) -> &'static str { "Famicom Controller Set" }
     fn port_sets(&self) -> &[PortSet] {
-        &[
-            PortSet { ports: &["player1"] },
-            PortSet { ports: &["player2"] },
-        ]
+        &[PortSet { ports: &["player1", "player2"] }]
     }
     fn port_groups(&self) -> &[&[ControlInfo]] {
         use AbstractKey::*;
         use ControlKind::*;
-        static CONTROLS: &[ControlInfo] = &[
+        static P1: &[ControlInfo] = &[
             ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(Button1) },
             ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(Button2) },
             ControlInfo { id: "select", label: "Select", kind: Digital, abstract_key: Some(Select) },
@@ -30,7 +27,16 @@ impl ControllerProfile for StandardPad {
             ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(DpadLeft) },
             ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(DpadRight) },
         ];
-        static GROUPS: &[&[ControlInfo]] = &[CONTROLS];
+        static P2: &[ControlInfo] = &[
+            ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(Button1) },
+            ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(Button2) },
+            ControlInfo { id: "mic", label: "Microphone", kind: Digital, abstract_key: None },
+            ControlInfo { id: "up", label: "Up", kind: Digital, abstract_key: Some(DpadUp) },
+            ControlInfo { id: "down", label: "Down", kind: Digital, abstract_key: Some(DpadDown) },
+            ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(DpadLeft) },
+            ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(DpadRight) },
+        ];
+        static GROUPS: &[&[ControlInfo]] = &[P1, P2];
         GROUPS
     }
     fn directional_ids(&self) -> &[&[&'static str; 4]] {
@@ -38,8 +44,8 @@ impl ControllerProfile for StandardPad {
     }
 }
 
-static STANDARD_PAD: StandardPad = StandardPad;
-static NES_CONTROLLERS: &[&'static dyn ControllerProfile] = &[&STANDARD_PAD];
+static FAMICOM_SET: FamicomSet = FamicomSet;
+static NES_CONTROLLERS: &[&'static dyn ControllerProfile] = &[&FAMICOM_SET];
 
 impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
@@ -56,36 +62,26 @@ impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments {
             slots: vec![
-                ("player1", Some("nes.standard_pad")),
-                ("player2", Some("nes.standard_pad")),
+                ("player1", Some("nes.famicom")),
+                ("player2", None),
             ],
         }
     }
 
     fn create_split(
         &self,
-        assignments: &InputAssignments,
+        _assignments: &InputAssignments,
     ) -> Result<InputResources, CreateSplitError> {
         use std::sync::{Arc, Mutex};
         use nerust_input_traits::InputStateBuffer;
 
         let mut field_map = std::collections::HashMap::new();
-        let mut field_index = 0usize;
 
-        for (slot_id, ctrl_opt) in &assignments.slots {
-            let ctrl_id = match ctrl_opt {
-                Some(id) => *id,
-                None => continue,
-            };
-            if ctrl_id != "nes.standard_pad" {
-                return Err(CreateSplitError::ControllerNotFound {
-                    controller: ctrl_id.to_string(),
-                });
-            }
-            let slot_str: &str = slot_id;
-            for ci in StandardPad.port_groups()[0] {
-                field_map.insert((slot_str, ci.id), field_index);
-                field_index += 1;
+        // FamicomSet occupies P1+P2. Generate field_map for both.
+        for (gi, controls) in FAMICOM_SET.port_groups().iter().enumerate() {
+            let slot = if gi == 0 { "player1" } else { "player2" };
+            for (fi, ci) in controls.iter().enumerate() {
+                field_map.insert((slot, ci.id), gi * 8 + fi);
             }
         }
 
