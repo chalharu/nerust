@@ -174,16 +174,25 @@ impl InputSystemFactory for crate::NesFactory {
             });
         }
 
-        // FamicomSet port_set = {P1, P2}. Populate field_map for both slots.
+        // FamicomSet port_set = {P1, P2}. Populate field_map using NES protocol bit positions.
         let mut field_map = std::collections::HashMap::new();
         for (gi, controls) in FAMICOM_SET.port_groups().iter().enumerate() {
             let slot = if gi == 0 { "player1" } else { "player2" };
-            for (fi, ci) in controls.iter().enumerate() {
-                // Mic uses dedicated byte at field 16, not P2 byte at field 10.
-                let field = if ci.id == "mic" { 16 } else { gi * 8 + fi };
-                field_map.insert((slot, ci.id), field);
+            let base = gi * 8;
+            for ci in controls.iter() {
+                // Map control to its NES shift-register bit position.
+                let bit = match ci.id {
+                    "a" => 0, "b" => 1,
+                    "select" => 2, "start" => 3,
+                    "up" => 4, "down" => 5, "left" => 6, "right" => 7,
+                    "microphone" => continue, // handled below as dedicated field
+                    _ => continue,
+                };
+                field_map.insert((slot, ci.id), base + bit);
             }
         }
+        // Microphone uses dedicated byte at field 16 (NesInputBuffer[2]).
+        field_map.insert(("player2", "microphone"), 16);
 
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
