@@ -20,7 +20,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{ControllerProfile, GuiInput, SlotInfo};
+use nerust_input_traits::{ControllerProfile, GuiInput, InputAssignments, SlotInfo};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -60,6 +60,7 @@ pub struct SessionHandle {
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
+    pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(&'static str, &'static str), usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
@@ -134,9 +135,11 @@ impl SessionHandle {
             .expect("settings snapshot should be readable");
         let (emu_core, gui_input, field_map) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
+        let current_assignments = factory.input_system_factory().default_assignments();
         Self {
             emu_core,
             gui_input,
+            current_assignments,
             field_map,
             descriptor,
             factory,
@@ -189,9 +192,11 @@ impl SessionHandle {
             .expect("settings snapshot should be readable");
         let (emu_core, gui_input, field_map) =
             Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
+        let current_assignments = factory.input_system_factory().default_assignments();
         Self {
             emu_core,
             gui_input,
+            current_assignments,
             field_map,
             descriptor,
             factory,

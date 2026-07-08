@@ -29,7 +29,6 @@ use nerust_gui_shell::{
     },
 };
 use nerust_input_traits::InputTopologyDescriptor;
-use std::fmt::Write;
 
 use crate::State;
 

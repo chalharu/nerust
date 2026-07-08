@@ -317,7 +317,9 @@ impl SessionHandle {
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = self.factory.system_id();
         let view = crate::settings::settings_view(next_settings, &system_id);
-        let parts = self.factory.create_core_and_adapter(&view, speaker)?;
+        let parts = self
+            .factory
+            .create_core_and_adapter_with_assignments(&view, speaker, &self.current_assignments)?;
         let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
 
         if let Some(loaded_media) = self.loaded_media.clone() {
