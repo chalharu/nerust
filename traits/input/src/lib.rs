@@ -345,7 +345,7 @@ pub struct GuiInput {
     pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     pub flag: Arc<AtomicBool>,
     pub state: Box<dyn InputStateBuffer>,
-    write_buf: Box<dyn InputStateBuffer>,
+    pub write_buf: Box<dyn InputStateBuffer>,
 }
 
 impl GuiInput {
