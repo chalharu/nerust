@@ -161,20 +161,29 @@ pub(crate) fn present_preferences_dialog(
     general_page.append(&storage_dir_row);
     general_page.append(&storage_error_label);
 
-    // Show controller assignment per slot (interactive selection in Phase 5)
+    // Controller assignment ComboBoxes per slot
     let input_factory = factory.input_system_factory();
     let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+    struct SlotCombo {
+        slot_id: String,
+        combo: gtk::ComboBoxText,
+    }
+    let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
     if !controllers.is_empty() {
         for slot in slots {
-            use std::fmt::Write;
-            let mut s = String::new();
-            let _ = write!(s, "{}: ", slot.label);
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let label = gtk::Label::new(Some(slot.label));
+            row.append(&label);
+            let combo = gtk::ComboBoxText::new();
             for c in controllers {
-                let _ = write!(s, "{} ", c.label());
+                combo.append_text(c.label());
             }
-            let label = gtk::Label::new(Some(&s));
-            label.set_xalign(0.0);
-            input_page.append(&label);
+            slot_combos.borrow_mut().push(SlotCombo {
+                slot_id: slot.id.to_string(),
+                combo: combo.clone(),
+            });
+            row.append(&combo);
+            input_page.append(&row);
         }
     }
 
@@ -514,8 +523,36 @@ pub(crate) fn present_preferences_dialog(
             factory.clone(),
         );
         let factory = factory.clone();
+        let slot_combos = slot_combos.clone();
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {
+                // Apply controller assignment changes
+                let assignments = {
+                    let combos = slot_combos.borrow();
+                    let slots: Vec<(String, Option<String>)> = combos
+                        .iter()
+                        .map(|sc| {
+                            let controller_id = sc.combo.active_text().and_then(|t| {
+                                // Find controller ID by label match
+                                let ctrls = factory.input_system_factory().controllers();
+                                ctrls
+                                    .iter()
+                                    .find(|c| c.label() == t)
+                                    .map(|c| c.id().to_string())
+                            });
+                            (sc.slot_id.clone(), controller_id)
+                        })
+                        .collect();
+                    nerust_input_traits::InputAssignments { slots }
+                };
+                if let Err(e) = state
+                    .borrow_mut()
+                    .session
+                    .reassign_controllers(&assignments)
+                {
+                    log::warn!("controller reassign failed: {e}");
+                }
+
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
