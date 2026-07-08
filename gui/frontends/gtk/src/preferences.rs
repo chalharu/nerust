@@ -73,6 +73,9 @@ fn dynamic_topology(
             _ => "unknown",
         }
     }
+    fn dev_kind(ctrl: &'static str, gi: usize) -> &'static str {
+        match (ctrl, gi) { ("nes.famicom", 1) => "nes.famicom_p2", _ => ctrl }
+    }
 
     for (slot_id, ctrl_opt) in &defaults.slots {
         let ctrl_id: &'static str = match ctrl_opt {
@@ -86,21 +89,19 @@ fn dynamic_topology(
         for ps in profile.port_sets() {
             if ps.ports.iter().any(|&p| p == slot_id) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
+                    let dk = dev_kind(ctrl_id, gi);
                     if seen_devices.insert((ctrl_id, gi)) {
                         let controls = profile.port_groups()[gi];
                         devices.push(DeviceDescriptor {
-                            kind: DeviceKindId::new(ctrl_id),
+                            kind: DeviceKindId::new(dk),
                             label: profile.label(),
-                            controls: controls
-                                .iter()
-                                .map(|ci| {
-                                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                                        id: DigitalControlId::new(ctl(ci.id)),
-                                        label: ci.label,
-                                        description: ci.label,
-                                    })
+                            controls: controls.iter().map(|ci| {
+                                ControlDescriptor::Digital(DigitalControlDescriptor {
+                                    id: DigitalControlId::new(ctl(ci.id)),
+                                    label: ci.label,
+                                    description: ci.label,
                                 })
-                                .collect(),
+                            }).collect(),
                         });
                     }
                     let full = att(port);
@@ -111,8 +112,8 @@ fn dynamic_topology(
                             attachments: vec![AttachmentSlotDescriptor {
                                 id: AttachmentId::new(full),
                                 label: port,
-                                device: DeviceKindId::new(ctrl_id),
-                                supported_devices: vec![DeviceKindId::new(ctrl_id)],
+                                device: DeviceKindId::new(dk),
+                                supported_devices: vec![DeviceKindId::new(dk)],
                             }],
                         });
                     }
