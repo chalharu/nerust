@@ -3,9 +3,7 @@ use std::collections::BTreeMap;
 use nerust_core_traits::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
-    input::{
-        IMPLICIT_PROFILE_ID, KeyboardKey, ShortcutAction, ShortcutBinding,
-    },
+    input::{IMPLICIT_PROFILE_ID, KeyboardKey, ShortcutAction, ShortcutBinding},
     local::HostBackendLocalSettings,
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},

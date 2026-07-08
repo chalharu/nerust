@@ -16,9 +16,8 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
 use nerust_input_traits::{
-    AbstractKey, BufferError, ControlInfo, ControlKind, ControllerProfile, GuiInput, InputAssignments,
-    InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory, InputValue,
-    PortSet, SlotInfo, CreateSplitError,
+    BufferError, ControllerProfile, CreateSplitError, GuiInput, InputAssignments, InputPorts,
+    InputResources, InputSplit, InputStateBuffer, InputSystemFactory, InputValue, SlotInfo,
 };
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
@@ -149,8 +148,12 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
 #[derive(Debug)]
 struct MockInputFactory;
 impl InputPorts for MockInputFactory {
-    fn slots(&self) -> &[SlotInfo] { &[] }
-    fn controllers(&self) -> &[&'static dyn ControllerProfile] { &[] }
+    fn slots(&self) -> &[SlotInfo] {
+        &[]
+    }
+    fn controllers(&self) -> &[&'static dyn ControllerProfile] {
+        &[]
+    }
 }
 impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {

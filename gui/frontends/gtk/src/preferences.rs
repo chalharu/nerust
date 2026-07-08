@@ -28,8 +28,8 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
-use std::fmt::Write;
 use nerust_input_traits::InputTopologyDescriptor;
+use std::fmt::Write;
 
 use crate::State;
 
