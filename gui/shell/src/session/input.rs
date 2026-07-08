@@ -1,5 +1,5 @@
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::InputValue;
+use nerust_input_traits::{DigitalInputEvent, InputValue};
 
 use crate::{
     session::{KeyboardShortcut, SessionHandle},
@@ -7,6 +7,18 @@ use crate::{
 };
 
 impl SessionHandle {
+    /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
+    pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
+        let slot = event.attachment.as_str();
+        let control = event.control.as_str();
+        if let Some(&field) = self.field_map.get(&(slot, control)) {
+            let _ = self
+                .gui_input
+                .write_buf
+                .set(field, InputValue::Digital(event.is_pressed()));
+        }
+    }
+
     pub fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,
