@@ -9,7 +9,6 @@ use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Bu
 /// CPU の $4016/$4017 読み出しに応答する。mic は $4016 D2 に現れる。
 pub struct NesPadDevice {
     cached: [u8; 3],
-    buttons: [u8; 2],
     index: [u8; 2],
     strobe: bool,
 }
@@ -18,7 +17,6 @@ impl NesPadDevice {
     pub fn new() -> Self {
         Self {
             cached: [0; 3],
-            buttons: [0; 2],
             index: [0; 2],
             strobe: false,
         }
@@ -27,7 +25,6 @@ impl NesPadDevice {
 
 impl ControllerState for NesPadDevice {
     fn reset_runtime(&mut self) {
-        self.buttons = [0; 2];
         self.index = [0; 2];
         self.strobe = false;
     }
@@ -38,7 +35,11 @@ impl ControllerState for NesPadDevice {
 
     fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let snapshot = decode_controller_state(bytes)?;
-        self.buttons = [snapshot.buttons[0].bits(), snapshot.buttons[1].bits()];
+        self.cached = [
+            snapshot.buttons[0].bits(),
+            snapshot.buttons[1].bits(),
+            snapshot.microphone as u8,
+        ];
         self.index = [snapshot.index1 as u8, snapshot.index2 as u8];
         self.strobe = snapshot.strobe;
         Ok(())

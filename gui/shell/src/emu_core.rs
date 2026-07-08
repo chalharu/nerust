@@ -11,7 +11,7 @@ use nerust_core_traits::factory::CoreParts;
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
-use nerust_input_traits::{GuiInput, InputSplit};
+use nerust_input_traits::GuiInput;
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
@@ -27,7 +27,6 @@ pub struct EmuCore {
     disp_fb: FrameBuffer,
     frame_ready: Arc<AtomicBool>,
     metrics: Arc<Mutex<ConsoleMetrics>>,
-    input_split: InputSplit,
 }
 
 impl EmuCore {
@@ -38,7 +37,6 @@ impl EmuCore {
         shared_fb: Arc<Mutex<FrameBuffer>>,
         disp_fb: FrameBuffer,
         frame_ready: Arc<AtomicBool>,
-        input_split: InputSplit,
     ) -> Self {
         let metrics = Arc::new(Mutex::new(ConsoleMetrics {
             paused: true,
@@ -51,7 +49,6 @@ impl EmuCore {
             disp_fb,
             frame_ready,
             metrics,
-            input_split,
         }
     }
 
@@ -98,7 +95,6 @@ impl EmuCore {
                     paused: true,
                     ..ConsoleMetrics::default()
                 })),
-                input_split: parts.input_split,
             },
             parts.gui_input,
             field_map,

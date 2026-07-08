@@ -70,18 +70,36 @@ impl InputSystemFactory for crate::NesFactory {
 
     fn create_split(
         &self,
-        _assignments: &InputAssignments,
+        assignments: &InputAssignments,
     ) -> Result<InputResources, CreateSplitError> {
         use std::sync::{Arc, Mutex};
         use nerust_input_traits::InputStateBuffer;
 
         let mut field_map = std::collections::HashMap::new();
+        let mut assigned_ports = std::collections::HashSet::<&str>::new();
 
-        // FamicomSet occupies P1+P2. Generate field_map for both.
-        for (gi, controls) in FAMICOM_SET.port_groups().iter().enumerate() {
-            let slot = if gi == 0 { "player1" } else { "player2" };
+        for (slot_id, ctrl_opt) in &assignments.slots {
+            let ctrl_id = match ctrl_opt {
+                Some(id) => *id,
+                None => continue,
+            };
+            let slot: &str = slot_id;
+            if ctrl_id != "nes.famicom" {
+                return Err(CreateSplitError::ControllerNotFound {
+                    controller: ctrl_id.to_string(),
+                });
+            }
+            if !assigned_ports.insert(slot) {
+                return Err(CreateSplitError::SlotConflict {
+                    a: slot.to_string(),
+                    b: slot.to_string(),
+                });
+            }
+            // FamicomSet occupies {P1, P2}. Assign control groups by slot.
+            let group_index = if slot == "player1" { 0 } else { 1 };
+            let controls = FAMICOM_SET.port_groups()[group_index];
             for (fi, ci) in controls.iter().enumerate() {
-                field_map.insert((slot, ci.id), gi * 8 + fi);
+                field_map.insert((slot, ci.id), group_index * 8 + fi);
             }
         }
 

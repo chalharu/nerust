@@ -222,6 +222,7 @@ impl SessionHandle {
     }
 
     pub fn swap_frame_buffer(&mut self) {
+        self.gui_input.publish();
         self.emu_core.swap_frame_buffer();
     }
 
