@@ -49,7 +49,7 @@ fn dynamic_topology(
     let input = factory.input_system_factory();
     let defaults = input.default_assignments();
     let mut ports = Vec::new();
-    let mut seen_devices = HashSet::new();
+    let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
 
     fn att(slot: &str) -> &'static str {
@@ -80,29 +80,24 @@ fn dynamic_topology(
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
-            continue;
-        };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else { continue };
         for ps in profile.port_sets() {
-            if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
-                if seen_devices.insert(ctrl_id) {
-                    let controls = profile.port_groups()[pos];
-                    devices.push(DeviceDescriptor {
-                        kind: DeviceKindId::new(ctrl_id),
-                        label: profile.label(),
-                        controls: controls
-                            .iter()
-                            .map(|ci| {
+            if ps.ports.iter().any(|&p| p == slot_id) {
+                for (gi, &port) in ps.ports.iter().enumerate() {
+                    if seen_devices.insert((ctrl_id, gi)) {
+                        let controls = profile.port_groups()[gi];
+                        devices.push(DeviceDescriptor {
+                            kind: DeviceKindId::new(ctrl_id),
+                            label: profile.label(),
+                            controls: controls.iter().map(|ci| {
                                 ControlDescriptor::Digital(DigitalControlDescriptor {
                                     id: DigitalControlId::new(ctl(ci.id)),
                                     label: ci.label,
                                     description: ci.label,
                                 })
-                            })
-                            .collect(),
-                    });
-                }
-                for &port in ps.ports {
+                            }).collect(),
+                        });
+                    }
                     let full = att(port);
                     if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == full) {
                         ports.push(PortDescriptor {
