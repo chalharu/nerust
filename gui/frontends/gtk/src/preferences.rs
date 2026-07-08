@@ -28,7 +28,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
-use nerust_input_traits::InputTopologyDescriptor;
+use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
 
 use crate::State;
 
@@ -162,20 +162,54 @@ pub(crate) fn present_preferences_dialog(
 
     // Controller assignment ComboBoxes per slot
     let input_factory = factory.input_system_factory();
-    let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+    let slots = input_factory.slots().to_vec();
+    let controllers: Vec<&'static dyn ControllerProfile> = input_factory.controllers().to_vec();
     struct SlotCombo {
         slot_id: String,
         combo: gtk::ComboBoxText,
     }
     let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
+    let factory2 = factory.clone();
     if !controllers.is_empty() {
-        for slot in slots {
+        for slot in &slots {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            let label = gtk::Label::new(Some(slot.label));
-            row.append(&label);
+            let lbl = gtk::Label::new(Some(slot.label));
+            row.append(&lbl);
             let combo = gtk::ComboBoxText::new();
-            for c in controllers {
+            for c in &controllers {
                 combo.append_text(c.label());
+            }
+            {
+                let sc = slot_combos.clone();
+                let f = factory2.clone();
+                combo.connect_changed(move |_| {
+                    let combos = sc.borrow();
+                    let input = f.input_system_factory();
+                    // Build occupied from current selections
+                    let mut occupied = std::collections::HashSet::new();
+                    for sc_item in combos.iter() {
+                        let Some(label) = sc_item.combo.active_text() else {
+                            continue;
+                        };
+                        for p in input.controllers().iter() {
+                            if p.label() != label.as_str() {
+                                continue;
+                            }
+                            for ps in p.port_sets() {
+                                if ps.ports.contains(&sc_item.slot_id.as_str()) {
+                                    for &port in ps.ports {
+                                        occupied.insert(port);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for sc_item in combos.iter() {
+                        let occ = occupied.contains(sc_item.slot_id.as_str())
+                            && sc_item.combo.active_text().is_none();
+                        sc_item.combo.set_sensitive(!occ);
+                    }
+                });
             }
             slot_combos.borrow_mut().push(SlotCombo {
                 slot_id: slot.id.to_string(),
