@@ -356,6 +356,7 @@ impl GuiInput {
     pub fn publish(&mut self) {
         let mut lock = self.shared.lock().unwrap();
         std::mem::swap(&mut *lock, &mut self.write_buf);
+        self.write_buf.clear();
         self.flag.store(true, Ordering::Release);
     }
 
