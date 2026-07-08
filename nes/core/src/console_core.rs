@@ -5,6 +5,7 @@ use nerust_core_traits::{
     VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
+use crate::input_types::NesInputBuffer;
 
 use crate::{Controller, Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
 
@@ -85,8 +86,8 @@ impl ConsoleCore for NesConsoleCore {
         // Take latest input and sync to controller
         self.emu_input.take();
         let any: &dyn Any = &*self.emu_input.read_buf;
-        if let Some(state) = any.downcast_ref::<[u8; 3]>() {
-            self.controller.sync_input(state);
+        if let Some(state) = any.downcast_ref::<NesInputBuffer>() {
+            self.controller.sync_input(&state.0);
         }
 
         core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
@@ -167,18 +168,21 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{EmuInput, InputStateBuffer, InputValue};
+    use nerust_input_traits::{EmuInput, InputStateBuffer};
+use crate::input_types::NesInputBuffer;
     use nerust_render_base::PixelFormat;
 
     use super::*;
     use crate::{OpenBusReadResult, controller::Controller};
 
     fn test_emu_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new(Box::new([0u8; 3])));
+        use nerust_input_traits::InputStateBuffer;
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
         EmuInput {
             shared,
             flag: Arc::new(AtomicBool::new(false)),
-            read_buf: Box::new([0u8; 3]),
+            read_buf: Box::<NesInputBuffer>::default(),
         }
     }
 
