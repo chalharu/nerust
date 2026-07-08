@@ -169,41 +169,7 @@ pub(crate) fn present_preferences_dialog(
     }
     let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
     if !controllers.is_empty() {
-        // Build occupied set from default assignments (multi-port controllers)
-        let defaults = input_factory.default_assignments();
-        let mut occupied = std::collections::HashSet::new();
-        for (s, c_opt) in &defaults.slots {
-            let ctrl_id = match c_opt {
-                Some(id) => id.as_str(),
-                None => continue,
-            };
-            for p in input_factory
-                .controllers()
-                .iter()
-                .find(|p| p.id() == ctrl_id)
-            {
-                for ps in p.port_sets() {
-                    if ps.ports.contains(&s.as_str()) {
-                        for &port in ps.ports {
-                            occupied.insert(port);
-                        }
-                    }
-                }
-            }
-        }
         for slot in slots {
-            if occupied.contains(slot.id)
-                && !defaults
-                    .slots
-                    .iter()
-                    .any(|(s, c)| s == slot.id && c.is_some())
-            {
-                // Occupied by another slot's multi-port controller
-                let label = gtk::Label::new(Some(&format!("{} — (occupied)", slot.label)));
-                label.set_xalign(0.0);
-                input_page.append(&label);
-                continue;
-            }
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let label = gtk::Label::new(Some(slot.label));
             row.append(&label);
@@ -560,14 +526,14 @@ pub(crate) fn present_preferences_dialog(
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {
                 // Apply controller assignment changes
+                let input_factory = factory.input_system_factory();
                 let assignments = {
                     let combos = slot_combos.borrow();
-                    let slots: Vec<(String, Option<String>)> = combos
+                    let mut slots: Vec<(String, Option<String>)> = combos
                         .iter()
                         .map(|sc| {
                             let controller_id = sc.combo.active_text().and_then(|t| {
-                                // Find controller ID by label match
-                                let ctrls = factory.input_system_factory().controllers();
+                                let ctrls = input_factory.controllers();
                                 ctrls
                                     .iter()
                                     .find(|c| c.label() == t)
@@ -576,6 +542,22 @@ pub(crate) fn present_preferences_dialog(
                             (sc.slot_id.clone(), controller_id)
                         })
                         .collect();
+                    // Clear conflicting assignments from multi-port controllers
+                    for i in 0..slots.len() {
+                        let Some(ref ctrl_id) = slots[i].1.clone() else { continue };
+                        for p in input_factory.controllers().iter() {
+                            if p.id() != ctrl_id { continue; }
+                            for ps in p.port_sets() {
+                                for &port in ps.ports {
+                                    if port != slots[i].0 {
+                                        if let Some(other) = slots.iter_mut().find(|(s, _)| *s == port) {
+                                            other.1 = None;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     nerust_input_traits::InputAssignments { slots }
                 };
                 if let Err(e) = state
