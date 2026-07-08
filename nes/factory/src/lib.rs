@@ -1,4 +1,5 @@
 mod builder;
+pub mod input_profiles;
 mod settings;
 
 use clap::{Arg, ArgMatches, Command};
@@ -18,6 +19,7 @@ pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
 /// Opaque option bytes for MMC3 IRQ variant: "nec".
 pub const MMC3_OPTION_NEC: &[u8] = b"nec";
 
+#[derive(Debug)]
 pub struct NesFactory;
 
 impl CoreFactory for NesFactory {
