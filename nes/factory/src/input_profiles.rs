@@ -161,9 +161,10 @@ impl InputSystemFactory for crate::NesFactory {
         use std::sync::{Arc, Mutex};
 
         // Validate: at least one slot must be assigned to FamicomSet
-        let has_famicom = assignments.slots.iter().any(|(_, c)| {
-            c.is_some_and(|id| id == "nes.famicom")
-        });
+        let has_famicom = assignments
+            .slots
+            .iter()
+            .any(|(_, c)| c.is_some_and(|id| id == "nes.famicom"));
         if !has_famicom {
             return Err(CreateSplitError::ControllerNotFound {
                 controller: "nes.famicom".to_string(),
