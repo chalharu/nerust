@@ -952,7 +952,10 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
         }
     }
     fn dev_kind(ctrl: &'static str, gi: usize) -> &'static str {
-        match (ctrl, gi) { ("nes.famicom", 1) => "nes.famicom_p2", _ => ctrl }
+        match (ctrl, gi) {
+            ("nes.famicom", 1) => "nes.famicom_p2",
+            _ => ctrl,
+        }
     }
 
     for (slot_id, ctrl_opt) in &state.controller_assignments {
@@ -973,13 +976,16 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
                         devices.push(DeviceDescriptor {
                             kind: DeviceKindId::new(dk),
                             label: profile.label(),
-                            controls: controls.iter().map(|ci| {
-                                ControlDescriptor::Digital(DigitalControlDescriptor {
-                                    id: DigitalControlId::new(ctl(ci.id)),
-                                    label: ci.label,
-                                    description: ci.label,
+                            controls: controls
+                                .iter()
+                                .map(|ci| {
+                                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                                        id: DigitalControlId::new(ctl(ci.id)),
+                                        label: ci.label,
+                                        description: ci.label,
+                                    })
                                 })
-                            }).collect(),
+                                .collect(),
                         });
                     }
                     let full = att(port);
