@@ -327,8 +327,12 @@ impl SettingsAppState {
                     for p in input.controllers().iter() {
                         if p.id() == ctrl_id {
                             for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 { continue; }
-                                if !ps.ports.contains(&slot.as_str()) { continue; }
+                                if ps.ports.len() <= 1 {
+                                    continue;
+                                }
+                                if !ps.ports.contains(&slot.as_str()) {
+                                    continue;
+                                }
                                 for &port in ps.ports {
                                     if port != slot {
                                         if let Some(other) = self
