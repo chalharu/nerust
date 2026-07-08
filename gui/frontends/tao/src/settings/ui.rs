@@ -334,14 +334,13 @@ impl SettingsAppState {
                                     continue;
                                 }
                                 for &port in ps.ports {
-                                    if port != slot {
-                                        if let Some(other) = self
+                                    if port != slot
+                                        && let Some(other) = self
                                             .controller_assignments
                                             .iter_mut()
                                             .find(|(s, _)| *s == port)
-                                        {
-                                            other.1 = None;
-                                        }
+                                    {
+                                        other.1 = None;
                                     }
                                 }
                             }
