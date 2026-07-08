@@ -207,10 +207,12 @@ pub enum BufferError {
 /// GUI-side write abstraction for input state.
 /// Emu side reads via `Any::downcast_ref`.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
-    /// field: 0..N logical field index. Semantics defined by impl.
+    /// field: 0..N の logical field index。値の意味は impl 定義。
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
-    /// Reset all fields to neutral/released state. Impl-defined.
+    /// 全 field を neutral / released 状態にリセットする。impl 依存。
     fn clear(&mut self);
+    /// Copy absolute state from another buffer of the same concrete type.
+    fn copy_state(&mut self, other: &dyn InputStateBuffer);
 }
 
 /// A set of port identifiers a controller can occupy.
@@ -336,11 +338,14 @@ impl std::fmt::Debug for InputSplit {
 }
 
 /// GUI thread input delivery.
+/// Maintains absolute input state in `state` buffer.
+/// On publish, copies state → write_buf → shared (swap), preserving held keys.
 #[derive(Debug)]
 pub struct GuiInput {
     pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     pub flag: Arc<AtomicBool>,
-    pub write_buf: Box<dyn InputStateBuffer>,
+    pub state: Box<dyn InputStateBuffer>,
+    write_buf: Box<dyn InputStateBuffer>,
 }
 
 impl GuiInput {
@@ -348,20 +353,23 @@ impl GuiInput {
         Self {
             shared: Arc::clone(&split.shared),
             flag: Arc::clone(&split.flag),
+            state: (split.new_buffer)(),
             write_buf: (split.new_buffer)(),
         }
     }
 
-    /// Must be called every frame. Swaps write_buf into shared and signals the Emu thread.
+    /// Must be called every frame. Copies absolute state into shared.
     pub fn publish(&mut self) {
+        // Prepare write_buf from absolute state (fast concrete copy)
+        self.write_buf.copy_state(&*self.state);
+        // Swap into shared (fast pointer exchange)
         let mut lock = self.shared.lock().unwrap();
         std::mem::swap(&mut *lock, &mut self.write_buf);
-        self.write_buf.clear();
         self.flag.store(true, Ordering::Release);
     }
 
     pub fn clear(&mut self) {
-        self.write_buf.clear();
+        self.state.clear();
     }
 }
 

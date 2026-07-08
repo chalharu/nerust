@@ -40,6 +40,12 @@ impl InputStateBuffer for TestInputBuffer {
     fn clear(&mut self) {
         self.0 = [0; 2];
     }
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) {
+        let any: &dyn std::any::Any = other;
+        if let Some(src) = any.downcast_ref::<TestInputBuffer>() {
+            self.0 = src.0;
+        }
+    }
 }
 
 struct MockConsoleCore {
@@ -106,6 +112,7 @@ fn test_input_resources() -> (GuiInput, InputSplit) {
     let gui = GuiInput {
         shared: Arc::clone(&shared),
         flag: Arc::clone(&flag),
+        state: Box::<TestInputBuffer>::default(),
         write_buf: Box::<TestInputBuffer>::default(),
     };
     let split = InputSplit {

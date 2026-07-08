@@ -49,7 +49,7 @@ impl SessionHandle {
         if let Some(&field) = self.field_map.get(&(slot, control)) {
             let _ = self
                 .gui_input
-                .write_buf
+                .state
                 .set(field, InputValue::Digital(event.is_pressed()));
         }
     }
@@ -82,7 +82,7 @@ impl SessionHandle {
             if let Some(&field) = self.field_map.get(&(slot, control)) {
                 let _ = self
                     .gui_input
-                    .write_buf
+                    .state
                     .set(field, InputValue::Digital(pressed));
             }
         }
