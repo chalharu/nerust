@@ -320,12 +320,15 @@ impl SettingsAppState {
                 slot,
                 controller_id,
             } => {
-                // When a multi-port controller is selected, clear other occupied slots
+                // For multi-port controllers (port_set with >1 port),
+                // clear other occupied slots in the same set.
                 if let Some(ref ctrl_id) = controller_id {
                     let input = self.factory.input_system_factory();
                     for p in input.controllers().iter() {
                         if p.id() == ctrl_id {
                             for ps in p.port_sets() {
+                                if ps.ports.len() <= 1 { continue; }
+                                if !ps.ports.contains(&slot.as_str()) { continue; }
                                 for &port in ps.ports {
                                     if port != slot {
                                         if let Some(other) = self
