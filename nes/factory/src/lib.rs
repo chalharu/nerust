@@ -1,4 +1,3 @@
-mod adapter;
 mod builder;
 mod settings;
 
