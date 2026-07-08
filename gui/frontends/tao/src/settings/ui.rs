@@ -931,11 +931,10 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     let mut devices = Vec::new();
 
     fn att(slot: &str) -> &'static str {
-        match slot {
-            "player1" => "nes.attachment.player1",
-            "player2" => "nes.attachment.player2",
-            _ => "unknown",
-        }
+        match slot { "player1" => "nes.attachment.player1", "player2" => "nes.attachment.player2", _ => "unknown" }
+    }
+    fn ctl(id: &str) -> &'static str {
+        match id { "a" => "nes.control.a", "b" => "nes.control.b", "select" => "nes.control.select", "start" => "nes.control.start", "up" => "nes.control.up", "down" => "nes.control.down", "left" => "nes.control.left", "right" => "nes.control.right", "microphone" => "famicom.microphone", _ => "unknown" }
     }
 
     for (slot_id, ctrl_opt) in &state.controller_assignments {
@@ -944,9 +943,7 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
-            continue;
-        };
+        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else { continue };
         for ps in profile.port_sets() {
             if let Some(pos) = ps.ports.iter().position(|&p| p == slot_id) {
                 if seen_devices.insert(ctrl_id) {
@@ -954,16 +951,13 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
                     devices.push(DeviceDescriptor {
                         kind: DeviceKindId::new(ctrl_id),
                         label: profile.label(),
-                        controls: controls
-                            .iter()
-                            .map(|ci| {
-                                ControlDescriptor::Digital(DigitalControlDescriptor {
-                                    id: DigitalControlId::new(ci.id),
-                                    label: ci.label,
-                                    description: ci.label,
-                                })
+                        controls: controls.iter().map(|ci| {
+                            ControlDescriptor::Digital(DigitalControlDescriptor {
+                                id: DigitalControlId::new(ctl(ci.id)),
+                                label: ci.label,
+                                description: ci.label,
                             })
-                            .collect(),
+                        }).collect(),
                     });
                 }
                 for &port in ps.ports {
