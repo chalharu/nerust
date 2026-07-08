@@ -181,8 +181,8 @@ impl DigitalInputEvent {
 // ===== New Input Architecture Types =====
 
 use std::any::Any;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Values that can be written to an InputStateBuffer field.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -198,7 +198,10 @@ pub enum BufferError {
     #[error("field {field} not found")]
     FieldNotFound { field: usize },
     #[error("field {field} does not support value type {expected}")]
-    UnsupportedFieldType { field: usize, expected: &'static str },
+    UnsupportedFieldType {
+        field: usize,
+        expected: &'static str,
+    },
 }
 
 /// GUI-side write abstraction for input state.
@@ -244,11 +247,25 @@ pub enum ControlKind {
 /// System-agnostic logical key identifier for default binding resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbstractKey {
-    Button1, Button2, Button3, Button4,
-    Button5, Button6, Button7, Button8,
-    Select, Start, Guide,
-    DpadUp, DpadDown, DpadLeft, DpadRight,
-    Axis1X, Axis1Y, Axis2X, Axis2Y,
+    Button1,
+    Button2,
+    Button3,
+    Button4,
+    Button5,
+    Button6,
+    Button7,
+    Button8,
+    Select,
+    Start,
+    Guide,
+    DpadUp,
+    DpadDown,
+    DpadLeft,
+    DpadRight,
+    Axis1X,
+    Axis1Y,
+    Axis2X,
+    Axis2Y,
 }
 
 /// Describes one controller type (metadata sent to Frontend).

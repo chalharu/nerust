@@ -1,9 +1,7 @@
 use std::{
-    fs, sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    fs,
     path::PathBuf,
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -17,9 +15,7 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-use nerust_input_traits::{
-    BufferError, GuiInput, InputSplit, InputStateBuffer, InputValue,
-};
+use nerust_input_traits::{BufferError, GuiInput, InputSplit, InputStateBuffer, InputValue};
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
 

@@ -27,16 +27,16 @@ impl SessionHandle {
             .systems
             .get(&system_id)
             .and_then(|s| s.implicit_keyboard_profile());
-        if let Some(profile) = profile {
-            if let Some(binding) = profile.bindings.iter().find(|b| b.key == key) {
-                let slot = binding.attachment.as_str();
-                let control = binding.control.as_str();
-                if let Some(&field) = self.field_map.get(&(slot, control)) {
-                    let _ = self.gui_input.write_buf.set(
-                        field,
-                        InputValue::Digital(pressed),
-                    );
-                }
+        if let Some(profile) = profile
+            && let Some(binding) = profile.bindings.iter().find(|b| b.key == key)
+        {
+            let slot = binding.attachment.as_str();
+            let control = binding.control.as_str();
+            if let Some(&field) = self.field_map.get(&(slot, control)) {
+                let _ = self
+                    .gui_input
+                    .write_buf
+                    .set(field, InputValue::Digital(pressed));
             }
         }
 

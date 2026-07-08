@@ -1,7 +1,6 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, ControllerProfile, InputAssignments,
+    AbstractKey, ControlInfo, ControlKind, ControllerProfile, CreateSplitError, InputAssignments,
     InputPorts, InputResources, InputSplit, InputSystemFactory, PortSet, SlotInfo,
-    CreateSplitError,
 };
 use nerust_nes_controller::input_buffer::NesInputBuffer;
 
@@ -9,32 +8,113 @@ use nerust_nes_controller::input_buffer::NesInputBuffer;
 struct FamicomSet;
 
 impl ControllerProfile for FamicomSet {
-    fn id(&self) -> &'static str { "nes.famicom" }
-    fn label(&self) -> &'static str { "Famicom Controller Set" }
+    fn id(&self) -> &'static str {
+        "nes.famicom"
+    }
+    fn label(&self) -> &'static str {
+        "Famicom Controller Set"
+    }
     fn port_sets(&self) -> &[PortSet] {
-        &[PortSet { ports: &["player1", "player2"] }]
+        &[PortSet {
+            ports: &["player1", "player2"],
+        }]
     }
     fn port_groups(&self) -> &[&[ControlInfo]] {
         use AbstractKey::*;
         use ControlKind::*;
         static P1: &[ControlInfo] = &[
-            ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(Button1) },
-            ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(Button2) },
-            ControlInfo { id: "select", label: "Select", kind: Digital, abstract_key: Some(Select) },
-            ControlInfo { id: "start", label: "Start", kind: Digital, abstract_key: Some(Start) },
-            ControlInfo { id: "up", label: "Up", kind: Digital, abstract_key: Some(DpadUp) },
-            ControlInfo { id: "down", label: "Down", kind: Digital, abstract_key: Some(DpadDown) },
-            ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(DpadLeft) },
-            ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(DpadRight) },
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(Button2),
+            },
+            ControlInfo {
+                id: "select",
+                label: "Select",
+                kind: Digital,
+                abstract_key: Some(Select),
+            },
+            ControlInfo {
+                id: "start",
+                label: "Start",
+                kind: Digital,
+                abstract_key: Some(Start),
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(DpadRight),
+            },
         ];
         static P2: &[ControlInfo] = &[
-            ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(Button1) },
-            ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(Button2) },
-            ControlInfo { id: "mic", label: "Microphone", kind: Digital, abstract_key: None },
-            ControlInfo { id: "up", label: "Up", kind: Digital, abstract_key: Some(DpadUp) },
-            ControlInfo { id: "down", label: "Down", kind: Digital, abstract_key: Some(DpadDown) },
-            ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(DpadLeft) },
-            ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(DpadRight) },
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(Button2),
+            },
+            ControlInfo {
+                id: "mic",
+                label: "Microphone",
+                kind: Digital,
+                abstract_key: None,
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(DpadRight),
+            },
         ];
         static GROUPS: &[&[ControlInfo]] = &[P1, P2];
         GROUPS
@@ -50,21 +130,26 @@ static NES_CONTROLLERS: &[&'static dyn ControllerProfile] = &[&FAMICOM_SET];
 impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
         static SLOTS: &[SlotInfo] = &[
-            SlotInfo { id: "player1", label: "Player 1" },
-            SlotInfo { id: "player2", label: "Player 2" },
+            SlotInfo {
+                id: "player1",
+                label: "Player 1",
+            },
+            SlotInfo {
+                id: "player2",
+                label: "Player 2",
+            },
         ];
         SLOTS
     }
-    fn controllers(&self) -> &[&'static dyn ControllerProfile] { NES_CONTROLLERS }
+    fn controllers(&self) -> &[&'static dyn ControllerProfile] {
+        NES_CONTROLLERS
+    }
 }
 
 impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments {
-            slots: vec![
-                ("player1", Some("nes.famicom")),
-                ("player2", None),
-            ],
+            slots: vec![("player1", Some("nes.famicom")), ("player2", None)],
         }
     }
 
@@ -72,8 +157,8 @@ impl InputSystemFactory for crate::NesFactory {
         &self,
         assignments: &InputAssignments,
     ) -> Result<InputResources, CreateSplitError> {
-        use std::sync::{Arc, Mutex};
         use nerust_input_traits::InputStateBuffer;
+        use std::sync::{Arc, Mutex};
 
         let mut field_map = std::collections::HashMap::new();
         let mut assigned_ports = std::collections::HashSet::<&str>::new();

@@ -13,6 +13,12 @@ pub struct NesPadDevice {
     strobe: bool,
 }
 
+impl Default for NesPadDevice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NesPadDevice {
     pub fn new() -> Self {
         Self {

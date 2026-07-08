@@ -8,7 +8,10 @@ pub mod persistence;
 mod tests;
 pub mod title;
 
-use std::{collections::{BTreeSet, HashMap}, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 pub use lifecycle::WindowSize;
 use nerust_core_traits::audio::AudioBackendRegistry;
@@ -17,7 +20,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{GuiInput, SlotInfo, ControllerProfile};
+use nerust_input_traits::{ControllerProfile, GuiInput, SlotInfo};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -73,7 +76,11 @@ impl SessionHandle {
         factory: &Arc<dyn CoreFactory>,
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
-    ) -> (EmuCore, GuiInput, HashMap<(&'static str, &'static str), usize>) {
+    ) -> (
+        EmuCore,
+        GuiInput,
+        HashMap<(&'static str, &'static str), usize>,
+    ) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = crate::settings::settings_view(snapshot, &system_id);
