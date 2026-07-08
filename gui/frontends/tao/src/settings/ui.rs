@@ -528,14 +528,19 @@ impl SettingsAppState {
                     }
                 }
             }
-            let choices: Vec<Choice<String>> = controllers
-                .iter()
-                .map(|c| Choice {
-                    value: c.id().to_string(),
-                    label: c.label().to_string(),
-                })
-                .collect();
             for slot in slots {
+                // Filter controllers available for this slot:
+                // a controller is available if any port_set starts with this slot.
+                let slot_choices: Vec<Choice<String>> = controllers
+                    .iter()
+                    .filter(|c| {
+                        c.port_sets().iter().any(|ps| ps.ports.first() == Some(&slot.id))
+                    })
+                    .map(|c| Choice {
+                        value: c.id().to_string(),
+                        label: c.label().to_string(),
+                    })
+                    .collect();
                 if occupied.contains(slot.id)
                     && !self
                         .controller_assignments
@@ -551,8 +556,8 @@ impl SettingsAppState {
                     .iter()
                     .find(|(s, _)| s == slot.id)
                     .and_then(|(_, c)| c.as_ref())
-                    .and_then(|id| choices.iter().find(|ch| ch.value == *id).cloned());
-                let pick = pick_list(choices.clone(), current, move |choice: Choice<String>| {
+                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == *id).cloned());
+                let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
                     Message::SetControllerSlot {
                         slot: slot.id.to_string(),
                         controller_id: Some(choice.value),

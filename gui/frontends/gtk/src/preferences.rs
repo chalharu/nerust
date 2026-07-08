@@ -176,7 +176,9 @@ pub(crate) fn present_preferences_dialog(
             let lbl = gtk::Label::new(Some(slot.label));
             row.append(&lbl);
             let combo = gtk::ComboBoxText::new();
-            for c in &controllers {
+            for c in controllers.iter().filter(|c| {
+                c.port_sets().iter().any(|ps| ps.ports.first() == Some(&slot.id))
+            }) {
                 combo.append_text(c.label());
             }
             {
