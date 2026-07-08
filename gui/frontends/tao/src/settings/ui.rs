@@ -534,7 +534,9 @@ impl SettingsAppState {
                 let slot_choices: Vec<Choice<String>> = controllers
                     .iter()
                     .filter(|c| {
-                        c.port_sets().iter().any(|ps| ps.ports.first() == Some(&slot.id))
+                        c.port_sets()
+                            .iter()
+                            .any(|ps| ps.ports.first() == Some(&slot.id))
                     })
                     .map(|c| Choice {
                         value: c.id().to_string(),
