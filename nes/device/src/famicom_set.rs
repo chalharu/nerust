@@ -13,7 +13,11 @@ pub struct FamicomSet {
 
 impl FamicomSet {
     pub fn new() -> Self {
-        Self { cached: [0; 3], index: [0; 2], strobe: false }
+        Self {
+            cached: [0; 3],
+            index: [0; 2],
+            strobe: false,
+        }
     }
     /// Reset shift register for save state load.
     pub fn reset_runtime(&mut self) {
@@ -23,7 +27,9 @@ impl FamicomSet {
 }
 
 impl Default for FamicomSet {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Controller for FamicomSet {
@@ -34,7 +40,13 @@ impl Controller for FamicomSet {
     }
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         let mic = address == 0 && self.cached[2] != 0;
-        pad_common::read(&[self.cached[0], self.cached[1]], &mut self.index, self.strobe, address, mic)
+        pad_common::read(
+            &[self.cached[0], self.cached[1]],
+            &mut self.index,
+            self.strobe,
+            address,
+            mic,
+        )
     }
     fn write(&mut self, value: u8) {
         pad_common::write(&mut self.strobe, &mut self.index, value);
@@ -45,31 +57,112 @@ impl Controller for FamicomSet {
 pub struct FamicomSetProfile;
 
 impl ControllerProfile for FamicomSetProfile {
-    fn id(&self) -> &'static str { "nes.famicom" }
-    fn label(&self) -> &'static str { "Famicom Controller Set" }
+    fn id(&self) -> &'static str {
+        "nes.famicom"
+    }
+    fn label(&self) -> &'static str {
+        "Famicom Controller Set"
+    }
     fn port_sets(&self) -> &[PortSet] {
-        &[PortSet { ports: &["player1", "player2"] }]
+        &[PortSet {
+            ports: &["player1", "player2"],
+        }]
     }
     fn port_groups(&self) -> &[&[ControlInfo]] {
         use ControlKind::*;
         static P1: &[ControlInfo] = &[
-            ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(AbstractKey::Button1) },
-            ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(AbstractKey::Button2) },
-            ControlInfo { id: "select", label: "Select", kind: Digital, abstract_key: Some(AbstractKey::Select) },
-            ControlInfo { id: "start", label: "Start", kind: Digital, abstract_key: Some(AbstractKey::Start) },
-            ControlInfo { id: "up", label: "Up", kind: Digital, abstract_key: Some(AbstractKey::DpadUp) },
-            ControlInfo { id: "down", label: "Down", kind: Digital, abstract_key: Some(AbstractKey::DpadDown) },
-            ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(AbstractKey::DpadLeft) },
-            ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(AbstractKey::DpadRight) },
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button2),
+            },
+            ControlInfo {
+                id: "select",
+                label: "Select",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Select),
+            },
+            ControlInfo {
+                id: "start",
+                label: "Start",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Start),
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadRight),
+            },
         ];
         static P2: &[ControlInfo] = &[
-            ControlInfo { id: "a", label: "A", kind: Digital, abstract_key: Some(AbstractKey::Button1) },
-            ControlInfo { id: "b", label: "B", kind: Digital, abstract_key: Some(AbstractKey::Button2) },
-            ControlInfo { id: "microphone", label: "Microphone", kind: Digital, abstract_key: None },
-            ControlInfo { id: "up", label: "Up", kind: Digital, abstract_key: Some(AbstractKey::DpadUp) },
-            ControlInfo { id: "down", label: "Down", kind: Digital, abstract_key: Some(AbstractKey::DpadDown) },
-            ControlInfo { id: "left", label: "Left", kind: Digital, abstract_key: Some(AbstractKey::DpadLeft) },
-            ControlInfo { id: "right", label: "Right", kind: Digital, abstract_key: Some(AbstractKey::DpadRight) },
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button2),
+            },
+            ControlInfo {
+                id: "microphone",
+                label: "Microphone",
+                kind: Digital,
+                abstract_key: None,
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadRight),
+            },
         ];
         static G: &[&[ControlInfo]] = &[P1, P2];
         G
