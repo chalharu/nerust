@@ -675,25 +675,17 @@ pub(crate) fn present_preferences_dialog(
                         })
                         .collect();
                     // Clear conflicting assignments from multi-port controllers
-                    for i in 0..slots.len() {
-                        let Some(ref ctrl_id) = slots[i].1.clone() else {
-                            continue;
-                        };
+                    let assigned: Vec<(String, Option<String>)> = slots.clone();
+                    for (slot_id, ctrl_opt) in &assigned {
+                        let ctrl_id = match ctrl_opt { Some(id) => id, None => continue };
                         for p in input_factory.controllers().iter() {
-                            if p.id() != ctrl_id {
-                                continue;
-                            }
+                            if p.id() != ctrl_id { continue; }
                             for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(&slots[i].0.as_str()) {
-                                    continue;
-                                }
+                                if ps.ports.len() <= 1 { continue; }
+                                if !ps.ports.contains(&slot_id.as_str()) { continue; }
                                 for &port in ps.ports {
-                                    if port != slots[i].0
-                                        && let Some(other) =
-                                            slots.iter_mut().find(|(s, _)| *s == port)
+                                    if port != slot_id
+                                        && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
                                     {
                                         other.1 = None;
                                     }
@@ -702,8 +694,8 @@ pub(crate) fn present_preferences_dialog(
                         }
                     }
                     // Fill unassigned slots with single-port compatible controllers
-                    for i in 0..slots.len() {
-                        if slots[i].1.is_some() {
+                    for slot in slots.iter_mut() {
+                        if slot.1.is_some() {
                             continue;
                         }
                         for p in input_factory.controllers().iter() {
@@ -712,9 +704,9 @@ pub(crate) fn present_preferences_dialog(
                             }
                             if p.port_sets()
                                 .iter()
-                                .any(|ps| ps.ports.first() == Some(&slots[i].0.as_str()))
+                                .any(|ps| ps.ports.first() == Some(&slot.0.as_str()))
                             {
-                                slots[i].1 = Some(p.id().to_string());
+                                slot.1 = Some(p.id().to_string());
                                 break;
                             }
                         }
