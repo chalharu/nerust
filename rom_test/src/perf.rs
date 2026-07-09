@@ -6,7 +6,7 @@ use std::{
 use clap::{Arg, ArgAction, Command};
 use nerust_core_traits::audio::AudioBackend;
 use nerust_nes_core::{Core, controller::Controller, input_types::Buttons, rom_parse};
-use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_nes_device::famicom_set::FamicomSet;
 use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
 
 use crate::{
@@ -241,7 +241,7 @@ struct PerfRunner {
     core: Core,
     screen: FrameBuffer,
     checksum: u64,
-    controller: NesPadDevice,
+    controller: FamicomSet,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
@@ -285,7 +285,7 @@ impl PerfRunner {
             core,
             screen,
             checksum: 0,
-            controller: NesPadDevice::new(),
+            controller: FamicomSet::new(),
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
