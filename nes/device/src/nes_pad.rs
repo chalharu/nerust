@@ -77,12 +77,6 @@ impl Controller for NesPadDevice {
         }
     }
 
-    fn set_controller_profile(&mut self, profile: &[u8]) {
-        if profile.len() >= 2 {
-            self.mask = [profile[0], profile[1]];
-        }
-    }
-
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         let buttons = [self.cached[0], self.cached[1]];
         match address {
