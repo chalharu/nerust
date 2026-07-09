@@ -1,5 +1,5 @@
 use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
-use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_nes_device::famicom_set::FamicomSet;
 
 use super::ValidationRuntime;
 use crate::{
@@ -29,7 +29,7 @@ impl ValidationRuntime {
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
             core,
-            controller: NesPadDevice::new(),
+            controller: FamicomSet::new(),
             mixer: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
