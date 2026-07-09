@@ -677,15 +677,25 @@ pub(crate) fn present_preferences_dialog(
                     // Clear conflicting assignments from multi-port controllers
                     let assigned: Vec<(String, Option<String>)> = slots.clone();
                     for (slot_id, ctrl_opt) in &assigned {
-                        let ctrl_id = match ctrl_opt { Some(id) => id, None => continue };
+                        let ctrl_id = match ctrl_opt {
+                            Some(id) => id,
+                            None => continue,
+                        };
                         for p in input_factory.controllers().iter() {
-                            if p.id() != ctrl_id { continue; }
+                            if p.id() != ctrl_id {
+                                continue;
+                            }
                             for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 { continue; }
-                                if !ps.ports.contains(&slot_id.as_str()) { continue; }
+                                if ps.ports.len() <= 1 {
+                                    continue;
+                                }
+                                if !ps.ports.contains(&slot_id.as_str()) {
+                                    continue;
+                                }
                                 for &port in ps.ports {
                                     if port != slot_id
-                                        && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
+                                        && let Some(other) =
+                                            slots.iter_mut().find(|(s, _)| *s == port)
                                     {
                                         other.1 = None;
                                     }
