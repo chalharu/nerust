@@ -5,7 +5,7 @@ use nerust_input_traits::{
     InputSystemFactory, SlotInfo,
 };
 use nerust_nes_controller::input_buffer::NesInputBuffer;
-use nerust_nes_device::controller_profiles::{FAMICOM_SET_PROFILE, STANDARD_PAD_PROFILE};
+use nerust_nes_device::{famicom_set::FamicomSetProfile, standard_pad::StandardPadProfile};
 
 impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
@@ -66,8 +66,14 @@ impl InputSystemFactory for crate::NesFactory {
                 &dyn ControllerProfile,
                 &[&[nerust_input_traits::ControlInfo]],
             ) = match ctrl_id {
-                "nes.standard_pad" => (&STANDARD_PAD_PROFILE, STANDARD_PAD_PROFILE.port_groups()),
-                "nes.famicom" => (&FAMICOM_SET_PROFILE, FAMICOM_SET_PROFILE.port_groups()),
+                "nes.standard_pad" => (
+                    &StandardPadProfile as &dyn ControllerProfile,
+                    StandardPadProfile.port_groups(),
+                ),
+                "nes.famicom" => (
+                    &FamicomSetProfile as &dyn ControllerProfile,
+                    FamicomSetProfile.port_groups(),
+                ),
                 _ => {
                     return Err(CreateSplitError::ControllerNotFound {
                         controller: ctrl_id.to_string(),
