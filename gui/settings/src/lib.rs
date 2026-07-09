@@ -495,6 +495,8 @@ pub mod app_state {
         pub schema_version: u32,
         pub last_successful_rom_directory: Option<PathBuf>,
         pub window_sizes: BTreeMap<String, RememberedWindowSize>,
+        /// Per-system controller assignments: system_id → [(slot_id, controller_id or None)]
+        pub controller_assignments: BTreeMap<String, Vec<(String, Option<String>)>>,
     }
 
     impl DesktopAppState {
@@ -517,6 +519,7 @@ pub mod app_state {
                 schema_version: DESKTOP_APP_STATE_SCHEMA_VERSION,
                 last_successful_rom_directory: None,
                 window_sizes: BTreeMap::new(),
+                controller_assignments: BTreeMap::new(),
             }
         }
     }

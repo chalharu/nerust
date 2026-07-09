@@ -72,6 +72,21 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
+    /// Load persisted controller assignments or fall back to defaults.
+    fn load_assignments(
+        factory: &Arc<dyn CoreFactory>,
+        snapshot: &SettingsSnapshot,
+        system_id: &str,
+    ) -> InputAssignments {
+        let persisted = snapshot.app_state.controller_assignments.get(system_id);
+        match persisted {
+            Some(slots) => InputAssignments {
+                slots: slots.clone(),
+            },
+            None => factory.input_system_factory().default_assignments(),
+        }
+    }
+
     /// Create a core from settings, falling back to defaults on failure.
     fn create_core_or_default(
         factory: &Arc<dyn CoreFactory>,
@@ -82,28 +97,47 @@ impl SessionHandle {
         GuiInput,
         HashMap<(&'static str, &'static str), usize>,
     ) {
+        Self::create_core_with_assignments(
+            factory,
+            registry,
+            snapshot,
+            &factory.input_system_factory().default_assignments(),
+        )
+    }
+
+    fn create_core_with_assignments(
+        factory: &Arc<dyn CoreFactory>,
+        registry: &AudioBackendRegistry,
+        snapshot: &SettingsSnapshot,
+        assignments: &InputAssignments,
+    ) -> (
+        EmuCore,
+        GuiInput,
+        HashMap<(&'static str, &'static str), usize>,
+    ) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = crate::settings::settings_view(snapshot, &system_id);
-        let parts = match factory.create_core_and_adapter(&view, speaker) {
-            Ok(parts) => parts,
-            Err(_) => {
-                log::warn!("core creation with loaded settings failed; using defaults");
-                use crate::settings::defaults::seed::{
-                    default_app_state, default_local_settings, default_shared_settings,
-                };
-                let fallback = SettingsSnapshot {
-                    shared: default_shared_settings(),
-                    local: default_local_settings(),
-                    app_state: default_app_state(),
-                };
-                let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                let fallback_view = crate::settings::settings_view(&fallback, &system_id);
-                factory
-                    .create_core_and_adapter(&fallback_view, fallback_speaker)
-                    .expect("failed to create core even with default settings")
-            }
-        };
+        let parts =
+            match factory.create_core_and_adapter_with_assignments(&view, speaker, assignments) {
+                Ok(parts) => parts,
+                Err(_) => {
+                    log::warn!("core creation with loaded settings failed; using defaults");
+                    use crate::settings::defaults::seed::{
+                        default_app_state, default_local_settings, default_shared_settings,
+                    };
+                    let fallback = SettingsSnapshot {
+                        shared: default_shared_settings(),
+                        local: default_local_settings(),
+                        app_state: default_app_state(),
+                    };
+                    let fallback_speaker = settings::build_speaker(registry, &fallback.local);
+                    let fallback_view = crate::settings::settings_view(&fallback, &system_id);
+                    factory
+                        .create_core_and_adapter(&fallback_view, fallback_speaker)
+                        .expect("failed to create core even with default settings")
+                }
+            };
         EmuCore::from_parts(parts)
     }
 
@@ -133,13 +167,18 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input, field_map) =
-            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
-        let current_assignments = factory.input_system_factory().default_assignments();
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        );
         Self {
             emu_core,
             gui_input,
-            current_assignments,
+            current_assignments: assignments,
             field_map,
             descriptor,
             factory,
@@ -190,13 +229,18 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input, field_map) =
-            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
-        let current_assignments = factory.input_system_factory().default_assignments();
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        );
         Self {
             emu_core,
             gui_input,
-            current_assignments,
+            current_assignments: assignments,
             field_map,
             descriptor,
             factory,
