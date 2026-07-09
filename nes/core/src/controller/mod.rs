@@ -6,4 +6,6 @@ pub trait Controller {
     /// Called before each frame to provide latest input state.
     /// Default impl is no-op.
     fn sync_input(&mut self, _state: &[u8]) {}
+    /// Inform controller which profile is active so it can adjust hardware behavior.
+    fn set_controller_profile(&mut self, _profile: &[u8]) {}
 }

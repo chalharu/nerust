@@ -44,7 +44,16 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        builder::create_core_and_adapter(view, speaker, gui_input, emu_input, resources.field_map)
+        // Compute controller mask from assignments
+        let mut controller_mask = [0xFFu8; 2];
+        for (slot_id, ctrl_opt) in &assignments.slots {
+            let ctrl_id = match ctrl_opt { Some(id) => id.as_str(), None => continue };
+            if ctrl_id == "nes.famicom" && slot_id == "player1" {
+                // FamicomSet: P2 has no Select/Start (bits 2,3 masked out)
+                controller_mask[1] = 0b11110011;
+            }
+        }
+        builder::create_core_and_adapter(view, speaker, gui_input, emu_input, resources.field_map, controller_mask)
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
