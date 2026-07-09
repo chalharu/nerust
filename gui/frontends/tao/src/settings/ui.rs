@@ -352,7 +352,7 @@ impl SettingsAppState {
                     .iter_mut()
                     .find(|(s, _)| *s == slot)
                 {
-                    entry.1 = controller_id;
+                    entry.1 = controller_id.clone();
                 }
                 // For single-port controllers, assign to other unassigned compatible slots
                 if let Some(ref ctrl_id) = controller_id {
