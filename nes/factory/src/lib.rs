@@ -13,8 +13,8 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
-use nerust_nes_core::controller::Controller;
 use nerust_input_traits::{EmuInput, GuiInput};
+use nerust_nes_core::controller::Controller;
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
@@ -46,13 +46,23 @@ impl CoreFactory for NesFactory {
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
         // Select device by assignment
-        let is_famicom = assignments.slots.iter().any(|(_, c)| c.as_deref() == Some("nes.famicom"));
+        let is_famicom = assignments
+            .slots
+            .iter()
+            .any(|(_, c)| c.as_deref() == Some("nes.famicom"));
         let device: Box<dyn Controller + Send> = if is_famicom {
             Box::new(nerust_nes_device::famicom_set::FamicomSet::new())
         } else {
             Box::new(nerust_nes_device::standard_pad::StandardPad::new())
         };
-        builder::create_core_and_adapter(view, speaker, gui_input, emu_input, resources.field_map, device)
+        builder::create_core_and_adapter(
+            view,
+            speaker,
+            gui_input,
+            emu_input,
+            resources.field_map,
+            device,
+        )
     }
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
