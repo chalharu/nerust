@@ -4,7 +4,7 @@ use nerust_input_traits::{
     ControllerProfile, CreateSplitError, InputAssignments, InputPorts, InputResources, InputSplit,
     InputSystemFactory, SlotInfo,
 };
-use nerust_nes_controller::input_buffer::NesInputBuffer;
+use nerust_nes_core::input_types::NesInputBuffer;
 use nerust_nes_device::{famicom_set::FamicomSetProfile, standard_pad::StandardPadProfile};
 
 impl InputPorts for crate::NesFactory {
