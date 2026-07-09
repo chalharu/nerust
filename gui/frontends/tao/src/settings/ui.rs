@@ -371,6 +371,9 @@ impl SettingsAppState {
                         }
                     }
                 }
+                // Sync to draft.app_state for persistence
+                let sid = self.factory.system_id().to_string();
+                self.draft.app_state.controller_assignments.insert(sid, self.controller_assignments.clone());
             }
             Message::StartCapture(target) => {
                 *self.capture_target.lock().unwrap() = Some(target);
