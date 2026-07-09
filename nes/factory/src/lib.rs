@@ -132,7 +132,7 @@ impl CliProvider for NesFactory {
 }
 
 pub fn nes_device_controller_profiles() -> &'static [&'static dyn ControllerProfile] {
-    nerust_nes_device::controller_profiles::NES_CONTROLLER_PROFILES
+    nerust_nes_device::NES_CONTROLLER_PROFILES
 }
 
 pub fn create_test_core_and_adapter(

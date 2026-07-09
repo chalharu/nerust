@@ -1,3 +1,4 @@
+use nerust_input_traits::{AbstractKey, ControlInfo, ControlKind, ControllerProfile, PortSet};
 use nerust_nes_controller::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
@@ -86,5 +87,124 @@ impl ControllerState for FamicomSet {
             index2: self.index[1] as usize,
             strobe: self.strobe,
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct FamicomSetProfile;
+
+impl ControllerProfile for FamicomSetProfile {
+    fn id(&self) -> &'static str {
+        "nes.famicom"
+    }
+    fn label(&self) -> &'static str {
+        "Famicom Controller Set"
+    }
+    fn port_sets(&self) -> &[PortSet] {
+        &[PortSet {
+            ports: &["player1", "player2"],
+        }]
+    }
+    fn port_groups(&self) -> &[&[ControlInfo]] {
+        use ControlKind::*;
+        static P1: &[ControlInfo] = &[
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button2),
+            },
+            ControlInfo {
+                id: "select",
+                label: "Select",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Select),
+            },
+            ControlInfo {
+                id: "start",
+                label: "Start",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Start),
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadRight),
+            },
+        ];
+        static P2: &[ControlInfo] = &[
+            ControlInfo {
+                id: "a",
+                label: "A",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button1),
+            },
+            ControlInfo {
+                id: "b",
+                label: "B",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::Button2),
+            },
+            ControlInfo {
+                id: "microphone",
+                label: "Microphone",
+                kind: Digital,
+                abstract_key: None,
+            },
+            ControlInfo {
+                id: "up",
+                label: "Up",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadUp),
+            },
+            ControlInfo {
+                id: "down",
+                label: "Down",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadDown),
+            },
+            ControlInfo {
+                id: "left",
+                label: "Left",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadLeft),
+            },
+            ControlInfo {
+                id: "right",
+                label: "Right",
+                kind: Digital,
+                abstract_key: Some(AbstractKey::DpadRight),
+            },
+        ];
+        static G: &[&[ControlInfo]] = &[P1, P2];
+        G
+    }
+    fn directional_ids(&self) -> &[&[&'static str; 4]] {
+        &[&["up", "down", "left", "right"]]
     }
 }
