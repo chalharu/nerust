@@ -13,7 +13,7 @@ pub(crate) fn create_core_and_adapter(
     gui_input: GuiInput,
     emu_input: EmuInput,
     field_map: HashMap<(&'static str, &'static str), usize>,
-    device: Box<dyn Controller + Send>,
+    device: Box<dyn Controller + Send>, // TODO: 本当は、deviceはスロットに対応するControllerを持つべき
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
 
