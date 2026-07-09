@@ -691,12 +691,11 @@ pub(crate) fn present_preferences_dialog(
                                     continue;
                                 }
                                 for &port in ps.ports {
-                                    if port != slots[i].0 {
-                                        if let Some(other) =
+                                    if port != slots[i].0
+                                        && let Some(other) =
                                             slots.iter_mut().find(|(s, _)| *s == port)
-                                        {
-                                            other.1 = None;
-                                        }
+                                    {
+                                        other.1 = None;
                                     }
                                 }
                             }
@@ -1060,11 +1059,7 @@ fn refresh_validation(
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(
-        &snapshot.shared,
-        &dynamic_topology(factory.as_ref()),
-        system,
-    );
+    let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(factory), system);
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
