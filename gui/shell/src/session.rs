@@ -87,24 +87,6 @@ impl SessionHandle {
         }
     }
 
-    /// Create a core from settings, falling back to defaults on failure.
-    fn create_core_or_default(
-        factory: &Arc<dyn CoreFactory>,
-        registry: &AudioBackendRegistry,
-        snapshot: &SettingsSnapshot,
-    ) -> (
-        EmuCore,
-        GuiInput,
-        HashMap<(&'static str, &'static str), usize>,
-    ) {
-        Self::create_core_with_assignments(
-            factory,
-            registry,
-            snapshot,
-            &factory.input_system_factory().default_assignments(),
-        )
-    }
-
     fn create_core_with_assignments(
         factory: &Arc<dyn CoreFactory>,
         registry: &AudioBackendRegistry,
