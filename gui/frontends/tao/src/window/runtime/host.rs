@@ -472,11 +472,14 @@ impl HostState {
         let pending_assignments = handle.take_pending_assignments();
         drop(handle);
         self.on_settings_closed();
-        if let Some(snapshot) = pending {
-            if let Some(assignments) = pending_assignments
-                && let Err(error) = self.session.reassign_controllers(&assignments)
-            {
-                log::warn!("controller reassign failed: {error}");
+        if let Some(mut snapshot) = pending {
+            if let Some(assignments) = pending_assignments {
+                // Embed assignments in snapshot so apply_settings saves them
+                let sid = self.session.factory().system_id().to_string();
+                snapshot.app_state.controller_assignments.insert(sid, assignments.slots.clone());
+                if let Err(error) = self.session.reassign_controllers(&assignments) {
+                    log::warn!("controller reassign failed: {error}");
+                }
             }
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),
