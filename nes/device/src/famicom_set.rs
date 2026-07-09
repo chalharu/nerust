@@ -7,7 +7,7 @@ use crate::pad_common;
 #[derive(Debug, Clone)]
 pub struct FamicomSet {
     pub(crate) cached: [u8; 3],
-    pub(crate) index: [u8; 2],
+    pub(crate) result: [u8; 3],
     pub(crate) strobe: bool,
 }
 
@@ -15,13 +15,13 @@ impl FamicomSet {
     pub fn new() -> Self {
         Self {
             cached: [0; 3],
-            index: [0; 2],
+            result: [0; 3],
             strobe: false,
         }
     }
     /// Reset shift register for save state load.
     pub fn reset_runtime(&mut self) {
-        self.index = [0; 2];
+        self.result = [0; 3];
         self.strobe = false;
     }
 }
@@ -39,17 +39,38 @@ impl Controller for FamicomSet {
         }
     }
     fn read(&mut self, address: usize) -> OpenBusReadResult {
-        let mic = address == 0 && self.cached[2] != 0;
-        pad_common::read(
-            &[self.cached[0], self.cached[1]],
-            &mut self.index,
-            self.strobe,
-            address,
-            mic,
-        )
+        let mic = address == 0 && self.cached[2] != 0; // micは即時に反映されるので、strobeの状態に関わらずmicの状態を返す
+        match address {
+            // $4016
+            0 => {
+                // strobe が 1 のときは常に最初のボタンの状態を返す
+                // strobe が 0 のときはシフトレジスタの状態を返す
+                let bit = if self.strobe {
+                    self.cached[0] & 1
+                } else {
+                    let b = self.result[0] & 1;
+                    self.result[0] = self.result[0] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
+                    b
+                };
+                let mic = if mic { 4 } else { 0 };
+                OpenBusReadResult::new(bit | mic, 7)
+            }
+            // $4017
+            1 => {
+                let bit = if self.strobe {
+                    self.cached[1] & 1
+                } else {
+                    let b = self.result[1] & 1;
+                    self.result[1] = self.result[1] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
+                    b
+                };
+                OpenBusReadResult::new(bit, 1)
+            }
+            _ => unreachable!("invalid controller read address: 0x{:04X}", address),
+        }
     }
     fn write(&mut self, value: u8) {
-        pad_common::write(&mut self.strobe, &mut self.index, value);
+        pad_common::write(&mut self.strobe, &self.cached, &mut self.result, value);
     }
 }
 
