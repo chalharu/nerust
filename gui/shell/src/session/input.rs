@@ -39,6 +39,15 @@ impl SessionHandle {
         self.gui_input = gui_input;
         self.field_map = field_map;
         self.current_assignments = assignments.clone();
+        // Persist to settings
+        self.settings_snapshot
+            .app_state
+            .controller_assignments
+            .insert(
+                self.factory.system_id().to_string(),
+                assignments.slots.clone(),
+            );
+        let _ = self.settings.save_snapshot(self.settings_snapshot.clone());
         Ok(())
     }
 
