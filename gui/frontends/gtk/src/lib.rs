@@ -27,7 +27,7 @@ use nerust_gui_shell::{
     },
     settings::i18n::{UiText, text},
 };
-use nerust_input_traits::InputTopologyDescriptor;
+
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::{FrameBuffer, GpuFactory, VideoRenderProfile};
 use nerust_run_options::RunOptions;
@@ -80,10 +80,6 @@ impl State {
         let view =
             nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
         self.ctx.core_factory.settings_page(&view)
-    }
-
-    pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
-        self.ctx.core_factory.system_descriptor().input_topology
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
