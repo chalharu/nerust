@@ -32,6 +32,8 @@ pub struct CoreParts {
     pub field_map: HashMap<(&'static str, &'static str), usize>,
     pub render_profile: nerust_render_base::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
+    /// Per-player input bitmask for NesPadDevice (masked in sync_input)
+    pub controller_mask: [u8; 2],
 }
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。

@@ -4,7 +4,7 @@ use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
 use nerust_input_traits::{EmuInput, GuiInput};
-use nerust_nes_core::console_core::NesConsoleCore;
+use nerust_nes_core::{console_core::NesConsoleCore, controller::Controller};
 use nerust_nes_device::nes_pad::NesPadDevice;
 use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
 
@@ -14,10 +14,12 @@ pub(crate) fn create_core_and_adapter(
     gui_input: GuiInput,
     emu_input: EmuInput,
     field_map: HashMap<(&'static str, &'static str), usize>,
+    controller_mask: [u8; 2],
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
 
-    let device = NesPadDevice::new();
+    let mut device = NesPadDevice::new();
+    device.set_controller_profile(&controller_mask);
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
@@ -28,6 +30,7 @@ pub(crate) fn create_core_and_adapter(
         field_map,
         render_profile,
         palette,
+        controller_mask,
     })
 }
 

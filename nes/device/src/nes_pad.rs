@@ -11,6 +11,9 @@ pub struct NesPadDevice {
     cached: [u8; 3],
     index: [u8; 2],
     strobe: bool,
+    /// Per-player bitmask: bits set to 0 are force-cleared on sync_input.
+    /// Player2 Famicom mode: mask[1] & 0b11110011  (Select/Start masked out)
+    mask: [u8; 2],
 }
 
 impl Default for NesPadDevice {
@@ -25,6 +28,7 @@ impl NesPadDevice {
             cached: [0; 3],
             index: [0; 2],
             strobe: false,
+            mask: [0xFF; 2],
         }
     }
 }
@@ -69,7 +73,17 @@ impl ControllerState for NesPadDevice {
 impl Controller for NesPadDevice {
     fn sync_input(&mut self, state: &[u8]) {
         if state.len() >= 3 {
-            self.cached = [state[0], state[1], state[2]];
+            self.cached = [
+                state[0] & self.mask[0],
+                state[1] & self.mask[1],
+                state[2],
+            ];
+        }
+    }
+
+    fn set_controller_profile(&mut self, profile: &[u8]) {
+        if profile.len() >= 2 {
+            self.mask = [profile[0], profile[1]];
         }
     }
 
