@@ -476,7 +476,10 @@ impl HostState {
             if let Some(assignments) = pending_assignments {
                 // Embed assignments in snapshot so apply_settings saves them
                 let sid = self.session.factory().system_id().to_string();
-                snapshot.app_state.controller_assignments.insert(sid, assignments.slots.clone());
+                snapshot
+                    .app_state
+                    .controller_assignments
+                    .insert(sid, assignments.slots.clone());
                 if let Err(error) = self.session.reassign_controllers(&assignments) {
                     log::warn!("controller reassign failed: {error}");
                 }
