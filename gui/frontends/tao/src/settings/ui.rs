@@ -188,13 +188,15 @@ impl SettingsAppState {
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
-        let controller_assignments = factory
-            .input_system_factory()
-            .default_assignments()
-            .slots
-            .iter()
-            .map(|(s, c)| (s.clone(), c.clone()))
-            .collect();
+        let sid = factory.system_id().to_string();
+        let controller_assignments = snapshot
+            .app_state
+            .controller_assignments
+            .get(&sid)
+            .cloned()
+            .unwrap_or_else(|| {
+                factory.input_system_factory().default_assignments().slots
+            });
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
