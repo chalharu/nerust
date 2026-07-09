@@ -1,4 +1,4 @@
-use nerust_nes_core::input_types::Buttons;
+use crate::events::Buttons;
 
 use super::{
     error::RomTestError,

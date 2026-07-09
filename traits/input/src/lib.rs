@@ -282,7 +282,7 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
 /// System port layout query. Factory → Frontend.
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
-    fn controllers(&self) -> &[&'static dyn ControllerProfile];
+    fn controllers(&self) -> Vec<Box<dyn ControllerProfile>>;
 }
 
 /// Slot-to-controller assignments.

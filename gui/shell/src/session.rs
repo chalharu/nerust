@@ -285,7 +285,7 @@ impl SessionHandle {
     }
 
     /// Negotiation #1: expose available slots and controllers for settings UI.
-    pub fn input_ports(&self) -> (&[SlotInfo], &[&'static dyn ControllerProfile]) {
+    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Box<dyn ControllerProfile>>) {
         let input = self.factory.input_system_factory();
         (input.slots(), input.controllers())
     }

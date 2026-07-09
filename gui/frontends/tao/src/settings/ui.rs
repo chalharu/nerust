@@ -986,13 +986,14 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
         }
     }
 
+    let controllers = input.controllers();
     for (slot_id, ctrl_opt) in &state.controller_assignments {
         let ctrl_id: &'static str = match ctrl_opt {
             Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+        let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
             continue;
         };
         for ps in profile.port_sets() {

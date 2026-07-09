@@ -1,8 +1,8 @@
-use nerust_nes_core::{controller::Controller, input_types::Buttons};
+use nerust_nes_core::controller::Controller;
 
 use super::ValidationRuntime;
 use crate::{
-    events::{ButtonCode, ControllerPad, PadState},
+    events::{ButtonCode, Buttons, ControllerPad, PadState},
     harness::apply_button_state,
 };
 
