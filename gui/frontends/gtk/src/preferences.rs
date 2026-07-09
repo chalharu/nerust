@@ -701,6 +701,17 @@ pub(crate) fn present_preferences_dialog(
                             }
                         }
                     }
+                    // Fill unassigned slots with single-port compatible controllers
+                    for i in 0..slots.len() {
+                        if slots[i].1.is_some() { continue; }
+                        for p in input_factory.controllers().iter() {
+                            if p.port_sets().iter().any(|ps| ps.ports.len() > 1) { continue; }
+                            if p.port_sets().iter().any(|ps| ps.ports.first() == Some(&slots[i].0.as_str())) {
+                                slots[i].1 = Some(p.id().to_string());
+                                break;
+                            }
+                        }
+                    }
                     nerust_input_traits::InputAssignments { slots }
                 };
                 if let Err(e) = state
