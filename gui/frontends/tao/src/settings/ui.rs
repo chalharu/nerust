@@ -194,9 +194,7 @@ impl SettingsAppState {
             .controller_assignments
             .get(&sid)
             .cloned()
-            .unwrap_or_else(|| {
-                factory.input_system_factory().default_assignments().slots
-            });
+            .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
