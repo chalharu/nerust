@@ -74,6 +74,10 @@ impl Controller for NesPadDevice {
     fn sync_input(&mut self, state: &[u8]) {
         if state.len() >= 3 {
             self.cached = [state[0] & self.mask[0], state[1] & self.mask[1], state[2]];
+            // Famicom P2: mic appears on both $4016 D2 and P2 register bit 2
+            if self.mask[1] & 4 == 0 {
+                self.cached[1] = (self.cached[1] & 0b11111011) | ((self.cached[2] & 1) << 2);
+            }
         }
     }
 
