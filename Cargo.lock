@@ -2991,6 +2991,7 @@ dependencies = [
 name = "nerust_rom_test"
 version = "0.1.0-dev"
 dependencies = [
+ "bitflags 2.13.0",
  "clap",
  "crc",
  "nerust_core_traits",

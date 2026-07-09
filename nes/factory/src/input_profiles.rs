@@ -21,8 +21,8 @@ impl InputPorts for crate::NesFactory {
         ];
         SLOTS
     }
-    fn controllers(&self) -> &[&'static dyn ControllerProfile] {
-        crate::nes_device_controller_profiles()
+    fn controllers(&self) -> Vec<Box<dyn ControllerProfile>> {
+        nerust_nes_device::nes_device_controller_profiles()
     }
 }
 

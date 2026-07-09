@@ -5,13 +5,13 @@ use std::{
 
 use clap::{Arg, ArgAction, Command};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_nes_core::{Core, controller::Controller, input_types::Buttons, rom_parse};
+use nerust_nes_core::{Core, controller::Controller, rom_parse};
 use nerust_nes_device::famicom_set::FamicomSet;
 use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
 
 use crate::{
     error::RomTestError,
-    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
+    events::{ButtonCode, Buttons, ControllerPad, PadState, RomAssertion},
     harness::{CaseHarness, apply_button_state, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},

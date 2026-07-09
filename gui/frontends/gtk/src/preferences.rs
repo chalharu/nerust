@@ -80,13 +80,14 @@ fn dynamic_topology(
         }
     }
 
+    let controllers = input.controllers();
     for (slot_id, ctrl_opt) in &defaults.slots {
         let ctrl_id: &'static str = match ctrl_opt {
             Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
             Some(id) if id == "nes.famicom" => "nes.famicom",
             _ => continue,
         };
-        let Some(profile) = input.controllers().iter().find(|p| p.id() == ctrl_id) else {
+        let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
             continue;
         };
         for ps in profile.port_sets() {
@@ -257,7 +258,7 @@ pub(crate) fn present_preferences_dialog(
     // Controller assignment ComboBoxes per slot
     let input_factory = factory.input_system_factory();
     let slots = input_factory.slots().to_vec();
-    let controllers: Vec<&'static dyn ControllerProfile> = input_factory.controllers().to_vec();
+    let controllers: Vec<Box<dyn ControllerProfile>> = input_factory.controllers();
     struct SlotCombo {
         slot_id: String,
         combo: gtk::ComboBoxText,

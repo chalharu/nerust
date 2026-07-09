@@ -1,9 +1,10 @@
-use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
+use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::FamicomSet;
 
 use super::ValidationRuntime;
 use crate::{
     error::RomTestError,
+    events::Buttons,
     manifest::RomCase,
     media::{HashingMixer, validation_screen_buffer},
 };
