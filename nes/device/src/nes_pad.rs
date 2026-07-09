@@ -73,11 +73,7 @@ impl ControllerState for NesPadDevice {
 impl Controller for NesPadDevice {
     fn sync_input(&mut self, state: &[u8]) {
         if state.len() >= 3 {
-            self.cached = [
-                state[0] & self.mask[0],
-                state[1] & self.mask[1],
-                state[2],
-            ];
+            self.cached = [state[0] & self.mask[0], state[1] & self.mask[1], state[2]];
         }
     }
 
