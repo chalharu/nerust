@@ -1,8 +1,8 @@
-use nerust_nes_core::{OpenBusReadResult, controller::Controller};
-use nerust_nes_core::input_types::Buttons;
 use nerust_nes_controller::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
+use nerust_nes_core::input_types::Buttons;
+use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
 use crate::pad_common;
 
@@ -17,17 +17,25 @@ pub struct StandardPad {
 
 impl StandardPad {
     pub fn new() -> Self {
-        Self { cached: [0; 2], index: [0; 2], strobe: false }
+        Self {
+            cached: [0; 2],
+            index: [0; 2],
+            strobe: false,
+        }
     }
 }
 
 impl Default for StandardPad {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Controller for StandardPad {
     fn sync_input(&mut self, state: &[u8]) {
-        if state.len() >= 2 { self.cached = [state[0], state[1]]; }
+        if state.len() >= 2 {
+            self.cached = [state[0], state[1]];
+        }
     }
     fn read(&mut self, address: usize) -> OpenBusReadResult {
         pad_common::read(&self.cached, &mut self.index, self.strobe, address, false)
@@ -54,7 +62,10 @@ impl ControllerState for StandardPad {
     }
     fn current_controller_state(&self) -> Result<Vec<u8>, String> {
         encode_controller_state(StandardControllerSnapshot {
-            buttons: [Buttons::from_bits_truncate(self.cached[0]), Buttons::from_bits_truncate(self.cached[1])],
+            buttons: [
+                Buttons::from_bits_truncate(self.cached[0]),
+                Buttons::from_bits_truncate(self.cached[1]),
+            ],
             microphone: false,
             index1: self.index[0] as usize,
             index2: self.index[1] as usize,

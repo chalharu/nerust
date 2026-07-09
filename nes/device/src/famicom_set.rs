@@ -1,7 +1,7 @@
-use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Buttons};
 use nerust_nes_controller::{
     ControllerState, StandardControllerSnapshot, decode_controller_state, encode_controller_state,
 };
+use nerust_nes_core::{OpenBusReadResult, controller::Controller, input_types::Buttons};
 
 use crate::pad_common;
 
@@ -16,12 +16,18 @@ pub struct FamicomSet {
 
 impl FamicomSet {
     pub fn new() -> Self {
-        Self { cached: [0; 3], index: [0; 2], strobe: false }
+        Self {
+            cached: [0; 3],
+            index: [0; 2],
+            strobe: false,
+        }
     }
 }
 
 impl Default for FamicomSet {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Controller for FamicomSet {
@@ -60,7 +66,11 @@ impl ControllerState for FamicomSet {
     }
     fn apply_controller_state(&mut self, bytes: &[u8]) -> Result<(), String> {
         let s = decode_controller_state(bytes)?;
-        self.cached = [s.buttons[0].bits(), s.buttons[1].bits() & 0b11110011, s.microphone as u8];
+        self.cached = [
+            s.buttons[0].bits(),
+            s.buttons[1].bits() & 0b11110011,
+            s.microphone as u8,
+        ];
         self.index = [s.index1 as u8, s.index2 as u8];
         self.strobe = s.strobe;
         Ok(())
