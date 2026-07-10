@@ -1,6 +1,7 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu, page_crossed,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu,
+        page_crossed,
     },
     exit_addressing_mode,
 };
@@ -12,7 +13,7 @@ impl CpuStepState for IndirectIndexed {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -21,7 +22,7 @@ impl CpuStepState for IndirectIndexed {
                     &mut core.register,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -32,7 +33,7 @@ impl CpuStepState for IndirectIndexed {
                     core.internal_stat.get_tempaddr(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -42,7 +43,7 @@ impl CpuStepState for IndirectIndexed {
                     core.internal_stat.get_tempaddr().wrapping_add(1) & 0xFF,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -68,7 +69,7 @@ impl CpuStepState for IndirectIndexed {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );

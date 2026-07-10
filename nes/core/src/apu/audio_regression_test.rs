@@ -6,8 +6,11 @@ use nerust_render_base::FrameBuffer;
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::{
-    Core, OpenBusReadResult, cartridge_data_parts::CartridgeDataParts,
-    cartridge_rom::CartridgeData, controller::Controller, mirror::MirrorMode,
+    Core, OpenBusReadResult,
+    cartridge_data_parts::CartridgeDataParts,
+    cartridge_rom::CartridgeData,
+    controller::{Controller, ControllerHub},
+    mirror::MirrorMode,
     rom_format::RomFormat,
 };
 
@@ -43,11 +46,19 @@ fn null_fb() -> FrameBuffer {
 struct NullController;
 
 impl Controller for NullController {
-    fn read(&mut self, _address: usize) -> OpenBusReadResult {
+    fn read(&mut self) -> OpenBusReadResult {
         OpenBusReadResult::new(0, 0)
     }
 
     fn write(&mut self, _value: u8) {}
+}
+
+impl ControllerHub for NullController {
+    fn read_port(&mut self, _port: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(0, 0)
+    }
+    fn write_strobe(&mut self, _value: u8) {}
+    fn sync_input(&mut self, _state: &[u8]) {}
 }
 
 #[derive(Debug, Clone)]

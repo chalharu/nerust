@@ -7,7 +7,12 @@ use nerust_core_traits::{
 };
 use nerust_input_traits::EmuInput;
 
-use crate::{Controller, Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
+use crate::{
+    Core,
+    cartridge_rom::CartridgeData,
+    controller::{ControllerCollection, ControllerHub},
+    core_options::CoreOptions,
+};
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
 /// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
@@ -20,7 +25,7 @@ unsafe impl Send for SendCore {}
 
 pub struct NesConsoleCore {
     core: SendCore,
-    controller: Box<dyn Controller + Send>,
+    controller: ControllerCollection,
     audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
@@ -29,7 +34,7 @@ pub struct NesConsoleCore {
 impl NesConsoleCore {
     pub fn new(
         cartridge_data: CartridgeData,
-        controller: Box<dyn Controller + Send>,
+        controller: ControllerCollection,
         audio: Box<dyn AudioBackend>,
         emu_input: EmuInput,
     ) -> Result<Self, CoreError> {
@@ -46,7 +51,7 @@ impl NesConsoleCore {
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
     pub fn new_empty(
-        controller: Box<dyn Controller + Send>,
+        controller: ControllerCollection,
         audio: Box<dyn AudioBackend>,
         emu_input: EmuInput,
     ) -> Self {
@@ -90,7 +95,7 @@ impl ConsoleCore for NesConsoleCore {
             self.controller.sync_input(&state.0);
         }
 
-        core.run_frame(frame_slot, self.controller.as_mut(), self.audio.as_mut());
+        core.run_frame(frame_slot, &mut self.controller, self.audio.as_mut());
 
         Ok(())
     }
@@ -188,7 +193,7 @@ mod tests {
 
     struct MockController;
     impl Controller for MockController {
-        fn read(&mut self, _address: usize) -> OpenBusReadResult {
+        fn read(&mut self) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
         fn write(&mut self, _value: u8) {}
@@ -214,7 +219,7 @@ mod tests {
         // NesConsoleCore::new should succeed
         let mut core = NesConsoleCore::new(
             cartridge,
-            Box::new(MockController),
+            ControllerCollection::new(vec![Box::new(MockController)]),
             Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         )
@@ -236,7 +241,7 @@ mod tests {
     fn load_via_trait_method() {
         let rom = test_rom();
         let mut core = NesConsoleCore::new_empty(
-            Box::new(MockController),
+            ControllerCollection::new(vec![Box::new(MockController)]),
             Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         );

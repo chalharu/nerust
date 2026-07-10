@@ -45,15 +45,21 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        // Select device by assignment
+        // Build one controller per assigned slot
         let is_famicom = assignments
             .slots
             .iter()
             .any(|(_, c)| c.as_deref() == Some("nes.famicom"));
-        let device: Box<dyn Controller + Send> = if is_famicom {
-            Box::new(nerust_nes_device::famicom_set::FamicomSet::new())
+        let devices: Vec<Box<dyn Controller + Send>> = if is_famicom {
+            vec![
+                Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
+                Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
+            ]
         } else {
-            Box::new(nerust_nes_device::standard_pad::StandardPad::new())
+            vec![
+                Box::new(nerust_nes_device::standard_pad::StandardPad::new(3)),
+                Box::new(nerust_nes_device::standard_pad::StandardPad::new(1)),
+            ]
         };
         builder::create_core_and_adapter(
             view,
@@ -61,7 +67,7 @@ impl CoreFactory for NesFactory {
             gui_input,
             emu_input,
             resources.field_map,
-            device,
+            devices,
         )
     }
 

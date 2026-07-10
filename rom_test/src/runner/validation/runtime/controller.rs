@@ -1,4 +1,4 @@
-use nerust_nes_core::controller::Controller;
+use nerust_nes_core::controller::{Controller, ControllerHub};
 
 use super::ValidationRuntime;
 use crate::{
