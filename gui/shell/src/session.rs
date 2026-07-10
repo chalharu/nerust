@@ -10,6 +10,7 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -80,9 +81,19 @@ impl SessionHandle {
     ) -> InputAssignments {
         let persisted = snapshot.app_state.controller_assignments.get(system_id);
         match persisted {
-            Some(slots) => InputAssignments {
-                slots: slots.clone(),
-            },
+            Some(pairs) => {
+                let profiles = factory.input_system_factory().controllers();
+                let slots = pairs
+                    .iter()
+                    .map(|(slot_id, ctrl_opt)| {
+                        let profile = ctrl_opt.as_ref().and_then(|id| {
+                            profiles.iter().find(|p| p.id() == id.as_str()).cloned()
+                        });
+                        (slot_id.clone(), profile)
+                    })
+                    .collect();
+                InputAssignments { slots }
+            }
             None => factory.input_system_factory().default_assignments(),
         }
     }
@@ -285,7 +296,7 @@ impl SessionHandle {
     }
 
     /// Negotiation #1: expose available slots and controllers for settings UI.
-    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Box<dyn ControllerProfile>>) {
+    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
         let input = self.factory.input_system_factory();
         (input.slots(), input.controllers())
     }

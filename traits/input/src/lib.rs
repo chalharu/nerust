@@ -181,6 +181,7 @@ impl DigitalInputEvent {
 // ===== New Input Architecture Types =====
 
 use std::any::Any;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -282,13 +283,40 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
 /// System port layout query. Factory → Frontend.
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
-    fn controllers(&self) -> Vec<Box<dyn ControllerProfile>>;
+    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
 }
 
 /// Slot-to-controller assignments.
-#[derive(Debug, Clone)]
+/// Uses Rc<dyn ControllerProfile> so callers can inspect profile methods directly
+/// without string-based lookups.
+#[derive(Clone)]
 pub struct InputAssignments {
-    pub slots: Vec<(String, Option<String>)>,
+    pub slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+}
+
+impl std::fmt::Debug for InputAssignments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputAssignments")
+            .field(
+                "slots",
+                &self
+                    .slots
+                    .iter()
+                    .map(|(s, c)| (s, c.as_ref().map(|p| p.id())))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+impl InputAssignments {
+    /// Convert to persistable string pairs (slot_id, option<controller_id>).
+    pub fn to_string_pairs(&self) -> Vec<(String, Option<String>)> {
+        self.slots
+            .iter()
+            .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+            .collect()
+    }
 }
 
 /// Errors from create_split.

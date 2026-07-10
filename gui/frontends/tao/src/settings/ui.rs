@@ -34,7 +34,9 @@ use nerust_gui_shell::{
         i18n::{UiText, text as ui_text},
     },
 };
-use nerust_input_traits::{InputAssignments, InputTopologyDescriptor};
+use std::rc::Rc;
+
+use nerust_input_traits::{ControllerProfile, InputAssignments, InputTopologyDescriptor};
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -168,7 +170,7 @@ pub(crate) struct SettingsAppState {
     factory: Arc<dyn CoreFactory>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
-    controller_assignments: Vec<(String, Option<String>)>,
+    controller_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
     page: SettingsPage,
     input_section: InputPageSection,
     storage_directory_input: String,
@@ -189,12 +191,25 @@ impl SettingsAppState {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
         let sid = factory.system_id().to_string();
+        let default_assignments = factory.input_system_factory().default_assignments();
         let controller_assignments = snapshot
             .app_state
             .controller_assignments
             .get(&sid)
-            .cloned()
-            .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+            .map(|pairs| {
+                let profiles = factory.input_system_factory().controllers();
+                pairs
+                    .iter()
+                    .map(|(slot_id, ctrl_opt)| {
+                        let profile = ctrl_opt
+                            .as_ref()
+                            .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                            .cloned();
+                        (slot_id.clone(), profile)
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| default_assignments.slots);
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
@@ -320,29 +335,32 @@ impl SettingsAppState {
                 slot,
                 controller_id,
             } => {
+                let profile = controller_id.as_ref().and_then(|id| {
+                    self.factory
+                        .input_system_factory()
+                        .controllers()
+                        .iter()
+                        .find(|p| p.id() == id)
+                        .cloned()
+                });
                 // For multi-port controllers (port_set with >1 port),
                 // clear other occupied slots in the same set.
-                if let Some(ref ctrl_id) = controller_id {
-                    let input = self.factory.input_system_factory();
-                    for p in input.controllers().iter() {
-                        if p.id() == ctrl_id {
-                            for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(&slot.as_str()) {
-                                    continue;
-                                }
-                                for &port in ps.ports {
-                                    if port != slot
-                                        && let Some(other) = self
-                                            .controller_assignments
-                                            .iter_mut()
-                                            .find(|(s, _)| *s == port)
-                                    {
-                                        other.1 = None;
-                                    }
-                                }
+                if let Some(ref p) = profile {
+                    for ps in p.port_sets() {
+                        if ps.ports.len() <= 1 {
+                            continue;
+                        }
+                        if !ps.ports.contains(&slot.as_str()) {
+                            continue;
+                        }
+                        for &port in ps.ports {
+                            if port != slot
+                                && let Some(other) = self
+                                    .controller_assignments
+                                    .iter_mut()
+                                    .find(|(s, _)| *s == port)
+                            {
+                                other.1 = None;
                             }
                         }
                     }
@@ -352,15 +370,18 @@ impl SettingsAppState {
                     .iter_mut()
                     .find(|(s, _)| *s == slot)
                 {
-                    entry.1 = controller_id.clone();
+                    entry.1 = profile.clone();
                 }
                 // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
                 let sid = self.factory.system_id().to_string();
-                self.draft
-                    .app_state
-                    .controller_assignments
-                    .insert(sid, self.controller_assignments.clone());
+                self.draft.app_state.controller_assignments.insert(
+                    sid,
+                    self.controller_assignments
+                        .iter()
+                        .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                        .collect(),
+                );
             }
             Message::StartCapture(target) => {
                 *self.capture_target.lock().unwrap() = Some(target);
@@ -516,20 +537,14 @@ impl SettingsAppState {
             // Build a set of occupied slot IDs
             let mut occupied = std::collections::HashSet::new();
             for (s, c_opt) in &self.controller_assignments {
-                let ctrl_id = match c_opt {
-                    Some(id) => id.as_str(),
+                let profile = match c_opt {
+                    Some(p) => p.as_ref(),
                     None => continue,
                 };
-                if let Some(p) = input_factory
-                    .controllers()
-                    .iter()
-                    .find(|p| p.id() == ctrl_id)
-                {
-                    for ps in p.port_sets() {
-                        if ps.ports.contains(&s.as_str()) {
-                            for &port in ps.ports {
-                                occupied.insert(port);
-                            }
+                for ps in profile.port_sets() {
+                    if ps.ports.contains(&s.as_str()) {
+                        for &port in ps.ports {
+                            occupied.insert(port);
                         }
                     }
                 }
@@ -564,7 +579,7 @@ impl SettingsAppState {
                     .iter()
                     .find(|(s, _)| s == slot.id)
                     .and_then(|(_, c)| c.as_ref())
-                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == *id).cloned());
+                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned());
                 let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
                     Message::SetControllerSlot {
                         slot: slot.id.to_string(),
@@ -933,21 +948,16 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
     use nerust_input_traits::*;
-    let input = state.factory.input_system_factory();
     let mut ports = Vec::new();
     let mut seen_devices = std::collections::HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
 
-    let controllers = input.controllers();
     for (slot_id, ctrl_opt) in &state.controller_assignments {
-        let ctrl_id: &'static str = match ctrl_opt {
-            Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
-            Some(id) if id == "nes.famicom" => "nes.famicom",
-            _ => continue,
+        let profile = match ctrl_opt {
+            Some(p) => p.as_ref(),
+            None => continue,
         };
-        let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
-            continue;
-        };
+        let ctrl_id = profile.id();
         for ps in profile.port_sets() {
             if ps.ports.iter().any(|&p| p == slot_id) {
                 for (gi, &port) in ps.ports.iter().enumerate() {

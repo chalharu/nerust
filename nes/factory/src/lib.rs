@@ -2,8 +2,9 @@ mod builder;
 pub mod input_profiles;
 mod settings;
 
-use clap::{Arg, ArgMatches, Command};
+use std::rc::Rc;
 
+use clap::{Arg, ArgMatches, Command};
 use nerust_core_traits::SystemId;
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::cli::CliProvider;
@@ -47,21 +48,16 @@ impl CoreFactory for NesFactory {
         let emu_input = EmuInput::from_split(&resources.split);
         // Build one controller per occupied port, in slot order.
         // Multi-port controllers (e.g. FamicomSet) occupy more than one slot.
-        let controllers = input_factory.controllers();
-        // (slot_position, group_index, ctrl_id)
+        // (slot_position, group_index, profile_id)
         let mut occupied: Vec<(usize, usize, &str)> = Vec::new();
         for (slot_pos, (slot_id, ctrl_opt)) in assignments.slots.iter().enumerate() {
-            let ctrl_id = match ctrl_opt {
-                Some(id) => id.as_str(),
+            let profile = match ctrl_opt {
+                Some(p) => p.as_ref(),
                 None => continue,
-            };
-            let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
-                continue;
             };
             for ps in profile.port_sets() {
                 if let Some(gi) = ps.ports.iter().position(|&p| p == slot_id) {
-                    occupied.push((slot_pos, gi, ctrl_id));
-                    // Also occupy other ports in the same set
+                    occupied.push((slot_pos, gi, profile.id()));
                     for (other_gi, &port) in ps.ports.iter().enumerate() {
                         if port == slot_id {
                             continue;
@@ -69,13 +65,12 @@ impl CoreFactory for NesFactory {
                         if let Some(other_pos) =
                             assignments.slots.iter().position(|(s, _)| s == port)
                         {
-                            occupied.push((other_pos, other_gi, ctrl_id));
+                            occupied.push((other_pos, other_gi, profile.id()));
                         }
                     }
                 }
             }
         }
-        // Deduplicate by slot position
         occupied.sort_by_key(|&(pos, _, _)| pos);
         occupied.dedup_by_key(|&mut (pos, _, _)| pos);
         let devices: Vec<Box<dyn Controller + Send>> = occupied
@@ -89,7 +84,6 @@ impl CoreFactory for NesFactory {
                         Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new())
                     }
                     ("nes.standard_pad", _) => {
-                        // Slot 0 (P1) gets open_bus_mask 3, slot 1 (P2) gets mask 1
                         let mask = if slot_pos == 0 { 3 } else { 1 };
                         Box::new(nerust_nes_device::standard_pad::StandardPad::new(mask))
                     }
@@ -174,7 +168,7 @@ impl CliProvider for NesFactory {
     }
 }
 
-pub fn nes_device_controller_profiles() -> Vec<Box<dyn ControllerProfile>> {
+pub fn nes_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
     nerust_nes_device::nes_device_controller_profiles()
 }
 

@@ -44,25 +44,20 @@ struct InputRow {
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
     factory: &dyn nerust_gui_shell::factory::CoreFactory,
-    assignments: &[(String, Option<String>)],
+    assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
 ) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
     use nerust_input_traits::*;
-    let input = factory.input_system_factory();
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
 
-    let controllers = input.controllers();
     for (slot_id, ctrl_opt) in assignments {
-        let ctrl_id: &'static str = match ctrl_opt {
-            Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
-            Some(id) if id == "nes.famicom" => "nes.famicom",
-            _ => continue,
+        let profile = match ctrl_opt {
+            Some(p) => p.as_ref(),
+            None => continue,
         };
-        let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
-            continue;
-        };
+        let ctrl_id = profile.id();
         for ps in profile.port_sets() {
             if ps.ports.iter().any(|&p| p == slot_id) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
@@ -231,7 +226,7 @@ pub(crate) fn present_preferences_dialog(
     // Controller assignment ComboBoxes per slot
     let input_factory = factory.input_system_factory();
     let slots = input_factory.slots().to_vec();
-    let controllers: Vec<Box<dyn ControllerProfile>> = input_factory.controllers();
+    let controllers: Vec<Rc<dyn ControllerProfile>> = input_factory.controllers();
     struct SlotCombo {
         slot_id: String,
         combo: gtk::ComboBoxText,
@@ -249,7 +244,7 @@ pub(crate) fn present_preferences_dialog(
         key_binding_box: &gtk::Box,
         input_rows: &Rc<RefCell<Vec<InputRow>>>,
         factory: &dyn CoreFactory,
-        assignments: &[(String, Option<String>)],
+        assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
         language: AppLanguage,
     ) {
         while let Some(child) = key_binding_box.first_child() {
@@ -308,45 +303,40 @@ pub(crate) fn present_preferences_dialog(
                     }
                     // Rebuild key binding UI
                     drop(combos);
-                    let mut current_assignments: Vec<(String, Option<String>)> = sc
-                        .borrow()
-                        .iter()
-                        .map(|sc_item| {
-                            let ctrl_id = sc_item.combo.active_text().and_then(|label| {
-                                input
-                                    .controllers()
-                                    .iter()
-                                    .find(|p| p.label() == label)
-                                    .map(|p| p.id().to_string())
-                            });
-                            (sc_item.slot_id.clone(), ctrl_id)
-                        })
-                        .collect();
+                    let mut current_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> =
+                        sc.borrow()
+                            .iter()
+                            .map(|sc_item| {
+                                let profile = sc_item.combo.active_text().and_then(|label| {
+                                    input
+                                        .controllers()
+                                        .iter()
+                                        .find(|p| p.label() == label)
+                                        .cloned()
+                                });
+                                (sc_item.slot_id.clone(), profile)
+                            })
+                            .collect();
                     // Clear multi-port conflicts
-                    let snapshot: Vec<(String, Option<String>)> = current_assignments.clone();
+                    let snapshot = current_assignments.clone();
                     for (slot_id, ctrl_opt) in &snapshot {
-                        let ctrl_id = match ctrl_opt {
-                            Some(id) => id.as_str(),
+                        let profile = match ctrl_opt {
+                            Some(p) => p.as_ref(),
                             None => continue,
                         };
-                        for p in input.controllers().iter() {
-                            if p.id() != ctrl_id {
+                        for ps in profile.port_sets() {
+                            if ps.ports.len() <= 1 {
                                 continue;
                             }
-                            for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(&slot_id.as_str()) {
-                                    continue;
-                                }
-                                for &port in ps.ports {
-                                    if port != slot_id
-                                        && let Some(other) =
-                                            current_assignments.iter_mut().find(|(s, _)| *s == port)
-                                    {
-                                        other.1 = None;
-                                    }
+                            if !ps.ports.contains(&slot_id.as_str()) {
+                                continue;
+                            }
+                            for &port in ps.ports {
+                                if port != slot_id
+                                    && let Some(other) =
+                                        current_assignments.iter_mut().find(|(s, _)| *s == port)
+                                {
+                                    other.1 = None;
                                 }
                             }
                         }
@@ -367,13 +357,26 @@ pub(crate) fn present_preferences_dialog(
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
     let sid = factory.system_id().to_string();
-    let assignments: Vec<(String, Option<String>)> = draft
+    let default_assignments = factory.input_system_factory().default_assignments();
+    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = draft
         .borrow()
         .app_state
         .controller_assignments
         .get(&sid)
-        .cloned()
-        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| default_assignments.slots);
     rebuild_input_ui(
         &key_binding_box,
         &input_rows,
@@ -719,44 +722,35 @@ pub(crate) fn present_preferences_dialog(
                 let input_factory = factory.input_system_factory();
                 let assignments = {
                     let combos = slot_combos.borrow();
-                    let mut slots: Vec<(String, Option<String>)> = combos
+                    let mut slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = combos
                         .iter()
                         .map(|sc| {
-                            let controller_id = sc.combo.active_text().and_then(|t| {
+                            let profile = sc.combo.active_text().and_then(|t| {
                                 let ctrls = input_factory.controllers();
-                                ctrls
-                                    .iter()
-                                    .find(|c| c.label() == t)
-                                    .map(|c| c.id().to_string())
+                                ctrls.iter().find(|c| c.label() == t).cloned()
                             });
-                            (sc.slot_id.clone(), controller_id)
+                            (sc.slot_id.clone(), profile)
                         })
                         .collect();
                     // Clear conflicting assignments from multi-port controllers
-                    let assigned: Vec<(String, Option<String>)> = slots.clone();
+                    let assigned = slots.clone();
                     for (slot_id, ctrl_opt) in &assigned {
-                        let ctrl_id = match ctrl_opt {
-                            Some(id) => id,
+                        let profile = match ctrl_opt {
+                            Some(p) => p.as_ref(),
                             None => continue,
                         };
-                        for p in input_factory.controllers().iter() {
-                            if p.id() != ctrl_id {
+                        for ps in profile.port_sets() {
+                            if ps.ports.len() <= 1 {
                                 continue;
                             }
-                            for ps in p.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(&slot_id.as_str()) {
-                                    continue;
-                                }
-                                for &port in ps.ports {
-                                    if port != slot_id
-                                        && let Some(other) =
-                                            slots.iter_mut().find(|(s, _)| *s == port)
-                                    {
-                                        other.1 = None;
-                                    }
+                            if !ps.ports.contains(&slot_id.as_str()) {
+                                continue;
+                            }
+                            for &port in ps.ports {
+                                if port != slot_id
+                                    && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
+                                {
+                                    other.1 = None;
                                 }
                             }
                         }
@@ -1118,11 +1112,23 @@ fn refresh_validation(
 ) {
     let system = factory.system_id();
     let sid = system.to_string();
-    let assignments: Vec<(String, Option<String>)> = snapshot
+    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
         .get(&sid)
-        .cloned()
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
         .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
@@ -1159,11 +1165,23 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         errors.push(error.to_string());
     }
     let sid = factory.system_id().to_string();
-    let assignments: Vec<(String, Option<String>)> = snapshot
+    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
         .get(&sid)
-        .cloned()
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
         .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
