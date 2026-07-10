@@ -8,10 +8,43 @@ use crate::{
 
 /// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
 /// to the short form used in field_map keys.
-fn normalize_id(id: &str) -> &str {
+pub fn normalize_id(id: &str) -> &str {
     id.trim_start_matches("nes.attachment.")
         .trim_start_matches("nes.control.")
         .trim_start_matches("famicom.")
+}
+
+/// Map slot name to attachment ID string.
+pub fn attachment_id(slot: &str) -> &'static str {
+    match slot {
+        "player1" => "nes.attachment.player1",
+        "player2" => "nes.attachment.player2",
+        _ => "unknown",
+    }
+}
+
+/// Map control short name to control ID string.
+pub fn control_id(id: &str) -> &'static str {
+    match id {
+        "a" => "nes.control.a",
+        "b" => "nes.control.b",
+        "select" => "nes.control.select",
+        "start" => "nes.control.start",
+        "up" => "nes.control.up",
+        "down" => "nes.control.down",
+        "left" => "nes.control.left",
+        "right" => "nes.control.right",
+        "microphone" => "famicom.microphone",
+        _ => "unknown",
+    }
+}
+
+/// Map controller kind + port group index to device kind string.
+pub fn device_kind(ctrl_id: &'static str, group_index: usize) -> &'static str {
+    match (ctrl_id, group_index) {
+        ("nes.famicom", 1) => "nes.famicom_p2",
+        _ => ctrl_id,
+    }
 }
 
 impl SessionHandle {

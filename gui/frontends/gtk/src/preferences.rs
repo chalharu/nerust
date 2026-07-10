@@ -46,39 +46,12 @@ fn dynamic_topology(
     factory: &dyn nerust_gui_shell::factory::CoreFactory,
     assignments: &[(String, Option<String>)],
 ) -> InputTopologyDescriptor {
+    use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
     use nerust_input_traits::*;
     let input = factory.input_system_factory();
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
-
-    fn att(slot: &str) -> &'static str {
-        match slot {
-            "player1" => "nes.attachment.player1",
-            "player2" => "nes.attachment.player2",
-            _ => "unknown",
-        }
-    }
-    fn ctl(id: &str) -> &'static str {
-        match id {
-            "a" => "nes.control.a",
-            "b" => "nes.control.b",
-            "select" => "nes.control.select",
-            "start" => "nes.control.start",
-            "up" => "nes.control.up",
-            "down" => "nes.control.down",
-            "left" => "nes.control.left",
-            "right" => "nes.control.right",
-            "microphone" => "famicom.microphone",
-            _ => "unknown",
-        }
-    }
-    fn dev_kind(ctrl: &'static str, gi: usize) -> &'static str {
-        match (ctrl, gi) {
-            ("nes.famicom", 1) => "nes.famicom_p2",
-            _ => ctrl,
-        }
-    }
 
     let controllers = input.controllers();
     for (slot_id, ctrl_opt) in assignments {
@@ -93,7 +66,7 @@ fn dynamic_topology(
         for ps in profile.port_sets() {
             if ps.ports.iter().any(|&p| p == slot_id) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
-                    let dk = dev_kind(ctrl_id, gi);
+                    let dk = device_kind(ctrl_id, gi);
                     if seen_devices.insert((ctrl_id, gi)) {
                         let controls = profile.port_groups()[gi];
                         devices.push(DeviceDescriptor {
@@ -103,7 +76,7 @@ fn dynamic_topology(
                                 .iter()
                                 .map(|ci| {
                                     ControlDescriptor::Digital(DigitalControlDescriptor {
-                                        id: DigitalControlId::new(ctl(ci.id)),
+                                        id: DigitalControlId::new(control_id(ci.id)),
                                         label: ci.label,
                                         description: ci.label,
                                     })
@@ -111,7 +84,7 @@ fn dynamic_topology(
                                 .collect(),
                         });
                     }
-                    let full = att(port);
+                    let full = attachment_id(port);
                     if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == full) {
                         ports.push(PortDescriptor {
                             id: PortId::new(full),
