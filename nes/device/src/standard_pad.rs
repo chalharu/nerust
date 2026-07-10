@@ -1,8 +1,6 @@
 use nerust_input_traits::{AbstractKey, ControlInfo, ControlKind, ControllerProfile, PortSet};
 use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
-use crate::pad_common;
-
 /// NES Standard Controller: full 8-button pad for a single port.
 #[derive(Debug, Clone)]
 pub struct StandardPad {
@@ -52,7 +50,11 @@ impl Controller for StandardPad {
         OpenBusReadResult::new(bit, self.open_bus_mask)
     }
     fn write(&mut self, value: u8) {
-        pad_common::write(&mut self.strobe, &self.cached, &mut self.result, value);
+        let new_strobe = value & 1 == 1;
+        if self.strobe && !new_strobe {
+            self.result = self.cached;
+        }
+        self.strobe = new_strobe;
     }
 }
 

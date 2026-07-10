@@ -1,8 +1,6 @@
 use nerust_input_traits::{AbstractKey, ControlInfo, ControlKind, ControllerProfile, PortSet};
 use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
-use crate::pad_common;
-
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
 #[derive(Debug, Clone)]
 pub struct FamicomPadP1 {
@@ -52,12 +50,11 @@ impl Controller for FamicomPadP1 {
         OpenBusReadResult::new(bit | mic, 7)
     }
     fn write(&mut self, value: u8) {
-        pad_common::write(
-            &mut self.strobe,
-            &self.cached_buttons,
-            &mut self.result,
-            value,
-        );
+        let new_strobe = value & 1 == 1;
+        if self.strobe && !new_strobe {
+            self.result = self.cached_buttons;
+        }
+        self.strobe = new_strobe;
     }
 }
 
@@ -106,7 +103,11 @@ impl Controller for FamicomPadP2 {
         OpenBusReadResult::new(bit, 1)
     }
     fn write(&mut self, value: u8) {
-        pad_common::write(&mut self.strobe, &self.cached, &mut self.result, value);
+        let new_strobe = value & 1 == 1;
+        if self.strobe && !new_strobe {
+            self.result = self.cached;
+        }
+        self.strobe = new_strobe;
     }
 }
 

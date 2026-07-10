@@ -7,6 +7,34 @@ use nerust_input_traits::{
 use nerust_nes_core::input_types::NesInputBuffer;
 use nerust_nes_device::{famicom_set::FamicomSetProfile, standard_pad::StandardPadProfile};
 
+fn control_bit(id: &str) -> Option<usize> {
+    match id {
+        "a" => Some(0),
+        "b" => Some(1),
+        "select" => Some(2),
+        "start" => Some(3),
+        "up" => Some(4),
+        "down" => Some(5),
+        "left" => Some(6),
+        "right" => Some(7),
+        "microphone" => None,
+        _ => None,
+    }
+}
+
+fn collect_control_fields(
+    field_map: &mut std::collections::HashMap<(&'static str, &'static str), usize>,
+    controls: &[nerust_input_traits::ControlInfo],
+    base: usize,
+    port: &'static str,
+) {
+    for ci in controls {
+        if let Some(bit) = control_bit(ci.id) {
+            field_map.insert((port, ci.id), base + bit);
+        }
+    }
+}
+
 impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
         static SLOTS: &[SlotInfo] = &[
@@ -82,24 +110,8 @@ impl InputSystemFactory for crate::NesFactory {
             };
             for ps in profile.port_sets() {
                 if let Some(pos) = ps.ports.iter().position(|&p| p == slot_key) {
-                    // Single-port controller: assign to this slot only
-                    let controls = port_groups_list[pos];
                     let base = pos * 8;
-                    for ci in controls {
-                        let bit = match ci.id {
-                            "a" => 0,
-                            "b" => 1,
-                            "select" => 2,
-                            "start" => 3,
-                            "up" => 4,
-                            "down" => 5,
-                            "left" => 6,
-                            "right" => 7,
-                            "microphone" => continue,
-                            _ => continue,
-                        };
-                        field_map.insert((slot_key, ci.id), base + bit);
-                    }
+                    collect_control_fields(&mut field_map, port_groups_list[pos], base, slot_key);
                     // Handle multi-port: also occupy other ports in the set
                     if ps.ports.len() > 1 {
                         for (gi, &port) in ps.ports.iter().enumerate() {
@@ -112,23 +124,13 @@ impl InputSystemFactory for crate::NesFactory {
                                     b: port.to_string(),
                                 });
                             }
-                            let controls = port_groups_list[gi];
                             let base = gi * 8;
-                            for ci in controls {
-                                let bit = match ci.id {
-                                    "a" => 0,
-                                    "b" => 1,
-                                    "select" => 2,
-                                    "start" => 3,
-                                    "up" => 4,
-                                    "down" => 5,
-                                    "left" => 6,
-                                    "right" => 7,
-                                    "microphone" => continue,
-                                    _ => continue,
-                                };
-                                field_map.insert((port, ci.id), base + bit);
-                            }
+                            collect_control_fields(
+                                &mut field_map,
+                                port_groups_list[gi],
+                                base,
+                                port,
+                            );
                         }
                         // Microphone for FamicomSet
                         if ctrl_id == "nes.famicom" {

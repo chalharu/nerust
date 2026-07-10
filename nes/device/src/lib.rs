@@ -1,5 +1,4 @@
 pub mod famicom_set;
-pub mod pad_common;
 pub mod standard_pad;
 
 use nerust_input_traits::ControllerProfile;
