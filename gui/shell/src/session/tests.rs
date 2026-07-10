@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use std::{
     fs,
     path::PathBuf,
@@ -15,6 +17,8 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
+use std::rc::Rc;
+
 use nerust_input_traits::{
     BufferError, ControllerProfile, CreateSplitError, GuiInput, InputAssignments, InputPorts,
     InputResources, InputSplit, InputStateBuffer, InputSystemFactory, InputValue, SlotInfo,
@@ -158,7 +162,7 @@ impl InputPorts for MockInputFactory {
     fn slots(&self) -> &[SlotInfo] {
         &[]
     }
-    fn controllers(&self) -> Vec<Box<dyn ControllerProfile>> {
+    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
         vec![]
     }
 }
