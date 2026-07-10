@@ -5,10 +5,10 @@ macro_rules! cpu_step_state_impl {
                 core: &mut super::super::Core,
                 ppu: &mut super::super::Ppu,
                 cartridge: &mut dyn super::CpuCartridgeBus,
-                controller: &mut dyn super::super::Controller,
+                hub: &mut dyn super::super::ControllerHub,
                 apu: &mut super::super::Apu,
             ) -> super::super::CpuStepStateEnum {
-                Self::exec_opcode(core, ppu, cartridge, controller, apu)
+                Self::exec_opcode(core, ppu, cartridge, hub, apu)
             }
         }
     };
@@ -69,7 +69,7 @@ pub(super) mod store;
 pub(super) mod transfer;
 
 use super::{
-    Apu, Controller, Core, CpuCartridgeBus, CpuStatesEnum, CpuStepStateEnum, Ppu, Register,
+    Apu, ControllerHub, Core, CpuCartridgeBus, CpuStatesEnum, CpuStepStateEnum, Ppu, Register,
     read_dummy_current,
 };
 
@@ -90,13 +90,13 @@ pub(crate) trait Accumulate {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
                 let data = Self::getter(&core.register);
                 let result = Self::calculator(&mut core.register, data);
                 Self::setter(&mut core.register, result);
@@ -116,7 +116,7 @@ pub(crate) trait AccumulateMemory {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -125,7 +125,7 @@ pub(crate) trait AccumulateMemory {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -140,7 +140,7 @@ pub(crate) trait AccumulateMemory {
                     data,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -151,7 +151,7 @@ pub(crate) trait AccumulateMemory {
                     core.internal_stat.get_data(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );

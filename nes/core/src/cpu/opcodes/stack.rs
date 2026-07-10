@@ -1,7 +1,7 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, RegisterP, pull,
-        push, read_dummy_current,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, RegisterP,
+        pull, push, read_dummy_current,
     },
     exit_opcode,
 };
@@ -13,13 +13,13 @@ pub(crate) trait Pull {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             2 => {
                 // dummy read
@@ -28,13 +28,13 @@ pub(crate) trait Pull {
                     0x100 | usize::from(sp),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
             }
             3 => {
-                let value = pull(core, ppu, cartridge, controller, apu);
+                let value = pull(core, ppu, cartridge, hub, apu);
                 Self::setter(&mut core.register, value);
             }
             _ => {
@@ -75,13 +75,13 @@ pub(crate) trait Push {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
                 core.internal_stat.set_data(Self::getter(&core.register));
             }
             2 => {
@@ -89,7 +89,7 @@ pub(crate) trait Push {
                     core,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     core.internal_stat.get_data(),
                 );

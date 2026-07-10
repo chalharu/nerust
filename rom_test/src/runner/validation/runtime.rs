@@ -3,8 +3,8 @@ mod controller;
 mod execution;
 mod inspection;
 
-use nerust_nes_core::Core;
-use nerust_nes_device::famicom_set::FamicomSet;
+use nerust_nes_core::{Core, controller::ControllerCollection};
+use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_render_base::{FrameBuffer, PixelFormat};
 
 use crate::{events::Buttons, media::HashingMixer};
@@ -12,8 +12,8 @@ use crate::{events::Buttons, media::HashingMixer};
 pub(super) struct ValidationRuntime {
     screen_buffer: FrameBuffer,
     core: Core,
+    controller: ControllerCollection,
     mixer: HashingMixer,
-    controller: FamicomSet,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,

@@ -3,71 +3,107 @@ use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
 use crate::pad_common;
 
-/// Famicom Controller Set: P1=8 buttons, P2=6 buttons + microphone.
+/// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
 #[derive(Debug, Clone)]
-pub struct FamicomSet {
-    pub(crate) cached: [u8; 3],
-    pub(crate) result: [u8; 3],
-    pub(crate) strobe: bool,
+pub struct FamicomPadP1 {
+    cached_buttons: u8,
+    cached_mic: u8,
+    result: u8,
+    strobe: bool,
 }
 
-impl FamicomSet {
+impl FamicomPadP1 {
     pub fn new() -> Self {
         Self {
-            cached: [0; 3],
-            result: [0; 3],
+            cached_buttons: 0,
+            cached_mic: 0,
+            result: 0,
             strobe: false,
         }
     }
-    /// Reset shift register for save state load.
     pub fn reset_runtime(&mut self) {
-        self.result = [0; 3];
+        self.result = 0;
         self.strobe = false;
     }
 }
 
-impl Default for FamicomSet {
+impl Default for FamicomPadP1 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Controller for FamicomSet {
+impl Controller for FamicomPadP1 {
     fn sync_input(&mut self, state: &[u8]) {
         if state.len() >= 3 {
-            self.cached = [state[0], state[1] & 0b11110011, state[2]];
+            self.cached_buttons = state[0];
+            self.cached_mic = state[2];
         }
     }
-    fn read(&mut self, address: usize) -> OpenBusReadResult {
-        let mic = address == 0 && self.cached[2] != 0; // micは即時に反映されるので、strobeの状態に関わらずmicの状態を返す
-        match address {
-            // $4016
-            0 => {
-                // strobe が 1 のときは常に最初のボタンの状態を返す
-                // strobe が 0 のときはシフトレジスタの状態を返す
-                let bit = if self.strobe {
-                    self.cached[0] & 1
-                } else {
-                    let b = self.result[0] & 1;
-                    self.result[0] = self.result[0] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
-                    b
-                };
-                let mic = if mic { 4 } else { 0 };
-                OpenBusReadResult::new(bit | mic, 7)
-            }
-            // $4017
-            1 => {
-                let bit = if self.strobe {
-                    self.cached[1] & 1
-                } else {
-                    let b = self.result[1] & 1;
-                    self.result[1] = self.result[1] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
-                    b
-                };
-                OpenBusReadResult::new(bit, 1)
-            }
-            _ => unreachable!("invalid controller read address: 0x{:04X}", address),
+    fn read(&mut self) -> OpenBusReadResult {
+        let bit = if self.strobe {
+            self.cached_buttons & 1
+        } else {
+            let b = self.result & 1;
+            self.result = self.result >> 1 | 0x80;
+            b
+        };
+        let mic = if self.cached_mic != 0 { 4 } else { 0 };
+        OpenBusReadResult::new(bit | mic, 7)
+    }
+    fn write(&mut self, value: u8) {
+        pad_common::write(
+            &mut self.strobe,
+            &self.cached_buttons,
+            &mut self.result,
+            value,
+        );
+    }
+}
+
+/// Famicom controller on port 2: 6 buttons (Select/Start always 0).
+#[derive(Debug, Clone)]
+pub struct FamicomPadP2 {
+    cached: u8,
+    result: u8,
+    strobe: bool,
+}
+
+impl FamicomPadP2 {
+    pub fn new() -> Self {
+        Self {
+            cached: 0,
+            result: 0,
+            strobe: false,
         }
+    }
+    pub fn reset_runtime(&mut self) {
+        self.result = 0;
+        self.strobe = false;
+    }
+}
+
+impl Default for FamicomPadP2 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Controller for FamicomPadP2 {
+    fn sync_input(&mut self, state: &[u8]) {
+        if state.len() >= 2 {
+            self.cached = state[1] & 0b11110011;
+        }
+    }
+    fn read(&mut self) -> OpenBusReadResult {
+        let bit = if self.strobe {
+            self.cached & 1
+        } else {
+            let b = self.result & 1;
+            self.result = self.result >> 1 | 0x80;
+            b
+        };
+        OpenBusReadResult::new(bit, 1)
     }
     fn write(&mut self, value: u8) {
         pad_common::write(&mut self.strobe, &self.cached, &mut self.result, value);

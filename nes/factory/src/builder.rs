@@ -4,7 +4,7 @@ use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
 use nerust_input_traits::{EmuInput, GuiInput};
-use nerust_nes_core::{console_core::NesConsoleCore, controller::Controller};
+use nerust_nes_core::{console_core::NesConsoleCore, controller::ControllerCollection};
 use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
 
 pub(crate) fn create_core_and_adapter(
@@ -13,14 +13,14 @@ pub(crate) fn create_core_and_adapter(
     gui_input: GuiInput,
     emu_input: EmuInput,
     field_map: HashMap<(&'static str, &'static str), usize>,
-    device: Box<dyn Controller + Send>, // TODO: 本当は、deviceはスロットに対応するControllerを持つべき
+    devices: Vec<Box<dyn nerust_nes_core::controller::Controller + Send>>,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
 
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
-    let core = NesConsoleCore::new_empty(device, speaker, emu_input);
+    let core = NesConsoleCore::new_empty(ControllerCollection::new(devices), speaker, emu_input);
     Ok(CoreParts {
         core: Box::new(core),
         gui_input,

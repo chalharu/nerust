@@ -1,5 +1,5 @@
 use super::{
-    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
+    super::{Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
     exit_addressing_mode,
 };
 
@@ -10,7 +10,7 @@ impl CpuStepState for Implied {
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut dyn CpuCartridgeBus,
-        _controller: &mut dyn Controller,
+        _hub: &mut dyn ControllerHub,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
         exit_addressing_mode(core)

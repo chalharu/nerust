@@ -3,70 +3,53 @@ use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
 use crate::pad_common;
 
-/// NES Standard Controller: full 8-button pad on both ports.
+/// NES Standard Controller: full 8-button pad for a single port.
 #[derive(Debug, Clone)]
 pub struct StandardPad {
-    pub(crate) cached: [u8; 2],
-    pub(crate) result: [u8; 2],
+    pub(crate) cached: u8,
+    pub(crate) result: u8,
     pub(crate) strobe: bool,
+    /// Open bus mask for this port ($4016=3, $4017=1).
+    open_bus_mask: u8,
 }
 
 impl StandardPad {
-    pub fn new() -> Self {
+    pub fn new(open_bus_mask: u8) -> Self {
         Self {
-            cached: [0; 2],
-            result: [0; 2],
+            cached: 0,
+            result: 0,
             strobe: false,
+            open_bus_mask,
         }
     }
     /// Reset shift register for save state load.
     pub fn reset_runtime(&mut self) {
-        self.result = [0; 2];
+        self.result = 0;
         self.strobe = false;
     }
 }
 
 impl Default for StandardPad {
     fn default() -> Self {
-        Self::new()
+        Self::new(3)
     }
 }
 
 impl Controller for StandardPad {
     fn sync_input(&mut self, state: &[u8]) {
-        if state.len() >= 2 {
-            self.cached = [state[0], state[1]];
+        if let Some(&b) = state.first() {
+            self.cached = b;
         }
     }
-    fn read(&mut self, address: usize) -> OpenBusReadResult {
-        match address {
-            // $4016
-            0 => {
-                // strobe が 1 のときは常に最初のボタンの状態を返す
-                // strobe が 0 のときはシフトレジスタの状態を返す
-                let bit = if self.strobe {
-                    self.cached[0] & 1
-                } else {
-                    let b = self.result[0] & 1;
-                    self.result[0] = self.result[0] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
-                    b
-                };
-                // StandardPadではmicはないので、Port解放状態となる
-                OpenBusReadResult::new(bit, 3)
-            }
-            // $4017
-            1 => {
-                let bit = if self.strobe {
-                    self.cached[1] & 1
-                } else {
-                    let b = self.result[1] & 1;
-                    self.result[1] = self.result[1] >> 1 | 0x80; // シフトレジスタを右にシフトして、上位ビットを 1 にする
-                    b
-                };
-                OpenBusReadResult::new(bit, 1)
-            }
-            _ => unreachable!("invalid controller read address: 0x{:04X}", address),
-        }
+    fn read(&mut self) -> OpenBusReadResult {
+        let bit = if self.strobe {
+            self.cached & 1
+        } else {
+            let b = self.result & 1;
+            self.result = self.result >> 1 | 0x80;
+            b
+        };
+        OpenBusReadResult::new(bit, self.open_bus_mask)
     }
     fn write(&mut self, value: u8) {
         pad_common::write(&mut self.strobe, &self.cached, &mut self.result, value);
