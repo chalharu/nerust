@@ -265,6 +265,28 @@ pub(crate) fn present_preferences_dialog(
     }
     let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
     let factory2 = factory.clone();
+
+    // Key binding section (rebuilt dynamically on controller change)
+    let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
+    input_page.append(&*key_binding_box);
+    let input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Rebuild key binding UI from current assignments.
+    fn rebuild_input_ui(
+        key_binding_box: &gtk::Box,
+        input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        factory: &dyn CoreFactory,
+        assignments: &[(String, Option<String>)],
+        language: AppLanguage,
+    ) {
+        while let Some(child) = key_binding_box.first_child() {
+            key_binding_box.remove(&child);
+        }
+        let topology = dynamic_topology(factory, assignments);
+        let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
+        *input_rows.borrow_mut() = rows;
+    }
+
     if !controllers.is_empty() {
         for slot in &slots {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -281,6 +303,9 @@ pub(crate) fn present_preferences_dialog(
             {
                 let sc = slot_combos.clone();
                 let f = factory2.clone();
+                let kb_box = key_binding_box.clone();
+                let kb_rows = input_rows.clone();
+                let lang = language;
                 combo.connect_changed(move |_| {
                     let combos = sc.borrow();
                     let input = f.input_system_factory();
@@ -308,6 +333,52 @@ pub(crate) fn present_preferences_dialog(
                             && sc_item.combo.active_text().is_none();
                         sc_item.combo.set_sensitive(!occ);
                     }
+                    // Rebuild key binding UI
+                    drop(combos);
+                    let mut current_assignments: Vec<(String, Option<String>)> = sc
+                        .borrow()
+                        .iter()
+                        .map(|sc_item| {
+                            let ctrl_id = sc_item.combo.active_text().and_then(|label| {
+                                input
+                                    .controllers()
+                                    .iter()
+                                    .find(|p| p.label() == label)
+                                    .map(|p| p.id().to_string())
+                            });
+                            (sc_item.slot_id.clone(), ctrl_id)
+                        })
+                        .collect();
+                    // Clear multi-port conflicts
+                    let snapshot: Vec<(String, Option<String>)> = current_assignments.clone();
+                    for (slot_id, ctrl_opt) in &snapshot {
+                        let ctrl_id = match ctrl_opt {
+                            Some(id) => id.as_str(),
+                            None => continue,
+                        };
+                        for p in input.controllers().iter() {
+                            if p.id() != ctrl_id {
+                                continue;
+                            }
+                            for ps in p.port_sets() {
+                                if ps.ports.len() <= 1 {
+                                    continue;
+                                }
+                                if !ps.ports.contains(&slot_id.as_str()) {
+                                    continue;
+                                }
+                                for &port in ps.ports {
+                                    if port != slot_id
+                                        && let Some(other) =
+                                            current_assignments.iter_mut().find(|(s, _)| *s == port)
+                                    {
+                                        other.1 = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rebuild_input_ui(&kb_box, &kb_rows, f.as_ref(), &current_assignments, lang);
                 });
             }
             slot_combos.borrow_mut().push(SlotCombo {
@@ -330,8 +401,13 @@ pub(crate) fn present_preferences_dialog(
         .get(&sid)
         .cloned()
         .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
-    let topology = dynamic_topology(factory.as_ref(), &assignments);
-    let input_rows = build_input_rows(language, &input_page, &topology, factory.system_id());
+    rebuild_input_ui(
+        &key_binding_box,
+        &input_rows,
+        factory.as_ref(),
+        &assignments,
+        language,
+    );
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -569,7 +645,7 @@ pub(crate) fn present_preferences_dialog(
     }
     dialog.add_controller(key_controller);
 
-    for row in input_rows.iter().cloned() {
+    for row in input_rows.borrow().iter().cloned() {
         let capture_target = capture_target.clone();
         let draft = draft.clone();
         let widgets = widget_bundle(
@@ -600,7 +676,7 @@ pub(crate) fn present_preferences_dialog(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    for row in input_rows.iter().cloned() {
+    for row in input_rows.borrow().iter().cloned() {
         let capture_target = capture_target.clone();
         let draft = draft.clone();
         let widgets = widget_bundle(
@@ -775,7 +851,7 @@ struct WidgetBundle {
     latency_spin: gtk::SpinButton,
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
-    input_rows: Vec<InputRow>,
+    input_rows: Rc<RefCell<Vec<InputRow>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -831,7 +907,7 @@ fn widget_bundle(
     latency_spin: &gtk::SpinButton,
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
-    input_rows: &[InputRow],
+    input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -853,7 +929,7 @@ fn widget_bundle(
         latency_spin: latency_spin.clone(),
         filter_combo: filter_combo.clone(),
         mmc3_combo: mmc3_combo.clone(),
-        input_rows: input_rows.to_vec(),
+        input_rows: input_rows.clone(),
         capture_target: capture_target.clone(),
         language,
         factory,
@@ -1146,7 +1222,7 @@ fn apply_snapshot_to_widgets(
     latency_spin: &gtk::SpinButton,
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
-    input_rows: &[InputRow],
+    input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
@@ -1195,7 +1271,7 @@ fn apply_snapshot_to_widgets(
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
-    for row in input_rows {
+    for row in input_rows.borrow().iter() {
         row.value_label
             .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
                 capture_label
