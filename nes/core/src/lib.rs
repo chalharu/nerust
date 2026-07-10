@@ -838,11 +838,11 @@ mod scheduler_tests {
     struct NullController;
 
     impl Controller for NullController {
-        fn read(&mut self) -> OpenBusReadResult {
+        fn read(&mut self, _port: usize) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
 
-        fn write(&mut self, _value: u8) {}
+        fn write(&mut self, _port: usize, _value: u8) {}
     }
 
     impl ControllerHub for NullController {

@@ -1,8 +1,8 @@
 use crate::OpenBusReadResult;
 
 pub trait Controller {
-    fn read(&mut self) -> OpenBusReadResult;
-    fn write(&mut self, value: u8);
+    fn read(&mut self, port: usize) -> OpenBusReadResult;
+    fn write(&mut self, port: usize, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
 }
 
@@ -27,11 +27,11 @@ impl ControllerHub for ControllerCollection {
     fn read_port(&mut self, port: usize) -> OpenBusReadResult {
         self.devices
             .get_mut(port)
-            .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read())
+            .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
     }
     fn write_strobe(&mut self, value: u8) {
-        for d in &mut self.devices {
-            d.write(value);
+        for (port, d) in self.devices.iter_mut().enumerate() {
+            d.write(port, value);
         }
     }
     fn sync_input(&mut self, state: &[u8]) {

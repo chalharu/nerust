@@ -4,8 +4,8 @@ use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 /// NES Standard Controller: full 8-button pad for a single port.
 #[derive(Debug, Clone)]
 pub struct StandardPad {
-    pub(crate) cached: u8,
-    pub(crate) result: u8,
+    pub(crate) cached: [u8; 2],
+    pub(crate) result: [u8; 2],
     pub(crate) strobe: bool,
     /// Open bus mask for this port ($4016=3, $4017=1).
     open_bus_mask: u8,
@@ -14,15 +14,15 @@ pub struct StandardPad {
 impl StandardPad {
     pub fn new(open_bus_mask: u8) -> Self {
         Self {
-            cached: 0,
-            result: 0,
+            cached: [0; 2],
+            result: [0; 2],
             strobe: false,
             open_bus_mask,
         }
     }
     /// Reset shift register for save state load.
     pub fn reset_runtime(&mut self) {
-        self.result = 0;
+        self.result = [0; 2];
         self.strobe = false;
     }
 }
@@ -35,21 +35,21 @@ impl Default for StandardPad {
 
 impl Controller for StandardPad {
     fn sync_input(&mut self, state: &[u8]) {
-        if let Some(&b) = state.first() {
-            self.cached = b;
+        if let Some(s) = state.get(..2) {
+            self.cached.copy_from_slice(s);
         }
     }
-    fn read(&mut self) -> OpenBusReadResult {
+    fn read(&mut self, port: usize) -> OpenBusReadResult {
         let bit = if self.strobe {
-            self.cached & 1
+            self.cached[port] & 1
         } else {
-            let b = self.result & 1;
-            self.result = self.result >> 1 | 0x80;
+            let b = self.result[port] & 1;
+            self.result[port] = self.result[port] >> 1 | 0x80;
             b
         };
         OpenBusReadResult::new(bit, self.open_bus_mask)
     }
-    fn write(&mut self, value: u8) {
+    fn write(&mut self, _port: usize, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached;

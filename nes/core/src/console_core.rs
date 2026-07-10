@@ -193,10 +193,10 @@ mod tests {
 
     struct MockController;
     impl Controller for MockController {
-        fn read(&mut self) -> OpenBusReadResult {
+        fn read(&mut self, _port: usize) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
-        fn write(&mut self, _value: u8) {}
+        fn write(&mut self, _port: usize, _value: u8) {}
     }
 
     fn test_rom() -> Vec<u8> {
