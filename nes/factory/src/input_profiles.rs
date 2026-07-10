@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use nerust_input_traits::{
     ControllerProfile, CreateSplitError, InputAssignments, InputPorts, InputResources, InputSplit,
@@ -48,16 +49,18 @@ impl InputPorts for crate::NesFactory {
         ];
         SLOTS
     }
-    fn controllers(&self) -> Vec<Box<dyn ControllerProfile>> {
+    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
         nerust_nes_device::nes_device_controller_profiles()
     }
 }
 
 impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
+        let profiles = self.controllers();
+        let famicom = profiles.iter().find(|p| p.id() == "nes.famicom").cloned();
         InputAssignments {
             slots: vec![
-                ("player1".to_string(), Some("nes.famicom".to_string())),
+                ("player1".to_string(), famicom),
                 ("player2".to_string(), None),
             ],
         }
@@ -74,8 +77,8 @@ impl InputSystemFactory for crate::NesFactory {
         let mut assigned_ports = HashSet::new();
 
         for (slot_id, ctrl_opt) in &assignments.slots {
-            let ctrl_id = match ctrl_opt {
-                Some(id) => id.as_str(),
+            let profile = match ctrl_opt {
+                Some(p) => p.as_ref(),
                 None => continue,
             };
             let slot_key: &'static str = match slot_id.as_str() {
@@ -89,13 +92,6 @@ impl InputSystemFactory for crate::NesFactory {
                     b: slot_key.to_string(),
                 });
             }
-            let controllers = self.controllers();
-            let profile = controllers
-                .iter()
-                .find(|p| p.id() == ctrl_id)
-                .ok_or_else(|| CreateSplitError::ControllerNotFound {
-                    controller: ctrl_id.to_string(),
-                })?;
             let port_groups_list = profile.port_groups();
             for ps in profile.port_sets() {
                 if let Some(pos) = ps.ports.iter().position(|&p| p == slot_key) {
@@ -122,7 +118,7 @@ impl InputSystemFactory for crate::NesFactory {
                             );
                         }
                         // Microphone for FamicomSet
-                        if ctrl_id == "nes.famicom" {
+                        if profile.id() == "nes.famicom" {
                             field_map.insert(("player2", "microphone"), 16);
                         }
                     }
