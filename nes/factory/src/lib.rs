@@ -45,26 +45,59 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        // Build one controller per slot, ordered by slot id
-        let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
-        for (slot_id, ctrl_opt) in &assignments.slots {
-            let ctrl: Box<dyn Controller + Send> = match ctrl_opt.as_deref() {
-                Some("nes.famicom") if slot_id == "player1" => {
-                    Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new())
-                }
-                Some("nes.famicom") => {
-                    Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new())
-                }
-                Some("nes.standard_pad") if slot_id == "player1" => {
-                    Box::new(nerust_nes_device::standard_pad::StandardPad::new(3))
-                }
-                Some("nes.standard_pad") => {
-                    Box::new(nerust_nes_device::standard_pad::StandardPad::new(1))
-                }
-                _ => continue, // unassigned or unknown controller
+        // Build one controller per occupied port, in slot order.
+        // Multi-port controllers (e.g. FamicomSet) occupy more than one slot.
+        let controllers = input_factory.controllers();
+        // (slot_position, group_index, ctrl_id)
+        let mut occupied: Vec<(usize, usize, &str)> = Vec::new();
+        for (slot_pos, (slot_id, ctrl_opt)) in assignments.slots.iter().enumerate() {
+            let ctrl_id = match ctrl_opt {
+                Some(id) => id.as_str(),
+                None => continue,
             };
-            devices.push(ctrl);
+            let Some(profile) = controllers.iter().find(|p| p.id() == ctrl_id) else {
+                continue;
+            };
+            for ps in profile.port_sets() {
+                if let Some(gi) = ps.ports.iter().position(|&p| p == slot_id) {
+                    occupied.push((slot_pos, gi, ctrl_id));
+                    // Also occupy other ports in the same set
+                    for (other_gi, &port) in ps.ports.iter().enumerate() {
+                        if port == slot_id {
+                            continue;
+                        }
+                        if let Some(other_pos) =
+                            assignments.slots.iter().position(|(s, _)| s == port)
+                        {
+                            occupied.push((other_pos, other_gi, ctrl_id));
+                        }
+                    }
+                }
+            }
         }
+        // Deduplicate by slot position
+        occupied.sort_by_key(|&(pos, _, _)| pos);
+        occupied.dedup_by_key(|&mut (pos, _, _)| pos);
+        let devices: Vec<Box<dyn Controller + Send>> = occupied
+            .into_iter()
+            .map(|(slot_pos, gi, ctrl_id)| {
+                let ctrl: Box<dyn Controller + Send> = match (ctrl_id, gi) {
+                    ("nes.famicom", 0) => {
+                        Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new())
+                    }
+                    ("nes.famicom", 1) => {
+                        Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new())
+                    }
+                    ("nes.standard_pad", _) => {
+                        // Slot 0 (P1) gets open_bus_mask 3, slot 1 (P2) gets mask 1
+                        let mask = if slot_pos == 0 { 3 } else { 1 };
+                        Box::new(nerust_nes_device::standard_pad::StandardPad::new(mask))
+                    }
+                    _ => unreachable!(),
+                };
+                ctrl
+            })
+            .collect();
         builder::create_core_and_adapter(
             view,
             speaker,
