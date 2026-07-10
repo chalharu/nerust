@@ -303,6 +303,7 @@ impl SoftbufferRenderer {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rendering<F: Fn(usize) -> [u8; 4]>(
         dst: &mut [u32],
         src_stride: usize,

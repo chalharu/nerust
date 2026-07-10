@@ -38,7 +38,7 @@ impl Controller for FamicomPadP1 {
             self.cached_mic = state[2];
         }
     }
-    fn read(&mut self) -> OpenBusReadResult {
+    fn read(&mut self, _port: usize) -> OpenBusReadResult {
         let bit = if self.strobe {
             self.cached_buttons & 1
         } else {
@@ -49,7 +49,7 @@ impl Controller for FamicomPadP1 {
         let mic = if self.cached_mic != 0 { 4 } else { 0 };
         OpenBusReadResult::new(bit | mic, 7)
     }
-    fn write(&mut self, value: u8) {
+    fn write(&mut self, _port: usize, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached_buttons;
@@ -92,7 +92,7 @@ impl Controller for FamicomPadP2 {
             self.cached = state[1] & 0b11110011;
         }
     }
-    fn read(&mut self) -> OpenBusReadResult {
+    fn read(&mut self, _port: usize) -> OpenBusReadResult {
         let bit = if self.strobe {
             self.cached & 1
         } else {
@@ -102,7 +102,7 @@ impl Controller for FamicomPadP2 {
         };
         OpenBusReadResult::new(bit, 1)
     }
-    fn write(&mut self, value: u8) {
+    fn write(&mut self, _port: usize, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached;
