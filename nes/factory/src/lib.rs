@@ -45,22 +45,26 @@ impl CoreFactory for NesFactory {
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        // Build one controller per assigned slot
-        let is_famicom = assignments
-            .slots
-            .iter()
-            .any(|(_, c)| c.as_deref() == Some("nes.famicom"));
-        let devices: Vec<Box<dyn Controller + Send>> = if is_famicom {
-            vec![
-                Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
-                Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
-            ]
-        } else {
-            vec![
-                Box::new(nerust_nes_device::standard_pad::StandardPad::new(3)),
-                Box::new(nerust_nes_device::standard_pad::StandardPad::new(1)),
-            ]
-        };
+        // Build one controller per slot, ordered by slot id
+        let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
+        for (slot_id, ctrl_opt) in &assignments.slots {
+            let ctrl: Box<dyn Controller + Send> = match ctrl_opt.as_deref() {
+                Some("nes.famicom") if slot_id == "player1" => {
+                    Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new())
+                }
+                Some("nes.famicom") => {
+                    Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new())
+                }
+                Some("nes.standard_pad") if slot_id == "player1" => {
+                    Box::new(nerust_nes_device::standard_pad::StandardPad::new(3))
+                }
+                Some("nes.standard_pad") => {
+                    Box::new(nerust_nes_device::standard_pad::StandardPad::new(1))
+                }
+                _ => continue, // unassigned or unknown controller
+            };
+            devices.push(ctrl);
+        }
         builder::create_core_and_adapter(
             view,
             speaker,

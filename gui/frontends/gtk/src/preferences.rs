@@ -41,13 +41,13 @@ struct InputRow {
     clear_button: gtk::Button,
 }
 
-/// Build a dynamic InputTopologyDescriptor from controller default assignments.
+/// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
     factory: &dyn nerust_gui_shell::factory::CoreFactory,
+    assignments: &[(String, Option<String>)],
 ) -> InputTopologyDescriptor {
     use nerust_input_traits::*;
     let input = factory.input_system_factory();
-    let defaults = input.default_assignments();
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
@@ -81,7 +81,7 @@ fn dynamic_topology(
     }
 
     let controllers = input.controllers();
-    for (slot_id, ctrl_opt) in &defaults.slots {
+    for (slot_id, ctrl_opt) in assignments {
         let ctrl_id: &'static str = match ctrl_opt {
             Some(id) if id == "nes.standard_pad" => "nes.standard_pad",
             Some(id) if id == "nes.famicom" => "nes.famicom",
@@ -322,7 +322,15 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let topology = dynamic_topology(factory.as_ref());
+    let sid = factory.system_id().to_string();
+    let assignments: Vec<(String, Option<String>)> = draft
+        .borrow()
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+    let topology = dynamic_topology(factory.as_ref(), &assignments);
     let input_rows = build_input_rows(language, &input_page, &topology, factory.system_id());
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
@@ -704,24 +712,7 @@ pub(crate) fn present_preferences_dialog(
                             }
                         }
                     }
-                    // Fill unassigned slots with single-port compatible controllers
-                    for slot in slots.iter_mut() {
-                        if slot.1.is_some() {
-                            continue;
-                        }
-                        for p in input_factory.controllers().iter() {
-                            if p.port_sets().iter().any(|ps| ps.ports.len() > 1) {
-                                continue;
-                            }
-                            if p.port_sets()
-                                .iter()
-                                .any(|ps| ps.ports.first() == Some(&slot.0.as_str()))
-                            {
-                                slot.1 = Some(p.id().to_string());
-                                break;
-                            }
-                        }
-                    }
+                    // Keep unassigned slots empty (allow disconnected ports).
                     nerust_input_traits::InputAssignments { slots }
                 };
                 if let Err(e) = state
@@ -1077,10 +1068,21 @@ fn refresh_validation(
     factory: &dyn CoreFactory,
 ) {
     let system = factory.system_id();
+    let sid = system.to_string();
+    let assignments: Vec<(String, Option<String>)> = snapshot
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(factory), system);
+    let conflicts = conflicting_keys(
+        &snapshot.shared,
+        &dynamic_topology(factory, &assignments),
+        system,
+    );
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -1107,9 +1109,16 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
+    let sid = factory.system_id().to_string();
+    let assignments: Vec<(String, Option<String>)> = snapshot
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
-        &dynamic_topology(factory),
+        &dynamic_topology(factory, &assignments),
         factory.system_id(),
     ) {
         errors.push(format!(

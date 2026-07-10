@@ -354,28 +354,7 @@ impl SettingsAppState {
                 {
                     entry.1 = controller_id.clone();
                 }
-                // For single-port controllers, assign to other unassigned compatible slots
-                if let Some(ref ctrl_id) = controller_id {
-                    let input = self.factory.input_system_factory();
-                    if let Some(p) = input.controllers().iter().find(|p| p.id() == ctrl_id) {
-                        let has_multi = p.port_sets().iter().any(|ps| ps.ports.len() > 1);
-                        if !has_multi {
-                            // Single-port controller: fill unassigned slots
-                            for entry in self.controller_assignments.iter_mut() {
-                                if entry.1.is_some() {
-                                    continue;
-                                }
-                                let slot_id = entry.0.as_str();
-                                if p.port_sets()
-                                    .iter()
-                                    .any(|ps| ps.ports.first() == Some(&slot_id))
-                                {
-                                    entry.1 = Some(ctrl_id.clone());
-                                }
-                            }
-                        }
-                    }
-                }
+                // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
                 let sid = self.factory.system_id().to_string();
                 self.draft
