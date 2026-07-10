@@ -5,7 +5,6 @@ use nerust_input_traits::{
     InputSystemFactory, SlotInfo,
 };
 use nerust_nes_core::input_types::NesInputBuffer;
-use nerust_nes_device::{famicom_set::FamicomSetProfile, standard_pad::StandardPadProfile};
 
 fn control_bit(id: &str) -> Option<usize> {
     match id {
@@ -90,24 +89,14 @@ impl InputSystemFactory for crate::NesFactory {
                     b: slot_key.to_string(),
                 });
             }
-            let (profile, port_groups_list): (
-                &dyn ControllerProfile,
-                &[&[nerust_input_traits::ControlInfo]],
-            ) = match ctrl_id {
-                "nes.standard_pad" => (
-                    &StandardPadProfile as &dyn ControllerProfile,
-                    StandardPadProfile.port_groups(),
-                ),
-                "nes.famicom" => (
-                    &FamicomSetProfile as &dyn ControllerProfile,
-                    FamicomSetProfile.port_groups(),
-                ),
-                _ => {
-                    return Err(CreateSplitError::ControllerNotFound {
-                        controller: ctrl_id.to_string(),
-                    });
-                }
-            };
+            let controllers = self.controllers();
+            let profile = controllers
+                .iter()
+                .find(|p| p.id() == ctrl_id)
+                .ok_or_else(|| CreateSplitError::ControllerNotFound {
+                    controller: ctrl_id.to_string(),
+                })?;
+            let port_groups_list = profile.port_groups();
             for ps in profile.port_sets() {
                 if let Some(pos) = ps.ports.iter().position(|&p| p == slot_key) {
                     let base = pos * 8;
