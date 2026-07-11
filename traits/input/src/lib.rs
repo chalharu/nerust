@@ -226,10 +226,6 @@ impl Port for SimplePort {
     }
 }
 
-/// NES port constants.
-pub const NES_PORTS: [SimplePort; 2] =
-    [SimplePort::new(0, "player1"), SimplePort::new(1, "player2")];
-
 /// Single physical controller (shift register logic).
 pub trait Controller: std::fmt::Debug + Send {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
@@ -237,7 +233,7 @@ pub trait Controller: std::fmt::Debug + Send {
     fn sync_input(&mut self, _state: &[u8]) {}
     /// Return field map entries (slot_id, control_id, field_index) for this
     /// controller at the given port. Default returns empty (no inputs).
-    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         Vec::new()
     }
 }
@@ -287,8 +283,9 @@ impl ControllerHub for ControllerCollection {
             .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
     }
     fn write_strobe(&mut self, value: u8) {
-        for (idx, d) in self.devices.iter_mut().enumerate() {
-            d.write(&NES_PORTS[idx], value);
+        let port = SimplePort::new(0, "");
+        for d in self.devices.iter_mut() {
+            d.write(&port, value);
         }
     }
     fn sync_input(&mut self, state: &[u8]) {
