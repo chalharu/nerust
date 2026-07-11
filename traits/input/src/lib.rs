@@ -198,21 +198,53 @@ impl OpenBusReadResult {
     }
 }
 
+/// Port identifier used by controllers and hubs.
+pub trait Port: std::fmt::Debug {
+    fn index(&self) -> usize;
+    fn id(&self) -> &'static str;
+}
+
+/// A simple port implementation with numeric index and string id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimplePort {
+    index: usize,
+    id: &'static str,
+}
+
+impl SimplePort {
+    pub const fn new(index: usize, id: &'static str) -> Self {
+        Self { index, id }
+    }
+}
+
+impl Port for SimplePort {
+    fn index(&self) -> usize {
+        self.index
+    }
+    fn id(&self) -> &'static str {
+        self.id
+    }
+}
+
+/// NES port constants.
+pub const NES_PORTS: [SimplePort; 2] =
+    [SimplePort::new(0, "player1"), SimplePort::new(1, "player2")];
+
 /// Single physical controller (shift register logic).
 pub trait Controller: std::fmt::Debug + Send {
-    fn read(&mut self, port: usize) -> OpenBusReadResult;
-    fn write(&mut self, port: usize, value: u8);
+    fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
+    fn write(&mut self, port: &dyn Port, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
     /// Return field map entries (slot_id, control_id, field_index) for this
-    /// controller at the given slot. Default returns empty (no inputs).
-    fn field_map(&self, _port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+    /// controller at the given port. Default returns empty (no inputs).
+    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         Vec::new()
     }
 }
 
 /// Multi-port controller hub routing reads/writes to per-port controllers.
 pub trait ControllerHub: std::fmt::Debug + Send {
-    fn read_port(&mut self, port: usize) -> OpenBusReadResult;
+    fn read_port(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write_strobe(&mut self, value: u8);
     fn sync_input(&mut self, state: &[u8]);
 }
@@ -249,14 +281,14 @@ impl ControllerCollection {
 }
 
 impl ControllerHub for ControllerCollection {
-    fn read_port(&mut self, port: usize) -> OpenBusReadResult {
+    fn read_port(&mut self, port: &dyn Port) -> OpenBusReadResult {
         self.devices
-            .get_mut(port)
+            .get_mut(port.index())
             .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
     }
     fn write_strobe(&mut self, value: u8) {
-        for (port, d) in self.devices.iter_mut().enumerate() {
-            d.write(port, value);
+        for (idx, d) in self.devices.iter_mut().enumerate() {
+            d.write(&NES_PORTS[idx], value);
         }
     }
     fn sync_input(&mut self, state: &[u8]) {

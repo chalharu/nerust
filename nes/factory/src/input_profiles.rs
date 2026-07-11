@@ -41,17 +41,15 @@ impl InputSystemFactory for crate::NesFactory {
         &self,
         controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
-        use nerust_input_traits::InputStateBuffer;
+        use nerust_input_traits::{InputStateBuffer, NES_PORTS};
         use std::sync::{Arc, Mutex};
 
-        let slot_keys: &[&str] = &["player1", "player2"];
         let mut field_map = std::collections::HashMap::new();
         for (idx, dev) in controllers.devices.iter().enumerate() {
-            let slot = match slot_keys.get(idx) {
-                Some(s) => s,
-                None => break,
-            };
-            for (s, ctrl, bit) in dev.field_map(slot) {
+            if idx >= NES_PORTS.len() {
+                break;
+            }
+            for (s, ctrl, bit) in dev.field_map(&NES_PORTS[idx]) {
                 field_map.insert((s, ctrl), bit);
             }
         }

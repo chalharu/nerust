@@ -1,4 +1,6 @@
-use nerust_input_traits::{AbstractKey, ControlInfo, ControlKind, ControllerProfile, PortSet};
+use nerust_input_traits::{
+    AbstractKey, ControlInfo, ControlKind, ControllerProfile, Port, PortSet,
+};
 use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -39,33 +41,34 @@ impl Controller for StandardPad {
             self.cached.copy_from_slice(s);
         }
     }
-    fn read(&mut self, port: usize) -> OpenBusReadResult {
+    fn read(&mut self, port: &dyn Port) -> OpenBusReadResult {
+        let idx = port.index();
         let bit = if self.strobe {
-            self.cached[port] & 1
+            self.cached[idx] & 1
         } else {
-            let b = self.result[port] & 1;
-            self.result[port] = self.result[port] >> 1 | 0x80;
+            let b = self.result[idx] & 1;
+            self.result[idx] = self.result[idx] >> 1 | 0x80;
             b
         };
         OpenBusReadResult::new(bit, self.open_bus_mask)
     }
-    fn write(&mut self, _port: usize, value: u8) {
+    fn write(&mut self, _port: &dyn Port, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached;
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         vec![
-            (port, "a", 0),
-            (port, "b", 1),
-            (port, "select", 2),
-            (port, "start", 3),
-            (port, "up", 4),
-            (port, "down", 5),
-            (port, "left", 6),
-            (port, "right", 7),
+            (port.id(), "a", 0),
+            (port.id(), "b", 1),
+            (port.id(), "select", 2),
+            (port.id(), "start", 3),
+            (port.id(), "up", 4),
+            (port.id(), "down", 5),
+            (port.id(), "left", 6),
+            (port.id(), "right", 7),
         ]
     }
 }
