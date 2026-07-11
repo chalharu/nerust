@@ -1,6 +1,5 @@
 pub mod context;
 pub mod emu_core;
-pub mod factory;
 pub mod keyboard_defaults;
 pub mod load;
 pub mod session;

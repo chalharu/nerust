@@ -5,11 +5,11 @@ use std::sync::Arc;
 use clap::Command;
 use log::LevelFilter;
 use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::factory::CoreFactory;
 use nerust_core_traits::factory::cli::CliProvider;
 use nerust_gui_runtime::rom::load_rom_path;
 use nerust_gui_shell::{
     context::FrontendContext,
-    factory::CoreFactory,
     load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
 };
 use nerust_nes_factory::NesFactory;
@@ -142,16 +142,14 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use nerust_core_traits::factory::CoreFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_shell::load::{
+        MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError,
+        SystemLoadOptions,
+    };
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
-    };
-    use nerust_gui_shell::{
-        factory::CoreFactory,
-        load::{
-            MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError,
-            SystemLoadOptions,
-        },
     };
     use nerust_nes_factory::NesFactory;
 

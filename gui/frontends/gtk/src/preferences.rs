@@ -8,13 +8,19 @@ use gtk::{
         EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
     },
 };
-use nerust_core_traits::SystemId;
+use nerust_core_traits::{
+    SystemId,
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel},
+    },
+};
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
+use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
-    factory::{CoreFactory, SystemSettingsFieldModel},
     session::SessionError,
     settings::{
         bindings::{
@@ -25,10 +31,6 @@ use nerust_gui_shell::{
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
         i18n::{UiText, text},
     },
-};
-use nerust_gui_shell::{
-    factory::{SystemSettingsFieldKind, SystemSettingsPageModel},
-    session::access::{FrontendSession, SettingsResult},
 };
 use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
 use std::collections::HashSet;
@@ -45,7 +47,7 @@ struct InputRow {
 
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
-    factory: &dyn nerust_gui_shell::factory::CoreFactory,
+    factory: &dyn CoreFactory,
     assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
 ) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
