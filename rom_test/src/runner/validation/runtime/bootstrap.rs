@@ -1,4 +1,5 @@
-use nerust_nes_core::{Core, controller::ControllerCollection, rom_parse};
+use nerust_input_traits::ControllerCollection;
+use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 
 use super::ValidationRuntime;

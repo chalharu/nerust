@@ -5,11 +5,8 @@ use std::{
 
 use clap::{Arg, ArgAction, Command};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_nes_core::{
-    Core,
-    controller::{Controller, ControllerCollection, ControllerHub},
-    rom_parse,
-};
+use nerust_input_traits::{ControllerCollection, ControllerHub as _};
+use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
 

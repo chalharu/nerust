@@ -1,7 +1,9 @@
+use nerust_input_traits::ControllerHub;
+
 use super::{
     super::{
-        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, RegisterP,
-        pull, push, read_dummy_current,
+        Apu, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, RegisterP, pull, push,
+        read_dummy_current,
     },
     exit_opcode,
 };

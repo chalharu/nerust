@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
-use nerust_input_traits::{EmuInput, GuiInput};
-use nerust_nes_core::{console_core::NesConsoleCore, controller::ControllerCollection};
+use nerust_input_traits::{ControllerCollection, EmuInput, GuiInput};
+use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
 
 pub(crate) fn create_core_and_adapter(

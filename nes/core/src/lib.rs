@@ -25,6 +25,7 @@ pub mod rom_parse;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::AudioBackend;
+use nerust_input_traits::ControllerHub;
 use nerust_render_base::FrameBuffer;
 use nerust_sound_filter::{
     ChaindFilter, Filter, IirFilter,
@@ -33,14 +34,11 @@ use nerust_sound_filter::{
 
 #[cfg(test)]
 use self::cartridge_data_parts::CartridgeDataParts;
-#[cfg(test)]
-use self::controller::{Controller, Port};
 use self::{
     apu::Core as Apu,
     cart_device::Cartridge,
     cartridge_rom::CartridgeData,
     cartridge_runtime_state::CartridgeRuntimeState,
-    controller::ControllerHub,
     cpu::Core as Cpu,
     persistence_codec::{
         PERSISTENCE_SCHEMA_VERSION, decode_payload, encode_payload, validate_schema_version,
@@ -812,6 +810,8 @@ fn mapper_program_with_prefix_test_data(
 
 #[cfg(test)]
 mod scheduler_tests {
+    use nerust_input_traits::{Controller, ControllerHub, Port};
+
     use super::*;
     use crate::{
         OpenBusReadResult,

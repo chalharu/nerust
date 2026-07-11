@@ -14,8 +14,9 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
-use nerust_input_traits::{ControllerCollection, ControllerProfile, EmuInput, GuiInput};
-use nerust_nes_core::controller::Controller;
+use nerust_input_traits::{
+    Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput,
+};
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
 pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";

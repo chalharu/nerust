@@ -11,6 +11,7 @@ bitflags.workspace = true
 clap.workspace = true
 crc.workspace = true
 nerust_core_traits.workspace = true
+nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_controller.workspace = true
 nerust_nes_device.workspace = true

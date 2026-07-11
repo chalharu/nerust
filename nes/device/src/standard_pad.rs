@@ -1,7 +1,7 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, ControllerProfile, Port, PortSet,
+    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, Port, PortSet,
 };
-use nerust_nes_core::{OpenBusReadResult, controller::Controller};
+use nerust_nes_core::OpenBusReadResult;
 
 /// NES Standard Controller: full 8-button pad for a single port.
 #[derive(Debug, Clone)]

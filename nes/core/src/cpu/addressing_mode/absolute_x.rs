@@ -1,8 +1,7 @@
+use nerust_input_traits::ControllerHub;
+
 use super::{
-    super::{
-        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu,
-        page_crossed,
-    },
+    super::{Apu, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu, page_crossed},
     exit_addressing_mode,
 };
 
