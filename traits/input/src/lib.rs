@@ -414,6 +414,21 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
     fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
+
+    /// Resolve a persisted slot ID string to an AttachmentId.
+    /// Returns the first slot whose ID matches, or the first slot if no match.
+    fn resolve_slot(&self, id: &str) -> AttachmentId {
+        self.slots()
+            .iter()
+            .find(|s| s.id.as_str() == id)
+            .map(|s| s.id)
+            .unwrap_or_else(|| self.slots()[0].id)
+    }
+
+    /// Resolve a persisted controller ID string to a ControllerProfile.
+    fn resolve_controller(&self, id: &str) -> Option<Rc<dyn ControllerProfile>> {
+        self.controllers().iter().find(|p| p.id() == id).cloned()
+    }
 }
 
 /// Slot-to-controller assignments.
