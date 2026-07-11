@@ -11,8 +11,8 @@ use glutin::{
     surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface},
 };
 use nerust_render_base::{
-    FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError,
-    SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 

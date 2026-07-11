@@ -4,19 +4,22 @@ use gio::glib::object::{Cast as _, IsA};
 use gtk::{
     glib,
     prelude::{
-        BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
-        EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
+        BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, ComboBoxExtManual,
+        DialogExt as _, EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
     },
 };
-use nerust_core_traits::SystemId;
+use nerust_core_traits::{
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel},
+    },
+    identity::SystemId,
+};
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
-    descriptor::SystemSettingsFieldKind,
-    factory::CoreFactory,
     session::SessionError,
     settings::{
         bindings::{
@@ -25,10 +28,16 @@ use nerust_gui_shell::{
             keys::keyboard_key_label,
         },
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        factory::{apply_settings_choice, settings_view},
         i18n::{UiText, text},
     },
 };
-use nerust_input_traits::InputTopologyDescriptor;
+use nerust_gui_shell::{
+    session::access::{FrontendSession, SettingsResult},
+    settings::factory::resolve_label,
+};
+use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
+use std::collections::HashSet;
 
 use crate::State;
 
@@ -38,6 +47,14 @@ struct InputRow {
     value_label: gtk::Label,
     change_button: gtk::Button,
     clear_button: gtk::Button,
+}
+
+/// Build a dynamic InputTopologyDescriptor from controller assignments.
+fn dynamic_topology(
+    assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
+) -> InputTopologyDescriptor {
+    use nerust_gui_shell::session::input::build_topology;
+    build_topology(assignments)
 }
 
 pub(crate) fn present_preferences_dialog(
@@ -160,11 +177,208 @@ pub(crate) fn present_preferences_dialog(
     general_page.append(&storage_dir_row);
     general_page.append(&storage_error_label);
 
+    // Controller assignment ComboBoxes per slot
+    let input_factory = factory.input_system_factory();
+    let slots = input_factory.slots().to_vec();
+    let controllers: Vec<Rc<dyn ControllerProfile>> = input_factory.controllers();
+    struct SlotCombo {
+        slot_id: String,
+        combo: gtk::ComboBoxText,
+    }
+    let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
+    let factory2 = factory.clone();
+
+    // Read current assignments to pre-select combo boxes.
+    let sid = factory.system_id().to_string();
+    let default_assignments = factory.input_system_factory().default_assignments();
+    let current_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = draft
+        .borrow()
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| default_assignments.slots);
+
+    // Key binding section (rebuilt dynamically on controller change)
+    let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
+    key_binding_box.set_vexpand(true);
+    let input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Rebuild key binding UI from current assignments.
+    fn rebuild_input_ui(
+        key_binding_box: &gtk::Box,
+        input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        factory: &dyn CoreFactory,
+        assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
+        language: AppLanguage,
+    ) {
+        while let Some(child) = key_binding_box.first_child() {
+            key_binding_box.remove(&child);
+        }
+        let topology = dynamic_topology(assignments);
+        let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
+        *input_rows.borrow_mut() = rows;
+    }
+
+    if !controllers.is_empty() {
+        for slot in &slots {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let lbl = gtk::Label::new(Some(slot.label));
+            row.append(&lbl);
+            let combo = gtk::ComboBoxText::new();
+            combo.append_text(text(language, UiText::None)); // "None" option
+            for c in controllers.iter().filter(|c| {
+                c.port_sets()
+                    .iter()
+                    .any(|ps| ps.ports.first() == Some(&slot.id))
+            }) {
+                combo.append_text(c.label());
+            }
+            {
+                let sc = slot_combos.clone();
+                let f = factory2.clone();
+                let kb_box = key_binding_box.clone();
+                let kb_rows = input_rows.clone();
+                let lang = language;
+                let d = draft.clone();
+                let ok = ok_button.clone();
+                combo.connect_changed(move |_| {
+                    let combos = sc.borrow();
+                    let input = f.input_system_factory();
+                    // Build occupied from current selections
+                    let mut occupied = HashSet::new();
+                    for sc_item in combos.iter() {
+                        let Some(label) = sc_item.combo.active_text() else {
+                            continue;
+                        };
+                        for p in input.controllers().iter() {
+                            if p.label() != label.as_str() {
+                                continue;
+                            }
+                            for ps in p.port_sets() {
+                                if ps.ports.contains(&sc_item.slot_id.as_str()) {
+                                    for &port in ps.ports {
+                                        occupied.insert(port);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for sc_item in combos.iter() {
+                        let occ = occupied.contains(sc_item.slot_id.as_str())
+                            && sc_item
+                                .combo
+                                .active_text()
+                                .is_none_or(|t| t.is_empty() || t == text(lang, UiText::None));
+                        sc_item.combo.set_sensitive(!occ);
+                    }
+                    // Rebuild key binding UI
+                    drop(combos);
+                    let mut current_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> =
+                        sc.borrow()
+                            .iter()
+                            .map(|sc_item| {
+                                let profile = sc_item.combo.active_text().and_then(|label| {
+                                    input
+                                        .controllers()
+                                        .iter()
+                                        .find(|p| p.label() == label)
+                                        .cloned()
+                                });
+                                (sc_item.slot_id.clone(), profile)
+                            })
+                            .collect();
+                    // Clear multi-port conflicts
+                    let snapshot = current_assignments.clone();
+                    for (slot_id, ctrl_opt) in &snapshot {
+                        let profile = match ctrl_opt {
+                            Some(p) => p.as_ref(),
+                            None => continue,
+                        };
+                        for ps in profile.port_sets() {
+                            if ps.ports.len() <= 1 {
+                                continue;
+                            }
+                            if !ps.ports.contains(&slot_id.as_str()) {
+                                continue;
+                            }
+                            for &port in ps.ports {
+                                if port != slot_id
+                                    && let Some(other) =
+                                        current_assignments.iter_mut().find(|(s, _)| *s == port)
+                                {
+                                    other.1 = None;
+                                    // Also clear the combo box for this slot
+                                    if let Some(sc_item) =
+                                        sc.borrow().iter().find(|s| s.slot_id == port)
+                                    {
+                                        sc_item.combo.set_active(Some(0));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rebuild_input_ui(&kb_box, &kb_rows, f.as_ref(), &current_assignments, lang);
+                    // Update key binding labels from current settings
+                    let snapshot = d.borrow();
+                    for row in kb_rows.borrow().iter() {
+                        row.value_label
+                            .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
+                    }
+                    // Disable OK button if no controller is assigned
+                    ok.set_sensitive(current_assignments.iter().any(|(_, c)| c.is_some()));
+                });
+            }
+            slot_combos.borrow_mut().push(SlotCombo {
+                slot_id: slot.id.to_string(),
+                combo: combo.clone(),
+            });
+            // Pre-select based on current assignment
+            if let Some((_, Some(profile))) = current_assignments.iter().find(|(s, _)| s == slot.id)
+            {
+                let idx = controllers
+                    .iter()
+                    .filter(|c| {
+                        c.port_sets()
+                            .iter()
+                            .any(|ps| ps.ports.first() == Some(&slot.id))
+                    })
+                    .position(|c| c.id() == profile.id())
+                    .map(|pos| pos as u32 + 1); // +1 for "None" at index 0
+                if let Some(active) = idx {
+                    combo.set_active(Some(active));
+                }
+            } else {
+                combo.set_active(Some(0)); // None
+            }
+            row.append(&combo);
+            input_page.append(&row);
+        }
+    }
+
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let topology = state.borrow().input_topology_descriptor();
-    let input_rows = build_input_rows(language, &input_page, &topology, factory.system_id());
+    input_page.append(&*key_binding_box);
+    rebuild_input_ui(
+        &key_binding_box,
+        &input_rows,
+        factory.as_ref(),
+        &current_assignments,
+        language,
+    );
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -221,16 +435,14 @@ pub(crate) fn present_preferences_dialog(
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
     let filter_combo = combo_from_optional_system_field(filter_field, language);
     let filter_label = filter_field
-        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
-        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.video.filter", language));
+        .map(|field| resolve_label(field.label_id, language))
+        .unwrap_or_else(|| resolve_label("nes.video.filter", language));
     system_page.append(&labeled_row(&filter_label, &filter_combo));
     let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
     let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
     let mmc3_label = mmc3_field
-        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
-        .unwrap_or_else(|| {
-            nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language)
-        });
+        .map(|field| resolve_label(field.label_id, language))
+        .unwrap_or_else(|| resolve_label("nes.core.mmc3_irq_variant", language));
     system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
     apply_snapshot_to_widgets(
@@ -402,7 +614,7 @@ pub(crate) fn present_preferences_dialog(
     }
     dialog.add_controller(key_controller);
 
-    for row in input_rows.iter().cloned() {
+    for row in input_rows.borrow().iter().cloned() {
         let capture_target = capture_target.clone();
         let draft = draft.clone();
         let widgets = widget_bundle(
@@ -433,7 +645,7 @@ pub(crate) fn present_preferences_dialog(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    for row in input_rows.iter().cloned() {
+    for row in input_rows.borrow().iter().cloned() {
         let capture_target = capture_target.clone();
         let draft = draft.clone();
         let widgets = widget_bundle(
@@ -496,8 +708,68 @@ pub(crate) fn present_preferences_dialog(
             factory.clone(),
         );
         let factory = factory.clone();
+        let slot_combos = slot_combos.clone();
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {
+                // Apply controller assignment changes
+                let input_factory = factory.input_system_factory();
+                let assignments = {
+                    let combos = slot_combos.borrow();
+                    let mut slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = combos
+                        .iter()
+                        .map(|sc| {
+                            let profile = sc.combo.active_text().and_then(|t| {
+                                let ctrls = input_factory.controllers();
+                                ctrls.iter().find(|c| c.label() == t).cloned()
+                            });
+                            (sc.slot_id.clone(), profile)
+                        })
+                        .collect();
+                    // Clear conflicting assignments from multi-port controllers
+                    let assigned = slots.clone();
+                    for (slot_id, ctrl_opt) in &assigned {
+                        let profile = match ctrl_opt {
+                            Some(p) => p.as_ref(),
+                            None => continue,
+                        };
+                        for ps in profile.port_sets() {
+                            if ps.ports.len() <= 1 {
+                                continue;
+                            }
+                            if !ps.ports.contains(&slot_id.as_str()) {
+                                continue;
+                            }
+                            for &port in ps.ports {
+                                if port != slot_id
+                                    && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
+                                {
+                                    other.1 = None;
+                                }
+                            }
+                        }
+                    }
+                    // Keep unassigned slots empty (allow disconnected ports).
+                    nerust_input_traits::InputAssignments { slots }
+                };
+                // Only rebuild core if assignments actually changed
+                let current_pairs = state.borrow().session.current_assignments_pairs();
+                let new_pairs = assignments.to_string_pairs();
+                if current_pairs != new_pairs
+                    && let Err(e) = state
+                        .borrow_mut()
+                        .session
+                        .reassign_controllers(&assignments)
+                {
+                    log::warn!("controller reassign failed: {e}");
+                }
+                // Persist assignments to draft
+                let sid = factory.system_id().to_string();
+                draft
+                    .borrow_mut()
+                    .app_state
+                    .controller_assignments
+                    .insert(sid, assignments.to_string_pairs());
+
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
                     refresh_all_from_draft(&snapshot, &widgets);
@@ -550,7 +822,7 @@ struct WidgetBundle {
     latency_spin: gtk::SpinButton,
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
-    input_rows: Vec<InputRow>,
+    input_rows: Rc<RefCell<Vec<InputRow>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -582,10 +854,7 @@ fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
 }
 
 fn should_apply_response(response: gtk::ResponseType) -> bool {
-    matches!(
-        response,
-        gtk::ResponseType::Ok | gtk::ResponseType::DeleteEvent
-    )
+    matches!(response, gtk::ResponseType::Ok)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -606,7 +875,7 @@ fn widget_bundle(
     latency_spin: &gtk::SpinButton,
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
-    input_rows: &[InputRow],
+    input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -628,7 +897,7 @@ fn widget_bundle(
         latency_spin: latency_spin.clone(),
         filter_combo: filter_combo.clone(),
         mmc3_combo: mmc3_combo.clone(),
-        input_rows: input_rows.to_vec(),
+        input_rows: input_rows.clone(),
         capture_target: capture_target.clone(),
         language,
         factory,
@@ -788,7 +1057,7 @@ fn connect_local_updates(
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*factory,
                     &mut snapshot,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
@@ -813,7 +1082,7 @@ fn connect_local_updates(
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*factory,
                     &mut snapshot,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
@@ -843,15 +1112,32 @@ fn refresh_validation(
     factory: &dyn CoreFactory,
 ) {
     let system = factory.system_id();
+    let sid = system.to_string();
+    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(
-        &snapshot.shared,
-        &factory.system_descriptor().input_topology,
-        system,
-    );
-    let has_errors = storage_error.is_some() || !conflicts.is_empty();
+    let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(&assignments), system);
+    let has_errors = storage_error.is_some()
+        || !conflicts.is_empty()
+        || !assignments.iter().any(|(_, c)| c.is_some());
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
@@ -877,9 +1163,31 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
+    let sid = factory.system_id().to_string();
+    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+    if !assignments.iter().any(|(_, c)| c.is_some()) {
+        errors.push("At least one controller must be assigned".to_string());
+    }
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
-        &factory.system_descriptor().input_topology,
+        &dynamic_topology(&assignments),
         factory.system_id(),
     ) {
         errors.push(format!(
@@ -907,7 +1215,7 @@ fn apply_snapshot_to_widgets(
     latency_spin: &gtk::SpinButton,
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
-    input_rows: &[InputRow],
+    input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
@@ -951,12 +1259,12 @@ fn apply_snapshot_to_widgets(
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
     let system_id = factory.system_id();
-    let view = nerust_gui_shell::settings::settings_view(snapshot, &system_id);
+    let view = settings_view(snapshot, &system_id);
     let system_page = factory.settings_page(&view);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
-    for row in input_rows {
+    for row in input_rows.borrow().iter() {
         row.value_label
             .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
                 capture_label
@@ -1069,23 +1377,23 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
 }
 
 fn system_field_by_id<'a>(
-    page: &'a nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    page: &'a SystemSettingsPageModel,
     field_id: &str,
-) -> Option<&'a nerust_gui_shell::descriptor::SystemSettingsFieldModel> {
+) -> Option<&'a SystemSettingsFieldModel> {
     page.fields
         .iter()
         .find(|field| field.id.as_str() == field_id)
 }
 
 fn combo_from_optional_system_field(
-    field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+    field: Option<&SystemSettingsFieldModel>,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     if let Some(field) = field {
         let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
         for option in options.iter() {
-            let label = nerust_gui_shell::settings::resolve_label(option.label_id, language);
+            let label = resolve_label(option.label_id, language);
             combo.append(Some(option.id.as_str()), &label);
         }
     }
@@ -1093,7 +1401,7 @@ fn combo_from_optional_system_field(
 }
 
 fn apply_system_field_by_id_to_combo(
-    page: &nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    page: &SystemSettingsPageModel,
     field_id: &str,
     combo: &gtk::ComboBoxText,
 ) {
@@ -1274,9 +1582,9 @@ mod tests {
     }
 
     #[test]
-    fn close_button_uses_apply_path() {
+    fn close_button_uses_cancel_path() {
         assert!(should_apply_response(gtk::ResponseType::Ok));
-        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
+        assert!(!should_apply_response(gtk::ResponseType::DeleteEvent));
         assert!(!should_apply_response(gtk::ResponseType::Cancel));
     }
 }

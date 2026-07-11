@@ -1,5 +1,7 @@
+use nerust_input_traits::ControllerHub;
+
 use super::{
-    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
+    super::{Apu, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
     exit_opcode,
 };
 
@@ -10,7 +12,7 @@ impl CpuStepState for Nop {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -18,7 +20,7 @@ impl CpuStepState for Nop {
                 let pc = core.register.get_pc() as usize;
                 let _ = core
                     .memory
-                    .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+                    .read(pc, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             _ => {
                 return exit_opcode(core);
@@ -35,7 +37,7 @@ impl CpuStepState for Kil {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -43,7 +45,7 @@ impl CpuStepState for Kil {
                 let pc = core.register.get_pc() as usize;
                 let _ = core
                     .memory
-                    .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+                    .read(pc, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             _ => {
                 return exit_opcode(core);

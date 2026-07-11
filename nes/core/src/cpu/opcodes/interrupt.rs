@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, IRQ_VECTOR,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, IRQ_VECTOR,
         IrqSource, NMI_VECTOR, Ppu, RESET_VECTOR, RegisterP, pull, push, read_dummy_current,
     },
     exit_opcode,
@@ -13,7 +13,7 @@ impl CpuStepState for Brk {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -23,7 +23,7 @@ impl CpuStepState for Brk {
                     &mut core.register,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -33,14 +33,14 @@ impl CpuStepState for Brk {
                 let hi = (pc >> 8) as u8;
                 core.internal_stat.set_data((pc & 0xFF) as u8);
 
-                push(core, ppu, cartridge, controller, apu, hi);
+                push(core, ppu, cartridge, hub, apu, hi);
             }
             3 => {
                 push(
                     core,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     core.internal_stat.get_data(),
                 );
@@ -54,7 +54,7 @@ impl CpuStepState for Brk {
             }
             4 => {
                 let p = core.register.get_p() | (RegisterP::BREAK | RegisterP::RESERVED).bits();
-                push(core, ppu, cartridge, controller, apu, p);
+                push(core, ppu, cartridge, hub, apu, p);
             }
             5 => {
                 core.register.set_i(true);
@@ -62,7 +62,7 @@ impl CpuStepState for Brk {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -72,7 +72,7 @@ impl CpuStepState for Brk {
                     core.internal_stat.get_address() + 1,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -95,37 +95,32 @@ impl CpuStepState for Rti {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             2 => {
                 // dummy read
                 let sp = usize::from(core.register.get_sp());
-                let _ = core.memory.read(
-                    sp | 0x100,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(sp | 0x100, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             3 => {
-                let p = pull(core, ppu, cartridge, controller, apu);
+                let p = pull(core, ppu, cartridge, hub, apu);
                 core.register
                     .set_p((p & !(RegisterP::BREAK.bits())) | RegisterP::RESERVED.bits());
             }
             4 => {
-                let data = pull(core, ppu, cartridge, controller, apu);
+                let data = pull(core, ppu, cartridge, hub, apu);
                 core.internal_stat.set_data(data);
             }
             5 => {
-                let high = pull(core, ppu, cartridge, controller, apu);
+                let high = pull(core, ppu, cartridge, hub, apu);
                 core.register
                     .set_pc(u16::from(core.internal_stat.get_data()) | (u16::from(high) << 8));
             }
@@ -144,30 +139,30 @@ impl CpuStepState for Irq {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             2 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             3 => {
                 let pc = core.register.get_pc();
                 let hi = (pc >> 8) as u8;
                 core.internal_stat.set_data((pc & 0xFF) as u8);
-                push(core, ppu, cartridge, controller, apu, hi);
+                push(core, ppu, cartridge, hub, apu, hi);
             }
             4 => {
                 push(
                     core,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     core.internal_stat.get_data(),
                 );
@@ -182,7 +177,7 @@ impl CpuStepState for Irq {
             5 => {
                 let p =
                     (core.register.get_p() & !RegisterP::BREAK.bits()) | RegisterP::RESERVED.bits();
-                push(core, ppu, cartridge, controller, apu, p);
+                push(core, ppu, cartridge, hub, apu, p);
             }
             6 => {
                 core.register.set_i(true);
@@ -190,7 +185,7 @@ impl CpuStepState for Irq {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -203,7 +198,7 @@ impl CpuStepState for Irq {
                     core.internal_stat.get_address() + 1,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -226,13 +221,13 @@ impl CpuStepState for Reset {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
 
                 core.interrupt.irq_flag = IrqSource::empty();
                 core.interrupt.irq_mask = IrqSource::ALL;
@@ -240,43 +235,28 @@ impl CpuStepState for Reset {
             }
             2 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             3 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                let _ = core.memory.read(
-                    0x100 | sp,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(0x100 | sp, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             4 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                let _ = core.memory.read(
-                    0x100 | sp,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(0x100 | sp, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             5 => {
                 let sp = usize::from(core.register.get_sp());
                 core.register.set_sp((sp.wrapping_sub(1) & 0xFF) as u8);
-                let _ = core.memory.read(
-                    0x100 | sp,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(0x100 | sp, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             6 => {
                 core.register.set_i(true);
@@ -284,7 +264,7 @@ impl CpuStepState for Reset {
                     RESET_VECTOR,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -294,7 +274,7 @@ impl CpuStepState for Reset {
                     RESET_VECTOR + 1,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));

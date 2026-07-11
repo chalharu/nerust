@@ -1,6 +1,7 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use super::Cartridge;
 use crate::{
-    OpenBusReadResult,
     cartridge_rom::CartridgeData,
     cartridge_runtime_state::{CartridgeRuntimeState, MAPPER_KIND_MMC5},
     interrupt::{Interrupt, IrqSource},

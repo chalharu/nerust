@@ -1,12 +1,15 @@
 use std::path::Path;
 
+use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_emu_thread::ConsoleMetrics;
+
 use crate::{
-    load::{MediaObject, ResolvedLoadRequest},
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
         title::window_title,
     },
+    settings::factory::settings_view,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,7 +19,7 @@ pub struct WindowSize {
 }
 
 impl SessionHandle {
-    pub fn metrics(&self) -> crate::session::metrics::ConsoleMetrics {
+    pub fn metrics(&self) -> ConsoleMetrics {
         self.emu_core.metrics()
     }
 
@@ -85,6 +88,7 @@ impl SessionHandle {
         self.settings_snapshot = next_settings;
         self.pressed_keys.clear();
         self.clear_input();
+        self.rebuild_key_field_map();
         Ok(plan)
     }
 
@@ -316,9 +320,13 @@ impl SessionHandle {
 
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = self.factory.system_id();
-        let view = crate::settings::settings_view(next_settings, &system_id);
-        let parts = self.factory.create_core_and_adapter(&view, speaker)?;
-        let (rebuilt_core, rebuilt_adapter) = crate::emu_core::EmuCore::from_parts(parts);
+        let view = settings_view(next_settings, &system_id);
+        let parts = self.factory.create_core_and_adapter_with_assignments(
+            &view,
+            speaker,
+            &self.current_assignments,
+        )?;
+        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, Vec::new())?;
@@ -331,7 +339,8 @@ impl SessionHandle {
         }
 
         self.emu_core = rebuilt_core;
-        self.input_adapter = rebuilt_adapter;
+        self.gui_input = gui_input;
+        self.field_map = field_map;
         if was_loaded {
             let rom_path = self
                 .loaded_media

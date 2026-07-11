@@ -1,7 +1,7 @@
+use nerust_input_traits::ControllerHub;
+
 use super::{
-    super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu, page_crossed,
-    },
+    super::{Apu, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu, page_crossed},
     exit_addressing_mode,
 };
 
@@ -12,7 +12,7 @@ impl CpuStepState for AbsoluteX {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -21,7 +21,7 @@ impl CpuStepState for AbsoluteX {
                     &mut core.register,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 ));
@@ -32,7 +32,7 @@ impl CpuStepState for AbsoluteX {
                     &mut core.register,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -59,7 +59,7 @@ impl CpuStepState for AbsoluteX {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );

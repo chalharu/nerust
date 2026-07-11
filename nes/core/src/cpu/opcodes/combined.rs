@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, InternalStat, Ppu, Register,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepStateEnum, InternalStat, Ppu, Register,
     },
     exit_opcode,
 };
@@ -12,7 +12,7 @@ pub(crate) trait Read {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -21,7 +21,7 @@ pub(crate) trait Read {
                     core.internal_stat.get_address(),
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -56,21 +56,14 @@ pub(crate) trait Write {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 let (data, address) = Self::writer(&mut core.register, &core.internal_stat);
-                core.memory.write(
-                    address,
-                    data,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                core.memory
+                    .write(address, data, ppu, cartridge, hub, apu, &mut core.interrupt);
             }
             _ => {
                 return exit_opcode(core);

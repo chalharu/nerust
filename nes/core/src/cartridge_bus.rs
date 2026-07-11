@@ -1,5 +1,6 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use crate::{
-    OpenBusReadResult,
     cart_device::Cartridge as MapperCartridge,
     interrupt::Interrupt,
     mapper::Mapper,

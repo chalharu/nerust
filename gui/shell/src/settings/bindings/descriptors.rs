@@ -1,4 +1,4 @@
-use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{
     AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor,
@@ -108,7 +108,7 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::SystemId;
+    use nerust_core_traits::identity::SystemId;
 
     use super::{keyboard_binding_sections, shortcut_descriptors};
     use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};

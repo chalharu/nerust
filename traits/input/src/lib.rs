@@ -178,37 +178,393 @@ impl DigitalInputEvent {
     }
 }
 
-use thiserror::Error;
+// ===== New Input Architecture Types =====
 
-#[derive(Debug, Error)]
-pub enum InputError {
-    #[error("input encode failed: {0}")]
-    Encode(String),
-    #[error("input decode failed: {0}")]
-    Decode(String),
+use std::any::Any;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// Result of a CPU bus read — data bits and which bits are valid.
+#[derive(Debug, Copy, Clone)]
+pub struct OpenBusReadResult {
+    pub data: u8,
+    pub mask: u8,
 }
 
-/// 実行時の入力イベントをシステム固有のアダプタに転送する (infallible)。
-///
-/// frontend (shell) はこの trait を通じてのみ入力処理を行う。
-/// 各システム (NES/SNES) の実装は factory crate で行う。
-pub trait SystemInputAdapter: Send {
-    fn apply_event(&mut self, event: DigitalInputEvent);
+impl OpenBusReadResult {
+    pub fn new(data: u8, mask: u8) -> Self {
+        Self { data, mask }
+    }
+}
+
+/// Port identifier used by controllers and hubs.
+pub trait Port: std::fmt::Debug {
+    fn index(&self) -> usize;
+    fn id(&self) -> &'static str;
+}
+
+/// A simple port implementation with numeric index and string id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimplePort {
+    index: usize,
+    id: &'static str,
+}
+
+impl SimplePort {
+    pub const fn new(index: usize, id: &'static str) -> Self {
+        Self { index, id }
+    }
+}
+
+impl Port for SimplePort {
+    fn index(&self) -> usize {
+        self.index
+    }
+    fn id(&self) -> &'static str {
+        self.id
+    }
+}
+
+/// Single physical controller (shift register logic).
+pub trait Controller: std::fmt::Debug + Send {
+    fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
+    fn write(&mut self, port: &dyn Port, value: u8);
+    fn sync_input(&mut self, _state: &[u8]) {}
+    /// Return field map entries (slot_id, control_id, field_index) for this
+    /// controller at the given port. Default returns empty (no inputs).
+    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+        Vec::new()
+    }
+}
+
+/// Multi-port controller hub routing reads/writes to per-port controllers.
+pub trait ControllerHub: std::fmt::Debug + Send {
+    fn read_port(&mut self, port: &dyn Port) -> OpenBusReadResult;
+    fn write_strobe(&mut self, value: u8);
+    fn sync_input(&mut self, state: &[u8]);
+}
+
+/// A collection of per-port controllers.
+pub struct ControllerCollection {
+    pub devices: Vec<Box<dyn Controller + Send>>,
+}
+
+impl std::fmt::Debug for ControllerCollection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ControllerCollection")
+            .field("device_count", &self.devices.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ControllerCollection {
+    pub fn new(devices: Vec<Box<dyn Controller + Send>>) -> Self {
+        Self { devices }
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    pub fn device_mut(&mut self, port: usize) -> Option<&mut Box<dyn Controller + Send>> {
+        self.devices.get_mut(port)
+    }
+
+    pub fn iter_devices_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn Controller + Send>> {
+        self.devices.iter_mut()
+    }
+}
+
+impl ControllerHub for ControllerCollection {
+    fn read_port(&mut self, port: &dyn Port) -> OpenBusReadResult {
+        self.devices
+            .get_mut(port.index())
+            .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
+    }
+    fn write_strobe(&mut self, value: u8) {
+        let port = SimplePort::new(0, "");
+        for d in self.devices.iter_mut() {
+            d.write(&port, value);
+        }
+    }
+    fn sync_input(&mut self, state: &[u8]) {
+        for d in &mut self.devices {
+            d.sync_input(state);
+        }
+    }
+}
+
+unsafe impl Send for ControllerCollection {}
+
+/// Values that can be written to an InputStateBuffer field.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputValue {
+    Digital(bool),
+    Analog(f32),
+    Position { x: f64, y: f64 },
+}
+
+/// Errors from InputStateBuffer operations.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum BufferError {
+    #[error("field {field} not found")]
+    FieldNotFound { field: usize },
+    #[error("field {field} does not support value type {expected}")]
+    UnsupportedFieldType {
+        field: usize,
+        expected: &'static str,
+    },
+}
+
+/// GUI-side write abstraction for input state.
+/// Emu side reads via `Any::downcast_ref`.
+pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
+    /// field: 0..N の logical field index。値の意味は impl 定義。
+    fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    /// 全 field を neutral / released 状態にリセットする。impl 依存。
     fn clear(&mut self);
-    fn decode_persisted_input(
-        &self,
-        attachment_id: &str,
-        control_id: &str,
-        pressed: bool,
-    ) -> Option<DigitalInputEvent>;
+    /// Copy absolute state from another buffer of the same concrete type.
+    fn copy_state(&mut self, other: &dyn InputStateBuffer);
 }
 
-/// 拡張: ランタイム状態のシリアライズ/デシリアライズ (fallible)。
-///
-/// 現在 production では未使用。save/restore 実装時に利用。
-pub trait InputStatePersistence: SystemInputAdapter {
-    fn sync_from_runtime_state(&mut self, bytes: &[u8]) -> Result<(), InputError>;
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, InputError>;
+/// A set of port identifiers a controller can occupy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortSet {
+    pub ports: &'static [&'static str],
+}
+
+/// Identifies a single slot on the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+/// Describes one control on a controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub kind: ControlKind,
+    pub abstract_key: Option<AbstractKey>,
+}
+
+/// Classification of a control's physical behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    Digital,
+    Analog,
+    AnalogStick { clickable: bool },
+    Mouse,
+}
+
+/// System-agnostic logical key identifier for default binding resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AbstractKey {
+    Button1,
+    Button2,
+    Button3,
+    Button4,
+    Button5,
+    Button6,
+    Button7,
+    Button8,
+    Select,
+    Start,
+    Guide,
+    DpadUp,
+    DpadDown,
+    DpadLeft,
+    DpadRight,
+    Axis1X,
+    Axis1Y,
+    Axis2X,
+    Axis2Y,
+}
+
+/// Describes one controller type (metadata sent to Frontend).
+pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
+    fn id(&self) -> &'static str;
+    fn label(&self) -> &'static str;
+    fn port_sets(&self) -> &[PortSet];
+    fn port_groups(&self) -> &[&[ControlInfo]];
+    fn directional_ids(&self) -> &[&[&'static str; 4]];
+}
+
+/// System port layout query. Factory → Frontend.
+pub trait InputPorts: std::fmt::Debug {
+    fn slots(&self) -> &[SlotInfo];
+    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
+}
+
+/// Slot-to-controller assignments.
+/// Uses Rc<dyn ControllerProfile> so callers can inspect profile methods directly
+/// without string-based lookups.
+#[derive(Clone)]
+pub struct InputAssignments {
+    pub slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+}
+
+impl std::fmt::Debug for InputAssignments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputAssignments")
+            .field(
+                "slots",
+                &self
+                    .slots
+                    .iter()
+                    .map(|(s, c)| (s, c.as_ref().map(|p| p.id())))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+impl InputAssignments {
+    /// Convert to persistable string pairs (slot_id, option<controller_id>).
+    pub fn to_string_pairs(&self) -> Vec<(String, Option<String>)> {
+        self.slots
+            .iter()
+            .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+            .collect()
+    }
+}
+
+/// Errors from create_split.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CreateSplitError {
+    #[error("slot '{slot}' not found")]
+    SlotNotFound { slot: String },
+    #[error("controller '{controller}' not found")]
+    ControllerNotFound { controller: String },
+    #[error("controller '{controller}' cannot be assigned to slot '{slot}'")]
+    IncompatibleController { controller: String, slot: String },
+    #[error("slot conflict between {a} and {b}")]
+    SlotConflict { a: String, b: String },
+}
+
+/// Factory for creating input runtime state.
+pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
+    fn default_assignments(&self) -> InputAssignments;
+    fn create_split(
+        &self,
+        controllers: &ControllerCollection,
+    ) -> Result<InputResources, CreateSplitError>;
+}
+
+/// Output of create_split.
+#[derive(Debug)]
+pub struct InputResources {
+    pub split: InputSplit,
+    /// (slot_id, control_id) → absolute field index
+    pub field_map: std::collections::HashMap<(&'static str, &'static str), usize>,
+}
+
+/// Thread-shared state reference.
+pub struct InputSplit {
+    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    pub flag: Arc<AtomicBool>,
+    pub new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+}
+
+impl std::fmt::Debug for InputSplit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InputSplit")
+            .field("shared", &self.shared)
+            .field("flag", &self.flag)
+            .finish_non_exhaustive()
+    }
+}
+
+/// GUI thread input delivery.
+/// Maintains absolute input state in `state` buffer.
+/// On publish, copies state → write_buf → shared (swap), preserving held keys.
+#[derive(Debug)]
+pub struct GuiInput {
+    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    flag: Arc<AtomicBool>,
+    pub state: Box<dyn InputStateBuffer>,
+    write_buf: Box<dyn InputStateBuffer>,
+}
+
+impl GuiInput {
+    pub fn new(
+        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+        flag: Arc<AtomicBool>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+    ) -> Self {
+        let state = (new_buffer)();
+        let write_buf = (new_buffer)();
+        Self {
+            shared,
+            flag,
+            state,
+            write_buf,
+        }
+    }
+
+    pub fn from_split(split: &InputSplit) -> Self {
+        Self {
+            shared: Arc::clone(&split.shared),
+            flag: Arc::clone(&split.flag),
+            state: (split.new_buffer)(),
+            write_buf: (split.new_buffer)(),
+        }
+    }
+
+    /// Must be called every frame. Copies absolute state into shared.
+    pub fn publish(&mut self) {
+        // Prepare write_buf from absolute state (fast concrete copy)
+        self.write_buf.copy_state(&*self.state);
+        // Swap into shared (fast pointer exchange)
+        let mut lock = self.shared.lock().unwrap();
+        std::mem::swap(&mut *lock, &mut self.write_buf);
+        self.flag.store(true, Ordering::Release);
+    }
+
+    pub fn clear(&mut self) {
+        self.state.clear();
+    }
+}
+
+/// Emu thread input consumer.
+#[derive(Debug)]
+pub struct EmuInput {
+    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    flag: Arc<AtomicBool>,
+    pub read_buf: Box<dyn InputStateBuffer>,
+}
+
+impl EmuInput {
+    pub fn new(
+        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+        flag: Arc<AtomicBool>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+    ) -> Self {
+        let read_buf = (new_buffer)();
+        Self {
+            shared,
+            flag,
+            read_buf,
+        }
+    }
+
+    pub fn from_split(split: &InputSplit) -> Self {
+        Self {
+            shared: Arc::clone(&split.shared),
+            flag: Arc::clone(&split.flag),
+            read_buf: (split.new_buffer)(),
+        }
+    }
+
+    /// Must be called every frame start. Takes latest input from GUI.
+    pub fn take(&mut self) {
+        if self.flag.swap(false, Ordering::Acquire) {
+            let mut lock = self.shared.lock().unwrap();
+            std::mem::swap(&mut *lock, &mut self.read_buf);
+        }
+    }
 }
 
 #[cfg(test)]

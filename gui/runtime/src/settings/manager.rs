@@ -3,8 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use nerust_core_traits::SystemId;
-use nerust_core_traits::identity::SystemIdentity;
+use nerust_core_traits::identity::{SystemId, SystemIdentity};
 use nerust_gui_settings::{
     app_state::{DesktopAppState, RememberedWindowSize},
     local::HostBackendLocalSettings,

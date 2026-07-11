@@ -1,12 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-use nerust_input_traits::InputTopologyDescriptor;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDescriptor {
-    pub input_topology: InputTopologyDescriptor,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SystemSettingsFieldId(pub Cow<'static, str>);
 

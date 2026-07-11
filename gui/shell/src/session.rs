@@ -1,23 +1,32 @@
 pub mod access;
 pub mod commands;
 pub mod input;
-mod lifecycle;
-pub mod metrics;
+pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
 mod tests;
 pub mod title;
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+    sync::Arc,
+};
 
-pub use lifecycle::WindowSize;
-use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::{
+    audio::AudioBackendRegistry,
+    factory::{
+        CoreFactory, FactoryError,
+        descriptor::SystemSettingsPageModel,
+        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+    },
+};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::SystemInputAdapter;
+use nerust_input_traits::{ControllerProfile, GuiInput, InputAssignments, SlotInfo};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -25,12 +34,9 @@ use thiserror::Error;
 use nerust_emu_thread::{ConsoleMetrics, OperationError};
 
 use crate::{
-    descriptor::{SystemDescriptor, SystemSettingsPageModel},
     emu_core::EmuCore,
-    factory::{CoreFactory, FactoryError},
-    load::{MediaObject, SystemLoadOptions},
     session::persistence::PersistenceManager,
-    settings,
+    settings::{self, factory::settings_view},
 };
 
 #[derive(Debug, Clone)]
@@ -41,7 +47,6 @@ pub(super) struct LoadedMedia {
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
     pub metrics: ConsoleMetrics,
-    pub input_topology: Option<nerust_input_traits::InputTopologyDescriptor>,
     pub slots: Arc<[StateSlotSummary]>,
     pub active_slot_id: Option<u64>,
 }
@@ -53,10 +58,13 @@ pub enum KeyboardShortcut {
 }
 
 pub struct SessionHandle {
-    pub(super) descriptor: SystemDescriptor,
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
-    pub(super) input_adapter: Box<dyn SystemInputAdapter>,
+    pub(super) gui_input: GuiInput,
+    pub(super) current_assignments: InputAssignments,
+    pub(super) field_map: HashMap<(&'static str, &'static str), usize>,
+    /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
+    pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
@@ -67,41 +75,69 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
-    /// Create a core from settings, falling back to defaults on failure.
-    fn create_core_or_default(
+    /// Load persisted controller assignments or fall back to defaults.
+    fn load_assignments(
+        factory: &Arc<dyn CoreFactory>,
+        snapshot: &SettingsSnapshot,
+        system_id: &str,
+    ) -> InputAssignments {
+        let persisted = snapshot.app_state.controller_assignments.get(system_id);
+        match persisted {
+            Some(pairs) => {
+                let profiles = factory.input_system_factory().controllers();
+                let slots = pairs
+                    .iter()
+                    .map(|(slot_id, ctrl_opt)| {
+                        let profile = ctrl_opt.as_ref().and_then(|id| {
+                            profiles.iter().find(|p| p.id() == id.as_str()).cloned()
+                        });
+                        (slot_id.clone(), profile)
+                    })
+                    .collect();
+                InputAssignments { slots }
+            }
+            None => factory.input_system_factory().default_assignments(),
+        }
+    }
+
+    fn create_core_with_assignments(
         factory: &Arc<dyn CoreFactory>,
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
-    ) -> (EmuCore, Box<dyn SystemInputAdapter>) {
+        assignments: &InputAssignments,
+    ) -> (
+        EmuCore,
+        GuiInput,
+        HashMap<(&'static str, &'static str), usize>,
+    ) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
-        let view = crate::settings::settings_view(snapshot, &system_id);
-        let result = factory.create_core_and_adapter(&view, speaker);
-        match result {
-            Ok(parts) => EmuCore::from_parts(parts),
-            Err(_) => {
-                log::warn!("core creation with loaded settings failed; using defaults");
-                use crate::settings::defaults::seed::{
-                    default_app_state, default_local_settings, default_shared_settings,
-                };
-                let fallback = SettingsSnapshot {
-                    shared: default_shared_settings(),
-                    local: default_local_settings(),
-                    app_state: default_app_state(),
-                };
-                let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                let fallback_view = crate::settings::settings_view(&fallback, &system_id);
-                let parts = factory
-                    .create_core_and_adapter(&fallback_view, fallback_speaker)
-                    .expect("failed to create core even with default settings");
-                EmuCore::from_parts(parts)
-            }
-        }
+        let view = settings_view(snapshot, &system_id);
+        let parts =
+            match factory.create_core_and_adapter_with_assignments(&view, speaker, assignments) {
+                Ok(parts) => parts,
+                Err(_) => {
+                    log::warn!("core creation with loaded settings failed; using defaults");
+                    use crate::settings::defaults::seed::{
+                        default_app_state, default_local_settings, default_shared_settings,
+                    };
+                    let fallback = SettingsSnapshot {
+                        shared: default_shared_settings(),
+                        local: default_local_settings(),
+                        app_state: default_app_state(),
+                    };
+                    let fallback_speaker = settings::build_speaker(registry, &fallback.local);
+                    let fallback_view = settings_view(&fallback, &system_id);
+                    factory
+                        .create_core_and_adapter(&fallback_view, fallback_speaker)
+                        .expect("failed to create core even with default settings")
+                }
+            };
+        EmuCore::from_parts(parts)
     }
 
     fn new_inner(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
@@ -125,12 +161,20 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) =
-            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
-        Self {
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        );
+        let mut result = Self {
             emu_core,
-            input_adapter,
-            descriptor,
+            gui_input,
+            current_assignments: assignments,
+            field_map,
+            key_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -139,16 +183,17 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
-        }
+        };
+        result.rebuild_key_field_map();
+        result
     }
 
     pub fn new(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, audio_registry, true)
+        Self::new_inner(capabilities, factory, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -157,7 +202,6 @@ impl SessionHandle {
     /// the frontend provides an explicit settings root instead.
     pub fn new_with_settings_paths(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
@@ -179,12 +223,20 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, input_adapter) =
-            Self::create_core_or_default(&factory, &audio_registry, &settings_snapshot);
-        Self {
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        );
+        let mut result = Self {
             emu_core,
-            input_adapter,
-            descriptor,
+            gui_input,
+            current_assignments: assignments,
+            field_map,
+            key_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -193,23 +245,23 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
-        }
+        };
+        result.rebuild_key_field_map();
+        result
     }
 
     #[cfg(test)]
     pub fn new_ephemeral(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, audio_registry, false)
+        Self::new_inner(capabilities, factory, audio_registry, false)
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             metrics: self.emu_core.metrics(),
-            input_topology: Some(self.descriptor.input_topology.clone()),
             slots: Arc::from(self.persistence.slots().to_vec()),
             active_slot_id: self.persistence.active_slot_id(),
         }
@@ -220,6 +272,7 @@ impl SessionHandle {
     }
 
     pub fn swap_frame_buffer(&mut self) {
+        self.gui_input.publish();
         self.emu_core.swap_frame_buffer();
     }
 
@@ -243,9 +296,19 @@ impl SessionHandle {
         &*self.factory
     }
 
+    pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
+        self.current_assignments.to_string_pairs()
+    }
+
+    /// Negotiation #1: expose available slots and controllers for settings UI.
+    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
+        let input = self.factory.input_system_factory();
+        (input.slots(), input.controllers())
+    }
+
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
         let system_id = self.factory.system_id();
-        let view = crate::settings::settings_view(settings, &system_id);
+        let view = settings_view(settings, &system_id);
         self.factory.settings_page(&view)
     }
 
@@ -270,7 +333,7 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
 }
 
-use crate::load::{ResolvedLoadRequest, RomLoadTarget, RomLoaderError};
+use crate::load::{RomLoadTarget, RomLoaderError};
 use crate::session::commands::SessionCommand;
 
 impl RomLoadTarget for SessionHandle {

@@ -30,6 +30,7 @@ pub fn save_settings(
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::manager::SettingsManager;
 
     use super::{
@@ -47,7 +48,7 @@ mod tests {
             current_or_default(&manager)
                 .shared
                 .systems
-                .contains_key(&nerust_core_traits::SystemId::new("nes"))
+                .contains_key(&SystemId::new("nes"))
         );
     }
 }

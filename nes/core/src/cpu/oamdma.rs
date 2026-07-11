@@ -1,4 +1,4 @@
-use super::{Apu, Controller, Core, CpuCartridgeBus, Ppu, read_dummy_current};
+use super::{Apu, ControllerHub, Core, CpuCartridgeBus, Ppu, read_dummy_current};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum OamDmaStateEnumValue {
@@ -79,14 +79,14 @@ impl OamDmaState {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         self.state = self.state_pool[self.state as usize].next(
             core,
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut self.value,
         );
@@ -108,7 +108,7 @@ pub(crate) trait OamDmaStepState {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue;
@@ -122,12 +122,12 @@ impl OamDmaStepState for OamDma {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         _value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
         // dummy read
-        read_dummy_current(core, ppu, cartridge, controller, apu);
+        read_dummy_current(core, ppu, cartridge, hub, apu);
         if core.cycles & 1 != 0 {
             OamDmaStateEnumValue::Step0
         } else {
@@ -144,19 +144,19 @@ impl OamDmaStepState for OamDmaStep1 {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
         if core.cycles & 1 == 0 {
-            read_dummy_current(core, ppu, cartridge, controller, apu);
+            read_dummy_current(core, ppu, cartridge, hub, apu);
             return OamDmaStateEnumValue::Step1;
         }
         value.value = core.memory.read(
             usize::from(value.offset) * 0x100 + usize::from(255 - value.count),
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut core.interrupt,
         );
@@ -172,12 +172,12 @@ impl OamDmaStepState for OamDmaStep2 {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         value: &mut OamDmaStateValue,
     ) -> OamDmaStateEnumValue {
         if core.cycles & 1 != 0 {
-            read_dummy_current(core, ppu, cartridge, controller, apu);
+            read_dummy_current(core, ppu, cartridge, hub, apu);
             return OamDmaStateEnumValue::Step2;
         }
         core.memory.write(
@@ -185,7 +185,7 @@ impl OamDmaStepState for OamDmaStep2 {
             value.value,
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut core.interrupt,
         );

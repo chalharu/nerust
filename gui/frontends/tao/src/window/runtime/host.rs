@@ -14,16 +14,20 @@ use nerust_gui_settings::{
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
-        KeyboardShortcut, SessionError, SessionHandle, WindowSize,
+        KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
+        lifecycle::WindowSize,
     },
     settings::{
         i18n::{UiText, text},
         scaling_factor,
     },
 };
-use nerust_render_base::{GpuFactory, RenderResult, SurfaceSize};
+use nerust_render_base::{
+    SurfaceSize,
+    renderer::{GpuFactory, RenderResult},
+};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
@@ -71,10 +75,8 @@ impl HostState {
                 supports_vsync: true,
             }),
         };
-        let descriptor = ctx.core_factory.system_descriptor();
         let session = SessionHandle::new(
             capabilities,
-            descriptor,
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
         );
@@ -469,9 +471,21 @@ impl HostState {
         mut handle: crate::settings_window::SettingsWindowHandle,
     ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
+        let pending_assignments = handle.take_pending_assignments();
         drop(handle);
         self.on_settings_closed();
-        if let Some(snapshot) = pending {
+        if let Some(mut snapshot) = pending {
+            if let Some(assignments) = pending_assignments {
+                // Embed assignments in snapshot so apply_settings saves them
+                let sid = self.session.factory().system_id().to_string();
+                snapshot
+                    .app_state
+                    .controller_assignments
+                    .insert(sid, assignments.to_string_pairs());
+                if let Err(error) = self.session.reassign_controllers(&assignments) {
+                    log::warn!("controller reassign failed: {error}");
+                }
+            }
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),
                 Err(error) => {

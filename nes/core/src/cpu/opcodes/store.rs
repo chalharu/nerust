@@ -1,5 +1,5 @@
 use super::{
-    super::{Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register},
+    super::{Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register},
     exit_opcode,
 };
 
@@ -10,7 +10,7 @@ pub(crate) trait Store {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -21,7 +21,7 @@ pub(crate) trait Store {
                     data,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );

@@ -1,28 +1,13 @@
 use std::collections::BTreeMap;
 
-use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
-    input::{
-        IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardKey, PersistedControlId, ShortcutAction,
-        ShortcutBinding,
-    },
+    input::{IMPLICIT_PROFILE_ID, KeyboardKey, ShortcutAction, ShortcutBinding},
     local::HostBackendLocalSettings,
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},
 };
-use nerust_input_traits::DigitalControlId;
-
-const P1: &str = "nes.attachment.player1";
-const A: DigitalControlId = DigitalControlId::new("nes.control.a");
-const B: DigitalControlId = DigitalControlId::new("nes.control.b");
-const SELECT: DigitalControlId = DigitalControlId::new("nes.control.select");
-const START: DigitalControlId = DigitalControlId::new("nes.control.start");
-const UP: DigitalControlId = DigitalControlId::new("nes.control.up");
-const DOWN: DigitalControlId = DigitalControlId::new("nes.control.down");
-const LEFT: DigitalControlId = DigitalControlId::new("nes.control.left");
-const RIGHT: DigitalControlId = DigitalControlId::new("nes.control.right");
-
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
         systems: BTreeMap::from([(
@@ -32,16 +17,8 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         ..Default::default()
     };
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
-    nes_input.implicit_keyboard_profile_mut().bindings = vec![
-        default_control_binding(P1, A, KeyboardKey::KeyZ),
-        default_control_binding(P1, B, KeyboardKey::KeyX),
-        default_control_binding(P1, SELECT, KeyboardKey::KeyC),
-        default_control_binding(P1, START, KeyboardKey::KeyV),
-        default_control_binding(P1, UP, KeyboardKey::ArrowUp),
-        default_control_binding(P1, DOWN, KeyboardKey::ArrowDown),
-        default_control_binding(P1, LEFT, KeyboardKey::ArrowLeft),
-        default_control_binding(P1, RIGHT, KeyboardKey::ArrowRight),
-    ];
+    nes_input.implicit_keyboard_profile_mut().bindings =
+        crate::keyboard_defaults::default_nes_bindings();
     let _ = nes_input
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
@@ -91,20 +68,9 @@ pub fn default_app_state() -> DesktopAppState {
     DesktopAppState::default()
 }
 
-fn default_control_binding(
-    attachment: &str,
-    control: DigitalControlId,
-    key: KeyboardKey,
-) -> KeyboardBinding {
-    KeyboardBinding::new(
-        attachment,
-        PersistedControlId::digital(control.as_str()),
-        key,
-    )
-}
-
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::input::ShortcutAction;
 
     use super::default_shared_settings;
@@ -114,17 +80,8 @@ mod tests {
     fn default_settings_seed_nes_bindings_and_system_settings() {
         let settings = default_shared_settings();
 
-        assert!(
-            settings
-                .systems
-                .contains_key(&nerust_core_traits::SystemId::new("nes"))
-        );
-        assert!(
-            settings
-                .input
-                .systems
-                .contains_key(&nerust_core_traits::SystemId::new("nes"))
-        );
+        assert!(settings.systems.contains_key(&SystemId::new("nes")));
+        assert!(settings.input.systems.contains_key(&SystemId::new("nes")));
         assert!(
             settings
                 .input
@@ -137,7 +94,7 @@ mod tests {
             !settings
                 .input
                 .systems
-                .get(&nerust_core_traits::SystemId::new("nes"))
+                .get(&SystemId::new("nes"))
                 .unwrap()
                 .implicit_keyboard_profile()
                 .unwrap()

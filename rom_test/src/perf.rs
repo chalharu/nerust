@@ -5,13 +5,14 @@ use std::{
 
 use clap::{Arg, ArgAction, Command};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
-use nerust_nes_device::nes_pad::NesPadDevice;
-use nerust_render_base::{FilterType, FrameBuffer, PixelFormat};
+use nerust_input_traits::{ControllerCollection, ControllerHub as _};
+use nerust_nes_core::{Core, rom_parse};
+use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
+use nerust_render_base::{FrameBuffer, PixelFormat, filter::FilterType};
 
 use crate::{
     error::RomTestError,
-    events::{ButtonCode, ControllerPad, PadState, RomAssertion},
+    events::{ButtonCode, Buttons, ControllerPad, PadState, RomAssertion},
     harness::{CaseHarness, apply_button_state, drive_case},
     manifest::{RomCase, load_default_manifest, read_rom},
     results::{CaseOutcome, ValidationOptions},
@@ -237,14 +238,11 @@ impl Aggregate {
     }
 }
 
-use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
-
 struct PerfRunner {
     core: Core,
     screen: FrameBuffer,
     checksum: u64,
-    controller: NesPadDevice<SharedNesInputCell>,
-    cell: Arc<NesInputCell>,
+    controller: ControllerCollection,
     mixer: PerfMixer,
     frame_counter: u64,
     pad1: Buttons,
@@ -266,7 +264,6 @@ impl PerfRunner {
                     message: error.to_string(),
                 }
             })?;
-        let cell = Arc::new(NesInputCell::new());
         let mut palette = [0u32; 256];
         let assets = FilterType::NtscComposite.palette_console_video_assets();
         let rgba8 = assets.palette_rgba8();
@@ -289,8 +286,10 @@ impl PerfRunner {
             core,
             screen,
             checksum: 0,
-            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
-            cell,
+            controller: ControllerCollection::new(vec![
+                Box::new(FamicomPadP1::new()),
+                Box::new(FamicomPadP2::new()),
+            ]),
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),
@@ -350,15 +349,15 @@ impl CaseHarness for PerfRunner {
                 self.pad2 = apply_button_state(self.pad2, buttons, state);
             }
         }
-        self.cell
-            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
+        self.controller
+            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 
     fn on_microphone(&mut self, state: PadState) -> Result<(), RomTestError> {
         self.mic = matches!(state, PadState::Pressed);
-        self.cell
-            .store(self.pad1.bits(), self.pad2.bits(), self.mic);
+        self.controller
+            .sync_input(&[self.pad1.bits(), self.pad2.bits(), self.mic as u8]);
         Ok(())
     }
 }

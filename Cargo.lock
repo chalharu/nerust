@@ -2487,12 +2487,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2782,6 +2776,7 @@ name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
+ "nerust_render_base",
  "nerust_timer",
  "thiserror 2.0.18",
 ]
@@ -2877,8 +2872,6 @@ dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
  "nerust_nes_core",
- "rmp-serde",
- "serde",
 ]
 
 [[package]]
@@ -2890,6 +2883,7 @@ dependencies = [
  "hound",
  "log",
  "nerust_core_traits",
+ "nerust_input_traits",
  "nerust_render_base",
  "nerust_serialize",
  "nerust_sound_filter",
@@ -2906,7 +2900,7 @@ name = "nerust_nes_device"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_nes_controller",
+ "nerust_input_traits",
  "nerust_nes_core",
 ]
 
@@ -2920,7 +2914,6 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
- "nerust_nes_controller",
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_render_base",
@@ -2970,7 +2963,6 @@ dependencies = [
 name = "nerust_render_ntsc"
 version = "0.1.0-dev"
 dependencies = [
- "lazy_static",
  "log",
 ]
 
@@ -3000,10 +2992,11 @@ dependencies = [
 name = "nerust_rom_test"
 version = "0.1.0-dev"
 dependencies = [
+ "bitflags 2.13.0",
  "clap",
  "crc",
  "nerust_core_traits",
- "nerust_nes_controller",
+ "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_render_base",

@@ -1,9 +1,15 @@
-use crate::topology::{
-    NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_B, NES_CONTROL_DOWN, NES_CONTROL_LEFT,
-    NES_CONTROL_RIGHT, NES_CONTROL_SELECT, NES_CONTROL_START, NES_CONTROL_UP,
-};
 use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint, TouchRect};
-use nerust_input_traits::DigitalInputEvent;
+use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent};
+
+const NES_ATTACHMENT_PLAYER_ONE: AttachmentId = AttachmentId::new("nes.attachment.player1");
+const NES_CONTROL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
+const NES_CONTROL_B: DigitalControlId = DigitalControlId::new("nes.control.b");
+const NES_CONTROL_SELECT: DigitalControlId = DigitalControlId::new("nes.control.select");
+const NES_CONTROL_START: DigitalControlId = DigitalControlId::new("nes.control.start");
+const NES_CONTROL_UP: DigitalControlId = DigitalControlId::new("nes.control.up");
+const NES_CONTROL_DOWN: DigitalControlId = DigitalControlId::new("nes.control.down");
+const NES_CONTROL_LEFT: DigitalControlId = DigitalControlId::new("nes.control.left");
+const NES_CONTROL_RIGHT: DigitalControlId = DigitalControlId::new("nes.control.right");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchTarget {
@@ -173,13 +179,13 @@ pub fn actions_for_target(target: TouchTarget, pressed: bool) -> Vec<TouchOverla
 
 #[cfg(test)]
 mod tests {
-    use crate::topology::{
-        NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
-    };
     use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint, TouchRect};
     use nerust_input_traits::DigitalInputEvent;
 
-    use super::{PortraitTouchOverlay, TouchTarget, actions_for_target};
+    use super::{
+        NES_ATTACHMENT_PLAYER_ONE, NES_CONTROL_A, NES_CONTROL_LEFT, NES_CONTROL_UP,
+        PortraitTouchOverlay, TouchTarget, actions_for_target,
+    };
 
     fn zone_center(bounds: TouchRect) -> TouchPoint {
         TouchPoint {

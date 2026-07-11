@@ -1,13 +1,17 @@
+use std::rc::Rc;
+
 use std::{
     fs,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use nerust_core_traits::SystemId;
+use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
+use nerust_core_traits::factory::{CoreFactory, FactoryError};
+use nerust_core_traits::identity::SystemId;
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
     audio::{AudioBackend, AudioBackendRegistry},
     factory::settings::FactorySettingsView,
     identity::SystemIdentity,
@@ -15,16 +19,37 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-use nerust_input_traits::{InputStatePersistence, SystemInputAdapter};
-use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
-
-use crate::{
-    factory::{CoreFactory, FactoryError},
-    load::{MediaObject, SystemLoadOptions},
-    session::{KeyboardShortcut, SessionHandle},
-    test_support::single_port_topology,
+use nerust_input_traits::{
+    BufferError, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
+    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
+    InputValue, SlotInfo,
 };
+use nerust_persistence::slots::autosave_state_slot_path;
+use nerust_render_base::logical::LogicalSize;
+use nerust_render_base::physical::PhysicalSize;
+use nerust_render_base::{FrameBuffer, VideoRenderProfile};
+
+use crate::session::{KeyboardShortcut, SessionHandle};
+use crate::settings::factory::settings_view;
+
+/// Minimal InputStateBuffer for testing.
+#[derive(Debug, Default)]
+struct TestInputBuffer([u8; 2]);
+
+impl InputStateBuffer for TestInputBuffer {
+    fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
+        Ok(())
+    }
+    fn clear(&mut self) {
+        self.0 = [0; 2];
+    }
+    fn copy_state(&mut self, other: &dyn InputStateBuffer) {
+        let any: &dyn std::any::Any = other;
+        if let Some(src) = any.downcast_ref::<TestInputBuffer>() {
+            self.0 = src.0;
+        }
+    }
+}
 
 struct MockConsoleCore {
     loaded: bool,
@@ -57,7 +82,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            nerust_core_traits::SystemId::new("nes"),
+            SystemId::new("nes"),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -83,6 +108,23 @@ impl ConsoleCore for MockConsoleCore {
     }
 }
 
+fn test_input_resources() -> (GuiInput, InputSplit) {
+    let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+        Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
+    let flag = Arc::new(AtomicBool::new(false));
+    let gui = GuiInput::new(
+        Arc::clone(&shared),
+        Arc::clone(&flag),
+        Box::new(|| Box::<TestInputBuffer>::default()),
+    );
+    let split = InputSplit {
+        shared: Arc::clone(&shared),
+        flag: Arc::clone(&flag),
+        new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
+    };
+    (gui, split)
+}
+
 fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
     use nerust_core_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
@@ -102,33 +144,42 @@ fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
         frame_format: nerust_render_base::VideoFrameFormat::Palette,
         ntsc_packed_rgba8: None,
     };
+    let (gui_input, _input_split) = test_input_resources();
     CoreParts {
         core: Box::new(core),
-        adapter: Box::new(MockAdapter),
+        gui_input,
+        field_map: std::collections::HashMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),
     }
 }
 
-struct MockAdapter;
-impl SystemInputAdapter for MockAdapter {
-    fn apply_event(&mut self, _: nerust_input_traits::DigitalInputEvent) {}
-    fn clear(&mut self) {}
-    fn decode_persisted_input(
-        &self,
-        _: &str,
-        _: &str,
-        _: bool,
-    ) -> Option<nerust_input_traits::DigitalInputEvent> {
-        None
+#[derive(Debug)]
+struct MockInputFactory;
+impl InputPorts for MockInputFactory {
+    fn slots(&self) -> &[SlotInfo] {
+        &[]
+    }
+    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
+        vec![]
     }
 }
-impl InputStatePersistence for MockAdapter {
-    fn sync_from_runtime_state(&mut self, _: &[u8]) -> Result<(), nerust_input_traits::InputError> {
-        Ok(())
+impl InputSystemFactory for MockInputFactory {
+    fn default_assignments(&self) -> InputAssignments {
+        InputAssignments { slots: vec![] }
     }
-    fn runtime_state_bytes(&self) -> Result<Vec<u8>, nerust_input_traits::InputError> {
-        Ok(Vec::new())
+    fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
+        let flag = Arc::new(AtomicBool::new(false));
+        Ok(InputResources {
+            split: InputSplit {
+                shared: Arc::clone(&shared),
+                flag: Arc::clone(&flag),
+                new_buffer: Box::new(|| Box::<TestInputBuffer>::default()),
+            },
+            field_map: std::collections::HashMap::new(),
+        })
     }
 }
 
@@ -142,20 +193,16 @@ impl CoreFactory for MockFactory {
         "NES (test)"
     }
 
-    fn create_core_and_adapter(
+    fn create_core_and_adapter_with_assignments(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,
         _speaker: Box<dyn AudioBackend>,
+        _: &InputAssignments,
     ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
         Ok(build_test_core_parts())
     }
     fn probe_media(&self, _: &MediaObject) -> bool {
         true
-    }
-    fn system_descriptor(&self) -> nerust_core_traits::factory::descriptor::SystemDescriptor {
-        nerust_core_traits::factory::descriptor::SystemDescriptor {
-            input_topology: single_port_topology(),
-        }
     }
     fn settings_page(
         &self,
@@ -187,6 +234,10 @@ impl CoreFactory for MockFactory {
     fn default_load_options(&self) -> SystemLoadOptions {
         SystemLoadOptions::default()
     }
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        static MOCK_INPUT: MockInputFactory = MockInputFactory;
+        &MOCK_INPUT
+    }
 }
 
 fn test_session() -> SessionHandle {
@@ -199,10 +250,9 @@ fn test_session() -> SessionHandle {
         presentation: None,
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
-    let descriptor = factory.system_descriptor();
     let audio_registry = Arc::new(AudioBackendRegistry::new());
     // Use ephemeral settings so tests are not affected by disk state.
-    SessionHandle::new_ephemeral(capabilities, descriptor, factory, audio_registry)
+    SessionHandle::new_ephemeral(capabilities, factory, audio_registry)
 }
 
 fn test_rom() -> Vec<u8> {
@@ -219,7 +269,7 @@ fn test_rom_with_mapper4() -> Vec<u8> {
 
 fn test_view(session: &SessionHandle) -> FactorySettingsView {
     let system_id = session.factory().system_id();
-    crate::settings::settings_view(session.settings_snapshot(), &system_id)
+    settings_view(session.settings_snapshot(), &system_id)
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {
