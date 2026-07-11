@@ -793,7 +793,7 @@ pub(crate) fn present_preferences_dialog(
                     nerust_input_traits::InputAssignments { slots }
                 };
                 // Only rebuild core if assignments actually changed
-                let current_pairs = state.borrow().session.current_assignments.to_string_pairs();
+                let current_pairs = state.borrow().session.current_assignments_pairs();
                 let new_pairs = assignments.to_string_pairs();
                 if current_pairs != new_pairs {
                     if let Err(e) = state
