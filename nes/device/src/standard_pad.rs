@@ -9,7 +9,9 @@ pub struct StandardPad {
     pub(crate) cached: [u8; 2],
     pub(crate) result: [u8; 2],
     pub(crate) strobe: bool,
-    /// Open bus mask for this port ($4016=3, $4017=1).
+    /// Open bus mask for this port
+    /// NES-001 & NES-004: 0x1F
+    /// NES-101 & NES-039: 0x1B,0x1F (D2: OpenBus)
     open_bus_mask: u8,
 }
 
@@ -31,7 +33,7 @@ impl StandardPad {
 
 impl Default for StandardPad {
     fn default() -> Self {
-        Self::new(3)
+        Self::new(0x1F)
     }
 }
 
