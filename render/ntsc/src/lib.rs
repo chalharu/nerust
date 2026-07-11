@@ -1,10 +1,5 @@
-#![no_std]
-extern crate alloc;
-
 mod init;
 pub mod setup;
-
-use alloc::{boxed::Box, vec::Vec};
 
 use self::{
     init::Init,
@@ -178,7 +173,7 @@ impl Color {
 impl Engine {
     fn gamma_factor(setup: &Setup) -> f32 {
         let gamma = setup.gamma() * -0.5 + 0.1333;
-        libm::powf(gamma.abs(), 0.73).abs()
+        gamma.abs().powf(0.73).abs()
     }
 
     fn merge_fields(setup: &Setup) -> bool {

@@ -1,7 +1,4 @@
-use core::f32;
-
-use alloc::vec;
-use alloc::vec::Vec;
+use std::f32;
 
 use crate::{
     ARTIFACTS_MAX, ARTIFACTS_MID, BURST_COUNT, DEFAULT_DECODER, FRINGING_MAX, FRINGING_MID,
@@ -57,8 +54,8 @@ impl Init {
             let hue = (setup.hue() * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
             let sat = setup.saturation() + 1.0;
 
-            let s = libm::sinf(hue) * sat;
-            let c = libm::cosf(hue) * sat;
+            let s = hue.sin() * sat;
+            let c = hue.cos() * sat;
 
             (0..BURST_COUNT)
                 .scan((s, c), |acc, _| {
@@ -93,7 +90,7 @@ impl Init {
             // sinc with rolloff (dsf)
             let rolloff: f32 = 1.0 + setup.sharpness() * 0.032;
             let maxh = 32.0;
-            let pow_a_n = libm::powf(rolloff, maxh);
+            let pow_a_n = rolloff.powf(maxh);
 
             // quadratic mapping to reduce negative (blurring) range
             let to_angle = setup.resolution() + 1.0;
@@ -105,9 +102,9 @@ impl Init {
 
                 // instability occurs at center point with rolloff very close to 1.0
                 if KERNEL_HALF != i || !(0.981..=1.056).contains(&pow_a_n) {
-                    let rolloff_cos_a = rolloff * libm::cosf(angle);
-                    let num = 1.0 - rolloff_cos_a - pow_a_n * libm::cosf(maxh * angle)
-                        + pow_a_n * rolloff * libm::cosf((maxh - 1.0) * angle);
+                    let rolloff_cos_a = rolloff * angle.cos();
+                    let num = 1.0 - rolloff_cos_a - pow_a_n * (maxh * angle).cos()
+                        + pow_a_n * rolloff * ((maxh - 1.0) * angle).cos();
                     let den = 1.0 - rolloff_cos_a - rolloff_cos_a + rolloff * rolloff;
                     let dsf = num / den;
                     kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i] = dsf - 0.5;
@@ -118,7 +115,7 @@ impl Init {
             let sum = 1.0
                 / (0..=KERNEL_HALF * 2).fold(0.0, |acc, i| {
                     let x = f32::consts::PI / KERNEL_HALF as f32 * i as f32;
-                    let blackman = (0.42 - 0.5 * libm::cosf(x) + 0.08 * libm::cosf(x * 2.0))
+                    let blackman = (0.42 - 0.5 * x.cos() + 0.08 * (x * 2.0).cos())
                         * kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i];
                     kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i] = blackman;
                     blackman + acc
@@ -140,14 +137,14 @@ impl Init {
                     * cutoff_factor
                     * (if setup.bleed() < 0.0 {
                         // keep extreme value accessible only near upper end of scale (1.0)
-                        libm::powf(setup.bleed(), 4.0) * (-30.0 / 0.65)
+                        setup.bleed().powi(4) * (-30.0 / 0.65)
                     } else {
                         setup.bleed()
                     });
 
             for i in 0..=(KERNEL_HALF * 2) {
                 kernels[KERNEL_SIZE / 2 + i - KERNEL_HALF] =
-                    libm::expf(libm::powf(i as f32 - KERNEL_HALF as f32, 2.0) * cutoff);
+                    ((i as f32 - KERNEL_HALF as f32).powi(2) * cutoff).exp();
             }
 
             // normalize even and odd phases separately
