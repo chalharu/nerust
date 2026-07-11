@@ -895,9 +895,7 @@ fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
 }
 
 fn should_apply_response(response: gtk::ResponseType) -> bool {
-    matches!(
-        response,
-        gtk::ResponseType::Ok | gtk::ResponseType::DeleteEvent
+    matches!(response, gtk::ResponseType::Ok)
     )
 }
 
@@ -1621,9 +1619,9 @@ mod tests {
     }
 
     #[test]
-    fn close_button_uses_apply_path() {
+    fn close_button_uses_cancel_path() {
         assert!(should_apply_response(gtk::ResponseType::Ok));
-        assert!(should_apply_response(gtk::ResponseType::DeleteEvent));
+        assert!(!should_apply_response(gtk::ResponseType::DeleteEvent));
         assert!(!should_apply_response(gtk::ResponseType::Cancel));
     }
 }
