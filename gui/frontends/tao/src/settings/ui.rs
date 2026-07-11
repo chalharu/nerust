@@ -22,8 +22,7 @@ use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
 use nerust_gui_shell::{
-    descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
-    factory::CoreFactory,
+    factory::{CoreFactory, SystemSettingsFieldKind, SystemSettingsFieldModel},
     settings::{
         bindings::{
             conflicting_keys,

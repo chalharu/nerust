@@ -19,7 +19,7 @@ use nerust_gui_runtime::settings::{
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     context::FrontendContext,
-    descriptor::SystemSettingsPageModel,
+    factory::SystemSettingsPageModel,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
