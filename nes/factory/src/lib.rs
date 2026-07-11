@@ -8,7 +8,7 @@ use clap::{Arg, ArgMatches, Command};
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::cli::CliProvider;
 use nerust_core_traits::factory::descriptor::{
-    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
@@ -81,10 +81,6 @@ impl CoreFactory for NesFactory {
 
     fn probe_media(&self, _media: &MediaObject) -> bool {
         true
-    }
-
-    fn system_descriptor(&self) -> SystemDescriptor {
-        SystemDescriptor
     }
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
