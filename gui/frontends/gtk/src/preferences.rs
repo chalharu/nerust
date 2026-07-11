@@ -791,12 +791,17 @@ pub(crate) fn present_preferences_dialog(
                     // Keep unassigned slots empty (allow disconnected ports).
                     nerust_input_traits::InputAssignments { slots }
                 };
-                if let Err(e) = state
-                    .borrow_mut()
-                    .session
-                    .reassign_controllers(&assignments)
-                {
-                    log::warn!("controller reassign failed: {e}");
+                // Only rebuild core if assignments actually changed
+                let current_pairs = state.borrow().session.current_assignments.to_string_pairs();
+                let new_pairs = assignments.to_string_pairs();
+                if current_pairs != new_pairs {
+                    if let Err(e) = state
+                        .borrow_mut()
+                        .session
+                        .reassign_controllers(&assignments)
+                    {
+                        log::warn!("controller reassign failed: {e}");
+                    }
                 }
                 // Persist assignments to draft
                 let sid = factory.system_id().to_string();
