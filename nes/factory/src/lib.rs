@@ -44,7 +44,7 @@ impl CoreFactory for NesFactory {
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
         // Build controller devices per occupied port.
         let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
-        for (_, (_, ctrl_opt)) in assignments.slots.iter().enumerate() {
+        for (_, ctrl_opt) in &assignments.slots {
             let profile = match ctrl_opt {
                 Some(p) => p,
                 None => continue,
