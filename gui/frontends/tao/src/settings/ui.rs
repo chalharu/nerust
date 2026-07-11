@@ -16,22 +16,25 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
-use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::{
+    audio::AudioBackendRegistry,
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
+    },
+};
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::{
-    factory::{CoreFactory, SystemSettingsFieldKind, SystemSettingsFieldModel},
-    settings::{
-        bindings::{
-            conflicting_keys,
-            descriptors::{keyboard_binding_sections, shortcut_descriptors},
-            keys::keyboard_key_label,
-        },
-        editor::{CaptureTarget, apply_capture_target, current_binding_label},
-        i18n::{UiText, text as ui_text},
+use nerust_gui_shell::settings::{
+    bindings::{
+        conflicting_keys,
+        descriptors::{keyboard_binding_sections, shortcut_descriptors},
+        keys::keyboard_key_label,
     },
+    editor::{CaptureTarget, apply_capture_target, current_binding_label},
+    i18n::{UiText, text as ui_text},
 };
 use std::rc::Rc;
 

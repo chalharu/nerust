@@ -13,13 +13,13 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
+use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     context::FrontendContext,
-    factory::SystemSettingsPageModel,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},

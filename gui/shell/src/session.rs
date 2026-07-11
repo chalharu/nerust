@@ -17,7 +17,10 @@ use std::{
 pub use lifecycle::WindowSize;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
-    factory::descriptor::{SystemDescriptor, SystemSettingsPageModel},
+    factory::{
+        CoreFactory, FactoryError,
+        descriptor::{SystemDescriptor, SystemSettingsPageModel},
+    },
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
@@ -33,7 +36,6 @@ use nerust_emu_thread::{ConsoleMetrics, OperationError};
 
 use crate::{
     emu_core::EmuCore,
-    factory::{CoreFactory, FactoryError},
     load::{MediaObject, SystemLoadOptions},
     session::persistence::PersistenceManager,
     settings,

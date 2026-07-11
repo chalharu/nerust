@@ -8,6 +8,7 @@ use std::{
 };
 
 use nerust_core_traits::SystemId;
+use nerust_core_traits::factory::{CoreFactory, FactoryError};
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer,
     audio::{AudioBackend, AudioBackendRegistry},
@@ -27,7 +28,6 @@ use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
 
 use crate::{
-    factory::{CoreFactory, FactoryError},
     load::{MediaObject, SystemLoadOptions},
     session::{KeyboardShortcut, SessionHandle},
     test_support::single_port_topology,
