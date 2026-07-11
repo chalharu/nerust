@@ -1,4 +1,6 @@
-use nerust_input_traits::{AbstractKey, ControlInfo, ControlKind, ControllerProfile, PortSet};
+use nerust_input_traits::{
+    AbstractKey, ControlInfo, ControlKind, ControllerProfile, Port, PortSet,
+};
 use nerust_nes_core::{OpenBusReadResult, controller::Controller};
 
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
@@ -38,7 +40,7 @@ impl Controller for FamicomPadP1 {
             self.cached_mic = state[2];
         }
     }
-    fn read(&mut self, _port: usize) -> OpenBusReadResult {
+    fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
         let bit = if self.strobe {
             self.cached_buttons & 1
         } else {
@@ -49,23 +51,23 @@ impl Controller for FamicomPadP1 {
         let mic = if self.cached_mic != 0 { 4 } else { 0 };
         OpenBusReadResult::new(bit | mic, 7)
     }
-    fn write(&mut self, _port: usize, value: u8) {
+    fn write(&mut self, _port: &dyn Port, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached_buttons;
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, _port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         vec![
-            (_port, "a", 0),
-            (_port, "b", 1),
-            (_port, "select", 2),
-            (_port, "start", 3),
-            (_port, "up", 4),
-            (_port, "down", 5),
-            (_port, "left", 6),
-            (_port, "right", 7),
+            (_port.id(), "a", 0),
+            (_port.id(), "b", 1),
+            (_port.id(), "select", 2),
+            (_port.id(), "start", 3),
+            (_port.id(), "up", 4),
+            (_port.id(), "down", 5),
+            (_port.id(), "left", 6),
+            (_port.id(), "right", 7),
             ("player2", "microphone", 16),
         ]
     }
@@ -105,7 +107,7 @@ impl Controller for FamicomPadP2 {
             self.cached = state[1] & 0b11110011;
         }
     }
-    fn read(&mut self, _port: usize) -> OpenBusReadResult {
+    fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
         let bit = if self.strobe {
             self.cached & 1
         } else {
@@ -115,21 +117,21 @@ impl Controller for FamicomPadP2 {
         };
         OpenBusReadResult::new(bit, 1)
     }
-    fn write(&mut self, _port: usize, value: u8) {
+    fn write(&mut self, _port: &dyn Port, value: u8) {
         let new_strobe = value & 1 == 1;
         if self.strobe && !new_strobe {
             self.result = self.cached;
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         vec![
-            (port, "a", 0),
-            (port, "b", 1),
-            (port, "up", 4),
-            (port, "down", 5),
-            (port, "left", 6),
-            (port, "right", 7),
+            (port.id(), "a", 0),
+            (port.id(), "b", 1),
+            (port.id(), "up", 4),
+            (port.id(), "down", 5),
+            (port.id(), "left", 6),
+            (port.id(), "right", 7),
         ]
     }
 }

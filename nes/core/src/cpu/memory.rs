@@ -1,7 +1,7 @@
 use super::CpuCartridgeBus as Cartridge;
-use crate::{
-    Apu, ControllerHub, OpenBus, OpenBusReadResult, Ppu, cpu::Register, interrupt::Interrupt,
-};
+use nerust_input_traits::{ControllerHub, NES_PORTS, OpenBusReadResult};
+
+use crate::{Apu, OpenBus, Ppu, cpu::Register, interrupt::Interrupt};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct Memory {
@@ -48,7 +48,7 @@ impl Memory {
                 ppu.read_register(address, &mut ppu_cartridge, interrupt)
             }
             0x4015 => apu.read_register(address, interrupt),
-            0x4016 | 0x4017 => hub.read_port(address & 1),
+            0x4016 | 0x4017 => hub.read_port(&NES_PORTS[address as usize & 1]),
             0x4000..=0x4014 | 0x4018..=0x401F => OpenBusReadResult::new(0, 0), // TODO: I/O registers
             0x4020..=0x5FFF => cartridge.read(address),
             0x6000..=0xFFFF => cartridge.read(address),
