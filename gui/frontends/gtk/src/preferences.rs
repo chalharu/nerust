@@ -798,6 +798,12 @@ pub(crate) fn present_preferences_dialog(
                 {
                     log::warn!("controller reassign failed: {e}");
                 }
+                // Persist assignments to draft
+                let sid = factory.system_id().to_string();
+                draft.borrow_mut().app_state.controller_assignments.insert(
+                    sid,
+                    assignments.to_string_pairs(),
+                );
 
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
