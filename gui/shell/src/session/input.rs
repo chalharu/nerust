@@ -7,7 +7,7 @@ use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, ShortcutAction};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
-    InputTopologyDescriptor, InputValue, PortDescriptor, PortId,
+    InputTopologyDescriptor, InputValue, PortDescriptor, PortId, SlotInfo,
 };
 
 use crate::{
@@ -58,7 +58,15 @@ pub fn device_kind(ctrl_id: &'static str, group_index: usize) -> &'static str {
 /// Build an InputTopologyDescriptor from slot→controller assignments.
 pub fn build_topology(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    slots: &[SlotInfo],
 ) -> InputTopologyDescriptor {
+    let slot_label = |att: AttachmentId| -> &'static str {
+        slots
+            .iter()
+            .find(|s| s.id == att)
+            .map(|s| s.label)
+            .unwrap_or("")
+    };
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
@@ -91,12 +99,13 @@ pub fn build_topology(
                         });
                     }
                     if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
+                        let label = slot_label(port);
                         ports.push(PortDescriptor {
                             id: PortId::new(port.as_str()),
-                            label: port.as_str(),
+                            label,
                             attachments: vec![AttachmentSlotDescriptor {
                                 id: port,
-                                label: port.as_str(),
+                                label,
                                 device: DeviceKindId::new(dk),
                                 supported_devices: vec![DeviceKindId::new(dk)],
                             }],

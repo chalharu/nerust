@@ -1013,7 +1013,8 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::build_topology;
-    build_topology(&state.controller_assignments)
+    let slots = state.factory.input_system_factory().slots();
+    build_topology(&state.controller_assignments, slots)
 }
 
 pub(crate) fn keyboard_key_from_physical(
