@@ -1,4 +1,4 @@
-use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
     KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
@@ -101,7 +101,7 @@ pub fn apply_capture_target(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::SystemId;
+    use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 

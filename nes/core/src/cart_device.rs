@@ -1,9 +1,11 @@
 use std::cmp;
 
+use nerust_input_traits::OpenBusReadResult;
+
 use crate::{
-    OpenBusReadResult, cartridge_runtime_state::CartridgeRuntimeState, interrupt::Interrupt,
-    mapper::Mapper, mapper_state::MappingMode, mirror::MirrorMode,
-    persistence_error::PersistenceError, ppu_memory_access::PpuReadAccess,
+    cartridge_runtime_state::CartridgeRuntimeState, interrupt::Interrupt, mapper::Mapper,
+    mapper_state::MappingMode, mirror::MirrorMode, persistence_error::PersistenceError,
+    ppu_memory_access::PpuReadAccess,
 };
 
 fn mirror_lut(mode: MirrorMode) -> [u8; 4] {

@@ -1,7 +1,7 @@
 use std::{fmt, rc::Rc, sync::Arc};
 
 use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
-use nerust_render_base::GpuFactory;
+use nerust_render_base::renderer::GpuFactory;
 
 use crate::load::RomLoader;
 

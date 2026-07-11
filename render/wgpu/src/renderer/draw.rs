@@ -1,4 +1,4 @@
-use nerust_render_base::PhysicalSize;
+use nerust_render_base::{SurfaceSize, physical::PhysicalSize};
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,
@@ -6,7 +6,7 @@ use wgpu::{
 };
 
 use super::{RenderOutcome, RenderPipeline, fit_surface_size_to_limit};
-use crate::{surface::SurfaceSize, upload::pack_frame_rows};
+use crate::upload::pack_frame_rows;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(super) struct Viewport {

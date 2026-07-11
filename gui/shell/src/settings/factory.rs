@@ -1,5 +1,7 @@
-use nerust_core_traits::SystemId;
-use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
+use nerust_core_traits::{
+    factory::settings::{FactorySettingsView, Language},
+    identity::SystemId,
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::shared::SystemSettings;
 

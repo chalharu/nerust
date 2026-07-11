@@ -1,5 +1,7 @@
 use nerust_render_base::{
-    LogicalSize, NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH, VideoFrameFormat, VideoPresentation,
+    SurfaceSize, VideoFrameFormat, VideoPresentation,
+    filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH},
+    logical::LogicalSize,
 };
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
@@ -12,7 +14,7 @@ use wgpu::{
 use zerocopy::{Immutable, IntoBytes};
 
 use super::{DeviceLimitProfile, PresentationOptions, RenderPipeline, fit_surface_size_to_limit};
-use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, surface::SurfaceSize, upload::FrameUploadLayout};
+use crate::{srgb_lut::SRGB_TO_LINEAR_LUT_BYTES, upload::FrameUploadLayout};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, IntoBytes, Immutable)]

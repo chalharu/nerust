@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::{
+    rc::Rc,
+    sync::{Arc, Mutex, atomic::AtomicBool},
+};
 
 use iced::{Event, Point, Size, advanced::renderer, keyboard, mouse, theme};
 use iced_tiny_skia::{
@@ -144,7 +147,7 @@ pub(crate) struct SettingsWindowHandle {
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     cursor: mouse::Cursor,
@@ -187,7 +190,7 @@ impl SettingsWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
-        let pending_assignments = Arc::new(Mutex::new(None));
+        let pending_assignments = Rc::new(Mutex::new(None));
         let capture_target = Arc::new(Mutex::new(None));
 
         #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]

@@ -1316,13 +1316,13 @@ impl<'de> serde::Deserialize<'de> for Core {
 
 #[cfg(test)]
 mod tests {
-    use nerust_input_traits::{Controller, ControllerHub, Port};
+    use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
     use strum::IntoEnumIterator;
 
     use super::{
         CPU_STEPFUNCS, Core, CpuStatesEnum, CpuStepStateFunc, DmcDmaKind, DmcDmaPhase, DmcDmaState,
     };
-    use crate::{Apu, OpenBusReadResult, Ppu};
+    use crate::{Apu, Ppu};
 
     macro_rules! cpu_stepfunc_pair_array {
         ($(($state:expr, $func:expr)),+ $(,)?) => {

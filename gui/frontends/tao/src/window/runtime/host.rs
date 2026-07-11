@@ -14,16 +14,20 @@ use nerust_gui_settings::{
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
-        KeyboardShortcut, SessionError, SessionHandle, WindowSize,
+        KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
+        lifecycle::WindowSize,
     },
     settings::{
         i18n::{UiText, text},
         scaling_factor,
     },
 };
-use nerust_render_base::{GpuFactory, RenderResult, SurfaceSize};
+use nerust_render_base::{
+    SurfaceSize,
+    renderer::{GpuFactory, RenderResult},
+};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},

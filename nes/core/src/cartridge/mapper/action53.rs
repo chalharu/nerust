@@ -1,3 +1,5 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use super::Cartridge;
 use crate::{
     cartridge_rom::CartridgeData,
@@ -203,8 +205,8 @@ impl Mapper for Action53 {
         "Action 53 (Mapper28)"
     }
 
-    fn read_expansion(&self, _address: usize) -> crate::OpenBusReadResult {
-        crate::OpenBusReadResult::new(0, 0)
+    fn read_expansion(&self, _address: usize) -> OpenBusReadResult {
+        OpenBusReadResult::new(0, 0)
     }
 
     fn write_expansion(&mut self, address: usize, value: u8, _interrupt: &mut Interrupt) {

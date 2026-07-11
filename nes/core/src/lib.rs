@@ -25,7 +25,7 @@ pub mod rom_parse;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_input_traits::ControllerHub;
+use nerust_input_traits::{ControllerHub, OpenBusReadResult};
 use nerust_render_base::FrameBuffer;
 use nerust_sound_filter::{
     ChaindFilter, Filter, IirFilter,
@@ -651,8 +651,6 @@ impl OpenBus {
         result
     }
 }
-
-pub use nerust_input_traits::OpenBusReadResult;
 
 #[cfg(test)]
 fn nrom_test_cartridge() -> Box<dyn Cartridge> {

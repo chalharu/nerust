@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use nerust_core_traits::factory::CoreParts;
+use nerust_core_traits::factory::{CoreParts, load::MediaObject};
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
@@ -15,10 +15,7 @@ use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::GuiInput;
 use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
-use crate::{
-    load::MediaObject,
-    session::persistence::{CorePersistence, CorePersistenceError},
-};
+use crate::session::persistence::{CorePersistence, CorePersistenceError};
 
 pub struct EmuCore {
     emu: EmuThread,

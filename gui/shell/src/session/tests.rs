@@ -7,8 +7,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use nerust_core_traits::SystemId;
+use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
 use nerust_core_traits::factory::{CoreFactory, FactoryError};
+use nerust_core_traits::identity::SystemId;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer,
     audio::{AudioBackend, AudioBackendRegistry},
@@ -18,17 +19,18 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-
 use nerust_input_traits::{
     BufferError, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
     InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
     InputValue, SlotInfo,
 };
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
+use nerust_render_base::VideoRenderProfile;
+use nerust_render_base::logical::LogicalSize;
+use nerust_render_base::physical::PhysicalSize;
 
+use crate::settings::factory::settings_view;
 use crate::{
-    load::{MediaObject, SystemLoadOptions},
     session::{KeyboardShortcut, SessionHandle},
     test_support::single_port_topology,
 };
@@ -83,7 +85,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            nerust_core_traits::SystemId::new("nes"),
+            SystemId::new("nes"),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -277,7 +279,7 @@ fn test_rom_with_mapper4() -> Vec<u8> {
 
 fn test_view(session: &SessionHandle) -> FactorySettingsView {
     let system_id = session.factory().system_id();
-    crate::settings::settings_view(session.settings_snapshot(), &system_id)
+    settings_view(session.settings_snapshot(), &system_id)
 }
 
 fn unique_temp_dir(label: &str) -> PathBuf {

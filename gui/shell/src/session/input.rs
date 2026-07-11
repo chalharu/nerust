@@ -3,7 +3,7 @@ use nerust_input_traits::{DigitalInputEvent, InputAssignments, InputValue};
 
 use crate::{
     session::{KeyboardShortcut, SessionHandle},
-    settings::bindings::events::shortcut::shortcut_action_for_key,
+    settings::{bindings::events::shortcut::shortcut_action_for_key, factory::settings_view},
 };
 
 /// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
@@ -54,7 +54,7 @@ impl SessionHandle {
         assignments: &InputAssignments,
     ) -> Result<(), crate::session::SessionError> {
         let system_id = self.factory.system_id();
-        let view = crate::settings::settings_view(&self.settings_snapshot, &system_id);
+        let view = settings_view(&self.settings_snapshot, &system_id);
         let speaker =
             crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
         let parts =

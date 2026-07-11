@@ -1,6 +1,6 @@
 use std::path::Path;
 
-pub use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug, thiserror::Error)]
