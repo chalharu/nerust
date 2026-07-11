@@ -9,7 +9,7 @@ use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
-use nerust_render_base::FilterType;
+use nerust_render_base::filter::FilterType;
 
 pub(crate) fn deserialize_settings(bytes: &[u8]) -> NesSettings {
     if bytes.is_empty() {
@@ -187,6 +187,7 @@ mod tests {
         NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
     };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+    use nerust_render_base::filter::FilterType;
 
     use super::{
         apply_nes_settings_choice_inner, filter_type_from_bytes, nes_settings_page,
@@ -317,7 +318,7 @@ mod tests {
 
         assert!(matches!(
             filter_type_from_bytes(&bytes),
-            nerust_render_base::FilterType::NtscSVideo
+            FilterType::NtscSVideo
         ));
     }
 

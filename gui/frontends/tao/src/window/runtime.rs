@@ -3,7 +3,10 @@ mod host;
 use std::path::Path;
 
 use nerust_gui_shell::context::FrontendContext;
-use nerust_render_base::{GpuRenderer, RendererConfig, SurfaceSize};
+use nerust_render_base::{
+    SurfaceSize,
+    renderer::{GpuRenderer, RendererConfig},
+};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;

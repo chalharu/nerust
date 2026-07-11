@@ -12,13 +12,14 @@ pub(crate) mod timer;
 mod triangle;
 
 use nerust_core_traits::audio::AudioBackend;
+use nerust_input_traits::OpenBusReadResult;
 
 use self::{
     dmc::DMC, envelope::*, frame_counter::*, length_counter::*, noise::Noise, pulse::Pulse,
     triangle::Triangle,
 };
 use crate::{
-    Cpu, OpenBusReadResult,
+    Cpu,
     interrupt::{Interrupt, IrqSource},
     persistence_error::PersistenceError,
 };

@@ -169,11 +169,10 @@ mod tests {
 
     use crate::input_types::NesInputBuffer;
     use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{Controller, EmuInput, Port};
+    use nerust_input_traits::{Controller, EmuInput, OpenBusReadResult, Port};
     use nerust_render_base::PixelFormat;
 
     use super::*;
-    use crate::OpenBusReadResult;
 
     fn test_emu_input() -> EmuInput {
         use nerust_input_traits::InputStateBuffer;

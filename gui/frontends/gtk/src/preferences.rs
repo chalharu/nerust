@@ -9,17 +9,16 @@ use gtk::{
     },
 };
 use nerust_core_traits::{
-    SystemId,
     factory::{
         CoreFactory,
         descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel},
     },
+    identity::SystemId,
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
     session::SessionError,
     settings::{
@@ -29,8 +28,13 @@ use nerust_gui_shell::{
             keys::keyboard_key_label,
         },
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        factory::{apply_settings_choice, settings_view},
         i18n::{UiText, text},
     },
+};
+use nerust_gui_shell::{
+    session::access::{FrontendSession, SettingsResult},
+    settings::factory::resolve_label,
 };
 use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
 use std::collections::HashSet;
@@ -444,16 +448,14 @@ pub(crate) fn present_preferences_dialog(
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
     let filter_combo = combo_from_optional_system_field(filter_field, language);
     let filter_label = filter_field
-        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
-        .unwrap_or_else(|| nerust_gui_shell::settings::resolve_label("nes.video.filter", language));
+        .map(|field| resolve_label(field.label_id, language))
+        .unwrap_or_else(|| resolve_label("nes.video.filter", language));
     system_page.append(&labeled_row(&filter_label, &filter_combo));
     let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
     let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
     let mmc3_label = mmc3_field
-        .map(|field| nerust_gui_shell::settings::resolve_label(field.label_id, language))
-        .unwrap_or_else(|| {
-            nerust_gui_shell::settings::resolve_label("nes.core.mmc3_irq_variant", language)
-        });
+        .map(|field| resolve_label(field.label_id, language))
+        .unwrap_or_else(|| resolve_label("nes.core.mmc3_irq_variant", language));
     system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
     apply_snapshot_to_widgets(
@@ -1060,7 +1062,7 @@ fn connect_local_updates(
         let _ = filter_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*factory,
                     &mut snapshot,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
@@ -1085,7 +1087,7 @@ fn connect_local_updates(
         let _ = mmc3_combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*factory,
                     &mut snapshot,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
@@ -1261,7 +1263,7 @@ fn apply_snapshot_to_widgets(
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
     let system_id = factory.system_id();
-    let view = nerust_gui_shell::settings::settings_view(snapshot, &system_id);
+    let view = settings_view(snapshot, &system_id);
     let system_page = factory.settings_page(&view);
     apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
@@ -1395,7 +1397,7 @@ fn combo_from_optional_system_field(
     if let Some(field) = field {
         let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
         for option in options.iter() {
-            let label = nerust_gui_shell::settings::resolve_label(option.label_id, language);
+            let label = resolve_label(option.label_id, language);
             combo.append(Some(option.id.as_str()), &label);
         }
     }

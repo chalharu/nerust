@@ -2,8 +2,9 @@ use std::num::NonZeroU32;
 
 use log::{error, warn};
 use nerust_render_base::{
-    BLACK_PALETTE_INDEX, FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat,
-    RenderResult, RendererConfig, RendererError, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
+    filter::BLACK_PALETTE_INDEX,
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,

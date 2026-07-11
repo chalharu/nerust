@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nerust_core_traits::{identity::SystemIdentity, save_state_with_header};
+use nerust_core_traits::{identity::SystemIdentity, save_state::save_state_with_header};
 use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},

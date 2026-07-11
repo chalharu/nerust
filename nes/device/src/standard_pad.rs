@@ -1,7 +1,7 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, Port, PortSet,
+    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, OpenBusReadResult, Port,
+    PortSet,
 };
-use nerust_nes_core::OpenBusReadResult;
 
 /// NES Standard Controller: full 8-button pad for a single port.
 #[derive(Debug, Clone)]
@@ -62,7 +62,7 @@ impl Controller for StandardPad {
     fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base + 0),
+            (port.id(), "a", base),
             (port.id(), "b", base + 1),
             (port.id(), "select", base + 2),
             (port.id(), "start", base + 3),

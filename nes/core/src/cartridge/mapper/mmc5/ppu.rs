@@ -1,7 +1,8 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use super::{ChrBankSet, Mmc5};
 use crate::{
-    OpenBusReadResult, mapper::CartridgeDataDao, mapper_state::MapperStateDao,
-    ppu_memory_access::PpuReadAccess,
+    mapper::CartridgeDataDao, mapper_state::MapperStateDao, ppu_memory_access::PpuReadAccess,
 };
 
 impl Mmc5 {

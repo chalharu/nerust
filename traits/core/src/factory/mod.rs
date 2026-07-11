@@ -3,13 +3,13 @@ pub mod descriptor;
 pub mod load;
 pub mod settings;
 
-use crate::SystemId;
 use crate::audio::AudioBackend;
 use crate::factory::descriptor::{
     SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
+use crate::identity::SystemId;
 use nerust_input_traits::{GuiInput, InputAssignments, InputSystemFactory};
 use std::collections::HashMap;
 use thiserror::Error;

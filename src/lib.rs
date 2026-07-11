@@ -7,13 +7,15 @@ use log::LevelFilter;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_core_traits::factory::CoreFactory;
 use nerust_core_traits::factory::cli::CliProvider;
+use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
 use nerust_gui_runtime::rom::load_rom_path;
+use nerust_gui_shell::settings::factory::settings_view;
 use nerust_gui_shell::{
     context::FrontendContext,
-    load::{MediaObject, RomLoadTarget, RomLoader, RomLoaderError, SystemLoadOptions},
+    load::{RomLoadTarget, RomLoader, RomLoaderError},
 };
 use nerust_nes_factory::NesFactory;
-use nerust_render_base::GpuFactory;
+use nerust_render_base::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
 
@@ -80,8 +82,7 @@ impl RomLoader for LiveRomLoader {
             .take()
             .unwrap_or_else(|| target.default_load_options());
         let system_id = self.factory.system_id();
-        let view =
-            nerust_gui_shell::settings::settings_view(target.settings_snapshot(), &system_id);
+        let view = settings_view(target.settings_snapshot(), &system_id);
         let resolved = self
             .factory
             .resolve_load_request(&view, options)
@@ -143,11 +144,9 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::factory::CoreFactory;
+    use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_shell::load::{
-        MediaObject, ResolvedLoadRequest, RomLoadTarget, RomLoader, RomLoaderError,
-        SystemLoadOptions,
-    };
+    use nerust_gui_shell::load::{RomLoadTarget, RomLoader, RomLoaderError};
     use nerust_gui_shell::settings::defaults::seed::{
         default_app_state, default_local_settings, default_shared_settings,
     };

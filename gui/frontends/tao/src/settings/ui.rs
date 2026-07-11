@@ -34,6 +34,7 @@ use nerust_gui_shell::settings::{
         keys::keyboard_key_label,
     },
     editor::{CaptureTarget, apply_capture_target, current_binding_label},
+    factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
 use std::rc::Rc;
@@ -107,7 +108,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
@@ -167,7 +168,7 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     factory: Arc<dyn CoreFactory>,
     audio_registry: Arc<AudioBackendRegistry>,
@@ -215,7 +216,7 @@ impl SettingsAppState {
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
-            pending_assignments: Arc::new(Mutex::new(None)),
+            pending_assignments: Rc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
             controller_assignments,
             factory,
@@ -234,7 +235,7 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        pending_assignments: Arc<Mutex<Option<InputAssignments>>>,
+        pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
         let mut state = Self::new(snapshot, factory, audio_registry);
@@ -324,7 +325,7 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*self.factory,
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
@@ -737,7 +738,7 @@ impl SettingsAppState {
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
         let system_id = self.factory.system_id();
-        let view = nerust_gui_shell::settings::settings_view(&self.draft, &system_id);
+        let view = settings_view(&self.draft, &system_id);
         let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
@@ -827,7 +828,7 @@ fn system_choice_row(
         .iter()
         .map(|option| Choice {
             value: option.id.as_str().to_string(),
-            label: nerust_gui_shell::settings::resolve_label(option.label_id, language),
+            label: resolve_label(option.label_id, language),
         })
         .collect::<Vec<_>>();
     let selected = choices
@@ -841,11 +842,7 @@ fn system_choice_row(
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(nerust_gui_shell::settings::resolve_label(
-            field.label_id,
-            language
-        ))
-        .width(Length::Fixed(220.0)),
+        text(resolve_label(field.label_id, language)).width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })

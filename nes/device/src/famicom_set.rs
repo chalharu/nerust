@@ -1,7 +1,7 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, Port, PortSet,
+    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, OpenBusReadResult, Port,
+    PortSet,
 };
-use nerust_nes_core::OpenBusReadResult;
 
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
 #[derive(Debug, Clone)]
@@ -61,7 +61,7 @@ impl Controller for FamicomPadP1 {
     fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base + 0),
+            (port.id(), "a", base),
             (port.id(), "b", base + 1),
             (port.id(), "select", base + 2),
             (port.id(), "start", base + 3),
@@ -128,7 +128,7 @@ impl Controller for FamicomPadP2 {
     fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base + 0),
+            (port.id(), "a", base),
             (port.id(), "b", base + 1),
             (port.id(), "up", base + 4),
             (port.id(), "down", base + 5),

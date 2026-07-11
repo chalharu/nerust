@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
     input::{IMPLICIT_PROFILE_ID, KeyboardKey, ShortcutAction, ShortcutBinding},
@@ -70,6 +70,7 @@ pub fn default_app_state() -> DesktopAppState {
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::input::ShortcutAction;
 
     use super::default_shared_settings;
@@ -79,17 +80,8 @@ mod tests {
     fn default_settings_seed_nes_bindings_and_system_settings() {
         let settings = default_shared_settings();
 
-        assert!(
-            settings
-                .systems
-                .contains_key(&nerust_core_traits::SystemId::new("nes"))
-        );
-        assert!(
-            settings
-                .input
-                .systems
-                .contains_key(&nerust_core_traits::SystemId::new("nes"))
-        );
+        assert!(settings.systems.contains_key(&SystemId::new("nes")));
+        assert!(settings.input.systems.contains_key(&SystemId::new("nes")));
         assert!(
             settings
                 .input
@@ -102,7 +94,7 @@ mod tests {
             !settings
                 .input
                 .systems
-                .get(&nerust_core_traits::SystemId::new("nes"))
+                .get(&SystemId::new("nes"))
                 .unwrap()
                 .implicit_keyboard_profile()
                 .unwrap()

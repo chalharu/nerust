@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use nerust_render_base::{
-    FrameBuffer, GpuFactory, GpuRenderer, RendererConfig, RendererError, SurfaceSize,
-    VideoRenderProfile,
+    FrameBuffer, SurfaceSize, VideoRenderProfile,
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RendererConfig, RendererError},
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -57,7 +57,7 @@ impl GtkRenderer {
             Some(r) => r.reattach(window_handle, display_handle, size),
             None => Err(RendererError::new(
                 "reattach",
-                Box::new(nerust_render_base::OpaqueError("no renderer".to_string())),
+                Box::new(OpaqueError("no renderer".to_string())),
             )),
         }
     }

@@ -1,8 +1,7 @@
 pub mod access;
 pub mod commands;
 pub mod input;
-mod lifecycle;
-pub mod metrics;
+pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
 mod tests;
@@ -14,12 +13,12 @@ use std::{
     sync::Arc,
 };
 
-pub use lifecycle::WindowSize;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory, FactoryError,
         descriptor::{SystemDescriptor, SystemSettingsPageModel},
+        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
     },
 };
 use nerust_gui_runtime::settings::{
@@ -36,9 +35,8 @@ use nerust_emu_thread::{ConsoleMetrics, OperationError};
 
 use crate::{
     emu_core::EmuCore,
-    load::{MediaObject, SystemLoadOptions},
     session::persistence::PersistenceManager,
-    settings,
+    settings::{self, factory::settings_view},
 };
 
 #[derive(Debug, Clone)]
@@ -114,7 +112,7 @@ impl SessionHandle {
     ) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
-        let view = crate::settings::settings_view(snapshot, &system_id);
+        let view = settings_view(snapshot, &system_id);
         let parts =
             match factory.create_core_and_adapter_with_assignments(&view, speaker, assignments) {
                 Ok(parts) => parts,
@@ -129,7 +127,7 @@ impl SessionHandle {
                         app_state: default_app_state(),
                     };
                     let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                    let fallback_view = crate::settings::settings_view(&fallback, &system_id);
+                    let fallback_view = settings_view(&fallback, &system_id);
                     factory
                         .create_core_and_adapter(&fallback_view, fallback_speaker)
                         .expect("failed to create core even with default settings")
@@ -307,7 +305,7 @@ impl SessionHandle {
 
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
         let system_id = self.factory.system_id();
-        let view = crate::settings::settings_view(settings, &system_id);
+        let view = settings_view(settings, &system_id);
         self.factory.settings_page(&view)
     }
 
@@ -332,7 +330,7 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
 }
 
-use crate::load::{ResolvedLoadRequest, RomLoadTarget, RomLoaderError};
+use crate::load::{RomLoadTarget, RomLoaderError};
 use crate::session::commands::SessionCommand;
 
 impl RomLoadTarget for SessionHandle {

@@ -5,7 +5,9 @@ use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
 use nerust_input_traits::{ControllerCollection, EmuInput, GuiInput};
 use nerust_nes_core::console_core::NesConsoleCore;
-use nerust_render_base::{FilterType, LogicalSize, VideoRenderProfile};
+use nerust_render_base::VideoRenderProfile;
+use nerust_render_base::filter::FilterType;
+use nerust_render_base::logical::LogicalSize;
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,

@@ -2,13 +2,13 @@ use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_input_traits::{Controller, ControllerHub, Port};
+use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
 use nerust_render_base::FrameBuffer;
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::{
-    Core, OpenBusReadResult, cartridge_data_parts::CartridgeDataParts,
-    cartridge_rom::CartridgeData, mirror::MirrorMode, rom_format::RomFormat,
+    Core, cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+    mirror::MirrorMode, rom_format::RomFormat,
 };
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;

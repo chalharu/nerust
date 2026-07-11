@@ -1,12 +1,15 @@
 use std::path::Path;
 
+use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_emu_thread::ConsoleMetrics;
+
 use crate::{
-    load::{MediaObject, ResolvedLoadRequest},
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
         title::window_title,
     },
+    settings::factory::settings_view,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,7 +19,7 @@ pub struct WindowSize {
 }
 
 impl SessionHandle {
-    pub fn metrics(&self) -> crate::session::metrics::ConsoleMetrics {
+    pub fn metrics(&self) -> ConsoleMetrics {
         self.emu_core.metrics()
     }
 
@@ -316,7 +319,7 @@ impl SessionHandle {
 
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = self.factory.system_id();
-        let view = crate::settings::settings_view(next_settings, &system_id);
+        let view = settings_view(next_settings, &system_id);
         let parts = self.factory.create_core_and_adapter_with_assignments(
             &view,
             speaker,
