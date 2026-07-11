@@ -53,64 +53,8 @@ struct InputRow {
 fn dynamic_topology(
     assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
 ) -> InputTopologyDescriptor {
-    use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
-    use nerust_input_traits::*;
-    let mut ports = Vec::new();
-    let mut seen_devices = HashSet::<(&str, usize)>::new();
-    let mut devices = Vec::new();
-
-    for (slot_id, ctrl_opt) in assignments {
-        let profile = match ctrl_opt {
-            Some(p) => p.as_ref(),
-            None => continue,
-        };
-        let ctrl_id = profile.id();
-        for ps in profile.port_sets() {
-            if ps.ports.iter().any(|&p| p == slot_id) {
-                for (gi, &port) in ps.ports.iter().enumerate() {
-                    let dk = device_kind(ctrl_id, gi);
-                    if seen_devices.insert((ctrl_id, gi)) {
-                        let controls = profile.port_groups()[gi];
-                        devices.push(DeviceDescriptor {
-                            kind: DeviceKindId::new(dk),
-                            label: profile.label(),
-                            controls: controls
-                                .iter()
-                                .map(|ci| {
-                                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                                        id: DigitalControlId::new(control_id(ci.id)),
-                                        label: ci.label,
-                                        description: ci.label,
-                                    })
-                                })
-                                .collect(),
-                        });
-                    }
-                    let full = attachment_id(port);
-                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == full) {
-                        ports.push(PortDescriptor {
-                            id: PortId::new(full),
-                            label: port,
-                            attachments: vec![AttachmentSlotDescriptor {
-                                id: AttachmentId::new(full),
-                                label: port,
-                                device: DeviceKindId::new(dk),
-                                supported_devices: vec![DeviceKindId::new(dk)],
-                            }],
-                        });
-                    }
-                }
-            }
-        }
-    }
-    if ports.is_empty() {
-        InputTopologyDescriptor {
-            ports: Vec::new(),
-            devices: Vec::new(),
-        }
-    } else {
-        InputTopologyDescriptor { ports, devices }
-    }
+    use nerust_gui_shell::session::input::build_topology;
+    build_topology(assignments)
 }
 
 pub(crate) fn present_preferences_dialog(
