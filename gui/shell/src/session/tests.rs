@@ -112,12 +112,11 @@ fn test_input_resources() -> (GuiInput, InputSplit) {
     let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
         Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
     let flag = Arc::new(AtomicBool::new(false));
-    let gui = GuiInput {
-        shared: Arc::clone(&shared),
-        flag: Arc::clone(&flag),
-        state: Box::<TestInputBuffer>::default(),
-        write_buf: Box::<TestInputBuffer>::default(),
-    };
+    let gui = GuiInput::new(
+        Arc::clone(&shared),
+        Arc::clone(&flag),
+        Box::new(|| Box::<TestInputBuffer>::default()),
+    );
     let split = InputSplit {
         shared: Arc::clone(&shared),
         flag: Arc::clone(&flag),

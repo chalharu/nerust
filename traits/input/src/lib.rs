@@ -483,12 +483,27 @@ impl std::fmt::Debug for InputSplit {
 #[derive(Debug)]
 pub struct GuiInput {
     pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    pub flag: Arc<AtomicBool>,
+    flag: Arc<AtomicBool>,
     pub state: Box<dyn InputStateBuffer>,
-    pub write_buf: Box<dyn InputStateBuffer>,
+    write_buf: Box<dyn InputStateBuffer>,
 }
 
 impl GuiInput {
+    pub fn new(
+        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+        flag: Arc<AtomicBool>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+    ) -> Self {
+        let state = (new_buffer)();
+        let write_buf = (new_buffer)();
+        Self {
+            shared,
+            flag,
+            state,
+            write_buf,
+        }
+    }
+
     pub fn from_split(split: &InputSplit) -> Self {
         Self {
             shared: Arc::clone(&split.shared),
