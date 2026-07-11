@@ -17,9 +17,9 @@ use std::{
 use jni::JavaVM;
 use jni::sys::{JNI_VERSION_1_6, jint};
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_gui_shell::factory::CoreFactory;
+use nerust_core_traits::factory::CoreFactory;
 use nerust_nes_factory::NesFactory;
-use nerust_render_base::GpuFactory;
+use nerust_render_base::renderer::GpuFactory;
 use winit::platform::android::activity::AndroidApp;
 
 const ANDROID_LOG_TAG: &str = "Nerust";

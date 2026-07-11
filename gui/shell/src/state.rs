@@ -1,4 +1,4 @@
-use nerust_core_traits::load_state_from_header;
+use nerust_core_traits::save_state::load_state_from_header;
 use nerust_emu_thread::EmuThread;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

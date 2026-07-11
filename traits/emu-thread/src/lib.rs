@@ -8,7 +8,8 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use nerust_core_traits::{ConsoleCore, EmuCommand, FrameBuffer, PixelFormat};
+use nerust_core_traits::{ConsoleCore, EmuCommand};
+use nerust_render_base::{FrameBuffer, PixelFormat};
 use nerust_timer::Timer;
 use thiserror::Error;
 

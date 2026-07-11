@@ -1,9 +1,8 @@
 use std::{fmt, rc::Rc, sync::Arc};
 
-use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_render_base::GpuFactory;
+use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_render_base::renderer::GpuFactory;
 
-use crate::factory::CoreFactory;
 use crate::load::RomLoader;
 
 pub struct FrontendContext {

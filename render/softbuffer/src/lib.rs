@@ -2,8 +2,9 @@ use std::num::NonZeroU32;
 
 use log::{error, warn};
 use nerust_render_base::{
-    BLACK_PALETTE_INDEX, FrameBuffer, GpuFactory, GpuRenderer, OpaqueError, PixelFormat,
-    RenderResult, RendererConfig, RendererError, SurfaceSize, VideoRenderProfile,
+    FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
+    filter::BLACK_PALETTE_INDEX,
+    renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -290,13 +291,11 @@ impl SoftbufferRenderer {
                 width: self.render_profile.logical_size.width as u32,
                 height: self.render_profile.logical_size.height as u32,
             },
-            self.render_profile.physical_size.width as f32
-                / self.render_profile.physical_size.height as f32,
+            self.render_profile.physical_size.width / self.render_profile.physical_size.height,
             self.size,
         );
         self.ntsc_buffer.resize(
-            self.render_profile.logical_size.width as usize
-                * self.render_profile.logical_size.height as usize,
+            self.render_profile.logical_size.width * self.render_profile.logical_size.height,
             0,
         );
         self.resize_buffer.resize(
@@ -305,6 +304,7 @@ impl SoftbufferRenderer {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rendering<F: Fn(usize) -> [u8; 4]>(
         dst: &mut [u32],
         src_stride: usize,
@@ -444,7 +444,7 @@ impl SoftbufferRenderer {
                         y,
                     );
                     sum = sum.wrapping_add(Self::read_entry(
-                        &packed_entries,
+                        packed_entries,
                         color,
                         phase_row + row_offset,
                     ));

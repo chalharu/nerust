@@ -1,8 +1,7 @@
 use std::{fs, path::Path};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
-use nerust_core_traits::SystemId;
-use nerust_core_traits::identity::SystemIdentity;
+use nerust_core_traits::identity::{SystemId, SystemIdentity};
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
 

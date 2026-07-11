@@ -13,23 +13,26 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
+use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
 use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
 use nerust_gui_shell::{
     context::FrontendContext,
-    descriptor::SystemSettingsPageModel,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
     },
-    settings::i18n::{UiText, text},
+    settings::{
+        factory::settings_view,
+        i18n::{UiText, text},
+    },
 };
-use nerust_input_traits::InputTopologyDescriptor;
+
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_base::{FrameBuffer, GpuFactory, VideoRenderProfile};
+use nerust_render_base::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
 
 use self::window::{StateMenus, Window, WindowExtend};
@@ -52,10 +55,8 @@ impl State {
             },
             presentation: None,
         };
-        let descriptor = ctx.core_factory.system_descriptor();
         let session = SessionHandle::new(
             capabilities,
-            descriptor,
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
         );
@@ -77,13 +78,8 @@ impl State {
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
         let system_id = self.ctx.core_factory.system_id();
-        let view =
-            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+        let view = settings_view(self.session.settings_snapshot(), &system_id);
         self.ctx.core_factory.settings_page(&view)
-    }
-
-    pub(crate) fn input_topology_descriptor(&self) -> InputTopologyDescriptor {
-        self.ctx.core_factory.system_descriptor().input_topology
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {

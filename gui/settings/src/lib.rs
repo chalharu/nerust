@@ -1,7 +1,5 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use nerust_core_traits::SystemId;
-
 pub mod language {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
@@ -14,7 +12,9 @@ pub mod language {
 }
 
 pub mod input {
-    use super::{BTreeMap, SystemId};
+    use nerust_core_traits::identity::SystemId;
+
+    use super::BTreeMap;
 
     pub const IMPLICIT_PROFILE_ID: &str = "default";
 
@@ -258,9 +258,9 @@ pub mod nes {
 }
 
 pub mod shared {
-    use super::{
-        BTreeMap, PathBuf, SystemId, input::InputSettings, language::AppLanguage, nes::NesSettings,
-    };
+    use nerust_core_traits::identity::SystemId;
+
+    use super::{BTreeMap, PathBuf, input::InputSettings, language::AppLanguage, nes::NesSettings};
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
@@ -495,6 +495,8 @@ pub mod app_state {
         pub schema_version: u32,
         pub last_successful_rom_directory: Option<PathBuf>,
         pub window_sizes: BTreeMap<String, RememberedWindowSize>,
+        /// Per-system controller assignments: system_id → [(slot_id, controller_id or None)]
+        pub controller_assignments: BTreeMap<String, Vec<(String, Option<String>)>>,
     }
 
     impl DesktopAppState {
@@ -517,6 +519,7 @@ pub mod app_state {
                 schema_version: DESKTOP_APP_STATE_SCHEMA_VERSION,
                 last_successful_rom_directory: None,
                 window_sizes: BTreeMap::new(),
+                controller_assignments: BTreeMap::new(),
             }
         }
     }

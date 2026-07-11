@@ -1,12 +1,11 @@
-use std::sync::Arc;
-
-use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_nes_core::{Core, input_types::Buttons, rom_parse};
-use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_input_traits::ControllerCollection;
+use nerust_nes_core::{Core, rom_parse};
+use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 
 use super::ValidationRuntime;
 use crate::{
     error::RomTestError,
+    events::Buttons,
     manifest::RomCase,
     media::{HashingMixer, validation_screen_buffer},
 };
@@ -29,12 +28,13 @@ impl ValidationRuntime {
                 }
             })?;
 
-        let cell = Arc::new(NesInputCell::new());
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
             core,
-            controller: NesPadDevice::new(SharedNesInputCell(cell.clone())),
-            cell,
+            controller: ControllerCollection::new(vec![
+                Box::new(FamicomPadP1::new()),
+                Box::new(FamicomPadP2::new()),
+            ]),
             mixer: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),

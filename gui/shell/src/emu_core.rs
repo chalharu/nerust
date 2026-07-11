@@ -7,17 +7,15 @@ use std::{
     },
 };
 
-use nerust_core_traits::factory::CoreParts;
+use nerust_core_traits::factory::{CoreParts, load::MediaObject};
 use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
+use nerust_input_traits::GuiInput;
 use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
-use crate::{
-    load::MediaObject,
-    session::persistence::{CorePersistence, CorePersistenceError},
-};
+use crate::session::persistence::{CorePersistence, CorePersistenceError};
 
 pub struct EmuCore {
     emu: EmuThread,
@@ -52,10 +50,15 @@ impl EmuCore {
     }
 
     /// Wrap `CoreParts` (from a factory) into an `EmuCore`.
-    /// Returns the core and the input adapter separately.
+    /// Returns (EmuCore, GuiInput, field_map).
     pub fn from_parts(
         parts: CoreParts,
-    ) -> (Self, Box<dyn nerust_input_traits::SystemInputAdapter>) {
+    ) -> (
+        Self,
+        GuiInput,
+        std::collections::HashMap<(&'static str, &'static str), usize>,
+    ) {
+        let field_map = parts.field_map;
         use std::sync::Mutex;
         let src_w = parts.render_profile.source_logical_size.width;
         let src_h = parts.render_profile.source_logical_size.height;
@@ -85,8 +88,19 @@ impl EmuCore {
             parts.palette,
         );
         (
-            Self::new(emu, parts.render_profile, shared_fb, disp_fb, frame_ready),
-            parts.adapter,
+            Self {
+                emu,
+                render_profile: parts.render_profile,
+                shared_fb,
+                disp_fb,
+                frame_ready,
+                metrics: Arc::new(Mutex::new(ConsoleMetrics {
+                    paused: true,
+                    ..ConsoleMetrics::default()
+                })),
+            },
+            parts.gui_input,
+            field_map,
         )
     }
 

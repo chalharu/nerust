@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu,
         read_dummy_current,
     },
     exit_opcode,
@@ -13,7 +13,7 @@ impl CpuStepState for Jmp {
         core: &mut Core,
         _ppu: &mut Ppu,
         _cartridge: &mut dyn CpuCartridgeBus,
-        _controller: &mut dyn Controller,
+        _hub: &mut dyn ControllerHub,
         _apu: &mut Apu,
     ) -> CpuStepStateEnum {
         core.register
@@ -29,20 +29,15 @@ impl CpuStepState for Jsr {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 let sp = usize::from(core.register.get_sp());
-                let _ = core.memory.read(
-                    0x100 | sp,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(0x100 | sp, ppu, cartridge, hub, apu, &mut core.interrupt);
 
                 core.internal_stat
                     .set_tempaddr(core.register.get_pc().wrapping_sub(1) as usize);
@@ -56,7 +51,7 @@ impl CpuStepState for Jsr {
                     hi,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -70,7 +65,7 @@ impl CpuStepState for Jsr {
                     low,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );
@@ -92,25 +87,20 @@ impl CpuStepState for Rts {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
             1 => {
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
             }
             2 => {
                 // dummy read
                 let sp = usize::from(core.register.get_sp());
-                let _ = core.memory.read(
-                    sp | 0x100,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let _ = core
+                    .memory
+                    .read(sp | 0x100, ppu, cartridge, hub, apu, &mut core.interrupt);
 
                 core.register.set_sp((sp.wrapping_add(1) & 0xFF) as u8);
             }
@@ -121,7 +111,7 @@ impl CpuStepState for Rts {
                         sp | 0x100,
                         ppu,
                         cartridge,
-                        controller,
+                        hub,
                         apu,
                         &mut core.interrupt,
                     )));
@@ -130,14 +120,9 @@ impl CpuStepState for Rts {
             }
             4 => {
                 let sp = usize::from(core.register.get_sp());
-                let high = core.memory.read(
-                    sp | 0x100,
-                    ppu,
-                    cartridge,
-                    controller,
-                    apu,
-                    &mut core.interrupt,
-                );
+                let high =
+                    core.memory
+                        .read(sp | 0x100, ppu, cartridge, hub, apu, &mut core.interrupt);
                 core.internal_stat
                     .set_tempaddr(core.internal_stat.get_tempaddr() | usize::from(high) << 8);
             }
@@ -148,7 +133,7 @@ impl CpuStepState for Rts {
                     &mut core.register,
                     ppu,
                     cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut core.interrupt,
                 );

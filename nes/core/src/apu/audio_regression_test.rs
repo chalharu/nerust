@@ -2,13 +2,13 @@ use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use nerust_core_traits::audio::AudioBackend;
+use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
 use nerust_render_base::FrameBuffer;
 
 use super::fft_test::CPU_CLOCK_HZ;
 use crate::{
-    Core, OpenBusReadResult, cartridge_data_parts::CartridgeDataParts,
-    cartridge_rom::CartridgeData, controller::Controller, mirror::MirrorMode,
-    rom_format::RomFormat,
+    Core, cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+    mirror::MirrorMode, rom_format::RomFormat,
 };
 
 const ANALYSIS_WINDOW_SECONDS: f32 = 0.001;
@@ -39,15 +39,23 @@ fn null_fb() -> FrameBuffer {
     fb
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct NullController;
 
 impl Controller for NullController {
-    fn read(&mut self, _address: usize) -> OpenBusReadResult {
+    fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
         OpenBusReadResult::new(0, 0)
     }
 
-    fn write(&mut self, _value: u8) {}
+    fn write(&mut self, _port: &dyn Port, _value: u8) {}
+}
+
+impl ControllerHub for NullController {
+    fn read_port(&mut self, _port: &dyn Port) -> OpenBusReadResult {
+        OpenBusReadResult::new(0, 0)
+    }
+    fn write_strobe(&mut self, _value: u8) {}
+    fn sync_input(&mut self, _state: &[u8]) {}
 }
 
 #[derive(Debug, Clone)]

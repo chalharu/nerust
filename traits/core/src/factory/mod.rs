@@ -3,14 +3,15 @@ pub mod descriptor;
 pub mod load;
 pub mod settings;
 
-use crate::SystemId;
 use crate::audio::AudioBackend;
 use crate::factory::descriptor::{
-    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
-use nerust_input_traits::SystemInputAdapter;
+use crate::identity::SystemId;
+use nerust_input_traits::{GuiInput, InputAssignments, InputSystemFactory};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -26,7 +27,9 @@ pub enum FactoryError {
 /// Raw parts produced by a system factory before EmuCore wrapping.
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
-    pub adapter: Box<dyn SystemInputAdapter>,
+    pub gui_input: GuiInput,
+    /// (slot_id, control_id) → absolute field index
+    pub field_map: HashMap<(&'static str, &'static str), usize>,
     pub render_profile: nerust_render_base::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
 }
@@ -44,8 +47,6 @@ pub trait CoreFactory {
     fn display_name(&self) -> &'static str;
 
     fn probe_media(&self, media: &MediaObject) -> bool;
-
-    fn system_descriptor(&self) -> SystemDescriptor;
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel;
 
@@ -68,5 +69,22 @@ pub trait CoreFactory {
         &self,
         view: &FactorySettingsView,
         speaker: Box<dyn AudioBackend>,
+    ) -> Result<CoreParts, FactoryError> {
+        self.create_core_and_adapter_with_assignments(
+            view,
+            speaker,
+            &self.input_system_factory().default_assignments(),
+        )
+    }
+
+    /// Same as create_core_and_adapter but with custom controller assignments.
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
     ) -> Result<CoreParts, FactoryError>;
+
+    /// Returns this factory's input system factory for negotiation.
+    fn input_system_factory(&self) -> &dyn InputSystemFactory;
 }

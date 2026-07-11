@@ -1,6 +1,8 @@
 use nerust_render_base::{
-    FilterType, LogicalSize, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH, PhysicalSize,
-    VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+    SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+    filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH},
+    logical::LogicalSize,
+    physical::PhysicalSize,
 };
 
 use super::{
@@ -8,7 +10,6 @@ use super::{
     fit_surface_size_to_limit,
     setup::{FramePipelineKind, composed_shader_source, encode_ntsc_texture, frame_logical_size},
 };
-use crate::surface::SurfaceSize;
 
 #[test]
 fn viewport_preserves_aspect_ratio() {

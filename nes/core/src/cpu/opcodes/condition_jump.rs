@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Apu, Controller, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, page_crossed,
+        Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepStateEnum, Ppu, Register, page_crossed,
         read_dummy_current,
     },
     exit_opcode,
@@ -36,7 +36,7 @@ pub(crate) trait ConditionJump {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn CpuCartridgeBus,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         match core.internal_stat.get_step() {
@@ -47,7 +47,7 @@ pub(crate) trait ConditionJump {
                     return exit_opcode(core);
                 }
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
                 let pc = core.register.get_pc() as usize;
                 core.internal_stat
                     .set_crossed(page_crossed(core.internal_stat.get_address(), pc));
@@ -62,7 +62,7 @@ pub(crate) trait ConditionJump {
                     return exit_opcode(core);
                 }
                 // dummy read
-                read_dummy_current(core, ppu, cartridge, controller, apu);
+                read_dummy_current(core, ppu, cartridge, hub, apu);
 
                 core.register
                     .set_pc(core.internal_stat.get_address() as u16);

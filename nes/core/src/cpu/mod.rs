@@ -7,6 +7,8 @@ mod register;
 
 use std::ops::Shr;
 
+use nerust_input_traits::ControllerHub;
+
 use self::{
     addressing_mode::{
         AddressingModeLut, absolute::Absolute, absolute_indirect::AbsoluteIndirect,
@@ -42,7 +44,7 @@ use self::{
     register::{Register, RegisterP},
 };
 use crate::{
-    Apu, Controller, Ppu,
+    Apu, Ppu,
     cart_device::Cartridge as MapperCartridge,
     cartridge_bus::{CpuCartridgeBus, CpuCartridgeBus as Cartridge, mapper_cartridge_bus},
     interrupt::{DmcDmaKind, Interrupt, IrqSource},
@@ -313,7 +315,7 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         let mut cartridge = mapper_cartridge_bus(cartridge);
@@ -327,13 +329,13 @@ impl Core {
             self.dmc_dma = Some(DmcDmaState::from_kind(kind));
         }
 
-        if self.process_dma_cycle_bus(ppu, &mut cartridge, controller, apu) {
+        if self.process_dma_cycle_bus(ppu, &mut cartridge, hub, apu) {
             return;
         }
 
         let mut machine = self.cpu_stepfunc;
         self.internal_stat.step += 1;
-        while let CpuStepStateEnum::Exit(s) = machine(self, ppu, &mut cartridge, controller, apu) {
+        while let CpuStepStateEnum::Exit(s) = machine(self, ppu, &mut cartridge, hub, apu) {
             self.set_cpu_state(s);
             self.internal_stat.step = 1;
             machine = self.cpu_stepfunc;
@@ -346,13 +348,13 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> u64 {
         let mut cycles = 0;
         loop {
             cycles += 1;
-            self.step(ppu, cartridge, controller, apu);
+            self.step(ppu, cartridge, hub, apu);
             if self.is_instruction_boundary() {
                 return cycles;
             }
@@ -436,7 +438,7 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> Option<u64> {
         let plan = self.fast_path_plan(cartridge)?;
@@ -453,47 +455,42 @@ impl Core {
                     &mut self.register,
                     ppu,
                     &mut cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut self.interrupt,
                 );
                 self.apply_fast_path_operation(operation, Some(operand))?;
                 self.sample_interrupt();
-                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, hub, apu);
             }
             FastPathPlanKind::ImpliedOrAccumulator => {
                 self.cycles = self.cycles.wrapping_add(1);
                 let pc = usize::from(self.register.get_pc());
-                let _ = self.memory.read(
-                    pc,
-                    ppu,
-                    &mut cartridge,
-                    controller,
-                    apu,
-                    &mut self.interrupt,
-                );
+                let _ = self
+                    .memory
+                    .read(pc, ppu, &mut cartridge, hub, apu, &mut self.interrupt);
                 self.apply_fast_path_operation(operation, None)?;
                 self.sample_interrupt();
-                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, hub, apu);
             }
             FastPathPlanKind::ReadMemory(access) => {
-                self.execute_fast_path_addressing(access, ppu, &mut cartridge, controller, apu);
+                self.execute_fast_path_addressing(access, ppu, &mut cartridge, hub, apu);
                 self.cycles = self.cycles.wrapping_add(1);
                 self.internal_stat.set_address(access.final_address);
                 let operand = self.memory.read(
                     access.final_address,
                     ppu,
                     &mut cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut self.interrupt,
                 );
                 self.apply_fast_path_operation(operation, Some(operand))?;
                 self.sample_interrupt();
-                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, hub, apu);
             }
             FastPathPlanKind::StoreMemory(access) => {
-                self.execute_fast_path_addressing(access, ppu, &mut cartridge, controller, apu);
+                self.execute_fast_path_addressing(access, ppu, &mut cartridge, hub, apu);
                 self.cycles = self.cycles.wrapping_add(1);
                 self.internal_stat.set_address(access.final_address);
                 let value = self.fast_path_store_value(operation)?;
@@ -502,22 +499,15 @@ impl Core {
                     value,
                     ppu,
                     &mut cartridge,
-                    controller,
+                    hub,
                     apu,
                     &mut self.interrupt,
                 );
                 self.sample_interrupt();
-                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, controller, apu);
+                self.fetch_fast_path_next_opcode(ppu, &mut cartridge, hub, apu);
             }
             FastPathPlanKind::Branch(branch) => {
-                self.execute_fast_path_branch(
-                    branch,
-                    operation,
-                    ppu,
-                    &mut cartridge,
-                    controller,
-                    apu,
-                )?;
+                self.execute_fast_path_branch(branch, operation, ppu, &mut cartridge, hub, apu)?;
             }
         }
 
@@ -675,7 +665,7 @@ impl Core {
         access: FastPathMemoryAccess,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         for _ in 0..access.operand_bytes {
@@ -684,7 +674,7 @@ impl Core {
                 &mut self.register,
                 ppu,
                 cartridge,
-                controller,
+                hub,
                 apu,
                 &mut self.interrupt,
             );
@@ -697,7 +687,7 @@ impl Core {
                 dummy_read_address,
                 ppu,
                 cartridge,
-                controller,
+                hub,
                 apu,
                 &mut self.interrupt,
             );
@@ -716,7 +706,7 @@ impl Core {
         operation: CpuStatesEnum,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> Option<()> {
         self.cycles = self.cycles.wrapping_add(1);
@@ -724,7 +714,7 @@ impl Core {
             &mut self.register,
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut self.interrupt,
         );
@@ -741,7 +731,7 @@ impl Core {
         self.internal_stat.set_interrupt(self.interrupt.executing);
         if !Self::fast_path_branch_condition(operation, &self.register)? {
             debug_assert!(!branch.taken);
-            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, hub, apu);
             return Some(());
         }
         debug_assert!(branch.taken);
@@ -749,7 +739,7 @@ impl Core {
             usize::from(branch.fallthrough),
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut self.interrupt,
         );
@@ -762,20 +752,20 @@ impl Core {
                 usize::from(branch.fallthrough),
                 ppu,
                 cartridge,
-                controller,
+                hub,
                 apu,
                 &mut self.interrupt,
             );
             self.register.set_pc(branch.target);
             self.sample_interrupt();
-            self.fetch_fast_path_next_opcode(ppu, cartridge, controller, apu);
+            self.fetch_fast_path_next_opcode(ppu, cartridge, hub, apu);
         } else {
             self.cycles = self.cycles.wrapping_add(1);
             self.register.set_pc(branch.target);
             if !self.internal_stat.get_interrupt() {
                 self.interrupt.executing = false;
             }
-            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+            self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, hub, apu);
         }
 
         Some(())
@@ -785,25 +775,25 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         self.cycles = self.cycles.wrapping_add(1);
-        self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, controller, apu);
+        self.fetch_fast_path_next_opcode_without_cycle_sample(ppu, cartridge, hub, apu);
     }
 
     fn fetch_fast_path_next_opcode_without_cycle_sample(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         let next_opcode = self.memory.read_next(
             &mut self.register,
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             &mut self.interrupt,
         );
@@ -1086,18 +1076,18 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> bool {
         let mut cartridge = mapper_cartridge_bus(cartridge);
-        self.process_dma_cycle_bus(ppu, &mut cartridge, controller, apu)
+        self.process_dma_cycle_bus(ppu, &mut cartridge, hub, apu)
     }
 
     fn process_dma_cycle_bus(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> bool {
         let oam_active = self.oam_dma.as_ref().unwrap().has_transaction();
@@ -1109,7 +1099,7 @@ impl Core {
                 dmc_dma.delay -= 1;
                 self.dmc_dma = Some(dmc_dma);
                 if oam_active {
-                    self.advance_oam_dma(ppu, cartridge, controller, apu);
+                    self.advance_oam_dma(ppu, cartridge, hub, apu);
                     return true;
                 }
                 return false;
@@ -1126,9 +1116,9 @@ impl Core {
                         dmc_dma.attempted_halt = false;
                         self.dmc_dma = Some(dmc_dma);
                         if oam_active {
-                            self.advance_oam_dma(ppu, cartridge, controller, apu);
+                            self.advance_oam_dma(ppu, cartridge, hub, apu);
                         } else {
-                            read_dummy_current(self, ppu, cartridge, controller, apu);
+                            read_dummy_current(self, ppu, cartridge, hub, apu);
                         }
                         return true;
                     }
@@ -1139,7 +1129,7 @@ impl Core {
 
                     self.dmc_dma = Some(dmc_dma);
                     if oam_active {
-                        self.advance_oam_dma(ppu, cartridge, controller, apu);
+                        self.advance_oam_dma(ppu, cartridge, hub, apu);
                         return true;
                     }
                     return false;
@@ -1152,9 +1142,9 @@ impl Core {
                     };
                     self.dmc_dma = Some(dmc_dma);
                     if oam_active {
-                        self.advance_oam_dma(ppu, cartridge, controller, apu);
+                        self.advance_oam_dma(ppu, cartridge, hub, apu);
                     } else {
-                        read_dummy_current(self, ppu, cartridge, controller, apu);
+                        read_dummy_current(self, ppu, cartridge, hub, apu);
                     }
                     return true;
                 }
@@ -1162,22 +1152,17 @@ impl Core {
                     dmc_dma.phase = DmcDmaPhase::Read;
                     self.dmc_dma = Some(dmc_dma);
                     if oam_active {
-                        self.advance_oam_dma(ppu, cartridge, controller, apu);
+                        self.advance_oam_dma(ppu, cartridge, hub, apu);
                     } else {
-                        read_dummy_current(self, ppu, cartridge, controller, apu);
+                        read_dummy_current(self, ppu, cartridge, hub, apu);
                     }
                     return true;
                 }
                 DmcDmaPhase::Read => {
                     if let Some(addr) = apu.dmc_fill_address() {
-                        let value = self.memory.read(
-                            addr,
-                            ppu,
-                            cartridge,
-                            controller,
-                            apu,
-                            &mut self.interrupt,
-                        );
+                        let value =
+                            self.memory
+                                .read(addr, ppu, cartridge, hub, apu, &mut self.interrupt);
                         apu.dmc_fill(value, &mut self.interrupt);
                     }
                     self.dmc_dma = None;
@@ -1187,7 +1172,7 @@ impl Core {
         }
 
         if oam_active {
-            self.advance_oam_dma(ppu, cartridge, controller, apu);
+            self.advance_oam_dma(ppu, cartridge, hub, apu);
             return true;
         }
 
@@ -1198,14 +1183,14 @@ impl Core {
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) {
         let mut oam_dma = self.oam_dma.take();
         oam_dma
             .as_mut()
             .unwrap()
-            .next(self, ppu, cartridge, controller, apu);
+            .next(self, ppu, cartridge, hub, apu);
         self.oam_dma = oam_dma;
     }
 
@@ -1331,12 +1316,13 @@ impl<'de> serde::Deserialize<'de> for Core {
 
 #[cfg(test)]
 mod tests {
+    use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
     use strum::IntoEnumIterator;
 
     use super::{
         CPU_STEPFUNCS, Core, CpuStatesEnum, CpuStepStateFunc, DmcDmaKind, DmcDmaPhase, DmcDmaState,
     };
-    use crate::{Apu, OpenBusReadResult, Ppu, controller::Controller};
+    use crate::{Apu, Ppu};
 
     macro_rules! cpu_stepfunc_pair_array {
         ($(($state:expr, $func:expr)),+ $(,)?) => {
@@ -1356,32 +1342,35 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct TestController;
 
     impl Controller for TestController {
-        fn read(&mut self, _address: usize) -> OpenBusReadResult {
+        fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
 
-        fn write(&mut self, _value: u8) {}
+        fn write(&mut self, _port: &dyn Port, _value: u8) {}
+    }
+
+    impl ControllerHub for TestController {
+        fn read_port(&mut self, _port: &dyn Port) -> OpenBusReadResult {
+            OpenBusReadResult::new(0, 0)
+        }
+        fn write_strobe(&mut self, _value: u8) {}
+        fn sync_input(&mut self, _state: &[u8]) {}
     }
 
     fn dmc_dma_stall_cycles(cpu: &mut Core) -> usize {
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = TestController;
+        let mut hub = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
         let mut stalled_cycles = 0;
 
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle_for_test(
-                &mut ppu,
-                cartridge.as_mut(),
-                &mut controller,
-                &mut apu,
-            ) {
+            if cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu) {
                 stalled_cycles += 1;
             }
         }
@@ -1427,7 +1416,7 @@ mod tests {
         cpu.cycles = 0;
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = TestController;
+        let mut hub = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         apu.write_register(0x4010, 0x00, cpu.interrupt_mut());
@@ -1443,7 +1432,7 @@ mod tests {
 
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut controller, &mut apu);
+            cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu);
         }
 
         assert_eq!(
@@ -1466,17 +1455,12 @@ mod tests {
 
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = TestController;
+        let mut hub = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         set_write_cycle(&mut cpu);
         cpu.cycles += 1;
-        assert!(!cpu.process_dma_cycle_for_test(
-            &mut ppu,
-            cartridge.as_mut(),
-            &mut controller,
-            &mut apu
-        ));
+        assert!(!cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu));
 
         cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
         cpu.internal_stat.step = 1;
@@ -1484,12 +1468,7 @@ mod tests {
         let mut stalled = 0;
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle_for_test(
-                &mut ppu,
-                cartridge.as_mut(),
-                &mut controller,
-                &mut apu,
-            ) {
+            if cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu) {
                 stalled += 1;
             }
         }
@@ -1511,17 +1490,12 @@ mod tests {
 
         let mut ppu = Ppu::new();
         let mut cartridge = super::super::nrom_test_cartridge();
-        let mut controller = TestController;
+        let mut hub = TestController;
         let mut apu = Apu::new(cpu.interrupt_mut());
 
         set_write_cycle(&mut cpu);
         cpu.cycles += 1;
-        assert!(!cpu.process_dma_cycle_for_test(
-            &mut ppu,
-            cartridge.as_mut(),
-            &mut controller,
-            &mut apu
-        ));
+        assert!(!cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu));
 
         cpu.set_cpu_state(CpuStatesEnum::FetchOpCode);
         cpu.internal_stat.step = 1;
@@ -1529,12 +1503,7 @@ mod tests {
         let mut stalled = 0;
         while cpu.dmc_dma.is_some() {
             cpu.cycles += 1;
-            if cpu.process_dma_cycle_for_test(
-                &mut ppu,
-                cartridge.as_mut(),
-                &mut controller,
-                &mut apu,
-            ) {
+            if cpu.process_dma_cycle_for_test(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu) {
                 stalled += 1;
             }
         }
@@ -1554,13 +1523,18 @@ pub(crate) trait CpuStepState {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum;
 }
 
-type CpuStepStateFunc =
-    fn(&mut Core, &mut Ppu, &mut dyn Cartridge, &mut dyn Controller, &mut Apu) -> CpuStepStateEnum;
+type CpuStepStateFunc = fn(
+    &mut Core,
+    &mut Ppu,
+    &mut dyn Cartridge,
+    &mut dyn ControllerHub,
+    &mut Apu,
+) -> CpuStepStateEnum;
 
 struct FetchOpCode;
 
@@ -1569,7 +1543,7 @@ impl CpuStepState for FetchOpCode {
         core: &mut Core,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> CpuStepStateEnum {
         if core.internal_stat.step == 1 {
@@ -1577,7 +1551,7 @@ impl CpuStepState for FetchOpCode {
                 &mut core.register,
                 ppu,
                 cartridge,
-                controller,
+                hub,
                 apu,
                 &mut core.interrupt,
             ));
@@ -1593,7 +1567,7 @@ fn push(
     core: &mut Core,
     ppu: &mut Ppu,
     cartridge: &mut dyn Cartridge,
-    controller: &mut dyn Controller,
+    hub: &mut dyn ControllerHub,
     apu: &mut Apu,
     value: u8,
 ) {
@@ -1604,7 +1578,7 @@ fn push(
         value,
         ppu,
         cartridge,
-        controller,
+        hub,
         apu,
         &mut core.interrupt,
     );
@@ -1614,7 +1588,7 @@ fn pull(
     core: &mut Core,
     ppu: &mut Ppu,
     cartridge: &mut dyn Cartridge,
-    controller: &mut dyn Controller,
+    hub: &mut dyn ControllerHub,
     apu: &mut Apu,
 ) -> u8 {
     let sp = core.register.get_sp().wrapping_add(1);
@@ -1623,7 +1597,7 @@ fn pull(
         0x100 | usize::from(sp),
         ppu,
         cartridge,
-        controller,
+        hub,
         apu,
         &mut core.interrupt,
     )
@@ -1633,11 +1607,11 @@ fn read_dummy_current(
     core: &mut Core,
     ppu: &mut Ppu,
     cartridge: &mut dyn Cartridge,
-    controller: &mut dyn Controller,
+    hub: &mut dyn ControllerHub,
     apu: &mut Apu,
 ) {
     let pc = usize::from(core.register.get_pc());
     let _ = core
         .memory
-        .read(pc, ppu, cartridge, controller, apu, &mut core.interrupt);
+        .read(pc, ppu, cartridge, hub, apu, &mut core.interrupt);
 }

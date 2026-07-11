@@ -114,7 +114,6 @@ time = { version = "=0.3.53" }
 iced_tiny_skia = { version = "=0.14.0" }
 iced_winit = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
-lazy_static = { version = "=1.5.0" }
 log = { version = "=0.4.33", default-features = false }
 muda = { version = "=0.19.3", default-features = false, features = ["gtk"] }
 nerust_core_traits = { path = "traits/core" }

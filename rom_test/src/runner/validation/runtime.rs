@@ -3,21 +3,18 @@ mod controller;
 mod execution;
 mod inspection;
 
-use std::sync::Arc;
-
-use nerust_nes_controller::nes_input_cell::{NesInputCell, SharedNesInputCell};
-use nerust_nes_core::{Core, input_types::Buttons};
-use nerust_nes_device::nes_pad::NesPadDevice;
+use nerust_input_traits::ControllerCollection;
+use nerust_nes_core::Core;
+use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_render_base::{FrameBuffer, PixelFormat};
 
-use crate::media::HashingMixer;
+use crate::{events::Buttons, media::HashingMixer};
 
 pub(super) struct ValidationRuntime {
     screen_buffer: FrameBuffer,
     core: Core,
+    controller: ControllerCollection,
     mixer: HashingMixer,
-    controller: NesPadDevice<SharedNesInputCell>,
-    cell: Arc<NesInputCell>,
     frame_counter: u64,
     pad1: Buttons,
     pad2: Buttons,

@@ -16,25 +16,30 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
-use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::{
+    audio::AudioBackendRegistry,
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
+    },
+};
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::{
-    descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
-    factory::CoreFactory,
-    settings::{
-        bindings::{
-            conflicting_keys,
-            descriptors::{keyboard_binding_sections, shortcut_descriptors},
-            keys::keyboard_key_label,
-        },
-        editor::{CaptureTarget, apply_capture_target, current_binding_label},
-        i18n::{UiText, text as ui_text},
+use nerust_gui_shell::settings::{
+    bindings::{
+        conflicting_keys,
+        descriptors::{keyboard_binding_sections, shortcut_descriptors},
+        keys::keyboard_key_label,
     },
+    editor::{CaptureTarget, apply_capture_target, current_binding_label},
+    factory::{apply_settings_choice, resolve_label, settings_view},
+    i18n::{UiText, text as ui_text},
 };
-use nerust_input_traits::InputTopologyDescriptor;
+use std::rc::Rc;
+
+use nerust_input_traits::{ControllerProfile, InputAssignments, InputTopologyDescriptor};
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -89,6 +94,10 @@ pub(crate) enum Message {
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
+    SetControllerSlot {
+        slot: String,
+        controller_id: Option<String>,
+    },
     Submit,
     Cancel,
 }
@@ -99,6 +108,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
@@ -128,6 +138,7 @@ impl Program for SettingsAppProgram {
             self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
+            self.pending_assignments.clone(),
             self.capture_target.clone(),
         );
         (state, Task::none())
@@ -157,10 +168,14 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     factory: Arc<dyn CoreFactory>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
+    controller_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+    /// Snapshot of initial assignments for change detection at Submit time.
+    initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
     input_section: InputPageSection,
     storage_directory_input: String,
@@ -180,10 +195,36 @@ impl SettingsAppState {
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
+        let sid = factory.system_id().to_string();
+        let default_assignments = factory.input_system_factory().default_assignments();
+        let controller_assignments = snapshot
+            .app_state
+            .controller_assignments
+            .get(&sid)
+            .map(|pairs| {
+                let profiles = factory.input_system_factory().controllers();
+                pairs
+                    .iter()
+                    .map(|(slot_id, ctrl_opt)| {
+                        let profile = ctrl_opt
+                            .as_ref()
+                            .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                            .cloned();
+                        (slot_id.clone(), profile)
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| default_assignments.slots);
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
+            pending_assignments: Rc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
+            controller_assignments: controller_assignments.clone(),
+            initial_assignments_pairs: controller_assignments
+                .iter()
+                .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                .collect(),
             factory,
             audio_registry,
             draft: snapshot.clone(),
@@ -200,11 +241,13 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+        pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
         let mut state = Self::new(snapshot, factory, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
+        state.pending_assignments = pending_assignments;
         state.capture_target = capture_target;
         state
     }
@@ -217,6 +260,9 @@ impl SettingsAppState {
         let mut errors = Vec::new();
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
+        }
+        if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
+            errors.push("At least one controller must be assigned".to_string());
         }
         for (key, labels) in conflicting_keys(
             &self.draft.shared,
@@ -288,13 +334,65 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let _ = nerust_gui_shell::settings::apply_settings_choice(
+                let _ = apply_settings_choice(
                     &*self.factory,
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
                     &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         choice.value.into(),
                     ),
+                );
+            }
+            Message::SetControllerSlot {
+                slot,
+                controller_id,
+            } => {
+                let profile = controller_id.as_ref().and_then(|id| {
+                    self.factory
+                        .input_system_factory()
+                        .controllers()
+                        .iter()
+                        .find(|p| p.id() == id)
+                        .cloned()
+                });
+                // For multi-port controllers (port_set with >1 port),
+                // clear other occupied slots in the same set.
+                if let Some(ref p) = profile {
+                    for ps in p.port_sets() {
+                        if ps.ports.len() <= 1 {
+                            continue;
+                        }
+                        if !ps.ports.contains(&slot.as_str()) {
+                            continue;
+                        }
+                        for &port in ps.ports {
+                            if port != slot
+                                && let Some(other) = self
+                                    .controller_assignments
+                                    .iter_mut()
+                                    .find(|(s, _)| *s == port)
+                            {
+                                other.1 = None;
+                            }
+                        }
+                    }
+                }
+                if let Some(entry) = self
+                    .controller_assignments
+                    .iter_mut()
+                    .find(|(s, _)| *s == slot)
+                {
+                    entry.1 = profile.clone();
+                }
+                // Keep unassigned slots empty (allow disconnected ports).
+                // Sync to draft.app_state for persistence
+                let sid = self.factory.system_id().to_string();
+                self.draft.app_state.controller_assignments.insert(
+                    sid,
+                    self.controller_assignments
+                        .iter()
+                        .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                        .collect(),
                 );
             }
             Message::StartCapture(target) => {
@@ -315,6 +413,17 @@ impl SettingsAppState {
                     return Task::none();
                 }
                 *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
+                // Only push assignments if they actually changed
+                let new_pairs: Vec<(String, Option<String>)> = self
+                    .controller_assignments
+                    .iter()
+                    .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                    .collect();
+                if new_pairs != self.initial_assignments_pairs {
+                    *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
+                        slots: self.controller_assignments.clone(),
+                    });
+                }
                 self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
@@ -438,6 +547,78 @@ impl SettingsAppState {
         let mut content = column![];
         if let Some(conflict) = self.input_conflict() {
             content = content.push(text(conflict));
+        }
+
+        // Show controller assignment pickers per slot.
+        // Multi-port controllers (e.g. FamicomSet: {P1,P2}) mark consumed slots as occupied.
+        let input_factory = self.factory.input_system_factory();
+        let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+        if !controllers.is_empty() {
+            // Build a set of occupied slot IDs
+            let mut occupied = std::collections::HashSet::new();
+            for (s, c_opt) in &self.controller_assignments {
+                let profile = match c_opt {
+                    Some(p) => p.as_ref(),
+                    None => continue,
+                };
+                for ps in profile.port_sets() {
+                    if ps.ports.contains(&s.as_str()) {
+                        for &port in ps.ports {
+                            occupied.insert(port);
+                        }
+                    }
+                }
+            }
+            for slot in slots {
+                // Build slot choices including a "None" option.
+                let none = Choice {
+                    value: String::new(),
+                    label: ui_text(self.draft.shared.general.language, UiText::None).to_string(),
+                };
+                let mut slot_choices: Vec<Choice<String>> = vec![none];
+                slot_choices.extend(
+                    controllers
+                        .iter()
+                        .filter(|c| {
+                            c.port_sets()
+                                .iter()
+                                .any(|ps| ps.ports.first() == Some(&slot.id))
+                        })
+                        .map(|c| Choice {
+                            value: c.id().to_string(),
+                            label: c.label().to_string(),
+                        }),
+                );
+                if occupied.contains(slot.id)
+                    && !self
+                        .controller_assignments
+                        .iter()
+                        .any(|(s, c)| s == slot.id && c.is_some())
+                {
+                    // Occupied by another slot's multi-port controller
+                    content = content.push(text(format!("{} — (occupied)", slot.label)));
+                    continue;
+                }
+                let current = self
+                    .controller_assignments
+                    .iter()
+                    .find(|(s, _)| s == slot.id)
+                    .and_then(|(_, c)| c.as_ref())
+                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned())
+                    .or_else(|| slot_choices.first().cloned()); // default to "None"
+                let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
+                    let controller_id = if choice.value.is_empty() {
+                        None
+                    } else {
+                        Some(choice.value)
+                    };
+                    Message::SetControllerSlot {
+                        slot: slot.id.to_string(),
+                        controller_id,
+                    }
+                });
+                content = content.push(text(slot.label)).push(pick);
+            }
         }
 
         let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
@@ -585,7 +766,7 @@ impl SettingsAppState {
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
         let system_id = self.factory.system_id();
-        let view = nerust_gui_shell::settings::settings_view(&self.draft, &system_id);
+        let view = settings_view(&self.draft, &system_id);
         let model = self.factory.settings_page(&view);
         let mut content = column![];
         for field in model.fields.iter() {
@@ -675,7 +856,7 @@ fn system_choice_row(
         .iter()
         .map(|option| Choice {
             value: option.id.as_str().to_string(),
-            label: nerust_gui_shell::settings::resolve_label(option.label_id, language),
+            label: resolve_label(option.label_id, language),
         })
         .collect::<Vec<_>>();
     let selected = choices
@@ -689,11 +870,7 @@ fn system_choice_row(
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(nerust_gui_shell::settings::resolve_label(
-            field.label_id,
-            language
-        ))
-        .width(Length::Fixed(220.0)),
+        text(resolve_label(field.label_id, language)).width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })
@@ -796,7 +973,8 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 }
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
-    state.factory.system_descriptor().input_topology
+    use nerust_gui_shell::session::input::build_topology;
+    build_topology(&state.controller_assignments)
 }
 
 pub(crate) fn keyboard_key_from_physical(

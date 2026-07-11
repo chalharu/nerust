@@ -7,8 +7,6 @@ pub mod i18n;
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};
 
-pub use factory::{apply_settings_choice, resolve_label, settings_view};
-
 pub fn build_speaker(
     registry: &AudioBackendRegistry,
     settings: &HostBackendLocalSettings,

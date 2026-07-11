@@ -1,5 +1,7 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use super::Mmc5;
-use crate::{OpenBusReadResult, mapper::CartridgeDataDao, mapper_state::MapperStateDao};
+use crate::{mapper::CartridgeDataDao, mapper_state::MapperStateDao};
 
 #[derive(Clone, Copy)]
 pub(super) enum ProgramTarget {

@@ -1,6 +1,5 @@
-use crate::OpenBusReadResult;
+use nerust_input_traits::SimplePort;
 
-pub trait Controller {
-    fn read(&mut self, address: usize) -> OpenBusReadResult;
-    fn write(&mut self, value: u8);
-}
+/// NES port constants indexed by CPU address ($4016 → index 0, $4017 → index 1).
+pub const NES_PORTS: [SimplePort; 2] =
+    [SimplePort::new(0, "player1"), SimplePort::new(1, "player2")];

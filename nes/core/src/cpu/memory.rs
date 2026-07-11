@@ -1,7 +1,7 @@
 use super::CpuCartridgeBus as Cartridge;
-use crate::{
-    Apu, Controller, OpenBus, OpenBusReadResult, Ppu, cpu::Register, interrupt::Interrupt,
-};
+use nerust_input_traits::{ControllerHub, OpenBusReadResult};
+
+use crate::{Apu, OpenBus, Ppu, controller::NES_PORTS, cpu::Register, interrupt::Interrupt};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct Memory {
@@ -23,13 +23,13 @@ impl Memory {
         register: &mut Register,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         interrupt: &mut Interrupt,
     ) -> u8 {
         let pc = register.get_pc();
         register.set_pc(pc.wrapping_add(1));
-        self.read(pc as usize, ppu, cartridge, controller, apu, interrupt)
+        self.read(pc as usize, ppu, cartridge, hub, apu, interrupt)
     }
 
     pub(crate) fn read(
@@ -37,7 +37,7 @@ impl Memory {
         address: usize,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         interrupt: &mut Interrupt,
     ) -> u8 {
@@ -48,7 +48,7 @@ impl Memory {
                 ppu.read_register(address, &mut ppu_cartridge, interrupt)
             }
             0x4015 => apu.read_register(address, interrupt),
-            0x4016 | 0x4017 => controller.read(address & 1),
+            0x4016 | 0x4017 => hub.read_port(&NES_PORTS[address & 1]),
             0x4000..=0x4014 | 0x4018..=0x401F => OpenBusReadResult::new(0, 0), // TODO: I/O registers
             0x4020..=0x5FFF => cartridge.read(address),
             0x6000..=0xFFFF => cartridge.read(address),
@@ -79,7 +79,7 @@ impl Memory {
         new_address: usize,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         interrupt: &mut Interrupt,
     ) {
@@ -87,7 +87,7 @@ impl Memory {
             (address & 0xFF00) | (new_address & 0xFF),
             ppu,
             cartridge,
-            controller,
+            hub,
             apu,
             interrupt,
         );
@@ -103,7 +103,7 @@ impl Memory {
         value: u8,
         ppu: &mut Ppu,
         cartridge: &mut dyn Cartridge,
-        controller: &mut dyn Controller,
+        hub: &mut dyn ControllerHub,
         apu: &mut Apu,
         interrupt: &mut Interrupt,
     ) {
@@ -119,7 +119,7 @@ impl Memory {
                 cartridge.notify_oam_dma(interrupt);
             }
             0x4015 => apu.write_register(address, value, interrupt),
-            0x4016 => controller.write(value),
+            0x4016 => hub.write_strobe(value),
             0x4017 => apu.write_register(address, value, interrupt),
             0x4018..=0x401F => (), // TODO: I/O registers
             0x4020..=0x5FFF => cartridge.write(address, value, interrupt),

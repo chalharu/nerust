@@ -1,14 +1,12 @@
 pub mod audio;
 pub mod factory;
 pub mod identity;
-pub mod input;
 pub mod save_state;
 pub mod touch;
 
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
 
-pub use identity::SystemId;
-pub use save_state::{SaveStateHeader, load_state_from_header, save_state_with_header};
+use nerust_render_base::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -45,8 +43,6 @@ pub struct CoreCapabilities {
     pub output_formats: Vec<PixelFormat>,
     pub video_signal: VideoSignalKind,
 }
-
-pub use nerust_render_base::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
 // Region
