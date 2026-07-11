@@ -238,7 +238,7 @@ pub(crate) fn present_preferences_dialog(
             let lbl = gtk::Label::new(Some(slot.label));
             row.append(&lbl);
             let combo = gtk::ComboBoxText::new();
-            combo.append_text(""); // "None" option
+            combo.append_text(text(language, UiText::None).as_str()); // "None" option
             for c in controllers.iter().filter(|c| {
                 c.port_sets()
                     .iter()
