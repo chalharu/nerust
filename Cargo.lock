@@ -2773,6 +2773,7 @@ name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
+ "nerust_render_base",
  "nerust_timer",
  "thiserror 2.0.18",
 ]

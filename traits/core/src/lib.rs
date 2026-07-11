@@ -6,6 +6,8 @@ pub mod touch;
 
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
 
+use nerust_render_base::{FrameBuffer, PixelFormat};
+
 // ---------------------------------------------------------------------------
 // CoreError
 // ---------------------------------------------------------------------------
@@ -41,8 +43,6 @@ pub struct CoreCapabilities {
     pub output_formats: Vec<PixelFormat>,
     pub video_signal: VideoSignalKind,
 }
-
-pub use nerust_render_base::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
 // Region
