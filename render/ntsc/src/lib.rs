@@ -1,5 +1,10 @@
+#![no_std]
+extern crate alloc;
+
 mod init;
 pub mod setup;
+
+use alloc::{boxed::Box, vec::Vec};
 
 use self::{
     init::Init,

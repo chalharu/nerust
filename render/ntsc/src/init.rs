@@ -1,4 +1,7 @@
-use std::f32;
+use core::f32;
+
+use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::{
     ARTIFACTS_MAX, ARTIFACTS_MID, BURST_COUNT, DEFAULT_DECODER, FRINGING_MAX, FRINGING_MID,
