@@ -17,7 +17,6 @@ use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{CoreFactory, load::MediaObject},
-    identity::SystemId,
     touch::{TouchOverlayAction, TouchPoint},
 };
 use nerust_gui_runtime::{
@@ -35,7 +34,10 @@ use nerust_gui_shell::{
     },
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
-use nerust_render_base::{renderer::GpuFactory, SurfaceSize};
+use nerust_render_base::{
+    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
+    SurfaceSize,
+};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,

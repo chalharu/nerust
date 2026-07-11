@@ -10,7 +10,7 @@ use std::sync::{
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
-use nerust_core_traits::SystemId;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
     nes::{NesSettings, NesVideoFilter},
