@@ -62,7 +62,7 @@ impl Controller for StandardPad {
         self.strobe = new_strobe;
     }
     fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
-        let attachment = AttachmentId::new(port.id());
+        let attachment = port.as_attachment_id();
         let base = port.index() * 8;
         vec![
             (attachment, DigitalControlId::new("nes.control.a"), base),
