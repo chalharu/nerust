@@ -1,8 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDescriptor;
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SystemSettingsFieldId(pub Cow<'static, str>);
 

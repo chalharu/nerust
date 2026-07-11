@@ -205,9 +205,6 @@ impl CoreFactory for MockFactory {
     fn probe_media(&self, _: &MediaObject) -> bool {
         true
     }
-    fn system_descriptor(&self) -> nerust_core_traits::factory::descriptor::SystemDescriptor {
-        nerust_core_traits::factory::descriptor::SystemDescriptor
-    }
     fn settings_page(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,

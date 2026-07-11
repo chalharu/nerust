@@ -5,7 +5,7 @@ pub mod settings;
 
 use crate::audio::AudioBackend;
 use crate::factory::descriptor::{
-    SystemDescriptor, SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
+    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
 };
 use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use crate::factory::settings::FactorySettingsView;
@@ -47,8 +47,6 @@ pub trait CoreFactory {
     fn display_name(&self) -> &'static str;
 
     fn probe_media(&self, media: &MediaObject) -> bool;
-
-    fn system_descriptor(&self) -> SystemDescriptor;
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel;
 
