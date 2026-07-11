@@ -322,6 +322,10 @@ impl SessionHandle {
         &*self.factory
     }
 
+    pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
+        self.current_assignments.to_string_pairs()
+    }
+
     /// Negotiation #1: expose available slots and controllers for settings UI.
     pub fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
         let input = self.factory.input_system_factory();
