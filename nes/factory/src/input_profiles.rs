@@ -41,7 +41,8 @@ impl InputSystemFactory for crate::NesFactory {
         &self,
         controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
-        use nerust_input_traits::{InputStateBuffer, NES_PORTS};
+        use nerust_input_traits::InputStateBuffer;
+        use nerust_nes_core::controller::NES_PORTS;
         use std::sync::{Arc, Mutex};
 
         let mut field_map = std::collections::HashMap::new();

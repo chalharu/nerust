@@ -1,7 +1,7 @@
 use super::CpuCartridgeBus as Cartridge;
-use nerust_input_traits::{ControllerHub, NES_PORTS, OpenBusReadResult};
+use nerust_input_traits::{ControllerHub, OpenBusReadResult};
 
-use crate::{Apu, OpenBus, Ppu, cpu::Register, interrupt::Interrupt};
+use crate::{Apu, OpenBus, Ppu, controller::NES_PORTS, cpu::Register, interrupt::Interrupt};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct Memory {
