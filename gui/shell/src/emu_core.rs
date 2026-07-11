@@ -12,7 +12,7 @@ use nerust_core_traits::{
     CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
-use nerust_input_traits::GuiInput;
+use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
 use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
 use crate::session::persistence::{CorePersistence, CorePersistenceError};
@@ -56,7 +56,7 @@ impl EmuCore {
     ) -> (
         Self,
         GuiInput,
-        std::collections::HashMap<(&'static str, &'static str), usize>,
+        std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
     ) {
         let field_map = parts.field_map;
         use std::sync::Mutex;

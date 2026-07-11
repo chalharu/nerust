@@ -1,6 +1,6 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, OpenBusReadResult, Port,
-    PortSet,
+    AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
+    DigitalControlId, OpenBusReadResult, Port, PortSet,
 };
 
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
@@ -58,18 +58,47 @@ impl Controller for FamicomPadP1 {
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
+        let attachment = AttachmentId::new(port.id());
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base),
-            (port.id(), "b", base + 1),
-            (port.id(), "select", base + 2),
-            (port.id(), "start", base + 3),
-            (port.id(), "up", base + 4),
-            (port.id(), "down", base + 5),
-            (port.id(), "left", base + 6),
-            (port.id(), "right", base + 7),
-            ("player2", "microphone", 16),
+            (attachment, DigitalControlId::new("nes.control.a"), base),
+            (attachment, DigitalControlId::new("nes.control.b"), base + 1),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.select"),
+                base + 2,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.start"),
+                base + 3,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.up"),
+                base + 4,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.down"),
+                base + 5,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.left"),
+                base + 6,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.right"),
+                base + 7,
+            ),
+            (
+                AttachmentId::new("nes.attachment.player2"),
+                DigitalControlId::new("famicom.microphone"),
+                16,
+            ),
         ]
     }
 }
@@ -125,15 +154,32 @@ impl Controller for FamicomPadP2 {
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
+        let attachment = AttachmentId::new(port.id());
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base),
-            (port.id(), "b", base + 1),
-            (port.id(), "up", base + 4),
-            (port.id(), "down", base + 5),
-            (port.id(), "left", base + 6),
-            (port.id(), "right", base + 7),
+            (attachment, DigitalControlId::new("nes.control.a"), base),
+            (attachment, DigitalControlId::new("nes.control.b"), base + 1),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.up"),
+                base + 4,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.down"),
+                base + 5,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.left"),
+                base + 6,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.right"),
+                base + 7,
+            ),
         ]
     }
 }
