@@ -5,7 +5,7 @@ use gtk::{
     glib,
     prelude::{
         BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, ComboBoxExtManual,
-        DialogExt as _, EditableExt as _, GtkWindowExt as _, WidgetExt as _,
+        DialogExt as _, EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
     },
 };
 use nerust_core_traits::{
