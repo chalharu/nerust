@@ -56,6 +56,18 @@ impl Controller for StandardPad {
         }
         self.strobe = new_strobe;
     }
+    fn field_map(&self, port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+        vec![
+            (port, "a", 0),
+            (port, "b", 1),
+            (port, "select", 2),
+            (port, "start", 3),
+            (port, "up", 4),
+            (port, "down", 5),
+            (port, "left", 6),
+            (port, "right", 7),
+        ]
+    }
 }
 
 #[derive(Debug)]

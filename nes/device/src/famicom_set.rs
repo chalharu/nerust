@@ -56,6 +56,19 @@ impl Controller for FamicomPadP1 {
         }
         self.strobe = new_strobe;
     }
+    fn field_map(&self, _port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+        vec![
+            (_port, "a", 0),
+            (_port, "b", 1),
+            (_port, "select", 2),
+            (_port, "start", 3),
+            (_port, "up", 4),
+            (_port, "down", 5),
+            (_port, "left", 6),
+            (_port, "right", 7),
+            ("player2", "microphone", 16),
+        ]
+    }
 }
 
 /// Famicom controller on port 2: 6 buttons (Select/Start always 0).
@@ -108,6 +121,16 @@ impl Controller for FamicomPadP2 {
             self.result = self.cached;
         }
         self.strobe = new_strobe;
+    }
+    fn field_map(&self, port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+        vec![
+            (port, "a", 0),
+            (port, "b", 1),
+            (port, "up", 4),
+            (port, "down", 5),
+            (port, "left", 6),
+            (port, "right", 7),
+        ]
     }
 }
 

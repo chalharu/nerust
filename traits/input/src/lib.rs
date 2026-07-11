@@ -203,6 +203,11 @@ pub trait Controller: std::fmt::Debug + Send {
     fn read(&mut self, port: usize) -> OpenBusReadResult;
     fn write(&mut self, port: usize, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
+    /// Return field map entries (slot_id, control_id, field_index) for this
+    /// controller at the given slot. Default returns empty (no inputs).
+    fn field_map(&self, _port: &'static str) -> Vec<(&'static str, &'static str, usize)> {
+        Vec::new()
+    }
 }
 
 /// Multi-port controller hub routing reads/writes to per-port controllers.
@@ -212,26 +217,22 @@ pub trait ControllerHub: std::fmt::Debug + Send {
     fn sync_input(&mut self, state: &[u8]);
 }
 
-/// A collection of per-port controllers with their associated profiles.
+/// A collection of per-port controllers.
 pub struct ControllerCollection {
-    devices: Vec<Box<dyn Controller + Send>>,
-    pub profiles: Vec<Option<Rc<dyn ControllerProfile>>>,
+    pub devices: Vec<Box<dyn Controller + Send>>,
 }
 
 impl std::fmt::Debug for ControllerCollection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ControllerCollection")
-            .field("profiles", &self.profiles)
+            .field("device_count", &self.devices.len())
             .finish_non_exhaustive()
     }
 }
 
 impl ControllerCollection {
-    pub fn new(
-        devices: Vec<Box<dyn Controller + Send>>,
-        profiles: Vec<Option<Rc<dyn ControllerProfile>>>,
-    ) -> Self {
-        Self { devices, profiles }
+    pub fn new(devices: Vec<Box<dyn Controller + Send>>) -> Self {
+        Self { devices }
     }
 
     pub fn device_count(&self) -> usize {
