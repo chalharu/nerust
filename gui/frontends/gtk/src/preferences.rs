@@ -37,7 +37,7 @@ use nerust_gui_shell::{
     session::input::build_topology,
     settings::factory::resolve_label,
 };
-use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
+use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor, SlotInfo};
 use std::collections::HashSet;
 
 use crate::State;
@@ -53,8 +53,9 @@ struct InputRow {
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    slots: &[SlotInfo],
 ) -> InputTopologyDescriptor {
-    build_topology(assignments)
+    build_topology(assignments, slots)
 }
 
 pub(crate) fn present_preferences_dialog(
@@ -234,11 +235,12 @@ pub(crate) fn present_preferences_dialog(
         factory: &dyn CoreFactory,
         assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
         language: AppLanguage,
+        slots: &[SlotInfo],
     ) {
         while let Some(child) = key_binding_box.first_child() {
             key_binding_box.remove(&child);
         }
-        let topology = dynamic_topology(assignments);
+        let topology = dynamic_topology(assignments, slots);
         let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
         *input_rows.borrow_mut() = rows;
     }
@@ -344,7 +346,14 @@ pub(crate) fn present_preferences_dialog(
                             }
                         }
                     }
-                    rebuild_input_ui(&kb_box, &kb_rows, f.as_ref(), &current_assignments, lang);
+                    rebuild_input_ui(
+                        &kb_box,
+                        &kb_rows,
+                        f.as_ref(),
+                        &current_assignments,
+                        lang,
+                        f.input_system_factory().slots(),
+                    );
                     // Update key binding labels from current settings
                     let snapshot = d.borrow();
                     for row in kb_rows.borrow().iter() {
@@ -393,6 +402,7 @@ pub(crate) fn present_preferences_dialog(
         factory.as_ref(),
         &current_assignments,
         language,
+        input_factory.slots(),
     );
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
@@ -1155,7 +1165,11 @@ fn refresh_validation(
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(&assignments), system);
+    let conflicts = conflicting_keys(
+        &snapshot.shared,
+        &dynamic_topology(&assignments, input_factory.slots()),
+        system,
+    );
     let has_errors = storage_error.is_some()
         || !conflicts.is_empty()
         || !assignments.iter().any(|(_, c)| c.is_some());
@@ -1214,7 +1228,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     }
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
-        &dynamic_topology(&assignments),
+        &dynamic_topology(&assignments, input_factory.slots()),
         factory.system_id(),
     ) {
         errors.push(format!(
