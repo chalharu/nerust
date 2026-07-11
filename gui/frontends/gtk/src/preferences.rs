@@ -308,6 +308,7 @@ pub(crate) fn present_preferences_dialog(
                 let kb_box = key_binding_box.clone();
                 let kb_rows = input_rows.clone();
                 let lang = language;
+                let d = draft.clone();
                 combo.connect_changed(move |_| {
                     let combos = sc.borrow();
                     let input = f.input_system_factory();
@@ -382,6 +383,14 @@ pub(crate) fn present_preferences_dialog(
                         }
                     }
                     rebuild_input_ui(&kb_box, &kb_rows, f.as_ref(), &current_assignments, lang);
+                    // Update key binding labels from current settings
+                    let snapshot = d.borrow();
+                    for row in kb_rows.borrow().iter() {
+                        row.value_label.set_text(
+                            current_binding_label(&snapshot, &row.target)
+                                .unwrap_or(""),
+                        );
+                    }
                 });
             }
             slot_combos.borrow_mut().push(SlotCombo {
@@ -896,7 +905,6 @@ fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
 
 fn should_apply_response(response: gtk::ResponseType) -> bool {
     matches!(response, gtk::ResponseType::Ok)
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
