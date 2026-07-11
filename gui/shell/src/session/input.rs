@@ -90,10 +90,7 @@ pub fn build_topology(
                                 .collect(),
                         });
                     }
-                    if !ports
-                        .iter()
-                        .any(|p: &PortDescriptor| p.id.as_str() == port.as_str())
-                    {
+                    if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
                         ports.push(PortDescriptor {
                             id: PortId::new(port.as_str()),
                             label: port.as_str(),

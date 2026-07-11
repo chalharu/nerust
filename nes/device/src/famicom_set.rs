@@ -301,14 +301,4 @@ impl ControllerProfile for FamicomSetProfile {
         const G: &[&[ControlInfo]] = &[P1, P2];
         G
     }
-    fn directional_ids(&self) -> &[&[DigitalControlId; 4]] {
-        const D: &[DigitalControlId; 4] = &[
-            DigitalControlId::new("nes.control.up"),
-            DigitalControlId::new("nes.control.down"),
-            DigitalControlId::new("nes.control.left"),
-            DigitalControlId::new("nes.control.right"),
-        ];
-        const R: &[&[DigitalControlId; 4]] = &[D];
-        R
-    }
 }
