@@ -1,7 +1,7 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, ControllerProfile, Port, PortSet,
+    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, Port, PortSet,
 };
-use nerust_nes_core::{OpenBusReadResult, controller::Controller};
+use nerust_nes_core::OpenBusReadResult;
 
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
 #[derive(Debug, Clone)]

@@ -1,5 +1,7 @@
+use nerust_input_traits::ControllerHub;
+
 use super::{
-    super::{Apu, ControllerHub, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
+    super::{Apu, Core, CpuCartridgeBus, CpuStepState, CpuStepStateEnum, Ppu},
     exit_opcode,
 };
 

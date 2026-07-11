@@ -7,6 +7,8 @@ mod register;
 
 use std::ops::Shr;
 
+use nerust_input_traits::ControllerHub;
+
 use self::{
     addressing_mode::{
         AddressingModeLut, absolute::Absolute, absolute_indirect::AbsoluteIndirect,
@@ -42,7 +44,7 @@ use self::{
     register::{Register, RegisterP},
 };
 use crate::{
-    Apu, ControllerHub, Ppu,
+    Apu, Ppu,
     cart_device::Cartridge as MapperCartridge,
     cartridge_bus::{CpuCartridgeBus, CpuCartridgeBus as Cartridge, mapper_cartridge_bus},
     interrupt::{DmcDmaKind, Interrupt, IrqSource},
@@ -1314,12 +1316,13 @@ impl<'de> serde::Deserialize<'de> for Core {
 
 #[cfg(test)]
 mod tests {
+    use nerust_input_traits::{Controller, ControllerHub, Port};
     use strum::IntoEnumIterator;
 
     use super::{
         CPU_STEPFUNCS, Core, CpuStatesEnum, CpuStepStateFunc, DmcDmaKind, DmcDmaPhase, DmcDmaState,
     };
-    use crate::{Apu, OpenBusReadResult, Ppu, controller};
+    use crate::{Apu, OpenBusReadResult, Ppu};
 
     macro_rules! cpu_stepfunc_pair_array {
         ($(($state:expr, $func:expr)),+ $(,)?) => {
@@ -1342,16 +1345,16 @@ mod tests {
     #[derive(Debug, Default)]
     struct TestController;
 
-    impl controller::Controller for TestController {
-        fn read(&mut self, _port: &dyn controller::Port) -> OpenBusReadResult {
+    impl Controller for TestController {
+        fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
 
-        fn write(&mut self, _port: &dyn controller::Port, _value: u8) {}
+        fn write(&mut self, _port: &dyn Port, _value: u8) {}
     }
 
-    impl controller::ControllerHub for TestController {
-        fn read_port(&mut self, _port: &dyn controller::Port) -> OpenBusReadResult {
+    impl ControllerHub for TestController {
+        fn read_port(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
         fn write_strobe(&mut self, _value: u8) {}
