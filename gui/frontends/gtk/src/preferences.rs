@@ -278,10 +278,10 @@ pub(crate) fn present_preferences_dialog(
                     }
                     for sc_item in combos.iter() {
                         let occ = occupied.contains(sc_item.slot_id.as_str())
-                            && sc_item.combo.active_text().map_or(true, |t| {
-                                t.is_empty()
-                                    || t == text(lang, UiText::None)
-                        });
+                            && sc_item
+                                .combo
+                                .active_text()
+                                .is_none_or(|t| t.is_empty() || t == text(lang, UiText::None));
                         sc_item.combo.set_sensitive(!occ);
                     }
                     // Rebuild key binding UI
@@ -338,9 +338,7 @@ pub(crate) fn present_preferences_dialog(
                             .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
                     }
                     // Disable OK button if no controller is assigned
-                    ok.set_sensitive(
-                        current_assignments.iter().any(|(_, c)| c.is_some()),
-                    );
+                    ok.set_sensitive(current_assignments.iter().any(|(_, c)| c.is_some()));
                 });
             }
             slot_combos.borrow_mut().push(SlotCombo {
