@@ -93,7 +93,7 @@ impl Init {
             // sinc with rolloff (dsf)
             let rolloff: f32 = 1.0 + setup.sharpness() * 0.032;
             let maxh = 32.0;
-            let pow_a_n = rolloff.powf(maxh);
+            let pow_a_n = libm::powf(rolloff, maxh);
 
             // quadratic mapping to reduce negative (blurring) range
             let to_angle = setup.resolution() + 1.0;
@@ -140,14 +140,14 @@ impl Init {
                     * cutoff_factor
                     * (if setup.bleed() < 0.0 {
                         // keep extreme value accessible only near upper end of scale (1.0)
-                        setup.bleed().powi(4) * (-30.0 / 0.65)
+                        libm::powf(setup.bleed(), 4.0) * (-30.0 / 0.65)
                     } else {
                         setup.bleed()
                     });
 
             for i in 0..=(KERNEL_HALF * 2) {
                 kernels[KERNEL_SIZE / 2 + i - KERNEL_HALF] =
-                    ((i as f32 - KERNEL_HALF as f32).powi(2) * cutoff).exp();
+                    libm::expf(libm::powf(i as f32 - KERNEL_HALF as f32, 2.0) * cutoff);
             }
 
             // normalize even and odd phases separately

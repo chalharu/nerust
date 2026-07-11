@@ -26,17 +26,15 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_shell::{
-    session::{
-        SessionError, SessionHandle,
-        access::{FrontendSession, SettingsResult},
-        commands::{SessionCommand, SessionCommandOutcome},
-    },
+use nerust_gui_shell::session::{
+    SessionError, SessionHandle,
+    access::{FrontendSession, SettingsResult},
+    commands::{SessionCommand, SessionCommandOutcome},
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
 use nerust_render_base::{
-    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
     SurfaceSize,
+    renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
 use winit::{
     application::ApplicationHandler,
@@ -276,8 +274,10 @@ impl AndroidFrontend {
         let media = MediaObject::new(path, bytes);
         let options = self.session.default_load_options();
         let system_id = self.session.factory().system_id();
-        let view =
-            nerust_gui_shell::settings::factory::settings_view(self.session.settings_snapshot(), &system_id);
+        let view = nerust_gui_shell::settings::factory::settings_view(
+            self.session.settings_snapshot(),
+            &system_id,
+        );
         let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
@@ -345,8 +345,10 @@ impl AndroidFrontend {
         let media = MediaObject::new(Some(path), bytes);
         let options = self.session.default_load_options();
         let system_id = self.session.factory().system_id();
-        let view =
-            nerust_gui_shell::settings::factory::settings_view(self.session.settings_snapshot(), &system_id);
+        let view = nerust_gui_shell::settings::factory::settings_view(
+            self.session.settings_snapshot(),
+            &system_id,
+        );
         let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {

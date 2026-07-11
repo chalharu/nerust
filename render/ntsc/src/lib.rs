@@ -178,7 +178,7 @@ impl Color {
 impl Engine {
     fn gamma_factor(setup: &Setup) -> f32 {
         let gamma = setup.gamma() * -0.5 + 0.1333;
-        gamma.abs().powf(0.73).abs()
+        libm::powf(gamma.abs(), 0.73).abs()
     }
 
     fn merge_fields(setup: &Setup) -> bool {
