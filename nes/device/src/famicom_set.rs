@@ -58,16 +58,17 @@ impl Controller for FamicomPadP1 {
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+        let base = port.index() * 8;
         vec![
-            (_port.id(), "a", 0),
-            (_port.id(), "b", 1),
-            (_port.id(), "select", 2),
-            (_port.id(), "start", 3),
-            (_port.id(), "up", 4),
-            (_port.id(), "down", 5),
-            (_port.id(), "left", 6),
-            (_port.id(), "right", 7),
+            (port.id(), "a", base + 0),
+            (port.id(), "b", base + 1),
+            (port.id(), "select", base + 2),
+            (port.id(), "start", base + 3),
+            (port.id(), "up", base + 4),
+            (port.id(), "down", base + 5),
+            (port.id(), "left", base + 6),
+            (port.id(), "right", base + 7),
             ("player2", "microphone", 16),
         ]
     }
@@ -125,13 +126,14 @@ impl Controller for FamicomPadP2 {
         self.strobe = new_strobe;
     }
     fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+        let base = port.index() * 8;
         vec![
-            (port.id(), "a", 0),
-            (port.id(), "b", 1),
-            (port.id(), "up", 4),
-            (port.id(), "down", 5),
-            (port.id(), "left", 6),
-            (port.id(), "right", 7),
+            (port.id(), "a", base + 0),
+            (port.id(), "b", base + 1),
+            (port.id(), "up", base + 4),
+            (port.id(), "down", base + 5),
+            (port.id(), "left", base + 6),
+            (port.id(), "right", base + 7),
         ]
     }
 }
