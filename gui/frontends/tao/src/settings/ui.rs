@@ -591,7 +591,7 @@ impl SettingsAppState {
                     None => continue,
                 };
                 for ps in profile.port_sets() {
-                    if ps.ports.iter().any(|p| *p == *s) {
+                    if ps.ports.contains(s) {
                         for &port in ps.ports {
                             occupied.insert(port);
                         }
@@ -622,7 +622,7 @@ impl SettingsAppState {
                     && !self
                         .controller_assignments
                         .iter()
-                        .any(|(s, c)| s.as_str() == slot.id.as_str() && c.is_some())
+                        .any(|(s, c)| *s == slot.id && c.is_some())
                 {
                     // Occupied by another slot's multi-port controller
                     content = content.push(text(format!("{} — (occupied)", slot.label)));

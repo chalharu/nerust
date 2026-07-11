@@ -34,11 +34,10 @@ use nerust_gui_shell::{
 };
 use nerust_gui_shell::{
     session::access::{FrontendSession, SettingsResult},
+    session::input::build_topology,
     settings::factory::resolve_label,
 };
-use nerust_input_traits::{
-    AttachmentId, ControllerProfile, DigitalControlId, InputTopologyDescriptor,
-};
+use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
 use std::collections::HashSet;
 
 use crate::State;
@@ -53,9 +52,8 @@ struct InputRow {
 
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
-    assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
 ) -> InputTopologyDescriptor {
-    use nerust_gui_shell::session::input::build_topology;
     build_topology(assignments)
 }
 
@@ -222,7 +220,7 @@ pub(crate) fn present_preferences_dialog(
             default_assignments
                 .slots
                 .iter()
-                .map(|(slot_id, profile)| (resolve_slot(slot_id), profile.clone()))
+                .map(|(slot_id, profile)| (*slot_id, profile.clone()))
                 .collect()
         });
 
@@ -283,7 +281,7 @@ pub(crate) fn present_preferences_dialog(
                                 continue;
                             }
                             for ps in p.port_sets() {
-                                if ps.ports.iter().any(|p| *p == sc_item.slot_id) {
+                                if ps.ports.contains(&sc_item.slot_id) {
                                     for &port in ps.ports {
                                         occupied.insert(port);
                                     }
@@ -329,11 +327,11 @@ pub(crate) fn present_preferences_dialog(
                             if ps.ports.len() <= 1 {
                                 continue;
                             }
-                            if !ps.ports.iter().any(|p| *p == slot_id) {
+                            if !ps.ports.contains(slot_id) {
                                 continue;
                             }
                             for &port in ps.ports {
-                                if port != slot_id
+                                if port != *slot_id
                                     && let Some(other) =
                                         current_assignments.iter_mut().find(|(s, _)| *s == port)
                                 {
@@ -364,7 +362,8 @@ pub(crate) fn present_preferences_dialog(
                 combo: combo.clone(),
             });
             // Pre-select based on current assignment
-            if let Some((_, Some(profile))) = current_assignments.iter().find(|(s, _)| s == slot.id)
+            if let Some((_, Some(profile))) =
+                current_assignments.iter().find(|(s, _)| *s == slot.id)
             {
                 let idx = controllers
                     .iter()
@@ -733,14 +732,14 @@ pub(crate) fn present_preferences_dialog(
                 let input_factory = factory.input_system_factory();
                 let assignments = {
                     let combos = slot_combos.borrow();
-                    let mut slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = combos
+                    let mut slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = combos
                         .iter()
                         .map(|sc| {
                             let profile = sc.combo.active_text().and_then(|t| {
                                 let ctrls = input_factory.controllers();
                                 ctrls.iter().find(|c| c.label() == t).cloned()
                             });
-                            (sc.slot_id.clone(), profile)
+                            (sc.slot_id, profile)
                         })
                         .collect();
                     // Clear conflicting assignments from multi-port controllers
@@ -754,11 +753,11 @@ pub(crate) fn present_preferences_dialog(
                             if ps.ports.len() <= 1 {
                                 continue;
                             }
-                            if !ps.ports.contains(&slot_id.as_str()) {
+                            if !ps.ports.contains(slot_id) {
                                 continue;
                             }
                             for &port in ps.ports {
-                                if port != slot_id
+                                if port != *slot_id
                                     && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
                                 {
                                     other.1 = None;
@@ -1131,12 +1130,21 @@ fn refresh_validation(
 ) {
     let system = factory.system_id();
     let sid = system.to_string();
-    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
+    let input_factory = factory.input_system_factory();
+    let slots = input_factory.slots();
+    let profiles = input_factory.controllers();
+    let resolve_slot = |slot_id: &str| -> AttachmentId {
+        slots
+            .iter()
+            .find(|s| s.id.as_str() == slot_id)
+            .map(|s| s.id)
+            .unwrap_or(slots[0].id)
+    };
+    let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
         .get(&sid)
         .map(|pairs| {
-            let profiles = factory.input_system_factory().controllers();
             pairs
                 .iter()
                 .map(|(slot_id, ctrl_opt)| {
@@ -1144,11 +1152,11 @@ fn refresh_validation(
                         .as_ref()
                         .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
                         .cloned();
-                    (slot_id.clone(), profile)
+                    (resolve_slot(slot_id), profile)
                 })
                 .collect()
         })
-        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+        .unwrap_or_else(|| input_factory.default_assignments().slots);
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
@@ -1182,12 +1190,21 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         errors.push(error.to_string());
     }
     let sid = factory.system_id().to_string();
-    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = snapshot
+    let input_factory = factory.input_system_factory();
+    let slots = input_factory.slots();
+    let profiles = input_factory.controllers();
+    let resolve_slot = |slot_id: &str| -> AttachmentId {
+        slots
+            .iter()
+            .find(|s| s.id.as_str() == slot_id)
+            .map(|s| s.id)
+            .unwrap_or(slots[0].id)
+    };
+    let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
         .get(&sid)
         .map(|pairs| {
-            let profiles = factory.input_system_factory().controllers();
             pairs
                 .iter()
                 .map(|(slot_id, ctrl_opt)| {
@@ -1195,11 +1212,11 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
                         .as_ref()
                         .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
                         .cloned();
-                    (slot_id.clone(), profile)
+                    (resolve_slot(slot_id), profile)
                 })
                 .collect()
         })
-        .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+        .unwrap_or_else(|| input_factory.default_assignments().slots);
     if !assignments.iter().any(|(_, c)| c.is_some()) {
         errors.push("At least one controller must be assigned".to_string());
     }
