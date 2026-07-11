@@ -6,34 +6,6 @@ use nerust_input_traits::{
 };
 use nerust_nes_core::input_types::NesInputBuffer;
 
-fn control_bit(id: &str) -> Option<usize> {
-    match id {
-        "a" => Some(0),
-        "b" => Some(1),
-        "select" => Some(2),
-        "start" => Some(3),
-        "up" => Some(4),
-        "down" => Some(5),
-        "left" => Some(6),
-        "right" => Some(7),
-        "microphone" => None,
-        _ => None,
-    }
-}
-
-fn collect_control_fields(
-    field_map: &mut std::collections::HashMap<(&'static str, &'static str), usize>,
-    controls: &[nerust_input_traits::ControlInfo],
-    base: usize,
-    port: &'static str,
-) {
-    for ci in controls {
-        if let Some(bit) = control_bit(ci.id) {
-            field_map.insert((port, ci.id), base + bit);
-        }
-    }
-}
-
 impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
         static SLOTS: &[SlotInfo] = &[
@@ -72,27 +44,15 @@ impl InputSystemFactory for crate::NesFactory {
         use nerust_input_traits::InputStateBuffer;
         use std::sync::{Arc, Mutex};
 
+        let slot_keys: &[&str] = &["player1", "player2"];
         let mut field_map = std::collections::HashMap::new();
-
-        for (_, profile_opt) in controllers.profiles.iter().enumerate() {
-            let profile = match profile_opt {
-                Some(p) => p.as_ref(),
-                None => continue,
+        for (idx, dev) in controllers.devices.iter().enumerate() {
+            let slot = match slot_keys.get(idx) {
+                Some(s) => s,
+                None => break,
             };
-            let groups = profile.port_groups();
-            for (gi, &port) in profile
-                .port_sets()
-                .iter()
-                .flat_map(|ps| ps.ports.iter().enumerate())
-            {
-                let base = gi * 8;
-                if let Some(controls) = groups.get(gi) {
-                    collect_control_fields(&mut field_map, controls, base, port);
-                }
-            }
-            // Microphone for FamicomSet (maps from P2's port group)
-            if profile.id() == "nes.famicom" {
-                field_map.insert(("player2", "microphone"), 16);
+            for (s, ctrl, bit) in dev.field_map(slot) {
+                field_map.insert((s, ctrl), bit);
             }
         }
         if field_map.is_empty() {

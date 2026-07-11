@@ -14,7 +14,7 @@ use nerust_core_traits::factory::descriptor::{
 use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
-use nerust_input_traits::{ControllerProfile, EmuInput, GuiInput};
+use nerust_input_traits::{ControllerCollection, ControllerProfile, EmuInput, GuiInput};
 use nerust_nes_core::controller::Controller;
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
@@ -41,11 +41,8 @@ impl CoreFactory for NesFactory {
         assignments: &nerust_input_traits::InputAssignments,
     ) -> Result<CoreParts, FactoryError> {
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
-        // Build (device, profile) pairs per occupied port.
-        let mut pairs: Vec<(
-            Box<dyn Controller + Send>,
-            Option<Rc<dyn ControllerProfile>>,
-        )> = Vec::new();
+        // Build controller devices per occupied port.
+        let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
         for (slot_pos, (_, ctrl_opt)) in assignments.slots.iter().enumerate() {
             let profile = match ctrl_opt {
                 Some(p) => p,
@@ -53,28 +50,19 @@ impl CoreFactory for NesFactory {
             };
             match profile.id() {
                 "nes.famicom" => {
-                    pairs.push((
-                        Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
-                        Some(profile.clone()),
-                    ));
-                    pairs.push((
-                        Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
-                        Some(profile.clone()), // Both ports use the same FamicomSet profile
-                    ));
+                    devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()));
+                    devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()));
                 }
                 "nes.standard_pad" => {
                     let mask = if slot_pos == 0 { 3 } else { 1 };
-                    pairs.push((
-                        Box::new(nerust_nes_device::standard_pad::StandardPad::new(mask)),
-                        Some(profile.clone()),
-                    ));
+                    devices.push(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
+                        mask,
+                    )));
                 }
                 _ => {}
             }
         }
-        let (devices, profiles): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
-        let controller_collection =
-            nerust_input_traits::ControllerCollection::new(devices, profiles);
+        let controller_collection = ControllerCollection::new(devices);
         let resources = input_factory
             .create_split(&controller_collection)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
