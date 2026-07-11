@@ -14,8 +14,12 @@ use std::{
 };
 
 use jni::{jni_sig, jni_str};
-use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_core_traits::touch::{TouchOverlayAction, TouchPoint};
+use nerust_core_traits::{
+    audio::AudioBackendRegistry,
+    factory::{CoreFactory, load::MediaObject},
+    identity::SystemId,
+    touch::{TouchOverlayAction, TouchPoint},
+};
 use nerust_gui_runtime::{
     settings::{
         BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
@@ -24,8 +28,6 @@ use nerust_gui_runtime::{
     shell::NativeShellState,
 };
 use nerust_gui_shell::{
-    factory::CoreFactory,
-    load::MediaObject,
     session::{
         SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
@@ -33,7 +35,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
-use nerust_render_base::{GpuFactory, GpuRenderer, RenderResult, RendererConfig, SurfaceSize};
+use nerust_render_base::{renderer::GpuFactory, SurfaceSize};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -273,7 +275,7 @@ impl AndroidFrontend {
         let options = self.session.default_load_options();
         let system_id = self.session.factory().system_id();
         let view =
-            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+            nerust_gui_shell::settings::factory::settings_view(self.session.settings_snapshot(), &system_id);
         let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
@@ -342,7 +344,7 @@ impl AndroidFrontend {
         let options = self.session.default_load_options();
         let system_id = self.session.factory().system_id();
         let view =
-            nerust_gui_shell::settings::settings_view(self.session.settings_snapshot(), &system_id);
+            nerust_gui_shell::settings::factory::settings_view(self.session.settings_snapshot(), &system_id);
         let resolved = match self.session.factory().resolve_load_request(&view, options) {
             Ok(r) => r,
             Err(error) => {
