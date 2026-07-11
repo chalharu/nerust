@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use nerust_input_traits::{
-    ControllerProfile, CreateSplitError, InputAssignments, InputPorts, InputResources, InputSplit,
-    InputSystemFactory, SlotInfo,
+    ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments, InputPorts,
+    InputResources, InputSplit, InputSystemFactory, SlotInfo,
 };
 use nerust_nes_core::input_types::NesInputBuffer;
 
@@ -68,7 +68,7 @@ impl InputSystemFactory for crate::NesFactory {
 
     fn create_split(
         &self,
-        assignments: &InputAssignments,
+        controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
         use nerust_input_traits::InputStateBuffer;
         use std::sync::{Arc, Mutex};
@@ -76,14 +76,14 @@ impl InputSystemFactory for crate::NesFactory {
         let mut field_map = std::collections::HashMap::new();
         let mut assigned_ports = HashSet::new();
 
-        for (slot_id, ctrl_opt) in &assignments.slots {
-            let profile = match ctrl_opt {
+        for (slot_idx, profile_opt) in controllers.profiles.iter().enumerate() {
+            let profile = match profile_opt {
                 Some(p) => p.as_ref(),
                 None => continue,
             };
-            let slot_key: &'static str = match slot_id.as_str() {
-                "player1" => "player1",
-                "player2" => "player2",
+            let slot_key: &'static str = match slot_idx {
+                0 => "player1",
+                1 => "player2",
                 _ => continue,
             };
             if !assigned_ports.insert(slot_key) {

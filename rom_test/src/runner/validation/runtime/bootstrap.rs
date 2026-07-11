@@ -30,10 +30,10 @@ impl ValidationRuntime {
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
             core,
-            controller: ControllerCollection::new(vec![
-                Box::new(FamicomPadP1::new()),
-                Box::new(FamicomPadP2::new()),
-            ]),
+            controller: ControllerCollection::new(
+                vec![Box::new(FamicomPadP1::new()), Box::new(FamicomPadP2::new())],
+                Vec::new(),
+            ),
             mixer: HashingMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),

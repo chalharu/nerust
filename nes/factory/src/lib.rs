@@ -41,64 +41,52 @@ impl CoreFactory for NesFactory {
         assignments: &nerust_input_traits::InputAssignments,
     ) -> Result<CoreParts, FactoryError> {
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
+        // Build (device, profile) pairs per occupied port.
+        let mut pairs: Vec<(
+            Box<dyn Controller + Send>,
+            Option<Rc<dyn ControllerProfile>>,
+        )> = Vec::new();
+        for (slot_pos, (_, ctrl_opt)) in assignments.slots.iter().enumerate() {
+            let profile = match ctrl_opt {
+                Some(p) => p,
+                None => continue,
+            };
+            match profile.id() {
+                "nes.famicom" => {
+                    pairs.push((
+                        Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()),
+                        Some(profile.clone()),
+                    ));
+                    pairs.push((
+                        Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
+                        None, // P2 is part of the same FamicomSet profile
+                    ));
+                }
+                "nes.standard_pad" => {
+                    let mask = if slot_pos == 0 { 3 } else { 1 };
+                    pairs.push((
+                        Box::new(nerust_nes_device::standard_pad::StandardPad::new(mask)),
+                        Some(profile.clone()),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        let (devices, profiles): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+        let controller_collection =
+            nerust_input_traits::ControllerCollection::new(devices, profiles);
         let resources = input_factory
-            .create_split(assignments)
+            .create_split(&controller_collection)
             .map_err(|e| FactoryError::Create(e.to_string()))?;
         let gui_input = GuiInput::from_split(&resources.split);
         let emu_input = EmuInput::from_split(&resources.split);
-        // Build one controller per occupied port, in slot order.
-        // Multi-port controllers (e.g. FamicomSet) occupy more than one slot.
-        // (slot_position, group_index, profile_id)
-        let mut occupied: Vec<(usize, usize, &str)> = Vec::new();
-        for (slot_pos, (slot_id, ctrl_opt)) in assignments.slots.iter().enumerate() {
-            let profile = match ctrl_opt {
-                Some(p) => p.as_ref(),
-                None => continue,
-            };
-            for ps in profile.port_sets() {
-                if let Some(gi) = ps.ports.iter().position(|&p| p == slot_id) {
-                    occupied.push((slot_pos, gi, profile.id()));
-                    for (other_gi, &port) in ps.ports.iter().enumerate() {
-                        if port == slot_id {
-                            continue;
-                        }
-                        if let Some(other_pos) =
-                            assignments.slots.iter().position(|(s, _)| s == port)
-                        {
-                            occupied.push((other_pos, other_gi, profile.id()));
-                        }
-                    }
-                }
-            }
-        }
-        occupied.sort_by_key(|&(pos, _, _)| pos);
-        occupied.dedup_by_key(|&mut (pos, _, _)| pos);
-        let devices: Vec<Box<dyn Controller + Send>> = occupied
-            .into_iter()
-            .map(|(slot_pos, gi, ctrl_id)| {
-                let ctrl: Box<dyn Controller + Send> = match (ctrl_id, gi) {
-                    ("nes.famicom", 0) => {
-                        Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new())
-                    }
-                    ("nes.famicom", 1) => {
-                        Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new())
-                    }
-                    ("nes.standard_pad", _) => {
-                        let mask = if slot_pos == 0 { 3 } else { 1 };
-                        Box::new(nerust_nes_device::standard_pad::StandardPad::new(mask))
-                    }
-                    _ => unreachable!(),
-                };
-                ctrl
-            })
-            .collect();
         builder::create_core_and_adapter(
             view,
             speaker,
             gui_input,
             emu_input,
             resources.field_map,
-            devices,
+            controller_collection,
         )
     }
 

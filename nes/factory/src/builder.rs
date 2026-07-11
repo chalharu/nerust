@@ -13,14 +13,14 @@ pub(crate) fn create_core_and_adapter(
     gui_input: GuiInput,
     emu_input: EmuInput,
     field_map: HashMap<(&'static str, &'static str), usize>,
-    devices: Vec<Box<dyn nerust_nes_core::controller::Controller + Send>>,
+    controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
 
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
-    let core = NesConsoleCore::new_empty(ControllerCollection::new(devices), speaker, emu_input);
+    let core = NesConsoleCore::new_empty(controller_collection, speaker, emu_input);
     Ok(CoreParts {
         core: Box::new(core),
         gui_input,
