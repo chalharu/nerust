@@ -1343,15 +1343,15 @@ mod tests {
     struct TestController;
 
     impl controller::Controller for TestController {
-        fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
+        fn read(&mut self, _port: &dyn controller::Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
 
-        fn write(&mut self, _port: &dyn Port, _value: u8) {}
+        fn write(&mut self, _port: &dyn controller::Port, _value: u8) {}
     }
 
     impl controller::ControllerHub for TestController {
-        fn read_port(&mut self, _port: usize) -> OpenBusReadResult {
+        fn read_port(&mut self, _port: &dyn controller::Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
         fn write_strobe(&mut self, _value: u8) {}

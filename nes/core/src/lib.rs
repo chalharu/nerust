@@ -34,7 +34,7 @@ use nerust_sound_filter::{
 #[cfg(test)]
 use self::cartridge_data_parts::CartridgeDataParts;
 #[cfg(test)]
-use self::controller::Controller;
+use self::controller::{Controller, Port};
 use self::{
     apu::Core as Apu,
     cart_device::Cartridge,
@@ -836,7 +836,7 @@ mod scheduler_tests {
     }
 
     impl ControllerHub for NullController {
-        fn read_port(&mut self, _port: usize) -> OpenBusReadResult {
+        fn read_port(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
         }
         fn write_strobe(&mut self, _value: u8) {}
