@@ -19,8 +19,9 @@ use nerust_gui_runtime::settings::{
 };
 
 use nerust_input_traits::{
-    BufferError, ControllerProfile, CreateSplitError, GuiInput, InputAssignments, InputPorts,
-    InputResources, InputSplit, InputStateBuffer, InputSystemFactory, InputValue, SlotInfo,
+    BufferError, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
+    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
+    InputValue, SlotInfo,
 };
 use nerust_persistence::slots::autosave_state_slot_path;
 use nerust_render_base::{LogicalSize, PhysicalSize, VideoRenderProfile};
@@ -169,7 +170,7 @@ impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments { slots: vec![] }
     }
-    fn create_split(&self, _: &InputAssignments) -> Result<InputResources, CreateSplitError> {
+    fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
         let flag = Arc::new(AtomicBool::new(false));
