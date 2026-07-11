@@ -29,11 +29,8 @@ use nerust_render_base::logical::LogicalSize;
 use nerust_render_base::physical::PhysicalSize;
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 
+use crate::session::{KeyboardShortcut, SessionHandle};
 use crate::settings::factory::settings_view;
-use crate::{
-    session::{KeyboardShortcut, SessionHandle},
-    test_support::single_port_topology,
-};
 
 /// Minimal InputStateBuffer for testing.
 #[derive(Debug, Default)]
@@ -209,9 +206,7 @@ impl CoreFactory for MockFactory {
         true
     }
     fn system_descriptor(&self) -> nerust_core_traits::factory::descriptor::SystemDescriptor {
-        nerust_core_traits::factory::descriptor::SystemDescriptor {
-            input_topology: single_port_topology(),
-        }
+        nerust_core_traits::factory::descriptor::SystemDescriptor
     }
     fn settings_page(
         &self,
@@ -262,7 +257,7 @@ fn test_session() -> SessionHandle {
     let descriptor = factory.system_descriptor();
     let audio_registry = Arc::new(AudioBackendRegistry::new());
     // Use ephemeral settings so tests are not affected by disk state.
-    SessionHandle::new_ephemeral(capabilities, descriptor, factory, audio_registry)
+    SessionHandle::new_ephemeral(capabilities, factory, audio_registry)
 }
 
 fn test_rom() -> Vec<u8> {
