@@ -1,5 +1,4 @@
 pub mod context;
-pub mod descriptor;
 pub mod emu_core;
 pub mod factory;
 pub mod keyboard_defaults;

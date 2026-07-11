@@ -13,10 +13,8 @@ use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_sett
 use nerust_gui_settings::{
     input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
-use nerust_gui_shell::session::access::{FrontendSession, SettingsResult};
 use nerust_gui_shell::{
-    descriptor::SystemSettingsFieldKind,
-    factory::CoreFactory,
+    factory::{CoreFactory, SystemSettingsFieldModel},
     session::SessionError,
     settings::{
         bindings::{
@@ -27,6 +25,10 @@ use nerust_gui_shell::{
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
         i18n::{UiText, text},
     },
+};
+use nerust_gui_shell::{
+    factory::{SystemSettingsFieldKind, SystemSettingsPageModel},
+    session::access::{FrontendSession, SettingsResult},
 };
 use nerust_input_traits::{ControllerProfile, InputTopologyDescriptor};
 use std::collections::HashSet;
@@ -1375,16 +1377,16 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
 }
 
 fn system_field_by_id<'a>(
-    page: &'a nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    page: &'a SystemSettingsPageModel,
     field_id: &str,
-) -> Option<&'a nerust_gui_shell::descriptor::SystemSettingsFieldModel> {
+) -> Option<&'a SystemSettingsFieldModel> {
     page.fields
         .iter()
         .find(|field| field.id.as_str() == field_id)
 }
 
 fn combo_from_optional_system_field(
-    field: Option<&nerust_gui_shell::descriptor::SystemSettingsFieldModel>,
+    field: Option<&SystemSettingsFieldModel>,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
@@ -1399,7 +1401,7 @@ fn combo_from_optional_system_field(
 }
 
 fn apply_system_field_by_id_to_combo(
-    page: &nerust_gui_shell::descriptor::SystemSettingsPageModel,
+    page: &SystemSettingsPageModel,
     field_id: &str,
     combo: &gtk::ComboBoxText,
 ) {
