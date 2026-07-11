@@ -44,7 +44,7 @@ impl CoreFactory for NesFactory {
         let input_factory: &dyn nerust_input_traits::InputSystemFactory = self;
         // Build controller devices per occupied port.
         let mut devices: Vec<Box<dyn Controller + Send>> = Vec::new();
-        for (slot_pos, (_, ctrl_opt)) in assignments.slots.iter().enumerate() {
+        for (_, ctrl_opt) in &assignments.slots {
             let profile = match ctrl_opt {
                 Some(p) => p,
                 None => continue,
@@ -55,9 +55,8 @@ impl CoreFactory for NesFactory {
                     devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()));
                 }
                 "nes.standard_pad" => {
-                    let mask = if slot_pos == 0 { 3 } else { 1 };
                     devices.push(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
-                        mask,
+                        0x1F,
                     )));
                 }
                 _ => {}
