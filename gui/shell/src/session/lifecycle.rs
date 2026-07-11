@@ -88,6 +88,7 @@ impl SessionHandle {
         self.settings_snapshot = next_settings;
         self.pressed_keys.clear();
         self.clear_input();
+        self.rebuild_key_field_map();
         Ok(plan)
     }
 
