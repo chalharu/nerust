@@ -553,20 +553,25 @@ impl SettingsAppState {
                 }
             }
             for slot in slots {
-                // Filter controllers available for this slot:
-                // a controller is available if any port_set starts with this slot.
-                let slot_choices: Vec<Choice<String>> = controllers
-                    .iter()
-                    .filter(|c| {
-                        c.port_sets()
-                            .iter()
-                            .any(|ps| ps.ports.first() == Some(&slot.id))
-                    })
-                    .map(|c| Choice {
-                        value: c.id().to_string(),
-                        label: c.label().to_string(),
-                    })
-                    .collect();
+                // Build slot choices including a "None" option.
+                let none = Choice {
+                    value: String::new(),
+                    label: ui_text(self.draft.shared.general.language, UiText::None).to_string(),
+                };
+                let mut slot_choices: Vec<Choice<String>> = vec![none];
+                slot_choices.extend(
+                    controllers
+                        .iter()
+                        .filter(|c| {
+                            c.port_sets()
+                                .iter()
+                                .any(|ps| ps.ports.first() == Some(&slot.id))
+                        })
+                        .map(|c| Choice {
+                            value: c.id().to_string(),
+                            label: c.label().to_string(),
+                        }),
+                );
                 if occupied.contains(slot.id)
                     && !self
                         .controller_assignments
@@ -584,9 +589,14 @@ impl SettingsAppState {
                     .and_then(|(_, c)| c.as_ref())
                     .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned());
                 let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
+                    let controller_id = if choice.value.is_empty() {
+                        None
+                    } else {
+                        Some(choice.value)
+                    };
                     Message::SetControllerSlot {
                         slot: slot.id.to_string(),
-                        controller_id: Some(choice.value),
+                        controller_id,
                     }
                 });
                 content = content.push(text(slot.label)).push(pick);
