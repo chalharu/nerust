@@ -116,7 +116,7 @@ impl Controller for FamicomPadP2 {
             self.result = self.result >> 1 | 0x80;
             b
         };
-        OpenBusReadResult::new(bit, 1)
+        OpenBusReadResult::new(bit, 0x1F)
     }
     fn write(&mut self, _port: &dyn Port, value: u8) {
         let new_strobe = value & 1 == 1;
