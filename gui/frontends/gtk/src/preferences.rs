@@ -191,20 +191,6 @@ pub(crate) fn present_preferences_dialog(
     // Read current assignments to pre-select combo boxes.
     let sid = factory.system_id().to_string();
     let default_assignments = factory.input_system_factory().default_assignments();
-    // Resolve persisted String slot IDs to AttachmentId (boundary conversion).
-    let resolve_slot = |slot_id: &str| -> AttachmentId {
-        slots
-            .iter()
-            .find(|s| s.id.as_str() == slot_id)
-            .map(|s| s.id)
-            .unwrap_or(slots[0].id)
-    };
-    let resolve_profile = |ctrl_opt: &Option<String>| -> Option<Rc<dyn ControllerProfile>> {
-        ctrl_opt
-            .as_ref()
-            .and_then(|id| controllers.iter().find(|p| p.id() == id.as_str()))
-            .cloned()
-    };
     let current_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = draft
         .borrow()
         .app_state
@@ -213,7 +199,12 @@ pub(crate) fn present_preferences_dialog(
         .map(|pairs| {
             pairs
                 .iter()
-                .map(|(slot_id, ctrl_opt)| (resolve_slot(slot_id), resolve_profile(ctrl_opt)))
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| input_factory.resolve_controller(id));
+                    (input_factory.resolve_slot(slot_id), profile)
+                })
                 .collect()
         })
         .unwrap_or_else(|| {
@@ -1131,15 +1122,6 @@ fn refresh_validation(
     let system = factory.system_id();
     let sid = system.to_string();
     let input_factory = factory.input_system_factory();
-    let slots = input_factory.slots();
-    let profiles = input_factory.controllers();
-    let resolve_slot = |slot_id: &str| -> AttachmentId {
-        slots
-            .iter()
-            .find(|s| s.id.as_str() == slot_id)
-            .map(|s| s.id)
-            .unwrap_or(slots[0].id)
-    };
     let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
@@ -1150,9 +1132,8 @@ fn refresh_validation(
                 .map(|(slot_id, ctrl_opt)| {
                     let profile = ctrl_opt
                         .as_ref()
-                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
-                        .cloned();
-                    (resolve_slot(slot_id), profile)
+                        .and_then(|id| input_factory.resolve_controller(id));
+                    (input_factory.resolve_slot(slot_id), profile)
                 })
                 .collect()
         })
@@ -1191,15 +1172,6 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     }
     let sid = factory.system_id().to_string();
     let input_factory = factory.input_system_factory();
-    let slots = input_factory.slots();
-    let profiles = input_factory.controllers();
-    let resolve_slot = |slot_id: &str| -> AttachmentId {
-        slots
-            .iter()
-            .find(|s| s.id.as_str() == slot_id)
-            .map(|s| s.id)
-            .unwrap_or(slots[0].id)
-    };
     let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
@@ -1210,9 +1182,8 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
                 .map(|(slot_id, ctrl_opt)| {
                     let profile = ctrl_opt
                         .as_ref()
-                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
-                        .cloned();
-                    (resolve_slot(slot_id), profile)
+                        .and_then(|id| input_factory.resolve_controller(id));
+                    (input_factory.resolve_slot(slot_id), profile)
                 })
                 .collect()
         })

@@ -199,22 +199,7 @@ impl SettingsAppState {
             .unwrap_or_default();
         let sid = factory.system_id().to_string();
         let input_factory = factory.input_system_factory();
-        let slots = input_factory.slots();
-        let controllers = input_factory.controllers();
         let default_assignments = input_factory.default_assignments();
-        let resolve_slot = |slot_id: &str| -> AttachmentId {
-            slots
-                .iter()
-                .find(|s| s.id.as_str() == slot_id)
-                .map(|s| s.id)
-                .unwrap_or(slots[0].id)
-        };
-        let resolve_profile = |ctrl_opt: &Option<String>| -> Option<Rc<dyn ControllerProfile>> {
-            ctrl_opt
-                .as_ref()
-                .and_then(|id| controllers.iter().find(|p| p.id() == id.as_str()))
-                .cloned()
-        };
         let controller_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> =
             snapshot
                 .app_state
@@ -224,7 +209,10 @@ impl SettingsAppState {
                     pairs
                         .iter()
                         .map(|(slot_id, ctrl_opt)| {
-                            (resolve_slot(slot_id), resolve_profile(ctrl_opt))
+                            let profile = ctrl_opt
+                                .as_ref()
+                                .and_then(|id| input_factory.resolve_controller(id));
+                            (input_factory.resolve_slot(slot_id), profile)
                         })
                         .collect()
                 })
