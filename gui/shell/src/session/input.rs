@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_input_traits::{DigitalInputEvent, InputAssignments, InputValue};
 
@@ -107,17 +109,25 @@ impl SessionHandle {
             .systems
             .get(&system_id)
             .and_then(|s| s.implicit_keyboard_profile());
-        if let Some(profile) = profile
-            && let Some(binding) = profile.bindings.iter().find(|b| b.key == key)
-        {
-            let slot = normalize_id(binding.attachment.as_str());
-            let control = normalize_id(binding.control.as_str());
-            if let Some(&field) = self.field_map.get(&(slot, control)) {
-                let _ = self
-                    .gui_input
-                    .state
-                    .set(field, InputValue::Digital(pressed));
-            }
+
+        let matched_profile = self
+            .field_map
+            .iter()
+            .filter_map(|((slot, control), field)| {
+                let attachment_id = attachment_id(slot);
+                let control_id = control_id(control);
+                let binding = profile?.bindings.iter().find(|b| {
+                    b.attachment.as_str() == attachment_id && b.control.as_str() == control_id
+                })?;
+                Some((binding.key, *field))
+            })
+            .collect::<HashMap<_, _>>();
+
+        if let Some(&field) = matched_profile.get(&key) {
+            let _ = self
+                .gui_input
+                .state
+                .set(field, InputValue::Digital(pressed));
         }
 
         if first_press {
