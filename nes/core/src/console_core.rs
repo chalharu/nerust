@@ -220,7 +220,7 @@ mod tests {
         // NesConsoleCore::new should succeed
         let mut core = NesConsoleCore::new(
             cartridge,
-            ControllerCollection::new(vec![Box::new(MockController)], Vec::new()),
+            ControllerCollection::new(vec![Box::new(MockController)]),
             Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         )
@@ -242,7 +242,7 @@ mod tests {
     fn load_via_trait_method() {
         let rom = test_rom();
         let mut core = NesConsoleCore::new_empty(
-            ControllerCollection::new(vec![Box::new(MockController)], Vec::new()),
+            ControllerCollection::new(vec![Box::new(MockController)]),
             Box::new(nerust_core_traits::audio::NullAudio),
             test_emu_input(),
         );
