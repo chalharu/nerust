@@ -51,7 +51,6 @@ struct InputRow {
 
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
-    factory: &dyn CoreFactory,
     assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
 ) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::{attachment_id, control_id, device_kind};
@@ -261,7 +260,7 @@ pub(crate) fn present_preferences_dialog(
         while let Some(child) = key_binding_box.first_child() {
             key_binding_box.remove(&child);
         }
-        let topology = dynamic_topology(factory, assignments);
+        let topology = dynamic_topology(assignments);
         let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
         *input_rows.borrow_mut() = rows;
     }
@@ -1142,11 +1141,7 @@ fn refresh_validation(
     let storage_error = validate_shared_settings(&snapshot.shared)
         .err()
         .map(|error| error.to_string());
-    let conflicts = conflicting_keys(
-        &snapshot.shared,
-        &dynamic_topology(factory, &assignments),
-        system,
-    );
+    let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(&assignments), system);
     let has_errors = storage_error.is_some() || !conflicts.is_empty();
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
@@ -1194,7 +1189,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
-        &dynamic_topology(factory, &assignments),
+        &dynamic_topology(&assignments),
         factory.system_id(),
     ) {
         errors.push(format!(

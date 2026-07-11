@@ -254,7 +254,6 @@ fn test_session() -> SessionHandle {
         presentation: None,
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
-    let descriptor = factory.system_descriptor();
     let audio_registry = Arc::new(AudioBackendRegistry::new());
     // Use ephemeral settings so tests are not affected by disk state.
     SessionHandle::new_ephemeral(capabilities, factory, audio_registry)

@@ -173,14 +173,12 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::CoreFactory;
     use nerust_core_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
     use nerust_core_traits::factory::load::SystemLoadOptions;
     use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 
     use nerust_gui_settings::nes::NesVideoFilter;
 
-    use nerust_input_traits::ControlDescriptor;
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_render_base::filter::FilterType;
 
@@ -188,7 +186,6 @@ mod tests {
         apply_nes_settings_choice_inner, filter_type_from_bytes, nes_settings_page,
         resolve_nes_load_request_inner,
     };
-    use crate::NesFactory;
 
     fn test_view() -> FactorySettingsView {
         FactorySettingsView {
@@ -196,9 +193,6 @@ mod tests {
             system_config_bytes: vec![],
         }
     }
-
-    #[test]
-    #[test]
 
     fn nec_options() -> SystemLoadOptions {
         SystemLoadOptions {
