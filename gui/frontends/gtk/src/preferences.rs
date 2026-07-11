@@ -330,10 +330,8 @@ pub(crate) fn present_preferences_dialog(
                     // Update key binding labels from current settings
                     let snapshot = d.borrow();
                     for row in kb_rows.borrow().iter() {
-                        row.value_label.set_text(
-                            current_binding_label(&snapshot, &row.target)
-                                .unwrap_or(""),
-                        );
+                        row.value_label
+                            .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
                     }
                 });
             }
@@ -748,21 +746,21 @@ pub(crate) fn present_preferences_dialog(
                 // Only rebuild core if assignments actually changed
                 let current_pairs = state.borrow().session.current_assignments_pairs();
                 let new_pairs = assignments.to_string_pairs();
-                if current_pairs != new_pairs {
-                    if let Err(e) = state
+                if current_pairs != new_pairs
+                    && let Err(e) = state
                         .borrow_mut()
                         .session
                         .reassign_controllers(&assignments)
-                    {
-                        log::warn!("controller reassign failed: {e}");
-                    }
+                {
+                    log::warn!("controller reassign failed: {e}");
                 }
                 // Persist assignments to draft
                 let sid = factory.system_id().to_string();
-                draft.borrow_mut().app_state.controller_assignments.insert(
-                    sid,
-                    assignments.to_string_pairs(),
-                );
+                draft
+                    .borrow_mut()
+                    .app_state
+                    .controller_assignments
+                    .insert(sid, assignments.to_string_pairs());
 
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
