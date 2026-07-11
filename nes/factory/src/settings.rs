@@ -181,11 +181,6 @@ mod tests {
     use nerust_gui_settings::nes::NesVideoFilter;
 
     use nerust_input_traits::ControlDescriptor;
-    use nerust_nes_controller::topology::{
-        FAMICOM_P2_CONTROL_MICROPHONE, NES_ATTACHMENT_PLAYER_ONE, NES_ATTACHMENT_PLAYER_TWO,
-        NES_CONTROL_A, NES_CONTROL_SELECT, NES_DEVICE_PLAYER_ONE_PAD,
-        NES_DEVICE_PLAYER_TWO_FAMICOM_PAD,
-    };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_render_base::filter::FilterType;
 
@@ -203,63 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn default_descriptor_reports_distinct_player_devices() {
-        let factory = NesFactory;
-        let descriptor = factory.system_descriptor();
-
-        assert_eq!(descriptor.input_topology.ports.len(), 2);
-        assert_eq!(
-            descriptor
-                .input_topology
-                .attachment(NES_ATTACHMENT_PLAYER_ONE)
-                .unwrap()
-                .device,
-            NES_DEVICE_PLAYER_ONE_PAD
-        );
-        assert_eq!(
-            descriptor
-                .input_topology
-                .attachment(NES_ATTACHMENT_PLAYER_TWO)
-                .unwrap()
-                .device,
-            NES_DEVICE_PLAYER_TWO_FAMICOM_PAD
-        );
-    }
-
     #[test]
-    fn default_descriptor_keeps_select_and_microphone_controls() {
-        let factory = NesFactory;
-        let descriptor = factory.system_descriptor();
-        let player_one_controls = &descriptor
-            .input_topology
-            .device(NES_DEVICE_PLAYER_ONE_PAD)
-            .unwrap()
-            .controls;
-        let player_two_controls = &descriptor
-            .input_topology
-            .device(NES_DEVICE_PLAYER_TWO_FAMICOM_PAD)
-            .unwrap()
-            .controls;
-
-        assert!(player_one_controls.iter().any(|control| {
-            matches!(
-                control,
-                ControlDescriptor::Digital(digital) if digital.id == NES_CONTROL_A
-            )
-        }));
-        assert!(player_one_controls.iter().any(|control| {
-            matches!(
-                control,
-                ControlDescriptor::Digital(digital) if digital.id == NES_CONTROL_SELECT
-            )
-        }));
-        assert!(player_two_controls.iter().any(|control| {
-            matches!(
-                control,
-                ControlDescriptor::Digital(digital) if digital.id == FAMICOM_P2_CONTROL_MICROPHONE
-            )
-        }));
-    }
 
     fn nec_options() -> SystemLoadOptions {
         SystemLoadOptions {

@@ -105,7 +105,10 @@ fn dynamic_topology(
         }
     }
     if ports.is_empty() {
-        factory.system_descriptor().input_topology
+        InputTopologyDescriptor {
+            ports: Vec::new(),
+            devices: Vec::new(),
+        }
     } else {
         InputTopologyDescriptor { ports, devices }
     }

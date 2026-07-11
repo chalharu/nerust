@@ -996,7 +996,10 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
         }
     }
     if ports.is_empty() {
-        state.factory.system_descriptor().input_topology
+        InputTopologyDescriptor {
+            ports: Vec::new(),
+            devices: Vec::new(),
+        }
     } else {
         InputTopologyDescriptor { ports, devices }
     }
