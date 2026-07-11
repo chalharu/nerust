@@ -63,6 +63,8 @@ pub struct SessionHandle {
     pub(super) gui_input: GuiInput,
     pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(&'static str, &'static str), usize>,
+    /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
+    pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
@@ -167,11 +169,12 @@ impl SessionHandle {
             &settings_snapshot,
             &assignments,
         );
-        Self {
+        let mut result = Self {
             emu_core,
             gui_input,
             current_assignments: assignments,
             field_map,
+            key_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -180,6 +183,34 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
+        };
+        result.rebuild_key_field_map();
+        result
+    }
+
+    fn rebuild_key_field_map(&mut self) {
+        self.key_field_map.clear();
+        let system_id = self.factory.system_id();
+        let Some(profile) = self
+            .settings_snapshot
+            .shared
+            .input
+            .systems
+            .get(&system_id)
+            .and_then(|s| s.implicit_keyboard_profile())
+        else {
+            return;
+        };
+        for ((slot, control), &field) in &self.field_map {
+            let attachment = crate::session::input::attachment_id(slot);
+            let ctrl = crate::session::input::control_id(control);
+            if let Some(binding) = profile
+                .bindings
+                .iter()
+                .find(|b| b.attachment.as_str() == attachment && b.control.as_str() == ctrl)
+            {
+                self.key_field_map.insert(binding.key, field);
+            }
         }
     }
 
@@ -226,11 +257,12 @@ impl SessionHandle {
             &settings_snapshot,
             &assignments,
         );
-        Self {
+        let mut result = Self {
             emu_core,
             gui_input,
             current_assignments: assignments,
             field_map,
+            key_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -239,7 +271,9 @@ impl SessionHandle {
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
-        }
+        };
+        result.rebuild_key_field_map();
+        result
     }
 
     #[cfg(test)]
