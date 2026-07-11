@@ -1,7 +1,8 @@
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::rc::Rc;
 
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, ShortcutAction};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
@@ -12,6 +13,40 @@ use crate::{
     session::{KeyboardShortcut, SessionHandle},
     settings::{bindings::events::shortcut::shortcut_action_for_key, factory::settings_view},
 };
+
+/// Abstraction over a binding type (keyboard, gamepad, etc.) for building
+/// a source-key → field-index map from an InputAssignments field_map.
+trait InputBinding {
+    type Id: Copy + Eq + Hash;
+    fn matches(&self, attachment: &str, control: &str) -> bool;
+    fn source_id(&self) -> Self::Id;
+}
+
+impl InputBinding for KeyboardBinding {
+    type Id = KeyboardKey;
+    fn matches(&self, attachment: &str, control: &str) -> bool {
+        self.attachment.as_str() == attachment && self.control.as_str() == control
+    }
+    fn source_id(&self) -> Self::Id {
+        self.key
+    }
+}
+
+/// Generic rebuild: iterate field_map, find matching bindings, populate target map.
+fn rebuild_input_map<B: InputBinding>(
+    field_map: &std::collections::HashMap<(&'static str, &'static str), usize>,
+    bindings: &[B],
+    target: &mut std::collections::HashMap<B::Id, usize>,
+) {
+    target.clear();
+    for ((slot, control), &field) in field_map {
+        let attachment = attachment_id(slot);
+        let ctrl = control_id(control);
+        if let Some(binding) = bindings.iter().find(|b| b.matches(attachment, ctrl)) {
+            target.insert(binding.source_id(), field);
+        }
+    }
+}
 
 /// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
 /// to the short form used in field_map keys.
@@ -194,7 +229,6 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        self.key_field_map.clear();
         let system_id = self.factory.system_id();
         let Some(profile) = self
             .settings_snapshot
@@ -206,16 +240,6 @@ impl SessionHandle {
         else {
             return;
         };
-        for ((slot, control), &field) in &self.field_map {
-            let attachment = crate::session::input::attachment_id(slot);
-            let ctrl = crate::session::input::control_id(control);
-            if let Some(binding) = profile
-                .bindings
-                .iter()
-                .find(|b| b.attachment.as_str() == attachment && b.control.as_str() == ctrl)
-            {
-                self.key_field_map.insert(binding.key, field);
-            }
-        }
+        rebuild_input_map(&self.field_map, &profile.bindings, &mut self.key_field_map);
     }
 }
