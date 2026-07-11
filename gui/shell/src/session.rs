@@ -86,14 +86,23 @@ impl SessionHandle {
         let persisted = snapshot.app_state.controller_assignments.get(system_id);
         match persisted {
             Some(pairs) => {
-                let profiles = factory.input_system_factory().controllers();
+                let input_factory = factory.input_system_factory();
+                let slots = input_factory.slots();
+                let profiles = input_factory.controllers();
+                let resolve_slot = |slot_id: &str| -> AttachmentId {
+                    slots
+                        .iter()
+                        .find(|s| s.id.as_str() == slot_id)
+                        .map(|s| s.id)
+                        .unwrap_or(slots[0].id)
+                };
                 let slots = pairs
                     .iter()
                     .map(|(slot_id, ctrl_opt)| {
                         let profile = ctrl_opt.as_ref().and_then(|id| {
                             profiles.iter().find(|p| p.id() == id.as_str()).cloned()
                         });
-                        (slot_id.clone(), profile)
+                        (resolve_slot(slot_id), profile)
                     })
                     .collect();
                 InputAssignments { slots }

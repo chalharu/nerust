@@ -195,110 +195,120 @@ impl ControllerProfile for FamicomSetProfile {
         "Famicom Controller Set"
     }
     fn port_sets(&self) -> &[PortSet] {
-        &[PortSet {
-            ports: &["player1", "player2"],
-        }]
+        const PORTS: &[AttachmentId] = &[
+            AttachmentId::new("nes.attachment.player1"),
+            AttachmentId::new("nes.attachment.player2"),
+        ];
+        const SETS: &[PortSet] = &[PortSet { ports: PORTS }];
+        SETS
     }
     fn port_groups(&self) -> &[&[ControlInfo]] {
         use ControlKind::*;
-        static P1: &[ControlInfo] = &[
+        const P1: &[ControlInfo] = &[
             ControlInfo {
-                id: "a",
+                id: DigitalControlId::new("nes.control.a"),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: "b",
+                id: DigitalControlId::new("nes.control.b"),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: "select",
+                id: DigitalControlId::new("nes.control.select"),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: "start",
+                id: DigitalControlId::new("nes.control.start"),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: "up",
+                id: DigitalControlId::new("nes.control.up"),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: "down",
+                id: DigitalControlId::new("nes.control.down"),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: "left",
+                id: DigitalControlId::new("nes.control.left"),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: "right",
+                id: DigitalControlId::new("nes.control.right"),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
             },
         ];
-        static P2: &[ControlInfo] = &[
+        const P2: &[ControlInfo] = &[
             ControlInfo {
-                id: "a",
+                id: DigitalControlId::new("nes.control.a"),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: "b",
+                id: DigitalControlId::new("nes.control.b"),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: "microphone",
+                id: DigitalControlId::new("famicom.microphone"),
                 label: "Microphone",
                 kind: Digital,
                 abstract_key: None,
             },
             ControlInfo {
-                id: "up",
+                id: DigitalControlId::new("nes.control.up"),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: "down",
+                id: DigitalControlId::new("nes.control.down"),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: "left",
+                id: DigitalControlId::new("nes.control.left"),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: "right",
+                id: DigitalControlId::new("nes.control.right"),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
             },
         ];
-        static G: &[&[ControlInfo]] = &[P1, P2];
+        const G: &[&[ControlInfo]] = &[P1, P2];
         G
     }
-    fn directional_ids(&self) -> &[&[&'static str; 4]] {
-        &[&["up", "down", "left", "right"]]
+    fn directional_ids(&self) -> &[&[DigitalControlId; 4]] {
+        const D: &[DigitalControlId; 4] = &[
+            DigitalControlId::new("nes.control.up"),
+            DigitalControlId::new("nes.control.down"),
+            DigitalControlId::new("nes.control.left"),
+            DigitalControlId::new("nes.control.right"),
+        ];
+        const R: &[&[DigitalControlId; 4]] = &[D];
+        R
     }
 }

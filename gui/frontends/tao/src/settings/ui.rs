@@ -39,7 +39,9 @@ use nerust_gui_shell::settings::{
 };
 use std::rc::Rc;
 
-use nerust_input_traits::{ControllerProfile, InputAssignments, InputTopologyDescriptor};
+use nerust_input_traits::{
+    AttachmentId, ControllerProfile, InputAssignments, InputTopologyDescriptor,
+};
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -95,7 +97,7 @@ pub(crate) enum Message {
     ClearCapture(CaptureTarget),
     CaptureKey(KeyboardKey),
     SetControllerSlot {
-        slot: String,
+        slot: AttachmentId,
         controller_id: Option<String>,
     },
     Submit,
@@ -173,7 +175,7 @@ pub(crate) struct SettingsAppState {
     factory: Arc<dyn CoreFactory>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
-    controller_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+    controller_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
     /// Snapshot of initial assignments for change detection at Submit time.
     initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
@@ -196,25 +198,43 @@ impl SettingsAppState {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
         let sid = factory.system_id().to_string();
-        let default_assignments = factory.input_system_factory().default_assignments();
-        let controller_assignments = snapshot
-            .app_state
-            .controller_assignments
-            .get(&sid)
-            .map(|pairs| {
-                let profiles = factory.input_system_factory().controllers();
-                pairs
-                    .iter()
-                    .map(|(slot_id, ctrl_opt)| {
-                        let profile = ctrl_opt
-                            .as_ref()
-                            .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
-                            .cloned();
-                        (slot_id.clone(), profile)
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| default_assignments.slots);
+        let input_factory = factory.input_system_factory();
+        let slots = input_factory.slots();
+        let controllers = input_factory.controllers();
+        let default_assignments = input_factory.default_assignments();
+        let resolve_slot = |slot_id: &str| -> AttachmentId {
+            slots
+                .iter()
+                .find(|s| s.id.as_str() == slot_id)
+                .map(|s| s.id)
+                .unwrap_or(slots[0].id)
+        };
+        let resolve_profile = |ctrl_opt: &Option<String>| -> Option<Rc<dyn ControllerProfile>> {
+            ctrl_opt
+                .as_ref()
+                .and_then(|id| controllers.iter().find(|p| p.id() == id.as_str()))
+                .cloned()
+        };
+        let controller_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> =
+            snapshot
+                .app_state
+                .controller_assignments
+                .get(&sid)
+                .map(|pairs| {
+                    pairs
+                        .iter()
+                        .map(|(slot_id, ctrl_opt)| {
+                            (resolve_slot(slot_id), resolve_profile(ctrl_opt))
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    default_assignments
+                        .slots
+                        .iter()
+                        .map(|(slot_id, profile)| (*slot_id, profile.clone()))
+                        .collect()
+                });
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
@@ -223,7 +243,12 @@ impl SettingsAppState {
             controller_assignments: controller_assignments.clone(),
             initial_assignments_pairs: controller_assignments
                 .iter()
-                .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                .map(|(s, c)| {
+                    (
+                        s.as_str().to_string(),
+                        c.as_ref().map(|p| p.id().to_string()),
+                    )
+                })
                 .collect(),
             factory,
             audio_registry,
@@ -362,7 +387,7 @@ impl SettingsAppState {
                         if ps.ports.len() <= 1 {
                             continue;
                         }
-                        if !ps.ports.contains(&slot.as_str()) {
+                        if !ps.ports.contains(&slot) {
                             continue;
                         }
                         for &port in ps.ports {
@@ -391,7 +416,7 @@ impl SettingsAppState {
                     sid,
                     self.controller_assignments
                         .iter()
-                        .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                        .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
                         .collect(),
                 );
             }
@@ -417,11 +442,15 @@ impl SettingsAppState {
                 let new_pairs: Vec<(String, Option<String>)> = self
                     .controller_assignments
                     .iter()
-                    .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                    .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
                     .collect();
                 if new_pairs != self.initial_assignments_pairs {
                     *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
-                        slots: self.controller_assignments.clone(),
+                        slots: self
+                            .controller_assignments
+                            .iter()
+                            .map(|(s, c)| (*s, c.clone()))
+                            .collect(),
                     });
                 }
                 self.should_close.store(true, Ordering::Release);
@@ -562,7 +591,7 @@ impl SettingsAppState {
                     None => continue,
                 };
                 for ps in profile.port_sets() {
-                    if ps.ports.contains(&s.as_str()) {
+                    if ps.ports.iter().any(|p| *p == *s) {
                         for &port in ps.ports {
                             occupied.insert(port);
                         }
@@ -589,11 +618,11 @@ impl SettingsAppState {
                             label: c.label().to_string(),
                         }),
                 );
-                if occupied.contains(slot.id)
+                if occupied.contains(&slot.id)
                     && !self
                         .controller_assignments
                         .iter()
-                        .any(|(s, c)| s == slot.id && c.is_some())
+                        .any(|(s, c)| s.as_str() == slot.id.as_str() && c.is_some())
                 {
                     // Occupied by another slot's multi-port controller
                     content = content.push(text(format!("{} — (occupied)", slot.label)));
@@ -602,7 +631,7 @@ impl SettingsAppState {
                 let current = self
                     .controller_assignments
                     .iter()
-                    .find(|(s, _)| s == slot.id)
+                    .find(|(s, _)| *s == slot.id)
                     .and_then(|(_, c)| c.as_ref())
                     .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned())
                     .or_else(|| slot_choices.first().cloned()); // default to "None"
@@ -613,7 +642,7 @@ impl SettingsAppState {
                         Some(choice.value)
                     };
                     Message::SetControllerSlot {
-                        slot: slot.id.to_string(),
+                        slot: slot.id,
                         controller_id,
                     }
                 });

@@ -24,6 +24,12 @@ impl AttachmentId {
     }
 }
 
+impl std::fmt::Display for AttachmentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DeviceKindId(&'static str);
 
@@ -47,6 +53,12 @@ impl DigitalControlId {
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl std::fmt::Display for DigitalControlId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }
 
@@ -337,20 +349,20 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
 /// A set of port identifiers a controller can occupy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PortSet {
-    pub ports: &'static [&'static str],
+    pub ports: &'static [AttachmentId],
 }
 
 /// Identifies a single slot on the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotInfo {
-    pub id: &'static str,
+    pub id: AttachmentId,
     pub label: &'static str,
 }
 
 /// Describes one control on a controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControlInfo {
-    pub id: &'static str,
+    pub id: DigitalControlId,
     pub label: &'static str,
     pub kind: ControlKind,
     pub abstract_key: Option<AbstractKey>,
@@ -395,7 +407,7 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
     fn label(&self) -> &'static str;
     fn port_sets(&self) -> &[PortSet];
     fn port_groups(&self) -> &[&[ControlInfo]];
-    fn directional_ids(&self) -> &[&[&'static str; 4]];
+    fn directional_ids(&self) -> &[&[DigitalControlId; 4]];
 }
 
 /// System port layout query. Factory → Frontend.
@@ -409,7 +421,7 @@ pub trait InputPorts: std::fmt::Debug {
 /// without string-based lookups.
 #[derive(Clone)]
 pub struct InputAssignments {
-    pub slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+    pub slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
 }
 
 impl std::fmt::Debug for InputAssignments {
@@ -432,7 +444,7 @@ impl InputAssignments {
     pub fn to_string_pairs(&self) -> Vec<(String, Option<String>)> {
         self.slots
             .iter()
-            .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+            .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
             .collect()
     }
 }
