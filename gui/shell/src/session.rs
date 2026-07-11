@@ -188,32 +188,6 @@ impl SessionHandle {
         result
     }
 
-    fn rebuild_key_field_map(&mut self) {
-        self.key_field_map.clear();
-        let system_id = self.factory.system_id();
-        let Some(profile) = self
-            .settings_snapshot
-            .shared
-            .input
-            .systems
-            .get(&system_id)
-            .and_then(|s| s.implicit_keyboard_profile())
-        else {
-            return;
-        };
-        for ((slot, control), &field) in &self.field_map {
-            let attachment = crate::session::input::attachment_id(slot);
-            let ctrl = crate::session::input::control_id(control);
-            if let Some(binding) = profile
-                .bindings
-                .iter()
-                .find(|b| b.attachment.as_str() == attachment && b.control.as_str() == ctrl)
-            {
-                self.key_field_map.insert(binding.key, field);
-            }
-        }
-    }
-
     pub fn new(
         capabilities: HostBackendCapabilities,
         factory: Arc<dyn CoreFactory>,

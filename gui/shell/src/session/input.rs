@@ -3,10 +3,9 @@ use std::rc::Rc;
 
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
 use nerust_input_traits::{
-    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile,
-    DeviceDescriptor, DeviceKindId, DigitalControlDescriptor, DigitalControlId,
-    DigitalInputEvent, InputAssignments, InputTopologyDescriptor, InputValue, PortDescriptor,
-    PortId,
+    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
+    DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
+    InputTopologyDescriptor, InputValue, PortDescriptor, PortId,
 };
 
 use crate::{
@@ -16,7 +15,7 @@ use crate::{
 
 /// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
 /// to the short form used in field_map keys.
-pub fn normalize_id(id: &str) -> &str {
+fn normalize_id(id: &str) -> &str {
     id.trim_start_matches("nes.attachment.")
         .trim_start_matches("nes.control.")
         .trim_start_matches("famicom.")
@@ -192,5 +191,31 @@ impl SessionHandle {
     pub fn clear_input(&mut self) {
         self.pressed_keys.clear();
         self.gui_input.clear();
+    }
+
+    pub fn rebuild_key_field_map(&mut self) {
+        self.key_field_map.clear();
+        let system_id = self.factory.system_id();
+        let Some(profile) = self
+            .settings_snapshot
+            .shared
+            .input
+            .systems
+            .get(&system_id)
+            .and_then(|s| s.implicit_keyboard_profile())
+        else {
+            return;
+        };
+        for ((slot, control), &field) in &self.field_map {
+            let attachment = crate::session::input::attachment_id(slot);
+            let ctrl = crate::session::input::control_id(control);
+            if let Some(binding) = profile
+                .bindings
+                .iter()
+                .find(|b| b.attachment.as_str() == attachment && b.control.as_str() == ctrl)
+            {
+                self.key_field_map.insert(binding.key, field);
+            }
+        }
     }
 }
