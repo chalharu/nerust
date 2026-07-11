@@ -55,10 +55,8 @@ impl State {
             },
             presentation: None,
         };
-        let descriptor = ctx.core_factory.system_descriptor();
         let session = SessionHandle::new(
             capabilities,
-            descriptor,
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
         );

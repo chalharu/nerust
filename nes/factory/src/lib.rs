@@ -84,9 +84,7 @@ impl CoreFactory for NesFactory {
     }
 
     fn system_descriptor(&self) -> SystemDescriptor {
-        SystemDescriptor {
-            input_topology: nerust_nes_controller::topology::input_topology_descriptor(),
-        }
+        SystemDescriptor
     }
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {

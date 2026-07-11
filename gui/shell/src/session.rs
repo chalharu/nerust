@@ -17,7 +17,7 @@ use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory, FactoryError,
-        descriptor::{SystemDescriptor, SystemSettingsPageModel},
+        descriptor::SystemSettingsPageModel,
         load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
     },
 };
@@ -47,7 +47,6 @@ pub(super) struct LoadedMedia {
 #[derive(Debug, Clone)]
 pub struct SessionSnapshot {
     pub metrics: ConsoleMetrics,
-    pub input_topology: Option<nerust_input_traits::InputTopologyDescriptor>,
     pub slots: Arc<[StateSlotSummary]>,
     pub active_slot_id: Option<u64>,
 }
@@ -59,7 +58,6 @@ pub enum KeyboardShortcut {
 }
 
 pub struct SessionHandle {
-    pub(super) descriptor: SystemDescriptor,
     pub(super) factory: Arc<dyn CoreFactory>,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
@@ -138,7 +136,6 @@ impl SessionHandle {
 
     fn new_inner(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
@@ -175,7 +172,6 @@ impl SessionHandle {
             gui_input,
             current_assignments: assignments,
             field_map,
-            descriptor,
             factory,
             capabilities,
             settings,
@@ -189,11 +185,10 @@ impl SessionHandle {
 
     pub fn new(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, audio_registry, true)
+        Self::new_inner(capabilities, factory, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -202,7 +197,6 @@ impl SessionHandle {
     /// the frontend provides an explicit settings root instead.
     pub fn new_with_settings_paths(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
@@ -237,7 +231,6 @@ impl SessionHandle {
             gui_input,
             current_assignments: assignments,
             field_map,
-            descriptor,
             factory,
             capabilities,
             settings,
@@ -252,17 +245,15 @@ impl SessionHandle {
     #[cfg(test)]
     pub fn new_ephemeral(
         capabilities: HostBackendCapabilities,
-        descriptor: SystemDescriptor,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, descriptor, factory, audio_registry, false)
+        Self::new_inner(capabilities, factory, audio_registry, false)
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             metrics: self.emu_core.metrics(),
-            input_topology: Some(self.descriptor.input_topology.clone()),
             slots: Arc::from(self.persistence.slots().to_vec()),
             active_slot_id: self.persistence.active_slot_id(),
         }

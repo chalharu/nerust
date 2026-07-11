@@ -203,12 +203,10 @@ impl AndroidFrontend {
                 supports_vsync: true,
             }),
         };
-        let descriptor = core_factory.system_descriptor();
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
-            descriptor,
             core_factory,
             audio_registry,
             settings_paths,
