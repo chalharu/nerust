@@ -257,7 +257,7 @@ pub(crate) fn present_preferences_dialog(
                     let combos = sc.borrow();
                     let input = f.input_system_factory();
                     // Build occupied from current selections
-                    let mut occupied = std::collections::HashSet::new();
+                    let mut occupied = HashSet::new();
                     for sc_item in combos.iter() {
                         let Some(label) = sc_item.combo.active_text() else {
                             continue;

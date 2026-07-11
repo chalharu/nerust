@@ -174,6 +174,8 @@ pub(crate) struct SettingsAppState {
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
     controller_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+    /// Snapshot of initial assignments for change detection at Submit time.
+    initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
     input_section: InputPageSection,
     storage_directory_input: String,
@@ -218,7 +220,11 @@ impl SettingsAppState {
             pending_apply: Arc::new(Mutex::new(None)),
             pending_assignments: Rc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
-            controller_assignments,
+            controller_assignments: controller_assignments.clone(),
+            initial_assignments_pairs: controller_assignments
+                .iter()
+                .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                .collect(),
             factory,
             audio_registry,
             draft: snapshot.clone(),
@@ -410,20 +416,7 @@ impl SettingsAppState {
                     .iter()
                     .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
                     .collect();
-                let sid = self.factory.system_id().to_string();
-                let current_pairs = self
-                    .draft
-                    .app_state
-                    .controller_assignments
-                    .get(&sid)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        self.factory
-                            .input_system_factory()
-                            .default_assignments()
-                            .to_string_pairs()
-                    });
-                if new_pairs != current_pairs {
+                if new_pairs != self.initial_assignments_pairs {
                     *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
                         slots: self.controller_assignments.clone(),
                     });
