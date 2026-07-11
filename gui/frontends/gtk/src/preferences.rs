@@ -199,11 +199,18 @@ pub(crate) fn present_preferences_dialog(
         .map(|pairs| {
             pairs
                 .iter()
-                .map(|(slot_id, ctrl_opt)| {
+                .filter_map(|(slot_id, ctrl_opt)| {
+                    let att = match input_factory.resolve_slot(slot_id) {
+                        Some(a) => a,
+                        None => {
+                            log::warn!("unknown persisted slot ID in GTK preferences: {slot_id}");
+                            return None;
+                        }
+                    };
                     let profile = ctrl_opt
                         .as_ref()
                         .and_then(|id| input_factory.resolve_controller(id));
-                    (input_factory.resolve_slot(slot_id), profile)
+                    Some((att, profile))
                 })
                 .collect()
         })
@@ -1129,11 +1136,18 @@ fn refresh_validation(
         .map(|pairs| {
             pairs
                 .iter()
-                .map(|(slot_id, ctrl_opt)| {
+                .filter_map(|(slot_id, ctrl_opt)| {
+                    let att = match input_factory.resolve_slot(slot_id) {
+                        Some(a) => a,
+                        None => {
+                            log::warn!("unknown persisted slot ID in validation: {slot_id}");
+                            return None;
+                        }
+                    };
                     let profile = ctrl_opt
                         .as_ref()
                         .and_then(|id| input_factory.resolve_controller(id));
-                    (input_factory.resolve_slot(slot_id), profile)
+                    Some((att, profile))
                 })
                 .collect()
         })
@@ -1179,11 +1193,18 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         .map(|pairs| {
             pairs
                 .iter()
-                .map(|(slot_id, ctrl_opt)| {
+                .filter_map(|(slot_id, ctrl_opt)| {
+                    let att = match input_factory.resolve_slot(slot_id) {
+                        Some(a) => a,
+                        None => {
+                            log::warn!("unknown persisted slot ID in validation errors: {slot_id}");
+                            return None;
+                        }
+                    };
                     let profile = ctrl_opt
                         .as_ref()
                         .and_then(|id| input_factory.resolve_controller(id));
-                    (input_factory.resolve_slot(slot_id), profile)
+                    Some((att, profile))
                 })
                 .collect()
         })

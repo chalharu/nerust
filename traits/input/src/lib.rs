@@ -11,6 +11,12 @@ impl PortId {
     }
 }
 
+impl PartialEq<AttachmentId> for PortId {
+    fn eq(&self, other: &AttachmentId) -> bool {
+        self.0 == other.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttachmentId(&'static str);
 
@@ -359,6 +365,13 @@ pub struct SlotInfo {
     pub label: &'static str,
 }
 
+impl SlotInfo {
+    /// Check whether this slot corresponds to the given persisted ID string.
+    pub fn matches_id(&self, id: &str) -> bool {
+        self.id.0 == id
+    }
+}
+
 /// Describes one control on a controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControlInfo {
@@ -407,7 +420,6 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
     fn label(&self) -> &'static str;
     fn port_sets(&self) -> &[PortSet];
     fn port_groups(&self) -> &[&[ControlInfo]];
-    fn directional_ids(&self) -> &[&[DigitalControlId; 4]];
 }
 
 /// System port layout query. Factory → Frontend.
@@ -416,13 +428,9 @@ pub trait InputPorts: std::fmt::Debug {
     fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
 
     /// Resolve a persisted slot ID string to an AttachmentId.
-    /// Returns the first slot whose ID matches, or the first slot if no match.
-    fn resolve_slot(&self, id: &str) -> AttachmentId {
-        self.slots()
-            .iter()
-            .find(|s| s.id.as_str() == id)
-            .map(|s| s.id)
-            .unwrap_or_else(|| self.slots()[0].id)
+    /// Returns None if no slot matches.
+    fn resolve_slot(&self, id: &str) -> Option<AttachmentId> {
+        self.slots().iter().find(|s| s.matches_id(id)).map(|s| s.id)
     }
 
     /// Resolve a persisted controller ID string to a ControllerProfile.

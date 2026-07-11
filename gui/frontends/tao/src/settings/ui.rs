@@ -208,11 +208,18 @@ impl SettingsAppState {
                 .map(|pairs| {
                     pairs
                         .iter()
-                        .map(|(slot_id, ctrl_opt)| {
+                        .filter_map(|(slot_id, ctrl_opt)| {
+                            let att = match input_factory.resolve_slot(slot_id) {
+                                Some(a) => a,
+                                None => {
+                                    log::warn!("unknown persisted slot ID in settings: {slot_id}");
+                                    return None;
+                                }
+                            };
                             let profile = ctrl_opt
                                 .as_ref()
                                 .and_then(|id| input_factory.resolve_controller(id));
-                            (input_factory.resolve_slot(slot_id), profile)
+                            Some((att, profile))
                         })
                         .collect()
                 })
