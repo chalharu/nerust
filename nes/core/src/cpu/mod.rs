@@ -1339,7 +1339,7 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct TestController;
 
     impl controller::Controller for TestController {

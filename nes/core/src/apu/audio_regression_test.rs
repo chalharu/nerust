@@ -42,7 +42,7 @@ fn null_fb() -> FrameBuffer {
     fb
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct NullController;
 
 impl Controller for NullController {

@@ -654,17 +654,7 @@ impl OpenBus {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct OpenBusReadResult {
-    pub data: u8,
-    pub mask: u8,
-}
-
-impl OpenBusReadResult {
-    pub fn new(data: u8, mask: u8) -> Self {
-        Self { data, mask }
-    }
-}
+pub use nerust_input_traits::OpenBusReadResult;
 
 #[cfg(test)]
 fn nrom_test_cartridge() -> Box<dyn Cartridge> {
@@ -834,7 +824,7 @@ mod scheduler_tests {
         fb
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct NullController;
 
     impl Controller for NullController {

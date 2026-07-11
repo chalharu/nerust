@@ -185,6 +185,88 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Result of a CPU bus read — data bits and which bits are valid.
+#[derive(Debug, Copy, Clone)]
+pub struct OpenBusReadResult {
+    pub data: u8,
+    pub mask: u8,
+}
+
+impl OpenBusReadResult {
+    pub fn new(data: u8, mask: u8) -> Self {
+        Self { data, mask }
+    }
+}
+
+/// Single physical controller (shift register logic).
+pub trait Controller: std::fmt::Debug + Send {
+    fn read(&mut self, port: usize) -> OpenBusReadResult;
+    fn write(&mut self, port: usize, value: u8);
+    fn sync_input(&mut self, _state: &[u8]) {}
+}
+
+/// Multi-port controller hub routing reads/writes to per-port controllers.
+pub trait ControllerHub: std::fmt::Debug + Send {
+    fn read_port(&mut self, port: usize) -> OpenBusReadResult;
+    fn write_strobe(&mut self, value: u8);
+    fn sync_input(&mut self, state: &[u8]);
+}
+
+/// A collection of per-port controllers with their associated profiles.
+pub struct ControllerCollection {
+    devices: Vec<Box<dyn Controller + Send>>,
+    pub profiles: Vec<Option<Rc<dyn ControllerProfile>>>,
+}
+
+impl std::fmt::Debug for ControllerCollection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ControllerCollection")
+            .field("profiles", &self.profiles)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ControllerCollection {
+    pub fn new(
+        devices: Vec<Box<dyn Controller + Send>>,
+        profiles: Vec<Option<Rc<dyn ControllerProfile>>>,
+    ) -> Self {
+        Self { devices, profiles }
+    }
+
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    pub fn device_mut(&mut self, port: usize) -> Option<&mut Box<dyn Controller + Send>> {
+        self.devices.get_mut(port)
+    }
+
+    pub fn iter_devices_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn Controller + Send>> {
+        self.devices.iter_mut()
+    }
+}
+
+impl ControllerHub for ControllerCollection {
+    fn read_port(&mut self, port: usize) -> OpenBusReadResult {
+        self.devices
+            .get_mut(port)
+            .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
+    }
+    fn write_strobe(&mut self, value: u8) {
+        for (port, d) in self.devices.iter_mut().enumerate() {
+            d.write(port, value);
+        }
+    }
+    fn sync_input(&mut self, state: &[u8]) {
+        for d in &mut self.devices {
+            d.sync_input(state);
+        }
+    }
+}
+
+unsafe impl Send for ControllerCollection {}
+
 /// Values that can be written to an InputStateBuffer field.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InputValue {
@@ -337,7 +419,7 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
     fn default_assignments(&self) -> InputAssignments;
     fn create_split(
         &self,
-        assignments: &InputAssignments,
+        controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError>;
 }
 
