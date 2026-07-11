@@ -59,7 +59,7 @@ impl CoreFactory for NesFactory {
                     ));
                     pairs.push((
                         Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()),
-                        None, // P2 is part of the same FamicomSet profile
+                        Some(profile.clone()), // Both ports use the same FamicomSet profile
                     ));
                 }
                 "nes.standard_pad" => {

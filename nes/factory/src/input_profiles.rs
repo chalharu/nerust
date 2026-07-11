@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use nerust_input_traits::{
@@ -74,55 +73,26 @@ impl InputSystemFactory for crate::NesFactory {
         use std::sync::{Arc, Mutex};
 
         let mut field_map = std::collections::HashMap::new();
-        let mut assigned_ports = HashSet::new();
 
-        for (slot_idx, profile_opt) in controllers.profiles.iter().enumerate() {
+        for (_, profile_opt) in controllers.profiles.iter().enumerate() {
             let profile = match profile_opt {
                 Some(p) => p.as_ref(),
                 None => continue,
             };
-            let slot_key: &'static str = match slot_idx {
-                0 => "player1",
-                1 => "player2",
-                _ => continue,
-            };
-            if !assigned_ports.insert(slot_key) {
-                return Err(CreateSplitError::SlotConflict {
-                    a: slot_key.to_string(),
-                    b: slot_key.to_string(),
-                });
-            }
-            let port_groups_list = profile.port_groups();
-            for ps in profile.port_sets() {
-                if let Some(pos) = ps.ports.iter().position(|&p| p == slot_key) {
-                    let base = pos * 8;
-                    collect_control_fields(&mut field_map, port_groups_list[pos], base, slot_key);
-                    // Handle multi-port: also occupy other ports in the set
-                    if ps.ports.len() > 1 {
-                        for (gi, &port) in ps.ports.iter().enumerate() {
-                            if port == slot_key {
-                                continue;
-                            }
-                            if !assigned_ports.insert(port) {
-                                return Err(CreateSplitError::SlotConflict {
-                                    a: port.to_string(),
-                                    b: port.to_string(),
-                                });
-                            }
-                            let base = gi * 8;
-                            collect_control_fields(
-                                &mut field_map,
-                                port_groups_list[gi],
-                                base,
-                                port,
-                            );
-                        }
-                        // Microphone for FamicomSet
-                        if profile.id() == "nes.famicom" {
-                            field_map.insert(("player2", "microphone"), 16);
-                        }
-                    }
+            let groups = profile.port_groups();
+            for (gi, &port) in profile
+                .port_sets()
+                .iter()
+                .flat_map(|ps| ps.ports.iter().enumerate())
+            {
+                let base = gi * 8;
+                if let Some(controls) = groups.get(gi) {
+                    collect_control_fields(&mut field_map, controls, base, port);
                 }
+            }
+            // Microphone for FamicomSet (maps from P2's port group)
+            if profile.id() == "nes.famicom" {
+                field_map.insert(("player2", "microphone"), 16);
             }
         }
         if field_map.is_empty() {
