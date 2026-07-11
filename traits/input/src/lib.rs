@@ -482,7 +482,7 @@ impl std::fmt::Debug for InputSplit {
 /// On publish, copies state → write_buf → shared (swap), preserving held keys.
 #[derive(Debug)]
 pub struct GuiInput {
-    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
     pub state: Box<dyn InputStateBuffer>,
     write_buf: Box<dyn InputStateBuffer>,
