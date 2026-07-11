@@ -17,7 +17,6 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsApplyPlan,
 };
-use std::rc::Rc;
 
 use nerust_input_traits::{
     BufferError, ControllerProfile, CreateSplitError, GuiInput, InputAssignments, InputPorts,
