@@ -246,7 +246,6 @@ pub(crate) fn present_preferences_dialog(
 
     // Key binding section (rebuilt dynamically on controller change)
     let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
-    input_page.append(&*key_binding_box);
     let input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Rebuild key binding UI from current assignments.
@@ -388,6 +387,7 @@ pub(crate) fn present_preferences_dialog(
                 .collect()
         })
         .unwrap_or_else(|| default_assignments.slots);
+    input_page.append(&*key_binding_box);
     rebuild_input_ui(
         &key_binding_box,
         &input_rows,
