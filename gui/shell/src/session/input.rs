@@ -68,7 +68,7 @@ pub fn build_topology(
             Some(p) => p.as_ref(),
             None => continue,
         };
-        let ctrl_id = profile.id();
+        let ctrl_id = profile.profile_id().as_str();
         for ps in profile.port_sets() {
             if ps.ports.contains(slot_att) {
                 for (gi, &port) in ps.ports.iter().enumerate() {

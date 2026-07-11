@@ -241,7 +241,7 @@ impl SettingsAppState {
                 .map(|(s, c)| {
                     (
                         s.as_str().to_string(),
-                        c.as_ref().map(|p| p.id().to_string()),
+                        c.as_ref().map(|p| p.profile_id().to_string()),
                     )
                 })
                 .collect(),
@@ -372,7 +372,7 @@ impl SettingsAppState {
                         .input_system_factory()
                         .controllers()
                         .iter()
-                        .find(|p| p.id() == id)
+                        .find(|p| p.profile_id().as_str() == id)
                         .cloned()
                 });
                 // For multi-port controllers (port_set with >1 port),
@@ -411,7 +411,12 @@ impl SettingsAppState {
                     sid,
                     self.controller_assignments
                         .iter()
-                        .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
+                        .map(|(s, c)| {
+                            (
+                                s.to_string(),
+                                c.as_ref().map(|p| p.profile_id().to_string()),
+                            )
+                        })
                         .collect(),
                 );
             }
@@ -437,7 +442,12 @@ impl SettingsAppState {
                 let new_pairs: Vec<(String, Option<String>)> = self
                     .controller_assignments
                     .iter()
-                    .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
+                    .map(|(s, c)| {
+                        (
+                            s.to_string(),
+                            c.as_ref().map(|p| p.profile_id().to_string()),
+                        )
+                    })
                     .collect();
                 if new_pairs != self.initial_assignments_pairs {
                     *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
@@ -609,7 +619,7 @@ impl SettingsAppState {
                                 .any(|ps| ps.ports.first() == Some(&slot.id))
                         })
                         .map(|c| Choice {
-                            value: c.id().to_string(),
+                            value: c.profile_id().to_string(),
                             label: c.label().to_string(),
                         }),
                 );
@@ -628,7 +638,12 @@ impl SettingsAppState {
                     .iter()
                     .find(|(s, _)| *s == slot.id)
                     .and_then(|(_, c)| c.as_ref())
-                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned())
+                    .and_then(|id| {
+                        slot_choices
+                            .iter()
+                            .find(|ch| ch.value == id.profile_id().as_str())
+                            .cloned()
+                    })
                     .or_else(|| slot_choices.first().cloned()); // default to "None"
                 let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
                     let controller_id = if choice.value.is_empty() {
