@@ -531,12 +531,25 @@ impl GuiInput {
 /// Emu thread input consumer.
 #[derive(Debug)]
 pub struct EmuInput {
-    pub shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
-    pub flag: Arc<AtomicBool>,
+    shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+    flag: Arc<AtomicBool>,
     pub read_buf: Box<dyn InputStateBuffer>,
 }
 
 impl EmuInput {
+    pub fn new(
+        shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
+        flag: Arc<AtomicBool>,
+        new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer>>,
+    ) -> Self {
+        let read_buf = (new_buffer)();
+        Self {
+            shared,
+            flag,
+            read_buf,
+        }
+    }
+
     pub fn from_split(split: &InputSplit) -> Self {
         Self {
             shared: Arc::clone(&split.shared),
