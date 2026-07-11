@@ -244,6 +244,29 @@ pub(crate) fn present_preferences_dialog(
     let slot_combos: Rc<RefCell<Vec<SlotCombo>>> = Rc::new(RefCell::new(Vec::new()));
     let factory2 = factory.clone();
 
+    // Read current assignments to pre-select combo boxes.
+    let sid = factory.system_id().to_string();
+    let default_assignments = factory.input_system_factory().default_assignments();
+    let current_assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = draft
+        .borrow()
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .map(|pairs| {
+            let profiles = factory.input_system_factory().controllers();
+            pairs
+                .iter()
+                .map(|(slot_id, ctrl_opt)| {
+                    let profile = ctrl_opt
+                        .as_ref()
+                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
+                        .cloned();
+                    (slot_id.clone(), profile)
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| default_assignments.slots);
+
     // Key binding section (rebuilt dynamically on controller change)
     let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
     let input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
@@ -347,6 +370,12 @@ pub(crate) fn present_preferences_dialog(
                                         current_assignments.iter_mut().find(|(s, _)| *s == port)
                                 {
                                     other.1 = None;
+                                    // Also clear the combo box for this slot
+                                    if let Some(sc_item) =
+                                        sc.borrow().iter().find(|s| s.slot_id == port)
+                                    {
+                                        sc_item.combo.set_active(Some(0));
+                                    }
                                 }
                             }
                         }
@@ -358,6 +387,22 @@ pub(crate) fn present_preferences_dialog(
                 slot_id: slot.id.to_string(),
                 combo: combo.clone(),
             });
+            // Pre-select based on current assignment
+            if let Some((_, Some(profile))) = current_assignments.iter().find(|(s, _)| s == slot.id)
+            {
+                let idx = controllers
+                    .iter()
+                    .filter(|c| {
+                        c.port_sets()
+                            .iter()
+                            .any(|ps| ps.ports.first() == Some(&slot.id))
+                    })
+                    .position(|c| c.id() == profile.id())
+                    .map(|pos| pos as u32 + 1); // +1 for "None" at index 0
+                if let Some(active) = idx {
+                    combo.set_active(Some(active));
+                }
+            }
             row.append(&combo);
             input_page.append(&row);
         }
@@ -366,33 +411,12 @@ pub(crate) fn present_preferences_dialog(
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
     input_page.append(&input_conflict_label);
-    let sid = factory.system_id().to_string();
-    let default_assignments = factory.input_system_factory().default_assignments();
-    let assignments: Vec<(String, Option<Rc<dyn ControllerProfile>>)> = draft
-        .borrow()
-        .app_state
-        .controller_assignments
-        .get(&sid)
-        .map(|pairs| {
-            let profiles = factory.input_system_factory().controllers();
-            pairs
-                .iter()
-                .map(|(slot_id, ctrl_opt)| {
-                    let profile = ctrl_opt
-                        .as_ref()
-                        .and_then(|id| profiles.iter().find(|p| p.id() == id.as_str()))
-                        .cloned();
-                    (slot_id.clone(), profile)
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| default_assignments.slots);
     input_page.append(&*key_binding_box);
     rebuild_input_ui(
         &key_binding_box,
         &input_rows,
         factory.as_ref(),
-        &assignments,
+        &current_assignments,
         language,
     );
 
