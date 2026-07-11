@@ -7,4 +7,5 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+libm.workspace = true
 log.workspace = true

@@ -57,8 +57,8 @@ impl Init {
             let hue = (setup.hue() * f32::consts::PI) + (f32::consts::PI / 180.0 * STD_DECODER_HUE);
             let sat = setup.saturation() + 1.0;
 
-            let s = hue.sin() * sat;
-            let c = hue.cos() * sat;
+            let s = libm::sinf(hue) * sat;
+            let c = libm::cosf(hue) * sat;
 
             (0..BURST_COUNT)
                 .scan((s, c), |acc, _| {
@@ -105,9 +105,9 @@ impl Init {
 
                 // instability occurs at center point with rolloff very close to 1.0
                 if KERNEL_HALF != i || !(0.981..=1.056).contains(&pow_a_n) {
-                    let rolloff_cos_a = rolloff * angle.cos();
-                    let num = 1.0 - rolloff_cos_a - pow_a_n * (maxh * angle).cos()
-                        + pow_a_n * rolloff * ((maxh - 1.0) * angle).cos();
+                    let rolloff_cos_a = rolloff * libm::cosf(angle);
+                    let num = 1.0 - rolloff_cos_a - pow_a_n * libm::cosf(maxh * angle)
+                        + pow_a_n * rolloff * libm::cosf((maxh - 1.0) * angle);
                     let den = 1.0 - rolloff_cos_a - rolloff_cos_a + rolloff * rolloff;
                     let dsf = num / den;
                     kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i] = dsf - 0.5;
@@ -118,7 +118,7 @@ impl Init {
             let sum = 1.0
                 / (0..=KERNEL_HALF * 2).fold(0.0, |acc, i| {
                     let x = f32::consts::PI / KERNEL_HALF as f32 * i as f32;
-                    let blackman = (0.42 - 0.5 * x.cos() + 0.08 * (x * 2.0).cos())
+                    let blackman = (0.42 - 0.5 * libm::cosf(x) + 0.08 * libm::cosf(x * 2.0))
                         * kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i];
                     kernels[KERNEL_SIZE * 3 / 2 - KERNEL_HALF + i] = blackman;
                     blackman + acc
