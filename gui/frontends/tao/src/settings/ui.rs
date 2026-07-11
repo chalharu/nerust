@@ -261,6 +261,9 @@ impl SettingsAppState {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
+        if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
+            errors.push("At least one controller must be assigned".to_string());
+        }
         for (key, labels) in conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
@@ -601,7 +604,8 @@ impl SettingsAppState {
                     .iter()
                     .find(|(s, _)| s == slot.id)
                     .and_then(|(_, c)| c.as_ref())
-                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned());
+                    .and_then(|id| slot_choices.iter().find(|ch| ch.value == id.id()).cloned())
+                    .or_else(|| slot_choices.first().cloned()); // default to "None"
                 let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
                     let controller_id = if choice.value.is_empty() {
                         None

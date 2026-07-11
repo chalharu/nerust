@@ -1127,7 +1127,9 @@ fn refresh_validation(
         .err()
         .map(|error| error.to_string());
     let conflicts = conflicting_keys(&snapshot.shared, &dynamic_topology(&assignments), system);
-    let has_errors = storage_error.is_some() || !conflicts.is_empty();
+    let has_errors = storage_error.is_some()
+        || !conflicts.is_empty()
+        || !assignments.iter().any(|(_, c)| c.is_some());
     storage_dir_row.set_visible(matches!(
         snapshot.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
@@ -1172,6 +1174,9 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
                 .collect()
         })
         .unwrap_or_else(|| factory.input_system_factory().default_assignments().slots);
+    if !assignments.iter().any(|(_, c)| c.is_some()) {
+        errors.push("At least one controller must be assigned".to_string());
+    }
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
         &dynamic_topology(&assignments),
