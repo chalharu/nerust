@@ -404,9 +404,30 @@ impl SettingsAppState {
                     return Task::none();
                 }
                 *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
-                *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
-                    slots: self.controller_assignments.clone(),
-                });
+                // Only push assignments if they actually changed
+                let new_pairs: Vec<(String, Option<String>)> = self
+                    .controller_assignments
+                    .iter()
+                    .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+                    .collect();
+                let sid = self.factory.system_id().to_string();
+                let current_pairs = self
+                    .draft
+                    .app_state
+                    .controller_assignments
+                    .get(&sid)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        self.factory
+                            .input_system_factory()
+                            .default_assignments()
+                            .to_string_pairs()
+                    });
+                if new_pairs != current_pairs {
+                    *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
+                        slots: self.controller_assignments.clone(),
+                    });
+                }
                 self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
