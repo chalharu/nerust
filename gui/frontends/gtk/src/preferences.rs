@@ -269,6 +269,7 @@ pub(crate) fn present_preferences_dialog(
 
     // Key binding section (rebuilt dynamically on controller change)
     let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
+    key_binding_box.set_vexpand(true);
     let input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Rebuild key binding UI from current assignments.
