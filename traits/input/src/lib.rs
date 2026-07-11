@@ -68,6 +68,26 @@ impl std::fmt::Display for DigitalControlId {
     }
 }
 
+/// Identifies a controller profile type (e.g. "nes.standard_pad", "nes.famicom").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProfileId(&'static str);
+
+impl ProfileId {
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnalogControlId(&'static str);
 
@@ -416,7 +436,7 @@ pub enum AbstractKey {
 
 /// Describes one controller type (metadata sent to Frontend).
 pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
-    fn id(&self) -> &'static str;
+    fn profile_id(&self) -> ProfileId;
     fn label(&self) -> &'static str;
     fn port_sets(&self) -> &[PortSet];
     fn port_groups(&self) -> &[&[ControlInfo]];
@@ -435,7 +455,10 @@ pub trait InputPorts: std::fmt::Debug {
 
     /// Resolve a persisted controller ID string to a ControllerProfile.
     fn resolve_controller(&self, id: &str) -> Option<Rc<dyn ControllerProfile>> {
-        self.controllers().iter().find(|p| p.id() == id).cloned()
+        self.controllers()
+            .iter()
+            .find(|p| p.profile_id().as_str() == id)
+            .cloned()
     }
 }
 
@@ -455,7 +478,7 @@ impl std::fmt::Debug for InputAssignments {
                 &self
                     .slots
                     .iter()
-                    .map(|(s, c)| (s, c.as_ref().map(|p| p.id())))
+                    .map(|(s, c)| (s, c.as_ref().map(|p| p.profile_id())))
                     .collect::<Vec<_>>(),
             )
             .finish()
@@ -467,7 +490,12 @@ impl InputAssignments {
     pub fn to_string_pairs(&self) -> Vec<(String, Option<String>)> {
         self.slots
             .iter()
-            .map(|(s, c)| (s.to_string(), c.as_ref().map(|p| p.id().to_string())))
+            .map(|(s, c)| {
+                (
+                    s.to_string(),
+                    c.as_ref().map(|p| p.profile_id().to_string()),
+                )
+            })
             .collect()
     }
 }

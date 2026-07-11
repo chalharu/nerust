@@ -1,6 +1,6 @@
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet,
+    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
 /// Famicom controller on port 1: 8 buttons + microphone on D2 ($4016).
@@ -188,8 +188,8 @@ impl Controller for FamicomPadP2 {
 pub struct FamicomSetProfile;
 
 impl ControllerProfile for FamicomSetProfile {
-    fn id(&self) -> &'static str {
-        "nes.famicom"
+    fn profile_id(&self) -> ProfileId {
+        ProfileId::new("nes.famicom")
     }
     fn label(&self) -> &'static str {
         "Famicom Controller Set"

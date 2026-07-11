@@ -1,6 +1,6 @@
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet,
+    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -105,8 +105,8 @@ impl Controller for StandardPad {
 pub struct StandardPadProfile;
 
 impl ControllerProfile for StandardPadProfile {
-    fn id(&self) -> &'static str {
-        "nes.standard_pad"
+    fn profile_id(&self) -> ProfileId {
+        ProfileId::new("nes.standard_pad")
     }
     fn label(&self) -> &'static str {
         "NES Standard Controller"

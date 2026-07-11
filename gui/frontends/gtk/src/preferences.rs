@@ -370,7 +370,7 @@ pub(crate) fn present_preferences_dialog(
                             .iter()
                             .any(|ps| ps.ports.first() == Some(&slot.id))
                     })
-                    .position(|c| c.id() == profile.id())
+                    .position(|c| c.profile_id() == profile.profile_id())
                     .map(|pos| pos as u32 + 1); // +1 for "None" at index 0
                 if let Some(active) = idx {
                     combo.set_active(Some(active));
