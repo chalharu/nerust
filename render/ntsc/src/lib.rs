@@ -59,7 +59,7 @@ struct PixelInfo {
     kernel: [f32; 4],
 }
 
-fn pixel_offset_impl(ntsc: isize, scaled: isize) -> usize {
+const fn pixel_offset_impl(ntsc: isize, scaled: isize) -> usize {
     (KERNEL_SIZE as isize / 2
         + ntsc
         + if scaled != 0 { 1 } else { 0 }
@@ -67,7 +67,7 @@ fn pixel_offset_impl(ntsc: isize, scaled: isize) -> usize {
         + (KERNEL_SIZE as isize * 2 * scaled)) as usize
 }
 
-fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
+const fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
     let offset = pixel_offset_impl(
         ntsc - scaled / RESCALE_OUT as isize * RESCALE_IN as isize,
         (scaled + RESCALE_OUT as isize * 10) % RESCALE_OUT as isize,
@@ -80,13 +80,11 @@ fn pixel_offset(ntsc: isize, scaled: isize, kernel: [f32; 4]) -> PixelInfo {
 }
 
 // 3 input pixels -> 8 composite samples
-lazy_static::lazy_static! {
-    static ref NES_NTSC_PIXELS: [PixelInfo; ALIGNMENT_COUNT] = [
-        pixel_offset(-4, -9, [1.0, 1.0, 0.6667, 0.0]),
-        pixel_offset(-2, -7, [0.3333, 1.0, 1.0, 0.3333]),
-        pixel_offset(0, -5, [0.0, 0.6667, 1.0, 1.0]),
-    ];
-}
+static NES_NTSC_PIXELS: [PixelInfo; ALIGNMENT_COUNT] = [
+    pixel_offset(-4, -9, [1.0, 1.0, 0.6667, 0.0]),
+    pixel_offset(-2, -7, [0.3333, 1.0, 1.0, 0.3333]),
+    pixel_offset(0, -5, [0.0, 0.6667, 1.0, 1.0]),
+];
 
 fn rotate_iq(iq: (f32, f32), sin_b: f32, cos_b: f32) -> (f32, f32) {
     (iq.0 * cos_b - iq.1 * sin_b, iq.0 * sin_b + iq.1 * cos_b)
