@@ -179,11 +179,11 @@ mod tests {
         use nerust_input_traits::InputStateBuffer;
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
-        EmuInput {
+        EmuInput::new(
             shared,
-            flag: Arc::new(AtomicBool::new(false)),
-            read_buf: Box::<NesInputBuffer>::default(),
-        }
+            Arc::new(AtomicBool::new(false)),
+            Box::new(|| Box::<NesInputBuffer>::default()),
+        )
     }
 
     #[derive(Debug)]
