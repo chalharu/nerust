@@ -2,10 +2,11 @@ use std::any::Any;
 
 use crate::input_types::NesInputBuffer;
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer, PixelFormat,
-    VideoSignalKind, audio::AudioBackend, identity::SystemIdentity,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
+use nerust_render_base::{FrameBuffer, PixelFormat};
 
 use crate::{Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
 

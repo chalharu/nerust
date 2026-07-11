@@ -11,7 +11,7 @@ use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
 use nerust_core_traits::factory::{CoreFactory, FactoryError};
 use nerust_core_traits::identity::SystemId;
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, FrameBuffer,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
     audio::{AudioBackend, AudioBackendRegistry},
     factory::settings::FactorySettingsView,
     identity::SystemIdentity,
@@ -25,9 +25,9 @@ use nerust_input_traits::{
     InputValue, SlotInfo,
 };
 use nerust_persistence::slots::autosave_state_slot_path;
-use nerust_render_base::VideoRenderProfile;
 use nerust_render_base::logical::LogicalSize;
 use nerust_render_base::physical::PhysicalSize;
+use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 
 use crate::settings::factory::settings_view;
 use crate::{
