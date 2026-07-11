@@ -289,10 +289,10 @@ impl PerfRunner {
             core,
             screen,
             checksum: 0,
-            controller: ControllerCollection::new(
-                vec![Box::new(FamicomPadP1::new()), Box::new(FamicomPadP2::new())],
-                Vec::new(),
-            ),
+            controller: ControllerCollection::new(vec![
+                Box::new(FamicomPadP1::new()),
+                Box::new(FamicomPadP2::new()),
+            ]),
             mixer: PerfMixer::new(case.audio_sample_rate()),
             frame_counter: 0,
             pad1: Buttons::empty(),

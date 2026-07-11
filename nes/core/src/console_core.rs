@@ -178,7 +178,10 @@ mod tests {
     use nerust_render_base::PixelFormat;
 
     use super::*;
-    use crate::{OpenBusReadResult, controller::Controller};
+    use crate::{
+        OpenBusReadResult,
+        controller::{Controller, Port},
+    };
 
     fn test_emu_input() -> EmuInput {
         use nerust_input_traits::InputStateBuffer;

@@ -9,7 +9,7 @@ use crate::{
     Core, OpenBusReadResult,
     cartridge_data_parts::CartridgeDataParts,
     cartridge_rom::CartridgeData,
-    controller::{Controller, ControllerHub},
+    controller::{Controller, ControllerHub, Port},
     mirror::MirrorMode,
     rom_format::RomFormat,
 };
@@ -54,7 +54,7 @@ impl Controller for NullController {
 }
 
 impl ControllerHub for NullController {
-    fn read_port(&mut self, _port: usize) -> OpenBusReadResult {
+    fn read_port(&mut self, _port: &dyn Port) -> OpenBusReadResult {
         OpenBusReadResult::new(0, 0)
     }
     fn write_strobe(&mut self, _value: u8) {}
