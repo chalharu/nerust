@@ -202,6 +202,12 @@ impl OpenBusReadResult {
 pub trait Port: std::fmt::Debug {
     fn index(&self) -> usize;
     fn id(&self) -> &'static str;
+
+    /// Return the attachment ID for this port.
+    /// The default implementation wraps `id()` in an `AttachmentId`.
+    fn as_attachment_id(&self) -> AttachmentId {
+        AttachmentId::new(self.id())
+    }
 }
 
 /// A simple port implementation with numeric index and string id.
