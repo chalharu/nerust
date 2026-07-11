@@ -231,9 +231,9 @@ pub trait Controller: std::fmt::Debug + Send {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write(&mut self, port: &dyn Port, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
-    /// Return field map entries (slot_id, control_id, field_index) for this
+    /// Return field map entries (attachment, control, field_index) for this
     /// controller at the given port. Default returns empty (no inputs).
-    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, _port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
         Vec::new()
     }
 }
@@ -457,8 +457,8 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 #[derive(Debug)]
 pub struct InputResources {
     pub split: InputSplit,
-    /// (slot_id, control_id) → absolute field index
-    pub field_map: std::collections::HashMap<(&'static str, &'static str), usize>,
+    /// (attachment, control) → absolute field index
+    pub field_map: std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
 }
 
 /// Thread-shared state reference.

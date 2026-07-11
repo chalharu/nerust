@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use nerust_core_traits::audio::AudioBackend;
 use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreParts, FactoryError};
-use nerust_input_traits::{ControllerCollection, EmuInput, GuiInput};
+use nerust_input_traits::{
+    AttachmentId, ControllerCollection, DigitalControlId, EmuInput, GuiInput,
+};
 use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_render_base::VideoRenderProfile;
 use nerust_render_base::filter::FilterType;
@@ -14,7 +16,7 @@ pub(crate) fn create_core_and_adapter(
     speaker: Box<dyn AudioBackend>,
     gui_input: GuiInput,
     emu_input: EmuInput,
-    field_map: HashMap<(&'static str, &'static str), usize>,
+    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
     let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);

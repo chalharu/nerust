@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -18,14 +19,14 @@ use crate::{
 /// a source-key → field-index map from an InputAssignments field_map.
 trait InputBinding {
     type Id: Copy + Eq + Hash;
-    fn matches(&self, attachment: &str, control: &str) -> bool;
+    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool;
     fn source_id(&self) -> Self::Id;
 }
 
 impl InputBinding for KeyboardBinding {
     type Id = KeyboardKey;
-    fn matches(&self, attachment: &str, control: &str) -> bool {
-        self.attachment.as_str() == attachment && self.control.as_str() == control
+    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool {
+        self.attachment == *attachment && self.control == *control
     }
     fn source_id(&self) -> Self::Id {
         self.key
@@ -34,26 +35,16 @@ impl InputBinding for KeyboardBinding {
 
 /// Generic rebuild: iterate field_map, find matching bindings, populate target map.
 fn rebuild_input_map<B: InputBinding>(
-    field_map: &std::collections::HashMap<(&'static str, &'static str), usize>,
+    field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
     bindings: &[B],
-    target: &mut std::collections::HashMap<B::Id, usize>,
+    target: &mut HashMap<B::Id, usize>,
 ) {
     target.clear();
-    for ((slot, control), &field) in field_map {
-        let attachment = attachment_id(slot);
-        let ctrl = control_id(control);
-        if let Some(binding) = bindings.iter().find(|b| b.matches(attachment, ctrl)) {
+    for ((attachment, control), &field) in field_map {
+        if let Some(binding) = bindings.iter().find(|b| b.matches(attachment, control)) {
             target.insert(binding.source_id(), field);
         }
     }
-}
-
-/// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
-/// to the short form used in field_map keys.
-fn normalize_id(id: &str) -> &str {
-    id.trim_start_matches("nes.attachment.")
-        .trim_start_matches("nes.control.")
-        .trim_start_matches("famicom.")
 }
 
 /// Map slot name to attachment ID string.
@@ -182,9 +173,7 @@ impl SessionHandle {
 
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        let slot = normalize_id(event.attachment.as_str());
-        let control = normalize_id(event.control.as_str());
-        if let Some(&field) = self.field_map.get(&(slot, control)) {
+        if let Some(&field) = self.field_map.get(&(event.attachment, event.control)) {
             let _ = self
                 .gui_input
                 .state

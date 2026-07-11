@@ -2837,6 +2837,7 @@ name = "nerust_gui_settings"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
+ "nerust_input_traits",
  "serde",
  "serde_yaml",
 ]
