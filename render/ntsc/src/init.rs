@@ -1,6 +1,10 @@
 use std::f32;
 
-use super::*;
+use crate::{
+    ARTIFACTS_MAX, ARTIFACTS_MID, BURST_COUNT, DEFAULT_DECODER, FRINGING_MAX, FRINGING_MID,
+    KERNEL_HALF, KERNEL_SIZE, LUMA_CUTOFF, RESCALE_IN, RESCALE_OUT, STD_DECODER_HUE, rotate_iq,
+    setup::{Setup, SetupValues as _},
+};
 
 pub(crate) struct Init {
     pub(crate) to_rgb: Vec<Vec<f32>>, //[f32; BURST_COUNT * 6],
@@ -190,4 +194,3 @@ impl Init {
         }
     }
 }
-use crate::setup::Setup;
