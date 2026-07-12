@@ -19,6 +19,8 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings =
         crate::keyboard_defaults::default_nes_bindings();
+    nes_input.implicit_gamepad_profile_mut().bindings =
+        crate::keyboard_defaults::default_nes_gamepad_bindings();
     let _ = nes_input
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
