@@ -379,6 +379,40 @@ pub(crate) fn present_preferences_dialog(
                             }
                         }
                     }
+                    // Sync all combos (both pages) to match current assignments.
+                    // Collect (slot_id, target_idx) first, then apply without holding RefCell.
+                    let input = f.input_system_factory();
+                    let sync_targets: Vec<(Option<gtk::ComboBoxText>, u32)> = {
+                        let guard = sc.borrow();
+                        guard
+                            .iter()
+                            .map(|si| {
+                                let assignment = current.iter().find(|(s, _)| *s == si.slot_id);
+                                let target_idx = match assignment.and_then(|(_, c)| c.as_ref()) {
+                                    Some(profile) => input
+                                        .controllers()
+                                        .iter()
+                                        .filter(|c| {
+                                            c.port_sets()
+                                                .iter()
+                                                .any(|ps| ps.ports.first() == Some(&si.slot_id))
+                                        })
+                                        .position(|c| c.profile_id() == profile.profile_id())
+                                        .map(|pos| pos as u32 + 1)
+                                        .unwrap_or(0),
+                                    None => 0,
+                                };
+                                (Some(si.combo.clone()), target_idx)
+                            })
+                            .collect()
+                    };
+                    for (combo_opt, target_idx) in &sync_targets {
+                        if let Some(combo) = combo_opt {
+                            if combo.active().map_or(true, |idx| idx != *target_idx) {
+                                combo.set_active(Some(*target_idx));
+                            }
+                        }
+                    }
                     rebuild_both_uis(
                         &kb_box,
                         &kb_rows,
@@ -569,6 +603,7 @@ pub(crate) fn present_preferences_dialog(
         &filter_combo,
         &mmc3_combo,
         &key_input_rows,
+        &gamepad_input_rows,
         &capture_target,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
@@ -604,6 +639,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -640,6 +676,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -675,6 +712,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -703,6 +741,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -743,6 +782,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -774,6 +814,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -811,6 +852,7 @@ pub(crate) fn present_preferences_dialog(
             &filter_combo,
             &mmc3_combo,
             &key_input_rows,
+            &gamepad_input_rows,
             &capture_target,
             language,
             factory.clone(),
@@ -931,6 +973,7 @@ struct WidgetBundle {
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
     key_input_rows: Rc<RefCell<Vec<InputRow>>>,
+    gamepad_input_rows: Rc<RefCell<Vec<InputRow>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -984,6 +1027,7 @@ fn widget_bundle(
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
     key_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+    gamepad_input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -1006,6 +1050,7 @@ fn widget_bundle(
         filter_combo: filter_combo.clone(),
         mmc3_combo: mmc3_combo.clone(),
         key_input_rows: key_input_rows.clone(),
+        gamepad_input_rows: gamepad_input_rows.clone(),
         capture_target: capture_target.clone(),
         language,
         factory,
@@ -1029,6 +1074,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.filter_combo,
         &widgets.mmc3_combo,
         &widgets.key_input_rows,
+        &widgets.gamepad_input_rows,
         &widgets.capture_target,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
@@ -1340,6 +1386,7 @@ fn apply_snapshot_to_widgets(
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
     key_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+    gamepad_input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
@@ -1391,13 +1438,19 @@ fn apply_snapshot_to_widgets(
     for row in key_input_rows.borrow().iter() {
         let text = if capture_target.borrow().as_ref() == Some(&row.target) {
             capture_label.to_string()
-        } else if matches!(row.target, CaptureTarget::GamepadBinding { .. }) {
-            gamepad_binding_label(snapshot, &row.target)
-                .unwrap_or_else(|| unbound_label.to_string())
         } else {
             current_binding_label(snapshot, &row.target)
                 .unwrap_or(unbound_label)
                 .to_string()
+        };
+        row.value_label.set_text(&text);
+    }
+    for row in gamepad_input_rows.borrow().iter() {
+        let text = if capture_target.borrow().as_ref() == Some(&row.target) {
+            capture_label.to_string()
+        } else {
+            gamepad_binding_label(snapshot, &row.target)
+                .unwrap_or_else(|| unbound_label.to_string())
         };
         row.value_label.set_text(&text);
     }
