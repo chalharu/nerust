@@ -109,9 +109,7 @@ pub mod input {
         }
     }
 
-    #[derive(
-        Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
     pub struct GamepadButton {
         pub player: usize,
         pub button: GamepadButtonKind,
@@ -123,9 +121,7 @@ pub mod input {
         }
     }
 
-    #[derive(
-        Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-    )]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum GamepadButtonKind {
         South,
@@ -619,9 +615,8 @@ mod tests {
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
         input::{
-            GamepadBinding, GamepadButton, GamepadButtonKind, KeyboardKey,
-            PersistedAttachmentId, PersistedControlId, ShortcutAction, ShortcutBinding,
-            SystemInputSettings,
+            GamepadBinding, GamepadButton, GamepadButtonKind, KeyboardKey, PersistedAttachmentId,
+            PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
         },
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
