@@ -83,7 +83,16 @@ impl HostState {
             ctx.audio_registry.clone(),
         );
         #[cfg(feature = "gamepad")]
-        let gilrs = gilrs::Gilrs::new().ok();
+        let gilrs = match gilrs::Gilrs::new() {
+            Ok(g) => {
+                log::info!("gamepad: gilrs initialized ({} gamepads)", g.gamepads().count());
+                Some(g)
+            }
+            Err(e) => {
+                log::warn!("gamepad: gilrs init failed: {e}");
+                None
+            }
+        };
 
         Self {
             window: None,
@@ -824,6 +833,7 @@ fn gilrs_to_gamepad_button(
     use gilrs::EventType;
     let (kind, pressed) = match event.event {
         EventType::ButtonPressed(button, _) => (button, true),
+        EventType::ButtonRepeated(button, _) => (button, true),
         EventType::ButtonReleased(button, _) => (button, false),
         _ => return None,
     };
@@ -847,7 +857,10 @@ fn gilrs_to_gamepad_button(
         gilrs::Button::DPadDown => nerust_gui_settings::input::GamepadButtonKind::DpadDown,
         gilrs::Button::DPadLeft => nerust_gui_settings::input::GamepadButtonKind::DpadLeft,
         gilrs::Button::DPadRight => nerust_gui_settings::input::GamepadButtonKind::DpadRight,
-        _ => return None,
+        _ => {
+            log::debug!("gamepad: unrecognized button: {kind:?}");
+            return None;
+        }
     };
     Some((
         nerust_gui_settings::input::GamepadButton {
