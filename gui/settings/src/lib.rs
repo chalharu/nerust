@@ -13,6 +13,7 @@ pub mod language {
 
 pub mod input {
     use nerust_core_traits::identity::SystemId;
+    use nerust_input_traits::{AttachmentId, DigitalControlId};
 
     use super::BTreeMap;
 
@@ -120,6 +121,12 @@ pub mod input {
         }
     }
 
+    impl PartialEq<AttachmentId> for PersistedAttachmentId {
+        fn eq(&self, other: &AttachmentId) -> bool {
+            self.0 == other.as_str()
+        }
+    }
+
     #[derive(
         Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
     )]
@@ -142,6 +149,12 @@ pub mod input {
             match self {
                 Self::Digital(value) | Self::Analog(value) => value.as_str(),
             }
+        }
+    }
+
+    impl PartialEq<DigitalControlId> for PersistedControlId {
+        fn eq(&self, other: &DigitalControlId) -> bool {
+            matches!(self, Self::Digital(v) if v == other.as_str())
         }
     }
 

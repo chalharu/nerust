@@ -11,6 +11,12 @@ impl PortId {
     }
 }
 
+impl PartialEq<AttachmentId> for PortId {
+    fn eq(&self, other: &AttachmentId) -> bool {
+        self.0 == other.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttachmentId(&'static str);
 
@@ -21,6 +27,12 @@ impl AttachmentId {
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl std::fmt::Display for AttachmentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }
 
@@ -47,6 +59,32 @@ impl DigitalControlId {
 
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl std::fmt::Display for DigitalControlId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// Identifies a controller profile type (e.g. "nes.standard_pad", "nes.famicom").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProfileId(&'static str);
+
+impl ProfileId {
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
     }
 }
 
@@ -202,6 +240,12 @@ impl OpenBusReadResult {
 pub trait Port: std::fmt::Debug {
     fn index(&self) -> usize;
     fn id(&self) -> &'static str;
+
+    /// Return the attachment ID for this port.
+    /// The default implementation wraps `id()` in an `AttachmentId`.
+    fn as_attachment_id(&self) -> AttachmentId {
+        AttachmentId::new(self.id())
+    }
 }
 
 /// A simple port implementation with numeric index and string id.
@@ -231,9 +275,9 @@ pub trait Controller: std::fmt::Debug + Send {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write(&mut self, port: &dyn Port, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
-    /// Return field map entries (slot_id, control_id, field_index) for this
+    /// Return field map entries (attachment, control, field_index) for this
     /// controller at the given port. Default returns empty (no inputs).
-    fn field_map(&self, _port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, _port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
         Vec::new()
     }
 }
@@ -331,20 +375,27 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
 /// A set of port identifiers a controller can occupy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PortSet {
-    pub ports: &'static [&'static str],
+    pub ports: &'static [AttachmentId],
 }
 
 /// Identifies a single slot on the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotInfo {
-    pub id: &'static str,
+    pub id: AttachmentId,
     pub label: &'static str,
+}
+
+impl SlotInfo {
+    /// Check whether this slot corresponds to the given persisted ID string.
+    pub fn matches_id(&self, id: &str) -> bool {
+        self.id.0 == id
+    }
 }
 
 /// Describes one control on a controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControlInfo {
-    pub id: &'static str,
+    pub id: DigitalControlId,
     pub label: &'static str,
     pub kind: ControlKind,
     pub abstract_key: Option<AbstractKey>,
@@ -385,17 +436,30 @@ pub enum AbstractKey {
 
 /// Describes one controller type (metadata sent to Frontend).
 pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
-    fn id(&self) -> &'static str;
+    fn profile_id(&self) -> ProfileId;
     fn label(&self) -> &'static str;
     fn port_sets(&self) -> &[PortSet];
     fn port_groups(&self) -> &[&[ControlInfo]];
-    fn directional_ids(&self) -> &[&[&'static str; 4]];
 }
 
 /// System port layout query. Factory → Frontend.
 pub trait InputPorts: std::fmt::Debug {
     fn slots(&self) -> &[SlotInfo];
     fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>>;
+
+    /// Resolve a persisted slot ID string to an AttachmentId.
+    /// Returns None if no slot matches.
+    fn resolve_slot(&self, id: &str) -> Option<AttachmentId> {
+        self.slots().iter().find(|s| s.matches_id(id)).map(|s| s.id)
+    }
+
+    /// Resolve a persisted controller ID string to a ControllerProfile.
+    fn resolve_controller(&self, id: &str) -> Option<Rc<dyn ControllerProfile>> {
+        self.controllers()
+            .iter()
+            .find(|p| p.profile_id().as_str() == id)
+            .cloned()
+    }
 }
 
 /// Slot-to-controller assignments.
@@ -403,7 +467,7 @@ pub trait InputPorts: std::fmt::Debug {
 /// without string-based lookups.
 #[derive(Clone)]
 pub struct InputAssignments {
-    pub slots: Vec<(String, Option<Rc<dyn ControllerProfile>>)>,
+    pub slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
 }
 
 impl std::fmt::Debug for InputAssignments {
@@ -414,7 +478,7 @@ impl std::fmt::Debug for InputAssignments {
                 &self
                     .slots
                     .iter()
-                    .map(|(s, c)| (s, c.as_ref().map(|p| p.id())))
+                    .map(|(s, c)| (s, c.as_ref().map(|p| p.profile_id())))
                     .collect::<Vec<_>>(),
             )
             .finish()
@@ -426,7 +490,12 @@ impl InputAssignments {
     pub fn to_string_pairs(&self) -> Vec<(String, Option<String>)> {
         self.slots
             .iter()
-            .map(|(s, c)| (s.clone(), c.as_ref().map(|p| p.id().to_string())))
+            .map(|(s, c)| {
+                (
+                    s.to_string(),
+                    c.as_ref().map(|p| p.profile_id().to_string()),
+                )
+            })
             .collect()
     }
 }
@@ -457,8 +526,8 @@ pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
 #[derive(Debug)]
 pub struct InputResources {
     pub split: InputSplit,
-    /// (slot_id, control_id) → absolute field index
-    pub field_map: std::collections::HashMap<(&'static str, &'static str), usize>,
+    /// (attachment, control) → absolute field index
+    pub field_map: std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
 }
 
 /// Thread-shared state reference.
