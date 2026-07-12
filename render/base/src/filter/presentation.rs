@@ -311,10 +311,10 @@ impl FilterType {
 
 #[cfg(test)]
 mod tests {
+    use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
     use crate::filter::{
         BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
     };
-    use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
     use crate::{LogicalSize, RGB, VideoFrameFormat};
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
