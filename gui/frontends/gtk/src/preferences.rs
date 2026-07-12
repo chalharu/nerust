@@ -232,6 +232,44 @@ pub(crate) fn present_preferences_dialog(
         });
 
     // Controller assignment rows on keyboard page (shared topology)
+    // Keyboard and gamepad binding boxes (created before combo loop for closure captures)
+    let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
+    key_binding_box.set_vexpand(true);
+    let key_input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let gamepad_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
+    gamepad_binding_box.set_vexpand(true);
+    let gamepad_input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
+
+    #[allow(clippy::too_many_arguments)]
+    fn rebuild_both_uis(
+        key_binding_box: &gtk::Box,
+        key_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        gamepad_binding_box: &gtk::Box,
+        gamepad_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        factory: &dyn CoreFactory,
+        assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+        language: AppLanguage,
+        slots: &[SlotInfo],
+        _draft: &SettingsSnapshot,
+    ) {
+        let topology = dynamic_topology(assignments, slots);
+        while let Some(child) = key_binding_box.first_child() {
+            key_binding_box.remove(&child);
+        }
+        let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
+        *key_input_rows.borrow_mut() = rows;
+        while let Some(child) = gamepad_binding_box.first_child() {
+            gamepad_binding_box.remove(&child);
+        }
+        let gamepad_rows = build_gamepad_input_rows(
+            language,
+            gamepad_binding_box,
+            &topology,
+            factory.system_id(),
+        );
+        *gamepad_input_rows.borrow_mut() = gamepad_rows;
+    }
+
     let controller_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     if !controllers.is_empty() {
         for slot in &slots {
@@ -247,11 +285,113 @@ pub(crate) fn present_preferences_dialog(
             }) {
                 combo.append_text(c.label());
             }
+            {
+                let sc = slot_combos.clone();
+                let f = factory2.clone();
+                let kb_box = key_binding_box.clone();
+                let kb_rows = key_input_rows.clone();
+                let gb_box = gamepad_binding_box.clone();
+                let gb_rows = gamepad_input_rows.clone();
+                let lang = language;
+                let d = draft.clone();
+                let ok = ok_button.clone();
+                combo.connect_changed(move |_| {
+                    let combos = sc.borrow();
+                    let input = f.input_system_factory();
+                    let mut occupied = HashSet::new();
+                    for sc_item in combos.iter() {
+                        let Some(label) = sc_item.combo.active_text() else {
+                            continue;
+                        };
+                        for p in input.controllers().iter() {
+                            if p.label() != label.as_str() {
+                                continue;
+                            }
+                            for ps in p.port_sets() {
+                                if ps.ports.contains(&sc_item.slot_id) {
+                                    for &port in ps.ports {
+                                        occupied.insert(port);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for sc_item in combos.iter() {
+                        let occ = occupied.contains(&sc_item.slot_id)
+                            && sc_item
+                                .combo
+                                .active_text()
+                                .is_none_or(|t| t.is_empty() || t == text(lang, UiText::None));
+                        sc_item.combo.set_sensitive(!occ);
+                    }
+                    drop(combos);
+                    let mut current: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = sc
+                        .borrow()
+                        .iter()
+                        .map(|sc_item| {
+                            let profile = sc_item.combo.active_text().and_then(|label| {
+                                input
+                                    .controllers()
+                                    .iter()
+                                    .find(|p| p.label() == label)
+                                    .cloned()
+                            });
+                            (sc_item.slot_id, profile)
+                        })
+                        .collect();
+                    let snapshot = current.clone();
+                    for (slot_id, ctrl_opt) in &snapshot {
+                        let profile = match ctrl_opt {
+                            Some(p) => p.as_ref(),
+                            None => continue,
+                        };
+                        for ps in profile.port_sets() {
+                            if ps.ports.len() <= 1 || !ps.ports.contains(slot_id) {
+                                continue;
+                            }
+                            for &port in ps.ports {
+                                if port != *slot_id
+                                    && let Some(other) =
+                                        current.iter_mut().find(|(s, _)| *s == port)
+                                {
+                                    other.1 = None;
+                                    if let Some(si) = sc.borrow().iter().find(|s| s.slot_id == port)
+                                    {
+                                        si.combo.set_active(Some(0));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rebuild_both_uis(
+                        &kb_box,
+                        &kb_rows,
+                        &gb_box,
+                        &gb_rows,
+                        f.as_ref(),
+                        &current,
+                        lang,
+                        f.input_system_factory().slots(),
+                        &d.borrow(),
+                    );
+                    let snapshot = d.borrow();
+                    for row in kb_rows.borrow().iter() {
+                        row.value_label
+                            .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
+                    }
+                    for row in gb_rows.borrow().iter() {
+                        row.value_label.set_text(
+                            &gamepad_binding_label(&snapshot, &row.target)
+                                .unwrap_or_else(|| text(lang, UiText::Unbound).to_string()),
+                        );
+                    }
+                    ok.set_sensitive(current.iter().any(|(_, c)| c.is_some()));
+                });
+            }
             slot_combos.borrow_mut().push(SlotCombo {
                 slot_id: slot.id,
                 combo: combo.clone(),
             });
-            // Pre-select based on current assignment
             if let Some((_, Some(profile))) =
                 current_assignments.iter().find(|(s, _)| *s == slot.id)
             {
@@ -274,168 +414,11 @@ pub(crate) fn present_preferences_dialog(
             controller_box.append(&row);
         }
     }
-    // Keyboard binding box
-    let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
-    key_binding_box.set_vexpand(true);
-    let key_input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
-
-    // Gamepad binding box
-    let gamepad_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
-    gamepad_binding_box.set_vexpand(true);
-    let gamepad_input_rows: Rc<RefCell<Vec<InputRow>>> = Rc::new(RefCell::new(Vec::new()));
-
-    // Rebuild both UIs from current assignments.
-    #[allow(clippy::too_many_arguments)]
-    fn rebuild_both_uis(
-        key_binding_box: &gtk::Box,
-        key_input_rows: &Rc<RefCell<Vec<InputRow>>>,
-        gamepad_binding_box: &gtk::Box,
-        gamepad_input_rows: &Rc<RefCell<Vec<InputRow>>>,
-        factory: &dyn CoreFactory,
-        assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
-        language: AppLanguage,
-        slots: &[SlotInfo],
-        _draft: &SettingsSnapshot,
-    ) {
-        let topology = dynamic_topology(assignments, slots);
-        // Keyboard
-        while let Some(child) = key_binding_box.first_child() {
-            key_binding_box.remove(&child);
-        }
-        let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
-        *key_input_rows.borrow_mut() = rows;
-        // Gamepad
-        while let Some(child) = gamepad_binding_box.first_child() {
-            gamepad_binding_box.remove(&child);
-        }
-        let gamepad_rows = build_gamepad_input_rows(
-            language,
-            gamepad_binding_box,
-            &topology,
-            factory.system_id(),
-        );
-        *gamepad_input_rows.borrow_mut() = gamepad_rows;
-    }
-
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
 
     let gamepad_conflict_label = gtk::Label::new(None);
     gamepad_conflict_label.set_xalign(0.0);
-
-    // Connect combo changed
-    {
-        let sc = slot_combos.clone();
-        let f = factory2.clone();
-        let kb_box = key_binding_box.clone();
-        let kb_rows = key_input_rows.clone();
-        let gb_box = gamepad_binding_box.clone();
-        let gb_rows = gamepad_input_rows.clone();
-        let lang = language;
-        let d = draft.clone();
-        let ok = ok_button.clone();
-        for sc_item in slot_combos.borrow().iter() {
-            let combo = sc_item.combo.clone();
-            let sc = sc.clone();
-            let f = f.clone();
-            let kb_box = kb_box.clone();
-            let kb_rows = kb_rows.clone();
-            let gb_box = gb_box.clone();
-            let gb_rows = gb_rows.clone();
-            let d = d.clone();
-            let ok = ok.clone();
-            combo.connect_changed(move |_| {
-                let combos = sc.borrow();
-                let input = f.input_system_factory();
-                let mut occupied = HashSet::new();
-                for sc_item in combos.iter() {
-                    let Some(label) = sc_item.combo.active_text() else {
-                        continue;
-                    };
-                    for p in input.controllers().iter() {
-                        if p.label() != label.as_str() {
-                            continue;
-                        }
-                        for ps in p.port_sets() {
-                            if ps.ports.contains(&sc_item.slot_id) {
-                                for &port in ps.ports {
-                                    occupied.insert(port);
-                                }
-                            }
-                        }
-                    }
-                }
-                for sc_item in combos.iter() {
-                    let occ = occupied.contains(&sc_item.slot_id)
-                        && sc_item
-                            .combo
-                            .active_text()
-                            .is_none_or(|t| t.is_empty() || t == text(lang, UiText::None));
-                    sc_item.combo.set_sensitive(!occ);
-                }
-                drop(combos);
-                let mut current: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = sc
-                    .borrow()
-                    .iter()
-                    .map(|sc_item| {
-                        let profile = sc_item.combo.active_text().and_then(|label| {
-                            input
-                                .controllers()
-                                .iter()
-                                .find(|p| p.label() == label)
-                                .cloned()
-                        });
-                        (sc_item.slot_id, profile)
-                    })
-                    .collect();
-                let snapshot = current.clone();
-                for (slot_id, ctrl_opt) in &snapshot {
-                    let profile = match ctrl_opt {
-                        Some(p) => p.as_ref(),
-                        None => continue,
-                    };
-                    for ps in profile.port_sets() {
-                        if ps.ports.len() <= 1 || !ps.ports.contains(slot_id) {
-                            continue;
-                        }
-                        for &port in ps.ports {
-                            if port != *slot_id
-                                && let Some(other) = current.iter_mut().find(|(s, _)| *s == port)
-                            {
-                                other.1 = None;
-                                if let Some(si) = sc.borrow().iter().find(|s| s.slot_id == port) {
-                                    si.combo.set_active(Some(0));
-                                }
-                            }
-                        }
-                    }
-                }
-                rebuild_both_uis(
-                    &kb_box,
-                    &kb_rows,
-                    &gb_box,
-                    &gb_rows,
-                    f.as_ref(),
-                    &current,
-                    lang,
-                    f.input_system_factory().slots(),
-                    &d.borrow(),
-                );
-                let snapshot = d.borrow();
-                for row in kb_rows.borrow().iter() {
-                    row.value_label
-                        .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
-                }
-                for row in gb_rows.borrow().iter() {
-                    row.value_label.set_text(
-                        &gamepad_binding_label(&snapshot, &row.target)
-                            .unwrap_or_else(|| text(lang, UiText::Unbound).to_string()),
-                    );
-                }
-                ok.set_sensitive(current.iter().any(|(_, c)| c.is_some()));
-            });
-        }
-    }
 
     keyboard_page.append(&controller_box);
     keyboard_page.append(&input_conflict_label);
