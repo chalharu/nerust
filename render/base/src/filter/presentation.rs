@@ -124,14 +124,6 @@ impl PaletteAssets {
         self.pipeline.kind()
     }
 
-    #[allow(
-        dead_code,
-        reason = "palette pipeline detection for future frontend use"
-    )]
-    fn is_palette_pipeline(&self) -> bool {
-        matches!(self.pipeline.kind(), VideoPresentationPipelineKind::Palette)
-    }
-
     pub fn uses_ntsc_pipeline(&self) -> bool {
         matches!(self.pipeline.kind(), VideoPresentationPipelineKind::Ntsc)
     }
