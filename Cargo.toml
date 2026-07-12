@@ -62,18 +62,8 @@ simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = [
-  "nerust_gtk",
-  "nerust_sound_cpal",
-  "nerust_sound_cubeb",
-  "nerust_gtk/gilrs",
-]
-tao = [
-  "nerust_tao",
-  "nerust_sound_cpal",
-  "nerust_sound_cubeb",
-  "nerust_tao/gilrs",
-]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
+tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb"]
 wgpu = ["nerust_render_wgpu"]
 softbuffer = ["nerust_render_softbuffer"]
 opengl = ["nerust_render_gl"]
