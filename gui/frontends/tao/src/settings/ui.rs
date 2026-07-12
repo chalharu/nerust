@@ -33,7 +33,7 @@ use nerust_gui_shell::settings::{
         descriptors::{keyboard_binding_sections, shortcut_descriptors},
         keys::keyboard_key_label,
     },
-    editor::{CaptureTarget, apply_capture_target, current_binding_label},
+    editor::{CaptureTarget, apply_capture_target, current_binding_label, gamepad_binding_label},
     factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
@@ -680,7 +680,7 @@ impl SettingsAppState {
             InputPageSection::Attachment(index) => sections
                 .get(index)
                 .map(|section| {
-                    let rows = section
+                    let mut rows: Vec<(&'static str, CaptureTarget)> = section
                         .bindings
                         .clone()
                         .into_iter()
@@ -694,8 +694,19 @@ impl SettingsAppState {
                                 },
                             )
                         })
-                        .collect::<Vec<_>>();
-                    self.input_section(section.attachment_label, rows.into_iter())
+                        .collect();
+                    rows.extend(section.bindings.clone().into_iter().map(|descriptor| {
+                        (
+                            descriptor.control_label,
+                            CaptureTarget::GamepadBinding {
+                                system: descriptor.system,
+                                attachment: descriptor.attachment.as_str().to_string(),
+                                control: descriptor.control.as_str().to_string(),
+                            },
+                        )
+                    }));
+                    let title = format!("{} (Kbd/Gampad)", section.attachment_label);
+                    self.input_section(&title, rows.into_iter())
                 })
                 .unwrap_or_else(|| self.input_section("", std::iter::empty())),
             InputPageSection::Shortcuts => self.input_section(
@@ -711,18 +722,22 @@ impl SettingsAppState {
 
     fn input_section<'a>(
         &'a self,
-        title: &'static str,
+        title: &str,
         rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
     ) -> El<'a> {
         let language = self.language();
         let current_capture = self.capture_target.lock().unwrap();
-        let mut content = column![text(title)];
+        let mut content = column![text(title.to_string())];
         for (label, target) in rows {
             let binding_label = if current_capture.as_ref() == Some(&target) {
-                ui_text(language, UiText::CapturePrompt)
+                ui_text(language, UiText::CapturePrompt).to_string()
+            } else if matches!(target, CaptureTarget::GamepadBinding { .. }) {
+                gamepad_binding_label(&self.draft, &target)
+                    .unwrap_or_else(|| ui_text(language, UiText::Unbound).to_string())
             } else {
                 current_binding_label(&self.draft, &target)
                     .unwrap_or(ui_text(language, UiText::Unbound))
+                    .to_string()
             };
             content = content.push(
                 row![
