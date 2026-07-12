@@ -2826,7 +2826,6 @@ dependencies = [
  "nerust_core_traits",
  "nerust_gui_settings",
  "nerust_persistence",
- "nerust_render_base",
  "serde",
  "serde_yaml",
  "thiserror 2.0.18",
@@ -2911,9 +2910,7 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "nerust_core_traits",
- "nerust_gui_runtime",
  "nerust_gui_settings",
- "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
