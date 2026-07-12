@@ -27,7 +27,9 @@ use nerust_gui_shell::{
             descriptors::{keyboard_binding_sections, shortcut_descriptors},
             keys::keyboard_key_label,
         },
-        editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        editor::{
+            CaptureTarget, apply_capture_target, current_binding_label, gamepad_binding_label,
+        },
         factory::{apply_settings_choice, settings_view},
         i18n::{UiText, text},
     },
@@ -1306,12 +1308,17 @@ fn apply_snapshot_to_widgets(
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
     for row in input_rows.borrow().iter() {
-        row.value_label
-            .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
-                capture_label
-            } else {
-                current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
-            });
+        let text = if capture_target.borrow().as_ref() == Some(&row.target) {
+            capture_label.to_string()
+        } else if matches!(row.target, CaptureTarget::GamepadBinding { .. }) {
+            gamepad_binding_label(snapshot, &row.target)
+                .unwrap_or_else(|| unbound_label.to_string())
+        } else {
+            current_binding_label(snapshot, &row.target)
+                .unwrap_or(unbound_label)
+                .to_string()
+        };
+        row.value_label.set_text(&text);
     }
 }
 
@@ -1332,6 +1339,7 @@ fn build_input_rows(
 
     let mut rows = Vec::new();
     for section in keyboard_binding_sections(topology, system) {
+        // Keyboard bindings for this attachment
         let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);
         section_page.set_hexpand(true);
         let grid = gtk::Grid::new();
@@ -1339,11 +1347,10 @@ fn build_input_rows(
         grid.set_row_spacing(6);
         grid.set_hexpand(true);
         section_page.append(&grid);
-        input_stack.add_titled(
-            &section_page,
-            Some(section.attachment.as_str()),
-            section.attachment_label,
-        );
+        let keyboard_label = gtk::Label::new(Some("Keyboard"));
+        keyboard_label.set_xalign(0.0);
+        keyboard_label.set_margin_top(6);
+        section_page.prepend(&keyboard_label);
 
         for (index, descriptor) in section.bindings.iter().enumerate() {
             rows.push(add_input_row(
@@ -1358,6 +1365,37 @@ fn build_input_rows(
                 language,
             ));
         }
+
+        // Gamepad bindings for the same attachment
+        let gamepad_label = gtk::Label::new(Some("Gamepad"));
+        gamepad_label.set_xalign(0.0);
+        gamepad_label.set_margin_top(12);
+        section_page.append(&gamepad_label);
+        let gamepad_grid = gtk::Grid::new();
+        gamepad_grid.set_column_spacing(12);
+        gamepad_grid.set_row_spacing(6);
+        gamepad_grid.set_hexpand(true);
+        section_page.append(&gamepad_grid);
+
+        for (index, descriptor) in section.bindings.iter().enumerate() {
+            rows.push(add_input_row(
+                &gamepad_grid,
+                index as i32,
+                descriptor.control_label,
+                CaptureTarget::GamepadBinding {
+                    system: descriptor.system,
+                    attachment: descriptor.attachment.as_str().to_string(),
+                    control: descriptor.control.as_str().to_string(),
+                },
+                language,
+            ));
+        }
+
+        input_stack.add_titled(
+            &section_page,
+            Some(section.attachment.as_str()),
+            section.attachment_label,
+        );
     }
 
     let section_page = gtk::Box::new(gtk::Orientation::Vertical, 12);

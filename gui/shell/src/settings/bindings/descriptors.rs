@@ -102,6 +102,13 @@ pub fn keyboard_binding_sections(
         .collect()
 }
 
+pub fn gamepad_binding_sections(
+    topology: &InputTopologyDescriptor,
+    system: SystemId,
+) -> Vec<KeyboardBindingSectionDescriptor> {
+    keyboard_binding_sections(topology, system)
+}
+
 pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
     SHORTCUT_DESCRIPTORS
 }

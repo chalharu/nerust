@@ -1,7 +1,8 @@
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
-    KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+    GamepadButton, KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId,
+    ShortcutAction,
 };
 
 use crate::settings::bindings::keys::keyboard_key_label;
@@ -14,6 +15,11 @@ pub enum CaptureTarget {
         control: String,
     },
     Shortcut(ShortcutAction),
+    GamepadBinding {
+        system: SystemId,
+        attachment: String,
+        control: String,
+    },
 }
 
 pub fn current_binding_key(
@@ -45,7 +51,42 @@ pub fn current_binding_key(
             .iter()
             .find(|binding| &binding.action == action)
             .and_then(|binding| binding.key),
+        CaptureTarget::GamepadBinding { .. } => None,
     }
+}
+
+pub fn current_gamepad_binding_button(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+) -> Option<GamepadButton> {
+    let (system, attachment, control) = match target {
+        CaptureTarget::GamepadBinding {
+            system,
+            attachment,
+            control,
+        } => (system, attachment, control),
+        _ => return None,
+    };
+    snapshot
+        .shared
+        .input
+        .systems
+        .get(system)?
+        .implicit_gamepad_profile()?
+        .bindings
+        .iter()
+        .find(|binding| {
+            binding.attachment.as_str() == attachment && binding.control.as_str() == control
+        })
+        .map(|binding| binding.button)
+}
+
+pub fn gamepad_binding_label(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+) -> Option<String> {
+    let btn = current_gamepad_binding_button(snapshot, target)?;
+    Some(format!("P{} {:?}", btn.player, btn.button))
 }
 
 pub fn current_binding_label(
@@ -95,6 +136,22 @@ pub fn apply_capture_target(
             {
                 binding.key = key;
             }
+        }
+        CaptureTarget::GamepadBinding {
+            system,
+            attachment,
+            control,
+        } => {
+            let profile = snapshot
+                .shared
+                .input
+                .systems
+                .entry(*system)
+                .or_default()
+                .implicit_gamepad_profile_mut();
+            profile.bindings.retain(|binding| {
+                !(binding.attachment.as_str() == attachment && binding.control.as_str() == control)
+            });
         }
     }
 }
