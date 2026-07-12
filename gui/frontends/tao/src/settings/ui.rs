@@ -721,7 +721,7 @@ impl SettingsAppState {
         let language = self.language();
         let mut content = column![];
 
-        // Controller assignment section (same topology)
+        // Controller assignment pickers (shared with keyboard page)
         let input_factory = self.factory.input_system_factory();
         let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
         if !controllers.is_empty() {
@@ -740,6 +740,24 @@ impl SettingsAppState {
                 }
             }
             for slot in slots {
+                let none = Choice {
+                    value: String::new(),
+                    label: ui_text(self.draft.shared.general.language, UiText::None).to_string(),
+                };
+                let mut slot_choices: Vec<Choice<String>> = vec![none];
+                slot_choices.extend(
+                    controllers
+                        .iter()
+                        .filter(|c| {
+                            c.port_sets()
+                                .iter()
+                                .any(|ps| ps.ports.first() == Some(&slot.id))
+                        })
+                        .map(|c| Choice {
+                            value: c.profile_id().to_string(),
+                            label: c.label().to_string(),
+                        }),
+                );
                 if occupied.contains(&slot.id)
                     && !self
                         .controller_assignments
@@ -749,7 +767,29 @@ impl SettingsAppState {
                     content = content.push(text(format!("{} — (occupied)", slot.label)));
                     continue;
                 }
-                content = content.push(text(slot.label));
+                let current = self
+                    .controller_assignments
+                    .iter()
+                    .find(|(s, _)| *s == slot.id)
+                    .and_then(|(_, c)| c.as_ref())
+                    .and_then(|id| {
+                        slot_choices
+                            .iter()
+                            .find(|ch| ch.value == id.profile_id().as_str())
+                            .cloned()
+                    })
+                    .or_else(|| slot_choices.first().cloned());
+                let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
+                    Message::SetControllerSlot {
+                        slot: slot.id,
+                        controller_id: if choice.value.is_empty() {
+                            None
+                        } else {
+                            Some(choice.value)
+                        },
+                    }
+                });
+                content = content.push(text(slot.label)).push(pick);
             }
         }
 
