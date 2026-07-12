@@ -255,6 +255,31 @@ fn gilrs_to_gamepad_button(
     ))
 }
 
+#[cfg(feature = "gamepad")]
+fn gilrs_to_gamepad_axis(
+    event: &gilrs::Event,
+) -> Option<(nerust_gui_settings::input::GamepadButton, f32)> {
+    use gilrs::Axis;
+    let (axis, value) = match event.event {
+        gilrs::EventType::AxisChanged(axis, value, _) => (axis, value),
+        _ => return None,
+    };
+    let button_kind = match axis {
+        Axis::LeftStickX => nerust_gui_settings::input::GamepadButtonKind::LeftStickX,
+        Axis::LeftStickY => nerust_gui_settings::input::GamepadButtonKind::LeftStickY,
+        Axis::RightStickX => nerust_gui_settings::input::GamepadButtonKind::RightStickX,
+        Axis::RightStickY => nerust_gui_settings::input::GamepadButtonKind::RightStickY,
+        _ => return None,
+    };
+    Some((
+        nerust_gui_settings::input::GamepadButton {
+            player: event.id.into(),
+            button: button_kind,
+        },
+        value,
+    ))
+}
+
 impl State {
     #[cfg(feature = "gamepad")]
     pub(crate) fn poll_gamepad(&mut self) {
@@ -264,6 +289,8 @@ impl State {
         while let Some(event) = gilrs.next_event() {
             if let Some((button, pressed)) = gilrs_to_gamepad_button(&event) {
                 self.session.handle_gamepad_event(button, pressed);
+            } else if let Some((button, value)) = gilrs_to_gamepad_axis(&event) {
+                self.session.handle_gamepad_axis_event(button, value);
             }
         }
         gilrs.inc();

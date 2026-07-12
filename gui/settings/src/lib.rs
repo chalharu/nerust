@@ -141,6 +141,10 @@ pub mod input {
         DpadDown,
         DpadLeft,
         DpadRight,
+        LeftStickX,
+        LeftStickY,
+        RightStickX,
+        RightStickY,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
