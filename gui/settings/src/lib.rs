@@ -620,7 +620,8 @@ mod tests {
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
         input::{
             GamepadBinding, GamepadButton, GamepadButtonKind, GamepadProfile, KeyboardKey,
-            PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
+            PersistedAttachmentId, PersistedControlId, ShortcutAction, ShortcutBinding,
+            SystemInputSettings,
         },
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
@@ -713,7 +714,7 @@ video:
         let mut settings = SystemInputSettings::default();
         let profile = settings.implicit_gamepad_profile_mut();
         profile.bindings = vec![GamepadBinding {
-            attachment: "nes.attachment.player1".into(),
+            attachment: PersistedAttachmentId::new("nes.attachment.player1"),
             control: PersistedControlId::digital("nes.control.a"),
             button: GamepadButton {
                 player: 0,
