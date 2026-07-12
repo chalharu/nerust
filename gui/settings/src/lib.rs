@@ -619,7 +619,7 @@ mod tests {
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
         input::{
-            GamepadBinding, GamepadButton, GamepadButtonKind, GamepadProfile, KeyboardKey,
+            GamepadBinding, GamepadButton, GamepadButtonKind, KeyboardKey,
             PersistedAttachmentId, PersistedControlId, ShortcutAction, ShortcutBinding,
             SystemInputSettings,
         },
