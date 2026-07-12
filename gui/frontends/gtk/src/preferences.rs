@@ -274,8 +274,6 @@ pub(crate) fn present_preferences_dialog(
             controller_box.append(&row);
         }
     }
-    content.append(&controller_box);
-
     // Keyboard binding box
     let key_binding_box = Rc::new(gtk::Box::new(gtk::Orientation::Vertical, 0));
     key_binding_box.set_vexpand(true);
@@ -439,8 +437,10 @@ pub(crate) fn present_preferences_dialog(
         }
     }
 
+    keyboard_page.append(&controller_box);
     keyboard_page.append(&input_conflict_label);
     keyboard_page.append(&*key_binding_box);
+    gamepad_page.append(&controller_box);
     gamepad_page.append(&gamepad_conflict_label);
     gamepad_page.append(&*gamepad_binding_box);
     rebuild_both_uis(
