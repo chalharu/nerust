@@ -73,6 +73,7 @@ impl SurfaceExtend for Surface {
                 }
             }
 
+            #[cfg(feature = "gamepad")]
             state.poll_gamepad();
             state.swap_frame_buffer();
 

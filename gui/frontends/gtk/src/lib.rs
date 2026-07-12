@@ -43,6 +43,7 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    #[cfg(feature = "gamepad")]
     gilrs: Option<gilrs::Gilrs>,
 }
 
@@ -62,12 +63,14 @@ impl State {
             ctx.audio_registry.clone(),
         );
 
+        #[cfg(feature = "gamepad")]
         let gilrs = gilrs::Gilrs::new().ok();
 
         Self {
             session,
             ctx,
             renderer_reload_pending: false,
+            #[cfg(feature = "gamepad")]
             gilrs,
         }
     }
@@ -212,6 +215,7 @@ impl FrontendSession for State {
 }
 
 impl State {
+    #[cfg(feature = "gamepad")]
     pub(crate) fn poll_gamepad(&mut self) {
         use gilrs::EventType;
         let Some(gilrs) = self.gilrs.as_mut() else {
@@ -263,7 +267,6 @@ impl State {
             };
             self.session.handle_gamepad_event(button, pressed);
         }
-        // gilrs requires explicit `inc()` call to avoid event stalling on some platforms
         gilrs.inc();
     }
 
