@@ -6,7 +6,7 @@ use std::{
 use directories::ProjectDirs;
 use serde_yaml::Value;
 
-use crate::settings::{SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
+use super::{SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
 
 const SETTINGS_FILE_NAME: &str = "settings.yaml";
 const CENTRAL_STORAGE_DIR_NAME: &str = "persistence";

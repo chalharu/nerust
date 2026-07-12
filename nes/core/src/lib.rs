@@ -22,7 +22,6 @@ mod ppu_memory_access;
 pub(crate) mod rom_format;
 pub(crate) mod rom_identity;
 pub mod rom_parse;
-mod tests;
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::AudioBackend;
