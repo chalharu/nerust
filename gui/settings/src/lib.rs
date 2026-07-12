@@ -618,7 +618,10 @@ pub mod app_state {
 mod tests {
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
-        input::{KeyboardKey, ShortcutAction, ShortcutBinding},
+        input::{
+            GamepadBinding, GamepadButton, GamepadButtonKind, GamepadProfile, KeyboardKey,
+            PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
+        },
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
         },
@@ -703,6 +706,35 @@ video:
         assert!(decoded.video.window.fullscreen_default);
         assert_eq!(decoded.video.window.scaling, ScalingMode::X3);
         assert!(!decoded.video.presentation.vsync);
+    }
+
+    #[test]
+    fn gamepad_bindings_survive_yaml_round_trip() {
+        let mut settings = SystemInputSettings::default();
+        let profile = settings.implicit_gamepad_profile_mut();
+        profile.bindings = vec![GamepadBinding {
+            attachment: "nes.attachment.player1".into(),
+            control: PersistedControlId::digital("nes.control.a"),
+            button: GamepadButton {
+                player: 0,
+                button: GamepadButtonKind::South,
+            },
+        }];
+
+        let encoded = serde_yaml::to_string(&settings).unwrap();
+        let decoded: SystemInputSettings = serde_yaml::from_str(&encoded).unwrap();
+
+        let decoded_binding = decoded
+            .implicit_gamepad_profile()
+            .and_then(|p| p.bindings.first());
+        assert!(decoded_binding.is_some());
+        assert_eq!(
+            decoded_binding.unwrap().button,
+            GamepadButton {
+                player: 0,
+                button: GamepadButtonKind::South
+            }
+        );
     }
 
     #[test]
