@@ -5,7 +5,7 @@ use nerust_core_traits::identity::{SystemId, SystemIdentity};
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
 
-use super::{SettingsError, SettingsPaths};
+use crate::settings::{SettingsError, SettingsPaths};
 
 const MAPPER_SAVE_FILE_NAME: &str = "mapper.sav";
 const STATES_DIR_NAME: &str = "states";
