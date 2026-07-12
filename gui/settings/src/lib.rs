@@ -30,6 +30,7 @@ pub mod input {
     #[serde(default)]
     pub struct SystemInputSettings {
         pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
+        pub gamepad_profiles: BTreeMap<String, GamepadProfile>,
     }
 
     impl SystemInputSettings {
@@ -39,6 +40,16 @@ pub mod input {
 
         pub fn implicit_keyboard_profile_mut(&mut self) -> &mut KeyboardProfile {
             self.keyboard_profiles
+                .entry(IMPLICIT_PROFILE_ID.to_string())
+                .or_default()
+        }
+
+        pub fn implicit_gamepad_profile(&self) -> Option<&GamepadProfile> {
+            self.gamepad_profiles.get(IMPLICIT_PROFILE_ID)
+        }
+
+        pub fn implicit_gamepad_profile_mut(&mut self) -> &mut GamepadProfile {
+            self.gamepad_profiles
                 .entry(IMPLICIT_PROFILE_ID.to_string())
                 .or_default()
         }
@@ -69,6 +80,71 @@ pub mod input {
                 key,
             }
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(default)]
+    pub struct GamepadProfile {
+        pub bindings: Vec<GamepadBinding>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub struct GamepadBinding {
+        pub attachment: PersistedAttachmentId,
+        pub control: PersistedControlId,
+        pub button: GamepadButton,
+    }
+
+    impl GamepadBinding {
+        pub fn new(
+            attachment: impl Into<String>,
+            control: PersistedControlId,
+            button: GamepadButton,
+        ) -> Self {
+            Self {
+                attachment: PersistedAttachmentId::new(attachment),
+                control,
+                button,
+            }
+        }
+    }
+
+    #[derive(
+        Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    )]
+    pub struct GamepadButton {
+        pub player: usize,
+        pub button: GamepadButtonKind,
+    }
+
+    impl GamepadButton {
+        pub const fn new(player: usize, button: GamepadButtonKind) -> Self {
+            Self { player, button }
+        }
+    }
+
+    #[derive(
+        Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum GamepadButtonKind {
+        South,
+        East,
+        North,
+        West,
+        LeftTrigger,
+        RightTrigger,
+        LeftTrigger2,
+        RightTrigger2,
+        Select,
+        Start,
+        Mode,
+        LeftThumb,
+        RightThumb,
+        DpadUp,
+        DpadDown,
+        DpadLeft,
+        DpadRight,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
