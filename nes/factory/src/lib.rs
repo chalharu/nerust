@@ -15,7 +15,7 @@ use nerust_core_traits::factory::settings::FactorySettingsView;
 use nerust_core_traits::factory::{CoreFactory, CoreParts, FactoryError};
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
-    Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput,
+    Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput, ProfileId,
 };
 
 /// Opaque option bytes for MMC3 IRQ variant: "sharp".
@@ -49,17 +49,14 @@ impl CoreFactory for NesFactory {
                 Some(p) => p,
                 None => continue,
             };
-            match profile.id() {
-                "nes.famicom" => {
-                    devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()));
-                    devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()));
-                }
-                "nes.standard_pad" => {
-                    devices.push(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
-                        0x1F,
-                    )));
-                }
-                _ => {}
+            let pid = profile.profile_id();
+            if pid == ProfileId::new("nes.famicom") {
+                devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP1::new()));
+                devices.push(Box::new(nerust_nes_device::famicom_set::FamicomPadP2::new()));
+            } else if pid == ProfileId::new("nes.standard_pad") {
+                devices.push(Box::new(nerust_nes_device::standard_pad::StandardPad::new(
+                    0x1F,
+                )));
             }
         }
         let controller_collection = ControllerCollection::new(devices);

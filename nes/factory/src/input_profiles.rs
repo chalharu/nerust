@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use nerust_input_traits::{
-    ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments, InputPorts,
-    InputResources, InputSplit, InputSystemFactory, SlotInfo,
+    AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
+    InputPorts, InputResources, InputSplit, InputSystemFactory, ProfileId, SlotInfo,
 };
 use nerust_nes_core::input_types::NesInputBuffer;
 
@@ -10,11 +10,11 @@ impl InputPorts for crate::NesFactory {
     fn slots(&self) -> &[SlotInfo] {
         static SLOTS: &[SlotInfo] = &[
             SlotInfo {
-                id: "player1",
+                id: AttachmentId::new("nes.attachment.player1"),
                 label: "Player 1",
             },
             SlotInfo {
-                id: "player2",
+                id: AttachmentId::new("nes.attachment.player2"),
                 label: "Player 2",
             },
         ];
@@ -28,11 +28,14 @@ impl InputPorts for crate::NesFactory {
 impl InputSystemFactory for crate::NesFactory {
     fn default_assignments(&self) -> InputAssignments {
         let profiles = self.controllers();
-        let famicom = profiles.iter().find(|p| p.id() == "nes.famicom").cloned();
+        let famicom = profiles
+            .iter()
+            .find(|p| p.profile_id() == ProfileId::new("nes.famicom"))
+            .cloned();
         InputAssignments {
             slots: vec![
-                ("player1".to_string(), famicom),
-                ("player2".to_string(), None),
+                (AttachmentId::new("nes.attachment.player1"), famicom),
+                (AttachmentId::new("nes.attachment.player2"), None),
             ],
         }
     }

@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::rc::Rc;
 
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, ShortcutAction};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
-    InputTopologyDescriptor, InputValue, PortDescriptor, PortId,
+    InputTopologyDescriptor, InputValue, PortDescriptor, PortId, SlotInfo,
 };
 
 use crate::{
@@ -13,36 +15,35 @@ use crate::{
     settings::{bindings::events::shortcut::shortcut_action_for_key, factory::settings_view},
 };
 
-/// Normalize a binding ID (e.g. "nes.attachment.player1" or "nes.control.a")
-/// to the short form used in field_map keys.
-fn normalize_id(id: &str) -> &str {
-    id.trim_start_matches("nes.attachment.")
-        .trim_start_matches("nes.control.")
-        .trim_start_matches("famicom.")
+/// Abstraction over a binding type (keyboard, gamepad, etc.) for building
+/// a source-key → field-index map from an InputAssignments field_map.
+trait InputBinding {
+    type Id: Copy + Eq + Hash;
+    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool;
+    fn source_id(&self) -> Self::Id;
 }
 
-/// Map slot name to attachment ID string.
-pub fn attachment_id(slot: &str) -> &'static str {
-    match slot {
-        "player1" => "nes.attachment.player1",
-        "player2" => "nes.attachment.player2",
-        _ => "unknown",
+impl InputBinding for KeyboardBinding {
+    type Id = KeyboardKey;
+    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool {
+        self.attachment == *attachment && self.control == *control
+    }
+    fn source_id(&self) -> Self::Id {
+        self.key
     }
 }
 
-/// Map control short name to control ID string.
-pub fn control_id(id: &str) -> &'static str {
-    match id {
-        "a" => "nes.control.a",
-        "b" => "nes.control.b",
-        "select" => "nes.control.select",
-        "start" => "nes.control.start",
-        "up" => "nes.control.up",
-        "down" => "nes.control.down",
-        "left" => "nes.control.left",
-        "right" => "nes.control.right",
-        "microphone" => "famicom.microphone",
-        _ => "unknown",
+/// Generic rebuild: iterate field_map, find matching bindings, populate target map.
+fn rebuild_input_map<B: InputBinding>(
+    field_map: &HashMap<(AttachmentId, DigitalControlId), usize>,
+    bindings: &[B],
+    target: &mut HashMap<B::Id, usize>,
+) {
+    target.clear();
+    for ((attachment, control), &field) in field_map {
+        if let Some(binding) = bindings.iter().find(|b| b.matches(attachment, control)) {
+            target.insert(binding.source_id(), field);
+        }
     }
 }
 
@@ -56,20 +57,28 @@ pub fn device_kind(ctrl_id: &'static str, group_index: usize) -> &'static str {
 
 /// Build an InputTopologyDescriptor from slot→controller assignments.
 pub fn build_topology(
-    assignments: &[(String, Option<Rc<dyn ControllerProfile>>)],
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    slots: &[SlotInfo],
 ) -> InputTopologyDescriptor {
+    let slot_label = |att: AttachmentId| -> &'static str {
+        slots
+            .iter()
+            .find(|s| s.id == att)
+            .map(|s| s.label)
+            .unwrap_or("")
+    };
     let mut ports = Vec::new();
     let mut seen_devices = HashSet::<(&str, usize)>::new();
     let mut devices = Vec::new();
 
-    for (slot_id, ctrl_opt) in assignments {
+    for (slot_att, ctrl_opt) in assignments {
         let profile = match ctrl_opt {
             Some(p) => p.as_ref(),
             None => continue,
         };
-        let ctrl_id = profile.id();
+        let ctrl_id = profile.profile_id().as_str();
         for ps in profile.port_sets() {
-            if ps.ports.iter().any(|&p| p == slot_id) {
+            if ps.ports.contains(slot_att) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
                     let dk = device_kind(ctrl_id, gi);
                     if seen_devices.insert((ctrl_id, gi)) {
@@ -81,7 +90,7 @@ pub fn build_topology(
                                 .iter()
                                 .map(|ci| {
                                     ControlDescriptor::Digital(DigitalControlDescriptor {
-                                        id: DigitalControlId::new(control_id(ci.id)),
+                                        id: ci.id,
                                         label: ci.label,
                                         description: ci.label,
                                     })
@@ -89,14 +98,14 @@ pub fn build_topology(
                                 .collect(),
                         });
                     }
-                    let full = attachment_id(port);
-                    if !ports.iter().any(|p: &PortDescriptor| p.id.as_str() == full) {
+                    if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
+                        let label = slot_label(port);
                         ports.push(PortDescriptor {
-                            id: PortId::new(full),
-                            label: port,
+                            id: PortId::new(port.as_str()),
+                            label,
                             attachments: vec![AttachmentSlotDescriptor {
-                                id: AttachmentId::new(full),
-                                label: port,
+                                id: port,
+                                label,
                                 device: DeviceKindId::new(dk),
                                 supported_devices: vec![DeviceKindId::new(dk)],
                             }],
@@ -147,9 +156,7 @@ impl SessionHandle {
 
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        let slot = normalize_id(event.attachment.as_str());
-        let control = normalize_id(event.control.as_str());
-        if let Some(&field) = self.field_map.get(&(slot, control)) {
+        if let Some(&field) = self.field_map.get(&(event.attachment, event.control)) {
             let _ = self
                 .gui_input
                 .state
@@ -194,7 +201,6 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        self.key_field_map.clear();
         let system_id = self.factory.system_id();
         let Some(profile) = self
             .settings_snapshot
@@ -206,16 +212,6 @@ impl SessionHandle {
         else {
             return;
         };
-        for ((slot, control), &field) in &self.field_map {
-            let attachment = crate::session::input::attachment_id(slot);
-            let ctrl = crate::session::input::control_id(control);
-            if let Some(binding) = profile
-                .bindings
-                .iter()
-                .find(|b| b.attachment.as_str() == attachment && b.control.as_str() == ctrl)
-            {
-                self.key_field_map.insert(binding.key, field);
-            }
-        }
+        rebuild_input_map(&self.field_map, &profile.bindings, &mut self.key_field_map);
     }
 }

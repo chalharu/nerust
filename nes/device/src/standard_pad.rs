@@ -1,6 +1,6 @@
 use nerust_input_traits::{
-    AbstractKey, ControlInfo, ControlKind, Controller, ControllerProfile, OpenBusReadResult, Port,
-    PortSet,
+    AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
+    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
 };
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -61,17 +61,42 @@ impl Controller for StandardPad {
         }
         self.strobe = new_strobe;
     }
-    fn field_map(&self, port: &dyn Port) -> Vec<(&'static str, &'static str, usize)> {
+    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
+        let attachment = port.as_attachment_id();
         let base = port.index() * 8;
         vec![
-            (port.id(), "a", base),
-            (port.id(), "b", base + 1),
-            (port.id(), "select", base + 2),
-            (port.id(), "start", base + 3),
-            (port.id(), "up", base + 4),
-            (port.id(), "down", base + 5),
-            (port.id(), "left", base + 6),
-            (port.id(), "right", base + 7),
+            (attachment, DigitalControlId::new("nes.control.a"), base),
+            (attachment, DigitalControlId::new("nes.control.b"), base + 1),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.select"),
+                base + 2,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.start"),
+                base + 3,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.up"),
+                base + 4,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.down"),
+                base + 5,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.left"),
+                base + 6,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("nes.control.right"),
+                base + 7,
+            ),
         ]
     }
 }
@@ -80,78 +105,71 @@ impl Controller for StandardPad {
 pub struct StandardPadProfile;
 
 impl ControllerProfile for StandardPadProfile {
-    fn id(&self) -> &'static str {
-        "nes.standard_pad"
+    fn profile_id(&self) -> ProfileId {
+        ProfileId::new("nes.standard_pad")
     }
     fn label(&self) -> &'static str {
         "NES Standard Controller"
     }
     fn port_sets(&self) -> &[PortSet] {
-        &[
-            PortSet {
-                ports: &["player1"],
-            },
-            PortSet {
-                ports: &["player2"],
-            },
-        ]
+        const P1: &[AttachmentId] = &[AttachmentId::new("nes.attachment.player1")];
+        const P2: &[AttachmentId] = &[AttachmentId::new("nes.attachment.player2")];
+        const SETS: &[PortSet] = &[PortSet { ports: P1 }, PortSet { ports: P2 }];
+        SETS
     }
     fn port_groups(&self) -> &[&[ControlInfo]] {
         use ControlKind::*;
-        static C: &[ControlInfo] = &[
+        const C: &[ControlInfo] = &[
             ControlInfo {
-                id: "a",
+                id: DigitalControlId::new("nes.control.a"),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: "b",
+                id: DigitalControlId::new("nes.control.b"),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: "select",
+                id: DigitalControlId::new("nes.control.select"),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: "start",
+                id: DigitalControlId::new("nes.control.start"),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: "up",
+                id: DigitalControlId::new("nes.control.up"),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: "down",
+                id: DigitalControlId::new("nes.control.down"),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: "left",
+                id: DigitalControlId::new("nes.control.left"),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: "right",
+                id: DigitalControlId::new("nes.control.right"),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
             },
         ];
-        static G: &[&[ControlInfo]] = &[C];
+        const G: &[&[ControlInfo]] = &[C];
         G
-    }
-    fn directional_ids(&self) -> &[&[&'static str; 4]] {
-        &[&["up", "down", "left", "right"]]
     }
 }

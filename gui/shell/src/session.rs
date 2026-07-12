@@ -26,7 +26,9 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{ControllerProfile, GuiInput, InputAssignments, SlotInfo};
+use nerust_input_traits::{
+    AttachmentId, ControllerProfile, DigitalControlId, GuiInput, InputAssignments, SlotInfo,
+};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -62,7 +64,7 @@ pub struct SessionHandle {
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
     pub(super) current_assignments: InputAssignments,
-    pub(super) field_map: HashMap<(&'static str, &'static str), usize>,
+    pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
     pub(super) capabilities: HostBackendCapabilities,
@@ -84,14 +86,21 @@ impl SessionHandle {
         let persisted = snapshot.app_state.controller_assignments.get(system_id);
         match persisted {
             Some(pairs) => {
-                let profiles = factory.input_system_factory().controllers();
+                let input_factory = factory.input_system_factory();
                 let slots = pairs
                     .iter()
-                    .map(|(slot_id, ctrl_opt)| {
-                        let profile = ctrl_opt.as_ref().and_then(|id| {
-                            profiles.iter().find(|p| p.id() == id.as_str()).cloned()
-                        });
-                        (slot_id.clone(), profile)
+                    .filter_map(|(slot_id, ctrl_opt)| {
+                        let att = match input_factory.resolve_slot(slot_id) {
+                            Some(a) => a,
+                            None => {
+                                log::warn!("unknown persisted slot ID: {slot_id}");
+                                return None;
+                            }
+                        };
+                        let profile = ctrl_opt
+                            .as_ref()
+                            .and_then(|id| input_factory.resolve_controller(id));
+                        Some((att, profile))
                     })
                     .collect();
                 InputAssignments { slots }
@@ -108,7 +117,7 @@ impl SessionHandle {
     ) -> (
         EmuCore,
         GuiInput,
-        HashMap<(&'static str, &'static str), usize>,
+        HashMap<(AttachmentId, DigitalControlId), usize>,
     ) {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
