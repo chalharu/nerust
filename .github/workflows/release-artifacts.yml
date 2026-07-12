@@ -216,6 +216,10 @@ jobs:
         run: cargo build -p nerust --features tao,wgpu --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --features tao,wgpu,nerust_tao/gamepad --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
         env:
           TAG_NAME: ${{ needs.prepare-context.outputs.tag_name }}
@@ -281,6 +285,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --features tao,wgpu --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --features tao,wgpu,nerust_tao/gamepad --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
