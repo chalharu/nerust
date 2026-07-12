@@ -11,7 +11,6 @@ pub struct VertexArray {
     // VBOs must be ref-counted because of the many-to-many relationship with VAOs and VBOs
     vbo_refs: Vec<Rc<VertexBuffer>>,
     // IBOs have a one-to-many relationship with VAOs
-    #[allow(dead_code, reason = "IBO tracking for indexed draw future use")]
     ibo_ref: Option<Rc<IndexBuffer>>,
 }
 
@@ -70,7 +69,6 @@ impl VertexArray {
     fn add_vbo(&mut self, vbo: Rc<VertexBuffer>) {
         self.vbo_refs.push(vbo);
     }
-    #[allow(dead_code, reason = "IBO binding for indexed draw future use")]
     fn set_ibo(&mut self, ibo: Rc<IndexBuffer>) {
         self.ibo_ref = Some(ibo);
     }
@@ -90,7 +88,7 @@ impl VertexArrayInitContext<'_> {
         cb(VertexArrayBufferContext)?;
         Ok(())
     }
-    #[allow(dead_code, reason = "IBO binding for indexed draw future use")]
+    #[expect(dead_code, reason = "IBO binding for indexed draw future use")]
     fn bind_ibo(&mut self, ibo: Rc<IndexBuffer>) -> Result<(), Error> {
         gl_error_handle(|| unsafe { gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo.id) })?;
         self.va.set_ibo(ibo);
@@ -100,14 +98,13 @@ impl VertexArrayInitContext<'_> {
 
 #[derive(Debug)]
 pub struct VertexArrayContext<'a> {
-    #[allow(dead_code, reason = "VA reference for indexed draw future use")]
     va: &'a VertexArray,
 }
 impl VertexArrayContext<'_> {
     pub fn draw_arrays(&self, mode: GLuint, first: GLint, count: GLsizei) -> Result<(), Error> {
         gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
     }
-    #[allow(dead_code, reason = "indexed draw for future renderer use")]
+    #[expect(dead_code, reason = "indexed draw for future renderer use")]
     fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: usize) -> Result<(), Error> {
         let data_type = self
             .va
@@ -187,7 +184,7 @@ impl VertexBuffer {
 #[derive(Debug)]
 pub struct IndexBuffer {
     id: GLuint,
-    #[allow(dead_code, reason = "data type for indexed draw future use")]
+
     data_type: GLenum,
 }
 
