@@ -1,12 +1,10 @@
 use std::path::Path;
 
-use nerust_gui_settings::{
-    local::HostBackendLocalSettings,
-    shared::{DesktopSharedSettings, StoragePolicy, SystemSettings},
-};
+use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
 
-use crate::settings::{
-    HostBackendCapabilities, SettingsApplyPlan, SettingsError, SettingsSnapshot,
+use super::{
+    HostBackendCapabilities, HostBackendLocalSettings, SettingsApplyPlan, SettingsError,
+    SettingsSnapshot,
 };
 
 pub fn derive_apply_plan(
