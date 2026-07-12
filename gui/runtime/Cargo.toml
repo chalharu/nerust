@@ -13,5 +13,5 @@ nerust_core_traits.workspace = true
 nerust_gui_settings.workspace = true
 nerust_persistence.workspace = true
 serde.workspace = true
-serde_yaml.workspace = true
+serde-saphyr.workspace = true
 thiserror.workspace = true

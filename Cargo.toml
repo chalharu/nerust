@@ -161,7 +161,7 @@ raw-window-handle = { version = "=0.6.2" }
 rfd = { version = "=0.17.2" }
 serde = { version = "=1.0.228", default-features = false }
 serde_bytes = { version = "=0.11.19" }
-serde_yaml = { version = "=0.9.34", default-features = false }
+serde-saphyr = { version = "=0.0.29" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { version = "=0.28.0", features = ["derive"] }
