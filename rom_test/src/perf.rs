@@ -1,6 +1,4 @@
-use std::{
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
 use nerust_core_traits::audio::AudioBackend;
