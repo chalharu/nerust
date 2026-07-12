@@ -807,7 +807,7 @@ fn mapper_program_with_prefix_test_data(
 }
 
 #[cfg(test)]
-mod tests {
+mod cartridge_tests {
     use crate::Core;
     use crate::cartridge_data_parts::CartridgeDataParts;
     use crate::cartridge_rom::CartridgeData;

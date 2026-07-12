@@ -311,7 +311,7 @@ impl FilterType {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{
+    use crate::filter::{
         BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
     };
     use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
