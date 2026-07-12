@@ -93,7 +93,7 @@ cubeb = { version = "=0.35.3" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
 flume = { version = "=0.12.0" }
-fs4 = { version = "=1.1.0" }
+
 gdk = { version = "=0.11.4", package = "gdk4" }
 gio = { version = "=0.22.8" }
 gl = { version = "=0.14.0", default-features = false }

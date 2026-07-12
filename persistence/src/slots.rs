@@ -5,7 +5,6 @@ use std::{
     time::SystemTime,
 };
 
-use fs4::FileExt;
 use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{
