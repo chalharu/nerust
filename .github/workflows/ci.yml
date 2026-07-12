@@ -87,6 +87,10 @@ jobs:
         run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --no-default-features --features tao,wgpu,nerust_tao/gamepad --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -129,6 +133,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust (GTK + opengl)
         run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (GTK + opengl + gamepad)
+        run: cargo build -p nerust --no-default-features --features gtk,opengl,nerust_gtk/gamepad --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
