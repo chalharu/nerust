@@ -139,3 +139,158 @@ impl LocalSettingsExt for HostBackendLocalSettings {
         u16::from(self.audio.master_volume_percent)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use nerust_core_traits::identity::SystemId;
+    use nerust_gui_settings::{
+        app_state::DesktopAppState,
+        language::AppLanguage,
+        local::ScalingMode,
+        nes::{Mmc3IrqVariant, NesVideoFilter},
+        shared::{StoragePolicy, SystemSettings},
+    };
+
+    use super::super::{
+        gtk_caps, tao_caps, test_local_defaults, test_shared_defaults, test_root,
+        SettingsApplyPlan, SettingsSnapshot,
+    };
+    use super::{derive_apply_plan, validate_shared_settings};
+
+    #[test]
+    fn apply_plan_flags_changed_categories() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.shared.general.language = AppLanguage::Japanese;
+        after.local.video.window.scaling = ScalingMode::X3;
+        after.local.audio.latency_ms = 90;
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+
+        assert_eq!(
+            plan,
+            SettingsApplyPlan {
+                language_changed: true,
+                bindings_changed: false,
+                persistence_changed: false,
+                session_rebuild_required: true,
+                audio_volume_changed: false,
+                renderer_rebuild_required: true,
+                window_settings_changed: true,
+                backend_presentation_changed: false,
+                scaling_changed: true,
+                vsync_changed: false,
+                fullscreen_default_changed: false,
+            }
+        );
+    }
+
+    #[test]
+    fn filter_change_requires_immediate_session_rebuild() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        let SystemSettings::Nes(nes) =
+            after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+
+        assert!(plan.session_rebuild_required);
+    }
+
+    #[test]
+    fn mmc3_variant_change_waits_for_next_rom_load() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        let SystemSettings::Nes(nes) =
+            after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+
+        assert!(!plan.session_rebuild_required);
+    }
+
+    #[test]
+    fn gtk_opengl_ignores_backend_presentation_changes() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
+
+        let plan = derive_apply_plan(&gtk_caps(), &before, &after);
+
+        assert!(plan.vsync_changed);
+        assert!(!plan.backend_presentation_changed);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn tao_wgpu_rebuilds_renderer_for_vsync_changes() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+
+        assert!(plan.vsync_changed);
+        assert!(plan.backend_presentation_changed);
+        assert!(plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn fullscreen_default_change_only_marks_window_settings() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        after.local.video.window.fullscreen_default =
+            !after.local.video.window.fullscreen_default;
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+
+        assert!(plan.fullscreen_default_changed);
+        assert!(plan.window_settings_changed);
+        assert!(!plan.session_rebuild_required);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn validate_shared_settings_does_not_create_custom_directory_during_validation() {
+        let root = test_root("validate-custom-directory");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let custom_directory = root.join("custom").join("nested");
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        shared.persistence.storage_directory = Some(custom_directory.clone());
+
+        validate_shared_settings(&shared).unwrap();
+
+        assert!(!custom_directory.exists());
+    }
+}

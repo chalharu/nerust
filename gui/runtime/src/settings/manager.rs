@@ -242,3 +242,197 @@ impl SettingsManager {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, fs};
+
+    use nerust_core_traits::identity::SystemId;
+    use nerust_gui_settings::{
+        app_state::{DesktopAppState, RememberedWindowSize},
+        input::{
+            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
+            ShortcutAction, ShortcutBinding, SystemInputSettings,
+        },
+        language::AppLanguage,
+        nes::NesVideoFilter,
+        shared::SystemSettings,
+    };
+
+    use super::super::{test_local_defaults, test_shared_defaults, test_root, SettingsPaths};
+    use super::SettingsManager;
+
+    #[test]
+    fn ephemeral_manager_round_trips_snapshot() {
+        let manager = SettingsManager::ephemeral(
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        );
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.input = InputSettings {
+            systems: BTreeMap::from([(SystemId::new("nes"), {
+                let mut system = SystemInputSettings::default();
+                system.keyboard_profiles.insert(
+                    IMPLICIT_PROFILE_ID.to_string(),
+                    nerust_gui_settings::input::KeyboardProfile {
+                        bindings: vec![KeyboardBinding::new(
+                            "nes.attachment.player1",
+                            PersistedControlId::digital("nes.control.a"),
+                            KeyboardKey::KeyZ,
+                        )],
+                    },
+                );
+                system
+            })]),
+            shortcuts: nerust_gui_settings::input::ShortcutSettings {
+                keyboard: vec![ShortcutBinding {
+                    action: ShortcutAction::TogglePause,
+                    key: Some(KeyboardKey::Space),
+                }],
+            },
+        };
+
+        manager.save_snapshot(snapshot.clone()).unwrap();
+
+        assert_eq!(manager.snapshot().unwrap(), snapshot);
+    }
+
+    #[test]
+    fn file_backed_manager_round_trips_snapshot_across_reloads() {
+        let root = test_root("file-backed-roundtrip");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let paths = SettingsPaths::from_root(root.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        snapshot.local.audio.muted = true;
+        let SystemSettings::Nes(nes) = snapshot
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .unwrap();
+        nes.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snapshot.clone()).unwrap();
+
+        let reloaded = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap()
+        .snapshot()
+        .unwrap();
+
+        assert_eq!(reloaded, snapshot);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn update_window_size_uses_fixed_key() {
+        let manager = SettingsManager::ephemeral(
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        );
+
+        manager.update_window_size(960, 720).unwrap();
+        manager.update_window_size(800, 600).unwrap();
+
+        let app_state = manager.app_state().unwrap();
+
+        assert!(app_state.window_size("tao+wgpu").is_none());
+        assert!(app_state.window_size("gtk+opengl").is_none());
+        assert_eq!(
+            app_state.window_size("main"),
+            Some(RememberedWindowSize {
+                width: 800,
+                height: 600,
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_enum_variant_resets_only_that_field() {
+        let dir =
+            std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        let path = dir.join("config").join("settings.yaml");
+        std::fs::write(
+            &path,
+            b"shared:\n  general:\n    language: future_variant\n",
+        )
+        .unwrap();
+
+        let paths = SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap = manager.snapshot().unwrap();
+
+        assert_eq!(
+            snap.shared.general.language,
+            AppLanguage::SystemDefault,
+            "unknown variant should fall back to default",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ntsc_filter_survives_save_reload_cycle() {
+        let dir =
+            std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let paths = SettingsPaths::from_root(dir.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+
+        let mut snap = manager.snapshot().unwrap();
+        let nes = snap.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes;
+        nes_settings.video.filter = NesVideoFilter::NtscRgb;
+        manager.save_snapshot(snap.clone()).unwrap();
+        drop(manager);
+
+        let manager2 = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let snap2 = manager2.snapshot().unwrap();
+        let nes2 = snap2.shared.systems.get(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes_settings) = nes2;
+        assert_eq!(
+            nes_settings.video.filter,
+            NesVideoFilter::NtscRgb,
+            "NTSC filter should persist across save/reload",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
