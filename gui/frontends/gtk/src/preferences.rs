@@ -407,10 +407,10 @@ pub(crate) fn present_preferences_dialog(
                             .collect()
                     };
                     for (combo_opt, target_idx) in &sync_targets {
-                        if let Some(combo) = combo_opt {
-                            if combo.active().map_or(true, |idx| idx != *target_idx) {
-                                combo.set_active(Some(*target_idx));
-                            }
+                        if let Some(combo) = combo_opt
+                            && combo.active() != Some(*target_idx)
+                        {
+                            combo.set_active(Some(*target_idx));
                         }
                     }
                     rebuild_both_uis(

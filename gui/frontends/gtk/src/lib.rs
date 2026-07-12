@@ -66,7 +66,10 @@ impl State {
         #[cfg(feature = "gamepad")]
         let gilrs = match gilrs::Gilrs::new() {
             Ok(g) => {
-                log::info!("gamepad: gilrs initialized ({} gamepads)", g.gamepads().count());
+                log::info!(
+                    "gamepad: gilrs initialized ({} gamepads)",
+                    g.gamepads().count()
+                );
                 Some(g)
             }
             Err(e) => {
