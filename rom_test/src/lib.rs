@@ -1,8 +1,3 @@
-#![allow(
-    unused_imports,
-    reason = "different harness targets reuse this facade with different subsets of the shared API"
-)]
-
 pub mod error;
 pub mod events;
 pub mod harness;

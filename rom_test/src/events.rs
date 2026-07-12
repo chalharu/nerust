@@ -168,10 +168,6 @@ pub enum ControllerPad {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(
-    clippy::upper_case_acronyms,
-    reason = "matches existing NES button names"
-)]
 pub enum ButtonCode {
     A,
     B,

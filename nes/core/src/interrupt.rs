@@ -10,7 +10,6 @@ bitflags::bitflags! {
         const EXTERNAL = 0b0000_0001;
         const FRAME_COUNTER = 0b0000_0010;
         const DMC = 0b0000_0100;
-        #[allow(dead_code, reason = "FDS IRQ placeholder")]
         const FDS_DISK = 0b0000_1000;
         const ALL = 0xFF;
     }
