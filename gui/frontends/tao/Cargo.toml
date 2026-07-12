@@ -10,7 +10,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gilrs.workspace = true
+gilrs = { workspace = true, optional = true }
 iced = { workspace = true, features = ["advanced"] }
 iced_tiny_skia.workspace = true
 iced_winit.workspace = true
@@ -28,5 +28,8 @@ raw-window-handle.workspace = true
 rfd.workspace = true
 tao.workspace = true
 
-[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+[features]
+gamepad = ["gilrs"]
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"

@@ -55,6 +55,7 @@ pub(crate) struct HostState {
     ctx: FrontendContext,
     app_menu: AppMenu,
     shell: NativeShellState,
+    #[cfg(feature = "gamepad")]
     gilrs: Option<gilrs::Gilrs>,
     pub(crate) settings_window: Option<crate::settings_window::SettingsWindowHandle>,
     settings_open: bool,
@@ -81,6 +82,7 @@ impl HostState {
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
         );
+        #[cfg(feature = "gamepad")]
         let gilrs = gilrs::Gilrs::new().ok();
 
         Self {
@@ -89,6 +91,7 @@ impl HostState {
             ctx,
             app_menu,
             shell: NativeShellState::new(),
+            #[cfg(feature = "gamepad")]
             gilrs,
             settings_window: None,
             settings_open: false,
@@ -241,6 +244,7 @@ impl HostState {
         }
     }
 
+    #[cfg(feature = "gamepad")]
     pub(crate) fn poll_gamepad(&mut self) {
         use gilrs::EventType;
         let Some(gilrs) = self.gilrs.as_mut() else {
