@@ -8,7 +8,7 @@ mod tests;
 pub mod title;
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     rc::Rc,
     sync::Arc,
 };
@@ -25,7 +25,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{GamepadButton, KeyboardKey, ShortcutAction};
 use nerust_input_traits::{
     AttachmentId, ControllerProfile, DigitalControlId, GuiInput, InputAssignments, SlotInfo,
 };
@@ -67,10 +67,15 @@ pub struct SessionHandle {
     pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
+    /// Reverse map: gamepad button → field index, rebuilt on binding/controller change.
+    pub(super) gamepad_field_map: HashMap<GamepadButton, usize>,
+    /// Reverse map: gamepad axis → field index, for analog inputs.
+    pub(super) gamepad_analog_field_map: HashMap<GamepadButton, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
     pub(super) pressed_keys: BTreeSet<KeyboardKey>,
+    pub(super) pressed_gamepad_buttons: HashSet<GamepadButton>,
     pub(super) loaded_media: Option<LoadedMedia>,
     pub(super) persistence: PersistenceManager,
     pub(super) audio_registry: Arc<AudioBackendRegistry>,
@@ -184,16 +189,21 @@ impl SessionHandle {
             current_assignments: assignments,
             field_map,
             key_field_map: HashMap::new(),
+            gamepad_field_map: HashMap::new(),
+            gamepad_analog_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
             settings_snapshot,
             pressed_keys: BTreeSet::new(),
+            pressed_gamepad_buttons: HashSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
             audio_registry,
         };
         result.rebuild_key_field_map();
+        result.rebuild_gamepad_field_map();
+        result.rebuild_gamepad_analog_field_map();
         result
     }
 
@@ -246,16 +256,21 @@ impl SessionHandle {
             current_assignments: assignments,
             field_map,
             key_field_map: HashMap::new(),
+            gamepad_field_map: HashMap::new(),
+            gamepad_analog_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
             settings_snapshot,
             pressed_keys: BTreeSet::new(),
+            pressed_gamepad_buttons: HashSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
-            audio_registry,
+            audio_registry: Arc::clone(&audio_registry),
         };
         result.rebuild_key_field_map();
+        result.rebuild_gamepad_field_map();
+        result.rebuild_gamepad_analog_field_map();
         result
     }
 

@@ -193,6 +193,8 @@ impl WindowRuntime {
             renderer.resize(window_size);
         }
 
+        #[cfg(feature = "gamepad")]
+        self.host.poll_gamepad();
         self.host.session_mut().swap_frame_buffer();
         let result = renderer.render(self.host.session_mut().frame_buffer());
         self.host.on_render_result(result);

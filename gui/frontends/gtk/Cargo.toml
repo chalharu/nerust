@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 gdk.workspace = true
+gilrs = { workspace = true, optional = true }
 gio.workspace = true
 gtk.workspace = true
 log.workspace = true
@@ -20,6 +21,9 @@ nerust_run_options.workspace = true
 nerust_render_base.workspace = true
 nerust_persistence.workspace = true
 raw-window-handle.workspace = true
+
+[features]
+gamepad = ["gilrs"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gdk-macos.workspace = true

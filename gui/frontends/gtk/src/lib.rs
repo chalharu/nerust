@@ -43,6 +43,8 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    #[cfg(feature = "gamepad")]
+    gilrs: Option<gilrs::Gilrs>,
 }
 
 impl State {
@@ -61,10 +63,24 @@ impl State {
             ctx.audio_registry.clone(),
         );
 
+        #[cfg(feature = "gamepad")]
+        let gilrs = match gilrs::Gilrs::new() {
+            Ok(g) => {
+                log::info!("gamepad: gilrs initialized");
+                Some(g)
+            }
+            Err(e) => {
+                log::warn!("gamepad: gilrs init failed: {e}");
+                None
+            }
+        };
+
         Self {
             session,
             ctx,
             renderer_reload_pending: false,
+            #[cfg(feature = "gamepad")]
+            gilrs,
         }
     }
 
@@ -207,7 +223,92 @@ impl FrontendSession for State {
     }
 }
 
+#[cfg(feature = "gamepad")]
+fn gilrs_to_gamepad_button(
+    event: &gilrs::Event,
+) -> Option<(nerust_gui_settings::input::GamepadButton, bool)> {
+    use gilrs::EventType;
+    let (kind, pressed) = match event.event {
+        EventType::ButtonPressed(button, _) => (button, true),
+        EventType::ButtonRepeated(button, _) => (button, true),
+        EventType::ButtonReleased(button, _) => (button, false),
+        _ => return None,
+    };
+    let button_kind = match kind {
+        gilrs::Button::South => nerust_gui_settings::input::GamepadButtonKind::South,
+        gilrs::Button::East => nerust_gui_settings::input::GamepadButtonKind::East,
+        gilrs::Button::North => nerust_gui_settings::input::GamepadButtonKind::North,
+        gilrs::Button::West => nerust_gui_settings::input::GamepadButtonKind::West,
+        gilrs::Button::LeftTrigger => nerust_gui_settings::input::GamepadButtonKind::LeftTrigger,
+        gilrs::Button::RightTrigger => nerust_gui_settings::input::GamepadButtonKind::RightTrigger,
+        gilrs::Button::LeftTrigger2 => nerust_gui_settings::input::GamepadButtonKind::LeftTrigger2,
+        gilrs::Button::RightTrigger2 => {
+            nerust_gui_settings::input::GamepadButtonKind::RightTrigger2
+        }
+        gilrs::Button::Select => nerust_gui_settings::input::GamepadButtonKind::Select,
+        gilrs::Button::Start => nerust_gui_settings::input::GamepadButtonKind::Start,
+        gilrs::Button::Mode => nerust_gui_settings::input::GamepadButtonKind::Mode,
+        gilrs::Button::LeftThumb => nerust_gui_settings::input::GamepadButtonKind::LeftThumb,
+        gilrs::Button::RightThumb => nerust_gui_settings::input::GamepadButtonKind::RightThumb,
+        gilrs::Button::DPadUp => nerust_gui_settings::input::GamepadButtonKind::DpadUp,
+        gilrs::Button::DPadDown => nerust_gui_settings::input::GamepadButtonKind::DpadDown,
+        gilrs::Button::DPadLeft => nerust_gui_settings::input::GamepadButtonKind::DpadLeft,
+        gilrs::Button::DPadRight => nerust_gui_settings::input::GamepadButtonKind::DpadRight,
+        _ => {
+            log::debug!("gamepad: unrecognized button: {kind:?}");
+            return None;
+        }
+    };
+    Some((
+        nerust_gui_settings::input::GamepadButton {
+            player: event.id.into(),
+            button: button_kind,
+        },
+        pressed,
+    ))
+}
+
+#[cfg(feature = "gamepad")]
+fn gilrs_to_gamepad_axis(
+    event: &gilrs::Event,
+) -> Option<(nerust_gui_settings::input::GamepadButton, f32)> {
+    use gilrs::Axis;
+    let (axis, value) = match event.event {
+        gilrs::EventType::AxisChanged(axis, value, _) => (axis, value),
+        _ => return None,
+    };
+    let button_kind = match axis {
+        Axis::LeftStickX => nerust_gui_settings::input::GamepadButtonKind::LeftStickX,
+        Axis::LeftStickY => nerust_gui_settings::input::GamepadButtonKind::LeftStickY,
+        Axis::RightStickX => nerust_gui_settings::input::GamepadButtonKind::RightStickX,
+        Axis::RightStickY => nerust_gui_settings::input::GamepadButtonKind::RightStickY,
+        _ => return None,
+    };
+    Some((
+        nerust_gui_settings::input::GamepadButton {
+            player: event.id.into(),
+            button: button_kind,
+        },
+        value,
+    ))
+}
+
 impl State {
+    #[cfg(feature = "gamepad")]
+    pub(crate) fn poll_gamepad(&mut self) {
+        let Some(gilrs) = self.gilrs.as_mut() else {
+            return;
+        };
+        while let Some(event) = gilrs.next_event() {
+            if let Some((button, pressed)) = gilrs_to_gamepad_button(&event) {
+                self.session.handle_gamepad_event(button, pressed);
+            } else if let Some((button, value)) = gilrs_to_gamepad_axis(&event) {
+                self.session.handle_gamepad_axis_event(button, value);
+            }
+        }
+        gilrs.inc();
+    }
+
     pub(crate) fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,

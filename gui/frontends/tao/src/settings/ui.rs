@@ -33,7 +33,7 @@ use nerust_gui_shell::settings::{
         descriptors::{keyboard_binding_sections, shortcut_descriptors},
         keys::keyboard_key_label,
     },
-    editor::{CaptureTarget, apply_capture_target, current_binding_label},
+    editor::{CaptureTarget, apply_capture_target, current_binding_label, gamepad_binding_label},
     factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
@@ -65,7 +65,8 @@ impl<T: Clone + Eq> fmt::Display for Choice<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     General,
-    Input,
+    Keyboard,
+    Gamepad,
     Video,
     Audio,
     System,
@@ -474,7 +475,13 @@ impl SettingsAppState {
 
         let sidebar = column![
             page_radio(language, UiText::General, SettingsPage::General, self.page),
-            page_radio(language, UiText::Input, SettingsPage::Input, self.page),
+            page_radio(
+                language,
+                UiText::Keyboard,
+                SettingsPage::Keyboard,
+                self.page
+            ),
+            page_radio(language, UiText::Gamepad, SettingsPage::Gamepad, self.page),
             page_radio(language, UiText::Video, SettingsPage::Video, self.page),
             page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
             page_radio(language, UiText::System, SettingsPage::System, self.page),
@@ -523,7 +530,8 @@ impl SettingsAppState {
     fn page_content(&self) -> El<'_> {
         match self.page {
             SettingsPage::General => self.general_page(),
-            SettingsPage::Input => self.input_page(),
+            SettingsPage::Keyboard => self.input_page(),
+            SettingsPage::Gamepad => self.gamepad_page(),
             SettingsPage::Video => self.video_page(),
             SettingsPage::Audio => self.audio_page(),
             SettingsPage::System => self.system_page(),
@@ -709,20 +717,140 @@ impl SettingsAppState {
         content.push(navigation).push(section).spacing(16).into()
     }
 
+    fn gamepad_page(&self) -> El<'_> {
+        let language = self.language();
+        let mut content = column![];
+
+        // Controller assignment pickers (shared with keyboard page)
+        let input_factory = self.factory.input_system_factory();
+        let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+        if !controllers.is_empty() {
+            let mut occupied = std::collections::HashSet::new();
+            for (s, c_opt) in &self.controller_assignments {
+                let profile = match c_opt {
+                    Some(p) => p.as_ref(),
+                    None => continue,
+                };
+                for ps in profile.port_sets() {
+                    if ps.ports.contains(s) {
+                        for &port in ps.ports {
+                            occupied.insert(port);
+                        }
+                    }
+                }
+            }
+            for slot in slots {
+                let none = Choice {
+                    value: String::new(),
+                    label: ui_text(self.draft.shared.general.language, UiText::None).to_string(),
+                };
+                let mut slot_choices: Vec<Choice<String>> = vec![none];
+                slot_choices.extend(
+                    controllers
+                        .iter()
+                        .filter(|c| {
+                            c.port_sets()
+                                .iter()
+                                .any(|ps| ps.ports.first() == Some(&slot.id))
+                        })
+                        .map(|c| Choice {
+                            value: c.profile_id().to_string(),
+                            label: c.label().to_string(),
+                        }),
+                );
+                if occupied.contains(&slot.id)
+                    && !self
+                        .controller_assignments
+                        .iter()
+                        .any(|(s, c)| *s == slot.id && c.is_some())
+                {
+                    content = content.push(text(format!("{} — (occupied)", slot.label)));
+                    continue;
+                }
+                let current = self
+                    .controller_assignments
+                    .iter()
+                    .find(|(s, _)| *s == slot.id)
+                    .and_then(|(_, c)| c.as_ref())
+                    .and_then(|id| {
+                        slot_choices
+                            .iter()
+                            .find(|ch| ch.value == id.profile_id().as_str())
+                            .cloned()
+                    })
+                    .or_else(|| slot_choices.first().cloned());
+                let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
+                    Message::SetControllerSlot {
+                        slot: slot.id,
+                        controller_id: if choice.value.is_empty() {
+                            None
+                        } else {
+                            Some(choice.value)
+                        },
+                    }
+                });
+                content = content.push(text(slot.label)).push(pick);
+            }
+        }
+
+        let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
+        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
+        for (index, section) in sections.iter().enumerate() {
+            navigation = navigation.push(input_section_radio_label(
+                section.attachment_label,
+                InputPageSection::Attachment(index),
+                self.input_section,
+            ));
+        }
+
+        let section = match self.input_section {
+            InputPageSection::Attachment(index) => sections
+                .get(index)
+                .map(|section| {
+                    let rows = section
+                        .bindings
+                        .clone()
+                        .into_iter()
+                        .map(|descriptor| {
+                            (
+                                descriptor.control_label,
+                                CaptureTarget::GamepadBinding {
+                                    system: descriptor.system,
+                                    attachment: descriptor.attachment.as_str().to_string(),
+                                    control: descriptor.control.as_str().to_string(),
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    self.input_section(section.attachment_label, rows.into_iter())
+                })
+                .unwrap_or_else(|| self.input_section("", std::iter::empty())),
+            InputPageSection::Shortcuts => {
+                self.input_section(ui_text(language, UiText::Shortcuts), std::iter::empty())
+            }
+        };
+
+        content.push(navigation).push(section).spacing(16).into()
+    }
+
     fn input_section<'a>(
         &'a self,
-        title: &'static str,
+        title: &str,
         rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
     ) -> El<'a> {
         let language = self.language();
         let current_capture = self.capture_target.lock().unwrap();
-        let mut content = column![text(title)];
+        let mut content = column![text(title.to_string())];
         for (label, target) in rows {
             let binding_label = if current_capture.as_ref() == Some(&target) {
-                ui_text(language, UiText::CapturePrompt)
+                ui_text(language, UiText::CapturePrompt).to_string()
+            } else if matches!(target, CaptureTarget::GamepadBinding { .. }) {
+                gamepad_binding_label(&self.draft, &target)
+                    .unwrap_or_else(|| ui_text(language, UiText::Unbound).to_string())
             } else {
                 current_binding_label(&self.draft, &target)
                     .unwrap_or(ui_text(language, UiText::Unbound))
+                    .to_string()
             };
             content = content.push(
                 row![

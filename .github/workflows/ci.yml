@@ -68,7 +68,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \
-            libcubeb-dev
+            libcubeb-dev \
+            libudev-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -84,6 +85,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --no-default-features --features tao,wgpu,nerust_tao/gamepad --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
@@ -111,7 +116,8 @@ jobs:
             libgtk-4-dev \
             libepoxy-dev \
             libasound2-dev \
-            libcubeb-dev
+            libcubeb-dev \
+            libudev-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -127,6 +133,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust (GTK + opengl)
         run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (GTK + opengl + gamepad)
+        run: cargo build -p nerust --no-default-features --features gtk,opengl,nerust_gtk/gamepad --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache

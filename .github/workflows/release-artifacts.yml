@@ -196,7 +196,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \
-            libcubeb-dev
+            libcubeb-dev \
+            libudev-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -213,6 +214,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --features tao,wgpu --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --features tao,wgpu,nerust_tao/gamepad --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
@@ -262,7 +267,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libasound2-dev \
-            libcubeb-dev
+            libcubeb-dev \
+            libudev-dev
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -279,6 +285,10 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
         run: cargo build -p nerust --features tao,wgpu --release
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
+      - name: Build nerust (Tao + wgpu + gamepad)
+        run: cargo build -p nerust --features tao,wgpu,nerust_tao/gamepad --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball

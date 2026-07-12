@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{
+    GamepadBinding, GamepadButton, KeyboardBinding, KeyboardKey, ShortcutAction,
+};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
@@ -30,6 +32,16 @@ impl InputBinding for KeyboardBinding {
     }
     fn source_id(&self) -> Self::Id {
         self.key
+    }
+}
+
+impl InputBinding for GamepadBinding {
+    type Id = GamepadButton;
+    fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool {
+        self.attachment == *attachment && self.control == *control
+    }
+    fn source_id(&self) -> Self::Id {
+        self.button
     }
 }
 
@@ -151,6 +163,8 @@ impl SessionHandle {
         self.field_map = field_map;
         self.current_assignments = assignments.clone();
         self.rebuild_key_field_map();
+        self.rebuild_gamepad_field_map();
+        self.rebuild_gamepad_analog_field_map();
         Ok(())
     }
 
@@ -197,7 +211,14 @@ impl SessionHandle {
 
     pub fn clear_input(&mut self) {
         self.pressed_keys.clear();
+        self.pressed_gamepad_buttons.clear();
         self.gui_input.clear();
+    }
+
+    pub fn clear_gamepad_analog(&mut self) {
+        for &field in self.gamepad_analog_field_map.values() {
+            let _ = self.gui_input.state.set(field, InputValue::Analog(0.0));
+        }
     }
 
     pub fn rebuild_key_field_map(&mut self) {
@@ -213,5 +234,57 @@ impl SessionHandle {
             return;
         };
         rebuild_input_map(&self.field_map, &profile.bindings, &mut self.key_field_map);
+    }
+
+    pub fn handle_gamepad_event(&mut self, button: GamepadButton, pressed: bool) {
+        if pressed {
+            self.pressed_gamepad_buttons.insert(button);
+        } else {
+            self.pressed_gamepad_buttons.remove(&button);
+        }
+
+        if let Some(&field) = self.gamepad_field_map.get(&button) {
+            let _ = self
+                .gui_input
+                .state
+                .set(field, InputValue::Digital(pressed));
+        }
+    }
+
+    pub fn handle_gamepad_axis_event(&mut self, button: GamepadButton, value: f32) {
+        if let Some(&field) = self.gamepad_analog_field_map.get(&button) {
+            let _ = self.gui_input.state.set(field, InputValue::Analog(value));
+        }
+        // Fallback: if no analog binding, try digital field_map with threshold.
+        if value.abs() > 0.5 {
+            if let Some(&field) = self.gamepad_field_map.get(&button) {
+                let _ = self.gui_input.state.set(field, InputValue::Digital(true));
+            }
+        } else if let Some(&field) = self.gamepad_field_map.get(&button) {
+            let _ = self.gui_input.state.set(field, InputValue::Digital(false));
+        }
+    }
+
+    pub fn rebuild_gamepad_field_map(&mut self) {
+        let system_id = self.factory.system_id();
+        let Some(profile) = self
+            .settings_snapshot
+            .shared
+            .input
+            .systems
+            .get(&system_id)
+            .and_then(|s| s.implicit_gamepad_profile())
+        else {
+            return;
+        };
+        rebuild_input_map(
+            &self.field_map,
+            &profile.bindings,
+            &mut self.gamepad_field_map,
+        );
+    }
+
+    pub fn rebuild_gamepad_analog_field_map(&mut self) {
+        self.gamepad_analog_field_map.clear();
     }
 }

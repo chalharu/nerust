@@ -30,6 +30,7 @@ pub mod input {
     #[serde(default)]
     pub struct SystemInputSettings {
         pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
+        pub gamepad_profiles: BTreeMap<String, GamepadProfile>,
     }
 
     impl SystemInputSettings {
@@ -39,6 +40,16 @@ pub mod input {
 
         pub fn implicit_keyboard_profile_mut(&mut self) -> &mut KeyboardProfile {
             self.keyboard_profiles
+                .entry(IMPLICIT_PROFILE_ID.to_string())
+                .or_default()
+        }
+
+        pub fn implicit_gamepad_profile(&self) -> Option<&GamepadProfile> {
+            self.gamepad_profiles.get(IMPLICIT_PROFILE_ID)
+        }
+
+        pub fn implicit_gamepad_profile_mut(&mut self) -> &mut GamepadProfile {
+            self.gamepad_profiles
                 .entry(IMPLICIT_PROFILE_ID.to_string())
                 .or_default()
         }
@@ -69,6 +80,71 @@ pub mod input {
                 key,
             }
         }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(default)]
+    pub struct GamepadProfile {
+        pub bindings: Vec<GamepadBinding>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub struct GamepadBinding {
+        pub attachment: PersistedAttachmentId,
+        pub control: PersistedControlId,
+        pub button: GamepadButton,
+    }
+
+    impl GamepadBinding {
+        pub fn new(
+            attachment: impl Into<String>,
+            control: PersistedControlId,
+            button: GamepadButton,
+        ) -> Self {
+            Self {
+                attachment: PersistedAttachmentId::new(attachment),
+                control,
+                button,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+    pub struct GamepadButton {
+        pub player: usize,
+        pub button: GamepadButtonKind,
+    }
+
+    impl GamepadButton {
+        pub const fn new(player: usize, button: GamepadButtonKind) -> Self {
+            Self { player, button }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum GamepadButtonKind {
+        South,
+        East,
+        North,
+        West,
+        LeftTrigger,
+        RightTrigger,
+        LeftTrigger2,
+        RightTrigger2,
+        Select,
+        Start,
+        Mode,
+        LeftThumb,
+        RightThumb,
+        DpadUp,
+        DpadDown,
+        DpadLeft,
+        DpadRight,
+        LeftStickX,
+        LeftStickY,
+        RightStickX,
+        RightStickY,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -542,7 +618,10 @@ pub mod app_state {
 mod tests {
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
-        input::{KeyboardKey, ShortcutAction, ShortcutBinding},
+        input::{
+            GamepadBinding, GamepadButton, GamepadButtonKind, KeyboardKey, PersistedAttachmentId,
+            PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
+        },
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
         },
@@ -627,6 +706,35 @@ video:
         assert!(decoded.video.window.fullscreen_default);
         assert_eq!(decoded.video.window.scaling, ScalingMode::X3);
         assert!(!decoded.video.presentation.vsync);
+    }
+
+    #[test]
+    fn gamepad_bindings_survive_yaml_round_trip() {
+        let mut settings = SystemInputSettings::default();
+        let profile = settings.implicit_gamepad_profile_mut();
+        profile.bindings = vec![GamepadBinding {
+            attachment: PersistedAttachmentId::new("nes.attachment.player1"),
+            control: PersistedControlId::digital("nes.control.a"),
+            button: GamepadButton {
+                player: 0,
+                button: GamepadButtonKind::South,
+            },
+        }];
+
+        let encoded = serde_yaml::to_string(&settings).unwrap();
+        let decoded: SystemInputSettings = serde_yaml::from_str(&encoded).unwrap();
+
+        let decoded_binding = decoded
+            .implicit_gamepad_profile()
+            .and_then(|p| p.bindings.first());
+        assert!(decoded_binding.is_some());
+        assert_eq!(
+            decoded_binding.unwrap().button,
+            GamepadButton {
+                player: 0,
+                button: GamepadButtonKind::South
+            }
+        );
     }
 
     #[test]
