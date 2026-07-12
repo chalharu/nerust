@@ -1,5 +1,6 @@
+use nerust_input_traits::OpenBusReadResult;
+
 use crate::{
-    OpenBusReadResult,
     cartridge_rom::CartridgeData,
     interrupt::Interrupt,
     mapper_state::{MapperStateDao, MappingMode},
