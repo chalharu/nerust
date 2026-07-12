@@ -62,8 +62,8 @@ simple_logger.workspace = true
 
 [features]
 default = ["wgpu"]
-gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
-tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb"]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_gtk/gilrs"]
+tao = ["nerust_tao", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao/gilrs"]
 wgpu = ["nerust_render_wgpu"]
 softbuffer = ["nerust_render_softbuffer"]
 opengl = ["nerust_render_gl"]
@@ -94,7 +94,7 @@ crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
 flume = { version = "=0.12.0" }
 fs2 = { version = "=0.4.3" }
-gilrs = { version = "=0.10.3" }
+gilrs = { version = "=0.11.2" }
 gdk = { version = "=0.11.4", package = "gdk4" }
 gio = { version = "=0.22.8" }
 gl = { version = "=0.14.0" }
