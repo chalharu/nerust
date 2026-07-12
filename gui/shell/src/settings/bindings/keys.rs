@@ -175,14 +175,6 @@ pub fn keyboard_key_id(key: KeyboardKey) -> &'static str {
     }
 }
 
-#[allow(dead_code, reason = "key lookup for future settings UI customization")]
-fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
-    editable_keys()
-        .iter()
-        .copied()
-        .find(|key| keyboard_key_id(*key) == id)
-}
-
 #[cfg(test)]
 mod tests {
     use nerust_gui_settings::input::KeyboardKey;

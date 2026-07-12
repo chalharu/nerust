@@ -9,7 +9,6 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -26,9 +25,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{
-    AttachmentId, ControllerProfile, DigitalControlId, GuiInput, InputAssignments, SlotInfo,
-};
+use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -309,13 +306,6 @@ impl SessionHandle {
         self.current_assignments.to_string_pairs()
     }
 
-    /// Negotiation #1: expose available slots and controllers for settings UI.
-    #[allow(dead_code, reason = "settings UI port negotiation")]
-    pub(super) fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
-        let input = self.factory.input_system_factory();
-        (input.slots(), input.controllers())
-    }
-
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
         let system_id = self.factory.system_id();
         let view = settings_view(settings, &system_id);
@@ -324,14 +314,6 @@ impl SessionHandle {
 
     pub fn default_load_options(&self) -> SystemLoadOptions {
         self.factory.default_load_options()
-    }
-
-    #[allow(
-        dead_code,
-        reason = "frame buffer access for future screenshot/recording"
-    )]
-    pub(super) fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        f(self.emu_core.frame_buffer().as_ref());
     }
 }
 

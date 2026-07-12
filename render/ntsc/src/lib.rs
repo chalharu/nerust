@@ -149,8 +149,6 @@ pub struct Engine {
     in_chunk_count: usize,
     row_pos: usize,
     row: NtscRow,
-    #[allow(dead_code, reason = "reserved for future NTSC tuning API")]
-    chunk_size: usize,
 }
 
 struct Color(usize);
@@ -555,27 +553,14 @@ impl Engine {
     }
 
     pub fn new(setup: &Setup, width: usize) -> Self {
-        let chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
         let ktable = Self::packed_kernel_entries(setup);
         Self {
-            chunk_size,
             width,
             burst: 0,
             in_chunk_count: 0,
             row_pos: 0,
             row: NtscRow::new(0, NES_NTSC_BLACK, NES_NTSC_BLACK, NES_NTSC_BLACK, ktable),
         }
-    }
-
-    #[allow(dead_code, reason = "NTSC tuning API for future frontend integration")]
-    fn set_burst(&mut self, burst: usize) {
-        self.burst = burst;
-    }
-
-    #[allow(dead_code, reason = "NTSC tuning API for future frontend integration")]
-    fn set_source_width(&mut self, width: usize) {
-        self.width = width;
-        self.chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
     }
 
     pub fn output_width(source: usize) -> usize {
