@@ -149,6 +149,7 @@ pub struct Engine {
     in_chunk_count: usize,
     row_pos: usize,
     row: NtscRow,
+    #[allow(dead_code, reason = "reserved for future NTSC tuning API")]
     chunk_size: usize,
 }
 
@@ -566,10 +567,12 @@ impl Engine {
         }
     }
 
+    #[allow(dead_code, reason = "NTSC tuning API for future frontend integration")]
     fn set_burst(&mut self, burst: usize) {
         self.burst = burst;
     }
 
+    #[allow(dead_code, reason = "NTSC tuning API for future frontend integration")]
     fn set_source_width(&mut self, width: usize) {
         self.width = width;
         self.chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;

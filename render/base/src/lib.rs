@@ -124,6 +124,7 @@ impl VideoPresentation {
         self.frame_spec.frame_format()
     }
 
+    #[allow(dead_code, reason = "frame format query for future frontend use")]
     fn is_palette_frame(&self) -> bool {
         matches!(self.frame_spec.frame_format(), VideoFrameFormat::Palette)
     }
@@ -277,6 +278,7 @@ impl FrameBuffer {
         }
     }
 
+    #[allow(dead_code, reason = "mutable palette access for future renderer use")]
     pub(crate) fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
         match &mut self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_mut()),

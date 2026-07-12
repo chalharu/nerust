@@ -175,6 +175,7 @@ pub fn keyboard_key_id(key: KeyboardKey) -> &'static str {
     }
 }
 
+#[allow(dead_code, reason = "key lookup for future settings UI customization")]
 fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
     editable_keys()
         .iter()
