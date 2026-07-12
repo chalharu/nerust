@@ -195,12 +195,9 @@ mod tests {
     use nerust_gui_settings::shared::StoragePolicy;
     use nerust_persistence::sidecar::resolve_sidecars;
 
-    use super::super::{
-        test_root, test_shared_defaults, test_system_identity, SettingsPaths,
-    };
+    use super::super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity};
     use super::{
-        resolve_central_storage_paths, resolve_persistence_paths_with_import,
-        system_storage_key,
+        resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
     };
 
     #[test]
@@ -263,8 +260,7 @@ mod tests {
 
         let central_root = root.join("central");
         let identity = test_system_identity();
-        let central =
-            resolve_central_storage_paths(&central_root, SystemId::new("nes"), &identity);
+        let central = resolve_central_storage_paths(&central_root, SystemId::new("nes"), &identity);
         fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&central.mapper_save_path, b"central").unwrap();
 
@@ -295,8 +291,7 @@ mod tests {
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let custom_root = root.join("custom");
         let identity = test_system_identity();
-        let custom =
-            resolve_central_storage_paths(&custom_root, SystemId::new("nes"), &identity);
+        let custom = resolve_central_storage_paths(&custom_root, SystemId::new("nes"), &identity);
         fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&custom.mapper_save_path, b"custom").unwrap();
 

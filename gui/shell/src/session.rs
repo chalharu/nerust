@@ -3,9 +3,9 @@ pub mod commands;
 pub mod input;
 pub mod lifecycle;
 pub mod persistence;
-pub mod title;
 #[cfg(test)]
 pub(crate) mod test_helpers;
+pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},

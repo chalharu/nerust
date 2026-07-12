@@ -154,8 +154,8 @@ mod tests {
     };
 
     use super::super::{
-        gtk_caps, tao_caps, test_local_defaults, test_shared_defaults, test_root,
-        SettingsApplyPlan, SettingsSnapshot,
+        SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults, test_root,
+        test_shared_defaults,
     };
     use super::{derive_apply_plan, validate_shared_settings};
 
@@ -199,8 +199,7 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) =
-            after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after);
@@ -216,8 +215,7 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) =
-            after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after);
@@ -267,8 +265,7 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        after.local.video.window.fullscreen_default =
-            !after.local.video.window.fullscreen_default;
+        after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after);
 

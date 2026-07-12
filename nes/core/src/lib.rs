@@ -808,11 +808,11 @@ fn mapper_program_with_prefix_test_data(
 
 #[cfg(test)]
 mod tests {
+    use crate::Core;
     use crate::cartridge_data_parts::CartridgeDataParts;
+    use crate::cartridge_rom::CartridgeData;
     use crate::mirror::MirrorMode;
     use crate::rom_format::RomFormat;
-    use crate::Core;
-    use crate::cartridge_rom::CartridgeData;
 
     #[test]
     fn inspect_cartridge_reads_ines_metadata() {
@@ -832,9 +832,8 @@ mod tests {
         })
         .expect("test cartridge data should be valid");
 
-        let info =
-            Core::inspect_cartridge(&cartridge_data, 16 + 0x8000 + 0x2000)
-                .expect("rom info should inspect");
+        let info = Core::inspect_cartridge(&cartridge_data, 16 + 0x8000 + 0x2000)
+            .expect("rom info should inspect");
 
         assert_eq!(info.format, RomFormat::INes);
         assert_eq!(info.mapper_type, 4);

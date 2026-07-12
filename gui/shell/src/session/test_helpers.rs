@@ -16,13 +16,11 @@ use nerust_core_traits::{
     },
     identity::{SystemId, SystemIdentity},
 };
-use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, HostWindowCapabilities,
-};
+use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
 use nerust_input_traits::{
     BufferError, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
-    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer,
-    InputSystemFactory, InputValue, SlotInfo,
+    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
+    InputValue, SlotInfo,
 };
 use nerust_render_base::logical::LogicalSize;
 use nerust_render_base::physical::PhysicalSize;
@@ -167,10 +165,7 @@ impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {
         InputAssignments { slots: vec![] }
     }
-    fn create_split(
-        &self,
-        _: &ControllerCollection,
-    ) -> Result<InputResources, CreateSplitError> {
+    fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<TestInputBuffer>::default()));
         let flag = Arc::new(AtomicBool::new(false));
@@ -278,10 +273,7 @@ pub(crate) fn unique_temp_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("current time should be after unix epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "nerust-{label}-{}-{nonce}",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("nerust-{label}-{}-{nonce}", std::process::id()));
     fs::create_dir_all(&path).expect("temp dir should create");
     path
 }

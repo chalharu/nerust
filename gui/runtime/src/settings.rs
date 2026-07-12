@@ -5,11 +5,11 @@ use nerust_gui_settings::{
 };
 
 #[cfg(test)]
-use std::{collections::BTreeMap, env};
-#[cfg(test)]
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
 #[cfg(test)]
 use nerust_gui_settings::{nes::NesSettings, shared::SystemSettings};
+#[cfg(test)]
+use std::{collections::BTreeMap, env};
 
 pub mod apply;
 pub mod manager;
