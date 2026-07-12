@@ -124,7 +124,7 @@ impl VideoPresentation {
         self.frame_spec.frame_format()
     }
 
-    pub fn is_palette_frame(&self) -> bool {
+    fn is_palette_frame(&self) -> bool {
         matches!(self.frame_spec.frame_format(), VideoFrameFormat::Palette)
     }
 }
@@ -277,7 +277,7 @@ impl FrameBuffer {
         }
     }
 
-    pub fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
+    pub(crate) fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
         match &mut self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_mut()),
             PixelFormat::Rgba => None,

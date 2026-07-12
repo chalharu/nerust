@@ -566,11 +566,11 @@ impl Engine {
         }
     }
 
-    pub fn set_burst(&mut self, burst: usize) {
+    fn set_burst(&mut self, burst: usize) {
         self.burst = burst;
     }
 
-    pub fn set_source_width(&mut self, width: usize) {
+    fn set_source_width(&mut self, width: usize) {
         self.width = width;
         self.chunk_size = (width - 1) / NES_NTSC_IN_CHUNK;
     }

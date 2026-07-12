@@ -344,7 +344,7 @@ impl Core {
     }
 
     #[allow(dead_code, reason = "CPU step utility not yet wired")]
-    pub(crate) fn step_until_instruction_boundary(
+    fn step_until_instruction_boundary(
         &mut self,
         ppu: &mut Ppu,
         cartridge: &mut dyn MapperCartridge,
