@@ -91,6 +91,7 @@ impl SessionHandle {
         self.clear_input();
         self.rebuild_key_field_map();
         self.rebuild_gamepad_field_map();
+        self.rebuild_gamepad_analog_field_map();
         Ok(plan)
     }
 

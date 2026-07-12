@@ -74,9 +74,10 @@ fn default_gamepad_button(abstract_key: AbstractKey) -> Option<GamepadButtonKind
         AbstractKey::DpadDown => GamepadButtonKind::DpadDown,
         AbstractKey::DpadLeft => GamepadButtonKind::DpadLeft,
         AbstractKey::DpadRight => GamepadButtonKind::DpadRight,
-        AbstractKey::Axis1X | AbstractKey::Axis1Y | AbstractKey::Axis2X | AbstractKey::Axis2Y => {
-            return None;
-        }
+        AbstractKey::Axis1X => GamepadButtonKind::LeftStickX,
+        AbstractKey::Axis1Y => GamepadButtonKind::LeftStickY,
+        AbstractKey::Axis2X => GamepadButtonKind::RightStickX,
+        AbstractKey::Axis2Y => GamepadButtonKind::RightStickY,
     })
 }
 

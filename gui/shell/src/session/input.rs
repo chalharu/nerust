@@ -164,6 +164,7 @@ impl SessionHandle {
         self.current_assignments = assignments.clone();
         self.rebuild_key_field_map();
         self.rebuild_gamepad_field_map();
+        self.rebuild_gamepad_analog_field_map();
         Ok(())
     }
 
@@ -214,6 +215,12 @@ impl SessionHandle {
         self.gui_input.clear();
     }
 
+    pub fn clear_gamepad_analog(&mut self) {
+        for &field in self.gamepad_analog_field_map.values() {
+            let _ = self.gui_input.state.set(field, InputValue::Analog(0.0));
+        }
+    }
+
     pub fn rebuild_key_field_map(&mut self) {
         let system_id = self.factory.system_id();
         let Some(profile) = self
@@ -244,6 +251,20 @@ impl SessionHandle {
         }
     }
 
+    pub fn handle_gamepad_axis_event(&mut self, button: GamepadButton, value: f32) {
+        if let Some(&field) = self.gamepad_analog_field_map.get(&button) {
+            let _ = self.gui_input.state.set(field, InputValue::Analog(value));
+        }
+        // Fallback: if no analog binding, try digital field_map with threshold.
+        if value.abs() > 0.5 {
+            if let Some(&field) = self.gamepad_field_map.get(&button) {
+                let _ = self.gui_input.state.set(field, InputValue::Digital(true));
+            }
+        } else if let Some(&field) = self.gamepad_field_map.get(&button) {
+            let _ = self.gui_input.state.set(field, InputValue::Digital(false));
+        }
+    }
+
     pub fn rebuild_gamepad_field_map(&mut self) {
         let system_id = self.factory.system_id();
         let Some(profile) = self
@@ -261,5 +282,9 @@ impl SessionHandle {
             &profile.bindings,
             &mut self.gamepad_field_map,
         );
+    }
+
+    pub fn rebuild_gamepad_analog_field_map(&mut self) {
+        self.gamepad_analog_field_map.clear();
     }
 }

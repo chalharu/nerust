@@ -69,6 +69,8 @@ pub struct SessionHandle {
     pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
     /// Reverse map: gamepad button → field index, rebuilt on binding/controller change.
     pub(super) gamepad_field_map: HashMap<GamepadButton, usize>,
+    /// Reverse map: gamepad axis → field index, for analog inputs.
+    pub(super) gamepad_analog_field_map: HashMap<GamepadButton, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
@@ -188,6 +190,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             gamepad_field_map: HashMap::new(),
+            gamepad_analog_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -200,6 +203,7 @@ impl SessionHandle {
         };
         result.rebuild_key_field_map();
         result.rebuild_gamepad_field_map();
+        result.rebuild_gamepad_analog_field_map();
         result
     }
 
@@ -253,6 +257,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             gamepad_field_map: HashMap::new(),
+            gamepad_analog_field_map: HashMap::new(),
             factory,
             capabilities,
             settings,
@@ -261,10 +266,11 @@ impl SessionHandle {
             pressed_gamepad_buttons: HashSet::new(),
             loaded_media: None,
             persistence: PersistenceManager::new(),
-            audio_registry,
+            audio_registry: Arc::clone(&audio_registry),
         };
         result.rebuild_key_field_map();
         result.rebuild_gamepad_field_map();
+        result.rebuild_gamepad_analog_field_map();
         result
     }
 
