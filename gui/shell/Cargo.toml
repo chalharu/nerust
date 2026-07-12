@@ -7,7 +7,6 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gilrs.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_emu_thread.workspace = true
