@@ -420,10 +420,12 @@ pub(crate) fn present_preferences_dialog(
     let gamepad_conflict_label = gtk::Label::new(None);
     gamepad_conflict_label.set_xalign(0.0);
 
-    keyboard_page.append(&controller_box);
+    // Re-insert controller_box before the stack pages
+    // (it was created earlier but not yet parented; prepend it)
+    content.prepend(&controller_box);
+
     keyboard_page.append(&input_conflict_label);
     keyboard_page.append(&*key_binding_box);
-    gamepad_page.append(&controller_box);
     gamepad_page.append(&gamepad_conflict_label);
     gamepad_page.append(&*gamepad_binding_box);
     rebuild_both_uis(
