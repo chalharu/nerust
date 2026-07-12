@@ -270,9 +270,25 @@ pub(crate) fn present_preferences_dialog(
         *gamepad_input_rows.borrow_mut() = gamepad_rows;
     }
 
-    let controller_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    if !controllers.is_empty() {
-        for slot in &slots {
+    // Build a controller assignment box. Called twice (keyboard + gamepad pages)
+    // with separate parent boxes but shared slot_combos state.
+    #[allow(clippy::too_many_arguments)]
+    fn build_controller_box(
+        parent_box: &gtk::Box,
+        slot_combos: &Rc<RefCell<Vec<SlotCombo>>>,
+        slots: &[SlotInfo],
+        controllers: &[Rc<dyn ControllerProfile>],
+        language: AppLanguage,
+        factory2: &Arc<dyn CoreFactory>,
+        key_binding_box: &Rc<gtk::Box>,
+        key_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        gamepad_binding_box: &Rc<gtk::Box>,
+        gamepad_input_rows: &Rc<RefCell<Vec<InputRow>>>,
+        draft: &Rc<RefCell<SettingsSnapshot>>,
+        ok_button: &gtk::Widget,
+        current_assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    ) {
+        for slot in slots {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let lbl = gtk::Label::new(Some(slot.label));
             row.append(&lbl);
@@ -411,20 +427,52 @@ pub(crate) fn present_preferences_dialog(
                 combo.set_active(Some(0));
             }
             row.append(&combo);
-            controller_box.append(&row);
+            parent_box.append(&row);
         }
     }
+
+    let keyboard_controller_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    build_controller_box(
+        &keyboard_controller_box,
+        &slot_combos,
+        &slots,
+        &controllers,
+        language,
+        &factory2,
+        &key_binding_box,
+        &key_input_rows,
+        &gamepad_binding_box,
+        &gamepad_input_rows,
+        &draft,
+        &ok_button,
+        &current_assignments,
+    );
+
+    let gamepad_controller_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    build_controller_box(
+        &gamepad_controller_box,
+        &slot_combos,
+        &slots,
+        &controllers,
+        language,
+        &factory2,
+        &key_binding_box,
+        &key_input_rows,
+        &gamepad_binding_box,
+        &gamepad_input_rows,
+        &draft,
+        &ok_button,
+        &current_assignments,
+    );
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
 
     let gamepad_conflict_label = gtk::Label::new(None);
     gamepad_conflict_label.set_xalign(0.0);
 
-    // Re-insert controller_box before the stack pages
-    // (it was created earlier but not yet parented; prepend it)
-    content.prepend(&controller_box);
-
+    keyboard_page.prepend(&keyboard_controller_box);
     keyboard_page.append(&input_conflict_label);
+    gamepad_page.prepend(&gamepad_controller_box);
     keyboard_page.append(&*key_binding_box);
     gamepad_page.append(&gamepad_conflict_label);
     gamepad_page.append(&*gamepad_binding_box);
