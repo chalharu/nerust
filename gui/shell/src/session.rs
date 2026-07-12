@@ -310,7 +310,7 @@ impl SessionHandle {
     }
 
     /// Negotiation #1: expose available slots and controllers for settings UI.
-    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
+    pub(super) fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
         let input = self.factory.input_system_factory();
         (input.slots(), input.controllers())
     }
@@ -325,7 +325,7 @@ impl SessionHandle {
         self.factory.default_load_options()
     }
 
-    pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
+    pub(super) fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
         f(self.emu_core.frame_buffer().as_ref());
     }
 }

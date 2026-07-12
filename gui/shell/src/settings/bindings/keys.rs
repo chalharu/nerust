@@ -175,7 +175,7 @@ pub fn keyboard_key_id(key: KeyboardKey) -> &'static str {
     }
 }
 
-pub fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
+fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
     editable_keys()
         .iter()
         .copied()

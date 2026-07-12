@@ -124,7 +124,7 @@ impl PaletteAssets {
         self.pipeline.kind()
     }
 
-    pub fn is_palette_pipeline(&self) -> bool {
+    fn is_palette_pipeline(&self) -> bool {
         matches!(self.pipeline.kind(), VideoPresentationPipelineKind::Palette)
     }
 
