@@ -19,5 +19,3 @@ rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
-[dev-dependencies]
-nerust_core_traits.workspace = true
