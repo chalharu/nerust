@@ -183,5 +183,13 @@ pub fn keyboard_key_from_id(id: &str) -> Option<KeyboardKey> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/settings/bindings/keys.rs"]
-mod tests;
+mod tests {
+    use nerust_gui_settings::input::KeyboardKey;
+
+    use super::keyboard_key_label;
+
+    #[test]
+    fn keyboard_key_labels_are_human_readable() {
+        assert_eq!(keyboard_key_label(KeyboardKey::ArrowUp), "Up");
+    }
+}
