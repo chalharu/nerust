@@ -11,7 +11,7 @@ use nerust_gui_settings::{
 };
 use nerust_persistence::sidecar::SidecarPaths;
 
-use super::{
+use crate::settings::{
     SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
     apply::{validate_local_settings, validate_shared_settings},
     persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
