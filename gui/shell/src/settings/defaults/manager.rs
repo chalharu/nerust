@@ -2,6 +2,7 @@ use nerust_gui_runtime::settings::{SettingsError, SettingsSnapshot, manager::Set
 
 use super::seed::{default_app_state, default_local_settings, default_shared_settings};
 
+#[allow(dead_code, reason = "settings bootstrapping for future CLI/daemon use")]
 fn load_settings_manager() -> SettingsManager {
     SettingsManager::load_or_ephemeral(
         default_shared_settings(),
@@ -21,6 +22,7 @@ pub fn current_or_default(manager: &SettingsManager) -> SettingsSnapshot {
     })
 }
 
+#[allow(dead_code, reason = "settings writeback for future CLI/daemon use")]
 fn save_settings(
     manager: &SettingsManager,
     settings: SettingsSnapshot,
