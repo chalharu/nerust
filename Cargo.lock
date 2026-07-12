@@ -2936,7 +2936,6 @@ dependencies = [
 name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
- "gilrs",
  "log",
  "nerust_core_traits",
  "nerust_emu_thread",
