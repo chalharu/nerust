@@ -43,7 +43,7 @@ pub struct SoftbufferRenderer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResizeKernel {
-    #[allow(unused)]
+    #[expect(unused)]
     NearestNeighbor,
     Bilinear,
 }
@@ -304,7 +304,7 @@ impl SoftbufferRenderer {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn rendering<F: Fn(usize) -> [u8; 4]>(
         dst: &mut [u32],
         src_stride: usize,

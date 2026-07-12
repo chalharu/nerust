@@ -5,8 +5,7 @@ mod inspection;
 
 use nerust_input_traits::ControllerCollection;
 use nerust_nes_core::Core;
-use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
-use nerust_render_base::{FrameBuffer, PixelFormat};
+use nerust_render_base::FrameBuffer;
 
 use crate::{events::Buttons, media::HashingMixer};
 

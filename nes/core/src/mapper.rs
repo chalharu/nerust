@@ -14,11 +14,11 @@ pub(crate) trait CartridgeDataDao {
     fn data_ref(&self) -> &CartridgeData;
 }
 
-#[allow(
-    dead_code,
-    reason = "trait methods dispatched through Cartridge/MapperCartridge blanket impls"
-)]
 pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
+    #[allow(
+        dead_code,
+        reason = "trait methods dispatched through Cartridge/MapperCartridge blanket impls"
+    )]
     fn name(&self) -> &str;
     fn program_page_len(&self) -> usize;
     fn character_page_len(&self) -> usize;
@@ -51,6 +51,10 @@ pub(crate) trait Mapper: MapperStateDao + CartridgeDataDao {
         if self.battery_default() { 0x2000 } else { 0 }
     }
 
+    #[allow(
+        dead_code,
+        reason = "trait methods dispatched through Cartridge/MapperCartridge blanket impls"
+    )]
     fn ram_page_len_default(&self) -> usize {
         if self.battery_default() { 0x2000 } else { 0 }
     }
