@@ -17,7 +17,7 @@ use super::{
 
 #[test]
 fn parse_manifest_with_hex_values() {
-    let mut manifest = serde_yaml::from_str::<RomManifest>(
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
         r#"
 cases:
   - id: cpu.nestest
@@ -53,7 +53,7 @@ cases:
 
 #[test]
 fn parse_manifest_with_generic_assertions() {
-    let mut manifest = serde_yaml::from_str::<RomManifest>(
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
         r#"
 cases:
   - id: mapper.generic_assert
@@ -98,7 +98,7 @@ fn default_manifest_contains_perf_cases() {
 
 #[test]
 fn resolve_manifest_paths_relative_to_manifest_file() {
-    let mut manifest = serde_yaml::from_str::<RomManifest>(
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
         r#"
 rom_root: fixtures/roms
 cases:
@@ -358,7 +358,7 @@ fn rom_case_builds_core_options() {
 
 #[test]
 fn rom_case_rejects_submapper_values_outside_nes20_range() {
-    let mut manifest = serde_yaml::from_str::<RomManifest>(
+    let mut manifest = serde_saphyr::from_str::<RomManifest>(
         r#"
 cases:
   - id: cpu.nestest

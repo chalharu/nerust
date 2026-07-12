@@ -32,12 +32,24 @@ pub enum SettingsError {
     MissingCustomStorageDirectory,
     #[error("settings persistence is unavailable in this host context")]
     PersistenceUnavailable,
-    #[error("settings serialization failed: {0}")]
-    Serialize(#[from] serde_yaml::Error),
+    #[error("settings YAML serialization/deserialization failed: {0}")]
+    Serialize(Box<dyn std::error::Error + Send + 'static>),
     #[error("settings I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("settings lock is poisoned")]
     LockPoisoned,
+}
+
+impl From<serde_saphyr::Error> for SettingsError {
+    fn from(e: serde_saphyr::Error) -> Self {
+        SettingsError::Serialize(Box::new(e))
+    }
+}
+
+impl From<serde_saphyr::ser::Error> for SettingsError {
+    fn from(e: serde_saphyr::ser::Error) -> Self {
+        SettingsError::Serialize(Box::new(e))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
