@@ -230,12 +230,11 @@ impl SessionHandle {
     }
 
     pub fn handle_gamepad_event(&mut self, button: GamepadButton, pressed: bool) {
-        let _ = if pressed {
-            self.pressed_gamepad_buttons.insert(button)
+        if pressed {
+            self.pressed_gamepad_buttons.insert(button);
         } else {
             self.pressed_gamepad_buttons.remove(&button);
-            false
-        };
+        }
 
         if let Some(&field) = self.gamepad_field_map.get(&button) {
             let _ = self
