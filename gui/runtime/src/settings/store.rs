@@ -4,6 +4,7 @@ use std::{
 };
 
 use directories::ProjectDirs;
+use serde_json::Value;
 
 use super::{SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
 
@@ -40,10 +41,13 @@ pub(super) fn load_snapshot(path: &Path, defaults: &SettingsSnapshot) -> Setting
             Ok(snapshot) => snapshot,
             Err(err) => {
                 log::warn!(
-                    "settings file {} is corrupt, using defaults: {err}",
+                    "settings file {} has corrupt fields, recovering: {err}",
                     path.display(),
                 );
-                defaults.clone()
+                match serde_saphyr::from_str::<Value>(&contents) {
+                    Ok(raw) => recover_snapshot(defaults, raw),
+                    Err(_) => defaults.clone(),
+                }
             }
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => defaults.clone(),
@@ -55,6 +59,40 @@ pub(super) fn load_snapshot(path: &Path, defaults: &SettingsSnapshot) -> Setting
             defaults.clone()
         }
     }
+}
+
+/// Recover a `SettingsSnapshot` from raw YAML by trying each top-level field
+/// independently.  A corrupt field (e.g. an enum variant from a future version)
+/// is reset to its default while the remaining fields are preserved.
+fn recover_snapshot(defaults: &SettingsSnapshot, raw: Value) -> SettingsSnapshot {
+    let Some(map) = raw.as_object() else {
+        return defaults.clone();
+    };
+    let mut result = defaults.clone();
+    for key_str in ["shared", "local", "app_state"] {
+        let Some(field_val) = map.get(key_str) else {
+            continue;
+        };
+        match key_str {
+            "shared" => {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
+                    result.shared = v;
+                }
+            }
+            "local" => {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
+                    result.local = v;
+                }
+            }
+            "app_state" => {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
+                    result.app_state = v;
+                }
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 pub(super) fn save_snapshot_store(
