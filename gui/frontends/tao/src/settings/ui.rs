@@ -65,7 +65,8 @@ impl<T: Clone + Eq> fmt::Display for Choice<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
     General,
-    Input,
+    Keyboard,
+    Gamepad,
     Video,
     Audio,
     System,
@@ -474,7 +475,13 @@ impl SettingsAppState {
 
         let sidebar = column![
             page_radio(language, UiText::General, SettingsPage::General, self.page),
-            page_radio(language, UiText::Input, SettingsPage::Input, self.page),
+            page_radio(
+                language,
+                UiText::Keyboard,
+                SettingsPage::Keyboard,
+                self.page
+            ),
+            page_radio(language, UiText::Gamepad, SettingsPage::Gamepad, self.page),
             page_radio(language, UiText::Video, SettingsPage::Video, self.page),
             page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
             page_radio(language, UiText::System, SettingsPage::System, self.page),
@@ -523,7 +530,8 @@ impl SettingsAppState {
     fn page_content(&self) -> El<'_> {
         match self.page {
             SettingsPage::General => self.general_page(),
-            SettingsPage::Input => self.input_page(),
+            SettingsPage::Keyboard => self.input_page(),
+            SettingsPage::Gamepad => self.gamepad_page(),
             SettingsPage::Video => self.video_page(),
             SettingsPage::Audio => self.audio_page(),
             SettingsPage::System => self.system_page(),
@@ -680,7 +688,7 @@ impl SettingsAppState {
             InputPageSection::Attachment(index) => sections
                 .get(index)
                 .map(|section| {
-                    let mut rows: Vec<(&'static str, CaptureTarget)> = section
+                    let rows = section
                         .bindings
                         .clone()
                         .into_iter()
@@ -694,19 +702,8 @@ impl SettingsAppState {
                                 },
                             )
                         })
-                        .collect();
-                    rows.extend(section.bindings.clone().into_iter().map(|descriptor| {
-                        (
-                            descriptor.control_label,
-                            CaptureTarget::GamepadBinding {
-                                system: descriptor.system,
-                                attachment: descriptor.attachment.as_str().to_string(),
-                                control: descriptor.control.as_str().to_string(),
-                            },
-                        )
-                    }));
-                    let title = format!("{} (Kbd/Gampad)", section.attachment_label);
-                    self.input_section(&title, rows.into_iter())
+                        .collect::<Vec<_>>();
+                    self.input_section(section.attachment_label, rows.into_iter())
                 })
                 .unwrap_or_else(|| self.input_section("", std::iter::empty())),
             InputPageSection::Shortcuts => self.input_section(
@@ -715,6 +712,82 @@ impl SettingsAppState {
                     (descriptor.label, CaptureTarget::Shortcut(descriptor.action))
                 }),
             ),
+        };
+
+        content.push(navigation).push(section).spacing(16).into()
+    }
+
+    fn gamepad_page(&self) -> El<'_> {
+        let language = self.language();
+        let mut content = column![];
+
+        // Controller assignment section (same topology)
+        let input_factory = self.factory.input_system_factory();
+        let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
+        if !controllers.is_empty() {
+            let mut occupied = std::collections::HashSet::new();
+            for (s, c_opt) in &self.controller_assignments {
+                let profile = match c_opt {
+                    Some(p) => p.as_ref(),
+                    None => continue,
+                };
+                for ps in profile.port_sets() {
+                    if ps.ports.contains(s) {
+                        for &port in ps.ports {
+                            occupied.insert(port);
+                        }
+                    }
+                }
+            }
+            for slot in slots {
+                if occupied.contains(&slot.id)
+                    && !self
+                        .controller_assignments
+                        .iter()
+                        .any(|(s, c)| *s == slot.id && c.is_some())
+                {
+                    content = content.push(text(format!("{} — (occupied)", slot.label)));
+                    continue;
+                }
+                content = content.push(text(slot.label));
+            }
+        }
+
+        let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
+        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
+        for (index, section) in sections.iter().enumerate() {
+            navigation = navigation.push(input_section_radio_label(
+                section.attachment_label,
+                InputPageSection::Attachment(index),
+                self.input_section,
+            ));
+        }
+
+        let section = match self.input_section {
+            InputPageSection::Attachment(index) => sections
+                .get(index)
+                .map(|section| {
+                    let rows = section
+                        .bindings
+                        .clone()
+                        .into_iter()
+                        .map(|descriptor| {
+                            (
+                                descriptor.control_label,
+                                CaptureTarget::GamepadBinding {
+                                    system: descriptor.system,
+                                    attachment: descriptor.attachment.as_str().to_string(),
+                                    control: descriptor.control.as_str().to_string(),
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    self.input_section(section.attachment_label, rows.into_iter())
+                })
+                .unwrap_or_else(|| self.input_section("", std::iter::empty())),
+            InputPageSection::Shortcuts => {
+                self.input_section(ui_text(language, UiText::Shortcuts), std::iter::empty())
+            }
         };
 
         content.push(navigation).push(section).spacing(16).into()
