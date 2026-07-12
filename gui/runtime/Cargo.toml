@@ -16,5 +16,4 @@ serde.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 
-[dev-dependencies]
-nerust_render_base.workspace = true
+
