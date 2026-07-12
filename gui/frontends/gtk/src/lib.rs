@@ -43,6 +43,7 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    gilrs: Option<gilrs::Gilrs>,
 }
 
 impl State {
@@ -61,10 +62,13 @@ impl State {
             ctx.audio_registry.clone(),
         );
 
+        let gilrs = gilrs::Gilrs::new().ok();
+
         Self {
             session,
             ctx,
             renderer_reload_pending: false,
+            gilrs,
         }
     }
 
@@ -208,6 +212,61 @@ impl FrontendSession for State {
 }
 
 impl State {
+    pub(crate) fn poll_gamepad(&mut self) {
+        use gilrs::EventType;
+        let Some(gilrs) = self.gilrs.as_mut() else {
+            return;
+        };
+        while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
+            let (kind, pressed) = match event {
+                EventType::ButtonPressed(button, _) => (button, true),
+                EventType::ButtonReleased(button, _) => (button, false),
+                _ => continue,
+            };
+            let button_kind = match kind {
+                gilrs::Button::South => nerust_gui_settings::input::GamepadButtonKind::South,
+                gilrs::Button::East => nerust_gui_settings::input::GamepadButtonKind::East,
+                gilrs::Button::North => nerust_gui_settings::input::GamepadButtonKind::North,
+                gilrs::Button::West => nerust_gui_settings::input::GamepadButtonKind::West,
+                gilrs::Button::LeftTrigger => {
+                    nerust_gui_settings::input::GamepadButtonKind::LeftTrigger
+                }
+                gilrs::Button::RightTrigger => {
+                    nerust_gui_settings::input::GamepadButtonKind::RightTrigger
+                }
+                gilrs::Button::LeftTrigger2 => {
+                    nerust_gui_settings::input::GamepadButtonKind::LeftTrigger2
+                }
+                gilrs::Button::RightTrigger2 => {
+                    nerust_gui_settings::input::GamepadButtonKind::RightTrigger2
+                }
+                gilrs::Button::Select => nerust_gui_settings::input::GamepadButtonKind::Select,
+                gilrs::Button::Start => nerust_gui_settings::input::GamepadButtonKind::Start,
+                gilrs::Button::Mode => nerust_gui_settings::input::GamepadButtonKind::Mode,
+                gilrs::Button::LeftThumb => {
+                    nerust_gui_settings::input::GamepadButtonKind::LeftThumb
+                }
+                gilrs::Button::RightThumb => {
+                    nerust_gui_settings::input::GamepadButtonKind::RightThumb
+                }
+                gilrs::Button::DPadUp => nerust_gui_settings::input::GamepadButtonKind::DpadUp,
+                gilrs::Button::DPadDown => nerust_gui_settings::input::GamepadButtonKind::DpadDown,
+                gilrs::Button::DPadLeft => nerust_gui_settings::input::GamepadButtonKind::DpadLeft,
+                gilrs::Button::DPadRight => {
+                    nerust_gui_settings::input::GamepadButtonKind::DpadRight
+                }
+                _ => continue,
+            };
+            let button = nerust_gui_settings::input::GamepadButton {
+                player: id.into(),
+                button: button_kind,
+            };
+            self.session.handle_gamepad_event(button, pressed);
+        }
+        // gilrs requires explicit `inc()` call to avoid event stalling on some platforms
+        gilrs.inc();
+    }
+
     pub(crate) fn handle_keyboard_key(
         &mut self,
         key: KeyboardKey,

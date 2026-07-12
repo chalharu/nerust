@@ -73,6 +73,7 @@ impl SurfaceExtend for Surface {
                 }
             }
 
+            state.poll_gamepad();
             state.swap_frame_buffer();
 
             if state.take_renderer_reload_pending() {
