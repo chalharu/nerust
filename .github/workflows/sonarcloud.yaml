@@ -49,9 +49,9 @@ jobs:
           toolchain: 1.97.0
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked --version =0.8.5
       - name: Install cargo-chef
-        uses: taiki-e/install-action@cargo-chef
+        run: cargo install cargo-chef --locked --version =0.1.77
       - name: Warm Rust dependency cache
         run: |
           chef_workspace="${RUNNER_TEMP}/cargo-chef-workspace"
@@ -81,7 +81,7 @@ jobs:
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@630d1518297ea304a5aa47ba65d45f8e860875e7 # v5.1.0
+        uses: SonarSource/sonarqube-scan-action@6a3bc57498662509adf083f58190ac79f13c55eb3 # v5.1.0
         env:
           SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
