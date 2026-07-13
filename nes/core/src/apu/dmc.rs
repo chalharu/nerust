@@ -9,7 +9,7 @@ const DMC_TABLE: [u8; 16] = [
 ];
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Copy, Clone)]
-#[allow(
+#[expect(
     clippy::upper_case_acronyms,
     reason = "DMC is the established NES APU channel name"
 )]

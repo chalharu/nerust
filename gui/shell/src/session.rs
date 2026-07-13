@@ -4,12 +4,11 @@ pub mod input;
 pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
-mod tests;
+pub(crate) mod test_helpers;
 pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -26,9 +25,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
-use nerust_input_traits::{
-    AttachmentId, ControllerProfile, DigitalControlId, GuiInput, InputAssignments, SlotInfo,
-};
+use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
@@ -309,12 +306,6 @@ impl SessionHandle {
         self.current_assignments.to_string_pairs()
     }
 
-    /// Negotiation #1: expose available slots and controllers for settings UI.
-    pub fn input_ports(&self) -> (&[SlotInfo], Vec<Rc<dyn ControllerProfile>>) {
-        let input = self.factory.input_system_factory();
-        (input.slots(), input.controllers())
-    }
-
     pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
         let system_id = self.factory.system_id();
         let view = settings_view(settings, &system_id);
@@ -323,10 +314,6 @@ impl SessionHandle {
 
     pub fn default_load_options(&self) -> SystemLoadOptions {
         self.factory.default_load_options()
-    }
-
-    pub fn with_frame_buffer(&self, f: &mut dyn FnMut(&[u8])) {
-        f(self.emu_core.frame_buffer().as_ref());
     }
 }
 
@@ -362,5 +349,93 @@ impl RomLoadTarget for SessionHandle {
     }
     fn resume(&mut self) {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
+    use nerust_gui_runtime::settings::SettingsApplyPlan;
+
+    use super::test_helpers::*;
+    use crate::session::KeyboardShortcut;
+
+    #[test]
+    fn shortcut_key_returns_shortcut_action_without_controller_event() {
+        let mut session = test_session();
+        assert_eq!(
+            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+            Some(KeyboardShortcut::Session(
+                nerust_gui_settings::input::ShortcutAction::TogglePause
+            )),
+        );
+        assert_eq!(
+            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+            None
+        );
+    }
+
+    #[test]
+    fn system_load_options_flow_into_session_load() {
+        let mut session = test_session();
+        let resolved = session
+            .factory()
+            .resolve_load_request(&test_view(&session), SystemLoadOptions::default())
+            .unwrap();
+        assert!(
+            session
+                .load_resolved(MediaObject::new(None, test_rom()), resolved)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn session_rebuild_reuses_previously_resolved_load_request() {
+        let mut session = test_session();
+        let options = session.factory().default_load_options();
+        let resolved = session
+            .factory()
+            .resolve_load_request(&test_view(&session), options)
+            .unwrap();
+        session
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
+            .unwrap();
+        assert!(session.loaded());
+
+        let mut next = session.settings_snapshot().clone();
+        next.local.audio.latency_ms = 90;
+        let plan = session.apply_settings(next).unwrap();
+
+        assert!(plan.session_rebuild_required);
+        assert!(session.loaded());
+    }
+
+    #[test]
+    fn set_fullscreen_default_updates_snapshot_and_plan() {
+        let mut session = test_session();
+        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+        let plan = session
+            .set_fullscreen_default(true)
+            .expect("set_fullscreen_default should succeed");
+        assert_eq!(
+            plan,
+            SettingsApplyPlan {
+                window_settings_changed: true,
+                fullscreen_default_changed: true,
+                ..SettingsApplyPlan::default()
+            }
+        );
+        assert!(
+            session
+                .settings_snapshot()
+                .local
+                .video
+                .window
+                .fullscreen_default
+        );
+        let second = session
+            .set_fullscreen_default(true)
+            .expect("second set_fullscreen_default should succeed");
+        assert_eq!(second, SettingsApplyPlan::default());
     }
 }

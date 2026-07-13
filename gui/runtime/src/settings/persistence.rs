@@ -186,3 +186,132 @@ fn copy_storage_contents(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf};
+
+    use nerust_core_traits::identity::SystemId;
+    use nerust_gui_settings::shared::StoragePolicy;
+    use nerust_persistence::sidecar::resolve_sidecars;
+
+    use super::super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity};
+    use super::{
+        resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
+    };
+
+    #[test]
+    fn central_storage_paths_use_system_and_identity_not_rom_path() {
+        let root = PathBuf::from("/base");
+        let identity = test_system_identity();
+        let first = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
+        let second = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
+
+        assert_eq!(first, second);
+        assert!(first.mapper_save_path.ends_with("mapper.sav"));
+        assert!(first.states_dir.ends_with("states"));
+        assert!(!system_storage_key(SystemId::new("nes"), &identity).is_empty());
+    }
+
+    #[test]
+    fn sidecar_imports_into_empty_central_storage() {
+        let root = test_root("import-sidecar-to-central");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let rom_path = root.join("game.nes");
+        fs::write(&rom_path, [0_u8; 4]).unwrap();
+        let sidecar = resolve_sidecars(&rom_path);
+        fs::write(&sidecar.mapper_save_path, b"mapper").unwrap();
+        fs::create_dir_all(&sidecar.states_dir).unwrap();
+        fs::write(sidecar.states_dir.join("slot-1.zip"), b"state").unwrap();
+
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        shared.persistence.storage_directory = Some(root.join("central"));
+
+        let identity = test_system_identity();
+        let resolved = resolve_persistence_paths_with_import(
+            &shared,
+            None,
+            SystemId::new("nes"),
+            Some(&rom_path),
+            &identity,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"mapper");
+        assert_eq!(
+            fs::read(resolved.states_dir.join("slot-1.zip")).unwrap(),
+            b"state"
+        );
+    }
+
+    #[test]
+    fn central_storage_wins_when_destination_is_not_empty() {
+        let root = test_root("central-destination-wins");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let rom_path = root.join("game.nes");
+        fs::write(&rom_path, [0_u8; 4]).unwrap();
+        let sidecar = resolve_sidecars(&rom_path);
+        fs::write(&sidecar.mapper_save_path, b"sidecar").unwrap();
+
+        let central_root = root.join("central");
+        let identity = test_system_identity();
+        let central = resolve_central_storage_paths(&central_root, SystemId::new("nes"), &identity);
+        fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
+        fs::write(&central.mapper_save_path, b"central").unwrap();
+
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        shared.persistence.storage_directory = Some(central_root);
+
+        let identity = test_system_identity();
+        let resolved = resolve_persistence_paths_with_import(
+            &shared,
+            None,
+            SystemId::new("nes"),
+            Some(&rom_path),
+            &identity,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"central");
+    }
+
+    #[test]
+    fn app_shared_data_imports_from_custom_storage_when_sidecar_is_empty() {
+        let root = test_root("app-shared-imports-custom");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let rom_path = root.join("game.nes");
+        fs::write(&rom_path, [0_u8; 4]).unwrap();
+        let custom_root = root.join("custom");
+        let identity = test_system_identity();
+        let custom = resolve_central_storage_paths(&custom_root, SystemId::new("nes"), &identity);
+        fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
+        fs::write(&custom.mapper_save_path, b"custom").unwrap();
+
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::AppSharedData;
+        shared.persistence.storage_directory = Some(custom_root);
+        let paths = SettingsPaths {
+            settings_file: root.join("config/settings.yaml"),
+            central_storage_root: root.join("data/persistence"),
+        };
+
+        let resolved = resolve_persistence_paths_with_import(
+            &shared,
+            Some(&paths),
+            SystemId::new("nes"),
+            Some(&rom_path),
+            &test_system_identity(),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"custom");
+    }
+}

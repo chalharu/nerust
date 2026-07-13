@@ -15,7 +15,3 @@ nerust_nes_device.workspace = true
 nerust_render_base.workspace = true
 clap.workspace = true
 rmp-serde.workspace = true
-
-[dev-dependencies]
-nerust_gui_runtime.workspace = true
-nerust_gui_shell.workspace = true

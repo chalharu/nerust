@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn unbound_shortcut_serializes_stably() {
-        let encoded = serde_yaml::to_string(&ShortcutBinding {
+        let encoded = serde_saphyr::to_string(&ShortcutBinding {
             action: ShortcutAction::Reset,
             key: None,
         })
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn bound_shortcut_serializes_key_name() {
-        let encoded = serde_yaml::to_string(&ShortcutBinding {
+        let encoded = serde_saphyr::to_string(&ShortcutBinding {
             action: ShortcutAction::TogglePause,
             key: Some(KeyboardKey::Space),
         })
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn local_video_settings_decode_legacy_flat_fields() {
-        let decoded: HostBackendLocalSettings = serde_yaml::from_str(
+        let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
             r#"
 schema_version: 1
 video:
@@ -631,7 +631,7 @@ video:
 
     #[test]
     fn local_video_settings_prefer_nested_fields_over_legacy_flat_fields() {
-        let decoded: HostBackendLocalSettings = serde_yaml::from_str(
+        let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
             r#"
 schema_version: 2
 video:

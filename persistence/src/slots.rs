@@ -5,7 +5,6 @@ use std::{
     time::SystemTime,
 };
 
-use fs2::FileExt;
 use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{
@@ -46,7 +45,7 @@ pub fn allocate_next_slot_id(states_dir: &Path) -> Result<u64, PersistenceError>
         .open(&counter_path)
     {
         Ok(mut counter) => {
-            match counter.lock_exclusive() {
+            match counter.lock() {
                 Ok(()) => {
                     let next_slot_id = (read_next_slot_id(&mut counter)?.unwrap_or(1))
                         .max(existing_slot_id_max(states_dir)?.saturating_add(1))

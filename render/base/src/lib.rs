@@ -123,10 +123,6 @@ impl VideoPresentation {
     pub fn frame_format(&self) -> VideoFrameFormat {
         self.frame_spec.frame_format()
     }
-
-    pub fn is_palette_frame(&self) -> bool {
-        matches!(self.frame_spec.frame_format(), VideoFrameFormat::Palette)
-    }
 }
 
 // === 新設計: FrameBuffer / PixelFormat ===
@@ -273,13 +269,6 @@ impl FrameBuffer {
     pub fn palette(&self) -> Option<&[u32; 256]> {
         match &self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
-            PixelFormat::Rgba => None,
-        }
-    }
-
-    pub fn palette_mut(&mut self) -> Option<&mut [u32; 256]> {
-        match &mut self.format {
-            PixelFormat::PaletteIndex { palette } => Some(palette.as_mut()),
             PixelFormat::Rgba => None,
         }
     }
