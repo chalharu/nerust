@@ -42,9 +42,6 @@ jobs:
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.9.0
         with:
           cache-all-crates: "true"
-          workspaces: |
-            . -> target
-            . -> target/llvm-cov-target
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -52,28 +49,6 @@ jobs:
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version =0.8.7
-      - name: Install cargo-chef
-        run: cargo install cargo-chef --locked --version =0.1.77
-      - name: Warm Rust dependency cache
-        run: |
-          chef_workspace="${RUNNER_TEMP}/cargo-chef-workspace"
-          llvm_cov_target_dir="${GITHUB_WORKSPACE}/target/llvm-cov-target"
-          cleanup() {
-            cd "${GITHUB_WORKSPACE}"
-            if [ -d "${chef_workspace}" ]; then
-              git worktree remove --force "${chef_workspace}"
-            fi
-          }
-          trap cleanup EXIT
-          rm -rf "${chef_workspace}"
-          git worktree add --detach "${chef_workspace}" HEAD
-          cd "${chef_workspace}"
-          cargo chef prepare --recipe-path recipe.json
-          eval "$(cargo llvm-cov show-env --sh)"
-          export CARGO_TARGET_DIR="${llvm_cov_target_dir}"
-          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
-          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo chef cook --workspace --all-targets --features tao,wgpu --recipe-path recipe.json
       - name: Generate coverage report
         run: |
           mkdir -p coverage
