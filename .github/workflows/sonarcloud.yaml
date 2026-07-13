@@ -57,7 +57,7 @@ jobs:
           mkdir -p coverage
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --features tao,wgpu --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov.info
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
