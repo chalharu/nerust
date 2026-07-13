@@ -62,7 +62,7 @@ verify_sha256() {
 
 mkdir -p "${INSTALL_DIR}"
 
-curl --fail --location --silent --show-error "${url}" -o "${tmp_dir}/${archive}"
+curl --fail --location --silent --show-error --proto =https "${url}" -o "${tmp_dir}/${archive}"
 verify_sha256
 tar -xzf "${tmp_dir}/${archive}" -C "${tmp_dir}"
 
