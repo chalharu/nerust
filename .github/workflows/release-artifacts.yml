@@ -212,7 +212,7 @@ jobs:
           key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
-        run: cargo build -p nerust --features tao,wgpu --release
+        run: cargo build --locked -p nerust --features tao,wgpu --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
@@ -278,7 +278,7 @@ jobs:
           key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
-        run: cargo build -p nerust --features tao,wgpu --release
+        run: cargo build --locked -p nerust --features tao,wgpu --release
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Package tarball
@@ -336,7 +336,7 @@ jobs:
           key: macos-cargo-release-aarch64-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: macos-cargo-release-aarch64-
       - name: Build nerust (release, tao + wgpu, aarch64)
-        run: cargo build -p nerust --features tao,wgpu --release --target aarch64-apple-darwin
+        run: cargo build --locked -p nerust --features tao,wgpu --release --target aarch64-apple-darwin
       - name: Package .app bundle
         env:
           BINARY: target/aarch64-apple-darwin/release/nerust
