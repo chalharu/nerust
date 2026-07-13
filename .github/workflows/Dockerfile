@@ -13,6 +13,9 @@ ARG RUST_TOOLCHAIN=1.97.0
 # renovate: datasource=github-releases depName=rust-lang/rustup
 ARG RUSTUP_VERSION=1.29.0
 
+# Sets /tmp if GITHUB_WORKSPACE is not set.
+ARG GITHUB_WORKSPACE=/tmp
+
 RUN <<EOT
   apt-get update -qq
   apt-get install -y --no-install-recommends \
@@ -29,7 +32,11 @@ RUN <<EOT
     libasound2-dev \
     libcubeb-dev \
     libudev-dev
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+EOT
 
+RUN <<EOT
   # Install mold
   curl -fsSL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
     | tar -C /usr/local --strip-components=1 -xzf -
@@ -38,19 +45,17 @@ RUN <<EOT
 
   # Install Rust toolchain via rustup
   curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
-    -o /tmp/rustup-init
+    -o ${GITHUB_WORKSPACE}/rustup-init
 
-  cd /tmp
+  cd /tmp || exit 1
   curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
     | sha256sum --check
-  chmod +x /tmp/rustup-init
-  /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
+  chmod +x ${GITHUB_WORKSPACE}/rustup-init
+  ${GITHUB_WORKSPACE}/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
     --profile minimal \
     --component rustfmt,clippy,llvm-tools-preview
-  rm -f /tmp/rustup-init
+  rm -f ${GITHUB_WORKSPACE}/rustup-init
 
-  apt-get clean
-  rm -rf /var/lib/apt/lists/*
   rm -rf /root/.cargo/registry
 EOT
 
