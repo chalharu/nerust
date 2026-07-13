@@ -39,7 +39,7 @@ jobs:
             libcubeb-dev \
             libudev-dev
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.9.0
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           cache-all-crates: "true"
           workspaces: |
