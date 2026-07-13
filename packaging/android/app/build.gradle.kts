@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 fun envOrNull(name: String): String? = System.getenv(name)?.takeUnless(String::isBlank)
 
 val versionNameOverride = System.getenv("ANDROID_VERSION_NAME") ?: "0.1.0"
