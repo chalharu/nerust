@@ -68,6 +68,9 @@ wgpu = ["nerust_render_wgpu"]
 softbuffer = ["nerust_render_softbuffer"]
 opengl = ["nerust_render_gl"]
 
+[profile.dev]
+opt-level = 3
+
 [profile.release]
 debug = false
 
