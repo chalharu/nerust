@@ -42,6 +42,9 @@ jobs:
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.9.0
         with:
           cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
