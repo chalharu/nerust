@@ -10,6 +10,8 @@ ENV TZ=UTC
 ARG MOLD_VERSION=2.36.0
 # renovate: datasource=github-releases depName=rust-lang/rust
 ARG RUST_TOOLCHAIN=1.97.0
+# renovate: datasource=github-releases depName=rust-lang/rustup
+ARG RUSTUP_VERSION=1.29.0
 
 RUN <<EOT
   apt-get update -qq
@@ -32,12 +34,14 @@ RUN <<EOT
   curl -fsSL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
     | tar -C /usr/local --strip-components=1 -xzf -
 
+  RUST_TARGET_TRIPLE=$(uname -m)-unknown-linux-gnu
+
   # Install Rust toolchain via rustup
-  # renovate: datasource=github-releases depName=rust-lang/rustup
-  RUSTUP_VERSION=1.28.1
-  curl -fsSL "https://github.com/rust-lang/rustup/releases/download/${RUSTUP_VERSION}/rustup-init-$(uname -m)-unknown-linux-gnu" \
+  curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
     -o /tmp/rustup-init
-  echo "$(curl -fsSL "https://github.com/rust-lang/rustup/releases/download/${RUSTUP_VERSION}/rustup-init-$(uname -m)-unknown-linux-gnu.sha256") /tmp/rustup-init" \
+
+  cd /tmp
+  curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
     | sha256sum --check
   chmod +x /tmp/rustup-init
   /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
@@ -57,8 +61,6 @@ ENV CARGO_TERM_COLOR=always
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 ENV LIBCUBEB_SYS_USE_PKG_CONFIG=1
-
-RUN rustc --version && cargo --version && mold --version
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
