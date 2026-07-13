@@ -35,13 +35,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy (default members)
-        run: cargo clippy -p nerust_nes_core -p nerust_persistence --quiet
+        run: cargo clippy --locked -p nerust_nes_core -p nerust_persistence --quiet
       - name: Unit tests (default members)
-        run: cargo test -p nerust_nes_core -p nerust_persistence --quiet
+        run: cargo test --locked -p nerust_nes_core -p nerust_persistence --quiet
       - name: Support crate tests
         run: |
-          cargo test -p nerust_render_base --lib --quiet
-          cargo test -p nerust_timer --lib --quiet
+          cargo test --locked -p nerust_render_base --lib --quiet
+          cargo test --locked -p nerust_timer --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -83,7 +83,7 @@ jobs:
           key: ${{ runner.os }}-cargo-tao-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-tao-
       - name: Build nerust (Tao + wgpu)
-        run: cargo build -p nerust --no-default-features --features tao,wgpu --release --quiet
+        run: cargo build --locked -p nerust --no-default-features --features tao,wgpu --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
@@ -126,7 +126,7 @@ jobs:
           key: ${{ runner.os }}-cargo-gtk-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-gtk-
       - name: Build nerust (GTK + opengl)
-        run: cargo build -p nerust --no-default-features --features gtk,opengl --release --quiet
+        run: cargo build --locked -p nerust --no-default-features --features gtk,opengl --release --quiet
         env:
           LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
@@ -167,9 +167,9 @@ jobs:
           key: ${{ runner.os }}-cargo-softbuffer-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-softbuffer-
       - name: Build softbuffer renderer crate
-        run: cargo build -p nerust_render_softbuffer --release --quiet
+        run: cargo build --locked -p nerust_render_softbuffer --release --quiet
       - name: Softbuffer renderer tests
-        run: cargo test -p nerust_render_softbuffer --lib --quiet
+        run: cargo test --locked -p nerust_render_softbuffer --lib --quiet
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
