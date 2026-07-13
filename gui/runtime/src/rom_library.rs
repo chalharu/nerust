@@ -15,12 +15,24 @@ const ROMS_DIR_NAME: &str = "roms";
 pub enum RomLibraryError {
     #[error("ROM library schema version {found} is newer than supported version {expected}")]
     UnsupportedSchemaVersion { found: u32, expected: u32 },
-    #[error("ROM library serialization failed: {0}")]
-    Serialize(#[from] serde_yaml::Error),
+    #[error("ROM library YAML serialization/deserialization failed: {0}")]
+    Serialize(Box<dyn std::error::Error + Send + 'static>),
     #[error("ROM library I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("system time is unavailable: {0}")]
     Clock(#[from] std::time::SystemTimeError),
+}
+
+impl From<serde_saphyr::Error> for RomLibraryError {
+    fn from(e: serde_saphyr::Error) -> Self {
+        RomLibraryError::Serialize(Box::new(e))
+    }
+}
+
+impl From<serde_saphyr::ser::Error> for RomLibraryError {
+    fn from(e: serde_saphyr::ser::Error) -> Self {
+        RomLibraryError::Serialize(Box::new(e))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +87,7 @@ impl RomLibrary {
     pub fn open(paths: RomLibraryPaths) -> Result<Self, RomLibraryError> {
         let document = match fs::read_to_string(&paths.catalog_file) {
             Ok(contents) => {
-                let document: RomLibraryDocument = serde_yaml::from_str(&contents)?;
+                let document: RomLibraryDocument = serde_saphyr::from_str(&contents)?;
                 if document.schema_version > ROM_LIBRARY_SCHEMA_VERSION {
                     return Err(RomLibraryError::UnsupportedSchemaVersion {
                         found: document.schema_version,
@@ -170,7 +182,7 @@ impl RomLibrary {
         fs::create_dir_all(&self.paths.roms_dir)?;
         fs::write(
             &self.paths.catalog_file,
-            serde_yaml::to_string(&self.document)?,
+            serde_saphyr::to_string(&self.document)?,
         )?;
         Ok(())
     }

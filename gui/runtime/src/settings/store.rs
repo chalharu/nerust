@@ -4,7 +4,7 @@ use std::{
 };
 
 use directories::ProjectDirs;
-use serde_yaml::Value;
+use serde_json::Value;
 
 use super::{SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
 
@@ -37,14 +37,14 @@ pub(super) fn settings_paths() -> Result<SettingsPaths, SettingsError> {
 
 pub(super) fn load_snapshot(path: &Path, defaults: &SettingsSnapshot) -> SettingsSnapshot {
     match fs::read_to_string(path) {
-        Ok(contents) => match serde_yaml::from_str::<SettingsSnapshot>(&contents) {
+        Ok(contents) => match serde_saphyr::from_str::<SettingsSnapshot>(&contents) {
             Ok(snapshot) => snapshot,
             Err(err) => {
                 log::warn!(
                     "settings file {} has corrupt fields, recovering: {err}",
                     path.display(),
                 );
-                match serde_yaml::from_str::<Value>(&contents) {
+                match serde_saphyr::from_str::<Value>(&contents) {
                     Ok(raw) => recover_snapshot(defaults, raw),
                     Err(_) => defaults.clone(),
                 }
@@ -65,28 +65,27 @@ pub(super) fn load_snapshot(path: &Path, defaults: &SettingsSnapshot) -> Setting
 /// independently.  A corrupt field (e.g. an enum variant from a future version)
 /// is reset to its default while the remaining fields are preserved.
 fn recover_snapshot(defaults: &SettingsSnapshot, raw: Value) -> SettingsSnapshot {
-    let Some(map) = raw.as_mapping() else {
+    let Some(map) = raw.as_object() else {
         return defaults.clone();
     };
     let mut result = defaults.clone();
     for key_str in ["shared", "local", "app_state"] {
-        let key = Value::String(key_str.into());
-        let Some(field_val) = map.get(&key) else {
+        let Some(field_val) = map.get(key_str) else {
             continue;
         };
         match key_str {
             "shared" => {
-                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
                     result.shared = v;
                 }
             }
             "local" => {
-                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
                     result.local = v;
                 }
             }
             "app_state" => {
-                if let Ok(v) = serde_yaml::from_value(field_val.clone()) {
+                if let Ok(v) = serde_json::from_value(field_val.clone()) {
                     result.app_state = v;
                 }
             }
@@ -105,7 +104,7 @@ pub(super) fn save_snapshot_store(
             if let Some(parent) = paths.settings_file.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&paths.settings_file, serde_yaml::to_string(snapshot)?)?;
+            fs::write(&paths.settings_file, serde_saphyr::to_string(snapshot)?)?;
             Ok(())
         }
         SettingsStore::Ephemeral => Ok(()),

@@ -88,7 +88,8 @@ impl VertexArrayInitContext<'_> {
         cb(VertexArrayBufferContext)?;
         Ok(())
     }
-    pub fn bind_ibo(&mut self, ibo: Rc<IndexBuffer>) -> Result<(), Error> {
+    #[expect(dead_code, reason = "IBO binding for indexed draw future use")]
+    fn bind_ibo(&mut self, ibo: Rc<IndexBuffer>) -> Result<(), Error> {
         gl_error_handle(|| unsafe { gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ibo.id) })?;
         self.va.set_ibo(ibo);
         Ok(())
@@ -103,7 +104,8 @@ impl VertexArrayContext<'_> {
     pub fn draw_arrays(&self, mode: GLuint, first: GLint, count: GLsizei) -> Result<(), Error> {
         gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
     }
-    pub fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: usize) -> Result<(), Error> {
+    #[expect(dead_code, reason = "indexed draw for future renderer use")]
+    fn draw_elements(&self, mode: GLuint, count: GLsizei, offset: usize) -> Result<(), Error> {
         let data_type = self
             .va
             .ibo_ref
@@ -182,6 +184,7 @@ impl VertexBuffer {
 #[derive(Debug)]
 pub struct IndexBuffer {
     id: GLuint,
+
     data_type: GLenum,
 }
 

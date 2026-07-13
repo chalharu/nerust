@@ -882,7 +882,7 @@ fn should_apply_response(response: gtk::ResponseType) -> bool {
     matches!(response, gtk::ResponseType::Ok)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn widget_bundle(
     ok_button: &gtk::Widget,
     storage_dir_row: &gtk::Box,
@@ -994,7 +994,7 @@ fn connect_general_updates(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn connect_local_updates(
     draft: &Rc<RefCell<SettingsSnapshot>>,
     factory: &Arc<dyn CoreFactory>,
@@ -1240,7 +1240,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     errors
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn apply_snapshot_to_widgets(
     snapshot: &SettingsSnapshot,
     language_combo: &gtk::ComboBoxText,

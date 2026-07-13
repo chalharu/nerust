@@ -7,7 +7,6 @@ use crate::{
     ppu_memory_access::{PpuBusEvent, PpuReadAccess},
 };
 
-#[allow(dead_code, reason = "dispatched through MapperCartridge blanket impl")]
 pub(crate) trait PpuCartridgeBus {
     fn read_ppu_pattern(
         &mut self,
@@ -29,6 +28,7 @@ pub(crate) trait PpuCartridgeBus {
         ciram: &mut [u8],
         interrupt: &mut Interrupt,
     );
+    #[allow(dead_code, reason = "dispatched through MapperCartridge blanket impl")]
     fn peek_ppu_nametable(&self, address: usize, ciram: &[u8]) -> Option<u8>;
     fn notify_ppu_status_read(&mut self, value: u8, interrupt: &mut Interrupt);
     fn notify_ppu_ctrl(&mut self, value: u8);

@@ -7,6 +7,4 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
-nerust_nes_core.workspace = true
