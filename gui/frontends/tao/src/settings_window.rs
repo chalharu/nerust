@@ -48,7 +48,6 @@ impl UiState {
     /// Build a UserInterface from instance state, transmuting the phantom
     /// lifetime to 'static. Safe because UiState's Drop ensures the UI is
     /// destroyed before the Instance it references.
-    #[allow(clippy::missing_transmute_annotations)]
     fn build_ui(
         instance: &program::Instance<SettingsAppProgram>,
         window_id: iced::window::Id,
@@ -383,7 +382,6 @@ impl SettingsWindowHandle {
 /// Convert Tao WindowEvent to iced Event, updating cursor/modifiers/should_close.
 /// Returns Some(event) for events that should be forwarded to handle_event(),
 /// None for events that are fully handled here (CursorLeft, CloseRequested, etc.).
-#[allow(deprecated)]
 fn convert_tao_window_event(
     event: tao::event::WindowEvent,
     cursor: &mut mouse::Cursor,
