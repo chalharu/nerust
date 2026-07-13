@@ -1,0 +1,67 @@
+name: SonarCloud
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang mold \
+            libgtk-3-dev \
+            libgtk-4-dev \
+            libepoxy-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libasound2-dev \
+            libcubeb-dev \
+            libudev-dev
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.9.0
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: 1.97.0
+          components: llvm-tools-preview, clippy
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked --version =0.8.7
+      - name: Generate coverage report
+        run: |
+          mkdir -p coverage
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov.info
+          workspace_root="${PWD%/}/"
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
+      - name: Run SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
