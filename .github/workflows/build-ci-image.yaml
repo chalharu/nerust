@@ -36,7 +36,6 @@ jobs:
           IMAGE_NAME="ghcr.io/chalharu/nerust-ci"
           TARGET_TAG="sha-${COMMIT_SHA}"
 
-          # Fetch existing tags from GHCR and find one with matching Dockerfile
           MATCHING_TAG=""
           VERSIONS=$(gh api "/orgs/chalharu/packages/container/nerust-ci/versions?per_page=100" \
             --jq '.[].metadata.container.tags[]' 2>/dev/null || true)
@@ -68,3 +67,19 @@ jobs:
               .
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           fi
+
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    needs: ensure
+    with:
+      ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
+
+  sonarcloud:
+    name: SonarCloud
+    uses: ./.github/workflows/sonarcloud.yaml
+    needs: ensure
+    with:
+      ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

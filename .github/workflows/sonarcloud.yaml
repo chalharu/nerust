@@ -1,5 +1,13 @@
 name: SonarCloud
 on:
+  workflow_call:
+    inputs:
+      ci-image-tag:
+        required: true
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        required: true
   push:
     branches:
       - master
@@ -11,7 +19,7 @@ jobs:
     name: SonarCloud
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
+      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag || github.ref_name }}
     timeout-minutes: 30
     env:
       CARGO_INCREMENTAL: "0"
