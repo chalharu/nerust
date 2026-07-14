@@ -71,9 +71,9 @@ RUN <<EOT
   rm -rf /root/.cargo/registry
 EOT
 
-RUN mkdir -p ${GITHUB_WORKSPACE} && \
-  chown -R 1001:1001 ${GITHUB_WORKSPACE}
-WORKDIR ${GITHUB_WORKSPACE}
+RUN groupadd -g 1001 runner
+RUN useradd -m -u 1001 runner -g 1001
+WORKDIR /home/runner
 USER runner
 ENV CARGO_HOME=/home/runner/.cargo
 
