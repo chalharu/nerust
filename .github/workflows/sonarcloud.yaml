@@ -8,10 +8,6 @@ on:
     secrets:
       SONAR_TOKEN:
         required: true
-  push:
-    branches:
-      - master
-  pull_request:
 permissions:
   contents: read
 jobs:

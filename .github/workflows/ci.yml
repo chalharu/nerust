@@ -5,10 +5,6 @@ on:
       ci-image-tag:
         required: true
         type: string
-  push:
-    branches: [master, release]
-  pull_request:
-    branches: [master, release]
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
