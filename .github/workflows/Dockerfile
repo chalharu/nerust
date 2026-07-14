@@ -72,11 +72,11 @@ EOT
 
 RUN groupadd -g 1001 runner
 RUN useradd -m -u 1001 runner -g 1001
-WORKDIR /home/runner
+RUN chmod -R a+rX /usr/local/cargo /usr/local/rustup
 USER runner
-ENV CARGO_HOME=/home/runner/.cargo
-ENV RUSTUP_HOME=/home/runner/.rustup
-ENV PATH=/home/runner/.cargo/bin:/home/runner/.rustup/bin:/usr/local/bin:${PATH}
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
