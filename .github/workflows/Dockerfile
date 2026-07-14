@@ -69,6 +69,18 @@ RUN <<EOT
   rm -f /tmp/rustup-init
 
   rm -rf /usr/local/cargo/registry
+
+  # Install commonly used cargo tools
+  # renovate: datasource=crate depName=cargo-llvm-cov
+  CARGO_LLVM_COV_VERSION="0.8.7"
+  cargo install cargo-llvm-cov --locked --version "=${CARGO_LLVM_COV_VERSION}"
+
+  # renovate: datasource=crate depName=cargo-ndk
+  CARGO_NDK_VERSION="4.1.2"
+  cargo install cargo-ndk --locked --version "=${CARGO_NDK_VERSION}"
+
+  # Add Android target
+  rustup target add aarch64-linux-android
 EOT
 
 RUN groupadd -g 1001 runner
