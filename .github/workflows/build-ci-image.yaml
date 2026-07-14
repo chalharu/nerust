@@ -127,8 +127,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Merge multi-arch manifest
+        env:
+          IMAGE_TAG: ${{ needs.ensure.outputs.image-tag }}
         run: |
-          IMAGE="ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}"
+          IMAGE="ghcr.io/chalharu/nerust-ci:${IMAGE_TAG}"
           docker buildx imagetools create \
             --tag "${IMAGE}" \
             "${IMAGE}-amd64" \
