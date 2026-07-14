@@ -42,7 +42,8 @@ RUN <<EOT
     libxdo-dev \
     libasound2-dev \
     libcubeb-dev \
-    libudev-dev
+    libudev-dev \
+    openjdk-17-jdk-headless
   apt-get clean
   rm -rf /var/lib/apt/lists/*
 EOT
@@ -68,9 +69,10 @@ RUN <<EOT
     --component rustfmt,clippy,llvm-tools-preview
   rm -f /tmp/rustup-init
 
-  rm -rf /usr/local/cargo/registry
+  # Add Android target
+  rustup target add aarch64-linux-android
 
-  # Install commonly used cargo tools
+  # Install commonly used cargo tools (registry still available)
   # renovate: datasource=crate depName=cargo-llvm-cov
   CARGO_LLVM_COV_VERSION="0.8.7"
   cargo install cargo-llvm-cov --locked --version "=${CARGO_LLVM_COV_VERSION}"
@@ -79,8 +81,8 @@ RUN <<EOT
   CARGO_NDK_VERSION="4.1.2"
   cargo install cargo-ndk --locked --version "=${CARGO_NDK_VERSION}"
 
-  # Add Android target
-  rustup target add aarch64-linux-android
+  # Clean up cargo registry to reduce image size
+  rm -rf /usr/local/cargo/registry
 EOT
 
 RUN groupadd -g 1001 runner
