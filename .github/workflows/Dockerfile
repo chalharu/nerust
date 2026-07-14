@@ -32,6 +32,7 @@ RUN <<EOT
     ca-certificates \
     curl \
     build-essential \
+    cmake \
     pkg-config \
     clang \
     libgtk-3-dev \
