@@ -5,15 +5,15 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
-permissions:
-  contents: read
-  packages: write
-  pull-requests: read
+permissions: {}
 jobs:
   ensure:
     name: Ensure CI image
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image-tag: ${{ steps.image.outputs.tag }}
     steps:
@@ -73,6 +73,8 @@ jobs:
     name: CI
     uses: ./.github/workflows/ci.yml
     needs: ensure
+    permissions:
+      contents: read
     with:
       ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
 
@@ -80,6 +82,9 @@ jobs:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml
     needs: ensure
+    permissions:
+      contents: read
+      pull-requests: read
     with:
       ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
     secrets:
