@@ -10,11 +10,12 @@ jobs:
   ensure:
     name: Ensure CI image
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
       packages: write
     outputs:
+      needs-build: ${{ steps.image.outputs.needs_build }}
       image-tag: ${{ steps.image.outputs.tag }}
     steps:
       - name: Check out repository
@@ -62,19 +63,75 @@ jobs:
             echo "needs_build=true" >> "$GITHUB_OUTPUT"
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           fi
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: ensure
+    if: needs.ensure.outputs.needs-build == 'true'
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-24.04
+            target: linux/amd64
+          - runner: ubuntu-24.04-arm
+            target: linux/arm64
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        if: steps.image.outputs.needs_build == 'true'
         with:
           context: .
           file: .github/workflows/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform.target }}
           push: true
-          tags: ghcr.io/chalharu/nerust-ci:${{ steps.image.outputs.tag }}
+          tags: ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}-${{ matrix.platform.target }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
             GITHUB_WORKSPACE=${{ github.workspace }}
+
+  merge:
+    name: Merge manifests
+    needs: [ensure, build]
+    if: always() && needs.ensure.outputs.needs-build == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Merge multi-arch manifest
+        run: |
+          IMAGE="ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}" \
+            "${IMAGE}-linux/amd64" \
+            "${IMAGE}-linux/arm64"
+
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
@@ -83,6 +140,7 @@ jobs:
       contents: read
     with:
       ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
+
   sonarcloud:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml
