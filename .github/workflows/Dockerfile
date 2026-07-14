@@ -18,9 +18,10 @@ ARG GITHUB_WORKSPACE=/tmp
 
 HEALTHCHECK NONE
 
-ENV CARGO_HOME=/usr/local/cargo
+ARG CARGO_HOME=/tmp/cargo
+ARG CARGO_INSTALL_ROOT=/usr/local/bin
 ENV RUSTUP_HOME=/usr/local/rustup
-ENV PATH=/usr/local/cargo/bin:/usr/local/bin:${PATH}
+ENV PATH=/usr/local/bin:${PATH}
 ENV CARGO_TERM_COLOR=always
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
@@ -73,8 +74,8 @@ EOT
 RUN mkdir -p ${GITHUB_WORKSPACE} && \
   chown -R 1001:1001 ${GITHUB_WORKSPACE}
 WORKDIR ${GITHUB_WORKSPACE}
-USER 1001
-ENV CARGO_REGISTRY_DIR="~/.cargo/registry"
+USER runner
+ENV CARGO_HOME=/home/runner/.cargo
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
