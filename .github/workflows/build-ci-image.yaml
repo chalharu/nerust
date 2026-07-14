@@ -36,8 +36,8 @@ jobs:
           IMAGE_NAME="ghcr.io/chalharu/nerust-ci"
           TARGET_TAG="sha-${COMMIT_SHA}"
 
-          # Fetch existing tags from GHCR
-          BASE_COMMIT=""
+          # Fetch existing tags from GHCR and find one with matching Dockerfile
+          MATCHING_TAG=""
           VERSIONS=$(gh api "/orgs/chalharu/packages/container/nerust-ci/versions?per_page=100" \
             --jq '.[].metadata.container.tags[]' 2>/dev/null || true)
 
@@ -46,23 +46,18 @@ jobs:
               candidate="${tag#sha-}"
               [[ ! "$candidate" =~ ^[0-9a-f]{40}$ ]] && continue
               git cat-file -t "$candidate" >/dev/null 2>&1 || continue
-              git merge-base --is-ancestor "$candidate" HEAD || continue
-              if [[ -z "$BASE_COMMIT" ]] || git merge-base --is-ancestor "$BASE_COMMIT" "$candidate"; then
-                BASE_COMMIT="$candidate"
+              if git diff --quiet "$candidate" HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml; then
+                echo "Found matching image from commit $candidate"
+                MATCHING_TAG="$tag"
+                break
               fi
             done
           fi
 
-          build_needed=true
-          if [[ -n "$BASE_COMMIT" ]]; then
-            echo "Found base commit: $BASE_COMMIT"
-            if git diff --quiet "$BASE_COMMIT" HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml; then
-              echo "No Dockerfile changes since $BASE_COMMIT"
-              build_needed=false
-            fi
-          fi
-
-          if $build_needed; then
+          if [[ -n "$MATCHING_TAG" ]]; then
+            echo "Reusing image ${IMAGE_NAME}:${MATCHING_TAG}"
+            echo "tag=${MATCHING_TAG}" >> "$GITHUB_OUTPUT"
+          else
             echo "Building CI image for $COMMIT_SHA"
             docker buildx build \
               --file .github/workflows/Dockerfile \
@@ -72,6 +67,4 @@ jobs:
               --push \
               .
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=sha-${BASE_COMMIT}" >> "$GITHUB_OUTPUT"
           fi
