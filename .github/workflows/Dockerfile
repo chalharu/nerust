@@ -19,9 +19,9 @@ ARG GITHUB_WORKSPACE=/tmp
 HEALTHCHECK NONE
 
 ARG CARGO_HOME=/tmp/cargo
-ARG CARGO_INSTALL_ROOT=/usr/local/bin
+ARG CARGO_INSTALL_ROOT=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
-ENV PATH=/usr/local/bin:${PATH}
+ENV PATH=/usr/local/cargo/bin:/usr/local/bin:${PATH}
 ENV CARGO_TERM_COLOR=always
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
