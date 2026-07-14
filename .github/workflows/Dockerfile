@@ -18,9 +18,8 @@ ARG GITHUB_WORKSPACE=/tmp
 
 HEALTHCHECK NONE
 
-ARG CARGO_HOME=/tmp/cargo
-ARG CARGO_INSTALL_ROOT=/usr/local/cargo
-ENV RUSTUP_HOME=/usr/local/rustup
+ARG CARGO_HOME=/usr/local/cargo
+ARG RUSTUP_HOME=/usr/local/rustup
 ENV PATH=/usr/local/cargo/bin:/usr/local/bin:${PATH}
 ENV CARGO_TERM_COLOR=always
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
@@ -68,7 +67,7 @@ RUN <<EOT
     --component rustfmt,clippy,llvm-tools-preview
   rm -f /tmp/rustup-init
 
-  rm -rf /root/.cargo/registry
+  rm -rf /usr/local/cargo/registry
 EOT
 
 RUN groupadd -g 1001 runner
@@ -76,6 +75,8 @@ RUN useradd -m -u 1001 runner -g 1001
 WORKDIR /home/runner
 USER runner
 ENV CARGO_HOME=/home/runner/.cargo
+ENV RUSTUP_HOME=/home/runner/.rustup
+ENV PATH=/home/runner/.cargo/bin:/home/runner/.rustup/bin:/usr/local/bin:${PATH}
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
