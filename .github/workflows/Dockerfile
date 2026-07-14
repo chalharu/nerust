@@ -72,7 +72,7 @@ EOT
 
 RUN groupadd -g 1001 runner
 RUN useradd -m -u 1001 runner -g 1001
-RUN chmod -R a+rX /usr/local/cargo /usr/local/rustup
+RUN chown -R runner:runner /usr/local/cargo /usr/local/rustup
 USER runner
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
