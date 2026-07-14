@@ -2,9 +2,6 @@ name: Build CI Image
 on:
   create:
   push:
-    paths:
-      - .github/workflows/Dockerfile
-      - .github/workflows/build-ci-image.yaml
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -13,8 +10,39 @@ permissions:
   contents: read
   packages: write
 jobs:
+  detect:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && 2 || 0 }}
+          persist-credentials: false
+      - name: Detect Dockerfile changes
+        id: diff
+        run: |
+          changed_files=""
+          if [[ "${{ github.event_name }}" == "create" ]]; then
+            git fetch origin master --depth=1
+            changed_files=$(git diff --name-only origin/master...HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            changed_files=$(git diff --name-only HEAD~1 HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            changed_files="manual"
+          fi
+          if [[ -n "$changed_files" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
   build:
     name: Build and push
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
