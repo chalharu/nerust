@@ -29,22 +29,22 @@ ENV LIBCUBEB_SYS_USE_PKG_CONFIG=1
 RUN <<EOT
   apt-get update -qq
   apt-get install -y --no-install-recommends \
-    ca-certificates=20240203 \
-    curl=8.5.0-2ubuntu10 \
-    gpg=2.4.4-2ubuntu17 \
-    build-essential=12.10ubuntu1 \
-    cmake=3.28.3-1build7 \
-    pkg-config=1.8.1-2build1 \
-    clang=1:18.0-59~exp2 \
-    libgtk-3-dev=3.24.41-4ubuntu1 \
-    libgtk-4-dev=4.14.4+ds-1ubuntu1 \
-    libepoxy-dev=1.5.10-1build1 \
-    libwebkit2gtk-4.1-dev=2.44.3-0ubuntu0.24.04.1 \
-    libxdo-dev=1:3.20211022.1-1.1build2 \
-    libasound2-dev=1.2.12-1build1 \
-    libcubeb-dev=0.1.0-1build1 \
-    libudev-dev=255.4-1build1 \
-    openjdk-17-jdk-headless=17.0.12+7-1ubuntu2
+    ca-certificates \
+    curl \
+    gpg \
+    build-essential \
+    cmake \
+    pkg-config \
+    clang \
+    libgtk-3-dev \
+    libgtk-4-dev \
+    libepoxy-dev \
+    libwebkit2gtk-4.1-dev \
+    libxdo-dev \
+    libasound2-dev \
+    libcubeb-dev \
+    libudev-dev \
+    openjdk-17-jdk-headless
   apt-get clean
   rm -rf /var/lib/apt/lists/*
 EOT
