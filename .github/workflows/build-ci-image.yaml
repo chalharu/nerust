@@ -56,18 +56,24 @@ jobs:
 
           if [[ -n "$MATCHING_TAG" ]]; then
             echo "Reusing image ${IMAGE_NAME}:${MATCHING_TAG}"
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
             echo "tag=${MATCHING_TAG}" >> "$GITHUB_OUTPUT"
           else
-            echo "Building CI image for $COMMIT_SHA"
-            docker buildx build \
-              --file .github/workflows/Dockerfile \
-              --tag "${IMAGE_NAME}:${TARGET_TAG}" \
-              --cache-from type=gha \
-              --cache-to type=gha,mode=max \
-              --push \
-              .
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           fi
+      - name: Build and push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        if: steps.image.outputs.needs_build == 'true'
+        with:
+          context: .
+          file: .github/workflows/Dockerfile
+          push: true
+          tags: ghcr.io/chalharu/nerust-ci:${{ steps.image.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GITHUB_WORKSPACE=${{ github.workspace }}
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
