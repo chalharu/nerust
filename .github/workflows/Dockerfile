@@ -16,8 +16,6 @@ ARG RUSTUP_VERSION=1.29.0
 # Sets /tmp if GITHUB_WORKSPACE is not set.
 ARG GITHUB_WORKSPACE=/tmp
 
-USER 1000
-
 HEALTHCHECK NONE
 
 ENV CARGO_HOME=/usr/local/cargo
@@ -76,3 +74,5 @@ WORKDIR ${GITHUB_WORKSPACE}
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
+
+USER 1000
