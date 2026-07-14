@@ -70,9 +70,10 @@ RUN <<EOT
   rm -rf /root/.cargo/registry
 EOT
 
+RUN mkdir -p ${GITHUB_WORKSPACE} && \
+  chown -R 1000:1000 ${GITHUB_WORKSPACE}
 WORKDIR ${GITHUB_WORKSPACE}
+USER 1000
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
-
-USER 1000
