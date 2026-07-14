@@ -68,6 +68,7 @@ jobs:
         with:
           context: .
           file: .github/workflows/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/chalharu/nerust-ci:${{ steps.image.outputs.tag }}
           cache-from: type=gha
