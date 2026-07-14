@@ -71,9 +71,9 @@ RUN <<EOT
 EOT
 
 RUN mkdir -p ${GITHUB_WORKSPACE} && \
-  chown -R 1000:1000 ${GITHUB_WORKSPACE}
+  chown -R 1001:1001 ${GITHUB_WORKSPACE}
 WORKDIR ${GITHUB_WORKSPACE}
-USER 1000
+USER 1001
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
