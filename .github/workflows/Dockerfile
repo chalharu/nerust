@@ -74,6 +74,7 @@ RUN mkdir -p ${GITHUB_WORKSPACE} && \
   chown -R 1001:1001 ${GITHUB_WORKSPACE}
 WORKDIR ${GITHUB_WORKSPACE}
 USER 1001
+ENV CARGO_REGISTRY_DIR="~/.cargo/registry"
 
 LABEL org.opencontainers.image.source="https://github.com/chalharu/nerust"
 LABEL org.opencontainers.image.description="nerust CI image"
