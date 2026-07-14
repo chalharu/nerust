@@ -138,7 +138,7 @@ jobs:
     name: CI
     uses: ./.github/workflows/ci.yml
     needs: [ensure, merge]
-    if: always()
+    if: ${{ !cancelled() && (needs.merge.result == 'success' || needs.merge.result == 'skipped') }}
     permissions:
       contents: read
     with:
@@ -148,7 +148,7 @@ jobs:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml
     needs: [ensure, merge]
-    if: always()
+    if: ${{ !cancelled() && (needs.merge.result == 'success' || needs.merge.result == 'skipped') }}
     permissions:
       contents: read
       pull-requests: read
