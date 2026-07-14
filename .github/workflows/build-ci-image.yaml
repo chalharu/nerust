@@ -8,6 +8,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  pull-requests: read
 jobs:
   ensure:
     name: Ensure CI image
