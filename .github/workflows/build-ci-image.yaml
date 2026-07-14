@@ -39,5 +39,5 @@ jobs:
           tags: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args:
-            - GITHUB_WORKSPACE=${{ github.workspace }}
+          build-args: |
+            GITHUB_WORKSPACE=${{ github.workspace }}
