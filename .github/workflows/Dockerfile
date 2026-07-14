@@ -16,9 +16,7 @@ ARG RUSTUP_VERSION=1.29.0
 # Sets /tmp if GITHUB_WORKSPACE is not set.
 ARG GITHUB_WORKSPACE=/tmp
 
-RUN groupadd ci
-RUN useradd -g ci -u 1000 ci -m
-USER ci
+USER 1000
 
 HEALTHCHECK NONE
 
