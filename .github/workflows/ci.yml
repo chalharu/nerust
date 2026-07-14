@@ -1,5 +1,10 @@
 name: CI
 on:
+  workflow_call:
+    inputs:
+      ci-image-tag:
+        required: true
+        type: string
   push:
     branches: [master, release]
   pull_request:
@@ -7,12 +12,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  CI_IMAGE_TAG: ${{ inputs.ci-image-tag || github.ref_name }}
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
+      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag || github.ref_name }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -51,7 +57,7 @@ jobs:
     name: Build Tao (Linux x86_64)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
+      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag || github.ref_name }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -84,7 +90,7 @@ jobs:
     name: Build GTK (Linux x86_64)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
+      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag || github.ref_name }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -117,7 +123,7 @@ jobs:
     name: Build softbuffer (Linux x86_64)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/chalharu/nerust-ci:${{ github.ref_name }}
+      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag || github.ref_name }}
     timeout-minutes: 20
     permissions:
       contents: read
