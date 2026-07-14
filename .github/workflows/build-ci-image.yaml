@@ -26,9 +26,13 @@ jobs:
         run: |
           changed_files=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.ref }}"
-            git fetch origin "$BASE" --depth=1
-            changed_files=$(git diff --name-only "origin/$BASE"...HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
+            if [[ "${{ github.event.action }}" == "synchronize" ]]; then
+              changed_files=$(git diff --name-only HEAD~2 HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
+            else
+              BASE="${{ github.event.pull_request.base.ref }}"
+              git fetch origin "$BASE" --depth=1
+              changed_files=$(git diff --name-only "origin/$BASE"...HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
+            fi
           elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             changed_files="manual"
           fi
