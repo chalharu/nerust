@@ -2,7 +2,6 @@ name: Build CI Image
 on:
   create:
   push:
-  pull_request:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -27,11 +26,7 @@ jobs:
         id: diff
         run: |
           changed_files=""
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.ref }}"
-            git fetch origin "$BASE" --depth=1
-            changed_files=$(git diff --name-only "origin/$BASE"...HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml)
-          elif [[ "${{ github.event_name }}" == "create" ]]; then
+          if [[ "${{ github.event_name }}" == "create" ]]; then
             BASE=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||')
             BASE="${BASE:-master}"
             git fetch origin "$BASE" --depth=1
