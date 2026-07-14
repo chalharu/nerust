@@ -73,8 +73,10 @@ jobs:
         platform:
           - runner: ubuntu-24.04
             target: linux/amd64
+            tag_suffix: amd64
           - runner: ubuntu-24.04-arm
             target: linux/arm64
+            tag_suffix: arm64
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 15
     permissions:
@@ -100,7 +102,7 @@ jobs:
           file: .github/workflows/Dockerfile
           platforms: ${{ matrix.platform.target }}
           push: true
-          tags: ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}-${{ matrix.platform.target }}
+          tags: ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}-${{ matrix.platform.tag_suffix }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -129,8 +131,8 @@ jobs:
           IMAGE="ghcr.io/chalharu/nerust-ci:${{ needs.ensure.outputs.image-tag }}"
           docker buildx imagetools create \
             --tag "${IMAGE}" \
-            "${IMAGE}-linux/amd64" \
-            "${IMAGE}-linux/arm64"
+            "${IMAGE}-amd64" \
+            "${IMAGE}-arm64"
 
   ci:
     name: CI
