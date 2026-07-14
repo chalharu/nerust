@@ -71,12 +71,7 @@ jobs:
               --cache-to type=gha,mode=max \
               --push \
               .
+            echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           else
-            # Tag existing image from base commit to target tag
-            echo "Reusing image from $BASE_COMMIT for $COMMIT_SHA"
-            docker buildx imagetools create \
-              --tag "${IMAGE_NAME}:${TARGET_TAG}" \
-              "${IMAGE_NAME}:sha-${BASE_COMMIT}"
+            echo "tag=sha-${BASE_COMMIT}" >> "$GITHUB_OUTPUT"
           fi
-
-          echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
