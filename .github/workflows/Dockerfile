@@ -31,6 +31,7 @@ RUN <<EOT
   apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    gpg \
     build-essential \
     cmake \
     pkg-config \
