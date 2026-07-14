@@ -16,6 +16,11 @@ ARG RUSTUP_VERSION=1.29.0
 # Sets /tmp if GITHUB_WORKSPACE is not set.
 ARG GITHUB_WORKSPACE=/tmp
 
+RUN useradd --create-home --shell /bin/bash --uid 1000 --user-group ci
+USER ci
+
+HEALTHCHECK NONE
+
 RUN <<EOT
   apt-get update -qq
   apt-get install -y --no-install-recommends \
@@ -36,6 +41,8 @@ RUN <<EOT
   rm -rf /var/lib/apt/lists/*
 EOT
 
+WORKDIR ${GITHUB_WORKSPACE}
+
 RUN <<EOT
   # Install mold
   curl -fsSL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
@@ -47,7 +54,6 @@ RUN <<EOT
   curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
     -o ${GITHUB_WORKSPACE}/rustup-init
 
-  cd /tmp || exit 1
   curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
     | sha256sum --check
   chmod +x ${GITHUB_WORKSPACE}/rustup-init
