@@ -65,7 +65,7 @@ jobs:
           fi
 
   build:
-    name: Build (${{ matrix.platform }})
+    name: Build (${{ matrix.platform.target }})
     needs: ensure
     if: needs.ensure.outputs.needs-build == 'true'
     strategy:
