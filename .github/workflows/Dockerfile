@@ -35,6 +35,7 @@ RUN <<EOT
     gpg \
     dirmngr \
     sudo \
+    unzip \
     build-essential \
     cmake \
     pkg-config \
