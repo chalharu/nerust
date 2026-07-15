@@ -236,9 +236,6 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-android-e2e-
-        run: |
-          chmod +x packaging/android/install-cargo-ndk.sh
-          packaging/android/install-cargo-ndk.sh
       - name: Restore Gradle cache
         id: gradle-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
