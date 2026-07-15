@@ -26,7 +26,6 @@ jobs:
         id: image
         run: |
           COMMIT_SHA="${{ github.sha }}"
-          IMAGE_NAME="ghcr.io/chalharu/nerust-ci"
           TARGET_TAG="sha-${COMMIT_SHA}"
 
           MATCHING_TAG=""
