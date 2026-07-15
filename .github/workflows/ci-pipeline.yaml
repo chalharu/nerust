@@ -67,7 +67,6 @@ jobs:
     name: CI
     uses: ./.github/workflows/ci.yml
     needs: [ensure, build-docker]
-    if: ${{ !failure() }}
     permissions:
       contents: read
     with:
@@ -76,7 +75,6 @@ jobs:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml
     needs: [ensure, build-docker]
-    if: ${{ !failure() }}
     permissions:
       contents: read
       pull-requests: read
