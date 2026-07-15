@@ -1,0 +1,84 @@
+name: CI Pipeline
+on:
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+permissions: {}
+jobs:
+  ensure:
+    name: Ensure CI image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      needs-build: ${{ steps.image.outputs.needs_build }}
+      image-tag: ${{ steps.image.outputs.tag }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve CI image
+        id: image
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          TARGET_TAG="sha-${COMMIT_SHA}"
+
+          MATCHING_TAG=""
+          VERSIONS=$(gh api "/orgs/chalharu/packages/container/nerust-ci/versions?per_page=100" \
+            --jq '.[].metadata.container.tags[]' 2>&1 || echo "")
+
+          if [[ -n "$VERSIONS" ]]; then
+            for tag in $VERSIONS; do
+              candidate="${tag#sha-}"
+              [[ ! "$candidate" =~ ^[0-9a-f]{40}$ ]] && continue
+              git cat-file -t "$candidate" >/dev/null 2>&1 || continue
+              if git diff --quiet "$candidate" HEAD -- .github/workflows/Dockerfile .github/workflows/build-ci-image.yaml; then
+                echo "Found matching image from commit $candidate"
+                MATCHING_TAG="$tag"
+                break
+              fi
+            done
+          fi
+
+          if [[ -n "$MATCHING_TAG" ]]; then
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "tag=${MATCHING_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+  build-docker:
+    name: Build Docker image
+    uses: ./.github/workflows/build-ci-image.yaml
+    needs: ensure
+    if: needs.ensure.outputs.needs-build == 'true'
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-tag: ${{ needs.ensure.outputs.image-tag }}
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    needs: [ensure, build-docker]
+    permissions:
+      contents: read
+    with:
+      ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
+  sonarcloud:
+    name: SonarCloud
+    uses: ./.github/workflows/sonarcloud.yaml
+    needs: [ensure, build-docker]
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
