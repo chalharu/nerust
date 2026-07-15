@@ -86,8 +86,15 @@ RUN <<EOT
   # renovate: datasource=crate depName=cargo-ndk
   CARGO_NDK_VERSION="4.1.2"
   NDK_TARGET=$(uname -m)-unknown-linux-musl
-  curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz" \
-    | tar -C /usr/local/cargo/bin --strip-components=1 -xzf - "cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk"
+  ARCHIVE="cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz"
+  TMPDIR=$(mktemp -d)
+  curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${ARCHIVE}" \
+    -o "${TMPDIR}/${ARCHIVE}"
+  tar -xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}"
+  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk" /usr/local/cargo/bin/cargo-ndk
+  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-env" /usr/local/cargo/bin/cargo-ndk-env
+  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-test" /usr/local/cargo/bin/cargo-ndk-test
+  rm -rf "${TMPDIR}"
 
   # Clean up cargo registry to reduce image size
   rm -rf /usr/local/cargo/registry
