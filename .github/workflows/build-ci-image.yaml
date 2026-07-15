@@ -1,12 +1,16 @@
 name: Build CI Image
 on:
+
   pull_request:
+
   workflow_dispatch:
 concurrency:
+
   group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 permissions: {}
 jobs:
+
   ensure:
     name: Ensure CI image
     runs-on: ubuntu-24.04
