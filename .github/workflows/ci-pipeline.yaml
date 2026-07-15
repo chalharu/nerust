@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      packages: read
     outputs:
       needs-build: ${{ steps.image.outputs.needs_build }}
       image-tag: ${{ steps.image.outputs.tag }}
@@ -30,7 +31,7 @@ jobs:
 
           MATCHING_TAG=""
           VERSIONS=$(gh api "/orgs/chalharu/packages/container/nerust-ci/versions?per_page=100" \
-            --jq '.[].metadata.container.tags[]' 2>/dev/null || true)
+            --jq '.[].metadata.container.tags[]' 2>&1 || echo "")
 
           if [[ -n "$VERSIONS" ]]; then
             for tag in $VERSIONS; do
