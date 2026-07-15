@@ -220,8 +220,6 @@ jobs:
   android-e2e:
     name: Android e2e (API ${{ matrix.api-level }}, x86_64 emulator)
     runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/chalharu/nerust-ci:${{ inputs.ci-image-tag }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -244,6 +242,15 @@ jobs:
           yes | $ANDROID_SDK_ROOT/cmdline-tools/20.0/bin/sdkmanager "ndk;27.0.12077973"
           echo "NDK installed successfully"
           ls -la $ANDROID_SDK_ROOT/ndk/
+      - name: Ensure CI image tools
+        run: |
+          rustup target add aarch64-linux-android 2>/dev/null || true
+          rustup target add x86_64-linux-android 2>/dev/null || true
+          if ! cargo ndk --version >/dev/null 2>&1; then
+            echo "cargo-ndk not found in CI image, installing..."
+            chmod +x packaging/android/install-cargo-ndk.sh
+            packaging/android/install-cargo-ndk.sh
+          fi
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
