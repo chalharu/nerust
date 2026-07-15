@@ -37,11 +37,9 @@ jobs:
           COMMIT_SHA="${{ github.sha }}"
           IMAGE_NAME="ghcr.io/chalharu/nerust-ci"
           TARGET_TAG="sha-${COMMIT_SHA}"
-
           MATCHING_TAG=""
           VERSIONS=$(gh api "/orgs/chalharu/packages/container/nerust-ci/versions?per_page=100" \
             --jq '.[].metadata.container.tags[]' 2>/dev/null || true)
-
           if [[ -n "$VERSIONS" ]]; then
             for tag in $VERSIONS; do
               candidate="${tag#sha-}"
@@ -54,7 +52,6 @@ jobs:
               fi
             done
           fi
-
           if [[ -n "$MATCHING_TAG" ]]; then
             echo "Reusing image ${IMAGE_NAME}:${MATCHING_TAG}"
             echo "needs_build=false" >> "$GITHUB_OUTPUT"
@@ -63,7 +60,6 @@ jobs:
             echo "needs_build=true" >> "$GITHUB_OUTPUT"
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           fi
-
   build:
     name: Build (${{ matrix.platform.target }})
     needs: ensure
@@ -107,7 +103,6 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             GITHUB_WORKSPACE=${{ github.workspace }}
-
   merge:
     name: Merge manifests
     needs: [ensure, build]
@@ -135,7 +130,6 @@ jobs:
             --tag "${IMAGE}" \
             "${IMAGE}-amd64" \
             "${IMAGE}-arm64"
-
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
@@ -145,7 +139,6 @@ jobs:
       contents: read
     with:
       ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
-
   sonarcloud:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml
