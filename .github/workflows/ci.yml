@@ -179,6 +179,13 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-android-
+      - name: Ensure cargo-ndk
+        run: |
+          if ! cargo ndk --version >/dev/null 2>&1; then
+            echo "cargo-ndk not found in CI image, installing..."
+            chmod +x packaging/android/install-cargo-ndk.sh
+            packaging/android/install-cargo-ndk.sh
+          fi
       - name: Build Android APK
         env:
           ANDROID_VERSION_CODE: ${{ github.run_number }}
