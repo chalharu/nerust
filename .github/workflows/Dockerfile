@@ -74,6 +74,7 @@ RUN <<EOT
 
   # Add Android target
   rustup target add aarch64-linux-android
+  rustup target add x86_64-linux-android
 
   # Install commonly used cargo tools (registry still available)
   # renovate: datasource=crate depName=cargo-llvm-cov
