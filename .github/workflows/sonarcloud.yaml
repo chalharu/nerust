@@ -37,8 +37,6 @@ jobs:
           workspaces: |
             . -> target
             . -> target/llvm-cov-target
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version =0.8.7
       - name: Generate coverage report
         run: |
           mkdir -p coverage
