@@ -52,7 +52,6 @@ jobs:
             echo "needs_build=true" >> "$GITHUB_OUTPUT"
             echo "tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
           fi
-
   build-docker:
     name: Build Docker image
     uses: ./.github/workflows/build-docker-image.yaml
@@ -60,7 +59,6 @@ jobs:
     if: needs.ensure.outputs.needs-build == 'true'
     with:
       image-tag: ${{ needs.ensure.outputs.image-tag }}
-
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
@@ -70,7 +68,6 @@ jobs:
       contents: read
     with:
       ci-image-tag: ${{ needs.ensure.outputs.image-tag }}
-
   sonarcloud:
     name: SonarCloud
     uses: ./.github/workflows/sonarcloud.yaml

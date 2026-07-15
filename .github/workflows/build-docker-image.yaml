@@ -51,7 +51,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=ci-image-${{ matrix.platform.tag_suffix }}
           build-args: |
             GITHUB_WORKSPACE=${{ github.workspace }}
-
   merge:
     name: Merge manifests
     needs: build
