@@ -26,10 +26,9 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 ENV LIBCUBEB_SYS_USE_PKG_CONFIG=1
 
-# hadolint ignore=DL3008
-RUN <<EOT
-  apt-get update -qq
-  apt-get install -y --no-install-recommends \
+# hadolint ignore=DL3008 DL3059
+RUN apt-get update -qq \
+  && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     clang \
@@ -49,64 +48,49 @@ RUN <<EOT
     pkg-config \
     sudo \
     udev \
-    unzip
-  apt-get clean
-  rm -rf /var/lib/apt/lists/*
-EOT
+    unzip \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp
 
-RUN <<EOT
-  # Install mold
-  curl -fsSL --proto =https "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
-    | tar -C /usr/local --strip-components=1 -xzf -
-
-  RUST_TARGET_TRIPLE=$(uname -m)-unknown-linux-gnu
-
-  # Install Rust toolchain via rustup
-  curl -fsSL --proto =https "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
-    -o /tmp/rustup-init
-
-  curl -fsSL --proto =https "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
-    | sha256sum --check
-  chmod +x /tmp/rustup-init
-  /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
+RUN curl -fsSL --proto =https \
+    "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
+    | tar -C /usr/local --strip-components=1 -xzf - \
+  && RUST_TARGET_TRIPLE=$(uname -m)-unknown-linux-gnu \
+  && curl -fsSL --proto =https \
+    "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
+    -o /tmp/rustup-init \
+  && curl -fsSL --proto =https \
+    "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
+    | sha256sum --check \
+  && chmod +x /tmp/rustup-init \
+  && /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
     --profile minimal \
-    --component rustfmt,clippy,llvm-tools-preview
-  rm -f /tmp/rustup-init
-
-  # Add Android target
-  rustup target add aarch64-linux-android
-  rustup target add x86_64-linux-android
-
-  # Install commonly used cargo tools (registry still available)
-  # renovate: datasource=crate depName=cargo-llvm-cov
-  CARGO_LLVM_COV_VERSION="0.8.7"
-  cargo install cargo-llvm-cov --locked --version "=${CARGO_LLVM_COV_VERSION}"
-
-  # renovate: datasource=crate depName=cargo-ndk
-  CARGO_NDK_VERSION="4.1.2"
-  NDK_TARGET=$(uname -m)-unknown-linux-musl
-  ARCHIVE="cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz"
-  TMPDIR=$(mktemp -d)
-  curl -fsSL --proto =https "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${ARCHIVE}" \
-    -o "${TMPDIR}/${ARCHIVE}"
-  tar -xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}"
-  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk" /usr/local/cargo/bin/cargo-ndk
-  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-env" /usr/local/cargo/bin/cargo-ndk-env
-  install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-test" /usr/local/cargo/bin/cargo-ndk-test
-  rm -rf "${TMPDIR}"
-
-  # Clean up cargo registry to reduce image size
-  rm -rf /usr/local/cargo/registry
-
-  # Create runner user
-  groupadd -g 1001 runner
-  useradd -m -u 1001 runner -g 1001
-  echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner
-  chmod 440 /etc/sudoers.d/runner
-  chown -R runner:runner /usr/local/cargo /usr/local/rustup
-EOT
+    --component rustfmt,clippy,llvm-tools-preview \
+  && rm -f /tmp/rustup-init \
+  && rustup target add aarch64-linux-android \
+  && rustup target add x86_64-linux-android \
+  && CARGO_LLVM_COV_VERSION="0.8.7" \
+  && cargo install cargo-llvm-cov --locked --version "=${CARGO_LLVM_COV_VERSION}" \
+  && CARGO_NDK_VERSION="4.1.2" \
+  && NDK_TARGET=$(uname -m)-unknown-linux-musl \
+  && ARCHIVE="cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz" \
+  && TMPDIR=$(mktemp -d) \
+  && curl -fsSL --proto =https \
+    "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${ARCHIVE}" \
+    -o "${TMPDIR}/${ARCHIVE}" \
+  && tar -xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}" \
+  && install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk" /usr/local/cargo/bin/cargo-ndk \
+  && install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-env" /usr/local/cargo/bin/cargo-ndk-env \
+  && install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk-test" /usr/local/cargo/bin/cargo-ndk-test \
+  && rm -rf "${TMPDIR}" \
+  && rm -rf /usr/local/cargo/registry \
+  && groupadd -g 1001 runner \
+  && useradd -m -u 1001 runner -g 1001 \
+  && echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner \
+  && chmod 440 /etc/sudoers.d/runner \
+  && chown -R runner:runner /usr/local/cargo /usr/local/rustup
 USER runner
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
