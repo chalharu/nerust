@@ -26,7 +26,7 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 ENV LIBCUBEB_SYS_USE_PKG_CONFIG=1
 
-# hadolint ignore=DL3008 DL3059
+# hadolint ignore=DL3008
 RUN apt-get update -qq \
   && apt-get install -y --no-install-recommends \
     build-essential \
