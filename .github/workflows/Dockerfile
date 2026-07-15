@@ -35,6 +35,7 @@ RUN <<EOT
     gpg \
     dirmngr \
     sudo \
+    systemd-udev \
     unzip \
     build-essential \
     cmake \
