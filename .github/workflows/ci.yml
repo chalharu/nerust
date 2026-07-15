@@ -179,8 +179,10 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
           restore-keys: ${{ runner.os }}-gradle-android-
-      - name: Ensure cargo-ndk
+      - name: Ensure CI image tools
         run: |
+          rustup target add aarch64-linux-android 2>/dev/null || true
+          rustup target add x86_64-linux-android 2>/dev/null || true
           if ! cargo ndk --version >/dev/null 2>&1; then
             echo "cargo-ndk not found in CI image, installing..."
             chmod +x packaging/android/install-cargo-ndk.sh
