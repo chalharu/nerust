@@ -226,15 +226,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api-level: [28]
+        api-level: [28, 35]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Enable KVM group access
         run: |
-          sudo mkdir -p /etc/udev/rules.d
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          if [ -e /dev/kvm ]; then
+            sudo chmod 0666 /dev/kvm
+            echo "KVM is available at /dev/kvm"
+          else
+            echo "KVM not available, emulator will use software rendering"
+          fi
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install NDK
