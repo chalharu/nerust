@@ -32,6 +32,7 @@ RUN <<EOT
     ca-certificates \
     curl \
     gpg \
+    dirmngr \
     build-essential \
     cmake \
     pkg-config \
