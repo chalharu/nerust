@@ -162,9 +162,9 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install NDK
         run: |
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/20.0/bin/sdkmanager "ndk;27.0.12077973"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/20.0/bin/sdkmanager" "ndk;27.0.12077973"
           echo "NDK installed successfully"
-          ls -la $ANDROID_SDK_ROOT/ndk/
+          ls -la "$ANDROID_SDK_ROOT/ndk/"
       - name: Restore Cargo registry and build cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -239,9 +239,9 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - name: Install NDK
         run: |
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/20.0/bin/sdkmanager "ndk;27.0.12077973"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/20.0/bin/sdkmanager" "ndk;27.0.12077973"
           echo "NDK installed successfully"
-          ls -la $ANDROID_SDK_ROOT/ndk/
+          ls -la "$ANDROID_SDK_ROOT/ndk/"
       - name: Ensure CI image tools
         run: |
           rustup target add aarch64-linux-android 2>/dev/null || true
