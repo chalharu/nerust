@@ -85,7 +85,9 @@ RUN <<EOT
 
   # renovate: datasource=crate depName=cargo-ndk
   CARGO_NDK_VERSION="4.1.2"
-  cargo install cargo-ndk --locked --version "=${CARGO_NDK_VERSION}"
+  NDK_TARGET=$(uname -m)-unknown-linux-musl
+  curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz" \
+    | tar -C /usr/local/cargo/bin --strip-components=1 -xzf - "cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk"
 
   # Clean up cargo registry to reduce image size
   rm -rf /usr/local/cargo/registry
