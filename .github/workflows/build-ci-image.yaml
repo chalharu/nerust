@@ -1,13 +1,10 @@
-name: Build Docker image
+name: Build CI Image
 on:
   workflow_call:
     inputs:
       image-tag:
         required: true
         type: string
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
-  cancel-in-progress: true
 permissions: {}
 jobs:
   build:
