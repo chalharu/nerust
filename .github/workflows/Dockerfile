@@ -30,26 +30,26 @@ ENV LIBCUBEB_SYS_USE_PKG_CONFIG=1
 RUN <<EOT
   apt-get update -qq
   apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gpg \
-    dirmngr \
-    sudo \
-    udev \
-    unzip \
     build-essential \
-    cmake \
-    pkg-config \
+    ca-certificates \
     clang \
-    libgtk-3-dev \
-    libgtk-4-dev \
-    libepoxy-dev \
-    libwebkit2gtk-4.1-dev \
-    libxdo-dev \
+    cmake \
+    curl \
+    dirmngr \
+    gpg \
     libasound2-dev \
     libcubeb-dev \
+    libepoxy-dev \
+    libgtk-3-dev \
+    libgtk-4-dev \
     libudev-dev \
-    openjdk-17-jdk-headless
+    libwebkit2gtk-4.1-dev \
+    libxdo-dev \
+    openjdk-17-jdk-headless \
+    pkg-config \
+    sudo \
+    udev \
+    unzip
   apt-get clean
   rm -rf /var/lib/apt/lists/*
 EOT
@@ -58,16 +58,16 @@ WORKDIR /tmp
 
 RUN <<EOT
   # Install mold
-  curl -fsSL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
+  curl -fsSL --proto =https "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-$(uname -m)-linux.tar.gz" \
     | tar -C /usr/local --strip-components=1 -xzf -
 
   RUST_TARGET_TRIPLE=$(uname -m)-unknown-linux-gnu
 
   # Install Rust toolchain via rustup
-  curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
+  curl -fsSL --proto =https "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init" \
     -o /tmp/rustup-init
 
-  curl -fsSL "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
+  curl -fsSL --proto =https "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${RUST_TARGET_TRIPLE}/rustup-init.sha256" \
     | sha256sum --check
   chmod +x /tmp/rustup-init
   /tmp/rustup-init -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" \
@@ -89,7 +89,7 @@ RUN <<EOT
   NDK_TARGET=$(uname -m)-unknown-linux-musl
   ARCHIVE="cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}.tgz"
   TMPDIR=$(mktemp -d)
-  curl -fsSL "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${ARCHIVE}" \
+  curl -fsSL --proto =https "https://github.com/bbqsrc/cargo-ndk/releases/download/v${CARGO_NDK_VERSION}/${ARCHIVE}" \
     -o "${TMPDIR}/${ARCHIVE}"
   tar -xzf "${TMPDIR}/${ARCHIVE}" -C "${TMPDIR}"
   install -m 0755 "${TMPDIR}/cargo-ndk-${NDK_TARGET}-v${CARGO_NDK_VERSION}/cargo-ndk" /usr/local/cargo/bin/cargo-ndk
@@ -99,13 +99,14 @@ RUN <<EOT
 
   # Clean up cargo registry to reduce image size
   rm -rf /usr/local/cargo/registry
-EOT
 
-RUN groupadd -g 1001 runner \
-    && useradd -m -u 1001 runner -g 1001 \
-    && echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner \
-    && chmod 440 /etc/sudoers.d/runner \
-    && chown -R runner:runner /usr/local/cargo /usr/local/rustup
+  # Create runner user
+  groupadd -g 1001 runner
+  useradd -m -u 1001 runner -g 1001
+  echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner
+  chmod 440 /etc/sudoers.d/runner
+  chown -R runner:runner /usr/local/cargo /usr/local/rustup
+EOT
 USER runner
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
