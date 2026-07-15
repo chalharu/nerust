@@ -51,7 +51,7 @@ jobs:
   merge:
     name: Merge manifests
     needs: build
-    if: always()
+    if: needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
