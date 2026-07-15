@@ -34,6 +34,7 @@ RUN <<EOT
     curl \
     gpg \
     dirmngr \
+    sudo \
     build-essential \
     cmake \
     pkg-config \
@@ -91,6 +92,8 @@ EOT
 
 RUN groupadd -g 1001 runner \
     && useradd -m -u 1001 runner -g 1001 \
+    && echo "runner ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/runner \
+    && chmod 440 /etc/sudoers.d/runner \
     && chown -R runner:runner /usr/local/cargo /usr/local/rustup
 USER runner
 ENV CARGO_HOME=/usr/local/cargo
