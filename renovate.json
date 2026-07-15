@@ -83,18 +83,6 @@
                 "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+readonly DEFAULT_CARGO_NDK_VERSION=\"(?<currentValue>[^\"]+)\""
             ],
             "versioningTemplate": "semver"
-        },
-        {
-            "customType": "regex",
-            "description": "Update cargo tools in the CI Dockerfile",
-            "managerFilePatterns": [
-                "/(^|/)\\.github/workflows/Dockerfile$/"
-            ],
-            "matchStrings": [
-                "# renovate: datasource=crate depName=(?<depName>\\S+)\\s*\\n\\s*CARGO_\\w+_VERSION=\"(?<currentValue>[^\"]+)\""
-            ],
-            "datasourceTemplate": "crate",
-            "versioningTemplate": "semver"
         }
     ]
 }

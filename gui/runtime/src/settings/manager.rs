@@ -398,7 +398,6 @@ mod tests {
     fn ntsc_filter_survives_save_reload_cycle() {
         let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir should be creatable");
 
         let paths = SettingsPaths::from_root(dir.clone());
         let manager = SettingsManager::load_with_paths(
