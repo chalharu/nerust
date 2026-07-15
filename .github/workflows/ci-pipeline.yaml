@@ -57,6 +57,9 @@ jobs:
     uses: ./.github/workflows/build-ci-image.yaml
     needs: ensure
     if: needs.ensure.outputs.needs-build == 'true'
+    permissions:
+      contents: read
+      packages: write
     with:
       image-tag: ${{ needs.ensure.outputs.image-tag }}
   ci:
