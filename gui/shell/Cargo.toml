@@ -21,3 +21,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 nerust_core_traits.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

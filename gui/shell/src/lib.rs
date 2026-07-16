@@ -1,3 +1,5 @@
+#![cfg_attr(coverage, feature(coverage_attribute))]
+
 pub mod context;
 pub mod emu_core;
 pub mod keyboard_defaults;
