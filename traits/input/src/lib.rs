@@ -802,4 +802,37 @@ mod tests {
             DigitalInputState::Released
         );
     }
+
+    #[test]
+    fn test_buffer_set_returns_error_on_out_of_bounds_field() {
+        let mut buf = TestBuffer::new(2);
+        assert!(matches!(
+            buf.set(5, InputValue::Digital(true)),
+            Err(BufferError::FieldNotFound { field: 5 }),
+        ));
+        // Buffer should be unchanged after error
+        assert!(matches!(buf.fields[0], InputValue::Digital(false)));
+        assert!(matches!(buf.fields[1], InputValue::Digital(false)));
+    }
+
+    #[test]
+    fn test_buffer_copy_state_skips_on_type_mismatch() {
+        #[derive(Debug)]
+        struct OtherBuffer;
+        impl InputStateBuffer for OtherBuffer {
+            fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
+                Ok(())
+            }
+            fn clear(&mut self) {}
+            fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
+        }
+
+        let mut buf = TestBuffer::new(3);
+        buf.fields[1] = InputValue::Analog(0.5);
+
+        buf.copy_state(&OtherBuffer);
+
+        // Original values should remain (copy was skipped due to type mismatch)
+        assert_eq!(buf.fields[1], InputValue::Analog(0.5));
+    }
 }
