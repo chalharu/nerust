@@ -207,16 +207,12 @@ impl AndroidFrontend {
         };
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
-        let session = SessionHandle::new_with_settings_paths(
+        let session = SessionHandle::new_with_settings_paths_or_abort(
             capabilities,
             core_factory,
             audio_registry,
             settings_paths,
-        )
-        .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
-            std::process::abort();
-        });
+        );
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
