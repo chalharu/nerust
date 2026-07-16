@@ -29,7 +29,6 @@ use nerust_gui_shell::settings::{
     bindings::{
         conflicting_keys,
         descriptors::{keyboard_binding_sections, shortcut_descriptors},
-        keys::keyboard_key_label,
     },
     editor::{CaptureTarget, apply_capture_target, current_binding_label},
     factory::{apply_settings_choice, resolve_label, settings_view},
@@ -287,11 +286,7 @@ impl SettingsAppState {
             &input_topology(self),
             self.factory.system_id(),
         ) {
-            errors.push(format!(
-                "{}: {}",
-                keyboard_key_label(key),
-                labels.join(", ")
-            ));
+            errors.push(format!("{}: {}", key, labels.join(", ")));
         }
         errors
     }
@@ -310,11 +305,7 @@ impl SettingsAppState {
         )
         .into_iter()
         .next()?;
-        Some(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ))
+        Some(format!("{}: {}", key, labels.join(", ")))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -717,10 +708,13 @@ impl SettingsAppState {
         let mut content = column![text(title)];
         for (label, target) in rows {
             let binding_label = if current_capture.as_ref() == Some(&target) {
-                ui_text(language, UiText::CapturePrompt)
+                ui_text(language, UiText::CapturePrompt).to_string()
             } else {
-                current_binding_label(&self.draft, &target)
-                    .unwrap_or(ui_text(language, UiText::Unbound))
+                if let Some(binding) = current_binding_label(&self.draft, &target) {
+                    binding
+                } else {
+                    ui_text(language, UiText::Unbound).to_string()
+                }
             };
             content = content.push(
                 row![

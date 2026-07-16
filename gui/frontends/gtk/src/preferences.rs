@@ -24,7 +24,6 @@ use nerust_gui_shell::{
         bindings::{
             conflicting_keys,
             descriptors::{keyboard_binding_sections, shortcut_descriptors},
-            keys::keyboard_key_label,
         },
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
         factory::{apply_settings_choice, settings_view},
@@ -356,8 +355,11 @@ pub(crate) fn present_preferences_dialog(
                     // Update key binding labels from current settings
                     let snapshot = d.borrow();
                     for row in kb_rows.borrow().iter() {
-                        row.value_label
-                            .set_text(current_binding_label(&snapshot, &row.target).unwrap_or(""));
+                        row.value_label.set_text(
+                            current_binding_label(&snapshot, &row.target)
+                                .unwrap_or("".to_string())
+                                .as_str(),
+                        );
                     }
                     // Disable OK button if no controller is assigned
                     ok.set_sensitive(current_assignments.iter().any(|(_, c)| c.is_some()));
@@ -1178,11 +1180,7 @@ fn refresh_validation(
     ));
     storage_error_label.set_text(storage_error.as_deref().unwrap_or(""));
     if let Some((key, labels)) = conflicts.iter().next() {
-        input_conflict_label.set_text(&format!(
-            "{}: {}",
-            keyboard_key_label(*key),
-            labels.join(", ")
-        ));
+        input_conflict_label.set_text(&format!("{}: {}", key, labels.join(", ")));
     } else {
         input_conflict_label.set_text("");
     }
@@ -1230,11 +1228,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         &dynamic_topology(&assignments, input_factory.slots()),
         factory.system_id(),
     ) {
-        errors.push(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ));
+        errors.push(format!("{}: {}", key, labels.join(", ")));
     }
     errors
 }
@@ -1305,12 +1299,15 @@ fn apply_snapshot_to_widgets(
     apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
 
     for row in input_rows.borrow().iter() {
-        row.value_label
-            .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
-                capture_label
+        if capture_target.borrow().as_ref() == Some(&row.target) {
+            row.value_label.set_text(capture_label);
+        } else {
+            if let Some(binding) = current_binding_label(snapshot, &row.target) {
+                row.value_label.set_text(binding.as_str());
             } else {
-                current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
-            });
+                row.value_label.set_text(unbound_label);
+            }
+        };
     }
 }
 
