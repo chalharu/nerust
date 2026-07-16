@@ -48,16 +48,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          toolchain: 1.97.0
+          toolchain: nightly
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version =0.8.7
+        run: cargo +nightly install cargo-llvm-cov --locked --version =0.8.7
       - name: Generate coverage report
         run: |
           mkdir -p coverage
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov.info
+          cargo +nightly llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov.info
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
