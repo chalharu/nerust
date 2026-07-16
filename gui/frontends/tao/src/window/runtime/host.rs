@@ -79,11 +79,7 @@ impl HostState {
             capabilities,
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
-        )
-        .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
-            std::process::abort();
-        });
+        );
         Self {
             window: None,
             session,
