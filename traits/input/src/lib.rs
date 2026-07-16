@@ -816,33 +816,16 @@ mod tests {
     }
 
     #[test]
-    fn test_buffer_copy_state_skips_on_type_mismatch() {
-        #[derive(Debug)]
-        struct OtherBuffer(u8);
-        impl InputStateBuffer for OtherBuffer {
-            fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
-                Ok(())
-            }
-            fn clear(&mut self) {
-                self.0 = 0;
-            }
-            fn copy_state(&mut self, _other: &dyn InputStateBuffer) {
-                self.0 = 1;
-            }
-        }
+    fn test_buffer_copy_state_copies_fields_between_matching_buffers() {
+        let mut src = TestBuffer::new(3);
+        src.fields[0] = InputValue::Digital(true);
+        src.fields[2] = InputValue::Analog(0.75);
 
-        let mut other = OtherBuffer(42);
-        other.set(0, InputValue::Digital(true)).unwrap();
-        other.clear();
-        let mut other_clone = OtherBuffer(0);
-        other_clone.copy_state(&other);
-        assert_eq!(other_clone.0, 1);
+        let mut dst = TestBuffer::new(3);
+        dst.copy_state(&src);
 
-        let mut buf = TestBuffer::new(3);
-        buf.fields[1] = InputValue::Analog(0.5);
-
-        buf.copy_state(&OtherBuffer(99));
-
-        assert_eq!(buf.fields[1], InputValue::Analog(0.5));
+        assert_eq!(dst.fields[0], InputValue::Digital(true));
+        assert_eq!(dst.fields[1], InputValue::Digital(false));
+        assert_eq!(dst.fields[2], InputValue::Analog(0.75));
     }
 }
