@@ -212,7 +212,11 @@ impl AndroidFrontend {
             core_factory,
             audio_registry,
             settings_paths,
-        );
+        )
+        .unwrap_or_else(|e| {
+            log::error!("failed to create core: {e}");
+            std::process::abort();
+        });
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
