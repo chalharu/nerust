@@ -818,21 +818,31 @@ mod tests {
     #[test]
     fn test_buffer_copy_state_skips_on_type_mismatch() {
         #[derive(Debug)]
-        struct OtherBuffer;
+        struct OtherBuffer(u8);
         impl InputStateBuffer for OtherBuffer {
             fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
                 Ok(())
             }
-            fn clear(&mut self) {}
-            fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
+            fn clear(&mut self) {
+                self.0 = 0;
+            }
+            fn copy_state(&mut self, _other: &dyn InputStateBuffer) {
+                self.0 = 1;
+            }
         }
+
+        let mut other = OtherBuffer(42);
+        other.set(0, InputValue::Digital(true)).unwrap();
+        other.clear();
+        let mut other_clone = OtherBuffer(0);
+        other_clone.copy_state(&other);
+        assert_eq!(other_clone.0, 1);
 
         let mut buf = TestBuffer::new(3);
         buf.fields[1] = InputValue::Analog(0.5);
 
-        buf.copy_state(&OtherBuffer);
+        buf.copy_state(&OtherBuffer(99));
 
-        // Original values should remain (copy was skipped due to type mismatch)
         assert_eq!(buf.fields[1], InputValue::Analog(0.5));
     }
 }
