@@ -295,7 +295,10 @@ impl Core {
     }
     pub(crate) fn reset(&mut self) {
         self.interrupt.reset();
-        self.oam_dma.as_mut().unwrap().reset();
+        self.oam_dma
+            .as_mut()
+            .unwrap_or_else(|| unreachable!())
+            .reset();
         self.internal_stat.reset();
         self.cpu_stepfunc = cpu_stepfunc(self.internal_stat.state);
         self.cycles = 0;
@@ -322,7 +325,10 @@ impl Core {
         self.cycles = self.cycles.wrapping_add(1);
 
         if let Some(offset) = self.interrupt.oam_dma.take() {
-            self.oam_dma.as_mut().unwrap().start_transaction(offset);
+            self.oam_dma
+                .as_mut()
+                .unwrap_or_else(|| unreachable!())
+                .start_transaction(offset);
         }
 
         if let Some(kind) = self.interrupt.dmc_dma_request.take() {
@@ -1090,7 +1096,11 @@ impl Core {
         hub: &mut dyn ControllerHub,
         apu: &mut Apu,
     ) -> bool {
-        let oam_active = self.oam_dma.as_ref().unwrap().has_transaction();
+        let oam_active = self
+            .oam_dma
+            .as_ref()
+            .unwrap_or_else(|| unreachable!())
+            .has_transaction();
         let cpu_write_cycle = self.current_cpu_cycle_is_write();
         let is_get_cycle = self.cycles & 1 != 0;
 
@@ -1189,7 +1199,7 @@ impl Core {
         let mut oam_dma = self.oam_dma.take();
         oam_dma
             .as_mut()
-            .unwrap()
+            .unwrap_or_else(|| unreachable!())
             .next(self, ppu, cartridge, hub, apu);
         self.oam_dma = oam_dma;
     }
