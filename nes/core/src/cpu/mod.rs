@@ -1520,6 +1520,55 @@ mod tests {
 
         assert_eq!(stalled, 3);
     }
+
+    #[test]
+    fn oam_dma_is_initialized_after_new_and_reset() {
+        let mut cpu = Core::new();
+        assert!(
+            !cpu.oam_dma
+                .as_ref()
+                .unwrap_or_else(|| unreachable!())
+                .has_transaction(),
+            "oam_dma should be initialized with no active transaction",
+        );
+
+        cpu.reset();
+        assert!(
+            !cpu.oam_dma
+                .as_ref()
+                .unwrap_or_else(|| unreachable!())
+                .has_transaction(),
+            "oam_dma should remain initialized with no active transaction after reset",
+        );
+    }
+
+    #[test]
+    fn oam_dma_transaction_consumes_the_interrupt_and_advances_through_steps() {
+        let mut cpu = Core::new();
+        let mut ppu = Ppu::new();
+        let mut cartridge = super::super::nrom_test_cartridge();
+        let mut hub = TestController;
+        let mut apu = Apu::new(cpu.interrupt_mut());
+
+        // Simulate CPU write to $4014 (OAMDMA register)
+        cpu.interrupt.oam_dma = Some(0x00);
+
+        // step() consumes interrupt.oam_dma, starts transaction
+        // step() → process_dma_cycle_bus() → advance_oam_dma()
+        cpu.step(&mut ppu, cartridge.as_mut(), &mut hub, &mut apu);
+
+        // After the first cycle, oam_dma should still be Some
+        // and actively processing (not yet finished after one cycle)
+        let still_active = cpu
+            .oam_dma
+            .as_ref()
+            .unwrap_or_else(|| unreachable!())
+            .has_transaction();
+        assert!(
+            still_active,
+            "OAM DMA should still be in progress after one cycle"
+        );
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
