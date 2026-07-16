@@ -55,11 +55,15 @@ impl State {
             },
             presentation: None,
         };
-        let session = SessionHandle::new_or_abort(
+        let session = SessionHandle::new(
             capabilities,
             Arc::clone(&ctx.core_factory),
             ctx.audio_registry.clone(),
-        );
+        )
+        .unwrap_or_else(|e| {
+            log::error!("failed to create core: {e}");
+            std::process::abort();
+        });
 
         Self {
             session,
