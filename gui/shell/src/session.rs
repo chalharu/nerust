@@ -410,7 +410,7 @@ mod tests {
             if self.has_failed.swap(true, AcqRel) {
                 unreachable!()
             }
-            return Err(FactoryError::Create("simulated failure".into()));
+            Err(FactoryError::Create("simulated failure".into()))
         }
         fn create_core_and_adapter(
             &self,
