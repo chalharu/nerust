@@ -586,8 +586,11 @@ impl GuiInput {
     pub fn publish(&mut self) {
         // Prepare write_buf from absolute state (fast concrete copy)
         self.write_buf.copy_state(&*self.state);
-        // Swap into shared (fast pointer exchange)
-        let mut lock = self.shared.lock().unwrap_or_else(|_| unreachable!());
+        // Swap into shared (fast pointer exchange).
+        // SAFETY: The mutex is never poisoned because publish() only performs
+        // std::mem::swap() and AtomicBool::store() while holding the lock,
+        // neither of which can panic. copy_state() runs before the lock.
+        let mut lock = self.shared.lock().unwrap();
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
     }
@@ -630,7 +633,9 @@ impl EmuInput {
     /// Must be called every frame start. Takes latest input from GUI.
     pub fn take(&mut self) {
         if self.flag.swap(false, Ordering::Acquire) {
-            let mut lock = self.shared.lock().unwrap_or_else(|_| unreachable!());
+            // SAFETY: take() only performs std::mem::swap() under the lock,
+            // which never panics, so the mutex can never be poisoned.
+            let mut lock = self.shared.lock().unwrap();
             std::mem::swap(&mut *lock, &mut self.read_buf);
         }
     }
