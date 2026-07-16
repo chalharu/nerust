@@ -1,4 +1,4 @@
-#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+#![cfg_attr(coverage, feature(coverage_attribute))]
 
 pub mod context;
 pub mod emu_core;
