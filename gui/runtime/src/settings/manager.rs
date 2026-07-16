@@ -365,7 +365,10 @@ mod tests {
 
     #[test]
     fn unknown_enum_variant_resets_only_that_field() {
-        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-test-{}-unknown_enum_variant",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("config")).unwrap();
         let path = dir.join("config").join("settings.yaml");
@@ -396,7 +399,10 @@ mod tests {
 
     #[test]
     fn ntsc_filter_survives_save_reload_cycle() {
-        let dir = std::env::temp_dir().join(format!("nerust-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-test-{}-ntsc_filter_survives_save_reload_cycle",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir should be creatable");
 
