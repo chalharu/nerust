@@ -550,4 +550,31 @@ mod tests {
         assert!(!session.loaded());
         assert!(session.paused());
     }
+
+    #[test]
+    fn failing_once_factory_delegates_unused_methods_to_inner() {
+        let inner: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+        let factory = FailingOnceFactory::new(Arc::clone(&inner));
+
+        assert!(factory.probe_media(&MediaObject::new(None, vec![])));
+        let view = test_view(&test_session());
+        factory.settings_page(&view);
+        assert_eq!(factory.default_load_options(), inner.default_load_options(),);
+        let _resolved = factory
+            .resolve_load_request(&view, SystemLoadOptions::default())
+            .unwrap();
+        assert!(
+            inner
+                .resolve_load_request(&view, SystemLoadOptions::default())
+                .is_ok()
+        );
+        let mut mutable_view = test_view(&test_session());
+        factory
+            .apply_settings_choice(
+                &mut mutable_view,
+                &nerust_core_traits::factory::descriptor::SystemSettingsFieldId("dummy".into()),
+                &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId("dummy".into()),
+            )
+            .unwrap();
+    }
 }
