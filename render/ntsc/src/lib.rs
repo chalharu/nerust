@@ -681,42 +681,37 @@ impl NtscRow {
 
     #[inline]
     pub(crate) fn rgb_out(&self, x: usize) -> RGB {
-        // RGB::from(Self::rgb_out_impl(Self::clamp_impl(
-        //     (self.ktable[self.kernel[0] + x]
-        //         + (self.ktable[self.kernel[1] + (x + 12) % 7 + 14])
-        //         + (self.ktable[self.kernel[2] + (x + 10) % 7 + 28])
-        //         + (self.ktable[self.kernelx[0] + (x + 7) % 14])
-        //         + (self.ktable[self.kernelx[1] + (x + 5) % 7 + 21])
-        //         + (self.ktable[self.kernelx[2] + (x + 3) % 7 + 35]))
-        //         .0,
-        // )))
+        // SAFETY: kernel[k] + x is bounded by ktable.len() (guaranteed by init).
+        debug_assert!(x < 7);
+        debug_assert!(self.kernel.iter().all(|&k| k + x < self.ktable.len()));
+        debug_assert!(
+            self.kernelx
+                .iter()
+                .all(|&k| k + (x + 7) % 14 < self.ktable.len())
+        );
         RGB::from(Self::rgb_out_impl(Self::clamp_impl(unsafe {
             self.ktable
-                .get_unchecked(self.kernel.get_unchecked(0) + x)
+                .get_unchecked(self.kernel[0] + x)
                 .wrapping_add(
                     *self
                         .ktable
-                        .get_unchecked(self.kernel.get_unchecked(1) + (x + 12) % 7 + 14),
+                        .get_unchecked(self.kernel[1] + (x + 12) % 7 + 14),
                 )
                 .wrapping_add(
                     *self
                         .ktable
-                        .get_unchecked(self.kernel.get_unchecked(2) + (x + 10) % 7 + 28),
+                        .get_unchecked(self.kernel[2] + (x + 10) % 7 + 28),
+                )
+                .wrapping_add(*self.ktable.get_unchecked(self.kernelx[0] + (x + 7) % 14))
+                .wrapping_add(
+                    *self
+                        .ktable
+                        .get_unchecked(self.kernelx[1] + (x + 5) % 7 + 21),
                 )
                 .wrapping_add(
                     *self
                         .ktable
-                        .get_unchecked(self.kernelx.get_unchecked(0) + (x + 7) % 14),
-                )
-                .wrapping_add(
-                    *self
-                        .ktable
-                        .get_unchecked(self.kernelx.get_unchecked(1) + (x + 5) % 7 + 21),
-                )
-                .wrapping_add(
-                    *self
-                        .ktable
-                        .get_unchecked(self.kernelx.get_unchecked(2) + (x + 3) % 7 + 35),
+                        .get_unchecked(self.kernelx[2] + (x + 3) % 7 + 35),
                 )
         })))
     }
