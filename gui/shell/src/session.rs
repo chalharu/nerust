@@ -359,6 +359,7 @@ impl RomLoadTarget for SessionHandle {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use std::sync::Arc;
 
