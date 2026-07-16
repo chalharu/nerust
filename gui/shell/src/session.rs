@@ -271,6 +271,35 @@ impl SessionHandle {
             .expect("core creation with defaults must succeed in tests")
     }
 
+    /// Create a session or abort the process on catastrophic failure.
+    /// The only scenario where this fails is when even default settings
+    /// cannot produce a working core (e.g. missing GPU driver).
+    pub fn new_or_abort(
+        capabilities: HostBackendCapabilities,
+        factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
+    ) -> Self {
+        Self::new(capabilities, factory, audio_registry).unwrap_or_else(|e| {
+            log::error!("failed to create core: {e}");
+            std::process::abort();
+        })
+    }
+
+    /// Like `new_with_settings_paths`, but aborts on catastrophic failure.
+    pub fn new_with_settings_paths_or_abort(
+        capabilities: HostBackendCapabilities,
+        factory: Arc<dyn CoreFactory>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        paths: SettingsPaths,
+    ) -> Self {
+        Self::new_with_settings_paths(capabilities, factory, audio_registry, paths).unwrap_or_else(
+            |e| {
+                log::error!("failed to create core: {e}");
+                std::process::abort();
+            },
+        )
+    }
+
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             metrics: self.emu_core.metrics(),
