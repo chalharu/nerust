@@ -360,11 +360,99 @@ impl RomLoadTarget for SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
+    use std::sync::Arc;
+
+    use nerust_core_traits::{
+        audio::AudioBackend,
+        factory::{
+            CoreFactory, FactoryError,
+            load::{MediaObject, SystemLoadOptions},
+            settings::FactorySettingsView,
+        },
+        identity::SystemId,
+    };
     use nerust_gui_runtime::settings::SettingsApplyPlan;
+    use nerust_input_traits::InputAssignments;
 
     use super::test_helpers::*;
-    use crate::session::KeyboardShortcut;
+    use crate::session::{KeyboardShortcut, SessionHandle};
+
+    /// Factory that fails on first `create_core_and_adapter_with_assignments`
+    /// call, then delegates to the inner factory for the fallback path.
+    struct FailingOnceFactory {
+        inner: Arc<dyn CoreFactory>,
+        has_failed: std::sync::atomic::AtomicBool,
+    }
+
+    impl FailingOnceFactory {
+        fn new(inner: Arc<dyn CoreFactory>) -> Self {
+            Self {
+                inner,
+                has_failed: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl CoreFactory for FailingOnceFactory {
+        fn system_id(&self) -> SystemId {
+            self.inner.system_id()
+        }
+        fn display_name(&self) -> &'static str {
+            self.inner.display_name()
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            view: &FactorySettingsView,
+            speaker: Box<dyn AudioBackend>,
+            assignments: &InputAssignments,
+        ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+            if !self
+                .has_failed
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FactoryError::Create("simulated failure".into()));
+            }
+            self.inner
+                .create_core_and_adapter_with_assignments(view, speaker, assignments)
+        }
+        fn create_core_and_adapter(
+            &self,
+            view: &FactorySettingsView,
+            speaker: Box<dyn AudioBackend>,
+        ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+            self.inner.create_core_and_adapter(view, speaker)
+        }
+        fn probe_media(&self, media: &nerust_core_traits::factory::load::MediaObject) -> bool {
+            self.inner.probe_media(media)
+        }
+        fn settings_page(
+            &self,
+            view: &FactorySettingsView,
+        ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+            self.inner.settings_page(view)
+        }
+        fn apply_settings_choice(
+            &self,
+            view: &mut FactorySettingsView,
+            field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
+            choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            self.inner.apply_settings_choice(view, field, choice)
+        }
+        fn resolve_load_request(
+            &self,
+            view: &FactorySettingsView,
+            options: nerust_core_traits::factory::load::SystemLoadOptions,
+        ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
+            self.inner.resolve_load_request(view, options)
+        }
+        fn default_load_options(&self) -> nerust_core_traits::factory::load::SystemLoadOptions {
+            self.inner.default_load_options()
+        }
+        fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
+            self.inner.input_system_factory()
+        }
+    }
 
     #[test]
     fn shortcut_key_returns_shortcut_action_without_controller_event() {
@@ -443,5 +531,23 @@ mod tests {
             .set_fullscreen_default(true)
             .expect("second set_fullscreen_default should succeed");
         assert_eq!(second, SettingsApplyPlan::default());
+    }
+
+    #[test]
+    fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
+        let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
+            window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let session = SessionHandle::new(capabilities, failing, audio_registry)
+            .expect("fallback to defaults should succeed");
+        assert!(!session.loaded());
+        assert!(session.paused());
     }
 }
