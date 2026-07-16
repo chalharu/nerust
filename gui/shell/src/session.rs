@@ -360,19 +360,20 @@ impl RomLoadTarget for SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, atomic::Ordering::AcqRel};
 
     use nerust_core_traits::{
         audio::AudioBackend,
         factory::{
-            CoreFactory, FactoryError,
-            load::{MediaObject, SystemLoadOptions},
+            CoreFactory, CoreParts, FactoryError,
+            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+            load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
             settings::FactorySettingsView,
         },
         identity::SystemId,
     };
     use nerust_gui_runtime::settings::SettingsApplyPlan;
-    use nerust_input_traits::InputAssignments;
+    use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
     use crate::session::{KeyboardShortcut, SessionHandle};
@@ -402,54 +403,47 @@ mod tests {
         }
         fn create_core_and_adapter_with_assignments(
             &self,
-            view: &FactorySettingsView,
-            speaker: Box<dyn AudioBackend>,
-            assignments: &InputAssignments,
-        ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
-            if !self
-                .has_failed
-                .swap(true, std::sync::atomic::Ordering::AcqRel)
-            {
-                return Err(FactoryError::Create("simulated failure".into()));
+            _: &FactorySettingsView,
+            _: Box<dyn AudioBackend>,
+            _: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            if self.has_failed.swap(true, AcqRel) {
+                unreachable!()
             }
-            self.inner
-                .create_core_and_adapter_with_assignments(view, speaker, assignments)
+            return Err(FactoryError::Create("simulated failure".into()));
         }
         fn create_core_and_adapter(
             &self,
             view: &FactorySettingsView,
             speaker: Box<dyn AudioBackend>,
-        ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+        ) -> Result<CoreParts, FactoryError> {
             self.inner.create_core_and_adapter(view, speaker)
         }
-        fn probe_media(&self, _media: &nerust_core_traits::factory::load::MediaObject) -> bool {
+        fn probe_media(&self, _media: &MediaObject) -> bool {
             unreachable!()
         }
-        fn settings_page(
-            &self,
-            _view: &FactorySettingsView,
-        ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+        fn settings_page(&self, _: &FactorySettingsView) -> SystemSettingsPageModel {
             unreachable!()
         }
         fn apply_settings_choice(
             &self,
-            _view: &mut FactorySettingsView,
-            _field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
-            _choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+            _: &mut FactorySettingsView,
+            _: &SystemSettingsFieldId,
+            _: &SystemSettingsChoiceId,
         ) -> Result<(), FactoryError> {
             unreachable!()
         }
         fn resolve_load_request(
             &self,
-            _view: &FactorySettingsView,
-            _options: nerust_core_traits::factory::load::SystemLoadOptions,
-        ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
+            _: &FactorySettingsView,
+            _: SystemLoadOptions,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
             unreachable!()
         }
-        fn default_load_options(&self) -> nerust_core_traits::factory::load::SystemLoadOptions {
+        fn default_load_options(&self) -> SystemLoadOptions {
             unreachable!()
         }
-        fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
             self.inner.input_system_factory()
         }
     }
