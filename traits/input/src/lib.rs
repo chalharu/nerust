@@ -364,8 +364,11 @@ pub enum BufferError {
 /// GUI-side write abstraction for input state.
 /// Emu side reads via `Any::downcast_ref`.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
+    /// field: 0..N の logical field index。値の意味は impl 定義。
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    /// 全 field を neutral / released 状態にリセットする。impl 依存。
     fn clear(&mut self);
+    /// Copy absolute state from another buffer of the same concrete type.
     fn copy_state(&mut self, other: &dyn InputStateBuffer);
 }
 
