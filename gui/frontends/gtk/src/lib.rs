@@ -13,11 +13,12 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
+use keyboard_types::Code;
 use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
-use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -214,7 +215,7 @@ impl FrontendSession for State {
 impl State {
     pub(crate) fn handle_keyboard_key(
         &mut self,
-        key: KeyboardKey,
+        key: Code,
         pressed: bool,
     ) -> Option<KeyboardShortcut> {
         self.session.handle_keyboard_key(key, pressed)

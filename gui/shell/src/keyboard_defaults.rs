@@ -1,25 +1,26 @@
-use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
+use keyboard_types::Code;
+use nerust_gui_settings::input::{KeyboardBinding, PersistedControlId};
 use nerust_input_traits::AbstractKey;
 
 /// System-agnostic default keyboard binding for an abstract key.
 /// Returns all sensible default keys (e.g. keyboard + numpad for D-pad).
-pub fn default_keyboard_key(abstract_key: AbstractKey) -> Vec<KeyboardKey> {
+pub fn default_keyboard_key(abstract_key: AbstractKey) -> Vec<Code> {
     match abstract_key {
-        AbstractKey::Button1 => vec![KeyboardKey::KeyZ],
-        AbstractKey::Button2 => vec![KeyboardKey::KeyX],
-        AbstractKey::Button3 => vec![KeyboardKey::KeyS],
-        AbstractKey::Button4 => vec![KeyboardKey::KeyD],
-        AbstractKey::Button5 => vec![KeyboardKey::KeyA],
-        AbstractKey::Button6 => vec![KeyboardKey::KeyQ],
-        AbstractKey::Button7 => vec![KeyboardKey::KeyW],
-        AbstractKey::Button8 => vec![KeyboardKey::KeyE],
-        AbstractKey::Select => vec![KeyboardKey::KeyC],
-        AbstractKey::Start => vec![KeyboardKey::KeyV],
+        AbstractKey::Button1 => vec![Code::KeyZ],
+        AbstractKey::Button2 => vec![Code::KeyX],
+        AbstractKey::Button3 => vec![Code::KeyS],
+        AbstractKey::Button4 => vec![Code::KeyD],
+        AbstractKey::Button5 => vec![Code::KeyA],
+        AbstractKey::Button6 => vec![Code::KeyQ],
+        AbstractKey::Button7 => vec![Code::KeyW],
+        AbstractKey::Button8 => vec![Code::KeyE],
+        AbstractKey::Select => vec![Code::KeyC],
+        AbstractKey::Start => vec![Code::KeyV],
         AbstractKey::Guide => vec![],
-        AbstractKey::DpadUp => vec![KeyboardKey::ArrowUp],
-        AbstractKey::DpadDown => vec![KeyboardKey::ArrowDown],
-        AbstractKey::DpadLeft => vec![KeyboardKey::ArrowLeft],
-        AbstractKey::DpadRight => vec![KeyboardKey::ArrowRight],
+        AbstractKey::DpadUp => vec![Code::ArrowUp],
+        AbstractKey::DpadDown => vec![Code::ArrowDown],
+        AbstractKey::DpadLeft => vec![Code::ArrowLeft],
+        AbstractKey::DpadRight => vec![Code::ArrowRight],
         AbstractKey::Axis1X | AbstractKey::Axis1Y => vec![],
         AbstractKey::Axis2X | AbstractKey::Axis2Y => vec![],
     }

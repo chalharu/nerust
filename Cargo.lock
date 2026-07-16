@@ -2501,6 +2501,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyboard-types"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+dependencies = [
+ "bitflags 2.13.0",
+ "serde",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2679,7 +2689,7 @@ dependencies = [
  "crossbeam-channel",
  "dpi",
  "gtk",
- "keyboard-types",
+ "keyboard-types 0.7.0",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -2842,6 +2852,7 @@ dependencies = [
  "gdk4-x11-sys",
  "gio 0.22.8",
  "gtk4",
+ "keyboard-types 0.8.3",
  "log",
  "nerust_core_traits",
  "nerust_gui_runtime",
@@ -2863,6 +2874,7 @@ version = "0.1.0-dev"
 dependencies = [
  "crc",
  "directories",
+ "keyboard-types 0.8.3",
  "log",
  "nerust_core_traits",
  "nerust_gui_settings",
@@ -2877,6 +2889,7 @@ dependencies = [
 name = "nerust_gui_settings"
 version = "0.1.0-dev"
 dependencies = [
+ "keyboard-types 0.8.3",
  "nerust_core_traits",
  "nerust_input_traits",
  "serde",
@@ -2887,6 +2900,7 @@ dependencies = [
 name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
+ "keyboard-types 0.8.3",
  "log",
  "nerust_core_traits",
  "nerust_emu_thread",
@@ -3085,6 +3099,7 @@ dependencies = [
  "iced",
  "iced_tiny_skia",
  "iced_winit",
+ "keyboard-types 0.8.3",
  "log",
  "muda",
  "nerust_core_traits",

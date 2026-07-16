@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 
+use keyboard_types::Code;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
@@ -24,7 +25,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
@@ -69,11 +70,11 @@ pub struct SessionHandle {
     pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
+    pub(super) key_field_map: HashMap<Code, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
-    pub(super) pressed_keys: BTreeSet<KeyboardKey>,
+    pub(super) pressed_keys: BTreeSet<Code>,
     pub(super) loaded_media: Option<LoadedMedia>,
     pub(super) persistence: PersistenceManager,
     pub(super) audio_registry: Arc<AudioBackendRegistry>,
@@ -362,6 +363,7 @@ impl RomLoadTarget for SessionHandle {
 mod tests {
     use std::sync::{Arc, atomic::Ordering::AcqRel};
 
+    use keyboard_types::Code;
     use nerust_core_traits::{
         audio::AudioBackend,
         factory::{
@@ -380,13 +382,13 @@ mod tests {
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
     /// call, then delegates to the inner factory for the fallback path.
-    struct FailingOnceFactory {
-        inner: Arc<dyn CoreFactory>,
+    struct FailingOnceFactory<T> {
+        inner: Arc<T>,
         has_failed: std::sync::atomic::AtomicBool,
     }
 
-    impl FailingOnceFactory {
-        fn new(inner: Arc<dyn CoreFactory>) -> Self {
+    impl<T: CoreFactory> FailingOnceFactory<T> {
+        fn new(inner: Arc<T>) -> Self {
             Self {
                 inner,
                 has_failed: std::sync::atomic::AtomicBool::new(false),
@@ -394,7 +396,7 @@ mod tests {
         }
     }
 
-    impl CoreFactory for FailingOnceFactory {
+    impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
         fn system_id(&self) -> SystemId {
             self.inner.system_id()
         }
@@ -452,15 +454,12 @@ mod tests {
     fn shortcut_key_returns_shortcut_action_without_controller_event() {
         let mut session = test_session();
         assert_eq!(
-            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+            session.handle_keyboard_key(Code::Space, true),
             Some(KeyboardShortcut::Session(
                 nerust_gui_settings::input::ShortcutAction::TogglePause
             )),
         );
-        assert_eq!(
-            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
-            None
-        );
+        assert_eq!(session.handle_keyboard_key(Code::Space, true), None);
     }
 
     #[test]
@@ -501,7 +500,7 @@ mod tests {
     #[test]
     fn set_fullscreen_default_updates_snapshot_and_plan() {
         let mut session = test_session();
-        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+        session.handle_keyboard_key(Code::KeyZ, true);
         let plan = session
             .set_fullscreen_default(true)
             .expect("set_fullscreen_default should succeed");

@@ -1,7 +1,8 @@
+use keyboard_types::Code;
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
-    KeyboardBinding, KeyboardKey, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+    KeyboardBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
 
 use crate::settings::bindings::keys::keyboard_key_label;
@@ -16,10 +17,7 @@ pub enum CaptureTarget {
     Shortcut(ShortcutAction),
 }
 
-pub fn current_binding_key(
-    snapshot: &SettingsSnapshot,
-    target: &CaptureTarget,
-) -> Option<KeyboardKey> {
+pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Code> {
     match target {
         CaptureTarget::Binding {
             system,
@@ -58,7 +56,7 @@ pub fn current_binding_label(
 pub fn apply_capture_target(
     snapshot: &mut SettingsSnapshot,
     target: &CaptureTarget,
-    key: Option<KeyboardKey>,
+    key: Option<Code>,
 ) {
     match target {
         CaptureTarget::Binding {
@@ -103,7 +101,7 @@ pub fn apply_capture_target(
 mod tests {
     use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+    use nerust_gui_settings::input::ShortcutAction;
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{
@@ -134,7 +132,7 @@ mod tests {
                     control: TEST_CTRL_A.as_str().to_string(),
                 }
             ),
-            Some(KeyboardKey::KeyZ)
+            Some(keyboard_types::Code::KeyZ)
         );
     }
 
@@ -147,11 +145,11 @@ mod tests {
             control: TEST_CTRL_A.as_str().to_string(),
         };
 
-        apply_capture_target(&mut snapshot, &target, Some(KeyboardKey::KeyA));
+        apply_capture_target(&mut snapshot, &target, Some(keyboard_types::Code::KeyA));
 
         assert_eq!(
             current_binding_key(&snapshot, &target),
-            Some(KeyboardKey::KeyA)
+            Some(keyboard_types::Code::KeyA)
         );
     }
 

@@ -247,11 +247,12 @@ impl SettingsManager {
 mod tests {
     use std::{collections::BTreeMap, fs};
 
+    use keyboard_types::Code;
     use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
-            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
+            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, PersistedControlId,
             ShortcutAction, ShortcutBinding, SystemInputSettings,
         },
         language::AppLanguage,
@@ -279,7 +280,7 @@ mod tests {
                         bindings: vec![KeyboardBinding::new(
                             "nes.attachment.player1",
                             PersistedControlId::digital("nes.control.a"),
-                            KeyboardKey::KeyZ,
+                            Code::KeyZ,
                         )],
                     },
                 );
@@ -288,7 +289,7 @@ mod tests {
             shortcuts: nerust_gui_settings::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
-                    key: Some(KeyboardKey::Space),
+                    key: Some(Code::Space),
                 }],
             },
         };

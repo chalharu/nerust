@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
+use keyboard_types::Code;
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
-    input::{IMPLICIT_PROFILE_ID, KeyboardKey, ShortcutAction, ShortcutBinding},
+    input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     local::HostBackendLocalSettings,
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},
@@ -30,27 +31,27 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
-            key: Some(KeyboardKey::Space),
+            key: Some(Code::Space),
         },
         ShortcutBinding {
             action: ShortcutAction::SaveActiveSlot,
-            key: Some(KeyboardKey::F5),
+            key: Some(Code::F5),
         },
         ShortcutBinding {
             action: ShortcutAction::SelectNextSlot,
-            key: Some(KeyboardKey::F6),
+            key: Some(Code::F6),
         },
         ShortcutBinding {
             action: ShortcutAction::SelectPreviousSlot,
-            key: Some(KeyboardKey::F7),
+            key: Some(Code::F7),
         },
         ShortcutBinding {
             action: ShortcutAction::LoadActiveSlot,
-            key: Some(KeyboardKey::F8),
+            key: Some(Code::F8),
         },
         ShortcutBinding {
             action: ShortcutAction::ToggleFullscreen,
-            key: Some(KeyboardKey::F11),
+            key: Some(Code::F11),
         },
         ShortcutBinding {
             action: ShortcutAction::Reset,

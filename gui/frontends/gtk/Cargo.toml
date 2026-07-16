@@ -10,6 +10,7 @@ rust-version.workspace = true
 gdk.workspace = true
 gio.workspace = true
 gtk.workspace = true
+keyboard-types.workspace = true
 log.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
