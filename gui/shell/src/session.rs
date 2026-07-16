@@ -423,17 +423,13 @@ mod tests {
             self.inner.create_core_and_adapter(view, speaker)
         }
         fn probe_media(&self, _media: &nerust_core_traits::factory::load::MediaObject) -> bool {
-            unreachable!(
-                "FailingOnceFactory: probe_media should not be called during session creation"
-            )
+            unreachable!()
         }
         fn settings_page(
             &self,
             _view: &FactorySettingsView,
         ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
-            unreachable!(
-                "FailingOnceFactory: settings_page should not be called during session creation"
-            )
+            unreachable!()
         }
         fn apply_settings_choice(
             &self,
@@ -441,23 +437,17 @@ mod tests {
             _field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
             _choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
         ) -> Result<(), FactoryError> {
-            unreachable!(
-                "FailingOnceFactory: apply_settings_choice should not be called during session creation"
-            )
+            unreachable!()
         }
         fn resolve_load_request(
             &self,
             _view: &FactorySettingsView,
             _options: nerust_core_traits::factory::load::SystemLoadOptions,
         ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
-            unreachable!(
-                "FailingOnceFactory: resolve_load_request should not be called during session creation"
-            )
+            unreachable!()
         }
         fn default_load_options(&self) -> nerust_core_traits::factory::load::SystemLoadOptions {
-            unreachable!(
-                "FailingOnceFactory: default_load_options should not be called during session creation"
-            )
+            unreachable!()
         }
         fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
             self.inner.input_system_factory()
