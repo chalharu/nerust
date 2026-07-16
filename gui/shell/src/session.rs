@@ -38,6 +38,12 @@ use crate::{
     settings::{self, factory::settings_view},
 };
 
+type CoreParts = (
+    EmuCore,
+    GuiInput,
+    HashMap<(AttachmentId, DigitalControlId), usize>,
+);
+
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
@@ -111,11 +117,7 @@ impl SessionHandle {
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
         assignments: &InputAssignments,
-    ) -> (
-        EmuCore,
-        GuiInput,
-        HashMap<(AttachmentId, DigitalControlId), usize>,
-    ) {
+    ) -> Result<CoreParts, SessionError> {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = settings_view(snapshot, &system_id);
@@ -136,10 +138,13 @@ impl SessionHandle {
                     let fallback_view = settings_view(&fallback, &system_id);
                     factory
                         .create_core_and_adapter(&fallback_view, fallback_speaker)
-                        .expect("failed to create core even with default settings")
+                        .map_err(|e| {
+                            log::error!("core creation failed even with default settings: {e}");
+                            SessionError::Factory(e)
+                        })?
                 }
             };
-        EmuCore::from_parts(parts)
+        Ok(EmuCore::from_parts(parts))
     }
 
     fn new_inner(
@@ -147,7 +152,7 @@ impl SessionHandle {
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -174,7 +179,7 @@ impl SessionHandle {
             &audio_registry,
             &settings_snapshot,
             &assignments,
-        );
+        )?;
         let mut result = Self {
             emu_core,
             gui_input,
@@ -191,14 +196,14 @@ impl SessionHandle {
             audio_registry,
         };
         result.rebuild_key_field_map();
-        result
+        Ok(result)
     }
 
     pub fn new(
         capabilities: HostBackendCapabilities,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         Self::new_inner(capabilities, factory, audio_registry, true)
     }
 
@@ -211,7 +216,7 @@ impl SessionHandle {
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -236,7 +241,7 @@ impl SessionHandle {
             &audio_registry,
             &settings_snapshot,
             &assignments,
-        );
+        )?;
         let mut result = Self {
             emu_core,
             gui_input,
@@ -253,7 +258,7 @@ impl SessionHandle {
             audio_registry,
         };
         result.rebuild_key_field_map();
-        result
+        Ok(result)
     }
 
     #[cfg(test)]
@@ -263,6 +268,7 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
         Self::new_inner(capabilities, factory, audio_registry, false)
+            .expect("core creation with defaults must succeed in tests")
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -354,11 +360,93 @@ impl RomLoadTarget for SessionHandle {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
+    use std::sync::{Arc, atomic::Ordering::AcqRel};
+
+    use nerust_core_traits::{
+        audio::AudioBackend,
+        factory::{
+            CoreFactory, CoreParts, FactoryError,
+            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+            load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+            settings::FactorySettingsView,
+        },
+        identity::SystemId,
+    };
     use nerust_gui_runtime::settings::SettingsApplyPlan;
+    use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
-    use crate::session::KeyboardShortcut;
+    use crate::session::{KeyboardShortcut, SessionHandle};
+
+    /// Factory that fails on first `create_core_and_adapter_with_assignments`
+    /// call, then delegates to the inner factory for the fallback path.
+    struct FailingOnceFactory {
+        inner: Arc<dyn CoreFactory>,
+        has_failed: std::sync::atomic::AtomicBool,
+    }
+
+    impl FailingOnceFactory {
+        fn new(inner: Arc<dyn CoreFactory>) -> Self {
+            Self {
+                inner,
+                has_failed: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl CoreFactory for FailingOnceFactory {
+        fn system_id(&self) -> SystemId {
+            self.inner.system_id()
+        }
+        fn display_name(&self) -> &'static str {
+            self.inner.display_name()
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            _: &FactorySettingsView,
+            _: Box<dyn AudioBackend>,
+            _: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            if self.has_failed.swap(true, AcqRel) {
+                unreachable!()
+            }
+            return Err(FactoryError::Create("simulated failure".into()));
+        }
+        fn create_core_and_adapter(
+            &self,
+            view: &FactorySettingsView,
+            speaker: Box<dyn AudioBackend>,
+        ) -> Result<CoreParts, FactoryError> {
+            self.inner.create_core_and_adapter(view, speaker)
+        }
+        fn probe_media(&self, _media: &MediaObject) -> bool {
+            unreachable!()
+        }
+        fn settings_page(&self, _: &FactorySettingsView) -> SystemSettingsPageModel {
+            unreachable!()
+        }
+        fn apply_settings_choice(
+            &self,
+            _: &mut FactorySettingsView,
+            _: &SystemSettingsFieldId,
+            _: &SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            unreachable!()
+        }
+        fn resolve_load_request(
+            &self,
+            _: &FactorySettingsView,
+            _: SystemLoadOptions,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
+            unreachable!()
+        }
+        fn default_load_options(&self) -> SystemLoadOptions {
+            unreachable!()
+        }
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
+            self.inner.input_system_factory()
+        }
+    }
 
     #[test]
     fn shortcut_key_returns_shortcut_action_without_controller_event() {
@@ -437,5 +525,23 @@ mod tests {
             .set_fullscreen_default(true)
             .expect("second set_fullscreen_default should succeed");
         assert_eq!(second, SettingsApplyPlan::default());
+    }
+
+    #[test]
+    fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
+        let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
+            window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let session = SessionHandle::new(capabilities, failing, audio_registry)
+            .expect("fallback to defaults should succeed");
+        assert!(!session.loaded());
+        assert!(session.paused());
     }
 }
