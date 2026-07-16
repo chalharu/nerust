@@ -363,6 +363,7 @@ impl PersistenceManager {
                 }
             }
         } else {
+            log::warn!("states_dir not configured, slot list unavailable");
             Vec::new()
         };
         if self
@@ -398,6 +399,7 @@ impl PersistenceManager {
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
+            log::warn!("mapper_save_path not set, mapper save skipped");
             return Ok(());
         };
         if !self.mapper_save_flush_allowed {
@@ -435,6 +437,7 @@ impl PersistenceManager {
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
+            log::warn!("mapper_save_path not set, mapper save load skipped");
             return Ok(());
         };
         match self.backend.read_mapper_save(path) {
