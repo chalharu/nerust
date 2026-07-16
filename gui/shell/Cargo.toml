@@ -23,4 +23,4 @@ thiserror.workspace = true
 nerust_core_traits.workspace = true
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
