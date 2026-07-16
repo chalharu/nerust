@@ -6,8 +6,19 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::shared::SystemSettings;
 
 fn system_settings_to_bytes(s: &SystemSettings) -> Vec<u8> {
-    match s {
-        SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).unwrap_or_default(),
+    let result = match s {
+        SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).map_err(|e| e.to_string()),
+    };
+    bytes_or_fallback(result)
+}
+
+fn bytes_or_fallback(result: Result<Vec<u8>, String>) -> Vec<u8> {
+    match result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::warn!("NesSettings serialization failed, settings change may not apply: {e}");
+            Vec::new()
+        }
     }
 }
 
@@ -83,4 +94,66 @@ pub fn resolve_label(
         return resolve_nes_label(label_id, language);
     }
     label_id.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use nerust_gui_settings::nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
+    use nerust_gui_settings::shared::SystemSettings;
+
+    use super::{bytes_or_fallback, system_settings_from_bytes, system_settings_to_bytes};
+
+    #[test]
+    fn settings_round_trip_preserves_filter_value() {
+        let nes = SystemSettings::Nes(NesSettings {
+            video: nerust_gui_settings::nes::NesVideoSettings {
+                filter: NesVideoFilter::NtscRgb,
+            },
+            core: nerust_gui_settings::nes::NesCoreSettings {
+                mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
+            },
+        });
+        let bytes = system_settings_to_bytes(&nes);
+        assert!(!bytes.is_empty(), "serialized bytes should not be empty");
+
+        let restored = system_settings_from_bytes(&bytes).unwrap();
+        let SystemSettings::Nes(restored_nes) = restored;
+        assert_eq!(restored_nes.video.filter, NesVideoFilter::NtscRgb);
+        assert_eq!(
+            restored_nes.core.mmc3_irq_variant,
+            Some(Mmc3IrqVariant::Sharp)
+        );
+    }
+
+    #[test]
+    fn invalid_bytes_return_none() {
+        assert!(system_settings_from_bytes(&[]).is_none());
+        assert!(system_settings_from_bytes(b"garbage").is_none());
+    }
+
+    #[test]
+    fn system_settings_to_returns_valid_msgpack() {
+        let nes = SystemSettings::Nes(NesSettings {
+            video: nerust_gui_settings::nes::NesVideoSettings {
+                filter: NesVideoFilter::NtscComposite,
+            },
+            core: nerust_gui_settings::nes::NesCoreSettings::default(),
+        });
+        let bytes = system_settings_to_bytes(&nes);
+        assert!(!bytes.is_empty(), "serialized bytes should not be empty");
+
+        let decoded: nerust_gui_settings::nes::NesSettings =
+            rmp_serde::from_slice(&bytes).expect("valid MessagePack");
+        assert_eq!(decoded.video.filter, NesVideoFilter::NtscComposite);
+    }
+
+    #[test]
+    fn serialization_fallback_returns_empty_on_error() {
+        assert!(bytes_or_fallback(Err("test error".to_string())).is_empty());
+    }
+
+    #[test]
+    fn serialization_fallback_passes_through_bytes() {
+        assert_eq!(bytes_or_fallback(Ok(vec![1, 2, 3])), vec![1, 2, 3]);
+    }
 }
