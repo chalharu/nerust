@@ -587,7 +587,7 @@ impl GuiInput {
         // Prepare write_buf from absolute state (fast concrete copy)
         self.write_buf.copy_state(&*self.state);
         // Swap into shared (fast pointer exchange)
-        let mut lock = self.shared.lock().unwrap();
+        let mut lock = self.shared.lock().unwrap_or_else(|_| unreachable!());
         std::mem::swap(&mut *lock, &mut self.write_buf);
         self.flag.store(true, Ordering::Release);
     }
@@ -630,7 +630,7 @@ impl EmuInput {
     /// Must be called every frame start. Takes latest input from GUI.
     pub fn take(&mut self) {
         if self.flag.swap(false, Ordering::Acquire) {
-            let mut lock = self.shared.lock().unwrap();
+            let mut lock = self.shared.lock().unwrap_or_else(|_| unreachable!());
             std::mem::swap(&mut *lock, &mut self.read_buf);
         }
     }
