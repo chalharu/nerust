@@ -38,6 +38,12 @@ use crate::{
     settings::{self, factory::settings_view},
 };
 
+type CoreParts = (
+    EmuCore,
+    GuiInput,
+    HashMap<(AttachmentId, DigitalControlId), usize>,
+);
+
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
@@ -111,11 +117,7 @@ impl SessionHandle {
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
         assignments: &InputAssignments,
-    ) -> (
-        EmuCore,
-        GuiInput,
-        HashMap<(AttachmentId, DigitalControlId), usize>,
-    ) {
+    ) -> Result<CoreParts, SessionError> {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = settings_view(snapshot, &system_id);
@@ -136,10 +138,13 @@ impl SessionHandle {
                     let fallback_view = settings_view(&fallback, &system_id);
                     factory
                         .create_core_and_adapter(&fallback_view, fallback_speaker)
-                        .expect("failed to create core even with default settings")
+                        .map_err(|e| {
+                            log::error!("core creation failed even with default settings: {e}");
+                            SessionError::Factory(e)
+                        })?
                 }
             };
-        EmuCore::from_parts(parts)
+        Ok(EmuCore::from_parts(parts))
     }
 
     fn new_inner(
@@ -147,7 +152,7 @@ impl SessionHandle {
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -174,7 +179,7 @@ impl SessionHandle {
             &audio_registry,
             &settings_snapshot,
             &assignments,
-        );
+        )?;
         let mut result = Self {
             emu_core,
             gui_input,
@@ -191,14 +196,14 @@ impl SessionHandle {
             audio_registry,
         };
         result.rebuild_key_field_map();
-        result
+        Ok(result)
     }
 
     pub fn new(
         capabilities: HostBackendCapabilities,
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         Self::new_inner(capabilities, factory, audio_registry, true)
     }
 
@@ -211,7 +216,7 @@ impl SessionHandle {
         factory: Arc<dyn CoreFactory>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
-    ) -> Self {
+    ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -236,7 +241,7 @@ impl SessionHandle {
             &audio_registry,
             &settings_snapshot,
             &assignments,
-        );
+        )?;
         let mut result = Self {
             emu_core,
             gui_input,
@@ -253,7 +258,7 @@ impl SessionHandle {
             audio_registry,
         };
         result.rebuild_key_field_map();
-        result
+        Ok(result)
     }
 
     #[cfg(test)]
@@ -263,6 +268,7 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
         Self::new_inner(capabilities, factory, audio_registry, false)
+            .expect("core creation with defaults must succeed in tests")
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
