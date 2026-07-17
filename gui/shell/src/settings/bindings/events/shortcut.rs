@@ -1,5 +1,5 @@
 use nerust_gui_settings::{
-    input::{KeyboardKey, ShortcutAction},
+    input::{Key, ShortcutAction},
     shared::DesktopSharedSettings,
 };
 
@@ -7,14 +7,14 @@ use crate::session::commands::SessionCommand;
 
 pub fn shortcut_command_for_key(
     settings: &DesktopSharedSettings,
-    key: KeyboardKey,
+    key: Key,
 ) -> Option<SessionCommand> {
     shortcut_action_for_key(settings, key).and_then(shortcut_action_to_command)
 }
 
 pub fn shortcut_action_for_key(
     settings: &DesktopSharedSettings,
-    key: KeyboardKey,
+    key: Key,
 ) -> Option<ShortcutAction> {
     settings
         .input
@@ -39,7 +39,7 @@ fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> 
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+    use nerust_gui_settings::input::{Key, ShortcutAction};
 
     use super::{shortcut_action_for_key, shortcut_command_for_key};
     use crate::{
@@ -51,7 +51,7 @@ mod tests {
         let settings = default_shared_settings();
 
         assert_eq!(
-            shortcut_command_for_key(&settings, KeyboardKey::F5),
+            shortcut_command_for_key(&settings, Key::F5),
             Some(SessionCommand::SaveActiveSlotOrNew)
         );
     }
@@ -61,9 +61,9 @@ mod tests {
         let settings = default_shared_settings();
 
         assert_eq!(
-            shortcut_action_for_key(&settings, KeyboardKey::F11),
+            shortcut_action_for_key(&settings, Key::F11),
             Some(ShortcutAction::ToggleFullscreen)
         );
-        assert_eq!(shortcut_command_for_key(&settings, KeyboardKey::F11), None);
+        assert_eq!(shortcut_command_for_key(&settings, Key::F11), None);
     }
 }

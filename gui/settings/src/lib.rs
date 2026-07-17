@@ -54,14 +54,14 @@ pub mod input {
     pub struct KeyboardBinding {
         pub attachment: PersistedAttachmentId,
         pub control: PersistedControlId,
-        pub key: KeyboardKey,
+        pub key: Key,
     }
 
     impl KeyboardBinding {
         pub fn new(
             attachment: impl Into<String>,
             control: PersistedControlId,
-            key: KeyboardKey,
+            key: Key,
         ) -> Self {
             Self {
                 attachment: PersistedAttachmentId::new(attachment),
@@ -80,7 +80,7 @@ pub mod input {
     #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     pub struct ShortcutBinding {
         pub action: ShortcutAction,
-        pub key: Option<KeyboardKey>,
+        pub key: Option<Key>,
     }
 
     #[derive(
@@ -158,77 +158,7 @@ pub mod input {
         }
     }
 
-    #[derive(
-        Debug,
-        Clone,
-        Copy,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        serde::Serialize,
-        serde::Deserialize,
-    )]
-    #[serde(rename_all = "snake_case")]
-    pub enum KeyboardKey {
-        KeyA,
-        KeyB,
-        KeyC,
-        KeyD,
-        KeyE,
-        KeyF,
-        KeyG,
-        KeyH,
-        KeyI,
-        KeyJ,
-        KeyK,
-        KeyL,
-        KeyM,
-        KeyN,
-        KeyO,
-        KeyP,
-        KeyQ,
-        KeyR,
-        KeyS,
-        KeyT,
-        KeyU,
-        KeyV,
-        KeyW,
-        KeyX,
-        KeyY,
-        KeyZ,
-        Digit0,
-        Digit1,
-        Digit2,
-        Digit3,
-        Digit4,
-        Digit5,
-        Digit6,
-        Digit7,
-        Digit8,
-        Digit9,
-        ArrowUp,
-        ArrowDown,
-        ArrowLeft,
-        ArrowRight,
-        Enter,
-        Escape,
-        Space,
-        Tab,
-        F1,
-        F2,
-        F3,
-        F4,
-        F5,
-        F6,
-        F7,
-        F8,
-        F9,
-        F10,
-        F11,
-        F12,
-    }
+    pub use nerust_keyboard::Key;
 }
 
 pub mod nes {
@@ -542,7 +472,7 @@ pub mod app_state {
 mod tests {
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
-        input::{KeyboardKey, ShortcutAction, ShortcutBinding},
+        input::{Key, ShortcutAction, ShortcutBinding},
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
         },
@@ -603,7 +533,7 @@ mod tests {
     fn bound_shortcut_serializes_key_name() {
         let encoded = serde_saphyr::to_string(&ShortcutBinding {
             action: ShortcutAction::TogglePause,
-            key: Some(KeyboardKey::Space),
+            key: Some(Key::Space),
         })
         .unwrap();
 

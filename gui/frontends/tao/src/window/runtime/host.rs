@@ -9,7 +9,7 @@ use nerust_gui_runtime::{
 };
 use nerust_gui_settings::{
     app_state::RememberedWindowSize,
-    input::{KeyboardKey, ShortcutAction},
+    input::{Key, ShortcutAction},
 };
 use nerust_gui_shell::{
     context::FrontendContext,
@@ -737,64 +737,64 @@ fn logical_size_from_remembered(size: RememberedWindowSize) -> TaoLogicalSize<f6
     TaoLogicalSize::new(f64::from(size.width), f64::from(size.height))
 }
 
-fn keycode_controller_input(code: KeyCode) -> Option<KeyboardKey> {
+fn keycode_controller_input(code: KeyCode) -> Option<Key> {
     Some(match code {
-        KeyCode::Digit0 => KeyboardKey::Digit0,
-        KeyCode::Digit1 => KeyboardKey::Digit1,
-        KeyCode::Digit2 => KeyboardKey::Digit2,
-        KeyCode::Digit3 => KeyboardKey::Digit3,
-        KeyCode::Digit4 => KeyboardKey::Digit4,
-        KeyCode::Digit5 => KeyboardKey::Digit5,
-        KeyCode::Digit6 => KeyboardKey::Digit6,
-        KeyCode::Digit7 => KeyboardKey::Digit7,
-        KeyCode::Digit8 => KeyboardKey::Digit8,
-        KeyCode::Digit9 => KeyboardKey::Digit9,
-        KeyCode::KeyA => KeyboardKey::KeyA,
-        KeyCode::KeyB => KeyboardKey::KeyB,
-        KeyCode::KeyC => KeyboardKey::KeyC,
-        KeyCode::KeyD => KeyboardKey::KeyD,
-        KeyCode::KeyE => KeyboardKey::KeyE,
-        KeyCode::KeyF => KeyboardKey::KeyF,
-        KeyCode::KeyG => KeyboardKey::KeyG,
-        KeyCode::KeyH => KeyboardKey::KeyH,
-        KeyCode::KeyI => KeyboardKey::KeyI,
-        KeyCode::KeyJ => KeyboardKey::KeyJ,
-        KeyCode::KeyK => KeyboardKey::KeyK,
-        KeyCode::KeyL => KeyboardKey::KeyL,
-        KeyCode::KeyM => KeyboardKey::KeyM,
-        KeyCode::KeyN => KeyboardKey::KeyN,
-        KeyCode::KeyO => KeyboardKey::KeyO,
-        KeyCode::KeyP => KeyboardKey::KeyP,
-        KeyCode::KeyQ => KeyboardKey::KeyQ,
-        KeyCode::KeyR => KeyboardKey::KeyR,
-        KeyCode::KeyS => KeyboardKey::KeyS,
-        KeyCode::KeyT => KeyboardKey::KeyT,
-        KeyCode::KeyU => KeyboardKey::KeyU,
-        KeyCode::KeyV => KeyboardKey::KeyV,
-        KeyCode::KeyW => KeyboardKey::KeyW,
-        KeyCode::KeyZ => KeyboardKey::KeyZ,
-        KeyCode::KeyX => KeyboardKey::KeyX,
-        KeyCode::KeyY => KeyboardKey::KeyY,
-        KeyCode::ArrowUp => KeyboardKey::ArrowUp,
-        KeyCode::ArrowDown => KeyboardKey::ArrowDown,
-        KeyCode::ArrowLeft => KeyboardKey::ArrowLeft,
-        KeyCode::ArrowRight => KeyboardKey::ArrowRight,
-        KeyCode::Enter => KeyboardKey::Enter,
-        KeyCode::Escape => KeyboardKey::Escape,
-        KeyCode::Space => KeyboardKey::Space,
-        KeyCode::Tab => KeyboardKey::Tab,
-        KeyCode::F1 => KeyboardKey::F1,
-        KeyCode::F2 => KeyboardKey::F2,
-        KeyCode::F3 => KeyboardKey::F3,
-        KeyCode::F4 => KeyboardKey::F4,
-        KeyCode::F5 => KeyboardKey::F5,
-        KeyCode::F6 => KeyboardKey::F6,
-        KeyCode::F7 => KeyboardKey::F7,
-        KeyCode::F8 => KeyboardKey::F8,
-        KeyCode::F9 => KeyboardKey::F9,
-        KeyCode::F10 => KeyboardKey::F10,
-        KeyCode::F11 => KeyboardKey::F11,
-        KeyCode::F12 => KeyboardKey::F12,
+        KeyCode::Digit0 => Key::Digit0,
+        KeyCode::Digit1 => Key::Digit1,
+        KeyCode::Digit2 => Key::Digit2,
+        KeyCode::Digit3 => Key::Digit3,
+        KeyCode::Digit4 => Key::Digit4,
+        KeyCode::Digit5 => Key::Digit5,
+        KeyCode::Digit6 => Key::Digit6,
+        KeyCode::Digit7 => Key::Digit7,
+        KeyCode::Digit8 => Key::Digit8,
+        KeyCode::Digit9 => Key::Digit9,
+        KeyCode::KeyA => Key::KeyA,
+        KeyCode::KeyB => Key::KeyB,
+        KeyCode::KeyC => Key::KeyC,
+        KeyCode::KeyD => Key::KeyD,
+        KeyCode::KeyE => Key::KeyE,
+        KeyCode::KeyF => Key::KeyF,
+        KeyCode::KeyG => Key::KeyG,
+        KeyCode::KeyH => Key::KeyH,
+        KeyCode::KeyI => Key::KeyI,
+        KeyCode::KeyJ => Key::KeyJ,
+        KeyCode::KeyK => Key::KeyK,
+        KeyCode::KeyL => Key::KeyL,
+        KeyCode::KeyM => Key::KeyM,
+        KeyCode::KeyN => Key::KeyN,
+        KeyCode::KeyO => Key::KeyO,
+        KeyCode::KeyP => Key::KeyP,
+        KeyCode::KeyQ => Key::KeyQ,
+        KeyCode::KeyR => Key::KeyR,
+        KeyCode::KeyS => Key::KeyS,
+        KeyCode::KeyT => Key::KeyT,
+        KeyCode::KeyU => Key::KeyU,
+        KeyCode::KeyV => Key::KeyV,
+        KeyCode::KeyW => Key::KeyW,
+        KeyCode::KeyZ => Key::KeyZ,
+        KeyCode::KeyX => Key::KeyX,
+        KeyCode::KeyY => Key::KeyY,
+        KeyCode::ArrowUp => Key::ArrowUp,
+        KeyCode::ArrowDown => Key::ArrowDown,
+        KeyCode::ArrowLeft => Key::ArrowLeft,
+        KeyCode::ArrowRight => Key::ArrowRight,
+        KeyCode::Enter => Key::Enter,
+        KeyCode::Escape => Key::Escape,
+        KeyCode::Space => Key::Space,
+        KeyCode::Tab => Key::Tab,
+        KeyCode::F1 => Key::F1,
+        KeyCode::F2 => Key::F2,
+        KeyCode::F3 => Key::F3,
+        KeyCode::F4 => Key::F4,
+        KeyCode::F5 => Key::F5,
+        KeyCode::F6 => Key::F6,
+        KeyCode::F7 => Key::F7,
+        KeyCode::F8 => Key::F8,
+        KeyCode::F9 => Key::F9,
+        KeyCode::F10 => Key::F10,
+        KeyCode::F11 => Key::F11,
+        KeyCode::F12 => Key::F12,
         _ => return None,
     })
 }
@@ -809,7 +809,7 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::KeyboardKey;
+    use nerust_keyboard::Key;
     use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
 
     use super::{
@@ -821,27 +821,27 @@ mod tests {
     fn keycode_mapping_matches_controller_layout() {
         assert_eq!(
             keycode_controller_input(KeyCode::KeyZ),
-            Some(KeyboardKey::KeyZ)
+            Some(Key::KeyZ)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::KeyX),
-            Some(KeyboardKey::KeyX)
+            Some(Key::KeyX)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),
-            Some(KeyboardKey::ArrowUp)
+            Some(Key::ArrowUp)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowRight),
-            Some(KeyboardKey::ArrowRight)
+            Some(Key::ArrowRight)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::Enter),
-            Some(KeyboardKey::Enter)
+            Some(Key::Enter)
         );
         assert_eq!(
             keycode_controller_input(KeyCode::Digit1),
-            Some(KeyboardKey::Digit1)
+            Some(Key::Digit1)
         );
     }
 
