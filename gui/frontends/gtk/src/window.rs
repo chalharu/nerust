@@ -5,7 +5,6 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
-use keyboard_types::Code;
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
@@ -75,68 +74,6 @@ pub(crate) trait WindowExtend {
 pub(crate) enum KeyEventState {
     Press,
     Release,
-}
-
-fn gdk_key_controller_input(key: gdk::Key) -> Option<Code> {
-    Some(match key {
-        gdk::Key::a | gdk::Key::A => Code::KeyA,
-        gdk::Key::b | gdk::Key::B => Code::KeyB,
-        gdk::Key::c | gdk::Key::C => Code::KeyC,
-        gdk::Key::d | gdk::Key::D => Code::KeyD,
-        gdk::Key::e | gdk::Key::E => Code::KeyE,
-        gdk::Key::f | gdk::Key::F => Code::KeyF,
-        gdk::Key::g | gdk::Key::G => Code::KeyG,
-        gdk::Key::h | gdk::Key::H => Code::KeyH,
-        gdk::Key::i | gdk::Key::I => Code::KeyI,
-        gdk::Key::j | gdk::Key::J => Code::KeyJ,
-        gdk::Key::k | gdk::Key::K => Code::KeyK,
-        gdk::Key::l | gdk::Key::L => Code::KeyL,
-        gdk::Key::m | gdk::Key::M => Code::KeyM,
-        gdk::Key::n | gdk::Key::N => Code::KeyN,
-        gdk::Key::o | gdk::Key::O => Code::KeyO,
-        gdk::Key::p | gdk::Key::P => Code::KeyP,
-        gdk::Key::q | gdk::Key::Q => Code::KeyQ,
-        gdk::Key::r | gdk::Key::R => Code::KeyR,
-        gdk::Key::s | gdk::Key::S => Code::KeyS,
-        gdk::Key::t | gdk::Key::T => Code::KeyT,
-        gdk::Key::u | gdk::Key::U => Code::KeyU,
-        gdk::Key::v | gdk::Key::V => Code::KeyV,
-        gdk::Key::w | gdk::Key::W => Code::KeyW,
-        gdk::Key::z | gdk::Key::Z => Code::KeyZ,
-        gdk::Key::x | gdk::Key::X => Code::KeyX,
-        gdk::Key::y | gdk::Key::Y => Code::KeyY,
-        gdk::Key::_0 => Code::Digit0,
-        gdk::Key::_1 => Code::Digit1,
-        gdk::Key::_2 => Code::Digit2,
-        gdk::Key::_3 => Code::Digit3,
-        gdk::Key::_4 => Code::Digit4,
-        gdk::Key::_5 => Code::Digit5,
-        gdk::Key::_6 => Code::Digit6,
-        gdk::Key::_7 => Code::Digit7,
-        gdk::Key::_8 => Code::Digit8,
-        gdk::Key::_9 => Code::Digit9,
-        gdk::Key::Up => Code::ArrowUp,
-        gdk::Key::Down => Code::ArrowDown,
-        gdk::Key::Left => Code::ArrowLeft,
-        gdk::Key::Right => Code::ArrowRight,
-        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => Code::Enter,
-        gdk::Key::Escape => Code::Escape,
-        gdk::Key::space => Code::Space,
-        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => Code::Tab,
-        gdk::Key::F1 => Code::F1,
-        gdk::Key::F2 => Code::F2,
-        gdk::Key::F3 => Code::F3,
-        gdk::Key::F4 => Code::F4,
-        gdk::Key::F5 => Code::F5,
-        gdk::Key::F6 => Code::F6,
-        gdk::Key::F7 => Code::F7,
-        gdk::Key::F8 => Code::F8,
-        gdk::Key::F9 => Code::F9,
-        gdk::Key::F10 => Code::F10,
-        gdk::Key::F11 => Code::F11,
-        gdk::Key::F12 => Code::F12,
-        _ => return None,
-    })
 }
 
 fn key_event_pressed(event: KeyEventState) -> bool {
@@ -546,7 +483,7 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        if let Some(controller_input) = gdk_key_controller_input(key) {
+        if let Some(controller_input) = super::key_mapping::gdk_key_to_code(key) {
             let shortcut = self
                 .state()
                 .borrow_mut()
@@ -647,21 +584,30 @@ fn rebuild_slot_menu(
 mod tests {
     use keyboard_types::Code;
 
-    use super::gdk_key_controller_input;
+    use super::super::key_mapping;
 
     #[test]
     fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(gdk_key_controller_input(gdk::Key::z), Some(Code::KeyZ));
-        assert_eq!(gdk_key_controller_input(gdk::Key::x), Some(Code::KeyX));
-        assert_eq!(gdk_key_controller_input(gdk::Key::Up), Some(Code::ArrowUp));
         assert_eq!(
-            gdk_key_controller_input(gdk::Key::Right),
+            super::super::key_mapping::gdk_key_to_code(gdk::Key::z),
+            Some(Code::KeyZ)
+        );
+        assert_eq!(key_mapping::gdk_key_to_code(gdk::Key::x), Some(Code::KeyX));
+        assert_eq!(
+            key_mapping::gdk_key_to_code(gdk::Key::Up),
+            Some(Code::ArrowUp)
+        );
+        assert_eq!(
+            key_mapping::gdk_key_to_code(gdk::Key::Right),
             Some(Code::ArrowRight)
         );
         assert_eq!(
-            gdk_key_controller_input(gdk::Key::Return),
+            key_mapping::gdk_key_to_code(gdk::Key::Return),
             Some(Code::Enter)
         );
-        assert_eq!(gdk_key_controller_input(gdk::Key::_1), Some(Code::Digit1));
+        assert_eq!(
+            key_mapping::gdk_key_to_code(gdk::Key::_1),
+            Some(Code::Digit1)
+        );
     }
 }

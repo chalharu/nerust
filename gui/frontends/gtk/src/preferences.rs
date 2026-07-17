@@ -8,7 +8,6 @@ use gtk::{
         DialogExt as _, EditableExt as _, GridExt as _, GtkWindowExt as _, WidgetExt as _,
     },
 };
-use keyboard_types::Code;
 use nerust_core_traits::{
     factory::{
         CoreFactory,
@@ -30,6 +29,8 @@ use nerust_gui_shell::{
         i18n::{UiText, text},
     },
 };
+
+use super::key_mapping;
 use nerust_gui_shell::{
     session::access::{FrontendSession, SettingsResult},
     session::input::build_topology,
@@ -629,7 +630,7 @@ pub(crate) fn present_preferences_dialog(
             let Some(target) = capture_target.borrow().clone() else {
                 return glib::Propagation::Proceed;
             };
-            let Some(mapped_key) = gdk_key_to_keyboard_key(key) else {
+            let Some(mapped_key) = key_mapping::gdk_key_to_code(key) else {
                 return glib::Propagation::Stop;
             };
             apply_capture_target(&mut draft.borrow_mut(), &target, Some(mapped_key));
@@ -1493,68 +1494,6 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     scroller.set_child(Some(&page));
 
     (scroller, page)
-}
-
-fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<Code> {
-    Some(match key {
-        gdk::Key::_0 => Code::Digit0,
-        gdk::Key::_1 => Code::Digit1,
-        gdk::Key::_2 => Code::Digit2,
-        gdk::Key::_3 => Code::Digit3,
-        gdk::Key::_4 => Code::Digit4,
-        gdk::Key::_5 => Code::Digit5,
-        gdk::Key::_6 => Code::Digit6,
-        gdk::Key::_7 => Code::Digit7,
-        gdk::Key::_8 => Code::Digit8,
-        gdk::Key::_9 => Code::Digit9,
-        gdk::Key::a | gdk::Key::A => Code::KeyA,
-        gdk::Key::b | gdk::Key::B => Code::KeyB,
-        gdk::Key::c | gdk::Key::C => Code::KeyC,
-        gdk::Key::d | gdk::Key::D => Code::KeyD,
-        gdk::Key::e | gdk::Key::E => Code::KeyE,
-        gdk::Key::f | gdk::Key::F => Code::KeyF,
-        gdk::Key::g | gdk::Key::G => Code::KeyG,
-        gdk::Key::h | gdk::Key::H => Code::KeyH,
-        gdk::Key::i | gdk::Key::I => Code::KeyI,
-        gdk::Key::j | gdk::Key::J => Code::KeyJ,
-        gdk::Key::k | gdk::Key::K => Code::KeyK,
-        gdk::Key::l | gdk::Key::L => Code::KeyL,
-        gdk::Key::m | gdk::Key::M => Code::KeyM,
-        gdk::Key::n | gdk::Key::N => Code::KeyN,
-        gdk::Key::o | gdk::Key::O => Code::KeyO,
-        gdk::Key::p | gdk::Key::P => Code::KeyP,
-        gdk::Key::q | gdk::Key::Q => Code::KeyQ,
-        gdk::Key::r | gdk::Key::R => Code::KeyR,
-        gdk::Key::s | gdk::Key::S => Code::KeyS,
-        gdk::Key::t | gdk::Key::T => Code::KeyT,
-        gdk::Key::u | gdk::Key::U => Code::KeyU,
-        gdk::Key::v | gdk::Key::V => Code::KeyV,
-        gdk::Key::w | gdk::Key::W => Code::KeyW,
-        gdk::Key::x | gdk::Key::X => Code::KeyX,
-        gdk::Key::y | gdk::Key::Y => Code::KeyY,
-        gdk::Key::z | gdk::Key::Z => Code::KeyZ,
-        gdk::Key::Up => Code::ArrowUp,
-        gdk::Key::Down => Code::ArrowDown,
-        gdk::Key::Left => Code::ArrowLeft,
-        gdk::Key::Right => Code::ArrowRight,
-        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => Code::Enter,
-        gdk::Key::Escape => Code::Escape,
-        gdk::Key::space => Code::Space,
-        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => Code::Tab,
-        gdk::Key::F1 => Code::F1,
-        gdk::Key::F2 => Code::F2,
-        gdk::Key::F3 => Code::F3,
-        gdk::Key::F4 => Code::F4,
-        gdk::Key::F5 => Code::F5,
-        gdk::Key::F6 => Code::F6,
-        gdk::Key::F7 => Code::F7,
-        gdk::Key::F8 => Code::F8,
-        gdk::Key::F9 => Code::F9,
-        gdk::Key::F10 => Code::F10,
-        gdk::Key::F11 => Code::F11,
-        gdk::Key::F12 => Code::F12,
-        _ => return None,
-    })
 }
 
 fn run_finish_callback(finish: &FinishCallback) {

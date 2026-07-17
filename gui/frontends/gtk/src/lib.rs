@@ -1,4 +1,5 @@
 mod gdk_raw;
+mod key_mapping;
 mod preferences;
 mod renderer;
 mod surface;
