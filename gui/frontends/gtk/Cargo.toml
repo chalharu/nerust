@@ -18,7 +18,7 @@ nerust_input_traits.workspace = true
 nerust_core_traits.workspace = true
 nerust_run_options.workspace = true
 nerust_render_base.workspace = true
-nerust_keyboard = { workspace = true, default-features = false, features = ["gdk"] }
+nerust_keyboard = { workspace = true, features = ["gdk"] }
 nerust_persistence.workspace = true
 raw-window-handle.workspace = true
 
@@ -30,7 +30,6 @@ objc2-quartz-core.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gdk-win32.workspace = true
-nerust_keyboard = { workspace = true, default-features = false, features = ["gdk"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 gdk4-wayland-sys.workspace = true
