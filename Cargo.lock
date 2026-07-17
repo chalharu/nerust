@@ -2908,6 +2908,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_keyboard"
+version = "0.1.0-dev"
+dependencies = [
+ "gdk4",
+ "ndk",
+ "serde",
+ "tao",
+]
+
+[[package]]
 name = "nerust_nes_controller"
 version = "0.1.0-dev"
 dependencies = [
