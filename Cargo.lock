@@ -2919,6 +2919,7 @@ dependencies = [
  "iced",
  "serde",
  "tao",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

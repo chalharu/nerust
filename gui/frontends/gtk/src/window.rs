@@ -8,7 +8,6 @@ use gtk::{
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
-use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::renderer::GpuFactory;
 
@@ -75,68 +74,6 @@ pub(crate) trait WindowExtend {
 pub(crate) enum KeyEventState {
     Press,
     Release,
-}
-
-fn gdk_key_controller_input(key: gdk::Key) -> Option<Key> {
-    Some(match key {
-        gdk::Key::a | gdk::Key::A => Key::KeyA,
-        gdk::Key::b | gdk::Key::B => Key::KeyB,
-        gdk::Key::c | gdk::Key::C => Key::KeyC,
-        gdk::Key::d | gdk::Key::D => Key::KeyD,
-        gdk::Key::e | gdk::Key::E => Key::KeyE,
-        gdk::Key::f | gdk::Key::F => Key::KeyF,
-        gdk::Key::g | gdk::Key::G => Key::KeyG,
-        gdk::Key::h | gdk::Key::H => Key::KeyH,
-        gdk::Key::i | gdk::Key::I => Key::KeyI,
-        gdk::Key::j | gdk::Key::J => Key::KeyJ,
-        gdk::Key::k | gdk::Key::K => Key::KeyK,
-        gdk::Key::l | gdk::Key::L => Key::KeyL,
-        gdk::Key::m | gdk::Key::M => Key::KeyM,
-        gdk::Key::n | gdk::Key::N => Key::KeyN,
-        gdk::Key::o | gdk::Key::O => Key::KeyO,
-        gdk::Key::p | gdk::Key::P => Key::KeyP,
-        gdk::Key::q | gdk::Key::Q => Key::KeyQ,
-        gdk::Key::r | gdk::Key::R => Key::KeyR,
-        gdk::Key::s | gdk::Key::S => Key::KeyS,
-        gdk::Key::t | gdk::Key::T => Key::KeyT,
-        gdk::Key::u | gdk::Key::U => Key::KeyU,
-        gdk::Key::v | gdk::Key::V => Key::KeyV,
-        gdk::Key::w | gdk::Key::W => Key::KeyW,
-        gdk::Key::z | gdk::Key::Z => Key::KeyZ,
-        gdk::Key::x | gdk::Key::X => Key::KeyX,
-        gdk::Key::y | gdk::Key::Y => Key::KeyY,
-        gdk::Key::_0 => Key::Digit0,
-        gdk::Key::_1 => Key::Digit1,
-        gdk::Key::_2 => Key::Digit2,
-        gdk::Key::_3 => Key::Digit3,
-        gdk::Key::_4 => Key::Digit4,
-        gdk::Key::_5 => Key::Digit5,
-        gdk::Key::_6 => Key::Digit6,
-        gdk::Key::_7 => Key::Digit7,
-        gdk::Key::_8 => Key::Digit8,
-        gdk::Key::_9 => Key::Digit9,
-        gdk::Key::Up => Key::ArrowUp,
-        gdk::Key::Down => Key::ArrowDown,
-        gdk::Key::Left => Key::ArrowLeft,
-        gdk::Key::Right => Key::ArrowRight,
-        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => Key::Enter,
-        gdk::Key::Escape => Key::Escape,
-        gdk::Key::space => Key::Space,
-        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => Key::Tab,
-        gdk::Key::F1 => Key::F1,
-        gdk::Key::F2 => Key::F2,
-        gdk::Key::F3 => Key::F3,
-        gdk::Key::F4 => Key::F4,
-        gdk::Key::F5 => Key::F5,
-        gdk::Key::F6 => Key::F6,
-        gdk::Key::F7 => Key::F7,
-        gdk::Key::F8 => Key::F8,
-        gdk::Key::F9 => Key::F9,
-        gdk::Key::F10 => Key::F10,
-        gdk::Key::F11 => Key::F11,
-        gdk::Key::F12 => Key::F12,
-        _ => return None,
-    })
 }
 
 fn key_event_pressed(event: KeyEventState) -> bool {
@@ -546,7 +483,7 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        if let Some(controller_input) = gdk_key_controller_input(key) {
+        if let Some(controller_input) = key.try_into().ok() {
             let shortcut = self
                 .state()
                 .borrow_mut()
@@ -640,25 +577,5 @@ fn rebuild_slot_menu(
         let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
         item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
         menu.append_item(&item);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use nerust_keyboard::Key;
-
-    use super::gdk_key_controller_input;
-
-    #[test]
-    fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(gdk_key_controller_input(gdk::Key::z), Some(Key::KeyZ));
-        assert_eq!(gdk_key_controller_input(gdk::Key::x), Some(Key::KeyX));
-        assert_eq!(gdk_key_controller_input(gdk::Key::Up), Some(Key::ArrowUp));
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Right),
-            Some(Key::ArrowRight)
-        );
-        assert_eq!(gdk_key_controller_input(gdk::Key::Return), Some(Key::Enter));
-        assert_eq!(gdk_key_controller_input(gdk::Key::_1), Some(Key::Digit1));
     }
 }

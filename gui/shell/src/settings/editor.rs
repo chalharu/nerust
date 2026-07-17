@@ -5,8 +5,6 @@ use nerust_gui_settings::input::{
 };
 use nerust_keyboard::Key;
 
-use crate::settings::bindings::keys::keyboard_key_label;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
     Binding {
@@ -50,7 +48,7 @@ pub fn current_binding_label(
     snapshot: &SettingsSnapshot,
     target: &CaptureTarget,
 ) -> Option<&'static str> {
-    current_binding_key(snapshot, target).map(keyboard_key_label)
+    current_binding_key(snapshot, target).map(|key| key.label())
 }
 
 pub fn apply_capture_target(
