@@ -21,7 +21,6 @@ use nerust_gui_shell::{
         scaling_factor,
     },
 };
-use nerust_keyboard::Key;
 use nerust_render_base::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
@@ -31,7 +30,6 @@ use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
     event_loop::{ControlFlow, EventLoopWindowTarget},
-    keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
@@ -244,7 +242,7 @@ impl HostState {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
-            && let Some(key) = keycode_controller_input(input.physical_key)
+            && let Some(key) = input.physical_key.try_into().ok()
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
@@ -735,68 +733,6 @@ fn logical_size_from_remembered(size: RememberedWindowSize) -> TaoLogicalSize<f6
     TaoLogicalSize::new(f64::from(size.width), f64::from(size.height))
 }
 
-fn keycode_controller_input(code: KeyCode) -> Option<Key> {
-    Some(match code {
-        KeyCode::Digit0 => Key::Digit0,
-        KeyCode::Digit1 => Key::Digit1,
-        KeyCode::Digit2 => Key::Digit2,
-        KeyCode::Digit3 => Key::Digit3,
-        KeyCode::Digit4 => Key::Digit4,
-        KeyCode::Digit5 => Key::Digit5,
-        KeyCode::Digit6 => Key::Digit6,
-        KeyCode::Digit7 => Key::Digit7,
-        KeyCode::Digit8 => Key::Digit8,
-        KeyCode::Digit9 => Key::Digit9,
-        KeyCode::KeyA => Key::KeyA,
-        KeyCode::KeyB => Key::KeyB,
-        KeyCode::KeyC => Key::KeyC,
-        KeyCode::KeyD => Key::KeyD,
-        KeyCode::KeyE => Key::KeyE,
-        KeyCode::KeyF => Key::KeyF,
-        KeyCode::KeyG => Key::KeyG,
-        KeyCode::KeyH => Key::KeyH,
-        KeyCode::KeyI => Key::KeyI,
-        KeyCode::KeyJ => Key::KeyJ,
-        KeyCode::KeyK => Key::KeyK,
-        KeyCode::KeyL => Key::KeyL,
-        KeyCode::KeyM => Key::KeyM,
-        KeyCode::KeyN => Key::KeyN,
-        KeyCode::KeyO => Key::KeyO,
-        KeyCode::KeyP => Key::KeyP,
-        KeyCode::KeyQ => Key::KeyQ,
-        KeyCode::KeyR => Key::KeyR,
-        KeyCode::KeyS => Key::KeyS,
-        KeyCode::KeyT => Key::KeyT,
-        KeyCode::KeyU => Key::KeyU,
-        KeyCode::KeyV => Key::KeyV,
-        KeyCode::KeyW => Key::KeyW,
-        KeyCode::KeyZ => Key::KeyZ,
-        KeyCode::KeyX => Key::KeyX,
-        KeyCode::KeyY => Key::KeyY,
-        KeyCode::ArrowUp => Key::ArrowUp,
-        KeyCode::ArrowDown => Key::ArrowDown,
-        KeyCode::ArrowLeft => Key::ArrowLeft,
-        KeyCode::ArrowRight => Key::ArrowRight,
-        KeyCode::Enter => Key::Enter,
-        KeyCode::Escape => Key::Escape,
-        KeyCode::Space => Key::Space,
-        KeyCode::Tab => Key::Tab,
-        KeyCode::F1 => Key::F1,
-        KeyCode::F2 => Key::F2,
-        KeyCode::F3 => Key::F3,
-        KeyCode::F4 => Key::F4,
-        KeyCode::F5 => Key::F5,
-        KeyCode::F6 => Key::F6,
-        KeyCode::F7 => Key::F7,
-        KeyCode::F8 => Key::F8,
-        KeyCode::F9 => Key::F9,
-        KeyCode::F10 => Key::F10,
-        KeyCode::F11 => Key::F11,
-        KeyCode::F12 => Key::F12,
-        _ => return None,
-    })
-}
-
 fn element_state_to_pressed(state: ElementState) -> Option<bool> {
     Some(match state {
         ElementState::Pressed => true,
@@ -807,29 +743,9 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use nerust_keyboard::Key;
-    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
+    use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
-    use super::{
-        NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
-        keycode_controller_input,
-    };
-
-    #[test]
-    fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(Key::KeyZ));
-        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(Key::KeyX));
-        assert_eq!(
-            keycode_controller_input(KeyCode::ArrowUp),
-            Some(Key::ArrowUp)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::ArrowRight),
-            Some(Key::ArrowRight)
-        );
-        assert_eq!(keycode_controller_input(KeyCode::Enter), Some(Key::Enter));
-        assert_eq!(keycode_controller_input(KeyCode::Digit1), Some(Key::Digit1));
-    }
+    use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
 
     #[test]
     fn window_builder_requests_initial_fullscreen_when_enabled() {

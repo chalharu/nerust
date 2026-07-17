@@ -28,7 +28,6 @@ use nerust_gui_shell::settings::{
     bindings::{
         conflicting_keys,
         descriptors::{keyboard_binding_sections, shortcut_descriptors},
-        keys::keyboard_key_label,
     },
     editor::{CaptureTarget, apply_capture_target, current_binding_label},
     factory::{apply_settings_choice, resolve_label, settings_view},
@@ -287,11 +286,7 @@ impl SettingsAppState {
             &input_topology(self),
             self.factory.system_id(),
         ) {
-            errors.push(format!(
-                "{}: {}",
-                keyboard_key_label(key),
-                labels.join(", ")
-            ));
+            errors.push(format!("{}: {}", key.label(), labels.join(", ")));
         }
         errors
     }
@@ -310,11 +305,7 @@ impl SettingsAppState {
         )
         .into_iter()
         .next()?;
-        Some(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ))
+        Some(format!("{}: {}", key.label(), labels.join(", ")))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1019,7 +1010,7 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
     let iced::keyboard::key::Physical::Code(code) = physical else {
         return None;
     };
-    Some(code.into())
+    code.try_into().ok()
 }
 
 #[cfg(test)]

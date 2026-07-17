@@ -10,12 +10,14 @@ rust-version.workspace = true
 
 [features]
 default = []
-gdk = ["dep:gdk"]
-iced = ["dep:iced"]
-tao = ["dep:tao"]
+error = ["dep:thiserror"]
+gdk = ["dep:gdk", "error"]
+iced = ["dep:iced", "error"]
+tao = ["dep:tao", "error"]
 
 [dependencies]
 gdk = { workspace = true, optional = true }
 iced = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tao = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
