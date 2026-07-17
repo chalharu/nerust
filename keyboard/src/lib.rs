@@ -196,3 +196,72 @@ mod gdk_impl {
         }
     }
 }
+
+#[cfg(feature = "iced")]
+mod iced_impl {
+    use crate::Key;
+
+    impl From<iced::keyboard::key::Code> for Key {
+        fn from(code: iced::keyboard::key::Code) -> Self {
+            match code {
+                iced::keyboard::key::Code::Digit0 => Key::Digit0,
+                iced::keyboard::key::Code::Digit1 => Key::Digit1,
+                iced::keyboard::key::Code::Digit2 => Key::Digit2,
+                iced::keyboard::key::Code::Digit3 => Key::Digit3,
+                iced::keyboard::key::Code::Digit4 => Key::Digit4,
+                iced::keyboard::key::Code::Digit5 => Key::Digit5,
+                iced::keyboard::key::Code::Digit6 => Key::Digit6,
+                iced::keyboard::key::Code::Digit7 => Key::Digit7,
+                iced::keyboard::key::Code::Digit8 => Key::Digit8,
+                iced::keyboard::key::Code::Digit9 => Key::Digit9,
+                iced::keyboard::key::Code::KeyA => Key::KeyA,
+                iced::keyboard::key::Code::KeyB => Key::KeyB,
+                iced::keyboard::key::Code::KeyC => Key::KeyC,
+                iced::keyboard::key::Code::KeyD => Key::KeyD,
+                iced::keyboard::key::Code::KeyE => Key::KeyE,
+                iced::keyboard::key::Code::KeyF => Key::KeyF,
+                iced::keyboard::key::Code::KeyG => Key::KeyG,
+                iced::keyboard::key::Code::KeyH => Key::KeyH,
+                iced::keyboard::key::Code::KeyI => Key::KeyI,
+                iced::keyboard::key::Code::KeyJ => Key::KeyJ,
+                iced::keyboard::key::Code::KeyK => Key::KeyK,
+                iced::keyboard::key::Code::KeyL => Key::KeyL,
+                iced::keyboard::key::Code::KeyM => Key::KeyM,
+                iced::keyboard::key::Code::KeyN => Key::KeyN,
+                iced::keyboard::key::Code::KeyO => Key::KeyO,
+                iced::keyboard::key::Code::KeyP => Key::KeyP,
+                iced::keyboard::key::Code::KeyQ => Key::KeyQ,
+                iced::keyboard::key::Code::KeyR => Key::KeyR,
+                iced::keyboard::key::Code::KeyS => Key::KeyS,
+                iced::keyboard::key::Code::KeyT => Key::KeyT,
+                iced::keyboard::key::Code::KeyU => Key::KeyU,
+                iced::keyboard::key::Code::KeyV => Key::KeyV,
+                iced::keyboard::key::Code::KeyW => Key::KeyW,
+                iced::keyboard::key::Code::KeyX => Key::KeyX,
+                iced::keyboard::key::Code::KeyY => Key::KeyY,
+                iced::keyboard::key::Code::KeyZ => Key::KeyZ,
+                iced::keyboard::key::Code::ArrowUp => Key::ArrowUp,
+                iced::keyboard::key::Code::ArrowDown => Key::ArrowDown,
+                iced::keyboard::key::Code::ArrowLeft => Key::ArrowLeft,
+                iced::keyboard::key::Code::ArrowRight => Key::ArrowRight,
+                iced::keyboard::key::Code::Enter | iced::keyboard::key::Code::NumpadEnter => Key::Enter,
+                iced::keyboard::key::Code::Escape => Key::Escape,
+                iced::keyboard::key::Code::Space => Key::Space,
+                iced::keyboard::key::Code::Tab => Key::Tab,
+                iced::keyboard::key::Code::F1 => Key::F1,
+                iced::keyboard::key::Code::F2 => Key::F2,
+                iced::keyboard::key::Code::F3 => Key::F3,
+                iced::keyboard::key::Code::F4 => Key::F4,
+                iced::keyboard::key::Code::F5 => Key::F5,
+                iced::keyboard::key::Code::F6 => Key::F6,
+                iced::keyboard::key::Code::F7 => Key::F7,
+                iced::keyboard::key::Code::F8 => Key::F8,
+                iced::keyboard::key::Code::F9 => Key::F9,
+                iced::keyboard::key::Code::F10 => Key::F10,
+                iced::keyboard::key::Code::F11 => Key::F11,
+                iced::keyboard::key::Code::F12 => Key::F12,
+                _ => panic!("unrecognized iced Code: {code:?}"),
+            }
+        }
+    }
+}

@@ -14,7 +14,7 @@ iced = { workspace = true, features = ["advanced"] }
 iced_tiny_skia.workspace = true
 iced_winit.workspace = true
 log.workspace = true
-nerust_keyboard = { workspace = true, default-features = false, features = ["tao"] }
+nerust_keyboard = { workspace = true, default-features = false, features = ["tao", "iced"] }
 muda.workspace = true
 nerust_core_traits.workspace = true
 nerust_render_base.workspace = true

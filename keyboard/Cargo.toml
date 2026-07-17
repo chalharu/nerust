@@ -9,9 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["tao", "gdk"]
+default = ["tao", "gdk", "iced"]
 tao = ["dep:tao"]
 gdk = ["dep:gdk"]
+iced = ["dep:iced"]
 android = ["dep:ndk"]
 
 [dependencies]
@@ -19,6 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 
 tao = { workspace = true, optional = true }
 gdk = { workspace = true, optional = true }
+iced = { workspace = true, optional = true }
 ndk = { optional = true, version = "0.9" }
 
 [lints.rust]
