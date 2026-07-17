@@ -76,6 +76,8 @@ impl TryFrom<KeyCode> for Key {
             KeyCode::AltLeft => Ok(Key::AltLeft),
             KeyCode::AltRight => Ok(Key::AltRight),
             KeyCode::Backquote => Ok(Key::Backquote),
+            KeyCode::NumpadEnter => Ok(Key::NumpadEnter),
+            KeyCode::Insert => Ok(Key::Insert),
             _ => Err(crate::error::KeyboardError::KeyCodeConversionError(
                 format!("{:?}", code),
             )),
@@ -153,6 +155,8 @@ impl From<Key> for KeyCode {
             Key::AltLeft => KeyCode::AltLeft,
             Key::AltRight => KeyCode::AltRight,
             Key::Backquote => KeyCode::Backquote,
+            Key::NumpadEnter => KeyCode::NumpadEnter,
+            Key::Insert => KeyCode::Insert,
         }
     }
 }

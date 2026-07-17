@@ -75,6 +75,8 @@ pub enum Key {
     AltLeft,
     AltRight,
     Backquote,
+    NumpadEnter,
+    Insert,
 }
 
 impl Key {
@@ -147,6 +149,8 @@ impl Key {
             Key::AltLeft => "Alt",
             Key::AltRight => "Alt",
             Key::Backquote => "`",
+            Key::NumpadEnter => "NumpadEnter",
+            Key::Insert => "Insert",
         }
     }
 }

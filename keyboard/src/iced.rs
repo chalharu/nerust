@@ -49,7 +49,7 @@ impl TryFrom<Code> for Key {
             Code::ArrowDown => Ok(Key::ArrowDown),
             Code::ArrowLeft => Ok(Key::ArrowLeft),
             Code::ArrowRight => Ok(Key::ArrowRight),
-            Code::Enter | Code::NumpadEnter => Ok(Key::Enter),
+            Code::Enter => Ok(Key::Enter),
             Code::Escape => Ok(Key::Escape),
             Code::Space => Ok(Key::Space),
             Code::Tab => Ok(Key::Tab),
@@ -76,6 +76,8 @@ impl TryFrom<Code> for Key {
             Code::AltLeft => Ok(Key::AltLeft),
             Code::AltRight => Ok(Key::AltRight),
             Code::Backquote => Ok(Key::Backquote),
+            Code::NumpadEnter => Ok(Key::NumpadEnter),
+            Code::Insert => Ok(Key::Insert),
             _ => Err(KeyboardError::KeyCodeConversionError(format!("{:?}", code))),
         }
     }
@@ -151,6 +153,8 @@ impl From<Key> for Code {
             Key::AltLeft => Code::AltLeft,
             Key::AltRight => Code::AltRight,
             Key::Backquote => Code::Backquote,
+            Key::NumpadEnter => Code::NumpadEnter,
+            Key::Insert => Code::Insert,
         }
     }
 }

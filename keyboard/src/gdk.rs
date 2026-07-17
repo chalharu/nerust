@@ -47,7 +47,7 @@ impl TryFrom<gdk::Key> for Key {
             gdk::Key::Down => Ok(Key::ArrowDown),
             gdk::Key::Left => Ok(Key::ArrowLeft),
             gdk::Key::Right => Ok(Key::ArrowRight),
-            gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => Ok(Key::Enter),
+            gdk::Key::Return | gdk::Key::ISO_Enter => Ok(Key::Enter),
             gdk::Key::Escape => Ok(Key::Escape),
             gdk::Key::space => Ok(Key::Space),
             gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => Ok(Key::Tab),
@@ -74,6 +74,8 @@ impl TryFrom<gdk::Key> for Key {
             gdk::Key::Alt_L => Ok(Key::AltLeft),
             gdk::Key::Alt_R => Ok(Key::AltRight),
             gdk::Key::grave | gdk::Key::asciitilde => Ok(Key::Backquote),
+            gdk::Key::KP_Enter => Ok(Key::NumpadEnter),
+            gdk::Key::Insert => Ok(Key::Insert),
             _ => Err(crate::error::KeyboardError::KeyCodeConversionError(
                 format!("{:?}", key),
             )),
@@ -151,6 +153,8 @@ impl From<Key> for gdk::Key {
             Key::AltLeft => gdk::Key::Alt_L,
             Key::AltRight => gdk::Key::Alt_R,
             Key::Backquote => gdk::Key::grave,
+            Key::NumpadEnter => gdk::Key::KP_Enter,
+            Key::Insert => gdk::Key::Insert,
         }
     }
 }
