@@ -1,5 +1,4 @@
 mod gdk_raw;
-mod key_mapping;
 mod preferences;
 mod renderer;
 mod surface;
@@ -18,7 +17,7 @@ use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
-use nerust_gui_settings::{input::Key, language::AppLanguage};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -32,6 +31,7 @@ use nerust_gui_shell::{
     },
 };
 
+use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;

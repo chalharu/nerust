@@ -9,19 +9,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["tao", "gdk", "iced"]
-tao = ["dep:tao"]
+default = []
 gdk = ["dep:gdk"]
 iced = ["dep:iced"]
-android = ["dep:ndk"]
+tao = ["dep:tao"]
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-
-tao = { workspace = true, optional = true }
 gdk = { workspace = true, optional = true }
 iced = { workspace = true, optional = true }
-ndk = { optional = true, version = "0.9" }
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+serde = { workspace = true, features = ["derive"] }
+tao = { workspace = true, optional = true }

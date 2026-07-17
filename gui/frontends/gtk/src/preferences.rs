@@ -16,9 +16,7 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
-use nerust_gui_settings::{
-    input::Key, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
-};
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
     session::SessionError,
     settings::{
@@ -38,6 +36,7 @@ use nerust_gui_shell::{
     settings::factory::resolve_label,
 };
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor, SlotInfo};
+use nerust_keyboard::Key;
 use std::collections::HashSet;
 
 use crate::State;

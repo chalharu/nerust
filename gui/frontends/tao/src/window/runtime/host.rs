@@ -7,10 +7,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::{
-    app_state::RememberedWindowSize,
-    input::{Key, ShortcutAction},
-};
+use nerust_gui_settings::{app_state::RememberedWindowSize, input::ShortcutAction};
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -24,6 +21,7 @@ use nerust_gui_shell::{
         scaling_factor,
     },
 };
+use nerust_keyboard::Key;
 use nerust_render_base::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
@@ -819,14 +817,8 @@ mod tests {
 
     #[test]
     fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyZ),
-            Some(Key::KeyZ)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyX),
-            Some(Key::KeyX)
-        );
+        assert_eq!(keycode_controller_input(KeyCode::KeyZ), Some(Key::KeyZ));
+        assert_eq!(keycode_controller_input(KeyCode::KeyX), Some(Key::KeyX));
         assert_eq!(
             keycode_controller_input(KeyCode::ArrowUp),
             Some(Key::ArrowUp)
@@ -835,14 +827,8 @@ mod tests {
             keycode_controller_input(KeyCode::ArrowRight),
             Some(Key::ArrowRight)
         );
-        assert_eq!(
-            keycode_controller_input(KeyCode::Enter),
-            Some(Key::Enter)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::Digit1),
-            Some(Key::Digit1)
-        );
+        assert_eq!(keycode_controller_input(KeyCode::Enter), Some(Key::Enter));
+        assert_eq!(keycode_controller_input(KeyCode::Digit1), Some(Key::Digit1));
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub mod language {
 pub mod input {
     use nerust_core_traits::identity::SystemId;
     use nerust_input_traits::{AttachmentId, DigitalControlId};
+    use nerust_keyboard::Key;
 
     use super::BTreeMap;
 
@@ -58,11 +59,7 @@ pub mod input {
     }
 
     impl KeyboardBinding {
-        pub fn new(
-            attachment: impl Into<String>,
-            control: PersistedControlId,
-            key: Key,
-        ) -> Self {
+        pub fn new(attachment: impl Into<String>, control: PersistedControlId, key: Key) -> Self {
             Self {
                 attachment: PersistedAttachmentId::new(attachment),
                 control,
@@ -157,8 +154,6 @@ pub mod input {
             matches!(self, Self::Digital(v) if v == other.as_str())
         }
     }
-
-    pub use nerust_keyboard::Key;
 }
 
 pub mod nes {
@@ -470,9 +465,11 @@ pub mod app_state {
 
 #[cfg(test)]
 mod tests {
+    use nerust_keyboard::Key;
+
     use super::{
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
-        input::{Key, ShortcutAction, ShortcutBinding},
+        input::{ShortcutAction, ShortcutBinding},
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
         },
