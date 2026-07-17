@@ -25,7 +25,7 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{
-    input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
+    input::Key, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
 };
 use nerust_gui_shell::settings::{
     bindings::{
@@ -95,7 +95,7 @@ pub(crate) enum Message {
     SetSystemChoice(String, Choice<String>),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
-    CaptureKey(KeyboardKey),
+    CaptureKey(Key),
     SetControllerSlot {
         slot: AttachmentId,
         controller_id: Option<String>,
@@ -1019,67 +1019,67 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
 
 pub(crate) fn keyboard_key_from_physical(
     physical: iced::keyboard::key::Physical,
-) -> Option<KeyboardKey> {
+) -> Option<Key> {
     let iced::keyboard::key::Physical::Code(code) = physical else {
         return None;
     };
     Some(match code {
-        Code::Digit0 => KeyboardKey::Digit0,
-        Code::Digit1 => KeyboardKey::Digit1,
-        Code::Digit2 => KeyboardKey::Digit2,
-        Code::Digit3 => KeyboardKey::Digit3,
-        Code::Digit4 => KeyboardKey::Digit4,
-        Code::Digit5 => KeyboardKey::Digit5,
-        Code::Digit6 => KeyboardKey::Digit6,
-        Code::Digit7 => KeyboardKey::Digit7,
-        Code::Digit8 => KeyboardKey::Digit8,
-        Code::Digit9 => KeyboardKey::Digit9,
-        Code::KeyA => KeyboardKey::KeyA,
-        Code::KeyB => KeyboardKey::KeyB,
-        Code::KeyC => KeyboardKey::KeyC,
-        Code::KeyD => KeyboardKey::KeyD,
-        Code::KeyE => KeyboardKey::KeyE,
-        Code::KeyF => KeyboardKey::KeyF,
-        Code::KeyG => KeyboardKey::KeyG,
-        Code::KeyH => KeyboardKey::KeyH,
-        Code::KeyI => KeyboardKey::KeyI,
-        Code::KeyJ => KeyboardKey::KeyJ,
-        Code::KeyK => KeyboardKey::KeyK,
-        Code::KeyL => KeyboardKey::KeyL,
-        Code::KeyM => KeyboardKey::KeyM,
-        Code::KeyN => KeyboardKey::KeyN,
-        Code::KeyO => KeyboardKey::KeyO,
-        Code::KeyP => KeyboardKey::KeyP,
-        Code::KeyQ => KeyboardKey::KeyQ,
-        Code::KeyR => KeyboardKey::KeyR,
-        Code::KeyS => KeyboardKey::KeyS,
-        Code::KeyT => KeyboardKey::KeyT,
-        Code::KeyU => KeyboardKey::KeyU,
-        Code::KeyV => KeyboardKey::KeyV,
-        Code::KeyW => KeyboardKey::KeyW,
-        Code::KeyX => KeyboardKey::KeyX,
-        Code::KeyY => KeyboardKey::KeyY,
-        Code::KeyZ => KeyboardKey::KeyZ,
-        Code::ArrowUp => KeyboardKey::ArrowUp,
-        Code::ArrowDown => KeyboardKey::ArrowDown,
-        Code::ArrowLeft => KeyboardKey::ArrowLeft,
-        Code::ArrowRight => KeyboardKey::ArrowRight,
-        Code::Enter | Code::NumpadEnter => KeyboardKey::Enter,
-        Code::Escape => KeyboardKey::Escape,
-        Code::Space => KeyboardKey::Space,
-        Code::Tab => KeyboardKey::Tab,
-        Code::F1 => KeyboardKey::F1,
-        Code::F2 => KeyboardKey::F2,
-        Code::F3 => KeyboardKey::F3,
-        Code::F4 => KeyboardKey::F4,
-        Code::F5 => KeyboardKey::F5,
-        Code::F6 => KeyboardKey::F6,
-        Code::F7 => KeyboardKey::F7,
-        Code::F8 => KeyboardKey::F8,
-        Code::F9 => KeyboardKey::F9,
-        Code::F10 => KeyboardKey::F10,
-        Code::F11 => KeyboardKey::F11,
-        Code::F12 => KeyboardKey::F12,
+        Code::Digit0 => Key::Digit0,
+        Code::Digit1 => Key::Digit1,
+        Code::Digit2 => Key::Digit2,
+        Code::Digit3 => Key::Digit3,
+        Code::Digit4 => Key::Digit4,
+        Code::Digit5 => Key::Digit5,
+        Code::Digit6 => Key::Digit6,
+        Code::Digit7 => Key::Digit7,
+        Code::Digit8 => Key::Digit8,
+        Code::Digit9 => Key::Digit9,
+        Code::KeyA => Key::KeyA,
+        Code::KeyB => Key::KeyB,
+        Code::KeyC => Key::KeyC,
+        Code::KeyD => Key::KeyD,
+        Code::KeyE => Key::KeyE,
+        Code::KeyF => Key::KeyF,
+        Code::KeyG => Key::KeyG,
+        Code::KeyH => Key::KeyH,
+        Code::KeyI => Key::KeyI,
+        Code::KeyJ => Key::KeyJ,
+        Code::KeyK => Key::KeyK,
+        Code::KeyL => Key::KeyL,
+        Code::KeyM => Key::KeyM,
+        Code::KeyN => Key::KeyN,
+        Code::KeyO => Key::KeyO,
+        Code::KeyP => Key::KeyP,
+        Code::KeyQ => Key::KeyQ,
+        Code::KeyR => Key::KeyR,
+        Code::KeyS => Key::KeyS,
+        Code::KeyT => Key::KeyT,
+        Code::KeyU => Key::KeyU,
+        Code::KeyV => Key::KeyV,
+        Code::KeyW => Key::KeyW,
+        Code::KeyX => Key::KeyX,
+        Code::KeyY => Key::KeyY,
+        Code::KeyZ => Key::KeyZ,
+        Code::ArrowUp => Key::ArrowUp,
+        Code::ArrowDown => Key::ArrowDown,
+        Code::ArrowLeft => Key::ArrowLeft,
+        Code::ArrowRight => Key::ArrowRight,
+        Code::Enter | Code::NumpadEnter => Key::Enter,
+        Code::Escape => Key::Escape,
+        Code::Space => Key::Space,
+        Code::Tab => Key::Tab,
+        Code::F1 => Key::F1,
+        Code::F2 => Key::F2,
+        Code::F3 => Key::F3,
+        Code::F4 => Key::F4,
+        Code::F5 => Key::F5,
+        Code::F6 => Key::F6,
+        Code::F7 => Key::F7,
+        Code::F8 => Key::F8,
+        Code::F9 => Key::F9,
+        Code::F10 => Key::F10,
+        Code::F11 => Key::F11,
+        Code::F12 => Key::F12,
         _ => return None,
     })
 }
@@ -1087,7 +1087,7 @@ pub(crate) fn keyboard_key_from_physical(
 #[cfg(test)]
 mod tests {
     use iced::keyboard::key::{Code, Physical};
-    use nerust_gui_settings::input::KeyboardKey;
+    use nerust_keyboard::Key;
 
     use super::keyboard_key_from_physical;
 
@@ -1095,15 +1095,15 @@ mod tests {
     fn physical_key_mapping_matches_tao_bindings() {
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::KeyZ)),
-            Some(KeyboardKey::KeyZ)
+            Some(Key::KeyZ)
         );
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::ArrowLeft)),
-            Some(KeyboardKey::ArrowLeft)
+            Some(Key::ArrowLeft)
         );
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::F11)),
-            Some(KeyboardKey::F11)
+            Some(Key::F11)
         );
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::Delete)),

@@ -24,7 +24,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_settings::input::{KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{Key, ShortcutAction};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_base::{FrameBuffer, VideoRenderProfile};
@@ -69,11 +69,11 @@ pub struct SessionHandle {
     pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    pub(super) key_field_map: HashMap<nerust_gui_settings::input::KeyboardKey, usize>,
+    pub(super) key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pub(super) capabilities: HostBackendCapabilities,
     pub(super) settings: SettingsManager,
     pub(super) settings_snapshot: SettingsSnapshot,
-    pub(super) pressed_keys: BTreeSet<KeyboardKey>,
+    pub(super) pressed_keys: BTreeSet<Key>,
     pub(super) loaded_media: Option<LoadedMedia>,
     pub(super) persistence: PersistenceManager,
     pub(super) audio_registry: Arc<AudioBackendRegistry>,
@@ -452,13 +452,13 @@ mod tests {
     fn shortcut_key_returns_shortcut_action_without_controller_event() {
         let mut session = test_session();
         assert_eq!(
-            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+            session.handle_keyboard_key(nerust_keyboard::Key::Space, true),
             Some(KeyboardShortcut::Session(
                 nerust_gui_settings::input::ShortcutAction::TogglePause
             )),
         );
         assert_eq!(
-            session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::Space, true),
+            session.handle_keyboard_key(nerust_keyboard::Key::Space, true),
             None
         );
     }
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn set_fullscreen_default_updates_snapshot_and_plan() {
         let mut session = test_session();
-        session.handle_keyboard_key(nerust_gui_settings::input::KeyboardKey::KeyZ, true);
+        session.handle_keyboard_key(nerust_keyboard::Key::KeyZ, true);
         let plan = session
             .set_fullscreen_default(true)
             .expect("set_fullscreen_default should succeed");

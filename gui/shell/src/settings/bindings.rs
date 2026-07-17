@@ -5,15 +5,15 @@ pub mod keys;
 use std::collections::BTreeMap;
 
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{input::KeyboardKey, shared::DesktopSharedSettings};
+use nerust_gui_settings::{input::Key, shared::DesktopSharedSettings};
 use nerust_input_traits::InputTopologyDescriptor;
 
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,
     topology: &InputTopologyDescriptor,
     system: SystemId,
-) -> BTreeMap<KeyboardKey, Vec<String>> {
-    let mut by_key = BTreeMap::<KeyboardKey, Vec<String>>::new();
+) -> BTreeMap<Key, Vec<String>> {
+    let mut by_key = BTreeMap::<Key, Vec<String>>::new();
 
     if let Some(profile) = settings
         .input
@@ -57,7 +57,7 @@ pub fn conflicting_keys(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::identity::SystemId;
-    use nerust_gui_settings::input::KeyboardKey;
+    use nerust_keyboard::Key;
 
     use super::conflicting_keys;
     use crate::{
@@ -79,9 +79,9 @@ mod tests {
                 )
             })
             .unwrap()
-            .key = Some(KeyboardKey::KeyZ);
+            .key = Some(Key::KeyZ);
 
         let conflicts = conflicting_keys(&settings, &single_port_topology(), SystemId::new("nes"));
-        assert!(conflicts.contains_key(&KeyboardKey::KeyZ));
+        assert!(conflicts.contains_key(&Key::KeyZ));
     }
 }

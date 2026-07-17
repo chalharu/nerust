@@ -1,11 +1,11 @@
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{input::KeyboardKey, shared::DesktopSharedSettings};
+use nerust_gui_settings::{input::Key, shared::DesktopSharedSettings};
 use nerust_input_traits::DigitalInputEvent;
 
 pub fn controller_event_for_key<F>(
     settings: &DesktopSharedSettings,
     system: SystemId,
-    key: KeyboardKey,
+    key: Key,
     pressed: bool,
     resolve: F,
 ) -> Option<DigitalInputEvent>
@@ -33,7 +33,7 @@ where
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::identity::SystemId;
-    use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, PersistedControlId};
+    use nerust_gui_settings::input::{KeyboardBinding, Key, PersistedControlId};
 
     use super::controller_event_for_key;
     use crate::{
@@ -47,7 +47,7 @@ mod tests {
         let event = controller_event_for_key(
             &settings,
             SystemId::new("nes"),
-            KeyboardKey::KeyZ,
+            Key::KeyZ,
             true,
             test_resolve,
         )
@@ -72,12 +72,12 @@ mod tests {
                     TEST_ATT_P2.as_str(),
                 ),
                 control: PersistedControlId::digital(TEST_CTRL_MIC.as_str()),
-                key: KeyboardKey::KeyM,
+                key: Key::KeyM,
             });
         let event = controller_event_for_key(
             &settings,
             SystemId::new("nes"),
-            KeyboardKey::KeyM,
+            Key::KeyM,
             true,
             test_resolve,
         )
