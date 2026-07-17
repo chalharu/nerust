@@ -199,6 +199,8 @@ impl From<Key> for Code {
             Key::Minus => Code::Minus,
             Key::Equal => Code::Equal,
             Key::IntlRo => unreachable!(),
+            Key::Hiragana => unreachable!(),
+            Key::Katakana => unreachable!(),
             Key::IntlYen => unreachable!(),
             Key::Eisu => unreachable!(),
             Key::ZenkakuHankaku => unreachable!(),
