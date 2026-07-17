@@ -206,6 +206,8 @@ impl From<Key> for gdk::Key {
             Key::Minus => unreachable!(),
             Key::Equal => unreachable!(),
             Key::IntlRo => unreachable!(),
+            Key::Hiragana => unreachable!(),
+            Key::Katakana => unreachable!(),
             Key::IntlYen => unreachable!(),
             Key::Eisu => unreachable!(),
             Key::ZenkakuHankaku => unreachable!(),
