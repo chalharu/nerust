@@ -483,7 +483,7 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        if let Some(controller_input) = key.try_into().ok() {
+        if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
                 .borrow_mut()

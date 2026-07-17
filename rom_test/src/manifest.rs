@@ -254,7 +254,7 @@ pub fn load_manifest(path: &Path) -> Result<RomManifest, RomTestError> {
     let manifest = serde_saphyr::from_str::<RomManifest>(&manifest_source).map_err(|source| {
         RomTestError::ParseManifest {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         }
     })?;
     let mut manifest = manifest;

@@ -1007,10 +1007,7 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
 }
 
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
-    let iced::keyboard::key::Physical::Code(code) = physical else {
-        return None;
-    };
-    code.try_into().ok()
+    physical.try_into().ok()
 }
 
 #[cfg(test)]
