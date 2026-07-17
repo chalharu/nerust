@@ -381,13 +381,13 @@ mod tests {
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
     /// call, then delegates to the inner factory for the fallback path.
-    struct FailingOnceFactory {
-        inner: Arc<dyn CoreFactory>,
+    struct FailingOnceFactory<T: CoreFactory> {
+        inner: Arc<T>,
         has_failed: std::sync::atomic::AtomicBool,
     }
 
-    impl FailingOnceFactory {
-        fn new(inner: Arc<dyn CoreFactory>) -> Self {
+    impl<T: CoreFactory> FailingOnceFactory<T> {
+        fn new(inner: Arc<T>) -> Self {
             Self {
                 inner,
                 has_failed: std::sync::atomic::AtomicBool::new(false),
@@ -395,7 +395,7 @@ mod tests {
         }
     }
 
-    impl CoreFactory for FailingOnceFactory {
+    impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
         fn system_id(&self) -> SystemId {
             self.inner.system_id()
         }
