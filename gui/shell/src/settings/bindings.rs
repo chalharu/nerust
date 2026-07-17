@@ -5,8 +5,9 @@ pub mod keys;
 use std::collections::BTreeMap;
 
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{input::Key, shared::DesktopSharedSettings};
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_traits::InputTopologyDescriptor;
+use nerust_keyboard::Key;
 
 pub fn conflicting_keys(
     settings: &DesktopSharedSettings,

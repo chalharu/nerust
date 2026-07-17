@@ -1,6 +1,7 @@
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{input::Key, shared::DesktopSharedSettings};
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_traits::DigitalInputEvent;
+use nerust_keyboard::Key;
 
 pub fn controller_event_for_key<F>(
     settings: &DesktopSharedSettings,
@@ -33,7 +34,8 @@ where
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::identity::SystemId;
-    use nerust_gui_settings::input::{KeyboardBinding, Key, PersistedControlId};
+    use nerust_gui_settings::input::{KeyboardBinding, PersistedControlId};
+    use nerust_keyboard::Key;
 
     use super::controller_event_for_key;
     use crate::{

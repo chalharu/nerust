@@ -23,9 +23,7 @@ use nerust_core_traits::{
     },
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
-use nerust_gui_settings::{
-    input::Key, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
-};
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::settings::{
     bindings::{
         conflicting_keys,
@@ -36,6 +34,7 @@ use nerust_gui_shell::settings::{
     factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
+use nerust_keyboard::Key;
 use std::rc::Rc;
 
 use nerust_input_traits::{
@@ -1016,9 +1015,7 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     build_topology(&state.controller_assignments, slots)
 }
 
-pub(crate) fn keyboard_key_from_physical(
-    physical: iced::keyboard::key::Physical,
-) -> Option<Key> {
+pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
     let iced::keyboard::key::Physical::Code(code) = physical else {
         return None;
     };

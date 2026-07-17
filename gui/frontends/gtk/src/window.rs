@@ -6,11 +6,9 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::{
-    input::{Key, ShortcutAction},
-    local::ScalingMode,
-};
+use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
+use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::renderer::GpuFactory;
 
@@ -653,29 +651,14 @@ mod tests {
 
     #[test]
     fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::z),
-            Some(Key::KeyZ)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::x),
-            Some(Key::KeyX)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Up),
-            Some(Key::ArrowUp)
-        );
+        assert_eq!(gdk_key_controller_input(gdk::Key::z), Some(Key::KeyZ));
+        assert_eq!(gdk_key_controller_input(gdk::Key::x), Some(Key::KeyX));
+        assert_eq!(gdk_key_controller_input(gdk::Key::Up), Some(Key::ArrowUp));
         assert_eq!(
             gdk_key_controller_input(gdk::Key::Right),
             Some(Key::ArrowRight)
         );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Return),
-            Some(Key::Enter)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::_1),
-            Some(Key::Digit1)
-        );
+        assert_eq!(gdk_key_controller_input(gdk::Key::Return), Some(Key::Enter));
+        assert_eq!(gdk_key_controller_input(gdk::Key::_1), Some(Key::Digit1));
     }
 }

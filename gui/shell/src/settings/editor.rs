@@ -1,8 +1,9 @@
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::input::{
-    KeyboardBinding, Key, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+    KeyboardBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction,
 };
+use nerust_keyboard::Key;
 
 use crate::settings::bindings::keys::keyboard_key_label;
 
@@ -16,10 +17,7 @@ pub enum CaptureTarget {
     Shortcut(ShortcutAction),
 }
 
-pub fn current_binding_key(
-    snapshot: &SettingsSnapshot,
-    target: &CaptureTarget,
-) -> Option<Key> {
+pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Key> {
     match target {
         CaptureTarget::Binding {
             system,
@@ -103,7 +101,8 @@ pub fn apply_capture_target(
 mod tests {
     use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
-    use nerust_gui_settings::input::{Key, ShortcutAction};
+    use nerust_gui_settings::input::ShortcutAction;
+    use nerust_keyboard::Key;
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{
@@ -149,10 +148,7 @@ mod tests {
 
         apply_capture_target(&mut snapshot, &target, Some(Key::KeyA));
 
-        assert_eq!(
-            current_binding_key(&snapshot, &target),
-            Some(Key::KeyA)
-        );
+        assert_eq!(current_binding_key(&snapshot, &target), Some(Key::KeyA));
     }
 
     #[test]

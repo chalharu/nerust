@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
-    input::{IMPLICIT_PROFILE_ID, Key, ShortcutAction, ShortcutBinding},
+    input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     local::HostBackendLocalSettings,
     nes::NesSettings,
     shared::{DesktopSharedSettings, SystemSettings},
 };
+use nerust_keyboard::Key;
+
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
         systems: BTreeMap::from([(
