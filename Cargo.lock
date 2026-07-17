@@ -2916,6 +2916,7 @@ name = "nerust_keyboard"
 version = "0.1.0-dev"
 dependencies = [
  "gdk4",
+ "iced",
  "ndk",
  "serde",
  "tao",
