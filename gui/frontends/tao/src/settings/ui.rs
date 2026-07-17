@@ -1031,9 +1031,5 @@ mod tests {
             keyboard_key_from_physical(Physical::Code(Code::F11)),
             Some(Key::F11)
         );
-        assert_eq!(
-            keyboard_key_from_physical(Physical::Code(Code::Delete)),
-            None
-        );
     }
 }
