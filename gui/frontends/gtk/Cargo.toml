@@ -29,7 +29,7 @@ objc2-quartz-core.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gdk-win32.workspace = true
-nerust_keyboard.workspace = true
+nerust_keyboard = { workspace = true, default-features = false, features = ["gdk"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 gdk4-wayland-sys.workspace = true
