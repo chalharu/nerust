@@ -90,7 +90,7 @@ rust-version = "1.89"
 [workspace.dependencies]
 android_logger = { version = "=0.15.1" }
 bitflags = { version = "=2.13.0", features = ["serde"] }
-clap = { version = "=4.6.1" }
+clap = { version = "=4.6.2" }
 cpal = { version = "=0.18.1" }
 cubeb = { version = "=0.35.3" }
 crc = { version = "=3.4.0" }
