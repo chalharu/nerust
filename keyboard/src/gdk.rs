@@ -313,7 +313,36 @@ impl From<Key> for gdk::Key {
             Key::LaunchApp1 => gdk::Key::Launch1,
             Key::LaunchApp2 => gdk::Key::Launch2,
             Key::LaunchMail => gdk::Key::Mail,
-            _ => gdk::Key::VoidSymbol, // Unrecognized key, return VoidSymbol
+            _ => gdk::Key::VoidSymbol,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator as _;
+
+    #[test]
+    fn round_trip() {
+        let mut tested = 0u32;
+        let mut collisions = 0u32;
+        for key in crate::Key::iter() {
+            let gdk_key: gdk::Key = key.into();
+            if gdk_key == gdk::Key::VoidSymbol {
+                continue;
+            }
+            if let Ok(round_trip_key) = gdk_key.try_into() {
+                if key != round_trip_key {
+                    collisions += 1;
+                    continue;
+                }
+            }
+            tested += 1;
+        }
+        assert!(tested > 0, "no keys tested");
+        assert!(
+            collisions < 10,
+            "too many GDK round-trip collisions: {collisions} (tested: {tested})"
+        );
     }
 }
