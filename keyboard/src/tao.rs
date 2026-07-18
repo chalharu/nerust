@@ -88,8 +88,8 @@ impl TryFrom<KeyCode> for Key {
             KeyCode::Equal => Key::Equal,
             KeyCode::IntlRo => Key::IntlRo,
             KeyCode::IntlYen => Key::IntlYen,
-            KeyCode::Hiragana => Key::Lang4,
-            KeyCode::Katakana => Key::Lang3,
+            KeyCode::Hiragana => Key::Hiragana,
+            KeyCode::Katakana => Key::Katakana,
             KeyCode::KanaMode => Key::KanaMode,
             KeyCode::Numpad0 => Key::Numpad0,
             KeyCode::Numpad1 => Key::Numpad1,
@@ -295,8 +295,8 @@ impl From<Key> for KeyCode {
             Key::Equal => KeyCode::Equal,
             Key::IntlRo => KeyCode::IntlRo,
             Key::IntlYen => KeyCode::IntlYen,
-            Key::Hiragana => KeyCode::Lang4,
-            Key::Katakana => KeyCode::Lang3,
+            Key::Hiragana => KeyCode::Hiragana,
+            Key::Katakana => KeyCode::Katakana,
             Key::KanaMode => KeyCode::KanaMode,
             Key::Numpad0 => KeyCode::Numpad0,
             Key::Numpad1 => KeyCode::Numpad1,
@@ -410,6 +410,20 @@ impl From<Key> for KeyCode {
             Key::LaunchApp1 => KeyCode::LaunchApp1,
             Key::LaunchApp2 => KeyCode::LaunchApp2,
             Key::LaunchMail => KeyCode::LaunchMail,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator as _;
+
+    #[test]
+    fn round_trip() {
+        for key in crate::Key::iter() {
+            let keycode: tao::keyboard::KeyCode = key.into();
+            let round_trip_key: crate::Key = keycode.try_into().unwrap();
+            assert_eq!(key, round_trip_key);
         }
     }
 }

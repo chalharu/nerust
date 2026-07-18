@@ -89,8 +89,8 @@ impl TryFrom<Physical> for Key {
                 Code::Equal => Key::Equal,
                 Code::IntlRo => Key::IntlRo,
                 Code::IntlYen => Key::IntlYen,
-                Code::Hiragana => Key::Lang4,
-                Code::Katakana => Key::Lang3,
+                Code::Hiragana => Key::Hiragana,
+                Code::Katakana => Key::Katakana,
                 Code::KanaMode => Key::KanaMode,
                 Code::Numpad0 => Key::Numpad0,
                 Code::Numpad1 => Key::Numpad1,
@@ -314,8 +314,8 @@ impl From<Key> for Code {
             Key::Equal => Code::Equal,
             Key::IntlRo => Code::IntlRo,
             Key::IntlYen => Code::IntlYen,
-            Key::Hiragana => Code::Lang4,
-            Key::Katakana => Code::Lang3,
+            Key::Hiragana => Code::Hiragana,
+            Key::Katakana => Code::Katakana,
             Key::KanaMode => Code::KanaMode,
             Key::Numpad0 => Code::Numpad0,
             Key::Numpad1 => Code::Numpad1,
@@ -429,6 +429,23 @@ impl From<Key> for Code {
             Key::LaunchApp1 => Code::LaunchApp1,
             Key::LaunchApp2 => Code::LaunchApp2,
             Key::LaunchMail => Code::LaunchMail,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator as _;
+
+    use crate::Key;
+
+    #[test]
+    fn round_trip() {
+        for key in Key::iter().filter(|k| *k != Key::Plus) {
+            let keycode: iced::keyboard::key::Code = key.into();
+            let physical = iced::keyboard::key::Physical::Code(keycode);
+            let round_trip_key: Key = physical.try_into().unwrap();
+            assert_eq!(key, round_trip_key);
         }
     }
 }
