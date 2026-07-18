@@ -92,7 +92,7 @@ android_logger = { version = "=0.15.1" }
 bitflags = { version = "=2.13.1", features = ["serde"] }
 clap = { version = "=4.6.2" }
 cpal = { version = "=0.18.1" }
-cubeb = { version = "=0.35.3" }
+cubeb = { version = "=0.36.0" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
 flume = { version = "=0.12.0" }
