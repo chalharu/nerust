@@ -8,6 +8,7 @@ use nerust_gui_settings::{
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
 #[cfg(test)]
 use nerust_gui_settings::shared::SystemSettings;
+#[cfg(test)]
 use nerust_nes_settings::NesSettings;
 #[cfg(test)]
 use std::{collections::BTreeMap, env};
