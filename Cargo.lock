@@ -3115,6 +3115,7 @@ dependencies = [
  "nerust_run_options",
  "raw-window-handle",
  "rfd",
+ "strum",
  "tao",
 ]
 

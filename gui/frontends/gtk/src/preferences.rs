@@ -1018,14 +1018,11 @@ fn connect_local_updates(
         let draft = draft.clone();
         let widgets = widgets.clone();
         let _ = scaling_combo.connect_changed(move |combo| {
-            draft.borrow_mut().local.video.window.scaling = match combo.active_id().as_deref() {
-                Some("1") => ScalingMode::X1,
-                Some("2") => ScalingMode::X2,
-                Some("3") => ScalingMode::X3,
-                Some("4") => ScalingMode::X4,
-                Some("5") => ScalingMode::X5,
-                _ => ScalingMode::FitToWindow,
-            };
+            draft.borrow_mut().local.video.window.scaling = combo
+                .active_id()
+                .as_deref()
+                .and_then(|id| id.parse::<ScalingMode>().ok())
+                .unwrap_or_default();
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -1274,14 +1271,7 @@ fn apply_snapshot_to_widgets(
         StoragePolicy::CustomDirectory
     ));
     fullscreen_check.set_active(snapshot.local.video.window.fullscreen_default);
-    scaling_combo.set_active_id(Some(match snapshot.local.video.window.scaling {
-        ScalingMode::FitToWindow => "fit",
-        ScalingMode::X1 => "1",
-        ScalingMode::X2 => "2",
-        ScalingMode::X3 => "3",
-        ScalingMode::X4 => "4",
-        ScalingMode::X5 => "5",
-    }));
+    scaling_combo.set_active_id(Some(snapshot.local.video.window.scaling.to_string()).as_deref());
     vsync_check.set_active(snapshot.local.video.presentation.vsync);
     mute_check.set_active(snapshot.local.audio.muted);
     volume_spin.set_value(f64::from(snapshot.local.audio.master_volume_percent));

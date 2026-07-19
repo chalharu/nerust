@@ -39,6 +39,7 @@ use std::rc::Rc;
 use nerust_input_traits::{
     AttachmentId, ControllerProfile, InputAssignments, InputTopologyDescriptor,
 };
+use strum::IntoEnumIterator;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -738,10 +739,10 @@ impl SettingsAppState {
                 .on_toggle(Message::ToggleFullscreenDefault),
             labeled_pick_list(
                 ui_text(language, UiText::Scaling),
-                scaling_options(language),
+                scaling_options(),
                 selected_choice(
                     self.draft.local.video.window.scaling,
-                    scaling_options(language)
+                    scaling_options()
                 ),
                 Message::SetScaling
             ),
@@ -953,33 +954,13 @@ fn storage_policy_options(language: AppLanguage) -> Vec<Choice<StoragePolicy>> {
     ]
 }
 
-fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
-    vec![
-        Choice {
-            value: ScalingMode::FitToWindow,
-            label: ui_text(language, UiText::FitToWindow).to_string(),
-        },
-        Choice {
-            value: ScalingMode::X1,
-            label: "1x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X2,
-            label: "2x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X3,
-            label: "3x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X4,
-            label: "4x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X5,
-            label: "5x".to_string(),
-        },
-    ]
+fn scaling_options() -> Vec<Choice<ScalingMode>> {
+    ScalingMode::iter()
+        .map(|mode| Choice {
+            value: mode,
+            label: mode.to_string(),
+        })
+        .collect()
 }
 
 const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];

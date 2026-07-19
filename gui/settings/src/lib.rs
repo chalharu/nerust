@@ -442,21 +442,22 @@ pub mod local {
         serde::Deserialize,
         strum::EnumIter,
         strum::Display,
+        strum::EnumString,
     )]
     #[serde(rename_all = "snake_case")]
     pub enum ScalingMode {
         #[default]
-        #[strum(serialize = "Fit")]
+        #[strum(serialize = "fit")]
         FitToWindow,
-        #[strum(serialize = "1x")]
+        #[strum(serialize = "1")]
         X1,
-        #[strum(serialize = "2x")]
+        #[strum(serialize = "2")]
         X2,
-        #[strum(serialize = "3x")]
+        #[strum(serialize = "3")]
         X3,
-        #[strum(serialize = "4x")]
+        #[strum(serialize = "4")]
         X4,
-        #[strum(serialize = "5x")]
+        #[strum(serialize = "5")]
         X5,
     }
 

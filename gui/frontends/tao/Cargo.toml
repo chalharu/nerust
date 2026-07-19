@@ -27,6 +27,7 @@ nerust_run_options.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
 tao.workspace = true
+strum.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"
