@@ -739,10 +739,10 @@ impl SettingsAppState {
                 .on_toggle(Message::ToggleFullscreenDefault),
             labeled_pick_list(
                 ui_text(language, UiText::Scaling),
-                scaling_options(),
+                scaling_options(language),
                 selected_choice(
                     self.draft.local.video.window.scaling,
-                    scaling_options()
+                    scaling_options(language)
                 ),
                 Message::SetScaling
             ),
@@ -954,11 +954,15 @@ fn storage_policy_options(language: AppLanguage) -> Vec<Choice<StoragePolicy>> {
     ]
 }
 
-fn scaling_options() -> Vec<Choice<ScalingMode>> {
+fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
     ScalingMode::iter()
         .map(|mode| Choice {
             value: mode,
-            label: mode.to_string(),
+            label: if mode == ScalingMode::FitToWindow {
+                ui_text(language, UiText::FitToWindow).to_string()
+            } else {
+                mode.to_string()
+            },
         })
         .collect()
 }
