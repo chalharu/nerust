@@ -7,7 +7,7 @@ use nerust_core_traits::factory::descriptor::{
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
-use nerust_gui_settings::nes::{NesSettings, NesVideoFilter};
+use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_render_base::filter::FilterType;
 
@@ -76,8 +76,8 @@ fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
                 kind: SystemSettingsFieldKind::Choice {
                     selected: SystemSettingsChoiceId(Cow::Borrowed(
                         match current.core.mmc3_irq_variant {
-                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp) => "sharp",
-                            Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec) => "nec",
+                            Some(nerust_nes_settings::Mmc3IrqVariant::Sharp) => "sharp",
+                            Some(nerust_nes_settings::Mmc3IrqVariant::Nec) => "nec",
                             None => "auto",
                         },
                     )),
@@ -104,10 +104,10 @@ fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
 const FILTER_FIELD: &str = "video.filter";
 const MMC3_FIELD: &str = "core.mmc3_irq_variant";
 
-fn convert_mmc3(v: nerust_gui_settings::nes::Mmc3IrqVariant) -> Mmc3IrqVariant {
+fn convert_mmc3(v: nerust_nes_settings::Mmc3IrqVariant) -> Mmc3IrqVariant {
     match v {
-        nerust_gui_settings::nes::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
-        nerust_gui_settings::nes::Mmc3IrqVariant::Nec => Mmc3IrqVariant::Nec,
+        nerust_nes_settings::Mmc3IrqVariant::Sharp => Mmc3IrqVariant::Sharp,
+        nerust_nes_settings::Mmc3IrqVariant::Nec => Mmc3IrqVariant::Nec,
     }
 }
 
@@ -158,8 +158,8 @@ pub(crate) fn apply_nes_settings_choice_inner(
         }
         MMC3_FIELD => {
             s.core.mmc3_irq_variant = match choice.as_str() {
-                "sharp" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp),
-                "nec" => Some(nerust_gui_settings::nes::Mmc3IrqVariant::Nec),
+                "sharp" => Some(nerust_nes_settings::Mmc3IrqVariant::Sharp),
+                "nec" => Some(nerust_nes_settings::Mmc3IrqVariant::Nec),
                 "auto" => None,
                 other => return Err(FactoryError::InvalidChoice(other.to_string())),
             };
@@ -177,7 +177,7 @@ mod tests {
     use nerust_core_traits::factory::load::SystemLoadOptions;
     use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 
-    use nerust_gui_settings::nes::NesVideoFilter;
+    use nerust_nes_settings::NesVideoFilter;
 
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_render_base::filter::FilterType;
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn explicit_load_options_win_over_saved_defaults() {
         let mut nes = super::deserialize_settings(&[]);
-        nes.core.mmc3_irq_variant = Some(nerust_gui_settings::nes::Mmc3IrqVariant::Sharp);
+        nes.core.mmc3_irq_variant = Some(nerust_nes_settings::Mmc3IrqVariant::Sharp);
 
         let resolved =
             resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn mmc3_irq_variant_conversion_covers_all_variants() {
-        use nerust_gui_settings::nes::Mmc3IrqVariant as SettingsVariant;
+        use nerust_nes_settings::Mmc3IrqVariant as SettingsVariant;
         use nerust_nes_core::core_options::Mmc3IrqVariant as CoreVariant;
 
         assert_eq!(
