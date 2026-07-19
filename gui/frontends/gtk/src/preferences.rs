@@ -523,11 +523,11 @@ pub(crate) fn present_preferences_dialog(
             factory.clone(),
         );
         let _ = language_combo.connect_changed(move |combo| {
-            draft.borrow_mut().shared.general.language = match combo.active_id().as_deref() {
-                Some("japanese") => AppLanguage::Japanese,
-                Some("english") => AppLanguage::English,
-                _ => AppLanguage::SystemDefault,
-            };
+            draft.borrow_mut().shared.general.language = combo
+                .active_id()
+                .as_deref()
+                .and_then(|id| id.parse::<AppLanguage>().ok())
+                .unwrap_or_default();
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -970,12 +970,11 @@ fn connect_general_updates(
         let draft = draft.clone();
         let widgets = widgets.clone();
         let _ = storage_policy_combo.connect_changed(move |combo| {
-            draft.borrow_mut().shared.persistence.storage_policy =
-                match combo.active_id().as_deref() {
-                    Some("app_shared_data") => StoragePolicy::AppSharedData,
-                    Some("custom_directory") => StoragePolicy::CustomDirectory,
-                    _ => StoragePolicy::Sidecar,
-                };
+            draft.borrow_mut().shared.persistence.storage_policy = combo
+                .active_id()
+                .as_deref()
+                .and_then(|id| id.parse::<StoragePolicy>().ok())
+                .unwrap_or_default();
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
@@ -1248,16 +1247,9 @@ fn apply_snapshot_to_widgets(
     capture_label: &str,
     factory: &dyn CoreFactory,
 ) {
-    language_combo.set_active_id(Some(match snapshot.shared.general.language {
-        AppLanguage::Japanese => "japanese",
-        AppLanguage::English => "english",
-        AppLanguage::SystemDefault => "system_default",
-    }));
-    storage_policy_combo.set_active_id(Some(match snapshot.shared.persistence.storage_policy {
-        StoragePolicy::AppSharedData => "app_shared_data",
-        StoragePolicy::CustomDirectory => "custom_directory",
-        StoragePolicy::Sidecar => "sidecar",
-    }));
+    language_combo.set_active_id(Some(snapshot.shared.general.language.to_string()).as_deref());
+    storage_policy_combo
+        .set_active_id(Some(snapshot.shared.persistence.storage_policy.to_string()).as_deref());
     let storage_dir_text = snapshot
         .shared
         .persistence

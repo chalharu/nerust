@@ -12,12 +12,12 @@ pub mod language {
         serde::Deserialize,
         strum::EnumIter,
         strum::Display,
+        strum::EnumString,
     )]
     #[serde(rename_all = "snake_case")]
-    #[strum(serialize_all = "kebab_case")]
+    #[strum(serialize_all = "snake_case")]
     pub enum AppLanguage {
         #[default]
-        #[strum(serialize = "System Default")]
         SystemDefault,
         Japanese,
         English,
@@ -219,6 +219,7 @@ pub mod nes {
         serde::Deserialize,
         strum::EnumIter,
         strum::Display,
+        strum::EnumString,
     )]
     #[serde(rename_all = "snake_case")]
     pub enum NesVideoFilter {
@@ -295,6 +296,7 @@ pub mod shared {
         serde::Deserialize,
         strum::EnumIter,
         strum::Display,
+        strum::EnumString,
     )]
     #[serde(rename_all = "snake_case")]
     pub enum StoragePolicy {
