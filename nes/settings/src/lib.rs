@@ -34,3 +34,17 @@ pub enum NesVideoFilter {
     NtscSVideo,
     NtscRgb,
 }
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "system", content = "settings", rename_all = "snake_case")]
+pub enum SystemSettings {
+    Nes(NesSettings),
+}
+
+impl SystemSettings {
+    pub fn requires_live_session_rebuild(&self, next: &Self) -> bool {
+        match (self, next) {
+            (Self::Nes(before), Self::Nes(after)) => before.video.filter != after.video.filter,
+        }
+    }
+}

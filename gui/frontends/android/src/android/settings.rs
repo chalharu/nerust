@@ -13,8 +13,8 @@ use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
-    nes::{NesSettings, NesVideoFilter},
-    shared::SystemSettings,
+    nerust_nes_settings::SystemSettings,
+    nerust_nes_settings::{NesSettings, NesVideoFilter},
 };
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
@@ -512,9 +512,10 @@ mod tests {
     use nerust_gui_settings::{
         app_state::DesktopAppState,
         local::HostBackendLocalSettings,
-        nes::{NesSettings, NesVideoFilter},
-        shared::{DesktopSharedSettings, SystemSettings},
+        nerust_nes_settings::{NesSettings, NesVideoFilter},
+        shared::DesktopSharedSettings,
     };
+    use nerust_nes_settings::SystemSettings;
 
     use super::*;
 

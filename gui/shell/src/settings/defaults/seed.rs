@@ -5,10 +5,10 @@ use nerust_gui_settings::{
     app_state::DesktopAppState,
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     local::HostBackendLocalSettings,
-    shared::{DesktopSharedSettings, SystemSettings},
+    shared::DesktopSharedSettings,
 };
 use nerust_keyboard::Key;
-use nerust_nes_settings::NesSettings;
+use nerust_nes_settings::{NesSettings, SystemSettings};
 
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {

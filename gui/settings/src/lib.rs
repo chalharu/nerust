@@ -161,10 +161,10 @@ pub mod shared {
     use std::path::PathBuf;
 
     use nerust_core_traits::identity::SystemId;
+    use nerust_nes_settings::SystemSettings;
 
     use super::input::InputSettings;
     use super::language::AppLanguage;
-    use nerust_nes_settings::NesSettings;
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
@@ -219,20 +219,6 @@ pub mod shared {
         Sidecar,
         AppSharedData,
         CustomDirectory,
-    }
-
-    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-    #[serde(tag = "system", content = "settings", rename_all = "snake_case")]
-    pub enum SystemSettings {
-        Nes(NesSettings),
-    }
-
-    impl SystemSettings {
-        pub fn requires_live_session_rebuild(&self, next: &Self) -> bool {
-            match (self, next) {
-                (Self::Nes(before), Self::Nes(after)) => before.video.filter != after.video.filter,
-            }
-        }
     }
 }
 

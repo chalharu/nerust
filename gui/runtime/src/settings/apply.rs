@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy, SystemSettings};
+use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
+use nerust_nes_settings::SystemSettings;
 
 use super::{
     HostBackendCapabilities, HostBackendLocalSettings, SettingsApplyPlan, SettingsError,
@@ -146,11 +147,10 @@ mod tests {
 
     use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::{
-        app_state::DesktopAppState,
-        language::AppLanguage,
-        local::ScalingMode,
-        shared::{StoragePolicy, SystemSettings},
+        app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
+        shared::StoragePolicy,
     };
+    use nerust_nes_settings::SystemSettings;
     use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
 
     use super::super::{
