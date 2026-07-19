@@ -1,14 +1,13 @@
 [package]
-name = "nerust_nes_settings"
+name = "nerust_settings_traits"
 version.workspace = true
 authors.workspace = true
-description = "NES-specific settings types (domain layer)"
+description = "SystemSettings trait for cross-platform emulator settings"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_settings_traits.workspace = true
 serde = { workspace = true, features = ["derive"] }
-typetag.workspace = true
+typetag = { workspace = true }

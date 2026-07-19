@@ -5,6 +5,7 @@ members = [
   "traits/core",
   "traits/emu-thread",
   "traits/input",
+  "traits/settings",
   "nes/core",
   "nes/device",
   "nes/factory",
@@ -126,6 +127,7 @@ nerust_keyboard = { path = "keyboard", default-features = false }
 nerust_nes_factory = { path = "nes/factory" }
 nerust_gui_settings = { path = "gui/settings" }
 nerust_run_options = { path = "gui/run-options" }
+nerust_settings_traits = { path = "traits/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
 nerust_nes_settings = { path = "nes/settings" }
