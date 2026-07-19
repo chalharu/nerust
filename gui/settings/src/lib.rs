@@ -1,10 +1,23 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub mod language {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        strum::EnumIter,
+        strum::Display,
+    )]
     #[serde(rename_all = "snake_case")]
+    #[strum(serialize_all = "kebab_case")]
     pub enum AppLanguage {
         #[default]
+        #[strum(serialize = "System Default")]
         SystemDefault,
         Japanese,
         English,
@@ -157,7 +170,18 @@ pub mod input {
 }
 
 pub mod nes {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        strum::EnumIter,
+        strum::Display,
+    )]
     #[serde(rename_all = "snake_case")]
     pub enum Mmc3IrqVariant {
         #[default]
@@ -184,13 +208,27 @@ pub mod nes {
         pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        strum::EnumIter,
+        strum::Display,
+    )]
     #[serde(rename_all = "snake_case")]
     pub enum NesVideoFilter {
         None,
         #[default]
+        #[strum(serialize = "NTSC Composite")]
         NtscComposite,
+        #[strum(serialize = "NTSC S-Video")]
         NtscSVideo,
+        #[strum(serialize = "NTSC RGB")]
         NtscRgb,
     }
 }
@@ -246,7 +284,18 @@ pub mod shared {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        strum::EnumIter,
+        strum::Display,
+    )]
     #[serde(rename_all = "snake_case")]
     pub enum StoragePolicy {
         #[default]
@@ -382,15 +431,32 @@ pub mod local {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        Default,
+        serde::Serialize,
+        serde::Deserialize,
+        strum::EnumIter,
+        strum::Display,
+    )]
     #[serde(rename_all = "snake_case")]
     pub enum ScalingMode {
         #[default]
+        #[strum(serialize = "Fit")]
         FitToWindow,
+        #[strum(serialize = "1x")]
         X1,
+        #[strum(serialize = "2x")]
         X2,
+        #[strum(serialize = "3x")]
         X3,
+        #[strum(serialize = "4x")]
         X4,
+        #[strum(serialize = "5x")]
         X5,
     }
 

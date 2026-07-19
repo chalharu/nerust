@@ -2884,6 +2884,7 @@ dependencies = [
  "nerust_keyboard",
  "serde",
  "serde-saphyr",
+ "strum",
 ]
 
 [[package]]

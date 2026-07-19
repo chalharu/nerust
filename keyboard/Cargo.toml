@@ -19,6 +19,7 @@ tao = ["dep:tao", "error"]
 gdk = { workspace = true, optional = true }
 iced = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true }
 tao = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
