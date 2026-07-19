@@ -11,5 +11,6 @@ nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
 serde = { workspace = true, features = ["std"] }
 
+nerust_keyboard = { workspace = true, default-features = false }
 [dev-dependencies]
 serde-saphyr.workspace = true

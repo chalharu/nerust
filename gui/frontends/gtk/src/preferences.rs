@@ -16,16 +16,13 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
-use nerust_gui_settings::{
-    input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
-};
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
     session::SessionError,
     settings::{
         bindings::{
             conflicting_keys,
             descriptors::{keyboard_binding_sections, shortcut_descriptors},
-            keys::keyboard_key_label,
         },
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
         factory::{apply_settings_choice, settings_view},
@@ -628,7 +625,7 @@ pub(crate) fn present_preferences_dialog(
             let Some(target) = capture_target.borrow().clone() else {
                 return glib::Propagation::Proceed;
             };
-            let Some(mapped_key) = gdk_key_to_keyboard_key(key) else {
+            let Some(mapped_key) = key.try_into().ok() else {
                 return glib::Propagation::Stop;
             };
             apply_capture_target(&mut draft.borrow_mut(), &target, Some(mapped_key));
@@ -1179,11 +1176,7 @@ fn refresh_validation(
     ));
     storage_error_label.set_text(storage_error.as_deref().unwrap_or(""));
     if let Some((key, labels)) = conflicts.iter().next() {
-        input_conflict_label.set_text(&format!(
-            "{}: {}",
-            keyboard_key_label(*key),
-            labels.join(", ")
-        ));
+        input_conflict_label.set_text(&format!("{}: {}", key.label(), labels.join(", ")));
     } else {
         input_conflict_label.set_text("");
     }
@@ -1231,11 +1224,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
         &dynamic_topology(&assignments, input_factory.slots()),
         factory.system_id(),
     ) {
-        errors.push(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ));
+        errors.push(format!("{}: {}", key.label(), labels.join(", ")));
     }
     errors
 }
@@ -1497,68 +1486,6 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     scroller.set_child(Some(&page));
 
     (scroller, page)
-}
-
-fn gdk_key_to_keyboard_key(key: gdk::Key) -> Option<KeyboardKey> {
-    Some(match key {
-        gdk::Key::_0 => KeyboardKey::Digit0,
-        gdk::Key::_1 => KeyboardKey::Digit1,
-        gdk::Key::_2 => KeyboardKey::Digit2,
-        gdk::Key::_3 => KeyboardKey::Digit3,
-        gdk::Key::_4 => KeyboardKey::Digit4,
-        gdk::Key::_5 => KeyboardKey::Digit5,
-        gdk::Key::_6 => KeyboardKey::Digit6,
-        gdk::Key::_7 => KeyboardKey::Digit7,
-        gdk::Key::_8 => KeyboardKey::Digit8,
-        gdk::Key::_9 => KeyboardKey::Digit9,
-        gdk::Key::a | gdk::Key::A => KeyboardKey::KeyA,
-        gdk::Key::b | gdk::Key::B => KeyboardKey::KeyB,
-        gdk::Key::c | gdk::Key::C => KeyboardKey::KeyC,
-        gdk::Key::d | gdk::Key::D => KeyboardKey::KeyD,
-        gdk::Key::e | gdk::Key::E => KeyboardKey::KeyE,
-        gdk::Key::f | gdk::Key::F => KeyboardKey::KeyF,
-        gdk::Key::g | gdk::Key::G => KeyboardKey::KeyG,
-        gdk::Key::h | gdk::Key::H => KeyboardKey::KeyH,
-        gdk::Key::i | gdk::Key::I => KeyboardKey::KeyI,
-        gdk::Key::j | gdk::Key::J => KeyboardKey::KeyJ,
-        gdk::Key::k | gdk::Key::K => KeyboardKey::KeyK,
-        gdk::Key::l | gdk::Key::L => KeyboardKey::KeyL,
-        gdk::Key::m | gdk::Key::M => KeyboardKey::KeyM,
-        gdk::Key::n | gdk::Key::N => KeyboardKey::KeyN,
-        gdk::Key::o | gdk::Key::O => KeyboardKey::KeyO,
-        gdk::Key::p | gdk::Key::P => KeyboardKey::KeyP,
-        gdk::Key::q | gdk::Key::Q => KeyboardKey::KeyQ,
-        gdk::Key::r | gdk::Key::R => KeyboardKey::KeyR,
-        gdk::Key::s | gdk::Key::S => KeyboardKey::KeyS,
-        gdk::Key::t | gdk::Key::T => KeyboardKey::KeyT,
-        gdk::Key::u | gdk::Key::U => KeyboardKey::KeyU,
-        gdk::Key::v | gdk::Key::V => KeyboardKey::KeyV,
-        gdk::Key::w | gdk::Key::W => KeyboardKey::KeyW,
-        gdk::Key::x | gdk::Key::X => KeyboardKey::KeyX,
-        gdk::Key::y | gdk::Key::Y => KeyboardKey::KeyY,
-        gdk::Key::z | gdk::Key::Z => KeyboardKey::KeyZ,
-        gdk::Key::Up => KeyboardKey::ArrowUp,
-        gdk::Key::Down => KeyboardKey::ArrowDown,
-        gdk::Key::Left => KeyboardKey::ArrowLeft,
-        gdk::Key::Right => KeyboardKey::ArrowRight,
-        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => KeyboardKey::Enter,
-        gdk::Key::Escape => KeyboardKey::Escape,
-        gdk::Key::space => KeyboardKey::Space,
-        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => KeyboardKey::Tab,
-        gdk::Key::F1 => KeyboardKey::F1,
-        gdk::Key::F2 => KeyboardKey::F2,
-        gdk::Key::F3 => KeyboardKey::F3,
-        gdk::Key::F4 => KeyboardKey::F4,
-        gdk::Key::F5 => KeyboardKey::F5,
-        gdk::Key::F6 => KeyboardKey::F6,
-        gdk::Key::F7 => KeyboardKey::F7,
-        gdk::Key::F8 => KeyboardKey::F8,
-        gdk::Key::F9 => KeyboardKey::F9,
-        gdk::Key::F10 => KeyboardKey::F10,
-        gdk::Key::F11 => KeyboardKey::F11,
-        gdk::Key::F12 => KeyboardKey::F12,
-        _ => return None,
-    })
 }
 
 fn run_finish_callback(finish: &FinishCallback) {

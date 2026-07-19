@@ -251,13 +251,14 @@ mod tests {
     use nerust_gui_settings::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
-            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardKey, PersistedControlId,
-            ShortcutAction, ShortcutBinding, SystemInputSettings,
+            IMPLICIT_PROFILE_ID, InputSettings, KeyboardBinding, KeyboardProfile,
+            PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
         },
         language::AppLanguage,
         nes::NesVideoFilter,
         shared::SystemSettings,
     };
+    use nerust_keyboard::Key;
 
     use super::super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults};
     use super::SettingsManager;
@@ -275,11 +276,11 @@ mod tests {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
-                    nerust_gui_settings::input::KeyboardProfile {
+                    KeyboardProfile {
                         bindings: vec![KeyboardBinding::new(
                             "nes.attachment.player1",
                             PersistedControlId::digital("nes.control.a"),
-                            KeyboardKey::KeyZ,
+                            Key::KeyZ,
                         )],
                     },
                 );
@@ -288,7 +289,7 @@ mod tests {
             shortcuts: nerust_gui_settings::input::ShortcutSettings {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
-                    key: Some(KeyboardKey::Space),
+                    key: Some(Key::Space),
                 }],
             },
         };
