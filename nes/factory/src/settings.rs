@@ -7,8 +7,8 @@ use nerust_core_traits::factory::descriptor::{
 };
 use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
 use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
-use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_render_base::filter::FilterType;
 
 pub(crate) fn deserialize_settings(bytes: &[u8]) -> NesSettings {
@@ -257,8 +257,8 @@ mod tests {
 
     #[test]
     fn mmc3_irq_variant_conversion_covers_all_variants() {
-        use nerust_nes_settings::Mmc3IrqVariant as SettingsVariant;
         use nerust_nes_core::core_options::Mmc3IrqVariant as CoreVariant;
+        use nerust_nes_settings::Mmc3IrqVariant as SettingsVariant;
 
         assert_eq!(
             super::convert_mmc3(SettingsVariant::Sharp),
