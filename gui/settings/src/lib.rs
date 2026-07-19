@@ -161,7 +161,7 @@ pub mod shared {
     use std::path::PathBuf;
 
     use nerust_core_traits::identity::SystemId;
-    use nerust_nes_settings::SystemSettings;
+    use nerust_settings_traits::SystemSettings as SystemSettingsTrait;
 
     use super::input::InputSettings;
     use super::language::AppLanguage;
@@ -175,7 +175,7 @@ pub mod shared {
         pub general: GeneralSettings,
         pub persistence: PersistenceSettings,
         pub input: InputSettings,
-        pub systems: BTreeMap<SystemId, SystemSettings>,
+        pub systems: BTreeMap<SystemId, Box<dyn SystemSettingsTrait>>,
     }
 
     impl Default for DesktopSharedSettings {

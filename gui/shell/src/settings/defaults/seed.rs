@@ -8,13 +8,13 @@ use nerust_gui_settings::{
     shared::DesktopSharedSettings,
 };
 use nerust_keyboard::Key;
-use nerust_nes_settings::{NesSettings, SystemSettings};
+use nerust_nes_settings::NesSettings;
 
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
         systems: BTreeMap::from([(
             SystemId::new("nes"),
-            SystemSettings::Nes(NesSettings::default()),
+            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()
     };

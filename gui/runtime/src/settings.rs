@@ -9,8 +9,6 @@ use nerust_core_traits::identity::{SystemId, SystemIdentity};
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
 #[cfg(test)]
-use nerust_nes_settings::SystemSettings;
-#[cfg(test)]
 use std::{collections::BTreeMap, env};
 
 pub mod apply;
@@ -141,7 +139,7 @@ pub(crate) fn test_shared_defaults() -> DesktopSharedSettings {
     DesktopSharedSettings {
         systems: BTreeMap::from([(
             SystemId::new("nes"),
-            SystemSettings::Nes(NesSettings::default()),
+            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()
     }

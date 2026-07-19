@@ -9,4 +9,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+nerust_settings_traits.workspace = true
 serde = { workspace = true, features = ["derive"] }
+typetag.workspace = true

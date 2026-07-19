@@ -2870,6 +2870,7 @@ dependencies = [
  "nerust_keyboard",
  "nerust_nes_settings",
  "nerust_persistence",
+ "nerust_settings_traits",
  "serde",
  "serde-saphyr",
  "serde_json",
@@ -2884,6 +2885,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_nes_settings",
+ "nerust_settings_traits",
  "serde",
  "serde-saphyr",
 ]
@@ -2902,6 +2904,7 @@ dependencies = [
  "nerust_nes_settings",
  "nerust_persistence",
  "nerust_render_base",
+ "nerust_settings_traits",
  "rmp-serde",
  "serde",
  "thiserror 2.0.18",
@@ -2981,7 +2984,9 @@ dependencies = [
 name = "nerust_nes_settings"
 version = "0.1.0-dev"
 dependencies = [
+ "nerust_settings_traits",
  "serde",
+ "typetag",
 ]
 
 [[package]]
@@ -3078,6 +3083,14 @@ name = "nerust_serialize"
 version = "0.1.0-dev"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "nerust_settings_traits"
+version = "0.1.0-dev"
+dependencies = [
+ "serde",
+ "typetag",
 ]
 
 [[package]]

@@ -35,16 +35,26 @@ pub enum NesVideoFilter {
     NtscRgb,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "system", content = "settings", rename_all = "snake_case")]
-pub enum SystemSettings {
-    Nes(NesSettings),
-}
-
-impl SystemSettings {
-    pub fn requires_live_session_rebuild(&self, next: &Self) -> bool {
-        match (self, next) {
-            (Self::Nes(before), Self::Nes(after)) => before.video.filter != after.video.filter,
+#[typetag::serde]
+impl nerust_settings_traits::SystemSettings for NesSettings {
+    fn requires_live_session_rebuild(
+        &self,
+        next: &dyn nerust_settings_traits::SystemSettings,
+    ) -> bool {
+        let any: &dyn std::any::Any = next;
+        if let Some(other) = any.downcast_ref::<NesSettings>() {
+            self.video.filter != other.video.filter
+        } else {
+            false
         }
+    }
+
+    fn clone_box(&self) -> Box<dyn nerust_settings_traits::SystemSettings> {
+        Box::new(self.clone())
+    }
+
+    fn eq_box(&self, other: &dyn nerust_settings_traits::SystemSettings) -> bool {
+        let any: &dyn std::any::Any = other;
+        any.downcast_ref::<NesSettings>() == Some(self)
     }
 }

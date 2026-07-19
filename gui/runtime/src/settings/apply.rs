@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
-use nerust_nes_settings::SystemSettings;
+use nerust_settings_traits::SystemSettings;
 
 use super::{
     HostBackendCapabilities, HostBackendLocalSettings, SettingsApplyPlan, SettingsError,
@@ -113,7 +113,10 @@ fn live_system_settings_changed(
     after: &DesktopSharedSettings,
 ) -> bool {
     before.systems.iter().any(|(system_id, before_settings)| {
-        system_live_settings_changed(Some(before_settings), after.systems.get(system_id))
+        system_live_settings_changed(
+            Some(&**before_settings),
+            after.systems.get(system_id).map(|s| &**s),
+        )
     }) || after
         .systems
         .iter()
@@ -121,8 +124,8 @@ fn live_system_settings_changed(
 }
 
 fn system_live_settings_changed(
-    before: Option<&SystemSettings>,
-    after: Option<&SystemSettings>,
+    before: Option<&dyn SystemSettings>,
+    after: Option<&dyn SystemSettings>,
 ) -> bool {
     match (before, after) {
         (Some(before), Some(after)) => before.requires_live_session_rebuild(after),
@@ -150,7 +153,6 @@ mod tests {
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };
-    use nerust_nes_settings::SystemSettings;
     use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
 
     use super::super::{
@@ -199,7 +201,15 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let nes = after
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .and_then(|s| {
+                let any: &mut dyn std::any::Any = &mut **s;
+                any.downcast_mut::<nerust_nes_settings::NesSettings>()
+            })
+            .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after);
@@ -215,7 +225,15 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let SystemSettings::Nes(nes) = after.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
+        let nes = after
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .and_then(|s| {
+                let any: &mut dyn std::any::Any = &mut **s;
+                any.downcast_mut::<nerust_nes_settings::NesSettings>()
+            })
+            .unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after);
