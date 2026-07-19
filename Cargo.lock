@@ -2882,6 +2882,7 @@ dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_settings",
  "serde",
  "serde-saphyr",
 ]
@@ -2966,12 +2967,19 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "nerust_core_traits",
- "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
+ "nerust_nes_settings",
  "nerust_render_base",
  "rmp-serde",
+]
+
+[[package]]
+name = "nerust_nes_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

@@ -9,6 +9,7 @@ members = [
   "nes/device",
   "nes/factory",
   "nes/controller",
+  "nes/settings",
   "gui/settings",
   "gui/run-options",
   "gui/runtime",
@@ -127,6 +128,7 @@ nerust_gui_settings = { path = "gui/settings" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
+nerust_nes_settings = { path = "nes/settings" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_input_traits = { path = "traits/input" }

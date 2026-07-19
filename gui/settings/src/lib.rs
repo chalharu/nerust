@@ -157,48 +157,18 @@ pub mod input {
 }
 
 pub mod nes {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum Mmc3IrqVariant {
-        #[default]
-        Sharp,
-        Nec,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-    #[serde(default)]
-    pub struct NesSettings {
-        pub video: NesVideoSettings,
-        pub core: NesCoreSettings,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-    #[serde(default)]
-    pub struct NesVideoSettings {
-        pub filter: NesVideoFilter,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-    #[serde(default)]
-    pub struct NesCoreSettings {
-        pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum NesVideoFilter {
-        None,
-        #[default]
-        NtscComposite,
-        NtscSVideo,
-        NtscRgb,
-    }
+    pub use nerust_nes_settings::*;
 }
 
 pub mod shared {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
     use nerust_core_traits::identity::SystemId;
 
-    use super::{BTreeMap, PathBuf, input::InputSettings, language::AppLanguage, nes::NesSettings};
+    use super::input::InputSettings;
+    use super::language::AppLanguage;
+    use nerust_nes_settings::NesSettings;
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
