@@ -149,9 +149,9 @@ mod tests {
         app_state::DesktopAppState,
         language::AppLanguage,
         local::ScalingMode,
-        nes::{Mmc3IrqVariant, NesVideoFilter},
         shared::{StoragePolicy, SystemSettings},
     };
+    use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
 
     use super::super::{
         SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults, test_root,

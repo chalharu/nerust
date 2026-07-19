@@ -23,7 +23,7 @@ fn bytes_or_fallback(result: Result<Vec<u8>, String>) -> Vec<u8> {
 }
 
 fn system_settings_from_bytes(bytes: &[u8]) -> Option<SystemSettings> {
-    let nes = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(bytes).ok()?;
+    let nes = rmp_serde::from_slice::<nerust_nes_settings::NesSettings>(bytes).ok()?;
     Some(SystemSettings::Nes(nes))
 }
 
@@ -98,7 +98,7 @@ pub fn resolve_label(
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
+    use nerust_nes_settings::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
     use nerust_gui_settings::shared::SystemSettings;
 
     use super::{bytes_or_fallback, system_settings_from_bytes, system_settings_to_bytes};
@@ -106,10 +106,10 @@ mod tests {
     #[test]
     fn settings_round_trip_preserves_filter_value() {
         let nes = SystemSettings::Nes(NesSettings {
-            video: nerust_gui_settings::nes::NesVideoSettings {
+            video: nerust_nes_settings::NesVideoSettings {
                 filter: NesVideoFilter::NtscRgb,
             },
-            core: nerust_gui_settings::nes::NesCoreSettings {
+            core: nerust_nes_settings::NesCoreSettings {
                 mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
             },
         });
@@ -134,15 +134,15 @@ mod tests {
     #[test]
     fn system_settings_to_returns_valid_msgpack() {
         let nes = SystemSettings::Nes(NesSettings {
-            video: nerust_gui_settings::nes::NesVideoSettings {
+            video: nerust_nes_settings::NesVideoSettings {
                 filter: NesVideoFilter::NtscComposite,
             },
-            core: nerust_gui_settings::nes::NesCoreSettings::default(),
+            core: nerust_nes_settings::NesCoreSettings::default(),
         });
         let bytes = system_settings_to_bytes(&nes);
         assert!(!bytes.is_empty(), "serialized bytes should not be empty");
 
-        let decoded: nerust_gui_settings::nes::NesSettings =
+        let decoded: nerust_nes_settings::NesSettings =
             rmp_serde::from_slice(&bytes).expect("valid MessagePack");
         assert_eq!(decoded.video.filter, NesVideoFilter::NtscComposite);
     }
