@@ -16,4 +16,5 @@ serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+nerust_nes_settings.workspace = true
 nerust_keyboard = { workspace = true, default-features = false }

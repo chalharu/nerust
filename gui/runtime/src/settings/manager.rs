@@ -255,10 +255,10 @@ mod tests {
             PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
         },
         language::AppLanguage,
-        nes::NesVideoFilter,
         shared::SystemSettings,
     };
     use nerust_keyboard::Key;
+    use nerust_nes_settings::NesVideoFilter;
 
     use super::super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults};
     use super::SettingsManager;

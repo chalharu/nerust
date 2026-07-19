@@ -156,10 +156,6 @@ pub mod input {
     }
 }
 
-pub mod nes {
-    pub use nerust_nes_settings::*;
-}
-
 pub mod shared {
     use std::collections::BTreeMap;
     use std::path::PathBuf;

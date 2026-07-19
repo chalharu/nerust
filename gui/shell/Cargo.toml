@@ -19,6 +19,7 @@ rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
+nerust_nes_settings.workspace = true
 nerust_keyboard = { workspace = true, default-features = false }
 [dev-dependencies]
 nerust_core_traits.workspace = true
