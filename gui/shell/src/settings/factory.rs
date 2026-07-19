@@ -98,8 +98,8 @@ pub fn resolve_label(
 
 #[cfg(test)]
 mod tests {
-    use nerust_nes_settings::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
     use nerust_gui_settings::shared::SystemSettings;
+    use nerust_nes_settings::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
 
     use super::{bytes_or_fallback, system_settings_from_bytes, system_settings_to_bytes};
 

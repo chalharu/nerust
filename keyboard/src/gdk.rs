@@ -360,10 +360,10 @@ mod tests {
             if gdk_key == gdk::Key::VoidSymbol {
                 continue;
             }
-            if let Ok(round_trip_key) = gdk_key.try_into() {
-                if key != round_trip_key {
-                    continue;
-                }
+            if let Ok(round_trip_key) = gdk_key.try_into()
+                && key != round_trip_key
+            {
+                continue;
             }
             tested += 1;
         }
