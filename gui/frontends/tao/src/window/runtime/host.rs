@@ -7,10 +7,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::{
-    app_state::RememberedWindowSize,
-    input::{KeyboardKey, ShortcutAction},
-};
+use nerust_gui_settings::{app_state::RememberedWindowSize, input::ShortcutAction};
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -33,7 +30,6 @@ use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::{ElementState, KeyEvent},
     event_loop::{ControlFlow, EventLoopWindowTarget},
-    keyboard::KeyCode,
     window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
@@ -246,7 +242,7 @@ impl HostState {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
-            && let Some(key) = keycode_controller_input(input.physical_key)
+            && let Some(key) = input.physical_key.try_into().ok()
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
             self.apply_keyboard_shortcut(shortcut);
@@ -737,68 +733,6 @@ fn logical_size_from_remembered(size: RememberedWindowSize) -> TaoLogicalSize<f6
     TaoLogicalSize::new(f64::from(size.width), f64::from(size.height))
 }
 
-fn keycode_controller_input(code: KeyCode) -> Option<KeyboardKey> {
-    Some(match code {
-        KeyCode::Digit0 => KeyboardKey::Digit0,
-        KeyCode::Digit1 => KeyboardKey::Digit1,
-        KeyCode::Digit2 => KeyboardKey::Digit2,
-        KeyCode::Digit3 => KeyboardKey::Digit3,
-        KeyCode::Digit4 => KeyboardKey::Digit4,
-        KeyCode::Digit5 => KeyboardKey::Digit5,
-        KeyCode::Digit6 => KeyboardKey::Digit6,
-        KeyCode::Digit7 => KeyboardKey::Digit7,
-        KeyCode::Digit8 => KeyboardKey::Digit8,
-        KeyCode::Digit9 => KeyboardKey::Digit9,
-        KeyCode::KeyA => KeyboardKey::KeyA,
-        KeyCode::KeyB => KeyboardKey::KeyB,
-        KeyCode::KeyC => KeyboardKey::KeyC,
-        KeyCode::KeyD => KeyboardKey::KeyD,
-        KeyCode::KeyE => KeyboardKey::KeyE,
-        KeyCode::KeyF => KeyboardKey::KeyF,
-        KeyCode::KeyG => KeyboardKey::KeyG,
-        KeyCode::KeyH => KeyboardKey::KeyH,
-        KeyCode::KeyI => KeyboardKey::KeyI,
-        KeyCode::KeyJ => KeyboardKey::KeyJ,
-        KeyCode::KeyK => KeyboardKey::KeyK,
-        KeyCode::KeyL => KeyboardKey::KeyL,
-        KeyCode::KeyM => KeyboardKey::KeyM,
-        KeyCode::KeyN => KeyboardKey::KeyN,
-        KeyCode::KeyO => KeyboardKey::KeyO,
-        KeyCode::KeyP => KeyboardKey::KeyP,
-        KeyCode::KeyQ => KeyboardKey::KeyQ,
-        KeyCode::KeyR => KeyboardKey::KeyR,
-        KeyCode::KeyS => KeyboardKey::KeyS,
-        KeyCode::KeyT => KeyboardKey::KeyT,
-        KeyCode::KeyU => KeyboardKey::KeyU,
-        KeyCode::KeyV => KeyboardKey::KeyV,
-        KeyCode::KeyW => KeyboardKey::KeyW,
-        KeyCode::KeyZ => KeyboardKey::KeyZ,
-        KeyCode::KeyX => KeyboardKey::KeyX,
-        KeyCode::KeyY => KeyboardKey::KeyY,
-        KeyCode::ArrowUp => KeyboardKey::ArrowUp,
-        KeyCode::ArrowDown => KeyboardKey::ArrowDown,
-        KeyCode::ArrowLeft => KeyboardKey::ArrowLeft,
-        KeyCode::ArrowRight => KeyboardKey::ArrowRight,
-        KeyCode::Enter => KeyboardKey::Enter,
-        KeyCode::Escape => KeyboardKey::Escape,
-        KeyCode::Space => KeyboardKey::Space,
-        KeyCode::Tab => KeyboardKey::Tab,
-        KeyCode::F1 => KeyboardKey::F1,
-        KeyCode::F2 => KeyboardKey::F2,
-        KeyCode::F3 => KeyboardKey::F3,
-        KeyCode::F4 => KeyboardKey::F4,
-        KeyCode::F5 => KeyboardKey::F5,
-        KeyCode::F6 => KeyboardKey::F6,
-        KeyCode::F7 => KeyboardKey::F7,
-        KeyCode::F8 => KeyboardKey::F8,
-        KeyCode::F9 => KeyboardKey::F9,
-        KeyCode::F10 => KeyboardKey::F10,
-        KeyCode::F11 => KeyboardKey::F11,
-        KeyCode::F12 => KeyboardKey::F12,
-        _ => return None,
-    })
-}
-
 fn element_state_to_pressed(state: ElementState) -> Option<bool> {
     Some(match state {
         ElementState::Pressed => true,
@@ -809,41 +743,9 @@ fn element_state_to_pressed(state: ElementState) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::input::KeyboardKey;
-    use tao::{dpi::LogicalSize as TaoLogicalSize, keyboard::KeyCode, window::Fullscreen};
+    use tao::{dpi::LogicalSize as TaoLogicalSize, window::Fullscreen};
 
-    use super::{
-        NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync,
-        keycode_controller_input,
-    };
-
-    #[test]
-    fn keycode_mapping_matches_controller_layout() {
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyZ),
-            Some(KeyboardKey::KeyZ)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::KeyX),
-            Some(KeyboardKey::KeyX)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::ArrowUp),
-            Some(KeyboardKey::ArrowUp)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::ArrowRight),
-            Some(KeyboardKey::ArrowRight)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::Enter),
-            Some(KeyboardKey::Enter)
-        );
-        assert_eq!(
-            keycode_controller_input(KeyCode::Digit1),
-            Some(KeyboardKey::Digit1)
-        );
-    }
+    use super::{NativeFullscreenSync, create_window_builder, derive_native_fullscreen_sync};
 
     #[test]
     fn window_builder_requests_initial_fullscreen_when_enabled() {

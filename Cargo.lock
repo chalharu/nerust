@@ -2848,6 +2848,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
+ "nerust_keyboard",
  "nerust_persistence",
  "nerust_render_base",
  "nerust_run_options",
@@ -2866,6 +2867,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_gui_settings",
+ "nerust_keyboard",
  "nerust_persistence",
  "serde",
  "serde-saphyr",
@@ -2879,6 +2881,7 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
+ "nerust_keyboard",
  "serde",
  "serde-saphyr",
 ]
@@ -2893,6 +2896,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_input_traits",
+ "nerust_keyboard",
  "nerust_persistence",
  "nerust_render_base",
  "rmp-serde",
@@ -2904,6 +2908,18 @@ dependencies = [
 name = "nerust_input_traits"
 version = "0.1.0-dev"
 dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nerust_keyboard"
+version = "0.1.0-dev"
+dependencies = [
+ "gdk4",
+ "iced",
+ "serde",
+ "strum",
+ "tao",
  "thiserror 2.0.18",
 ]
 
@@ -3092,6 +3108,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
+ "nerust_keyboard",
  "nerust_persistence",
  "nerust_render_base",
  "nerust_run_options",

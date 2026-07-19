@@ -3,12 +3,13 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::rc::Rc;
 
-use nerust_gui_settings::input::{KeyboardBinding, KeyboardKey, ShortcutAction};
+use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, DigitalControlId, DigitalInputEvent, InputAssignments,
     InputTopologyDescriptor, InputValue, PortDescriptor, PortId, SlotInfo,
 };
+use nerust_keyboard::Key;
 
 use crate::{
     session::{KeyboardShortcut, SessionHandle},
@@ -24,7 +25,7 @@ trait InputBinding {
 }
 
 impl InputBinding for KeyboardBinding {
-    type Id = KeyboardKey;
+    type Id = Key;
     fn matches(&self, attachment: &AttachmentId, control: &DigitalControlId) -> bool {
         self.attachment == *attachment && self.control == *control
     }
@@ -164,11 +165,7 @@ impl SessionHandle {
         }
     }
 
-    pub fn handle_keyboard_key(
-        &mut self,
-        key: KeyboardKey,
-        pressed: bool,
-    ) -> Option<KeyboardShortcut> {
+    pub fn handle_keyboard_key(&mut self, key: Key, pressed: bool) -> Option<KeyboardShortcut> {
         let first_press = if pressed {
             self.pressed_keys.insert(key)
         } else {

@@ -24,7 +24,7 @@ pub enum RomTestError {
     ParseManifest {
         path: PathBuf,
         #[source]
-        source: serde_saphyr::Error,
+        source: Box<serde_saphyr::Error>,
     },
     #[error("invalid ROM manifest: {0}")]
     InvalidManifest(String),

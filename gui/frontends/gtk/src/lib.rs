@@ -17,7 +17,7 @@ use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
-use nerust_gui_settings::{input::KeyboardKey, language::AppLanguage};
+use nerust_gui_settings::language::AppLanguage;
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
@@ -31,6 +31,7 @@ use nerust_gui_shell::{
     },
 };
 
+use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
@@ -214,7 +215,7 @@ impl FrontendSession for State {
 impl State {
     pub(crate) fn handle_keyboard_key(
         &mut self,
-        key: KeyboardKey,
+        key: Key,
         pressed: bool,
     ) -> Option<KeyboardShortcut> {
         self.session.handle_keyboard_key(key, pressed)

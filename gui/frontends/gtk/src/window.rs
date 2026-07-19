@@ -6,10 +6,7 @@ use gtk::{
     prelude::*,
 };
 use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_settings::{
-    input::{KeyboardKey, ShortcutAction},
-    local::ScalingMode,
-};
+use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_base::renderer::GpuFactory;
@@ -77,68 +74,6 @@ pub(crate) trait WindowExtend {
 pub(crate) enum KeyEventState {
     Press,
     Release,
-}
-
-fn gdk_key_controller_input(key: gdk::Key) -> Option<KeyboardKey> {
-    Some(match key {
-        gdk::Key::a | gdk::Key::A => KeyboardKey::KeyA,
-        gdk::Key::b | gdk::Key::B => KeyboardKey::KeyB,
-        gdk::Key::c | gdk::Key::C => KeyboardKey::KeyC,
-        gdk::Key::d | gdk::Key::D => KeyboardKey::KeyD,
-        gdk::Key::e | gdk::Key::E => KeyboardKey::KeyE,
-        gdk::Key::f | gdk::Key::F => KeyboardKey::KeyF,
-        gdk::Key::g | gdk::Key::G => KeyboardKey::KeyG,
-        gdk::Key::h | gdk::Key::H => KeyboardKey::KeyH,
-        gdk::Key::i | gdk::Key::I => KeyboardKey::KeyI,
-        gdk::Key::j | gdk::Key::J => KeyboardKey::KeyJ,
-        gdk::Key::k | gdk::Key::K => KeyboardKey::KeyK,
-        gdk::Key::l | gdk::Key::L => KeyboardKey::KeyL,
-        gdk::Key::m | gdk::Key::M => KeyboardKey::KeyM,
-        gdk::Key::n | gdk::Key::N => KeyboardKey::KeyN,
-        gdk::Key::o | gdk::Key::O => KeyboardKey::KeyO,
-        gdk::Key::p | gdk::Key::P => KeyboardKey::KeyP,
-        gdk::Key::q | gdk::Key::Q => KeyboardKey::KeyQ,
-        gdk::Key::r | gdk::Key::R => KeyboardKey::KeyR,
-        gdk::Key::s | gdk::Key::S => KeyboardKey::KeyS,
-        gdk::Key::t | gdk::Key::T => KeyboardKey::KeyT,
-        gdk::Key::u | gdk::Key::U => KeyboardKey::KeyU,
-        gdk::Key::v | gdk::Key::V => KeyboardKey::KeyV,
-        gdk::Key::w | gdk::Key::W => KeyboardKey::KeyW,
-        gdk::Key::z | gdk::Key::Z => KeyboardKey::KeyZ,
-        gdk::Key::x | gdk::Key::X => KeyboardKey::KeyX,
-        gdk::Key::y | gdk::Key::Y => KeyboardKey::KeyY,
-        gdk::Key::_0 => KeyboardKey::Digit0,
-        gdk::Key::_1 => KeyboardKey::Digit1,
-        gdk::Key::_2 => KeyboardKey::Digit2,
-        gdk::Key::_3 => KeyboardKey::Digit3,
-        gdk::Key::_4 => KeyboardKey::Digit4,
-        gdk::Key::_5 => KeyboardKey::Digit5,
-        gdk::Key::_6 => KeyboardKey::Digit6,
-        gdk::Key::_7 => KeyboardKey::Digit7,
-        gdk::Key::_8 => KeyboardKey::Digit8,
-        gdk::Key::_9 => KeyboardKey::Digit9,
-        gdk::Key::Up => KeyboardKey::ArrowUp,
-        gdk::Key::Down => KeyboardKey::ArrowDown,
-        gdk::Key::Left => KeyboardKey::ArrowLeft,
-        gdk::Key::Right => KeyboardKey::ArrowRight,
-        gdk::Key::Return | gdk::Key::ISO_Enter | gdk::Key::KP_Enter => KeyboardKey::Enter,
-        gdk::Key::Escape => KeyboardKey::Escape,
-        gdk::Key::space => KeyboardKey::Space,
-        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => KeyboardKey::Tab,
-        gdk::Key::F1 => KeyboardKey::F1,
-        gdk::Key::F2 => KeyboardKey::F2,
-        gdk::Key::F3 => KeyboardKey::F3,
-        gdk::Key::F4 => KeyboardKey::F4,
-        gdk::Key::F5 => KeyboardKey::F5,
-        gdk::Key::F6 => KeyboardKey::F6,
-        gdk::Key::F7 => KeyboardKey::F7,
-        gdk::Key::F8 => KeyboardKey::F8,
-        gdk::Key::F9 => KeyboardKey::F9,
-        gdk::Key::F10 => KeyboardKey::F10,
-        gdk::Key::F11 => KeyboardKey::F11,
-        gdk::Key::F12 => KeyboardKey::F12,
-        _ => return None,
-    })
 }
 
 fn key_event_pressed(event: KeyEventState) -> bool {
@@ -548,7 +483,7 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        if let Some(controller_input) = gdk_key_controller_input(key) {
+        if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
                 .borrow_mut()
@@ -642,40 +577,5 @@ fn rebuild_slot_menu(
         let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
         item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
         menu.append_item(&item);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use nerust_gui_settings::input::KeyboardKey;
-
-    use super::gdk_key_controller_input;
-
-    #[test]
-    fn gdk_key_mapping_matches_controller_layout() {
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::z),
-            Some(KeyboardKey::KeyZ)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::x),
-            Some(KeyboardKey::KeyX)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Up),
-            Some(KeyboardKey::ArrowUp)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Right),
-            Some(KeyboardKey::ArrowRight)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::Return),
-            Some(KeyboardKey::Enter)
-        );
-        assert_eq!(
-            gdk_key_controller_input(gdk::Key::_1),
-            Some(KeyboardKey::Digit1)
-        );
     }
 }

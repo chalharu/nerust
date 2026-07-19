@@ -9,7 +9,6 @@ use std::{
 use iced::{
     Font, Length, Task, Theme,
     alignment::Alignment,
-    keyboard::key::Code,
     widget::{
         button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
         text_input,
@@ -24,19 +23,17 @@ use nerust_core_traits::{
     },
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
-use nerust_gui_settings::{
-    input::KeyboardKey, language::AppLanguage, local::ScalingMode, shared::StoragePolicy,
-};
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::settings::{
     bindings::{
         conflicting_keys,
         descriptors::{keyboard_binding_sections, shortcut_descriptors},
-        keys::keyboard_key_label,
     },
     editor::{CaptureTarget, apply_capture_target, current_binding_label},
     factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
+use nerust_keyboard::Key;
 use std::rc::Rc;
 
 use nerust_input_traits::{
@@ -95,7 +92,7 @@ pub(crate) enum Message {
     SetSystemChoice(String, Choice<String>),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
-    CaptureKey(KeyboardKey),
+    CaptureKey(Key),
     SetControllerSlot {
         slot: AttachmentId,
         controller_id: Option<String>,
@@ -289,11 +286,7 @@ impl SettingsAppState {
             &input_topology(self),
             self.factory.system_id(),
         ) {
-            errors.push(format!(
-                "{}: {}",
-                keyboard_key_label(key),
-                labels.join(", ")
-            ));
+            errors.push(format!("{}: {}", key.label(), labels.join(", ")));
         }
         errors
     }
@@ -312,11 +305,7 @@ impl SettingsAppState {
         )
         .into_iter()
         .next()?;
-        Some(format!(
-            "{}: {}",
-            keyboard_key_label(key),
-            labels.join(", ")
-        ))
+        Some(format!("{}: {}", key.label(), labels.join(", ")))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1017,77 +1006,14 @@ fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     build_topology(&state.controller_assignments, slots)
 }
 
-pub(crate) fn keyboard_key_from_physical(
-    physical: iced::keyboard::key::Physical,
-) -> Option<KeyboardKey> {
-    let iced::keyboard::key::Physical::Code(code) = physical else {
-        return None;
-    };
-    Some(match code {
-        Code::Digit0 => KeyboardKey::Digit0,
-        Code::Digit1 => KeyboardKey::Digit1,
-        Code::Digit2 => KeyboardKey::Digit2,
-        Code::Digit3 => KeyboardKey::Digit3,
-        Code::Digit4 => KeyboardKey::Digit4,
-        Code::Digit5 => KeyboardKey::Digit5,
-        Code::Digit6 => KeyboardKey::Digit6,
-        Code::Digit7 => KeyboardKey::Digit7,
-        Code::Digit8 => KeyboardKey::Digit8,
-        Code::Digit9 => KeyboardKey::Digit9,
-        Code::KeyA => KeyboardKey::KeyA,
-        Code::KeyB => KeyboardKey::KeyB,
-        Code::KeyC => KeyboardKey::KeyC,
-        Code::KeyD => KeyboardKey::KeyD,
-        Code::KeyE => KeyboardKey::KeyE,
-        Code::KeyF => KeyboardKey::KeyF,
-        Code::KeyG => KeyboardKey::KeyG,
-        Code::KeyH => KeyboardKey::KeyH,
-        Code::KeyI => KeyboardKey::KeyI,
-        Code::KeyJ => KeyboardKey::KeyJ,
-        Code::KeyK => KeyboardKey::KeyK,
-        Code::KeyL => KeyboardKey::KeyL,
-        Code::KeyM => KeyboardKey::KeyM,
-        Code::KeyN => KeyboardKey::KeyN,
-        Code::KeyO => KeyboardKey::KeyO,
-        Code::KeyP => KeyboardKey::KeyP,
-        Code::KeyQ => KeyboardKey::KeyQ,
-        Code::KeyR => KeyboardKey::KeyR,
-        Code::KeyS => KeyboardKey::KeyS,
-        Code::KeyT => KeyboardKey::KeyT,
-        Code::KeyU => KeyboardKey::KeyU,
-        Code::KeyV => KeyboardKey::KeyV,
-        Code::KeyW => KeyboardKey::KeyW,
-        Code::KeyX => KeyboardKey::KeyX,
-        Code::KeyY => KeyboardKey::KeyY,
-        Code::KeyZ => KeyboardKey::KeyZ,
-        Code::ArrowUp => KeyboardKey::ArrowUp,
-        Code::ArrowDown => KeyboardKey::ArrowDown,
-        Code::ArrowLeft => KeyboardKey::ArrowLeft,
-        Code::ArrowRight => KeyboardKey::ArrowRight,
-        Code::Enter | Code::NumpadEnter => KeyboardKey::Enter,
-        Code::Escape => KeyboardKey::Escape,
-        Code::Space => KeyboardKey::Space,
-        Code::Tab => KeyboardKey::Tab,
-        Code::F1 => KeyboardKey::F1,
-        Code::F2 => KeyboardKey::F2,
-        Code::F3 => KeyboardKey::F3,
-        Code::F4 => KeyboardKey::F4,
-        Code::F5 => KeyboardKey::F5,
-        Code::F6 => KeyboardKey::F6,
-        Code::F7 => KeyboardKey::F7,
-        Code::F8 => KeyboardKey::F8,
-        Code::F9 => KeyboardKey::F9,
-        Code::F10 => KeyboardKey::F10,
-        Code::F11 => KeyboardKey::F11,
-        Code::F12 => KeyboardKey::F12,
-        _ => return None,
-    })
+pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
+    physical.try_into().ok()
 }
 
 #[cfg(test)]
 mod tests {
     use iced::keyboard::key::{Code, Physical};
-    use nerust_gui_settings::input::KeyboardKey;
+    use nerust_keyboard::Key;
 
     use super::keyboard_key_from_physical;
 
@@ -1095,19 +1021,15 @@ mod tests {
     fn physical_key_mapping_matches_tao_bindings() {
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::KeyZ)),
-            Some(KeyboardKey::KeyZ)
+            Some(Key::KeyZ)
         );
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::ArrowLeft)),
-            Some(KeyboardKey::ArrowLeft)
+            Some(Key::ArrowLeft)
         );
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::F11)),
-            Some(KeyboardKey::F11)
-        );
-        assert_eq!(
-            keyboard_key_from_physical(Physical::Code(Code::Delete)),
-            None
+            Some(Key::F11)
         );
     }
 }

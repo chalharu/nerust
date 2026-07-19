@@ -1,0 +1,26 @@
+[package]
+name = "nerust_keyboard"
+version.workspace = true
+authors.workspace = true
+description = "Platform-agnostic keyboard key code type with From implementations"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+error = ["dep:thiserror"]
+gdk = ["dep:gdk", "error"]
+iced = ["dep:iced", "error"]
+tao = ["dep:tao", "error"]
+
+[dependencies]
+gdk = { workspace = true, optional = true }
+iced = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+tao = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+[dev-dependencies]
+strum.workspace = true
