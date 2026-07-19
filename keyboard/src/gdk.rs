@@ -98,6 +98,7 @@ impl TryFrom<gdk::Key> for Key {
             gdk::Key::KP_Add => Ok(Key::NumpadAdd),
             gdk::Key::KP_Subtract => Ok(Key::NumpadSubtract),
             gdk::Key::KP_Multiply => Ok(Key::NumpadMultiply),
+            gdk::Key::NumericStar => Ok(Key::NumpadStar),
             gdk::Key::KP_Divide => Ok(Key::NumpadDivide),
             gdk::Key::KP_Enter => Ok(Key::NumpadEnter),
             gdk::Key::Insert => Ok(Key::Insert),
@@ -259,7 +260,7 @@ impl From<Key> for gdk::Key {
             // Key::NumpadMemorySubtract => gdk::Key::KP_MemorySubtract,
             // Key::NumpadParenLeft => gdk::Key::KP_ParenLeft,
             // Key::NumpadParenRight => gdk::Key::KP_ParenRight,
-            Key::NumpadStar => gdk::Key::KP_Multiply,
+            Key::NumpadStar => gdk::Key::NumericStar,
             Key::SuperLeft => gdk::Key::Super_L,
             Key::SuperRight => gdk::Key::Super_R,
             // Key::AudioVolumeUp => gdk::Key::AudioVolumeUp,
@@ -332,8 +333,6 @@ mod tests {
             }
             if let Ok(round_trip_key) = gdk_key.try_into() {
                 if key != round_trip_key {
-                    // GDK lacks distinction for some key variants that tao/iced have
-                    // (e.g. NumpadStar vs NumpadMultiply both → KP_Multiply).
                     continue;
                 }
             }
