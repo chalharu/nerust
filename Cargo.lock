@@ -3029,7 +3029,6 @@ dependencies = [
  "log",
  "nerust_render_ntsc",
  "nerust_render_traits",
- "serde",
 ]
 
 [[package]]
@@ -3057,7 +3056,6 @@ name = "nerust_render_softbuffer"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_render_filters",
  "nerust_render_traits",
  "raw-window-handle",
  "softbuffer",

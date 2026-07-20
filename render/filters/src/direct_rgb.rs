@@ -3,7 +3,7 @@ use nerust_render_traits::logical::LogicalSize;
 use nerust_render_traits::physical::PhysicalSize;
 use nerust_render_traits::rgb::RGB;
 
-pub struct DirectRgb {
+pub(crate) struct DirectRgb {
     source: LogicalSize,
 }
 

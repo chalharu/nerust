@@ -3,6 +3,7 @@ use nerust_render_traits::logical::LogicalSize;
 use nerust_render_traits::physical::PhysicalSize;
 use nerust_render_traits::rgb::RGB;
 
+#[derive(Debug)]
 pub(crate) struct NtscSimulator {
     ntsc: nerust_render_ntsc::Engine,
     source: LogicalSize,
