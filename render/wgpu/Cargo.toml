@@ -8,7 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 log.workspace = true
-nerust_render_base.workspace = true
+nerust_render_traits.workspace = true
+nerust_render_filters.workspace = true
 pollster.workspace = true
 raw-window-handle.workspace = true
 wgpu.workspace = true

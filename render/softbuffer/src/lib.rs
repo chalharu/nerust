@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use log::{error, warn};
-use nerust_render_base::{
+use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     filter::BLACK_PALETTE_INDEX,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},

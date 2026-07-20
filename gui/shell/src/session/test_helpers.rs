@@ -22,9 +22,9 @@ use nerust_input_traits::{
     InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
     InputValue, SlotInfo,
 };
-use nerust_render_base::logical::LogicalSize;
-use nerust_render_base::physical::PhysicalSize;
-use nerust_render_base::{FrameBuffer, VideoRenderProfile};
+use nerust_render_traits::logical::LogicalSize;
+use nerust_render_traits::physical::PhysicalSize;
+use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 
 use super::SessionHandle;
 use crate::settings::factory::settings_view;
@@ -138,7 +138,7 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
             width: 256.0,
             height: 240.0,
         },
-        frame_format: nerust_render_base::VideoFrameFormat::Palette,
+        frame_format: nerust_render_traits::VideoFrameFormat::Palette,
         ntsc_packed_rgba8: None,
     };
     let (gui_input, _input_split) = test_input_resources();

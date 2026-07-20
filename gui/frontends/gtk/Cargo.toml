@@ -17,7 +17,7 @@ nerust_gui_runtime.workspace = true
 nerust_input_traits.workspace = true
 nerust_core_traits.workspace = true
 nerust_run_options.workspace = true
-nerust_render_base.workspace = true
+nerust_render_traits.workspace = true
 nerust_keyboard = { workspace = true, features = ["gdk"] }
 nerust_persistence.workspace = true
 raw-window-handle.workspace = true

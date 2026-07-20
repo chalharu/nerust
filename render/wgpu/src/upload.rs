@@ -1,4 +1,4 @@
-use nerust_render_base::logical::LogicalSize;
+use nerust_render_traits::logical::LogicalSize;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct FrameUploadLayout {
@@ -63,7 +63,7 @@ pub(crate) fn pack_frame_rows(
 
 #[cfg(test)]
 mod tests {
-    use nerust_render_base::logical::LogicalSize;
+    use nerust_render_traits::logical::LogicalSize;
 
     use super::{FrameUploadLayout, pack_frame_rows};
 

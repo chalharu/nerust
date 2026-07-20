@@ -32,7 +32,7 @@ pub struct CoreParts {
     pub gui_input: GuiInput,
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
-    pub render_profile: nerust_render_base::VideoRenderProfile,
+    pub render_profile: nerust_render_traits::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
 }
 

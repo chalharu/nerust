@@ -10,7 +10,7 @@ use glutin::{
     display::{Display, DisplayApiPreference, GlDisplay as _},
     surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface},
 };
-use nerust_render_base::{
+use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RenderResult, RendererConfig, RendererError},
 };
