@@ -255,10 +255,9 @@ mod tests {
             PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
         },
         language::AppLanguage,
-        nes::NesVideoFilter,
-        shared::SystemSettings,
     };
     use nerust_keyboard::Key;
+    use nerust_nes_settings::NesVideoFilter;
 
     use super::super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults};
     use super::SettingsManager;
@@ -317,10 +316,14 @@ mod tests {
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.general.language = AppLanguage::Japanese;
         snapshot.local.audio.muted = true;
-        let SystemSettings::Nes(nes) = snapshot
+        let nes = snapshot
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
+            .and_then(|s| {
+                let any: &mut dyn std::any::Any = &mut **s;
+                any.downcast_mut::<nerust_nes_settings::NesSettings>()
+            })
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
         manager.save_snapshot(snapshot.clone()).unwrap();
@@ -417,10 +420,18 @@ mod tests {
         .unwrap();
 
         let mut snap = manager.snapshot().unwrap();
-        let nes = snap.shared.systems.get_mut(&SystemId::new("nes")).unwrap();
-        let SystemSettings::Nes(nes_settings) = nes;
+        let snap_clone = snap.clone();
+        let nes_settings = snap
+            .shared
+            .systems
+            .get_mut(&SystemId::new("nes"))
+            .and_then(|s| {
+                let any: &mut dyn std::any::Any = &mut **s;
+                any.downcast_mut::<nerust_nes_settings::NesSettings>()
+            })
+            .unwrap();
         nes_settings.video.filter = NesVideoFilter::NtscRgb;
-        manager.save_snapshot(snap.clone()).unwrap();
+        manager.save_snapshot(snap_clone).unwrap();
         drop(manager);
 
         let manager2 = SettingsManager::load_with_paths(
@@ -431,8 +442,15 @@ mod tests {
         )
         .unwrap();
         let snap2 = manager2.snapshot().unwrap();
-        let nes2 = snap2.shared.systems.get(&SystemId::new("nes")).unwrap();
-        let SystemSettings::Nes(nes_settings) = nes2;
+        let _nes2 = snap2
+            .shared
+            .systems
+            .get(&SystemId::new("nes"))
+            .and_then(|s| {
+                let any: &dyn std::any::Any = &**s;
+                any.downcast_ref::<nerust_nes_settings::NesSettings>()
+            })
+            .unwrap();
         assert_eq!(
             nes_settings.video.filter,
             NesVideoFilter::NtscRgb,

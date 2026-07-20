@@ -5,10 +5,12 @@ members = [
   "traits/core",
   "traits/emu-thread",
   "traits/input",
+  "traits/settings",
   "nes/core",
   "nes/device",
   "nes/factory",
   "nes/controller",
+  "nes/settings",
   "gui/settings",
   "gui/run-options",
   "gui/runtime",
@@ -96,6 +98,8 @@ cpal = { version = "=0.18.1" }
 cubeb = { version = "=0.36.0" }
 crc = { version = "=3.4.0" }
 directories = { version = "=6.0.0" }
+dyn-clone = { version = "=1.0.20" }
+dyn-eq = { version = "=0.1.3" }
 flume = { version = "=0.12.0" }
 gdk = { version = "=0.11.4", package = "gdk4" }
 gio = { version = "=0.22.8" }
@@ -125,8 +129,10 @@ nerust_keyboard = { path = "keyboard", default-features = false }
 nerust_nes_factory = { path = "nes/factory" }
 nerust_gui_settings = { path = "gui/settings" }
 nerust_run_options = { path = "gui/run-options" }
+nerust_settings_traits = { path = "traits/settings" }
 nerust_nes_core = { path = "nes/core" }
 nerust_nes_device = { path = "nes/device" }
+nerust_nes_settings = { path = "nes/settings" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_input_traits = { path = "traits/input" }

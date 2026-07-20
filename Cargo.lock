@@ -1032,6 +1032,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "dyn-eq"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c2d035d21af5cde1a6f5c7b444a5bf963520a9f142e5d06931178433d7d5388"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2794,8 +2806,10 @@ dependencies = [
  "nerust_input_traits",
  "nerust_nes_controller",
  "nerust_nes_factory",
+ "nerust_nes_settings",
  "nerust_render_base",
  "nerust_render_wgpu",
+ "nerust_settings_traits",
  "nerust_sound_cpal",
  "winit",
 ]
@@ -2868,7 +2882,9 @@ dependencies = [
  "nerust_core_traits",
  "nerust_gui_settings",
  "nerust_keyboard",
+ "nerust_nes_settings",
  "nerust_persistence",
+ "nerust_settings_traits",
  "serde",
  "serde-saphyr",
  "serde_json",
@@ -2882,6 +2898,8 @@ dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_settings",
+ "nerust_settings_traits",
  "serde",
  "serde-saphyr",
 ]
@@ -2897,8 +2915,10 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_settings",
  "nerust_persistence",
  "nerust_render_base",
+ "nerust_settings_traits",
  "rmp-serde",
  "serde",
  "thiserror 2.0.18",
@@ -2966,12 +2986,23 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "nerust_core_traits",
- "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
+ "nerust_nes_settings",
  "nerust_render_base",
  "rmp-serde",
+]
+
+[[package]]
+name = "nerust_nes_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "dyn-clone",
+ "dyn-eq",
+ "nerust_settings_traits",
+ "serde",
+ "typetag",
 ]
 
 [[package]]
@@ -3068,6 +3099,16 @@ name = "nerust_serialize"
 version = "0.1.0-dev"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "nerust_settings_traits"
+version = "0.1.0-dev"
+dependencies = [
+ "dyn-clone",
+ "dyn-eq",
+ "serde",
+ "typetag",
 ]
 
 [[package]]
