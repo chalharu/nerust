@@ -1,11 +1,11 @@
-use nerust_render_ntsc::{ShaderKernelEntry, setup::Setup};
+use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, ShaderKernelEntry, setup::Setup};
 use nerust_render_traits::filter::{FilterType, PALETTE_TEXTURE_WIDTH};
 use nerust_render_traits::logical::LogicalSize;
 use nerust_render_traits::physical::PhysicalSize;
 use nerust_render_traits::rgb::RGB;
 use nerust_render_traits::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
 
-use crate::{NTSC_TEXTURE_HEIGHT, direct_rgb};
+use crate::direct_rgb;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoPresentationPipelineKind {
@@ -340,8 +340,8 @@ impl FilterTypeExt for FilterType {
 #[cfg(test)]
 mod tests {
     use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
-    use crate::{NTSC_TEXTURE_HEIGHT, FilterTypeExt};
-    use nerust_render_ntsc;
+    use crate::FilterTypeExt;
+    use nerust_render_ntsc::{self, NTSC_TEXTURE_HEIGHT};
     use nerust_render_traits::filter::{BLACK_PALETTE_INDEX, FilterFunc, FilterType, PALETTE_TEXTURE_WIDTH};
     use nerust_render_traits::logical::LogicalSize;
     use nerust_render_traits::rgb::RGB;
