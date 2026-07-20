@@ -1,0 +1,100 @@
+use crate::{LogicalSize, PhysicalSize, RGB};
+
+pub const BLACK_PALETTE_INDEX: u8 = 0x0F;
+pub const PALETTE_TEXTURE_WIDTH: u32 = 64;
+
+pub trait VideoFilter: Send {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
+
+    fn logical_size(&self) -> LogicalSize;
+    fn physical_size(&self) -> PhysicalSize;
+}
+
+pub trait FilterFunc {
+    fn filter_func(&mut self, value: RGB);
+}
+
+pub trait FilterUnit: Send {
+    type Input;
+    type Output;
+
+    fn push<F: FnMut(Self::Output)>(&mut self, value: Self::Input, next_func: &mut F);
+
+    fn source_logical_size(&self) -> LogicalSize;
+    fn source_physical_size(&self) -> PhysicalSize;
+
+    fn eval_logical_size(source: LogicalSize) -> LogicalSize;
+    fn eval_physical_size(source: PhysicalSize) -> PhysicalSize;
+
+    fn logical_size(&self) -> LogicalSize {
+        Self::eval_logical_size(self.source_logical_size())
+    }
+
+    fn physical_size(&self) -> PhysicalSize {
+        Self::eval_physical_size(self.source_physical_size())
+    }
+
+    fn combine<T: FilterUnit<Input = Self::Output>>(self, other: T) -> Combine<Self, T>
+    where
+        Self: Sized,
+    {
+        Combine {
+            filter1: self,
+            filter2: other,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Combine<T: FilterUnit, U: FilterUnit<Input = T::Output>> {
+    filter1: T,
+    filter2: U,
+}
+
+impl<T: FilterUnit, U: FilterUnit<Input = T::Output>> FilterUnit for Combine<T, U> {
+    type Input = T::Input;
+    type Output = U::Output;
+
+    fn push<F: FnMut(Self::Output)>(&mut self, value: Self::Input, next_func: &mut F) {
+        let f2 = &mut self.filter2;
+        self.filter1.push(value, &mut |x| f2.push(x, next_func));
+    }
+
+    fn source_logical_size(&self) -> LogicalSize {
+        self.filter1.source_logical_size()
+    }
+
+    fn source_physical_size(&self) -> PhysicalSize {
+        self.filter1.source_physical_size()
+    }
+
+    fn eval_logical_size(source: LogicalSize) -> LogicalSize {
+        U::eval_logical_size(T::eval_logical_size(source))
+    }
+
+    fn eval_physical_size(source: PhysicalSize) -> PhysicalSize {
+        U::eval_physical_size(T::eval_physical_size(source))
+    }
+}
+
+impl<F: FilterUnit<Input = u8, Output = RGB>> VideoFilter for F {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc) {
+        FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
+    }
+
+    fn logical_size(&self) -> LogicalSize {
+        FilterUnit::logical_size(self)
+    }
+
+    fn physical_size(&self) -> PhysicalSize {
+        FilterUnit::physical_size(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FilterType {
+    None,
+    NtscRGB,
+    NtscComposite,
+    NtscSVideo,
+}
