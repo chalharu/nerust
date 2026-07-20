@@ -10,4 +10,3 @@ rust-version.workspace = true
 log.workspace = true
 nerust_render_ntsc.workspace = true
 nerust_render_traits.workspace = true
-serde = { workspace = true, features = ["derive"] }

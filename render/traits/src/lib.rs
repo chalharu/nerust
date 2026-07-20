@@ -125,11 +125,15 @@ impl VideoPresentation {
     }
 }
 
+/// Pixel format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PixelFormat {
+    /// 4 bytes/pixel, RGBA 8-bit per channel. Transfer directly to GPU.
     Rgba,
 
+    /// 1 byte/pixel, palette index + palette LUT.
     PaletteIndex {
+        /// 256-entry RGBA palette (u32 = 0xRRGGBBAA).
         palette: Box<[u32; 256]>,
     },
 }
@@ -143,6 +147,12 @@ impl PixelFormat {
     }
 }
 
+/// Frame buffer with pre-allocated capacity and reuse.
+///
+/// Console prepares via `resize(w, h)`, writes pixels via `as_mut()`.
+/// GUI reads via `as_ref()`. Thread transfer via
+/// `Arc<Mutex<FrameBuffer>>` + `mem::swap` (zero-copy).
+/// `stride` is bytes per row; RGBA rows are aligned to 256-byte boundary.
 #[derive(Debug)]
 pub struct FrameBuffer {
     data: Vec<u8>,
@@ -154,6 +164,7 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
+    /// Pre-allocate buffer for the maximum resolution.
     pub fn with_capacity(max_width: usize, max_height: usize, format: PixelFormat) -> Self {
         let bpp = format.bytes_per_pixel();
         Self {
@@ -166,6 +177,7 @@ impl FrameBuffer {
         }
     }
 
+    /// Resize to the given dimensions. Zero-allocation if within capacity.
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -178,6 +190,7 @@ impl FrameBuffer {
         self.data.resize(self.stride * height, 0);
     }
 
+    /// Write one palette index. Warns and ignores on buffer overflow.
     pub fn push(&mut self, value: u8) {
         if self.cursor >= self.data.len() {
             log::warn!(
@@ -191,6 +204,8 @@ impl FrameBuffer {
         self.cursor += 1;
     }
 
+    /// Write `count` copies of the same palette index.
+    /// Warns and ignores on buffer overflow.
     pub fn push_many(&mut self, value: u8, count: u16) {
         let end = self.cursor + count as usize;
         if end > self.data.len() {
@@ -206,15 +221,20 @@ impl FrameBuffer {
         self.cursor = end;
     }
 
+    /// Signal frame completion — reset cursor to start.
     pub fn render(&mut self) {
         self.cursor = 0;
     }
 
+    /// Zero out the entire buffer.
     pub fn clear(&mut self) {
         self.data.fill(0);
         self.cursor = 0;
     }
 
+    /// Resize the data buffer to the given byte length.
+    /// Does not update width/height/stride.
+    /// Used to match the output size of `ScreenBuffer::frame_len()`.
     pub fn resize_data(&mut self, len: usize) {
         self.data.resize(len, 0);
     }
@@ -242,6 +262,7 @@ impl FrameBuffer {
         &self.format
     }
 
+    /// Return the palette table reference when in `PaletteIndex` mode.
     pub fn palette(&self) -> Option<&[u32; 256]> {
         match &self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
@@ -249,6 +270,8 @@ impl FrameBuffer {
         }
     }
 
+    /// Convert the first 64 entries to RGBA8 bytes (256 B). For GPU upload.
+    /// Returns `None` when not in `PaletteIndex` mode.
     pub fn palette_as_rgba8(&self) -> Option<[u8; 256]> {
         let palette = self.palette()?;
         let mut rgba8 = [0u8; 256];
