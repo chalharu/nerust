@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk::{glib, prelude::*};
-use nerust_render_base::SurfaceSize;
-use nerust_render_base::renderer::GpuFactory;
+use nerust_render_traits::SurfaceSize;
+use nerust_render_traits::renderer::GpuFactory;
 
 use super::{State, renderer::GtkRenderer};
 

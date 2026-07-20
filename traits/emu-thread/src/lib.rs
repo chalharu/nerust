@@ -9,7 +9,7 @@ use std::{
 };
 
 use nerust_core_traits::{ConsoleCore, EmuCommand};
-use nerust_render_base::{FrameBuffer, PixelFormat};
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 use nerust_timer::Timer;
 use thiserror::Error;
 

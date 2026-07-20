@@ -13,7 +13,7 @@ use nerust_core_traits::{
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
-use nerust_render_base::{FrameBuffer, PixelFormat, VideoRenderProfile};
+use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
 use crate::session::persistence::{CorePersistence, CorePersistenceError};
 

@@ -2781,9 +2781,9 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_nes_factory",
- "nerust_render_base",
  "nerust_render_gl",
  "nerust_render_softbuffer",
+ "nerust_render_traits",
  "nerust_render_wgpu",
  "nerust_run_options",
  "nerust_sound_cpal",
@@ -2807,7 +2807,7 @@ dependencies = [
  "nerust_nes_controller",
  "nerust_nes_factory",
  "nerust_nes_settings",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_render_wgpu",
  "nerust_settings_traits",
  "nerust_sound_cpal",
@@ -2821,7 +2821,7 @@ dependencies = [
  "clap",
  "log",
  "nerust_input_traits",
- "nerust_render_base",
+ "nerust_render_traits",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -2831,7 +2831,7 @@ name = "nerust_emu_thread"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_timer",
  "thiserror 2.0.18",
 ]
@@ -2864,7 +2864,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_run_options",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -2917,7 +2917,7 @@ dependencies = [
  "nerust_keyboard",
  "nerust_nes_settings",
  "nerust_persistence",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_settings_traits",
  "rmp-serde",
  "serde",
@@ -2962,7 +2962,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_input_traits",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_serialize",
  "nerust_sound_filter",
  "rmp-serde",
@@ -2990,7 +2990,8 @@ dependencies = [
  "nerust_nes_core",
  "nerust_nes_device",
  "nerust_nes_settings",
- "nerust_render_base",
+ "nerust_render_filters",
+ "nerust_render_traits",
  "rmp-serde",
 ]
 
@@ -3022,12 +3023,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_render_base"
+name = "nerust_render_filters"
 version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_render_ntsc",
- "raw-window-handle",
+ "nerust_render_traits",
  "serde",
 ]
 
@@ -3039,7 +3040,8 @@ dependencies = [
  "glutin",
  "log",
  "nerust_glwrap",
- "nerust_render_base",
+ "nerust_render_filters",
+ "nerust_render_traits",
  "raw-window-handle",
 ]
 
@@ -3055,9 +3057,19 @@ name = "nerust_render_softbuffer"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_render_base",
+ "nerust_render_filters",
+ "nerust_render_traits",
  "raw-window-handle",
  "softbuffer",
+]
+
+[[package]]
+name = "nerust_render_traits"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "raw-window-handle",
+ "serde",
 ]
 
 [[package]]
@@ -3065,7 +3077,8 @@ name = "nerust_render_wgpu"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_render_base",
+ "nerust_render_filters",
+ "nerust_render_traits",
  "pollster 1.0.1",
  "raw-window-handle",
  "wgpu",
@@ -3083,7 +3096,8 @@ dependencies = [
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
- "nerust_render_base",
+ "nerust_render_filters",
+ "nerust_render_traits",
  "png",
  "serde",
  "serde-saphyr",
@@ -3151,7 +3165,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
- "nerust_render_base",
+ "nerust_render_traits",
  "nerust_run_options",
  "raw-window-handle",
  "rfd",

@@ -1,9 +1,10 @@
-use nerust_render_base::{
+use nerust_render_traits::{
     SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
-    filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH},
+    filter::FilterType,
     logical::LogicalSize,
     physical::PhysicalSize,
 };
+use nerust_render_filters::{FilterTypeExt, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
 
 use super::{
     draw::compute_viewport,

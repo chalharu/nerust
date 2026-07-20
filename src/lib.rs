@@ -15,7 +15,7 @@ use nerust_gui_shell::{
     load::{RomLoadTarget, RomLoader, RomLoaderError},
 };
 use nerust_nes_factory::NesFactory;
-use nerust_render_base::renderer::GpuFactory;
+use nerust_render_traits::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
 

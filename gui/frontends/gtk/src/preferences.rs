@@ -1446,7 +1446,7 @@ fn apply_system_field_by_id_to_combo(
 fn apply_scaling_to_window(
     window: &gtk::ApplicationWindow,
     scaling: nerust_gui_settings::local::ScalingMode,
-    render_profile: &nerust_render_base::VideoRenderProfile,
+    render_profile: &nerust_render_traits::VideoRenderProfile,
 ) {
     let base_width = render_profile.physical_size.width as i32;
     let base_height = render_profile.physical_size.height as i32;

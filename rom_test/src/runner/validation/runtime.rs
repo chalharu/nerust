@@ -5,7 +5,7 @@ mod inspection;
 
 use nerust_input_traits::ControllerCollection;
 use nerust_nes_core::Core;
-use nerust_render_base::FrameBuffer;
+use nerust_render_traits::FrameBuffer;
 
 use crate::{events::Buttons, media::HashingMixer};
 

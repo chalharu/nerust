@@ -33,7 +33,7 @@ use nerust_gui_shell::{
 
 use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_base::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
+use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
 
 use self::window::{StateMenus, Window, WindowExtend};

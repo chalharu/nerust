@@ -7,9 +7,10 @@ use nerust_input_traits::{
     AttachmentId, ControllerCollection, DigitalControlId, EmuInput, GuiInput,
 };
 use nerust_nes_core::console_core::NesConsoleCore;
-use nerust_render_base::VideoRenderProfile;
-use nerust_render_base::filter::FilterType;
-use nerust_render_base::logical::LogicalSize;
+use nerust_render_traits::VideoRenderProfile;
+use nerust_render_traits::filter::FilterType;
+use nerust_render_traits::logical::LogicalSize;
+use nerust_render_filters::FilterTypeExt;
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
@@ -48,7 +49,7 @@ fn compute_render_profile(filter_type: FilterType) -> (VideoRenderProfile, Box<[
         source_logical_size: layout.source_logical_size,
         logical_size: layout.logical_size,
         physical_size: layout.physical_size,
-        frame_format: nerust_render_base::VideoFrameFormat::Palette,
+        frame_format: nerust_render_traits::VideoFrameFormat::Palette,
         ntsc_packed_rgba8,
     };
     let mut palette = [0u32; 256];

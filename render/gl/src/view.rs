@@ -2,7 +2,8 @@ use std::{os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
 use nerust_glwrap::{Shader, raw::*, vertex::*};
-use nerust_render_base::{VideoFrameFormat, VideoRenderProfile, filter::NTSC_TEXTURE_HEIGHT};
+use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile};
+use nerust_render_filters::NTSC_TEXTURE_HEIGHT;
 
 use crate::{mat4::Mat4, vec2d::Vec2D, vertex_data::VertexData};
 
