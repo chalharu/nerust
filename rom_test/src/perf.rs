@@ -5,8 +5,8 @@ use nerust_core_traits::audio::AudioBackend;
 use nerust_input_traits::{ControllerCollection, ControllerHub as _};
 use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
-use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 use nerust_render_filters::FilterTypeExt;
+use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 
 use crate::{
     error::RomTestError,

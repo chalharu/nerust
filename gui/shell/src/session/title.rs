@@ -14,8 +14,9 @@ pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::window_title;
     use nerust_emu_thread::ConsoleMetrics;
+
+    use super::window_title;
 
     #[test]
     fn window_title_surfaces_runtime_metrics() {

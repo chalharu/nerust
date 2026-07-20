@@ -1,6 +1,6 @@
-use super::CpuCartridgeBus as Cartridge;
 use nerust_input_traits::{ControllerHub, OpenBusReadResult};
 
+use super::CpuCartridgeBus as Cartridge;
 use crate::{Apu, OpenBus, Ppu, controller::NES_PORTS, cpu::Register, interrupt::Interrupt};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]

@@ -7,9 +7,10 @@ use std::{
     },
 };
 
-use nerust_core_traits::factory::{CoreParts, load::MediaObject};
 use nerust_core_traits::{
-    CoreConfig, EmuCommand, LoadCommand, StateDataCommand, identity::SystemIdentity,
+    CoreConfig, EmuCommand, LoadCommand, StateDataCommand,
+    factory::{CoreParts, load::MediaObject},
+    identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};

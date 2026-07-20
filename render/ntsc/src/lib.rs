@@ -100,8 +100,7 @@ pub const SHADER_CHANNEL_BIAS: i16 = 512;
 /// GPU texture width in pixels (= `SHADER_COLOR_COUNT`).
 pub const NTSC_TEXTURE_WIDTH: u32 = SHADER_COLOR_COUNT as u32;
 /// GPU texture height in pixels (= `SHADER_PHASE_COUNT * SHADER_PHASE_ENTRY_COUNT`).
-pub const NTSC_TEXTURE_HEIGHT: u32 =
-    (SHADER_PHASE_COUNT * SHADER_PHASE_ENTRY_COUNT) as u32;
+pub const NTSC_TEXTURE_HEIGHT: u32 = (SHADER_PHASE_COUNT * SHADER_PHASE_ENTRY_COUNT) as u32;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ShaderKernelEntry {

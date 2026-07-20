@@ -194,8 +194,7 @@ mod mirror_mode_serde {
 #[cfg(test)]
 mod tests {
     use super::{CartridgeData, RomFormat};
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::mirror::MirrorMode;
+    use crate::{cartridge_data_parts::CartridgeDataParts, mirror::MirrorMode};
 
     #[test]
     fn rejects_too_small_program_rom() {

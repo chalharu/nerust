@@ -1,11 +1,10 @@
-use crate::events::Buttons;
-
 use super::{
     error::RomTestError,
     events::{ButtonCode, ControllerPad, PadState, RomAssertion, RomEventKind},
     manifest::RomCase,
     results::ExecutionTotals,
 };
+use crate::events::Buttons;
 
 pub trait CaseHarness {
     fn run_frame(&mut self) -> u64;

@@ -22,9 +22,9 @@ use nerust_input_traits::{
     InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
     InputValue, SlotInfo,
 };
-use nerust_render_traits::logical::LogicalSize;
-use nerust_render_traits::physical::PhysicalSize;
-use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
+use nerust_render_traits::{
+    FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
+};
 
 use super::SessionHandle;
 use crate::settings::factory::settings_view;

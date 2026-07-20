@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 
-use nerust_core_traits::audio::AudioBackend;
-use nerust_core_traits::factory::settings::FactorySettingsView;
-use nerust_core_traits::factory::{CoreParts, FactoryError};
+use nerust_core_traits::{
+    audio::AudioBackend,
+    factory::{CoreParts, FactoryError, settings::FactorySettingsView},
+};
 use nerust_input_traits::{
     AttachmentId, ControllerCollection, DigitalControlId, EmuInput, GuiInput,
 };
 use nerust_nes_core::console_core::NesConsoleCore;
-use nerust_render_traits::VideoRenderProfile;
-use nerust_render_traits::filter::FilterType;
-use nerust_render_traits::logical::LogicalSize;
 use nerust_render_filters::FilterTypeExt;
+use nerust_render_traits::{VideoRenderProfile, filter::FilterType, logical::LogicalSize};
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
