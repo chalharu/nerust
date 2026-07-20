@@ -125,15 +125,17 @@ impl VideoPresentation {
     }
 }
 
-/// Pixel format.
+// === 新設計: FrameBuffer / PixelFormat ===
+
+/// ピクセルフォーマット
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PixelFormat {
-    /// 4 bytes/pixel, RGBA 8-bit per channel. Transfer directly to GPU.
+    /// 4 bytes/pixel, RGBA各8bit. GPUにそのまま転送.
     Rgba,
 
     /// 1 byte/pixel, palette index + palette LUT.
     PaletteIndex {
-        /// 256-entry RGBA palette (u32 = 0xRRGGBBAA).
+        /// 256エントリのRGBAパレット (u32 = 0xRRGGBBAA)
         palette: Box<[u32; 256]>,
     },
 }
@@ -147,12 +149,12 @@ impl PixelFormat {
     }
 }
 
-/// Frame buffer with pre-allocated capacity and reuse.
+/// フレームバッファ（事前確保・再利用）
 ///
-/// Console prepares via `resize(w, h)`, writes pixels via `as_mut()`.
-/// GUI reads via `as_ref()`. Thread transfer via
-/// `Arc<Mutex<FrameBuffer>>` + `mem::swap` (zero-copy).
-/// `stride` is bytes per row; RGBA rows are aligned to 256-byte boundary.
+/// Console が `resize(w, h)` で準備し、`as_mut()` でピクセルを書き込む。
+/// GUI は `as_ref()` で読み取る。スレッド間の受け渡しは
+/// `Arc<Mutex<FrameBuffer>>` + `mem::swap` で行う（ゼロコピー）。
+/// stride とは 1行のバイト数で、RGBA 形式の場合は 256 バイト境界に揃える。
 #[derive(Debug)]
 pub struct FrameBuffer {
     data: Vec<u8>,
@@ -164,7 +166,7 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
-    /// Pre-allocate buffer for the maximum resolution.
+    /// 最大解像度のバッファを事前確保する
     pub fn with_capacity(max_width: usize, max_height: usize, format: PixelFormat) -> Self {
         let bpp = format.bytes_per_pixel();
         Self {
@@ -177,7 +179,7 @@ impl FrameBuffer {
         }
     }
 
-    /// Resize to the given dimensions. Zero-allocation if within capacity.
+    /// 指定サイズにリサイズ（capacity 内ならゼロアロケーション）
     pub fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
@@ -190,7 +192,8 @@ impl FrameBuffer {
         self.data.resize(self.stride * height, 0);
     }
 
-    /// Write one palette index. Warns and ignores on buffer overflow.
+    /// PPU が palette index を 1 ピクセル書き込む。
+    /// バッファ不足時は警告ログを出力して無視する。
     pub fn push(&mut self, value: u8) {
         if self.cursor >= self.data.len() {
             log::warn!(
@@ -204,8 +207,8 @@ impl FrameBuffer {
         self.cursor += 1;
     }
 
-    /// Write `count` copies of the same palette index.
-    /// Warns and ignores on buffer overflow.
+    /// PPU が同一 palette index を連続書き込みする。
+    /// バッファ不足時は警告ログを出力して無視する。
     pub fn push_many(&mut self, value: u8, count: u16) {
         let end = self.cursor + count as usize;
         if end > self.data.len() {
@@ -221,20 +224,20 @@ impl FrameBuffer {
         self.cursor = end;
     }
 
-    /// Signal frame completion — reset cursor to start.
+    /// フレーム完了を通知する（cursor を先頭に戻す）。
     pub fn render(&mut self) {
         self.cursor = 0;
     }
 
-    /// Zero out the entire buffer.
+    /// バッファ全体をゼロで埋める。
     pub fn clear(&mut self) {
         self.data.fill(0);
         self.cursor = 0;
     }
 
-    /// Resize the data buffer to the given byte length.
-    /// Does not update width/height/stride.
-    /// Used to match the output size of `ScreenBuffer::frame_len()`.
+    /// データバッファを指定バイト数にリサイズする。
+    /// width/height/stride は更新せず、data のみを拡張する。
+    /// ScreenBuffer の出力サイズ (frame_len()) に合わせるために使用する。
     pub fn resize_data(&mut self, len: usize) {
         self.data.resize(len, 0);
     }
@@ -262,7 +265,7 @@ impl FrameBuffer {
         &self.format
     }
 
-    /// Return the palette table reference when in `PaletteIndex` mode.
+    /// PaletteIndex 形式の場合、パレットテーブルへの参照を返す。
     pub fn palette(&self) -> Option<&[u32; 256]> {
         match &self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
@@ -270,8 +273,8 @@ impl FrameBuffer {
         }
     }
 
-    /// Convert the first 64 entries to RGBA8 bytes (256 B). For GPU upload.
-    /// Returns `None` when not in `PaletteIndex` mode.
+    /// 先頭64エントリを RGBA8 バイト列 (256B) に変換。GPU upload 用。
+    /// PaletteIndex 形式以外の場合は None。
     pub fn palette_as_rgba8(&self) -> Option<[u8; 256]> {
         let palette = self.palette()?;
         let mut rgba8 = [0u8; 256];
