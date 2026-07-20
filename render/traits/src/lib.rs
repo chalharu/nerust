@@ -277,10 +277,10 @@ impl FrameBuffer {
         let mut rgba8 = [0u8; 256];
         for (i, &color) in palette.iter().enumerate().take(64) {
             let pos = i * 4;
-            rgba8[pos] = (color >> 24) as u8;
-            rgba8[pos + 1] = (color >> 16) as u8;
-            rgba8[pos + 2] = (color >> 8) as u8;
-            rgba8[pos + 3] = color as u8;
+            rgba8[pos] = (color >> 24) as u8; // R
+            rgba8[pos + 1] = (color >> 16) as u8; // G
+            rgba8[pos + 2] = (color >> 8) as u8; // B
+            rgba8[pos + 3] = color as u8; // A
         }
         Some(rgba8)
     }
