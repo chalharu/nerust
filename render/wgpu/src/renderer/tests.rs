@@ -4,7 +4,8 @@ use nerust_render_traits::{
     logical::LogicalSize,
     physical::PhysicalSize,
 };
-use nerust_render_filters::{FilterTypeExt, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
+use nerust_render_filters::FilterTypeExt;
+use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
 
 use super::{
     draw::compute_viewport,

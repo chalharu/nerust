@@ -3039,7 +3039,7 @@ dependencies = [
  "glutin",
  "log",
  "nerust_glwrap",
- "nerust_render_filters",
+ "nerust_render_ntsc",
  "nerust_render_traits",
  "raw-window-handle",
 ]
@@ -3076,6 +3076,7 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_render_filters",
+ "nerust_render_ntsc",
  "nerust_render_traits",
  "pollster 1.0.1",
  "raw-window-handle",

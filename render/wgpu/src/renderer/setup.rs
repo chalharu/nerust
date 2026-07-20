@@ -3,7 +3,7 @@ use nerust_render_traits::{
     filter::PALETTE_TEXTURE_WIDTH,
     logical::LogicalSize,
 };
-use nerust_render_filters::NTSC_TEXTURE_WIDTH;
+use nerust_render_ntsc::NTSC_TEXTURE_WIDTH;
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,
