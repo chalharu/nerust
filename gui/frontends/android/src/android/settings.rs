@@ -13,7 +13,6 @@ use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_nes_settings::{NesSettings, NesVideoFilter};
-use nerust_settings_traits::SystemSettings;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
