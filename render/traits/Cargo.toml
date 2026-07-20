@@ -1,0 +1,12 @@
+[package]
+name = "nerust_render_traits"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log.workspace = true
+raw-window-handle.workspace = true
+serde = { workspace = true, features = ["derive"] }
