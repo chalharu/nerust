@@ -1,5 +1,6 @@
 use std::{
     fmt,
+    rc::Rc,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -33,12 +34,10 @@ use nerust_gui_shell::settings::{
     factory::{apply_settings_choice, resolve_label, settings_view},
     i18n::{UiText, text as ui_text},
 };
-use nerust_keyboard::Key;
-use std::rc::Rc;
-
 use nerust_input_traits::{
     AttachmentId, ControllerProfile, InputAssignments, InputTopologyDescriptor,
 };
+use nerust_keyboard::Key;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;

@@ -259,8 +259,10 @@ mod tests {
     use nerust_keyboard::Key;
     use nerust_nes_settings::NesVideoFilter;
 
-    use super::super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults};
-    use super::SettingsManager;
+    use super::{
+        super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults},
+        SettingsManager,
+    };
 
     #[test]
     fn ephemeral_manager_round_trips_snapshot() {

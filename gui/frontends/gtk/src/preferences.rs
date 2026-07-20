@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, sync::Arc};
 
 use gio::glib::object::{Cast as _, IsA};
 use gtk::{
@@ -18,24 +18,22 @@ use nerust_core_traits::{
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
-    session::SessionError,
+    session::{
+        SessionError,
+        access::{FrontendSession, SettingsResult},
+        input::build_topology,
+    },
     settings::{
         bindings::{
             conflicting_keys,
             descriptors::{keyboard_binding_sections, shortcut_descriptors},
         },
         editor::{CaptureTarget, apply_capture_target, current_binding_label},
-        factory::{apply_settings_choice, settings_view},
+        factory::{apply_settings_choice, resolve_label, settings_view},
         i18n::{UiText, text},
     },
 };
-use nerust_gui_shell::{
-    session::access::{FrontendSession, SettingsResult},
-    session::input::build_topology,
-    settings::factory::resolve_label,
-};
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor, SlotInfo};
-use std::collections::HashSet;
 
 use crate::State;
 
@@ -1446,7 +1444,7 @@ fn apply_system_field_by_id_to_combo(
 fn apply_scaling_to_window(
     window: &gtk::ApplicationWindow,
     scaling: nerust_gui_settings::local::ScalingMode,
-    render_profile: &nerust_render_base::VideoRenderProfile,
+    render_profile: &nerust_render_traits::VideoRenderProfile,
 ) {
     let base_width = render_profile.physical_size.width as i32;
     let base_height = render_profile.physical_size.height as i32;
@@ -1500,8 +1498,7 @@ mod tests {
 
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
-        session::SessionError,
-        session::access::SettingsResult,
+        session::{SessionError, access::SettingsResult},
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         },

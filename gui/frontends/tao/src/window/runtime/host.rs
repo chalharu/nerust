@@ -21,7 +21,7 @@ use nerust_gui_shell::{
         scaling_factor,
     },
 };
-use nerust_render_base::{
+use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
 };

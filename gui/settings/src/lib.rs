@@ -157,14 +157,12 @@ pub mod input {
 }
 
 pub mod shared {
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use nerust_core_traits::identity::SystemId;
     use nerust_settings_traits::SystemSettings as SystemSettingsTrait;
 
-    use super::input::InputSettings;
-    use super::language::AppLanguage;
+    use super::{input::InputSettings, language::AppLanguage};
 
     pub const DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION: u32 = 1;
 

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use nerust_render_base::{
+use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoRenderProfile,
     renderer::{GpuFactory, GpuRenderer, OpaqueError, RendererConfig, RendererError},
 };

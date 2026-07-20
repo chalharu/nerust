@@ -3,7 +3,7 @@ mod host;
 use std::path::Path;
 
 use nerust_gui_shell::context::FrontendContext;
-use nerust_render_base::{
+use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuRenderer, RendererConfig},
 };

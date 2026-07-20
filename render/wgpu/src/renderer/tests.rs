@@ -1,8 +1,8 @@
-use nerust_render_base::{
-    SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation,
-    filter::{FilterType, NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH},
-    logical::LogicalSize,
-    physical::PhysicalSize,
+use nerust_render_filters::FilterTypeExt;
+use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, NTSC_TEXTURE_WIDTH};
+use nerust_render_traits::{
+    SurfaceSize, VideoFrameFormat, VideoFrameSpec, VideoPresentation, filter::FilterType,
+    logical::LogicalSize, physical::PhysicalSize,
 };
 
 use super::{

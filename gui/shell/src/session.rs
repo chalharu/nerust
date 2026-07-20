@@ -20,6 +20,7 @@ use nerust_core_traits::{
         load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
     },
 };
+use nerust_emu_thread::{ConsoleMetrics, OperationError};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
@@ -28,10 +29,8 @@ use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
-use nerust_render_base::{FrameBuffer, VideoRenderProfile};
+use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use thiserror::Error;
-
-use nerust_emu_thread::{ConsoleMetrics, OperationError};
 
 use crate::{
     emu_core::EmuCore,
@@ -336,8 +335,10 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
 }
 
-use crate::load::{RomLoadTarget, RomLoaderError};
-use crate::session::commands::SessionCommand;
+use crate::{
+    load::{RomLoadTarget, RomLoaderError},
+    session::commands::SessionCommand,
+};
 
 impl RomLoadTarget for SessionHandle {
     fn default_load_options(&self) -> SystemLoadOptions {

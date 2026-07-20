@@ -1,5 +1,6 @@
-use super::FilterUnit;
-use crate::{LogicalSize, PhysicalSize, RGB};
+use nerust_render_traits::{
+    filter::FilterUnit, logical::LogicalSize, physical::PhysicalSize, rgb::RGB,
+};
 
 #[derive(Debug)]
 pub(crate) struct NtscSimulator {
@@ -8,14 +9,6 @@ pub(crate) struct NtscSimulator {
 }
 
 impl NtscSimulator {
-    // pub fn new(setup: &Setup, source: LogicalSize) -> Self {
-    //     match *setup {
-    //         Setup::Composite => Self::composite(source),
-    //         Setup::SVideo => Self::svideo(source),
-    //         Setup::RGB => Self::rgb(source),
-    //     }
-    // }
-
     pub(crate) fn composite(source: LogicalSize) -> Self {
         Self {
             ntsc: nerust_render_ntsc::Engine::new(
@@ -52,13 +45,7 @@ impl FilterUnit for NtscSimulator {
     type Output = RGB;
 
     fn push<F: FnMut(Self::Output)>(&mut self, value: Self::Input, next_func: &mut F) {
-        self.ntsc.push(value, &mut |x| {
-            next_func(RGB {
-                red: x.red,
-                green: x.green,
-                blue: x.blue,
-            })
-        });
+        self.ntsc.push(value, &mut |x| next_func(x));
     }
 
     fn source_logical_size(&self) -> LogicalSize {

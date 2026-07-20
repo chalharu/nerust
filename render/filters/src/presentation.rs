@@ -1,7 +1,13 @@
-use nerust_render_ntsc::{ShaderKernelEntry, setup::Setup};
+use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, ShaderKernelEntry, setup::Setup};
+use nerust_render_traits::{
+    VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+    filter::{FilterType, PALETTE_TEXTURE_WIDTH},
+    logical::LogicalSize,
+    physical::PhysicalSize,
+    rgb::RGB,
+};
 
-use super::{FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH, filters};
-use crate::{LogicalSize, PhysicalSize, RGB, VideoFrameFormat, VideoFrameSpec, VideoPresentation};
+use crate::direct_rgb;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum VideoPresentationPipelineKind {
@@ -141,8 +147,116 @@ impl PaletteAssets {
     }
 }
 
-impl FilterType {
-    pub fn layout(self, source_logical_size: LogicalSize) -> FilterLayout {
+pub trait FilterTypeExt {
+    fn generate(self, size: LogicalSize) -> Box<dyn nerust_render_traits::filter::VideoFilter>;
+    fn layout(self, source_logical_size: LogicalSize) -> FilterLayout;
+    fn presentation(
+        self,
+        source_logical_size: LogicalSize,
+        frame_format: VideoFrameFormat,
+    ) -> VideoPresentation;
+    fn rgba_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation;
+    fn palette_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation;
+    fn palette_assets(self) -> PaletteAssets;
+    fn palette_console_video_assets(self) -> ConsoleVideoAssets;
+    fn palette(self) -> [RGB; 64];
+}
+
+fn encoded_palette_rgba8(filter: FilterType) -> Box<[u8]> {
+    let palette = filter.palette();
+    let mut rgba = vec![0u8; 256];
+    for (i, color) in palette.iter().enumerate() {
+        let pos = i * 4;
+        rgba[pos] = color.red;
+        rgba[pos + 1] = color.green;
+        rgba[pos + 2] = color.blue;
+        rgba[pos + 3] = u8::MAX;
+    }
+    rgba.into_boxed_slice()
+}
+
+fn ntsc_setup(filter: FilterType) -> Option<Setup> {
+    match filter {
+        FilterType::None => None,
+        FilterType::NtscRGB => Some(Setup::RGB),
+        FilterType::NtscComposite => Some(Setup::Composite),
+        FilterType::NtscSVideo => Some(Setup::SVideo),
+    }
+}
+
+fn shader_kernel_entries(filter: FilterType) -> Option<Box<[ShaderKernelEntry]>> {
+    ntsc_setup(filter).map(|setup| nerust_render_ntsc::Engine::shader_kernel_entries(&setup))
+}
+
+fn packed_kernel_entries(filter: FilterType) -> Option<Box<[u32]>> {
+    ntsc_setup(filter).map(|setup| nerust_render_ntsc::Engine::packed_kernel_entries(&setup))
+}
+
+fn encode_ntsc_packed_entries_rgba8(entries: &[u32]) -> Box<[u8]> {
+    let color_count = PALETTE_TEXTURE_WIDTH as usize;
+    let texture_height = NTSC_TEXTURE_HEIGHT as usize;
+    let entry_stride = entries.len() / color_count;
+    debug_assert!(entry_stride >= texture_height);
+
+    let mut encoded = Vec::with_capacity(color_count * texture_height * 4);
+    for row in 0..texture_height {
+        for color in 0..color_count {
+            encoded.extend_from_slice(&entries[color * entry_stride + row].to_be_bytes());
+        }
+    }
+    encoded.into_boxed_slice()
+}
+
+fn encoded_packed_ntsc_texture_rgba8(filter: FilterType) -> Option<EncodedPackedNtscTexture> {
+    packed_kernel_entries(filter).map(|entries| EncodedPackedNtscTexture {
+        rgba8: encode_ntsc_packed_entries_rgba8(entries.as_ref()),
+    })
+}
+
+fn encoded_ntsc_textures_rgba8(filter: FilterType) -> Option<EncodedNtscTextures> {
+    shader_kernel_entries(filter).map(|entries| {
+        let color_count = PALETTE_TEXTURE_WIDTH as usize;
+        let texture_height = NTSC_TEXTURE_HEIGHT as usize;
+        let entry_stride = entries.len() / color_count;
+        debug_assert!(entry_stride >= texture_height);
+
+        let mut primary = Vec::with_capacity(color_count * texture_height * 4);
+        let mut secondary = Vec::with_capacity(color_count * texture_height * 4);
+        for row in 0..texture_height {
+            for color in 0..color_count {
+                let entry = entries[color * entry_stride + row];
+                let red = ((i32::from(entry.red)) + i32::from(i16::MAX) + 1) as u16;
+                let green = ((i32::from(entry.green)) + i32::from(i16::MAX) + 1) as u16;
+                let blue = ((i32::from(entry.blue)) + i32::from(i16::MAX) + 1) as u16;
+                primary.extend_from_slice(&[
+                    (red >> 8) as u8,
+                    red as u8,
+                    (green >> 8) as u8,
+                    green as u8,
+                ]);
+                secondary.extend_from_slice(&[(blue >> 8) as u8, blue as u8, 0, 0]);
+            }
+        }
+        EncodedNtscTextures {
+            primary_rgba8: primary.into_boxed_slice(),
+            secondary_rgba8: secondary.into_boxed_slice(),
+        }
+    })
+}
+
+impl FilterTypeExt for FilterType {
+    fn generate(self, size: LogicalSize) -> Box<dyn nerust_render_traits::filter::VideoFilter> {
+        match self {
+            FilterType::None => Box::new(direct_rgb::DirectRgb::new(size)),
+            FilterType::NtscRGB => Box::new(crate::ntsc_simulator::NtscSimulator::rgb(size)),
+            FilterType::NtscComposite => {
+                Box::new(crate::ntsc_simulator::NtscSimulator::composite(size))
+            }
+            FilterType::NtscSVideo => Box::new(crate::ntsc_simulator::NtscSimulator::svideo(size)),
+        }
+    }
+
+    fn layout(self, source_logical_size: LogicalSize) -> FilterLayout {
         let logical_size = match self {
             FilterType::None => source_logical_size,
             FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo => {
@@ -172,7 +286,7 @@ impl FilterType {
         }
     }
 
-    pub fn presentation(
+    fn presentation(
         self,
         source_logical_size: LogicalSize,
         frame_format: VideoFrameFormat,
@@ -187,42 +301,25 @@ impl FilterType {
         VideoPresentation::new(frame_spec)
     }
 
-    pub fn rgba_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
+    fn rgba_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
         self.presentation(source_logical_size, VideoFrameFormat::Rgba)
     }
 
-    pub fn palette_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
+    fn palette_presentation(self, source_logical_size: LogicalSize) -> VideoPresentation {
         self.presentation(source_logical_size, VideoFrameFormat::Palette)
     }
 
-    fn encode_ntsc_packed_entries_rgba8(entries: &[u32]) -> Box<[u8]> {
-        let color_count = PALETTE_TEXTURE_WIDTH as usize;
-        let texture_height = NTSC_TEXTURE_HEIGHT as usize;
-        let entry_stride = entries.len() / color_count;
-        debug_assert!(entry_stride >= texture_height);
-
-        let mut encoded = Vec::with_capacity(color_count * texture_height * 4);
-        for row in 0..texture_height {
-            for color in 0..color_count {
-                encoded.extend_from_slice(&entries[color * entry_stride + row].to_be_bytes());
-            }
-        }
-        encoded.into_boxed_slice()
-    }
-
-    pub(crate) fn palette_assets(self) -> PaletteAssets {
+    fn palette_assets(self) -> PaletteAssets {
         let pipeline = match self {
             FilterType::None => VideoFilterPipeline::Palette {
-                palette_rgba8: self.encoded_palette_rgba8(),
+                palette_rgba8: encoded_palette_rgba8(self),
             },
             FilterType::NtscRGB | FilterType::NtscComposite | FilterType::NtscSVideo => {
                 VideoFilterPipeline::Ntsc {
-                    palette_rgba8: self.encoded_palette_rgba8(),
-                    packed_ntsc_rgba8: self
-                        .encoded_packed_ntsc_texture_rgba8()
+                    palette_rgba8: encoded_palette_rgba8(self),
+                    packed_ntsc_rgba8: encoded_packed_ntsc_texture_rgba8(self)
                         .expect("NTSC filters should expose packed textures"),
-                    split_ntsc_textures: self
-                        .encoded_ntsc_textures_rgba8()
+                    split_ntsc_textures: encoded_ntsc_textures_rgba8(self)
                         .expect("NTSC filters should expose split textures"),
                 }
             }
@@ -231,87 +328,32 @@ impl FilterType {
         PaletteAssets::new(pipeline)
     }
 
-    pub fn palette_console_video_assets(self) -> ConsoleVideoAssets {
+    fn palette_console_video_assets(self) -> ConsoleVideoAssets {
         ConsoleVideoAssets::Nes(self.palette_assets())
     }
 
-    pub fn palette(self) -> [RGB; 64] {
-        filters::rgb::PALETTE.map(RGB::from)
-    }
-
-    pub fn encoded_palette_rgba8(self) -> Box<[u8]> {
-        self.palette()
-            .into_iter()
-            .flat_map(|color| [color.red, color.green, color.blue, u8::MAX])
-            .collect::<Vec<_>>()
-            .into_boxed_slice()
-    }
-
-    pub fn ntsc_setup(self) -> Option<Setup> {
-        match self {
-            FilterType::None => None,
-            FilterType::NtscRGB => Some(Setup::RGB),
-            FilterType::NtscComposite => Some(Setup::Composite),
-            FilterType::NtscSVideo => Some(Setup::SVideo),
-        }
-    }
-
-    pub fn shader_kernel_entries(self) -> Option<Box<[ShaderKernelEntry]>> {
-        self.ntsc_setup()
-            .map(|setup| nerust_render_ntsc::Engine::shader_kernel_entries(&setup))
-    }
-
-    pub fn packed_kernel_entries(self) -> Option<Box<[u32]>> {
-        self.ntsc_setup()
-            .map(|setup| nerust_render_ntsc::Engine::packed_kernel_entries(&setup))
-    }
-
-    pub fn encoded_packed_ntsc_texture_rgba8(self) -> Option<EncodedPackedNtscTexture> {
-        self.packed_kernel_entries()
-            .map(|entries| EncodedPackedNtscTexture {
-                rgba8: Self::encode_ntsc_packed_entries_rgba8(entries.as_ref()),
-            })
-    }
-
-    pub fn encoded_ntsc_textures_rgba8(self) -> Option<EncodedNtscTextures> {
-        self.shader_kernel_entries().map(|entries| {
-            let color_count = PALETTE_TEXTURE_WIDTH as usize;
-            let texture_height = NTSC_TEXTURE_HEIGHT as usize;
-            let entry_stride = entries.len() / color_count;
-            debug_assert!(entry_stride >= texture_height);
-
-            let mut primary = Vec::with_capacity(color_count * texture_height * 4);
-            let mut secondary = Vec::with_capacity(color_count * texture_height * 4);
-            for row in 0..texture_height {
-                for color in 0..color_count {
-                    let entry = entries[color * entry_stride + row];
-                    let red = ((i32::from(entry.red)) + i32::from(i16::MAX) + 1) as u16;
-                    let green = ((i32::from(entry.green)) + i32::from(i16::MAX) + 1) as u16;
-                    let blue = ((i32::from(entry.blue)) + i32::from(i16::MAX) + 1) as u16;
-                    primary.extend_from_slice(&[
-                        (red >> 8) as u8,
-                        red as u8,
-                        (green >> 8) as u8,
-                        green as u8,
-                    ]);
-                    secondary.extend_from_slice(&[(blue >> 8) as u8, blue as u8, 0, 0]);
-                }
-            }
-            EncodedNtscTextures {
-                primary_rgba8: primary.into_boxed_slice(),
-                secondary_rgba8: secondary.into_boxed_slice(),
-            }
-        })
+    fn palette(self) -> [RGB; 64] {
+        direct_rgb::PALETTE.map(RGB::from)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
-    use crate::filter::{
-        BLACK_PALETTE_INDEX, FilterFunc, FilterType, NTSC_TEXTURE_HEIGHT, PALETTE_TEXTURE_WIDTH,
+    use nerust_render_ntsc::{self, NTSC_TEXTURE_HEIGHT};
+    use nerust_render_traits::{
+        VideoFrameFormat,
+        filter::{BLACK_PALETTE_INDEX, FilterFunc, FilterType, PALETTE_TEXTURE_WIDTH},
+        logical::LogicalSize,
+        rgb::RGB,
     };
-    use crate::{LogicalSize, RGB, VideoFrameFormat};
+
+    use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
+    use crate::FilterTypeExt;
+
+    #[test]
+    fn black_palette_index_matches_ntsc_black() {
+        assert_eq!(BLACK_PALETTE_INDEX, nerust_render_ntsc::BLACK);
+    }
 
     const NTSC_ROW_OFFSETS: [[usize; 6]; 7] = [
         [0, 19, 31, 7, 26, 38],
@@ -402,8 +444,7 @@ mod tests {
         source: LogicalSize,
         source_frame: &[u8],
     ) -> Vec<u8> {
-        let packed_entries = filter
-            .packed_kernel_entries()
+        let packed_entries = super::packed_kernel_entries(filter)
             .expect("NTSC filters should expose packed entries");
         let logical_size = filter.layout(source).logical_size;
         let entry_stride = packed_entries.len() / PALETTE_TEXTURE_WIDTH as usize;
@@ -436,11 +477,9 @@ mod tests {
 
     #[test]
     fn encoded_ntsc_textures_are_row_major_and_complete() {
-        let entries = FilterType::NtscComposite
-            .shader_kernel_entries()
+        let entries = super::shader_kernel_entries(FilterType::NtscComposite)
             .expect("NTSC filters should expose shader entries");
-        let textures = FilterType::NtscComposite
-            .encoded_ntsc_textures_rgba8()
+        let textures = super::encoded_ntsc_textures_rgba8(FilterType::NtscComposite)
             .expect("NTSC filters should expose encoded textures");
         let color_count = PALETTE_TEXTURE_WIDTH as usize;
         let texture_height = NTSC_TEXTURE_HEIGHT as usize;
@@ -489,11 +528,9 @@ mod tests {
 
     #[test]
     fn encoded_packed_ntsc_texture_is_row_major_big_endian_and_complete() {
-        let entries = FilterType::NtscComposite
-            .packed_kernel_entries()
+        let entries = super::packed_kernel_entries(FilterType::NtscComposite)
             .expect("NTSC filters should expose packed entries");
-        let texture = FilterType::NtscComposite
-            .encoded_packed_ntsc_texture_rgba8()
+        let texture = super::encoded_packed_ntsc_texture_rgba8(FilterType::NtscComposite)
             .expect("NTSC filters should expose packed textures");
         let color_count = PALETTE_TEXTURE_WIDTH as usize;
         let texture_height = NTSC_TEXTURE_HEIGHT as usize;

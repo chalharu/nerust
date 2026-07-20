@@ -1,15 +1,14 @@
 use std::path::PathBuf;
-
-use nerust_gui_settings::{
-    app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
-};
+#[cfg(test)]
+use std::{collections::BTreeMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_gui_settings::{
+    app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+};
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
-#[cfg(test)]
-use std::{collections::BTreeMap, env};
 
 pub mod apply;
 pub mod manager;

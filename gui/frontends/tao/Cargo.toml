@@ -17,7 +17,7 @@ log.workspace = true
 nerust_keyboard = { workspace = true, features = ["tao", "iced"] }
 muda.workspace = true
 nerust_core_traits.workspace = true
-nerust_render_base.workspace = true
+nerust_render_traits.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_runtime.workspace = true

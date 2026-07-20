@@ -1,7 +1,7 @@
 mod draw;
 mod setup;
 
-use nerust_render_base::{SurfaceSize, logical::LogicalSize, physical::PhysicalSize};
+use nerust_render_traits::{SurfaceSize, logical::LogicalSize, physical::PhysicalSize};
 use wgpu::{BindGroup, Buffer, Device, Limits, Queue, SurfaceConfiguration, Texture};
 
 use crate::upload::FrameUploadLayout;

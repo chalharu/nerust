@@ -32,7 +32,7 @@ use nerust_gui_shell::session::{
     commands::{SessionCommand, SessionCommandOutcome},
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
-use nerust_render_base::{
+use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };

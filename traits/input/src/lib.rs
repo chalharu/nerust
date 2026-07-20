@@ -218,10 +218,14 @@ impl DigitalInputEvent {
 
 // ===== New Input Architecture Types =====
 
-use std::any::Any;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::{
+    any::Any,
+    rc::Rc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 /// Result of a CPU bus read — data bits and which bits are valid.
 #[derive(Debug, Copy, Clone)]

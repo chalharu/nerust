@@ -6,7 +6,7 @@ pub mod touch;
 
 use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
 
-use nerust_render_base::{FrameBuffer, PixelFormat};
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
 // CoreError
