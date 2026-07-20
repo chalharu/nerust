@@ -47,14 +47,14 @@ pub enum RenderResult {
     Error,
 }
 
-/// GPU device + pipeline + surface. Single unified trait.
+/// GPU device + pipeline + surface.  Single unified trait.
 ///
 /// Lifecycle: GpuFactory::create_renderer() → attach() → render() → detach() → drop
 pub trait GpuRenderer: std::fmt::Debug {
     /// Current output size.
     fn size(&self) -> SurfaceSize;
 
-    /// Attach a native window. Must be called before render().
+    /// Attach a native window.  Must be called before render().
     fn attach(
         &mut self,
         window_handle: RawWindowHandle,
@@ -82,7 +82,7 @@ pub trait GpuRenderer: std::fmt::Debug {
     /// Update the render pipeline for a new render profile.
     fn update_render_profile(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError>;
 
-    /// Render a frame. attach() must have been called.
+    /// Render a frame.  attach() must have been called.
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
 }
 
