@@ -90,22 +90,7 @@ fn rotate_iq(iq: (f32, f32), sin_b: f32, cos_b: f32) -> (f32, f32) {
     (iq.0 * cos_b - iq.1 * sin_b, iq.0 * sin_b + iq.1 * cos_b)
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct RGB {
-    pub red: u8,
-    pub green: u8,
-    pub blue: u8,
-}
-
-impl From<u32> for RGB {
-    fn from(value: u32) -> RGB {
-        RGB {
-            red: ((value >> 16) & 0xFF) as u8,
-            green: ((value >> 8) & 0xFF) as u8,
-            blue: (value & 0xFF) as u8,
-        }
-    }
-}
+pub use nerust_render_traits::rgb::RGB;
 
 pub const BLACK: u8 = NES_NTSC_BLACK;
 pub const SHADER_COLOR_COUNT: usize = NES_NTSC_PALETTE_SIZE;
