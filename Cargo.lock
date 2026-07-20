@@ -2806,8 +2806,10 @@ dependencies = [
  "nerust_input_traits",
  "nerust_nes_controller",
  "nerust_nes_factory",
+ "nerust_nes_settings",
  "nerust_render_base",
  "nerust_render_wgpu",
+ "nerust_settings_traits",
  "nerust_sound_cpal",
  "winit",
 ]
