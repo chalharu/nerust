@@ -54,8 +54,9 @@ pub enum LoadRequest {
 mod tests {
     use std::path::PathBuf;
 
-    use super::LoadRequest;
     use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
+
+    use super::LoadRequest;
 
     #[test]
     fn media_object_tracks_path_extension() {

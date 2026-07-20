@@ -155,11 +155,13 @@ mod tests {
     };
     use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
 
-    use super::super::{
-        SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults, test_root,
-        test_shared_defaults,
+    use super::{
+        super::{
+            SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults,
+            test_root, test_shared_defaults,
+        },
+        derive_apply_plan, validate_shared_settings,
     };
-    use super::{derive_apply_plan, validate_shared_settings};
 
     #[test]
     fn apply_plan_flags_changed_categories() {

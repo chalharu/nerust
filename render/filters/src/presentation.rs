@@ -1,9 +1,11 @@
 use nerust_render_ntsc::{NTSC_TEXTURE_HEIGHT, ShaderKernelEntry, setup::Setup};
-use nerust_render_traits::filter::{FilterType, PALETTE_TEXTURE_WIDTH};
-use nerust_render_traits::logical::LogicalSize;
-use nerust_render_traits::physical::PhysicalSize;
-use nerust_render_traits::rgb::RGB;
-use nerust_render_traits::{VideoFrameFormat, VideoFrameSpec, VideoPresentation};
+use nerust_render_traits::{
+    VideoFrameFormat, VideoFrameSpec, VideoPresentation,
+    filter::{FilterType, PALETTE_TEXTURE_WIDTH},
+    logical::LogicalSize,
+    physical::PhysicalSize,
+    rgb::RGB,
+};
 
 use crate::direct_rgb;
 
@@ -250,9 +252,7 @@ impl FilterTypeExt for FilterType {
             FilterType::NtscComposite => {
                 Box::new(crate::ntsc_simulator::NtscSimulator::composite(size))
             }
-            FilterType::NtscSVideo => {
-                Box::new(crate::ntsc_simulator::NtscSimulator::svideo(size))
-            }
+            FilterType::NtscSVideo => Box::new(crate::ntsc_simulator::NtscSimulator::svideo(size)),
         }
     }
 
@@ -339,13 +339,16 @@ impl FilterTypeExt for FilterType {
 
 #[cfg(test)]
 mod tests {
+    use nerust_render_ntsc::{self, NTSC_TEXTURE_HEIGHT};
+    use nerust_render_traits::{
+        VideoFrameFormat,
+        filter::{BLACK_PALETTE_INDEX, FilterFunc, FilterType, PALETTE_TEXTURE_WIDTH},
+        logical::LogicalSize,
+        rgb::RGB,
+    };
+
     use super::{ConsoleVideoAssets, VideoPresentationPipelineKind};
     use crate::FilterTypeExt;
-    use nerust_render_ntsc::{self, NTSC_TEXTURE_HEIGHT};
-    use nerust_render_traits::filter::{BLACK_PALETTE_INDEX, FilterFunc, FilterType, PALETTE_TEXTURE_WIDTH};
-    use nerust_render_traits::logical::LogicalSize;
-    use nerust_render_traits::rgb::RGB;
-    use nerust_render_traits::VideoFrameFormat;
 
     #[test]
     fn black_palette_index_matches_ntsc_black() {

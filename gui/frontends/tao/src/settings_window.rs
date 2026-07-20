@@ -20,7 +20,6 @@ use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::settings::editor::CaptureTarget;
 use nerust_input_traits::InputAssignments;
-
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{

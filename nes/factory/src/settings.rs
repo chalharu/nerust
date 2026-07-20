@@ -1,12 +1,14 @@
 use std::{borrow::Cow, sync::Arc};
 
-use nerust_core_traits::factory::FactoryError;
-use nerust_core_traits::factory::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
-    SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+use nerust_core_traits::factory::{
+    FactoryError,
+    descriptor::{
+        SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
+        SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+    },
+    load::{ResolvedLoadRequest, SystemLoadOptions},
+    settings::{FactorySettingsView, Language},
 };
-use nerust_core_traits::factory::load::{ResolvedLoadRequest, SystemLoadOptions};
-use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_render_traits::filter::FilterType;
@@ -173,13 +175,13 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
-    use nerust_core_traits::factory::load::SystemLoadOptions;
-    use nerust_core_traits::factory::settings::{FactorySettingsView, Language};
-
-    use nerust_nes_settings::NesVideoFilter;
-
+    use nerust_core_traits::factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+        load::SystemLoadOptions,
+        settings::{FactorySettingsView, Language},
+    };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+    use nerust_nes_settings::NesVideoFilter;
     use nerust_render_traits::filter::FilterType;
 
     use super::{

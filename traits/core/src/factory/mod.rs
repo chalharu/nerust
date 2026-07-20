@@ -3,18 +3,22 @@ pub mod descriptor;
 pub mod load;
 pub mod settings;
 
-use crate::audio::AudioBackend;
-use crate::factory::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
-};
-use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use crate::factory::settings::FactorySettingsView;
-use crate::identity::SystemId;
+use std::collections::HashMap;
+
 use nerust_input_traits::{
     AttachmentId, DigitalControlId, GuiInput, InputAssignments, InputSystemFactory,
 };
-use std::collections::HashMap;
 use thiserror::Error;
+
+use crate::{
+    audio::AudioBackend,
+    factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        settings::FactorySettingsView,
+    },
+    identity::SystemId,
+};
 
 #[derive(Debug, Error)]
 pub enum FactoryError {

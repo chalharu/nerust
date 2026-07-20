@@ -1,7 +1,6 @@
-use nerust_render_traits::filter::FilterUnit;
-use nerust_render_traits::logical::LogicalSize;
-use nerust_render_traits::physical::PhysicalSize;
-use nerust_render_traits::rgb::RGB;
+use nerust_render_traits::{
+    filter::FilterUnit, logical::LogicalSize, physical::PhysicalSize, rgb::RGB,
+};
 
 #[derive(Debug)]
 pub(crate) struct NtscSimulator {

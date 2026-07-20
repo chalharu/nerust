@@ -5,8 +5,8 @@ use std::{
 
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::AudioBackend;
-use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 use nerust_render_filters::FilterTypeExt;
+use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 use png::{BitDepth, ColorType, Encoder};
 
 use super::error::RomTestError;

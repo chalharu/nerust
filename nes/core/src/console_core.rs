@@ -1,6 +1,5 @@
 use std::any::Any;
 
-use crate::input_types::NesInputBuffer;
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
     identity::SystemIdentity,
@@ -8,7 +7,9 @@ use nerust_core_traits::{
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use crate::{Core, cartridge_rom::CartridgeData, core_options::CoreOptions};
+use crate::{
+    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, input_types::NesInputBuffer,
+};
 
 /// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
 /// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
@@ -164,16 +165,17 @@ impl ConsoleCore for NesConsoleCore {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex, atomic::AtomicBool},
+    };
 
-    use crate::input_types::NesInputBuffer;
     use nerust_core_traits::CoreConfig;
     use nerust_input_traits::{Controller, EmuInput, OpenBusReadResult, Port};
     use nerust_render_traits::PixelFormat;
 
     use super::*;
+    use crate::input_types::NesInputBuffer;
 
     fn test_emu_input() -> EmuInput {
         use nerust_input_traits::InputStateBuffer;

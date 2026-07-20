@@ -1,9 +1,8 @@
+use nerust_render_ntsc::NTSC_TEXTURE_WIDTH;
 use nerust_render_traits::{
-    SurfaceSize, VideoFrameFormat, VideoPresentation,
-    filter::PALETTE_TEXTURE_WIDTH,
+    SurfaceSize, VideoFrameFormat, VideoPresentation, filter::PALETTE_TEXTURE_WIDTH,
     logical::LogicalSize,
 };
-use nerust_render_ntsc::NTSC_TEXTURE_WIDTH;
 use wgpu::{
     BindGroupLayoutEntry, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
     CompositeAlphaMode, Device, Extent3d, FragmentState, MultisampleState, Origin3d,

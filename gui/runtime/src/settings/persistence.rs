@@ -195,8 +195,8 @@ mod tests {
     use nerust_gui_settings::shared::StoragePolicy;
     use nerust_persistence::sidecar::resolve_sidecars;
 
-    use super::super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity};
     use super::{
+        super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity},
         resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
     };
 
