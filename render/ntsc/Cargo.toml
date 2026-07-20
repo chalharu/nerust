@@ -8,3 +8,4 @@ rust-version.workspace = true
 
 [dependencies]
 log.workspace = true
+nerust_render_traits.workspace = true

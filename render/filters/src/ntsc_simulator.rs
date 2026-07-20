@@ -46,13 +46,7 @@ impl FilterUnit for NtscSimulator {
     type Output = RGB;
 
     fn push<F: FnMut(Self::Output)>(&mut self, value: Self::Input, next_func: &mut F) {
-        self.ntsc.push(value, &mut |x| {
-            next_func(RGB {
-                red: x.red,
-                green: x.green,
-                blue: x.blue,
-            })
-        });
+        self.ntsc.push(value, &mut |x| next_func(x));
     }
 
     fn source_logical_size(&self) -> LogicalSize {
