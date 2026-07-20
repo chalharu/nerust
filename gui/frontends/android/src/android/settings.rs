@@ -59,8 +59,10 @@ impl AndroidSettings {
             .shared
             .systems
             .get(&SystemId::new("nes"))
-            .map(|s| match s {
-                SystemSettings::Nes(n) => n.video.filter,
+            .map(|s| {
+                let any: &dyn std::any::Any = &**s;
+                any.downcast_ref::<NesSettings>()
+                    .map_or(NesVideoFilter::default(), |n| n.video.filter)
             })
             .unwrap_or_default();
 
@@ -88,8 +90,11 @@ impl AndroidSettings {
             .shared
             .systems
             .entry(SystemId::new("nes"))
-            .or_insert_with(|| SystemSettings::Nes(NesSettings::default()));
-        let SystemSettings::Nes(nes) = system;
+            .or_insert_with(|| {
+                Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>
+            });
+        let any: &mut dyn std::any::Any = &mut **system;
+        let nes = any.downcast_mut::<NesSettings>().unwrap();
         nes.video.filter = self.nes_filter;
     }
 
@@ -520,7 +525,7 @@ mod tests {
         let mut shared = DesktopSharedSettings::default();
         shared.systems.insert(
             SystemId::new("nes"),
-            SystemSettings::Nes(NesSettings::default()),
+            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
         SettingsSnapshot {
             shared,
@@ -555,10 +560,14 @@ mod tests {
     #[test]
     fn from_snapshot_extracts_nes_filter() {
         let mut snapshot = default_snapshot();
-        let SystemSettings::Nes(nes) = snapshot
+        let nes = snapshot
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
+            .map(|s| {
+                let any: &mut dyn std::any::Any = &mut **s;
+                any.downcast_mut::<NesSettings>().unwrap()
+            })
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
@@ -585,7 +594,15 @@ mod tests {
         assert_eq!(snapshot.local.audio.latency_ms, 75);
         assert_eq!(snapshot.local.audio.sample_rate, 44_100);
         assert!(!snapshot.local.video.presentation.vsync);
-        let SystemSettings::Nes(nes) = snapshot.shared.systems.get(&SystemId::new("nes")).unwrap();
+        let nes = snapshot
+            .shared
+            .systems
+            .get(&SystemId::new("nes"))
+            .map(|s| {
+                let any: &dyn std::any::Any = &**s;
+                any.downcast_ref::<NesSettings>().unwrap()
+            })
+            .unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);
     }
 
