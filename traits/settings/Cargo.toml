@@ -9,5 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+dyn-clone = { workspace = true }
+dyn-eq = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 typetag = { workspace = true }

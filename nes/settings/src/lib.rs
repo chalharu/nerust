@@ -18,7 +18,7 @@ pub struct NesCoreSettings {
     pub mmc3_irq_variant: Option<Mmc3IrqVariant>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct NesSettings {
     pub video: NesVideoSettings,
@@ -47,14 +47,5 @@ impl nerust_settings_traits::SystemSettings for NesSettings {
         } else {
             false
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn nerust_settings_traits::SystemSettings> {
-        Box::new(self.clone())
-    }
-
-    fn eq_box(&self, other: &dyn nerust_settings_traits::SystemSettings) -> bool {
-        let any: &dyn std::any::Any = other;
-        any.downcast_ref::<NesSettings>() == Some(self)
     }
 }
