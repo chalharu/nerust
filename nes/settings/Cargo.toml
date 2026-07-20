@@ -1,0 +1,16 @@
+[package]
+name = "nerust_nes_settings"
+version.workspace = true
+authors.workspace = true
+description = "NES-specific settings types (domain layer)"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+dyn-clone.workspace = true
+dyn-eq.workspace = true
+nerust_settings_traits.workspace = true
+serde = { workspace = true, features = ["derive"] }
+typetag.workspace = true

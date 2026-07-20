@@ -3,13 +3,15 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::shared::SystemSettings;
+use nerust_nes_settings::NesSettings;
+use nerust_settings_traits::SystemSettings as SystemSettingsTrait;
 
-fn system_settings_to_bytes(s: &SystemSettings) -> Vec<u8> {
-    let result = match s {
-        SystemSettings::Nes(nes) => rmp_serde::to_vec(nes).map_err(|e| e.to_string()),
+fn system_settings_to_bytes(s: &dyn SystemSettingsTrait) -> Vec<u8> {
+    let any: &dyn std::any::Any = s;
+    let Some(nes) = any.downcast_ref::<NesSettings>() else {
+        return Vec::new();
     };
-    bytes_or_fallback(result)
+    bytes_or_fallback(rmp_serde::to_vec(nes).map_err(|e| e.to_string()))
 }
 
 fn bytes_or_fallback(result: Result<Vec<u8>, String>) -> Vec<u8> {
@@ -22,9 +24,9 @@ fn bytes_or_fallback(result: Result<Vec<u8>, String>) -> Vec<u8> {
     }
 }
 
-fn system_settings_from_bytes(bytes: &[u8]) -> Option<SystemSettings> {
-    let nes = rmp_serde::from_slice::<nerust_gui_settings::nes::NesSettings>(bytes).ok()?;
-    Some(SystemSettings::Nes(nes))
+fn system_settings_from_bytes(bytes: &[u8]) -> Option<Box<dyn SystemSettingsTrait>> {
+    let nes = rmp_serde::from_slice::<NesSettings>(bytes).ok()?;
+    Some(Box::new(nes))
 }
 
 pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
@@ -37,7 +39,7 @@ pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> Facto
         .shared
         .systems
         .get(system_id)
-        .map(system_settings_to_bytes)
+        .map(|s| system_settings_to_bytes(&**s))
         .unwrap_or_default();
     FactorySettingsView {
         language,
@@ -54,7 +56,6 @@ pub fn apply_settings_choice(
     let system_id = factory.system_id();
     let mut view = settings_view(snapshot, &system_id);
     factory.apply_settings_choice(&mut view, field, choice)?;
-    // Write back system config to snapshot
     if let Some(settings) = system_settings_from_bytes(&view.system_config_bytes) {
         snapshot.shared.systems.insert(system_id, settings);
     }
@@ -98,26 +99,29 @@ pub fn resolve_label(
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::nes::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
-    use nerust_gui_settings::shared::SystemSettings;
+
+    use nerust_nes_settings::{Mmc3IrqVariant, NesSettings, NesVideoFilter};
 
     use super::{bytes_or_fallback, system_settings_from_bytes, system_settings_to_bytes};
 
     #[test]
     fn settings_round_trip_preserves_filter_value() {
-        let nes = SystemSettings::Nes(NesSettings {
-            video: nerust_gui_settings::nes::NesVideoSettings {
+        let nes = Box::new(NesSettings {
+            video: nerust_nes_settings::NesVideoSettings {
                 filter: NesVideoFilter::NtscRgb,
             },
-            core: nerust_gui_settings::nes::NesCoreSettings {
+            core: nerust_nes_settings::NesCoreSettings {
                 mmc3_irq_variant: Some(Mmc3IrqVariant::Sharp),
             },
-        });
-        let bytes = system_settings_to_bytes(&nes);
+        }) as Box<dyn super::SystemSettingsTrait>;
+        let bytes = system_settings_to_bytes(&*nes);
         assert!(!bytes.is_empty(), "serialized bytes should not be empty");
 
         let restored = system_settings_from_bytes(&bytes).unwrap();
-        let SystemSettings::Nes(restored_nes) = restored;
+        let restored_nes = {
+            let any: &dyn std::any::Any = &*restored;
+            any.downcast_ref::<NesSettings>().unwrap()
+        };
         assert_eq!(restored_nes.video.filter, NesVideoFilter::NtscRgb);
         assert_eq!(
             restored_nes.core.mmc3_irq_variant,
@@ -133,16 +137,16 @@ mod tests {
 
     #[test]
     fn system_settings_to_returns_valid_msgpack() {
-        let nes = SystemSettings::Nes(NesSettings {
-            video: nerust_gui_settings::nes::NesVideoSettings {
+        let nes = Box::new(NesSettings {
+            video: nerust_nes_settings::NesVideoSettings {
                 filter: NesVideoFilter::NtscComposite,
             },
-            core: nerust_gui_settings::nes::NesCoreSettings::default(),
-        });
-        let bytes = system_settings_to_bytes(&nes);
+            core: nerust_nes_settings::NesCoreSettings::default(),
+        }) as Box<dyn super::SystemSettingsTrait>;
+        let bytes = system_settings_to_bytes(&*nes);
         assert!(!bytes.is_empty(), "serialized bytes should not be empty");
 
-        let decoded: nerust_gui_settings::nes::NesSettings =
+        let decoded: nerust_nes_settings::NesSettings =
             rmp_serde::from_slice(&bytes).expect("valid MessagePack");
         assert_eq!(decoded.video.filter, NesVideoFilter::NtscComposite);
     }
