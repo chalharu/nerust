@@ -1,6 +1,6 @@
-use nerust_render_base::{
-    SurfaceSize, VideoFrameFormat, VideoPresentation,
-    filter::{NTSC_TEXTURE_WIDTH, PALETTE_TEXTURE_WIDTH},
+use nerust_render_ntsc::NTSC_TEXTURE_WIDTH;
+use nerust_render_traits::{
+    SurfaceSize, VideoFrameFormat, VideoPresentation, filter::PALETTE_TEXTURE_WIDTH,
     logical::LogicalSize,
 };
 use wgpu::{

@@ -10,16 +10,16 @@ use std::{
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
     rc::Rc,
-    sync::Arc,
-    sync::Once,
+    sync::{Arc, Once},
 };
 
-use jni::JavaVM;
-use jni::sys::{JNI_VERSION_1_6, jint};
-use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_core_traits::factory::CoreFactory;
+use jni::{
+    JavaVM,
+    sys::{JNI_VERSION_1_6, jint},
+};
+use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
 use nerust_nes_factory::NesFactory;
-use nerust_render_base::renderer::GpuFactory;
+use nerust_render_traits::renderer::GpuFactory;
 use winit::platform::android::activity::AndroidApp;
 
 const ANDROID_LOG_TAG: &str = "Nerust";

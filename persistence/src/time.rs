@@ -1,7 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use time::OffsetDateTime;
-use time::macros::format_description;
+use time::{OffsetDateTime, macros::format_description};
 
 use crate::{error::PersistenceError, model::StateSlotSummary};
 

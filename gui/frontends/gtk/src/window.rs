@@ -9,7 +9,7 @@ use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_settings::{input::ShortcutAction, local::ScalingMode};
 use nerust_gui_shell::session::{KeyboardShortcut, SessionError, access::FrontendSession};
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_base::renderer::GpuFactory;
+use nerust_render_traits::renderer::GpuFactory;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,

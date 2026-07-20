@@ -26,7 +26,7 @@ pub mod rom_parse;
 use crc::{CRC_64_XZ, Crc, Digest};
 use nerust_core_traits::audio::AudioBackend;
 use nerust_input_traits::{ControllerHub, OpenBusReadResult};
-use nerust_render_base::FrameBuffer;
+use nerust_render_traits::FrameBuffer;
 use nerust_sound_filter::{
     ChaindFilter, Filter, IirFilter,
     resampler::{Resampler, SimpleDownSampler},
@@ -808,11 +808,10 @@ fn mapper_program_with_prefix_test_data(
 
 #[cfg(test)]
 mod cartridge_tests {
-    use crate::Core;
-    use crate::cartridge_data_parts::CartridgeDataParts;
-    use crate::cartridge_rom::CartridgeData;
-    use crate::mirror::MirrorMode;
-    use crate::rom_format::RomFormat;
+    use crate::{
+        Core, cartridge_data_parts::CartridgeDataParts, cartridge_rom::CartridgeData,
+        mirror::MirrorMode, rom_format::RomFormat,
+    };
 
     #[test]
     fn inspect_cartridge_reads_ines_metadata() {
@@ -888,7 +887,7 @@ mod scheduler_tests {
     };
 
     fn null_fb() -> FrameBuffer {
-        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_render_base::PixelFormat::Rgba);
+        let mut fb = FrameBuffer::with_capacity(256, 240, nerust_render_traits::PixelFormat::Rgba);
         fb.resize(256, 240);
         fb
     }

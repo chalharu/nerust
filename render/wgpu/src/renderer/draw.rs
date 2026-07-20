@@ -1,4 +1,4 @@
-use nerust_render_base::{SurfaceSize, physical::PhysicalSize};
+use nerust_render_traits::{SurfaceSize, physical::PhysicalSize};
 use wgpu::{
     Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,

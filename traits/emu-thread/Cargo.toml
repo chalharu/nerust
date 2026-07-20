@@ -8,6 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 nerust_core_traits.workspace = true
-nerust_render_base.workspace = true
+nerust_render_traits.workspace = true
 nerust_timer.workspace = true
 thiserror.workspace = true

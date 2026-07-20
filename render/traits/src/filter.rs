@@ -1,7 +1,18 @@
-pub(crate) mod ntsc;
-pub(crate) mod rgb;
+use crate::{LogicalSize, PhysicalSize, RGB};
 
-use crate::{LogicalSize, PhysicalSize};
+pub const BLACK_PALETTE_INDEX: u8 = 0x0F;
+pub const PALETTE_TEXTURE_WIDTH: u32 = 64;
+
+pub trait VideoFilter: Send {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc);
+
+    fn logical_size(&self) -> LogicalSize;
+    fn physical_size(&self) -> PhysicalSize;
+}
+
+pub trait FilterFunc {
+    fn filter_func(&mut self, value: RGB);
+}
 
 pub trait FilterUnit: Send {
     type Input;
@@ -64,4 +75,26 @@ impl<T: FilterUnit, U: FilterUnit<Input = T::Output>> FilterUnit for Combine<T, 
     fn eval_physical_size(source: PhysicalSize) -> PhysicalSize {
         U::eval_physical_size(T::eval_physical_size(source))
     }
+}
+
+impl<F: FilterUnit<Input = u8, Output = RGB>> VideoFilter for F {
+    fn push(&mut self, value: u8, filter_func: &mut dyn FilterFunc) {
+        FilterUnit::push(self, value, &mut |x| filter_func.filter_func(x))
+    }
+
+    fn logical_size(&self) -> LogicalSize {
+        FilterUnit::logical_size(self)
+    }
+
+    fn physical_size(&self) -> PhysicalSize {
+        FilterUnit::physical_size(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FilterType {
+    None,
+    NtscRGB,
+    NtscComposite,
+    NtscSVideo,
 }

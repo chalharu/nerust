@@ -3,18 +3,22 @@ pub mod descriptor;
 pub mod load;
 pub mod settings;
 
-use crate::audio::AudioBackend;
-use crate::factory::descriptor::{
-    SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel,
-};
-use crate::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
-use crate::factory::settings::FactorySettingsView;
-use crate::identity::SystemId;
+use std::collections::HashMap;
+
 use nerust_input_traits::{
     AttachmentId, DigitalControlId, GuiInput, InputAssignments, InputSystemFactory,
 };
-use std::collections::HashMap;
 use thiserror::Error;
+
+use crate::{
+    audio::AudioBackend,
+    factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        settings::FactorySettingsView,
+    },
+    identity::SystemId,
+};
 
 #[derive(Debug, Error)]
 pub enum FactoryError {
@@ -32,7 +36,7 @@ pub struct CoreParts {
     pub gui_input: GuiInput,
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
-    pub render_profile: nerust_render_base::VideoRenderProfile,
+    pub render_profile: nerust_render_traits::VideoRenderProfile,
     pub palette: Box<[u32; 256]>,
 }
 
