@@ -4,7 +4,7 @@ use clap::{ArgMatches, Args, Command, FromArgMatches};
 use downcast_rs::Downcast;
 use dyn_eq::DynEq;
 
-use crate::DynCoreOptions;
+use crate::CoreOptions;
 
 #[derive(Debug, Clone)]
 pub struct MediaObject {
@@ -109,5 +109,5 @@ impl DynSystemLoadOptionsExt for Box<dyn DynSystemLoadOptions> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedLoadRequest {
-    pub options: Box<dyn DynCoreOptions>,
+    pub options: Box<dyn CoreOptions>,
 }
