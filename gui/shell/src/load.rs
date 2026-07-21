@@ -58,8 +58,6 @@ mod tests {
 
     use nerust_core_traits::factory::load::MediaObject;
 
-    use super::LoadRequest;
-
     #[test]
     fn media_object_tracks_path_extension() {
         let media = MediaObject::new(Some(PathBuf::from("/tmp/test.NES")), vec![1, 2, 3]);
