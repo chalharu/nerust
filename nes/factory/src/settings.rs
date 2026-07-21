@@ -163,13 +163,10 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::{
-        DynCoreOptionsExt,
-        factory::{
-            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-            load::DynSystemLoadOptions,
-            settings::{FactorySettingsView, Language},
-        },
+    use nerust_core_traits::factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+        load::DynSystemLoadOptions,
+        settings::{FactorySettingsView, Language},
     };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_nes_settings::{NesSettings, NesVideoFilter};
@@ -210,7 +207,7 @@ mod tests {
 
         let core_opts = &resolved
             .options
-            .into_inner::<CoreOptions>()
+            .downcast::<CoreOptions>()
             .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
@@ -243,7 +240,7 @@ mod tests {
 
         let core_opts = &resolved
             .options
-            .into_inner::<CoreOptions>()
+            .downcast::<CoreOptions>()
             .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
@@ -284,7 +281,7 @@ mod tests {
         )
         .unwrap();
 
-        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
+        let core_opts = &resolved.options.downcast::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
 
         let resolved = resolve_nes_load_request_inner(
@@ -296,7 +293,7 @@ mod tests {
             .into(),
         )
         .unwrap();
-        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
+        let core_opts = &resolved.options.downcast::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 }

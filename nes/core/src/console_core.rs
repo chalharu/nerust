@@ -1,6 +1,6 @@
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
-    audio::AudioBackend, identity::SystemIdentity,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
@@ -99,9 +99,9 @@ impl ConsoleCore for NesConsoleCore {
         let cartridge_data =
             crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
         let options = if let Some(core_options) = &config.core_options {
-            core_options
+            *core_options
                 .clone()
-                .into_inner()
+                .downcast::<CoreOptions>()
                 .map_err(|_| CoreError::InvalidCoreOptions)?
         } else {
             CoreOptions::default()

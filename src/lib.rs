@@ -174,7 +174,7 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use nerust_core_traits::{
-        DynCoreOptions,
+        CoreOptions,
         factory::{
             CoreFactory,
             load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
@@ -192,7 +192,7 @@ mod tests {
     use super::LiveRomLoader;
 
     struct LoadRecorder {
-        resolved: Option<Box<dyn DynCoreOptions>>,
+        resolved: Option<Box<dyn CoreOptions>>,
         resumed: bool,
         snapshot: SettingsSnapshot,
     }
