@@ -108,7 +108,7 @@ impl CoreFactory for NesFactory {
         let nes = deref_view
             .downcast_ref::<NesSettings>()
             .ok_or(FactoryError::InvalidSettings)?;
-        settings::resolve_nes_load_request_inner(&nes, &view.language, options)
+        settings::resolve_nes_load_request_inner(nes, &view.language, options)
     }
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
