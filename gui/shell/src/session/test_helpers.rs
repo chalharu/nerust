@@ -30,7 +30,9 @@ use super::SessionHandle;
 use crate::settings::factory::settings_view;
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
-#[derive(Default, Debug, Clone, PartialEq, Eq, clap::Args, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Default, Debug, Clone, PartialEq, Eq, clap::Args, serde::Serialize, serde::Deserialize,
+)]
 pub(crate) struct NoopSystemLoadOptions;
 
 impl SystemLoadOptions for NoopSystemLoadOptions {}

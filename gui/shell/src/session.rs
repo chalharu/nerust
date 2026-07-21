@@ -4,6 +4,7 @@ pub mod input;
 pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) mod test_helpers;
 pub mod title;
 
@@ -470,7 +471,10 @@ mod tests {
         let mut session = test_session();
         let resolved = session
             .factory()
-            .resolve_load_request(&test_view(&session), session.factory().default_load_options())
+            .resolve_load_request(
+                &test_view(&session),
+                session.factory().default_load_options(),
+            )
             .unwrap();
         assert!(
             session
