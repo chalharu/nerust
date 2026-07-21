@@ -309,6 +309,30 @@ impl Core {
         self.memory.peek_work_ram(address)
     }
 
+    pub(crate) fn reg_a(&self) -> u8 {
+        self.register.get_a()
+    }
+
+    pub(crate) fn reg_x(&self) -> u8 {
+        self.register.get_x()
+    }
+
+    pub(crate) fn reg_y(&self) -> u8 {
+        self.register.get_y()
+    }
+
+    pub(crate) fn reg_pc(&self) -> u16 {
+        self.register.get_pc()
+    }
+
+    pub(crate) fn reg_sp(&self) -> u8 {
+        self.register.get_sp()
+    }
+
+    pub(crate) fn reg_p(&self) -> u8 {
+        self.register.get_p()
+    }
+
     fn set_cpu_state(&mut self, state: CpuStatesEnum) {
         self.internal_stat.state = state;
         self.cpu_stepfunc = cpu_stepfunc(state);

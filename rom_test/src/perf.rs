@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::{ConsoleCore as _, CoreConfig, DynCoreOptions, audio::AudioBackend};
 use nerust_input_traits::{ControllerCollection, ControllerHub as _};
-use nerust_nes_core::{Core, rom_parse};
+use nerust_nes_core::{console_core::NesConsoleCore, debugger::nes::NesDebugger};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 use nerust_render_filters::FilterTypeExt;
 use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
@@ -237,7 +237,9 @@ impl Aggregate {
 }
 
 struct PerfRunner {
-    core: Core,
+    console_core: Box<NesConsoleCore>,
+    #[allow(dead_code)]
+    debugger: Box<NesDebugger>,
     screen: FrameBuffer,
     checksum: u64,
     controller: ControllerCollection,
@@ -250,18 +252,38 @@ struct PerfRunner {
 
 impl PerfRunner {
     fn new(case: &RomCase, rom_bytes: &[u8]) -> Result<Self, RomTestError> {
-        let cartridge_data =
-            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
+        use std::collections::HashMap;
+
+        let mut console_core = NesConsoleCore::new_minimal();
+        let opts: Box<dyn DynCoreOptions> = case.core_options().into();
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: Some(opts),
+        };
+        console_core
+            .load(rom_bytes, &config)
+            .map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
             })?;
-        let core =
-            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
-                RomTestError::CoreConstruction {
+
+        let debugger =
+            console_core
+                .create_debugger()
+                .ok_or_else(|| RomTestError::CoreConstruction {
                     case_id: case.id.clone(),
-                    message: error.to_string(),
-                }
-            })?;
+                    message: "debugger not supported".to_string(),
+                })?;
+        let debugger =
+            debugger
+                .downcast::<NesDebugger>()
+                .map_err(|_| RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: "expected NES debugger".to_string(),
+                })?;
+
         let mut palette = [0u32; 256];
         let assets = FilterType::NtscComposite.palette_console_video_assets();
         let rgba8 = assets.palette_rgba8();
@@ -281,7 +303,8 @@ impl PerfRunner {
         );
         screen.resize(256, 240);
         Ok(Self {
-            core,
+            console_core: Box::new(console_core),
+            debugger,
             screen,
             checksum: 0,
             controller: ControllerCollection::new(vec![
@@ -309,9 +332,9 @@ impl PerfRunner {
 impl CaseHarness for PerfRunner {
     fn run_frame(&mut self) -> u64 {
         let steps = self
-            .core
-            .run_frame(&mut self.screen, &mut self.controller, &mut self.mixer);
-        // Per-frame checksum: PPU が FrameBuffer に書き込んだ全ピクセルから計算
+            .console_core
+            .render_frame_with_io(&mut self.screen, &mut self.controller, &mut self.mixer)
+            .expect("render_frame_with_io should not fail");
         for &b in self.screen.as_ref() {
             self.checksum = self.checksum.wrapping_mul(31).wrapping_add(u64::from(b));
         }
@@ -328,7 +351,7 @@ impl CaseHarness for PerfRunner {
     }
 
     fn on_reset(&mut self) -> Result<(), RomTestError> {
-        self.core.reset();
+        self.console_core.reset();
         Ok(())
     }
 

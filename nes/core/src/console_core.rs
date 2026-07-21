@@ -1,24 +1,53 @@
-use std::any::Any;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
-    audio::AudioBackend, identity::SystemIdentity,
+    audio::AudioBackend, debugger::Debugger, identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
-use nerust_render_traits::{FrameBuffer, PixelFormat};
+use nerust_render_traits::FrameBuffer;
 
 use crate::{
-    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, input_types::NesInputBuffer,
+    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, debugger::nes::NesDebugger,
+    input_types::NesInputBuffer,
 };
 
-/// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
-/// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
-/// かつ全て Send であることが確認されているため、`unsafe impl Send` は安全。
-struct SendCore(Option<Core>);
+pub(crate) struct SendCore(Rc<RefCell<Option<Core>>>);
 
-// Safety: 全ての Cartridge 実装は同一 crate 内にあり、全て Send。
-// `pub(crate)` なので外部からの非 Send 実装追加は不可能。
 unsafe impl Send for SendCore {}
+
+impl SendCore {
+    pub(crate) fn new(core: Core) -> Self {
+        Self(Rc::new(RefCell::new(Some(core))))
+    }
+
+    pub(crate) fn new_empty() -> Self {
+        Self(Rc::new(RefCell::new(None)))
+    }
+
+    pub(crate) fn set(&mut self, core: Core) {
+        *self.0.borrow_mut() = Some(core);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        *self.0.borrow_mut() = None;
+    }
+
+    pub(crate) fn borrow(&self) -> Ref<'_, Option<Core>> {
+        self.0.borrow()
+    }
+
+    pub(crate) fn borrow_mut(&self) -> RefMut<'_, Option<Core>> {
+        self.0.borrow_mut()
+    }
+
+    pub(crate) fn clone_rc(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
+}
 
 pub struct NesConsoleCore {
     core: SendCore,
@@ -37,12 +66,32 @@ impl NesConsoleCore {
     ) -> Result<Self, CoreError> {
         let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
-            core: SendCore(Some(core)),
+            core: SendCore::new(core),
             controller,
             audio,
             emu_input,
             paused: false,
         })
+    }
+
+    /// Minimal constructor with dummy I/O — for use with `render_frame_with_io` only.
+    #[doc(hidden)]
+    pub fn new_minimal() -> Self {
+        use nerust_input_traits::InputStateBuffer;
+        use std::sync::{Arc, Mutex, atomic::AtomicBool};
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
+        Self {
+            core: SendCore::new_empty(),
+            controller: ControllerCollection::new(vec![]),
+            audio: Box::new(nerust_core_traits::audio::NullAudio),
+            emu_input: EmuInput::new(
+                shared,
+                Arc::new(AtomicBool::new(false)),
+                Box::new(|| Box::<NesInputBuffer>::default()),
+            ),
+            paused: false,
+        }
     }
 
     /// Creates a NesConsoleCore with no ROM loaded.
@@ -53,7 +102,7 @@ impl NesConsoleCore {
         emu_input: EmuInput,
     ) -> Self {
         Self {
-            core: SendCore(None),
+            core: SendCore::new_empty(),
             controller,
             audio,
             emu_input,
@@ -63,19 +112,29 @@ impl NesConsoleCore {
 }
 
 impl NesConsoleCore {
-    fn core_ref(&self) -> Result<&Core, CoreError> {
-        self.core.0.as_ref().ok_or(CoreError::NoRomLoaded)
+    fn core_ref(&self) -> Result<Ref<'_, Core>, CoreError> {
+        let guard = self.core.borrow();
+        if guard.is_some() {
+            Ok(Ref::map(guard, |o| o.as_ref().unwrap()))
+        } else {
+            Err(CoreError::NoRomLoaded)
+        }
     }
 
-    fn core_mut(&mut self) -> Result<&mut Core, CoreError> {
-        self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)
+    fn core_mut(&mut self) -> Result<RefMut<'_, Core>, CoreError> {
+        let guard = self.core.borrow_mut();
+        if guard.is_some() {
+            Ok(RefMut::map(guard, |o| o.as_mut().unwrap()))
+        } else {
+            Err(CoreError::NoRomLoaded)
+        }
     }
 }
 
 impl ConsoleCore for NesConsoleCore {
     fn capabilities(&self) -> CoreCapabilities {
         CoreCapabilities {
-            output_formats: vec![PixelFormat::PaletteIndex {
+            output_formats: vec![nerust_render_traits::PixelFormat::PaletteIndex {
                 palette: Box::new([0u32; 256]),
             }],
             video_signal: VideoSignalKind::Ntsc,
@@ -83,21 +142,20 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
-        let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
-
-        // Take latest input and sync to controller
         self.emu_input.take();
-        let any: &dyn Any = &*self.emu_input.read_buf;
+        let any: &dyn std::any::Any = &*self.emu_input.read_buf;
         if let Some(state) = any.downcast_ref::<NesInputBuffer>() {
             self.controller.sync_input(&state.0);
         }
 
-        core.run_frame(frame_slot, &mut self.controller, self.audio.as_mut());
-
+        let controller = &mut self.controller;
+        let audio = self.audio.as_mut();
+        let mut guard = self.core.borrow_mut();
+        let core = guard.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        core.run_frame(frame_slot, controller, audio);
         Ok(())
     }
 
-    // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
         let cartridge_data =
             crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
@@ -110,18 +168,18 @@ impl ConsoleCore for NesConsoleCore {
             CoreOptions::default()
         };
         let core = Core::new_with_options(cartridge_data, options).map_err(CoreError::Core)?;
-        self.core = SendCore(Some(core));
+        self.core.set(core);
         self.paused = false;
         Ok(())
     }
 
     fn unload(&mut self) {
-        self.core = SendCore(None);
+        self.core.clear();
         self.paused = false;
     }
 
     fn reset(&mut self) {
-        if let Some(core) = self.core.0.as_mut() {
+        if let Ok(mut core) = self.core_mut() {
             core.reset();
         }
     }
@@ -140,7 +198,7 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
-        let core = self.core_mut()?;
+        let mut core = self.core_mut()?;
         core.import_machine_state(data).map_err(CoreError::Core)
     }
 
@@ -154,7 +212,7 @@ impl ConsoleCore for NesConsoleCore {
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
-        let core = self.core_mut()?;
+        let mut core = self.core_mut()?;
         core.import_mapper_save(data).map_err(CoreError::Core)
     }
 
@@ -163,6 +221,20 @@ impl ConsoleCore for NesConsoleCore {
             .rom_identity()
             .into_system_identity()
             .map_err(|e| CoreError::Core(Box::new(e)))
+    }
+
+    fn render_frame_with_io(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        controller: &mut dyn nerust_input_traits::ControllerHub,
+        audio: &mut dyn AudioBackend,
+    ) -> Result<u64, CoreError> {
+        let mut core = self.core_mut()?;
+        Ok(core.run_frame(frame_slot, controller, audio))
+    }
+
+    fn create_debugger(&mut self) -> Option<Box<dyn Debugger>> {
+        Some(Box::new(NesDebugger::new(self.core.clone_rc())))
     }
 }
 
@@ -213,11 +285,9 @@ mod tests {
     fn load_and_render_frame() {
         let rom = test_rom();
 
-        // parse_rom should succeed
         let cartridge = crate::rom_parse::parse_rom(&rom).expect("parse_rom should succeed");
         assert_eq!(cartridge.mapper_type(), 0);
 
-        // NesConsoleCore::new should succeed
         let mut core = NesConsoleCore::new(
             cartridge,
             ControllerCollection::new(vec![Box::new(MockController)]),
@@ -226,7 +296,6 @@ mod tests {
         )
         .expect("NesConsoleCore::new should succeed");
 
-        // render_frame should succeed
         let mut fb = FrameBuffer::with_capacity(
             256,
             240,
@@ -253,11 +322,9 @@ mod tests {
             core_options: None,
         };
 
-        // load should succeed via trait method
         let result = ConsoleCore::load(&mut core, &rom, &config);
         assert!(result.is_ok(), "load should succeed: {:?}", result);
 
-        // render_frame should succeed after load
         let mut fb = FrameBuffer::with_capacity(
             256,
             240,
