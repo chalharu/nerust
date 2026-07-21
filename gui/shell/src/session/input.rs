@@ -143,7 +143,7 @@ impl SessionHandle {
         let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
         let was_paused = self.emu_core.metrics().paused;
         if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_core.load(&loaded_media.media, Vec::new())?;
+            rebuilt_core.load(&loaded_media.media, None)?;
             if !was_paused {
                 rebuilt_core.resume()?;
             }

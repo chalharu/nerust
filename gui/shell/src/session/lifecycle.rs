@@ -122,7 +122,7 @@ impl SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
         self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.load(&media, resolved.core_options_bytes)?;
+        self.emu_core.load(&media, Some(resolved.options))?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
@@ -329,7 +329,7 @@ impl SessionHandle {
         let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
 
         if let Some(loaded_media) = self.loaded_media.clone() {
-            rebuilt_core.load(&loaded_media.media, Vec::new())?;
+            rebuilt_core.load(&loaded_media.media, None)?;
             if let Some(core_bytes) = exported_core_bytes.as_ref() {
                 rebuilt_core.load_state_raw(core_bytes.clone())?;
                 if !was_paused {

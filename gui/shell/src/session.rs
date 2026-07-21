@@ -17,7 +17,7 @@ use nerust_core_traits::{
     factory::{
         CoreFactory, FactoryError,
         descriptor::SystemSettingsPageModel,
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
     },
 };
 use nerust_emu_thread::{ConsoleMetrics, OperationError};
@@ -318,7 +318,7 @@ impl SessionHandle {
         self.factory.settings_page(&view)
     }
 
-    pub fn default_load_options(&self) -> SystemLoadOptions {
+    pub fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
         self.factory.default_load_options()
     }
 }
@@ -341,7 +341,7 @@ use crate::{
 };
 
 impl RomLoadTarget for SessionHandle {
-    fn default_load_options(&self) -> SystemLoadOptions {
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
         SessionHandle::default_load_options(self)
     }
     fn settings_snapshot(&self) -> &SettingsSnapshot {
@@ -369,7 +369,7 @@ mod tests {
         factory::{
             CoreFactory, CoreParts, FactoryError,
             descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-            load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+            load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
             settings::FactorySettingsView,
         },
         identity::SystemId,
@@ -438,11 +438,11 @@ mod tests {
         fn resolve_load_request(
             &self,
             _: &FactorySettingsView,
-            _: SystemLoadOptions,
+            _: Box<dyn DynSystemLoadOptions>,
         ) -> Result<ResolvedLoadRequest, FactoryError> {
             unreachable!()
         }
-        fn default_load_options(&self) -> SystemLoadOptions {
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
             unreachable!()
         }
         fn input_system_factory(&self) -> &dyn InputSystemFactory {
@@ -470,7 +470,7 @@ mod tests {
         let mut session = test_session();
         let resolved = session
             .factory()
-            .resolve_load_request(&test_view(&session), SystemLoadOptions::default())
+            .resolve_load_request(&test_view(&session), session.factory().default_load_options())
             .unwrap();
         assert!(
             session

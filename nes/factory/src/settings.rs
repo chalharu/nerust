@@ -6,12 +6,14 @@ use nerust_core_traits::factory::{
         SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
         SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
     },
-    load::{ResolvedLoadRequest, SystemLoadOptions},
+    load::{DynSystemLoadOptions, DynSystemLoadOptionsExt, ResolvedLoadRequest},
     settings::{FactorySettingsView, Language},
 };
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_render_traits::filter::FilterType;
+
+use crate::CommandLineOptions;
 
 pub(crate) fn deserialize_settings(bytes: &[u8]) -> NesSettings {
     if bytes.is_empty() {
@@ -116,29 +118,18 @@ fn convert_mmc3(v: nerust_nes_settings::Mmc3IrqVariant) -> Mmc3IrqVariant {
 pub(crate) fn resolve_nes_load_request_inner(
     nes: &NesSettings,
     _language: &Language,
-    options: SystemLoadOptions,
+    options: Box<dyn DynSystemLoadOptions>,
 ) -> Result<ResolvedLoadRequest, FactoryError> {
     let saved = nes.core.mmc3_irq_variant.map(convert_mmc3);
-    let explicit_val = if options.options_bytes.is_empty() {
-        None
-    } else if options.options_bytes == crate::MMC3_OPTION_SHARP {
-        Some(Mmc3IrqVariant::Sharp)
-    } else if options.options_bytes == crate::MMC3_OPTION_NEC {
-        Some(Mmc3IrqVariant::Nec)
-    } else {
-        None
-    };
+    let options = options
+        .into_inner::<CommandLineOptions>()
+        .map_err(|_| FactoryError::Resolve("failed to downcast load options".to_string()))?;
+    let explicit_val = options.mmc3_irq_variant.map(Mmc3IrqVariant::from);
     let core_opts = CoreOptions {
         mmc3_irq_variant: explicit_val.or(saved),
     };
-    let resolved = SystemLoadOptions {
-        options_bytes: core_opts.into_bytes(),
-    };
-    let core_opts = CoreOptions::from_bytes(&resolved.options_bytes)
-        .map_err(|e| FactoryError::Resolve(format!("failed to decode core options: {e}")))?;
     Ok(ResolvedLoadRequest {
-        options: resolved,
-        core_options_bytes: core_opts.into_bytes(),
+        options: core_opts.into(),
     })
 }
 
@@ -175,14 +166,19 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::{
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-        load::SystemLoadOptions,
-        settings::{FactorySettingsView, Language},
+    use nerust_core_traits::{
+        DynCoreOptionsExt,
+        factory::{
+            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+            load::DynSystemLoadOptions,
+            settings::{FactorySettingsView, Language},
+        },
     };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
     use nerust_nes_settings::NesVideoFilter;
     use nerust_render_traits::filter::FilterType;
+
+    use crate::CommandLineOptions;
 
     use super::{
         apply_nes_settings_choice_inner, filter_type_from_bytes, nes_settings_page,
@@ -196,10 +192,11 @@ mod tests {
         }
     }
 
-    fn nec_options() -> SystemLoadOptions {
-        SystemLoadOptions {
-            options_bytes: b"nec".to_vec(),
+    fn nec_options() -> Box<dyn DynSystemLoadOptions> {
+        CommandLineOptions {
+            mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Nec),
         }
+        .into()
     }
 
     #[test]
@@ -209,8 +206,10 @@ mod tests {
         let resolved =
             resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
 
-        let core_opts =
-            CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
+        let core_opts = &resolved
+            .options
+            .into_inner::<CoreOptions>()
+            .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
@@ -240,8 +239,10 @@ mod tests {
         let resolved =
             resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
 
-        let core_opts =
-            CoreOptions::from_bytes(&resolved.core_options_bytes).expect("valid core options");
+        let core_opts = &resolved
+            .options
+            .into_inner::<CoreOptions>()
+            .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
@@ -275,23 +276,26 @@ mod tests {
         let resolved = resolve_nes_load_request_inner(
             &nes,
             &Language::SystemDefault,
-            SystemLoadOptions {
-                options_bytes: crate::MMC3_OPTION_SHARP.to_vec(),
-            },
+            CommandLineOptions {
+                mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Sharp),
+            }
+            .into(),
         )
         .unwrap();
-        let core_opts = CoreOptions::from_bytes(&resolved.core_options_bytes).unwrap();
+
+        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
 
         let resolved = resolve_nes_load_request_inner(
             &nes,
             &Language::SystemDefault,
-            SystemLoadOptions {
-                options_bytes: crate::MMC3_OPTION_NEC.to_vec(),
-            },
+            CommandLineOptions {
+                mmc3_irq_variant: Some(crate::Mmc3IrqVariant::Nec),
+            }
+            .into(),
         )
         .unwrap();
-        let core_opts = CoreOptions::from_bytes(&resolved.core_options_bytes).unwrap();
+        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 }

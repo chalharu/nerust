@@ -1,4 +1,3 @@
-pub mod cli;
 pub mod descriptor;
 pub mod load;
 pub mod settings;
@@ -14,7 +13,7 @@ use crate::{
     audio::AudioBackend,
     factory::{
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
         settings::FactorySettingsView,
     },
     identity::SystemId,
@@ -66,10 +65,10 @@ pub trait CoreFactory {
     fn resolve_load_request(
         &self,
         view: &FactorySettingsView,
-        options: SystemLoadOptions,
+        options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<ResolvedLoadRequest, FactoryError>;
 
-    fn default_load_options(&self) -> SystemLoadOptions;
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
 
     fn create_core_and_adapter(
         &self,

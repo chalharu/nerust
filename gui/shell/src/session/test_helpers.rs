@@ -11,7 +11,7 @@ use nerust_core_traits::{
     audio::{AudioBackend, AudioBackendRegistry},
     factory::{
         CoreFactory, FactoryError,
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
         settings::FactorySettingsView,
     },
     identity::{SystemId, SystemIdentity},
@@ -220,16 +220,14 @@ impl CoreFactory for MockFactory {
     fn resolve_load_request(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,
-        options: SystemLoadOptions,
+        options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
-        let bytes = options.options_bytes.clone();
         Ok(ResolvedLoadRequest {
-            options,
-            core_options_bytes: bytes,
+            options: nerust_core_traits::NoopCoreOptions::default().into(),
         })
     }
-    fn default_load_options(&self) -> SystemLoadOptions {
-        SystemLoadOptions::default()
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        nerust_core_traits::factory::load::NoopSystemLoadOptions::default().into()
     }
     fn input_system_factory(&self) -> &dyn InputSystemFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;

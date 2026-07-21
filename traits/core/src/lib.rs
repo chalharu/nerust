@@ -4,9 +4,13 @@ pub mod identity;
 pub mod save_state;
 pub mod touch;
 
-use std::{collections::HashMap, path::PathBuf, sync::mpsc::Sender};
+use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
 
+use downcast_rs::Downcast;
+use dyn_clone::DynClone;
+use dyn_eq::DynEq;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -20,6 +24,8 @@ pub enum CoreError {
     Core(Box<dyn std::error::Error + Send + Sync>),
     #[error("no ROM loaded")]
     NoRomLoaded,
+    #[error("invalid core options")]
+    InvalidCoreOptions,
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +82,7 @@ pub struct CoreConfig {
     pub controllers: HashMap<usize, ControllerKind>,
     /// System-specific options (e.g. serialized `CoreOptions` for NES).
     /// Interpreted by the `ConsoleCore` implementation.
-    pub core_options: Vec<u8>,
+    pub core_options: Option<Box<dyn DynCoreOptions>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -178,5 +184,45 @@ pub trait ConsoleCore: Send {
     /// Check `rewind_state_size()` returns `Some` before calling.
     fn rewind_restore(&mut self, _buf: &[u8]) {
         panic!("rewind not supported")
+    }
+}
+
+pub trait CoreOptions:
+    Serialize + for<'de> Deserialize<'de> + Debug + Clone + Eq + Send + Sync + 'static
+{
+}
+
+/// Placeholder implementation with no options.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoopCoreOptions;
+
+impl CoreOptions for NoopCoreOptions {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreOptionsWrapper<T: CoreOptions>(pub T);
+
+pub trait DynCoreOptions: DynClone + Debug + DynEq + Downcast + Send + Sync {}
+
+impl<T: CoreOptions> DynCoreOptions for CoreOptionsWrapper<T> {}
+
+downcast_rs::impl_downcast!(DynCoreOptions);
+dyn_clone::clone_trait_object!(DynCoreOptions);
+dyn_eq::eq_trait_object!(DynCoreOptions);
+
+impl<T: CoreOptions> From<T> for Box<dyn DynCoreOptions> {
+    fn from(value: T) -> Self {
+        Box::new(CoreOptionsWrapper(value))
+    }
+}
+
+pub trait DynCoreOptionsExt: Sized {
+    fn into_inner<T: CoreOptions>(self) -> Result<T, Self>;
+}
+
+impl DynCoreOptionsExt for Box<dyn DynCoreOptions> {
+    fn into_inner<T: CoreOptions>(self) -> Result<T, Self> {
+        self.downcast::<CoreOptionsWrapper<T>>()
+            .map(|wrapper| wrapper.0)
+            .map_err(|boxed| boxed as Box<dyn DynCoreOptions>)
     }
 }

@@ -1,8 +1,8 @@
 use std::any::Any;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
-    identity::SystemIdentity,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
+    audio::AudioBackend, identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
@@ -101,10 +101,13 @@ impl ConsoleCore for NesConsoleCore {
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
         let cartridge_data =
             crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
-        let options = if config.core_options.is_empty() {
-            CoreOptions::default()
+        let options = if let Some(core_options) = &config.core_options {
+            core_options
+                .clone()
+                .into_inner()
+                .map_err(|_| CoreError::InvalidCoreOptions)?
         } else {
-            CoreOptions::from_bytes(&config.core_options).unwrap_or_default()
+            CoreOptions::default()
         };
         let core = Core::new_with_options(cartridge_data, options).map_err(CoreError::Core)?;
         self.core = SendCore(Some(core));
@@ -247,7 +250,7 @@ mod tests {
             region: None,
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
-            core_options: Vec::new(),
+            core_options: None,
         };
 
         // load should succeed via trait method
