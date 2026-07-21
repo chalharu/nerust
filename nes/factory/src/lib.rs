@@ -4,14 +4,12 @@ mod settings;
 
 use std::rc::Rc;
 
-use clap::{Arg, ArgMatches, Command};
 use nerust_core_traits::{
     audio::AudioBackend,
     factory::{
         CoreFactory, CoreParts, FactoryError,
-        cli::CliProvider,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
         settings::FactorySettingsView,
     },
     identity::SystemId,
@@ -19,11 +17,7 @@ use nerust_core_traits::{
 use nerust_input_traits::{
     Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput, ProfileId,
 };
-
-/// Opaque option bytes for MMC3 IRQ variant: "sharp".
-pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
-/// Opaque option bytes for MMC3 IRQ variant: "nec".
-pub const MMC3_OPTION_NEC: &[u8] = b"nec";
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct NesFactory;
@@ -100,14 +94,14 @@ impl CoreFactory for NesFactory {
     fn resolve_load_request(
         &self,
         view: &FactorySettingsView,
-        options: SystemLoadOptions,
+        options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<ResolvedLoadRequest, FactoryError> {
         let nes = settings::deserialize_settings(&view.system_config_bytes);
         settings::resolve_nes_load_request_inner(&nes, &view.language, options)
     }
 
-    fn default_load_options(&self) -> SystemLoadOptions {
-        SystemLoadOptions::default()
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        CommandLineOptions::default().into()
     }
 
     fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
@@ -115,24 +109,26 @@ impl CoreFactory for NesFactory {
     }
 }
 
-impl CliProvider for NesFactory {
-    fn extend_command(&self, cmd: Command) -> Command {
-        cmd.arg(
-            Arg::new("mmc3-irq-variant")
-                .long("mmc3-irq-variant")
-                .value_parser(["sharp", "nec"])
-                .help("Override mapper 4 MMC3 IRQ behavior"),
-        )
-    }
+#[derive(Default, clap::Args, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+struct CommandLineOptions {
+    /// Override mapper 4 MMC3 IRQ behavior
+    #[clap(long, value_enum)]
+    mmc3_irq_variant: Option<Mmc3IrqVariant>,
+}
 
-    fn parse_core_options(&self, matches: &ArgMatches) -> Vec<u8> {
-        match matches
-            .get_one::<String>("mmc3-irq-variant")
-            .map(String::as_str)
-        {
-            Some("sharp") => MMC3_OPTION_SHARP.to_vec(),
-            Some("nec") => MMC3_OPTION_NEC.to_vec(),
-            _ => Vec::new(),
+impl SystemLoadOptions for CommandLineOptions {}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+enum Mmc3IrqVariant {
+    Sharp,
+    Nec,
+}
+
+impl From<Mmc3IrqVariant> for nerust_nes_core::core_options::Mmc3IrqVariant {
+    fn from(value: Mmc3IrqVariant) -> Self {
+        match value {
+            Mmc3IrqVariant::Sharp => Self::Sharp,
+            Mmc3IrqVariant::Nec => Self::Nec,
         }
     }
 }
