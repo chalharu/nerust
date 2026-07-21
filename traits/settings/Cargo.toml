@@ -1,15 +1,15 @@
 [package]
-name = "nerust_settings_traits"
-version.workspace = true
 authors.workspace = true
 description = "SystemSettings trait for cross-platform emulator settings"
 edition.workspace = true
 license.workspace = true
+name = "nerust_settings_traits"
 repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 dyn-clone = { workspace = true }
 dyn-eq = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { features = ["derive"], workspace = true }
 typetag = { workspace = true }

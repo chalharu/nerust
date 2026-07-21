@@ -1,17 +1,17 @@
 [package]
-name = "nerust_gui_shell"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_gui_shell"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_emu_thread.workspace = true
-nerust_gui_settings.workspace = true
 nerust_gui_runtime.workspace = true
+nerust_gui_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_persistence.workspace = true
 nerust_render_traits.workspace = true
@@ -19,9 +19,9 @@ rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
-nerust_settings_traits.workspace = true
+nerust_keyboard = { default-features = false, workspace = true }
 nerust_nes_settings.workspace = true
-nerust_keyboard = { workspace = true, default-features = false }
+nerust_settings_traits.workspace = true
 [dev-dependencies]
 clap.workspace = true
 nerust_core_traits.workspace = true
