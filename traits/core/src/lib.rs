@@ -1,16 +1,22 @@
 pub mod audio;
+pub mod debugger;
 pub mod factory;
 pub mod identity;
+pub mod memory_space;
 pub mod save_state;
 pub mod touch;
 
-use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
+use std::{collections::HashMap, fmt::Debug, io, path::PathBuf, sync::mpsc::Sender};
 
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 use serde::{Deserialize, Serialize};
+
+use crate::audio::AudioBackend;
+use crate::debugger::Debugger;
+use nerust_input_traits::ControllerHub;
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -184,6 +190,35 @@ pub trait ConsoleCore: Send {
     /// Check `rewind_state_size()` returns `Some` before calling.
     fn rewind_restore(&mut self, _buf: &[u8]) {
         panic!("rewind not supported")
+    }
+
+    // -- debug I/O (default: not supported) --
+    /// Runs one frame with externally-provided controller and audio backend.
+    ///
+    /// Unlike `render_frame()` which manages controller and audio internally,
+    /// this method lets the caller inject custom I/O — used by `rom_test`
+    /// and future TAS / netplay tools.
+    ///
+    /// Returns the total CPU cycles elapsed during the frame.
+    fn render_frame_with_io(
+        &mut self,
+        _frame_slot: &mut FrameBuffer,
+        _controller: &mut dyn ControllerHub,
+        _audio: &mut dyn AudioBackend,
+    ) -> Result<u64, CoreError> {
+        Err(CoreError::Core(Box::new(io::Error::new(
+            io::ErrorKind::Other,
+            "render_frame_with_io not supported",
+        ))))
+    }
+
+    /// Creates a debugger object for inspecting internal state.
+    ///
+    /// Returns `None` if debugging is not supported by this core.
+    /// The returned debugger shares internal state with the console core
+    /// and must not outlive it.
+    fn create_debugger(&mut self) -> Option<Box<dyn Debugger>> {
+        None
     }
 }
 
