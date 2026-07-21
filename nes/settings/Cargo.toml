@@ -14,3 +14,6 @@ dyn-eq.workspace = true
 nerust_settings_traits.workspace = true
 serde = { features = ["derive"], workspace = true }
 typetag.workspace = true
+
+[dev-dependencies]
+rmp-serde.workspace = true
