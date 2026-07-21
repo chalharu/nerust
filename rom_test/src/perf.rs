@@ -238,6 +238,7 @@ impl Aggregate {
 
 struct PerfRunner {
     console_core: Box<NesConsoleCore>,
+    #[allow(dead_code)]
     debugger: Box<NesDebugger>,
     screen: FrameBuffer,
     checksum: u64,
@@ -261,25 +262,27 @@ impl PerfRunner {
             controllers: HashMap::new(),
             core_options: Some(opts),
         };
-        console_core.load(rom_bytes, &config).map_err(|error| {
-            RomTestError::CoreConstruction {
+        console_core
+            .load(rom_bytes, &config)
+            .map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
 
-        let debugger = console_core
-            .create_debugger()
-            .ok_or_else(|| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: "debugger not supported".to_string(),
-            })?;
-        let debugger = debugger
-            .downcast::<NesDebugger>()
-            .map_err(|_| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: "expected NES debugger".to_string(),
-            })?;
+        let debugger =
+            console_core
+                .create_debugger()
+                .ok_or_else(|| RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: "debugger not supported".to_string(),
+                })?;
+        let debugger =
+            debugger
+                .downcast::<NesDebugger>()
+                .map_err(|_| RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: "expected NES debugger".to_string(),
+                })?;
 
         let mut palette = [0u32; 256];
         let assets = FilterType::NtscComposite.palette_console_video_assets();
@@ -328,7 +331,8 @@ impl PerfRunner {
 
 impl CaseHarness for PerfRunner {
     fn run_frame(&mut self) -> u64 {
-        let steps = self.console_core
+        let steps = self
+            .console_core
             .render_frame_with_io(&mut self.screen, &mut self.controller, &mut self.mixer)
             .expect("render_frame_with_io should not fail");
         for &b in self.screen.as_ref() {

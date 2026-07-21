@@ -78,21 +78,14 @@ impl Debugger for NesDebugger {
             "ppu" => core.peek_ppu_vram(address as usize),
             "oam" => core.peek_oam(address as usize),
             "palette" => core.peek_palette(address as usize),
-            "save" => core
-                .peek_cartridge_ram(address as usize)
-                .map(|r| r.data),
+            "save" => core.peek_cartridge_ram(address as usize).map(|r| r.data),
             _ => None,
         }
     }
 
     fn write(&mut self, space: &dyn MemorySpace, _address: u32, _value: u8) {
-        if self.core_ref().is_none() {
-            return;
-        }
-        match space.id() {
-            // Writing via debugger is not supported for Cpu/Ppu/Oam/Palette yet.
-            _ => {}
-        }
+        let _ = (space, _address, _value);
+        // Writing via debugger is not supported yet.
     }
 }
 
@@ -119,20 +112,14 @@ impl NesDebugger {
     }
 
     pub fn ppu_scanline(&self) -> u16 {
-        self.core_ref()
-            .map(|core| core.ppu_scanline())
-            .unwrap_or(0)
+        self.core_ref().map(|core| core.ppu_scanline()).unwrap_or(0)
     }
 
     pub fn ppu_cycle(&self) -> u16 {
-        self.core_ref()
-            .map(|core| core.ppu_cycle())
-            .unwrap_or(0)
+        self.core_ref().map(|core| core.ppu_cycle()).unwrap_or(0)
     }
 
     pub fn frame_count(&self) -> u64 {
-        self.core_ref()
-            .map(|core| core.ppu_frames())
-            .unwrap_or(0)
+        self.core_ref().map(|core| core.ppu_frames()).unwrap_or(0)
     }
 }

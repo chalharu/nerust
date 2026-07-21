@@ -27,25 +27,27 @@ impl ValidationRuntime {
             controllers: HashMap::new(),
             core_options: Some(opts),
         };
-        console_core.load(rom_bytes, &config).map_err(|error| {
-            RomTestError::CoreConstruction {
+        console_core
+            .load(rom_bytes, &config)
+            .map_err(|error| RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
-            }
-        })?;
+            })?;
 
-        let debugger = console_core
-            .create_debugger()
-            .ok_or_else(|| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: "debugger not supported".to_string(),
-            })?;
-        let debugger = debugger
-            .downcast::<NesDebugger>()
-            .map_err(|_| RomTestError::CoreConstruction {
-                case_id: case.id.clone(),
-                message: "expected NES debugger".to_string(),
-            })?;
+        let debugger =
+            console_core
+                .create_debugger()
+                .ok_or_else(|| RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: "debugger not supported".to_string(),
+                })?;
+        let debugger =
+            debugger
+                .downcast::<NesDebugger>()
+                .map_err(|_| RomTestError::CoreConstruction {
+                    case_id: case.id.clone(),
+                    message: "expected NES debugger".to_string(),
+                })?;
 
         Ok(Self {
             screen_buffer: validation_screen_buffer(),

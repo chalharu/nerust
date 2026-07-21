@@ -206,8 +206,7 @@ pub trait ConsoleCore: Send {
         _controller: &mut dyn ControllerHub,
         _audio: &mut dyn AudioBackend,
     ) -> Result<u64, CoreError> {
-        Err(CoreError::Core(Box::new(io::Error::new(
-            io::ErrorKind::Other,
+        Err(CoreError::Core(Box::new(io::Error::other(
             "render_frame_with_io not supported",
         ))))
     }

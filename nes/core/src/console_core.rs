@@ -5,16 +5,14 @@ use std::{
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
-    audio::AudioBackend,
-    debugger::Debugger,
-    identity::SystemIdentity,
+    audio::AudioBackend, debugger::Debugger, identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::FrameBuffer;
 
 use crate::{
-    Core, cartridge_rom::CartridgeData, core_options::CoreOptions,
-    debugger::nes::NesDebugger, input_types::NesInputBuffer,
+    Core, cartridge_rom::CartridgeData, core_options::CoreOptions, debugger::nes::NesDebugger,
+    input_types::NesInputBuffer,
 };
 
 pub(crate) struct SendCore(Rc<RefCell<Option<Core>>>);
@@ -79,8 +77,8 @@ impl NesConsoleCore {
     /// Minimal constructor with dummy I/O — for use with `render_frame_with_io` only.
     #[doc(hidden)]
     pub fn new_minimal() -> Self {
-        use std::sync::{Arc, Mutex, atomic::AtomicBool};
         use nerust_input_traits::InputStateBuffer;
+        use std::sync::{Arc, Mutex, atomic::AtomicBool};
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
             Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
         Self {
