@@ -76,6 +76,26 @@ impl NesConsoleCore {
         })
     }
 
+    /// Minimal constructor with dummy I/O — for use with `render_frame_with_io` only.
+    #[doc(hidden)]
+    pub fn new_minimal() -> Self {
+        use std::sync::{Arc, Mutex, atomic::AtomicBool};
+        use nerust_input_traits::InputStateBuffer;
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
+        Self {
+            core: SendCore::new_empty(),
+            controller: ControllerCollection::new(vec![]),
+            audio: Box::new(nerust_core_traits::audio::NullAudio),
+            emu_input: EmuInput::new(
+                shared,
+                Arc::new(AtomicBool::new(false)),
+                Box::new(|| Box::<NesInputBuffer>::default()),
+            ),
+            paused: false,
+        }
+    }
+
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
     pub fn new_empty(

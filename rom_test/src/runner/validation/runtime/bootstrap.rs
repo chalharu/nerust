@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
+use nerust_core_traits::{ConsoleCore as _, CoreConfig, DynCoreOptions};
 use nerust_input_traits::ControllerCollection;
-use nerust_nes_core::{Core, rom_parse};
+use nerust_nes_core::console_core::NesConsoleCore;
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
 
 use super::ValidationRuntime;
@@ -9,28 +12,45 @@ use crate::{
     manifest::RomCase,
     media::{HashingMixer, validation_screen_buffer},
 };
+use nerust_nes_core::debugger::nes::NesDebugger;
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {
-        let cartridge_data =
-            rom_parse::parse_rom(rom_bytes).map_err(|error| RomTestError::CoreConstruction {
+        let mut console_core = NesConsoleCore::new_minimal();
+        let opts: Box<dyn DynCoreOptions> = case.core_options().into();
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: Some(opts),
+        };
+        console_core.load(rom_bytes, &config).map_err(|error| {
+            RomTestError::CoreConstruction {
                 case_id: case.id.clone(),
                 message: error.to_string(),
+            }
+        })?;
+
+        let debugger = console_core
+            .create_debugger()
+            .ok_or_else(|| RomTestError::CoreConstruction {
+                case_id: case.id.clone(),
+                message: "debugger not supported".to_string(),
             })?;
-        let core =
-            Core::new_with_options(cartridge_data, case.core_options()).map_err(|error| {
-                RomTestError::CoreConstruction {
-                    case_id: case.id.clone(),
-                    message: error.to_string(),
-                }
+        let debugger = debugger
+            .downcast::<NesDebugger>()
+            .map_err(|_| RomTestError::CoreConstruction {
+                case_id: case.id.clone(),
+                message: "expected NES debugger".to_string(),
             })?;
 
         Ok(Self {
             screen_buffer: validation_screen_buffer(),
-            core,
+            core: Box::new(console_core),
+            debugger,
             controller: ControllerCollection::new(vec![
                 Box::new(FamicomPadP1::new()),
                 Box::new(FamicomPadP2::new()),

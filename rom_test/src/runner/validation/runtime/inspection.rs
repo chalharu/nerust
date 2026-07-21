@@ -1,4 +1,9 @@
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::{
+    audio::AudioBackend,
+    debugger::Debugger as _,
+    memory_space::MemorySpace as _,
+};
+use nerust_nes_core::debugger::memory_space::NesMemorySpace;
 
 use super::ValidationRuntime;
 use crate::{
@@ -30,19 +35,20 @@ impl ValidationRuntime {
     }
 
     pub(in crate::runner::validation) fn peek_work_ram(&self, address: usize) -> Option<u8> {
-        self.core.peek_work_ram(address)
+        self.debugger
+            .read(&NesMemorySpace::Cpu, address as u32)
     }
 
     pub(in crate::runner::validation) fn peek_cartridge_ram(
         &self,
         address: usize,
     ) -> Option<(u8, bool)> {
-        self.core
-            .peek_cartridge_ram(address)
-            .map(|read_result| (read_result.data, read_result.mask != 0xFF))
+        self.debugger
+            .read_cartridge_ram(address as u16)
     }
 
     pub(in crate::runner::validation) fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
-        self.core.peek_ppu_vram(address)
+        self.debugger
+            .read(&NesMemorySpace::Ppu, address as u32)
     }
 }
