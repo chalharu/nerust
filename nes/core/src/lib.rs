@@ -10,6 +10,7 @@ pub mod console_core;
 pub mod controller;
 pub mod core_options;
 mod cpu;
+pub mod debugger;
 pub mod input_types;
 mod interrupt;
 mod mapper;
@@ -284,6 +285,50 @@ impl Core {
 
     pub fn peek_ppu_vram(&self, address: usize) -> Option<u8> {
         self.ppu.peek_vram(address, self.cartridge.as_ref())
+    }
+
+    pub(crate) fn cpu_a(&self) -> u8 {
+        self.cpu.reg_a()
+    }
+
+    pub(crate) fn cpu_x(&self) -> u8 {
+        self.cpu.reg_x()
+    }
+
+    pub(crate) fn cpu_y(&self) -> u8 {
+        self.cpu.reg_y()
+    }
+
+    pub(crate) fn cpu_pc(&self) -> u16 {
+        self.cpu.reg_pc()
+    }
+
+    pub(crate) fn cpu_sp(&self) -> u8 {
+        self.cpu.reg_sp()
+    }
+
+    pub(crate) fn cpu_p(&self) -> u8 {
+        self.cpu.reg_p()
+    }
+
+    pub(crate) fn ppu_scanline(&self) -> u16 {
+        self.ppu.scanline()
+    }
+
+    pub(crate) fn ppu_cycle(&self) -> u16 {
+        self.ppu.cycle()
+    }
+
+    pub(crate) fn ppu_frames(&self) -> u64 {
+        self.ppu.frames()
+    }
+
+    pub(crate) fn peek_oam(&self, index: usize) -> Option<u8> {
+        self.ppu.peek_oam(index)
+    }
+
+    pub(crate) fn peek_palette(&self, index: usize) -> Option<u8> {
+        self.ppu.peek_palette(index)
     }
 
     pub fn rom_identity(&self) -> RomIdentity {

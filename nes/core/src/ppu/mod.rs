@@ -732,6 +732,26 @@ impl Core {
         self.has_next_sprite = false;
     }
 
+    pub(crate) fn scanline(&self) -> u16 {
+        self.scan_line
+    }
+
+    pub(crate) fn cycle(&self) -> u16 {
+        self.cycle
+    }
+
+    pub(crate) fn frames(&self) -> u64 {
+        self.frames as u64
+    }
+
+    pub(crate) fn peek_oam(&self, index: usize) -> Option<u8> {
+        self.primary_oam.get(index).copied()
+    }
+
+    pub(crate) fn peek_palette(&self, index: usize) -> Option<u8> {
+        self.palette.get(index).copied()
+    }
+
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
         if usize::from(self.sprite_index) > 8 {
             return Err(PersistenceError::Validation(
