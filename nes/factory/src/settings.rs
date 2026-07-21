@@ -206,7 +206,7 @@ mod tests {
             .downcast_ref::<NesSettings>()
             .unwrap();
         let resolved =
-            resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
+            resolve_nes_load_request_inner(nes, &Language::SystemDefault, nec_options()).unwrap();
 
         let core_opts = &resolved
             .options
