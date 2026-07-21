@@ -8,7 +8,7 @@ use std::{
 };
 
 use nerust_core_traits::{
-    CoreConfig, EmuCommand, LoadCommand, StateDataCommand,
+    CoreConfig, DynCoreOptions, EmuCommand, LoadCommand, StateDataCommand,
     factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
 };
@@ -176,7 +176,11 @@ impl EmuCore {
         Ok(())
     }
 
-    pub fn load(&self, media: &MediaObject, core_options: Vec<u8>) -> Result<(), OperationError> {
+    pub fn load(
+        &self,
+        media: &MediaObject,
+        core_options: Option<Box<dyn DynCoreOptions>>,
+    ) -> Result<(), OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::Load(Box::new(LoadCommand {

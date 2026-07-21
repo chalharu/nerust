@@ -8,6 +8,9 @@ rust-version.workspace = true
 
 [dependencies]
 clap.workspace = true
+downcast-rs.workspace = true
+dyn-clone.workspace = true
+dyn-eq.workspace = true
 log.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true

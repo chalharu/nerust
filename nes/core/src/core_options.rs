@@ -20,3 +20,5 @@ impl CoreOptions {
         rmp_serde::from_slice(bytes).map_err(|e| e.to_string())
     }
 }
+
+impl nerust_core_traits::CoreOptions for CoreOptions {}
