@@ -56,6 +56,13 @@ fn create_audio_registry() -> AudioBackendRegistry {
 fn parse_cli_args(
     factories: &[Arc<dyn CoreFactory>],
 ) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
+    parse_cli_args_from(factories, std::env::args())
+}
+
+fn parse_cli_args_from(
+    factories: &[Arc<dyn CoreFactory>],
+    args: impl IntoIterator<Item = String>,
+) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
     let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
@@ -67,7 +74,7 @@ fn parse_cli_args(
         app = opt.augment_args(app);
     }
 
-    let matches = app.get_matches();
+    let matches = app.try_get_matches_from(args)?;
     let options = RunOptions {
         rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
     };
@@ -236,5 +243,29 @@ mod tests {
         assert!(result.is_ok());
         assert!(target.resumed);
         assert!(target.resolved.is_some(), "expected non-empty core options");
+    }
+
+    #[test]
+    fn parse_cli_args_from_returns_default_options_with_no_system_args() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let factories = [factory];
+
+        let result = super::parse_cli_args_from(&factories, ["nerust".into()]);
+
+        let (_options, parsed) = result.expect("parse should succeed with no args");
+        assert_eq!(parsed.len(), 1, "one factory should produce one option set");
+    }
+
+    #[test]
+    fn parse_cli_args_from_accepts_mmc3_irq_variant_flag() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let factories = [factory];
+
+        let result = super::parse_cli_args_from(
+            &factories,
+            ["nerust".into(), "--mmc3-irq-variant".into(), "sharp".into()],
+        );
+
+        assert!(result.is_ok(), "valid flag should parse without error");
     }
 }
