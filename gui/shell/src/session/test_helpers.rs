@@ -234,7 +234,7 @@ impl CoreFactory for MockFactory {
     fn resolve_load_request(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,
-        options: Box<dyn DynSystemLoadOptions>,
+        _: Box<dyn DynSystemLoadOptions>,
     ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
         Ok(ResolvedLoadRequest {
             options: NoopCoreOptions::default().into(),

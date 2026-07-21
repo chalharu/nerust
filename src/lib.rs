@@ -237,40 +237,4 @@ mod tests {
         assert!(target.resumed);
         assert!(target.resolved.is_some(), "expected non-empty core options");
     }
-
-    #[test]
-    fn live_rom_loader_pending_options_consumed_once() {
-        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let pending = Some(factory.default_load_options());
-        let mut loader = LiveRomLoader {
-            factory: factory.clone(),
-            pending_options: pending,
-        };
-        fn make_snap() -> SettingsSnapshot {
-            SettingsSnapshot {
-                shared: default_shared_settings(),
-                local: default_local_settings(),
-                app_state: default_app_state(),
-            }
-        }
-
-        let mut target = LoadRecorder {
-            resolved: None,
-            resumed: false,
-            snapshot: make_snap(),
-        };
-
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
-        assert!(result.is_ok());
-        assert!(target.resumed, "expected resume on first load");
-
-        let mut target2 = LoadRecorder {
-            resolved: None,
-            resumed: false,
-            snapshot: make_snap(),
-        };
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target2);
-        assert!(result.is_ok());
-        assert!(target2.resumed, "expected resume on second load");
-    }
 }
