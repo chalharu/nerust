@@ -192,12 +192,6 @@ pub trait CoreOptions:
 {
 }
 
-/// Placeholder implementation with no options.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NoopCoreOptions;
-
-impl CoreOptions for NoopCoreOptions {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreOptionsWrapper<T: CoreOptions>(pub T);
 
