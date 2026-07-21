@@ -1,10 +1,10 @@
 [package]
-name = "nerust_rom_test"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_rom_test"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 bitflags.workspace = true
@@ -14,8 +14,8 @@ nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_device.workspace = true
-nerust_render_traits.workspace = true
 nerust_render_filters.workspace = true
+nerust_render_traits.workspace = true
 png.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true

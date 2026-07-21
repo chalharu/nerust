@@ -1,10 +1,10 @@
 [package]
-name = "nerust_core_traits"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_core_traits"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 clap.workspace = true

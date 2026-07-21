@@ -1,32 +1,32 @@
 [package]
-name = "nerust_android"
-version.workspace = true
 authors.workspace = true
 description.workspace = true
-repository.workspace = true
+edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-edition.workspace = true
+name = "nerust_android"
+repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [lib]
-name = "main"
 crate-type = ["cdylib", "rlib"]
+name = "main"
 
 [target.'cfg(target_os = "android")'.dependencies]
+android_logger.workspace = true
 jni.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
-nerust_render_traits.workspace = true
-nerust_render_wgpu.workspace = true
-nerust_gui_settings.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_nes_factory.workspace = true
-nerust_nes_settings.workspace = true
+nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_controller.workspace = true
+nerust_nes_factory.workspace = true
+nerust_nes_settings.workspace = true
+nerust_render_traits.workspace = true
+nerust_render_wgpu.workspace = true
 nerust_settings_traits.workspace = true
 nerust_sound_cpal.workspace = true
-android_logger.workspace = true
-winit = { workspace = true, features = ["android-native-activity"] }
+winit = { features = ["android-native-activity"], workspace = true }

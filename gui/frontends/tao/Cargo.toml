@@ -1,28 +1,28 @@
 [package]
-name = "nerust_tao"
-version.workspace = true
 authors.workspace = true
 description.workspace = true
-repository.workspace = true
+edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-edition.workspace = true
+name = "nerust_tao"
+repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
-iced = { workspace = true, features = ["advanced"] }
+iced = { features = ["advanced"], workspace = true }
 iced_tiny_skia.workspace = true
 iced_winit.workspace = true
 log.workspace = true
-nerust_keyboard = { workspace = true, features = ["tao", "iced"] }
 muda.workspace = true
 nerust_core_traits.workspace = true
-nerust_render_traits.workspace = true
+nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
-nerust_gui_runtime.workspace = true
 nerust_input_traits.workspace = true
+nerust_keyboard = { features = ["iced", "tao"], workspace = true }
 nerust_persistence.workspace = true
+nerust_render_traits.workspace = true
 nerust_run_options.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true

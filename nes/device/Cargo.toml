@@ -1,10 +1,10 @@
 [package]
-name = "nerust_nes_device"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_nes_device"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 nerust_input_traits.workspace = true
