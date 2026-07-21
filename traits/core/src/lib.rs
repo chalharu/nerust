@@ -8,7 +8,6 @@ use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
 
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
-use dyn_eq::DynEq;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 // ---------------------------------------------------------------------------
@@ -186,11 +185,10 @@ pub trait ConsoleCore: Send {
     }
 }
 
-pub trait CoreOptions: Debug + DynClone + DynEq + Downcast + Send {}
+pub trait CoreOptions: Debug + DynClone + Downcast + Send {}
 
 downcast_rs::impl_downcast!(CoreOptions);
 dyn_clone::clone_trait_object!(CoreOptions);
-dyn_eq::eq_trait_object!(CoreOptions);
 
 impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {
     fn from(value: T) -> Self {

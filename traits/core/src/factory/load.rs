@@ -107,7 +107,7 @@ impl DynSystemLoadOptionsExt for Box<dyn DynSystemLoadOptions> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ResolvedLoadRequest {
     pub options: Box<dyn CoreOptions>,
 }
