@@ -55,7 +55,7 @@ fn create_audio_registry() -> AudioBackendRegistry {
 
 fn parse_cli_args(
     factories: &[Arc<dyn CoreFactory>],
-) -> (RunOptions, Vec<Box<dyn DynSystemLoadOptions>>) {
+) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
     let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
@@ -74,9 +74,8 @@ fn parse_cli_args(
     let parsed = defaults
         .iter()
         .map(|opt| opt.arg_matches(&matches))
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    (options, parsed)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((options, parsed))
 }
 
 struct LiveRomLoader {
@@ -120,7 +119,7 @@ pub fn run() {
     let core_factories: Vec<Arc<dyn CoreFactory>> = vec![Arc::new(NesFactory)];
     let audio_registry = Arc::new(create_audio_registry());
 
-    let (options, core_options) = parse_cli_args(&core_factories);
+    let (options, core_options) = parse_cli_args(&core_factories).unwrap_or_else(|e| e.exit());
 
     let rom_loaders = core_factories
         .iter()
