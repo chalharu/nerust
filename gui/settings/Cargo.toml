@@ -1,18 +1,18 @@
 [package]
-name = "nerust_gui_settings"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_gui_settings"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
-serde = { workspace = true, features = ["std"] }
-
+nerust_keyboard = { default-features = false, workspace = true }
 nerust_nes_settings.workspace = true
 nerust_settings_traits.workspace = true
-nerust_keyboard = { workspace = true, default-features = false }
+serde = { features = ["std"], workspace = true }
+
 [dev-dependencies]
 serde-saphyr.workspace = true

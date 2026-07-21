@@ -1,10 +1,10 @@
 [package]
-name = "nerust_nes_core"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_nes_core"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
 bitflags.workspace = true
@@ -13,8 +13,8 @@ log.workspace = true
 nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
-nerust_sound_filter.workspace = true
 nerust_serialize.workspace = true
+nerust_sound_filter.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true

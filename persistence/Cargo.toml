@@ -1,24 +1,24 @@
 [package]
-name = "nerust_persistence"
-version.workspace = true
 authors.workspace = true
-license.workspace = true
 edition.workspace = true
+license.workspace = true
+name = "nerust_persistence"
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
-time = { workspace = true, features = ["local-offset", "formatting", "macros"] }
+log.workspace = true
 nerust_core_traits.workspace = true
 png.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
 thiserror.workspace = true
+time = { features = ["formatting", "local-offset", "macros"], workspace = true }
 zip.workspace = true
-log.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["serde_bytes"]
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { features = ["Win32_Storage_FileSystem"], version = "=0.61.2" }
