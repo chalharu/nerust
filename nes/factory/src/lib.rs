@@ -9,7 +9,10 @@ use nerust_core_traits::{
     factory::{
         CoreFactory, CoreParts, FactoryError,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsType, MediaObject, ResolvedLoadRequest,
+            SystemLoadOptions, SystemLoadOptionsType,
+        },
         settings::FactorySettingsView,
     },
     identity::SystemId,
@@ -118,6 +121,10 @@ impl CoreFactory for NesFactory {
     fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
         self
     }
+
+    fn load_options_factory(&self) -> Box<dyn DynSystemLoadOptionsType> {
+        CommandLineOptionsType.into()
+    }
 }
 
 #[derive(Default, clap::Args, Eq, PartialEq, Clone, Debug)]
@@ -128,6 +135,12 @@ struct CommandLineOptions {
 }
 
 impl SystemLoadOptions for CommandLineOptions {}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CommandLineOptionsType;
+impl SystemLoadOptionsType for CommandLineOptionsType {
+    type Options = CommandLineOptions;
+}
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
 enum Mmc3IrqVariant {
