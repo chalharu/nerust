@@ -246,6 +246,10 @@ impl CoreFactory for MockFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;
         &MOCK_INPUT
     }
+    
+    fn load_options_factory(&self) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsType> {
+        unreachable!()
+    }
 }
 
 pub(crate) fn test_session() -> SessionHandle {

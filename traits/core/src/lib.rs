@@ -10,7 +10,6 @@ use downcast_rs::Downcast;
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
-use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -187,15 +186,12 @@ pub trait ConsoleCore: Send {
     }
 }
 
-pub trait CoreOptions:
-    Serialize + for<'de> Deserialize<'de> + Debug + Clone + Eq + Send + Sync + 'static
-{
-}
+pub trait CoreOptions: Debug + Clone + Eq + Send + 'static {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreOptionsWrapper<T: CoreOptions>(T);
 
-pub trait DynCoreOptions: DynClone + Debug + DynEq + Downcast + Send + Sync {}
+pub trait DynCoreOptions: DynClone + Debug + DynEq + Downcast + Send {}
 
 impl<T: CoreOptions> DynCoreOptions for CoreOptionsWrapper<T> {}
 

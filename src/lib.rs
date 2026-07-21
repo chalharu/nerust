@@ -63,7 +63,7 @@ fn parse_cli_args_from(
     factories: &[Arc<dyn CoreFactory>],
     args: impl IntoIterator<Item = String>,
 ) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
-    let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
+    let defaults: Vec<_> = factories.iter().map(|f| f.load_options_factory()).collect();
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
