@@ -19,11 +19,6 @@ use nerust_input_traits::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Opaque option bytes for MMC3 IRQ variant: "sharp".
-pub const MMC3_OPTION_SHARP: &[u8] = b"sharp";
-/// Opaque option bytes for MMC3 IRQ variant: "nec".
-pub const MMC3_OPTION_NEC: &[u8] = b"nec";
-
 #[derive(Debug)]
 pub struct NesFactory;
 
