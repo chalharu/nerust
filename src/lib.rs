@@ -166,9 +166,12 @@ pub fn run() {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use nerust_core_traits::factory::{
-        CoreFactory,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    use nerust_core_traits::{
+        DynCoreOptions,
+        factory::{
+            CoreFactory,
+            load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+        },
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
@@ -182,7 +185,7 @@ mod tests {
     use super::LiveRomLoader;
 
     struct LoadRecorder {
-        resolved: Option<Box<dyn DynSystemLoadOptions>>,
+        resolved: Option<Box<dyn DynCoreOptions>>,
         resumed: bool,
         snapshot: SettingsSnapshot,
     }
