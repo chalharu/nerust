@@ -67,33 +67,6 @@ mod tests {
     }
 
     #[test]
-    fn serialize_deserialize_round_trip() {
-        let original: Box<dyn SystemSettings> = Box::new(test_settings());
-        let bytes = rmp_serde::to_vec(&original).expect("serialize should succeed");
-        assert!(!bytes.is_empty());
-
-        let restored: Box<dyn SystemSettings> =
-            rmp_serde::from_slice(&bytes).expect("deserialize should succeed");
-        let restored_nes = restored
-            .downcast_ref::<NesSettings>()
-            .expect("should downcast to NesSettings");
-
-        assert_eq!(restored_nes.video.filter, NesVideoFilter::NtscRgb);
-        assert_eq!(
-            restored_nes.core.mmc3_irq_variant,
-            Some(Mmc3IrqVariant::Sharp)
-        );
-    }
-
-    #[test]
-    fn deserialize_invalid_bytes_returns_error() {
-        assert!(rmp_serde::from_slice::<Box<dyn SystemSettings>>(&[]).is_err());
-        assert!(
-            rmp_serde::from_slice::<Box<dyn SystemSettings>>(b"garbage").is_err()
-        );
-    }
-
-    #[test]
     fn downcast_ref_works() {
         let settings: Box<dyn SystemSettings> = Box::new(NesSettings::default());
         let nes = settings

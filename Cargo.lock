@@ -3027,7 +3027,6 @@ dependencies = [
  "dyn-clone",
  "dyn-eq",
  "nerust_settings_traits",
- "rmp-serde",
  "serde",
  "typetag",
 ]
