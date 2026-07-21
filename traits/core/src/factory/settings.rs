@@ -1,3 +1,5 @@
+use nerust_settings_traits::SystemSettings;
+
 /// Language preference for UI labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Language {
@@ -15,5 +17,5 @@ pub struct FactorySettingsView {
     pub language: Language,
     /// Opaque serialized system-specific configuration.
     /// For NES: serialized `NesSettings` from gui/settings.
-    pub system_config_bytes: Vec<u8>,
+    pub system_config: Option<Box<dyn SystemSettings>>,
 }

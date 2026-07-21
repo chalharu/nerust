@@ -9,6 +9,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+downcast-rs = { workspace = true }
 dyn-clone = { workspace = true }
 dyn-eq = { workspace = true }
 serde = { features = ["derive"], workspace = true }

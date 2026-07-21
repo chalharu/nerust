@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
     audio::AudioBackend, identity::SystemIdentity,
@@ -87,8 +85,7 @@ impl ConsoleCore for NesConsoleCore {
 
         // Take latest input and sync to controller
         self.emu_input.take();
-        let any: &dyn Any = &*self.emu_input.read_buf;
-        if let Some(state) = any.downcast_ref::<NesInputBuffer>() {
+        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
             self.controller.sync_input(&state.0);
         }
 

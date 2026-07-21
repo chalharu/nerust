@@ -19,7 +19,7 @@ pub(crate) fn create_core_and_adapter(
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
-    let filter = crate::settings::filter_type_from_bytes(&view.system_config_bytes);
+    let filter = crate::settings::filter_type_from_bytes(view.system_config.as_deref());
 
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;

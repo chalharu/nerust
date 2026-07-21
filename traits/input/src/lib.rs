@@ -219,13 +219,14 @@ impl DigitalInputEvent {
 // ===== New Input Architecture Types =====
 
 use std::{
-    any::Any,
     rc::Rc,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
+
+use downcast_rs::Downcast;
 
 /// Result of a CPU bus read — data bits and which bits are valid.
 #[derive(Debug, Copy, Clone)]
@@ -367,7 +368,7 @@ pub enum BufferError {
 
 /// GUI-side write abstraction for input state.
 /// Emu side reads via `Any::downcast_ref`.
-pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
+pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// field: 0..N の logical field index。値の意味は impl 定義。
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
     /// 全 field を neutral / released 状態にリセットする。impl 依存。
@@ -375,6 +376,8 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Any {
     /// Copy absolute state from another buffer of the same concrete type.
     fn copy_state(&mut self, other: &dyn InputStateBuffer);
 }
+
+downcast_rs::impl_downcast!(InputStateBuffer);
 
 /// A set of port identifiers a controller can occupy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
