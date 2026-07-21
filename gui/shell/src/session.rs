@@ -449,8 +449,10 @@ mod tests {
         fn input_system_factory(&self) -> &dyn InputSystemFactory {
             self.inner.input_system_factory()
         }
-        
-        fn load_options_factory(&self) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsType> {
+
+        fn load_options_schema(
+            &self,
+        ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
             unreachable!()
         }
     }

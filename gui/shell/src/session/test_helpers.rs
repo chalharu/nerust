@@ -246,8 +246,10 @@ impl CoreFactory for MockFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;
         &MOCK_INPUT
     }
-    
-    fn load_options_factory(&self) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsType> {
+
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
         unreachable!()
     }
 }
