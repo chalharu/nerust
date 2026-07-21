@@ -23,4 +23,5 @@ nerust_settings_traits.workspace = true
 nerust_nes_settings.workspace = true
 nerust_keyboard = { workspace = true, default-features = false }
 [dev-dependencies]
+clap.workspace = true
 nerust_core_traits.workspace = true

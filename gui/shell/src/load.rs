@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions};
+use nerust_core_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug, thiserror::Error)]
@@ -18,7 +18,7 @@ pub enum RomLoaderError {
 /// Abstracts the session operations needed by `RomLoader` implementations,
 /// allowing them to work with any type (not just `SessionHandle`).
 pub trait RomLoadTarget {
-    fn default_load_options(&self) -> SystemLoadOptions;
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
     fn load_resolved(
         &mut self,
@@ -47,16 +47,16 @@ pub trait RomLoader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadRequest {
     Auto,
-    Explicit { options: SystemLoadOptions },
+    Explicit {
+        options: Box<dyn DynSystemLoadOptions>,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use nerust_core_traits::factory::load::{MediaObject, SystemLoadOptions};
-
-    use super::LoadRequest;
+    use nerust_core_traits::factory::load::MediaObject;
 
     #[test]
     fn media_object_tracks_path_extension() {
@@ -64,17 +64,5 @@ mod tests {
 
         assert_eq!(media.extension.as_deref(), Some("nes"));
         assert_eq!(media.bytes.as_ref(), [1, 2, 3]);
-    }
-
-    #[test]
-    fn explicit_load_requests_preserve_options() {
-        assert_eq!(
-            LoadRequest::Explicit {
-                options: SystemLoadOptions::default(),
-            },
-            LoadRequest::Explicit {
-                options: SystemLoadOptions::default(),
-            }
-        );
     }
 }

@@ -10,8 +10,7 @@ use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory,
-        cli::CliProvider,
-        load::{MediaObject, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject},
     },
 };
 use nerust_gui_runtime::rom::load_rom_path;
@@ -54,24 +53,41 @@ fn create_audio_registry() -> AudioBackendRegistry {
     reg
 }
 
-fn parse_cli_args(cli_provider: &dyn CliProvider) -> (RunOptions, Vec<u8>) {
-    let app = Command::new(env!("CARGO_PKG_NAME"))
+fn parse_cli_args(
+    factories: &[Arc<dyn CoreFactory>],
+) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
+    parse_cli_args_from(factories, std::env::args())
+}
+
+fn parse_cli_args_from(
+    factories: &[Arc<dyn CoreFactory>],
+    args: impl IntoIterator<Item = String>,
+) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
+    let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
+
+    let mut app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .arg(clap::Arg::new("filename").help("Rom file name"));
-    let app = cli_provider.extend_command(app);
-    let matches = app.get_matches();
+    for opt in &defaults {
+        app = opt.augment_args(app);
+    }
+
+    let matches = app.try_get_matches_from(args)?;
     let options = RunOptions {
         rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
     };
-    let core_options = cli_provider.parse_core_options(&matches);
-    (options, core_options)
+    let parsed = defaults
+        .iter()
+        .map(|opt| opt.arg_matches(&matches))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((options, parsed))
 }
 
 struct LiveRomLoader {
     factory: Arc<dyn CoreFactory>,
-    pending_options: Option<SystemLoadOptions>,
+    pending_options: Option<Box<dyn DynSystemLoadOptions>>,
 }
 
 impl RomLoader for LiveRomLoader {
@@ -107,26 +123,35 @@ pub fn run() {
         .unwrap();
 
     let gpu_factory = create_factory();
-    let core_factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+    let core_factories: Vec<Arc<dyn CoreFactory>> = vec![Arc::new(NesFactory)];
     let audio_registry = Arc::new(create_audio_registry());
 
-    let (options, core_options) = parse_cli_args(&NesFactory);
-    let pending_options = if core_options.is_empty() {
-        None
-    } else {
-        Some(SystemLoadOptions {
-            options_bytes: core_options,
-        })
-    };
+    let (options, core_options) = parse_cli_args(&core_factories).unwrap_or_else(|e| e.exit());
 
-    let rom_loader = Box::new(LiveRomLoader {
-        factory: Arc::clone(&core_factory),
-        pending_options,
-    });
+    let rom_loaders = core_factories
+        .iter()
+        .zip(core_options)
+        .map(|(f, o)| {
+            Box::new(LiveRomLoader {
+                factory: f.clone(),
+                pending_options: Some(o),
+            }) as Box<dyn RomLoader>
+        })
+        .collect::<Vec<_>>();
+
+    // TODO: 本当は複数の RomLoader をまとめるような構造体を作るべきだが、今は NES しかないので最初の一つだけ使う
+    let rom_loader = rom_loaders
+        .into_iter()
+        .next()
+        .expect("No RomLoader available");
 
     let ctx = FrontendContext {
         gpu_factory: Rc::from(gpu_factory),
-        core_factory,
+        // TODO: 本当は複数の CoreFactory をまとめるような構造体を作るべきだが、今は NES しかないので最初の一つだけ使う
+        core_factory: core_factories
+            .into_iter()
+            .next()
+            .expect("No CoreFactory available"),
         rom_loader,
         audio_registry,
     };
@@ -148,9 +173,12 @@ pub fn run() {
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use nerust_core_traits::factory::{
-        CoreFactory,
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+    use nerust_core_traits::{
+        DynCoreOptions,
+        factory::{
+            CoreFactory,
+            load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+        },
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
@@ -164,14 +192,14 @@ mod tests {
     use super::LiveRomLoader;
 
     struct LoadRecorder {
-        resolved: Vec<u8>,
+        resolved: Option<Box<dyn DynCoreOptions>>,
         resumed: bool,
         snapshot: SettingsSnapshot,
     }
 
     impl RomLoadTarget for LoadRecorder {
-        fn default_load_options(&self) -> SystemLoadOptions {
-            SystemLoadOptions::default()
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+            unreachable!()
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
             &self.snapshot
@@ -181,7 +209,7 @@ mod tests {
             _media: MediaObject,
             resolved: ResolvedLoadRequest,
         ) -> Result<(), RomLoaderError> {
-            self.resolved = resolved.core_options_bytes;
+            self.resolved = Some(resolved.options);
             Ok(())
         }
         fn resume(&mut self) {
@@ -192,11 +220,9 @@ mod tests {
     #[test]
     fn live_rom_loader_uses_pending_options_when_set() {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let pending = Some(SystemLoadOptions {
-            options_bytes: b"sharp".to_vec(),
-        });
+        let pending = Some(factory.default_load_options());
         let mut loader = LiveRomLoader {
-            factory,
+            factory: factory.clone(),
             pending_options: pending,
         };
         fn make_snapshot() -> SettingsSnapshot {
@@ -208,59 +234,38 @@ mod tests {
         }
 
         let mut target = LoadRecorder {
-            resolved: Vec::new(),
+            resolved: None,
             resumed: false,
             snapshot: make_snapshot(),
         };
 
-        // load_rom reads from disk; use a path we know exists
         let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
         assert!(result.is_ok());
         assert!(target.resumed);
-        // core_options_bytes should be non-empty (serialized from pending_options)
-        assert!(
-            !target.resolved.is_empty(),
-            "expected non-empty core options"
-        );
+        assert!(target.resolved.is_some(), "expected non-empty core options");
     }
 
     #[test]
-    fn live_rom_loader_pending_options_consumed_once() {
+    fn parse_cli_args_from_returns_default_options_with_no_system_args() {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let pending = Some(SystemLoadOptions {
-            options_bytes: b"nec".to_vec(),
-        });
-        let mut loader = LiveRomLoader {
-            factory,
-            pending_options: pending,
-        };
-        fn make_snap() -> SettingsSnapshot {
-            SettingsSnapshot {
-                shared: default_shared_settings(),
-                local: default_local_settings(),
-                app_state: default_app_state(),
-            }
-        }
+        let factories = [factory];
 
-        let mut target = LoadRecorder {
-            resolved: Vec::new(),
-            resumed: false,
-            snapshot: make_snap(),
-        };
+        let result = super::parse_cli_args_from(&factories, ["nerust".into()]);
 
-        // First call consumes pending_options — resumes
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
-        assert!(result.is_ok());
-        assert!(target.resumed, "expected resume on first load");
+        let (_options, parsed) = result.expect("parse should succeed with no args");
+        assert_eq!(parsed.len(), 1, "one factory should produce one option set");
+    }
 
-        // Second call uses default options since pending_options was taken — still succeeds
-        let mut target2 = LoadRecorder {
-            resolved: Vec::new(),
-            resumed: false,
-            snapshot: make_snap(),
-        };
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target2);
-        assert!(result.is_ok());
-        assert!(target2.resumed, "expected resume on second load");
+    #[test]
+    fn parse_cli_args_from_accepts_mmc3_irq_variant_flag() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let factories = [factory];
+
+        let result = super::parse_cli_args_from(
+            &factories,
+            ["nerust".into(), "--mmc3-irq-variant".into(), "sharp".into()],
+        );
+
+        assert!(result.is_ok(), "valid flag should parse without error");
     }
 }

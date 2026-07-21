@@ -7,11 +7,11 @@ use std::{
 };
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreOptions,
     audio::{AudioBackend, AudioBackendRegistry},
     factory::{
         CoreFactory, FactoryError,
-        load::{MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
         settings::FactorySettingsView,
     },
     identity::{SystemId, SystemIdentity},
@@ -28,6 +28,20 @@ use nerust_render_traits::{
 
 use super::SessionHandle;
 use crate::settings::factory::settings_view;
+
+/// Placeholder load options with no CLI arguments. Used by mock factories in tests.
+#[derive(
+    Default, Debug, Clone, PartialEq, Eq, clap::Args, serde::Serialize, serde::Deserialize,
+)]
+pub(crate) struct NoopSystemLoadOptions;
+
+impl SystemLoadOptions for NoopSystemLoadOptions {}
+
+/// Placeholder core options with no fields. Used by mock factories in tests.
+#[derive(Default, Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NoopCoreOptions;
+
+impl CoreOptions for NoopCoreOptions {}
 
 /// Minimal InputStateBuffer for testing.
 #[derive(Debug, Default)]
@@ -220,16 +234,14 @@ impl CoreFactory for MockFactory {
     fn resolve_load_request(
         &self,
         _: &nerust_core_traits::factory::settings::FactorySettingsView,
-        options: SystemLoadOptions,
+        _: Box<dyn DynSystemLoadOptions>,
     ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
-        let bytes = options.options_bytes.clone();
         Ok(ResolvedLoadRequest {
-            options,
-            core_options_bytes: bytes,
+            options: NoopCoreOptions::default().into(),
         })
     }
-    fn default_load_options(&self) -> SystemLoadOptions {
-        SystemLoadOptions::default()
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        NoopSystemLoadOptions::default().into()
     }
     fn input_system_factory(&self) -> &dyn InputSystemFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;
