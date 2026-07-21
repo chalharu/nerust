@@ -56,10 +56,7 @@ fn create_audio_registry() -> AudioBackendRegistry {
 fn parse_cli_args(
     factories: &[Arc<dyn CoreFactory>],
 ) -> (RunOptions, Vec<Box<dyn DynSystemLoadOptions>>) {
-    let defaults: Vec<_> = factories
-        .iter()
-        .map(|f| f.default_load_options())
-        .collect();
+    let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))

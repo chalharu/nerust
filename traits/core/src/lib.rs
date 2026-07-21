@@ -193,7 +193,7 @@ pub trait CoreOptions:
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoreOptionsWrapper<T: CoreOptions>(pub T);
+pub struct CoreOptionsWrapper<T: CoreOptions>(T);
 
 pub trait DynCoreOptions: DynClone + Debug + DynEq + Downcast + Send + Sync {}
 
