@@ -4,7 +4,6 @@ use clap::{ArgMatches, Args, Command};
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
-use serde::{Deserialize, Serialize};
 
 use crate::DynCoreOptions;
 
@@ -30,10 +29,7 @@ impl MediaObject {
     }
 }
 
-pub trait SystemLoadOptions:
-    Args + Serialize + for<'de> Deserialize<'de> + Debug + Clone + Eq + 'static
-{
-}
+pub trait SystemLoadOptions: Args + Debug + Clone + Eq + 'static {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemLoadOptionsWrapper<T: SystemLoadOptions>(T);

@@ -27,6 +27,8 @@ pub enum FactoryError {
     InvalidChoice(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
+    #[error("invalid settings snapshot")]
+    InvalidSettings,
 }
 
 /// Raw parts produced by a system factory before EmuCore wrapping.

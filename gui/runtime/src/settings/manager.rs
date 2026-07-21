@@ -322,10 +322,7 @@ mod tests {
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
-            .and_then(|s| {
-                let any: &mut dyn std::any::Any = &mut **s;
-                any.downcast_mut::<nerust_nes_settings::NesSettings>()
-            })
+            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
         manager.save_snapshot(snapshot.clone()).unwrap();
@@ -427,10 +424,7 @@ mod tests {
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
-            .and_then(|s| {
-                let any: &mut dyn std::any::Any = &mut **s;
-                any.downcast_mut::<nerust_nes_settings::NesSettings>()
-            })
+            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes_settings.video.filter = NesVideoFilter::NtscRgb;
         manager.save_snapshot(snap_clone).unwrap();
@@ -448,10 +442,7 @@ mod tests {
             .shared
             .systems
             .get(&SystemId::new("nes"))
-            .and_then(|s| {
-                let any: &dyn std::any::Any = &**s;
-                any.downcast_ref::<nerust_nes_settings::NesSettings>()
-            })
+            .and_then(|s| s.downcast_ref::<nerust_nes_settings::NesSettings>())
             .unwrap();
         assert_eq!(
             nes_settings.video.filter,
