@@ -10,8 +10,8 @@ use nerust_core_traits::{
         CoreFactory, CoreParts, FactoryError,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
         load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsType, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsType,
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+            SystemLoadOptions, SystemLoadOptionsSchema,
         },
         settings::FactorySettingsView,
     },
@@ -122,8 +122,8 @@ impl CoreFactory for NesFactory {
         self
     }
 
-    fn load_options_factory(&self) -> Box<dyn DynSystemLoadOptionsType> {
-        CommandLineOptionsType.into()
+    fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
+        NesLoadOptionsSchema.into()
     }
 }
 
@@ -137,8 +137,8 @@ struct CommandLineOptions {
 impl SystemLoadOptions for CommandLineOptions {}
 
 #[derive(Debug, Eq, PartialEq)]
-struct CommandLineOptionsType;
-impl SystemLoadOptionsType for CommandLineOptionsType {
+struct NesLoadOptionsSchema;
+impl SystemLoadOptionsSchema for NesLoadOptionsSchema {
     type Options = CommandLineOptions;
 }
 

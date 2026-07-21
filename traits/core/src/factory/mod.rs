@@ -10,9 +10,15 @@ use nerust_input_traits::{
 use thiserror::Error;
 
 use crate::{
-    audio::AudioBackend, factory::{
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel}, load::{DynSystemLoadOptions, DynSystemLoadOptionsType, MediaObject, ResolvedLoadRequest}, settings::FactorySettingsView,
-    }, identity::SystemId,
+    audio::AudioBackend,
+    factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        },
+        settings::FactorySettingsView,
+    },
+    identity::SystemId,
 };
 
 #[derive(Debug, Error)]
@@ -68,7 +74,7 @@ pub trait CoreFactory {
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
 
-    fn load_options_factory(&self) -> Box<dyn DynSystemLoadOptionsType>;
+    fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema>;
 
     fn create_core_and_adapter(
         &self,

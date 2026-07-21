@@ -30,7 +30,7 @@ impl MediaObject {
 
 pub trait SystemLoadOptions: Args + Debug + Eq + 'static {}
 
-pub trait SystemLoadOptionsType: Debug + Eq + 'static {
+pub trait SystemLoadOptionsSchema: Debug + Eq + 'static {
     type Options: SystemLoadOptions;
 }
 
@@ -38,9 +38,9 @@ pub trait SystemLoadOptionsType: Debug + Eq + 'static {
 pub struct SystemLoadOptionsWrapper<T: SystemLoadOptions>(T);
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct SystemLoadOptionsTypeWrapper<T: SystemLoadOptionsType>(T);
+pub struct SystemLoadOptionsSchemaWrapper<T: SystemLoadOptionsSchema>(T);
 
-impl<T: SystemLoadOptionsType> SystemLoadOptionsTypeWrapper<T> {
+impl<T: SystemLoadOptionsSchema> SystemLoadOptionsSchemaWrapper<T> {
     pub fn augment_args(&self, cmd: Command) -> Command {
         <T::Options as Args>::augment_args(cmd)
     }
@@ -55,7 +55,7 @@ impl<T: SystemLoadOptionsType> SystemLoadOptionsTypeWrapper<T> {
 
 pub trait DynSystemLoadOptions: Debug + DynEq + Downcast {}
 
-pub trait DynSystemLoadOptionsType: Debug + DynEq + Downcast {
+pub trait DynSystemLoadOptionsSchema: Debug + DynEq + Downcast {
     fn augment_args(&self, cmd: Command) -> Command;
     fn arg_matches(
         &self,
@@ -63,16 +63,16 @@ pub trait DynSystemLoadOptionsType: Debug + DynEq + Downcast {
     ) -> Result<Box<dyn DynSystemLoadOptions>, clap::Error>;
 }
 
-impl<T: SystemLoadOptionsType> DynSystemLoadOptionsType for SystemLoadOptionsTypeWrapper<T> {
+impl<T: SystemLoadOptionsSchema> DynSystemLoadOptionsSchema for SystemLoadOptionsSchemaWrapper<T> {
     fn augment_args(&self, cmd: Command) -> Command {
-        SystemLoadOptionsTypeWrapper::<T>::augment_args(self, cmd)
+        SystemLoadOptionsSchemaWrapper::<T>::augment_args(self, cmd)
     }
 
     fn arg_matches(
         &self,
         matches: &ArgMatches,
     ) -> Result<Box<dyn DynSystemLoadOptions>, clap::Error> {
-        SystemLoadOptionsTypeWrapper::<T>::arg_matches(self, matches).map(|x| Box::new(x) as _)
+        SystemLoadOptionsSchemaWrapper::<T>::arg_matches(self, matches).map(|x| Box::new(x) as _)
     }
 }
 
@@ -81,7 +81,7 @@ impl<T: SystemLoadOptions> DynSystemLoadOptions for SystemLoadOptionsWrapper<T> 
 downcast_rs::impl_downcast!(DynSystemLoadOptions);
 dyn_eq::eq_trait_object!(DynSystemLoadOptions);
 
-downcast_rs::impl_downcast!(DynSystemLoadOptionsType);
+downcast_rs::impl_downcast!(DynSystemLoadOptionsSchema);
 
 impl<T: SystemLoadOptions> From<T> for Box<dyn DynSystemLoadOptions> {
     fn from(value: T) -> Self {
@@ -89,9 +89,9 @@ impl<T: SystemLoadOptions> From<T> for Box<dyn DynSystemLoadOptions> {
     }
 }
 
-impl<T: SystemLoadOptionsType> From<T> for Box<dyn DynSystemLoadOptionsType> {
+impl<T: SystemLoadOptionsSchema> From<T> for Box<dyn DynSystemLoadOptionsSchema> {
     fn from(value: T) -> Self {
-        Box::new(SystemLoadOptionsTypeWrapper(value))
+        Box::new(SystemLoadOptionsSchemaWrapper(value))
     }
 }
 
