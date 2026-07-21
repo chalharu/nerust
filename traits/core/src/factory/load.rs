@@ -35,12 +35,6 @@ pub trait SystemLoadOptions:
 {
 }
 
-/// Placeholder implementation with no CLI arguments.
-#[derive(Default, Debug, Clone, PartialEq, Eq, clap::Args, Serialize, Deserialize)]
-pub struct NoopSystemLoadOptions;
-
-impl SystemLoadOptions for NoopSystemLoadOptions {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemLoadOptionsWrapper<T: SystemLoadOptions>(T);
 

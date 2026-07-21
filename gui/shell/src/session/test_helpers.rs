@@ -7,11 +7,11 @@ use std::{
 };
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreOptions,
     audio::{AudioBackend, AudioBackendRegistry},
     factory::{
         CoreFactory, FactoryError,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
         settings::FactorySettingsView,
     },
     identity::{SystemId, SystemIdentity},
@@ -28,6 +28,18 @@ use nerust_render_traits::{
 
 use super::SessionHandle;
 use crate::settings::factory::settings_view;
+
+/// Placeholder load options with no CLI arguments. Used by mock factories in tests.
+#[derive(Default, Debug, Clone, PartialEq, Eq, clap::Args, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NoopSystemLoadOptions;
+
+impl SystemLoadOptions for NoopSystemLoadOptions {}
+
+/// Placeholder core options with no fields. Used by mock factories in tests.
+#[derive(Default, Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NoopCoreOptions;
+
+impl CoreOptions for NoopCoreOptions {}
 
 /// Minimal InputStateBuffer for testing.
 #[derive(Debug, Default)]
@@ -223,11 +235,11 @@ impl CoreFactory for MockFactory {
         options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
         Ok(ResolvedLoadRequest {
-            options: nerust_core_traits::NoopCoreOptions::default().into(),
+            options: NoopCoreOptions::default().into(),
         })
     }
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        nerust_core_traits::factory::load::NoopSystemLoadOptions::default().into()
+        NoopSystemLoadOptions::default().into()
     }
     fn input_system_factory(&self) -> &dyn InputSystemFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;
