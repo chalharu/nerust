@@ -1,2 +1,2 @@
-force-exclude = true
 extend-exclude = ["roms"]
+force-exclude = true
