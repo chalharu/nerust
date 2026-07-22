@@ -451,7 +451,9 @@ pub(crate) fn present_preferences_dialog(
     ));
 
     let _snapshot = state.borrow().settings_snapshot().clone();
-    let system_page_model = state.borrow().settings_page();
+    // TODO: use gtk::Notebook to display settings for all registered systems.
+    // Currently only the first system's page is shown.
+    let system_page_model = &state.borrow().settings_pages()[0].1;
     let filter_field = system_field_by_id(&system_page_model, "video.filter");
     let filter_combo = combo_from_optional_system_field(filter_field, language);
     let filter_label = filter_field

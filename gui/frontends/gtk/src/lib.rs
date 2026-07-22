@@ -80,11 +80,18 @@ impl State {
         self.session.frame_buffer()
     }
 
-    pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        let factory = self.ctx.registry.primary();
-        let system_id = factory.system_id();
-        let view = settings_view(self.session.settings_snapshot(), &system_id);
-        factory.settings_page(&view)
+    pub(crate) fn settings_pages(&self) -> Vec<(&'static str, SystemSettingsPageModel)> {
+        let snapshot = self.session.settings_snapshot();
+        self.ctx
+            .registry
+            .all()
+            .iter()
+            .map(|factory| {
+                let system_id = factory.system_id();
+                let view = settings_view(snapshot, &system_id);
+                (factory.display_name(), factory.settings_page(&view))
+            })
+            .collect()
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
