@@ -27,10 +27,7 @@ use nerust_render_traits::{
 };
 
 use super::SessionHandle;
-use crate::{
-    registry::SystemRegistry,
-    settings::factory::settings_view,
-};
+use crate::{registry::SystemRegistry, settings::factory::settings_view};
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
 #[derive(

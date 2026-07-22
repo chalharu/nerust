@@ -214,7 +214,13 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
         let active_system_id = registry.primary().system_id();
-        Self::new_inner(capabilities, registry, active_system_id, audio_registry, true)
+        Self::new_inner(
+            capabilities,
+            registry,
+            active_system_id,
+            audio_registry,
+            true,
+        )
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -280,8 +286,14 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
         let active_system_id = registry.primary().system_id();
-        Self::new_inner(capabilities, registry, active_system_id, audio_registry, false)
-            .expect("core creation with defaults must succeed in tests")
+        Self::new_inner(
+            capabilities,
+            registry,
+            active_system_id,
+            audio_registry,
+            false,
+        )
+        .expect("core creation with defaults must succeed in tests")
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -395,7 +407,7 @@ mod tests {
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
-    use crate::session::{KeyboardShortcut, SessionHandle};
+    use crate::{registry::SystemRegistry, session::{KeyboardShortcut, SessionHandle}};
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
     /// call, then delegates to the inner factory for the fallback path.
@@ -559,6 +571,7 @@ mod tests {
     #[test]
     fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
         let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
+        let registry = Arc::new(SystemRegistry::new(vec![failing]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
             window: nerust_gui_runtime::settings::HostWindowCapabilities {
@@ -568,7 +581,7 @@ mod tests {
             },
             presentation: None,
         };
-        let session = SessionHandle::new(capabilities, failing, audio_registry)
+        let session = SessionHandle::new(capabilities, registry, audio_registry)
             .expect("fallback to defaults should succeed");
         assert!(!session.loaded());
         assert!(session.paused());

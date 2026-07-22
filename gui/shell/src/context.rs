@@ -1,6 +1,6 @@
 use std::{fmt, rc::Rc, sync::Arc};
 
-use nerust_core_traits::{audio::AudioBackendRegistry};
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_render_traits::renderer::GpuFactory;
 
 use crate::{load::RomLoader, registry::SystemRegistry};

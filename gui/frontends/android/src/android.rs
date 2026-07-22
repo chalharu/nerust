@@ -26,10 +26,13 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_shell::session::{
-    SessionError, SessionHandle,
-    access::{FrontendSession, SettingsResult},
-    commands::{SessionCommand, SessionCommandOutcome},
+use nerust_gui_shell::{
+    registry::SystemRegistry,
+    session::{
+        SessionError, SessionHandle,
+        access::{FrontendSession, SettingsResult},
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
 use nerust_render_traits::{
@@ -209,7 +212,7 @@ impl AndroidFrontend {
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
-            core_factory,
+            Arc::new(SystemRegistry::new(vec![core_factory])),
             audio_registry,
             settings_paths,
         )
