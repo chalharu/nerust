@@ -533,12 +533,12 @@ pub(crate) fn present_preferences_dialog(
                 .iter()
                 .find(|(id, _)| id == "video.filter")
                 .map(|(_, c)| c.clone())
-                .unwrap_or_else(|| gtk::ComboBoxText::new()),
+                .unwrap_or_else(gtk::ComboBoxText::new),
             mmc3_combo: field_widgets
                 .iter()
                 .find(|(id, _)| id == "core.mmc3_irq_variant")
                 .map(|(_, c)| c.clone())
-                .unwrap_or_else(|| gtk::ComboBoxText::new()),
+                .unwrap_or_else(gtk::ComboBoxText::new),
             field_widgets,
         });
     }
