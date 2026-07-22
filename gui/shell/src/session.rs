@@ -453,6 +453,7 @@ mod tests {
         fn load_options_schema(
             &self,
         ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+            // CLI parsing not exercised in this test path
             unreachable!()
         }
     }
