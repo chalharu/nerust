@@ -329,14 +329,10 @@ impl SessionHandle {
         &self.settings
     }
 
-    fn active_factory(&self) -> &Arc<dyn CoreFactory> {
+    pub fn active_factory(&self) -> &Arc<dyn CoreFactory> {
         self.registry
             .find_by_id(&self.active_system_id)
             .unwrap_or_else(|| self.registry.primary())
-    }
-
-    pub fn active_factory_arc(&self) -> &Arc<dyn CoreFactory> {
-        self.active_factory()
     }
 
     pub fn factory(&self) -> &dyn CoreFactory {
