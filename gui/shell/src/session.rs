@@ -66,7 +66,7 @@ pub enum KeyboardShortcut {
 
 pub struct SessionHandle {
     pub(super) registry: Arc<SystemRegistry>,
-    pub(super) active_system_id: Option<SystemId>,
+    pub(super) active_system_id: SystemId,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
     pub(super) current_assignments: InputAssignments,
@@ -153,17 +153,16 @@ impl SessionHandle {
     fn new_inner(
         capabilities: HostBackendCapabilities,
         registry: Arc<SystemRegistry>,
-        active_system_id: Option<SystemId>,
+        active_system_id: SystemId,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let factory = active_system_id
-            .as_ref()
-            .and_then(|id| registry.find_by_id(id))
-            .unwrap_or_else(|| registry.primary())
+        let factory = registry
+            .find_by_id(&active_system_id)
+            .expect("active_system_id must match a registered factory")
             .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
@@ -267,7 +266,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             registry,
-            active_system_id: Some(factory.system_id()),
+            active_system_id: factory.system_id(),
             capabilities,
             settings,
             settings_snapshot,
@@ -330,14 +329,14 @@ impl SessionHandle {
         &self.settings
     }
 
-    pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
-        self.active_system_id
-            .as_ref()
-            .and_then(|id| self.registry.find_by_id(id))
+    pub fn active_factory(&self) -> &Arc<dyn CoreFactory> {
+        self.registry
+            .find_by_id(&self.active_system_id)
+            .expect("active_system_id must match a registered factory")
     }
 
-    pub fn factory(&self) -> Option<&dyn CoreFactory> {
-        self.active_factory().map(|a| &**a)
+    pub fn factory(&self) -> &dyn CoreFactory {
+        &**self.active_factory()
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
@@ -345,9 +344,7 @@ impl SessionHandle {
     }
 
     pub fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        self.active_factory()
-            .unwrap_or_else(|| self.registry.primary())
-            .default_load_options()
+        self.active_factory().default_load_options()
     }
 }
 
@@ -398,10 +395,10 @@ impl RomLoadTarget for SessionHandle {
     /// detected system. Currently only NES cores exist, so the existing
     /// EmuCore is always correct.
     fn set_active_system(&mut self, system_id: SystemId) {
-        if self.active_system_id.as_ref() == Some(&system_id) {
+        if system_id == self.active_system_id {
             return;
         }
-        self.active_system_id = Some(system_id);
+        self.active_system_id = system_id;
 
         // Rebuild EmuCore with the new system's factory.
         // If a ROM is currently loaded, its state is preserved
