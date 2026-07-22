@@ -195,6 +195,7 @@ pub(crate) fn present_preferences_dialog(
     }
 
     struct InputTab {
+        _factory: Arc<dyn CoreFactory>,
         slot_combos: Rc<RefCell<Vec<SlotCombo>>>,
         _key_binding_box: Rc<gtk::Box>,
         input_rows: Rc<RefCell<Vec<InputRow>>>,
@@ -437,6 +438,7 @@ pub(crate) fn present_preferences_dialog(
 
         input_notebook.append_page(&tab_page, Some(&tab_label));
         input_tabs.push(InputTab {
+            _factory: factory.clone(),
             slot_combos: slot_combos.clone(),
             _key_binding_box: key_binding_box.clone(),
             input_rows: input_rows.clone(),
