@@ -578,26 +578,20 @@ impl SettingsAppState {
     fn input_page(&self) -> El<'_> {
         let language = self.language();
         let factories = self.registry.all();
-        let factory = if factories.len() <= 1 {
-            &factories[0]
-        } else {
-            &factories[self.input_tab_index]
-        };
+        let factory = &factories[self.input_tab_index];
 
         let mut content = column![];
 
-        if factories.len() > 1 {
-            let tab_row = row(factories.iter().enumerate().map(|(i, f)| {
-                let btn_text = text(f.display_name()).size(14);
-                if i == self.input_tab_index {
-                    button(btn_text).style(button::primary).into()
-                } else {
-                    button(btn_text).on_press(Message::SelectInputTab(i)).into()
-                }
-            }))
-            .spacing(4);
-            content = content.push(tab_row);
-        }
+        let tab_row = row(factories.iter().enumerate().map(|(i, f)| {
+            let btn_text = text(f.display_name()).size(14);
+            if i == self.input_tab_index {
+                button(btn_text).style(button::primary).into()
+            } else {
+                button(btn_text).on_press(Message::SelectInputTab(i)).into()
+            }
+        }))
+        .spacing(4);
+        content = content.push(tab_row);
 
         if let Some(conflict) = self.input_conflict() {
             content = content.push(text(conflict));
@@ -829,21 +823,19 @@ impl SettingsAppState {
         let model = factory.settings_page(&view);
 
         let mut content = column![];
-        if factories.len() > 1 {
-            let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
-            let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
-                let btn_text = text(*name).size(14);
-                if i == self.system_tab_index {
-                    button(btn_text).style(button::primary).into()
-                } else {
-                    button(btn_text)
-                        .on_press(Message::SelectSystemTab(i))
-                        .into()
-                }
-            }))
-            .spacing(4);
-            content = content.push(tab_row);
-        }
+        let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
+        let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
+            let btn_text = text(*name).size(14);
+            if i == self.system_tab_index {
+                button(btn_text).style(button::primary).into()
+            } else {
+                button(btn_text)
+                    .on_press(Message::SelectSystemTab(i))
+                    .into()
+            }
+        }))
+        .spacing(4);
+        content = content.push(tab_row);
 
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field, language));
