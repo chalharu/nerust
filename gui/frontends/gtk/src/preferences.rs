@@ -45,6 +45,12 @@ struct InputRow {
     clear_button: gtk::Button,
 }
 
+struct SystemTab {
+    factory: Arc<dyn CoreFactory>,
+    filter_combo: gtk::ComboBoxText,
+    mmc3_combo: gtk::ComboBoxText,
+}
+
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
 fn dynamic_topology(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
@@ -495,12 +501,15 @@ pub(crate) fn present_preferences_dialog(
     system_notebook.set_tab_pos(gtk::PositionType::Top);
     system_page.append(&system_notebook);
 
-    struct SystemTab {
-        filter_combo: gtk::ComboBoxText,
-        mmc3_combo: gtk::ComboBoxText,
-    }
     let mut system_tabs: Vec<SystemTab> = Vec::new();
-    for (name, model) in &state.borrow().settings_pages() {
+    for (factory, (name, model)) in state
+        .borrow()
+        .ctx
+        .registry
+        .all()
+        .iter()
+        .zip(state.borrow().settings_pages().iter())
+    {
         let tab_label = gtk::Label::new(Some(name));
         let tab_page = gtk::Box::new(gtk::Orientation::Vertical, 6);
         tab_page.set_margin_start(6);
@@ -524,11 +533,13 @@ pub(crate) fn present_preferences_dialog(
 
         system_notebook.append_page(&tab_page, Some(&tab_label));
         system_tabs.push(SystemTab {
+            factory: (*factory).clone(),
             filter_combo,
             mmc3_combo,
         });
     }
-    let first_tab = &system_tabs[0];
+    let system_tabs = Rc::new(RefCell::new(system_tabs));
+    let first_tab = &system_tabs.borrow()[0];
     let filter_combo = &first_tab.filter_combo;
     let mmc3_combo = &first_tab.mmc3_combo;
 
@@ -547,6 +558,7 @@ pub(crate) fn present_preferences_dialog(
         &latency_spin,
         filter_combo,
         mmc3_combo,
+        &system_tabs,
         &input_rows,
         &capture_target,
         text(language, UiText::Unbound),
@@ -582,6 +594,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -618,6 +631,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -653,6 +667,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -681,6 +696,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -721,6 +737,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -752,6 +769,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -789,6 +807,7 @@ pub(crate) fn present_preferences_dialog(
             &latency_spin,
             filter_combo,
             mmc3_combo,
+            &system_tabs,
             &input_rows,
             &capture_target,
             language,
@@ -909,6 +928,7 @@ struct WidgetBundle {
     latency_spin: gtk::SpinButton,
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
+    system_tabs: Rc<RefCell<Vec<SystemTab>>>,
     input_rows: Rc<RefCell<Vec<InputRow>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
@@ -962,6 +982,7 @@ fn widget_bundle(
     latency_spin: &gtk::SpinButton,
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
+    system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
     input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
@@ -984,6 +1005,7 @@ fn widget_bundle(
         latency_spin: latency_spin.clone(),
         filter_combo: filter_combo.clone(),
         mmc3_combo: mmc3_combo.clone(),
+        system_tabs: system_tabs.clone(),
         input_rows: input_rows.clone(),
         capture_target: capture_target.clone(),
         language,
@@ -1007,6 +1029,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.latency_spin,
         &widgets.filter_combo,
         &widgets.mmc3_combo,
+        &widgets.system_tabs,
         &widgets.input_rows,
         &widgets.capture_target,
         text(widgets.language, UiText::Unbound),
@@ -1308,13 +1331,14 @@ fn apply_snapshot_to_widgets(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
+    _filter_combo: &gtk::ComboBoxText,
+    _mmc3_combo: &gtk::ComboBoxText,
+    system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
     input_rows: &Rc<RefCell<Vec<InputRow>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
-    factory: &dyn CoreFactory,
+    _factory: &dyn CoreFactory,
 ) {
     language_combo.set_active_id(Some(match snapshot.shared.general.language {
         AppLanguage::Japanese => "japanese",
@@ -1353,11 +1377,13 @@ fn apply_snapshot_to_widgets(
     let active = format!("{}", snapshot.local.audio.sample_rate);
     sample_rate_combo.set_active_id(Some(&active));
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
-    let system_id = factory.system_id();
-    let view = settings_view(snapshot, &system_id);
-    let system_page = factory.settings_page(&view);
-    apply_system_field_by_id_to_combo(&system_page, "video.filter", filter_combo);
-    apply_system_field_by_id_to_combo(&system_page, "core.mmc3_irq_variant", mmc3_combo);
+    for tab in system_tabs.borrow().iter() {
+        let sid = tab.factory.system_id();
+        let view = settings_view(snapshot, &sid);
+        let page = tab.factory.settings_page(&view);
+        apply_system_field_by_id_to_combo(&page, "video.filter", &tab.filter_combo);
+        apply_system_field_by_id_to_combo(&page, "core.mmc3_irq_variant", &tab.mmc3_combo);
+    }
 
     for row in input_rows.borrow().iter() {
         row.value_label
