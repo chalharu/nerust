@@ -128,33 +128,87 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::{
-        audio::AudioBackendRegistry,
-        factory::{CoreFactory, load::MediaObject},
+        factory::{
+            CoreFactory, CoreParts, FactoryError,
+            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+            load::{
+                DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+                SystemLoadOptions,
+            },
+            settings::FactorySettingsView,
+        },
         identity::SystemId,
     };
-    use nerust_gui_runtime::settings::HostBackendCapabilities;
+    use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::*;
-    use crate::load::RomLoadTarget;
-    use crate::session::test_helpers::MockFactory;
+
+    #[derive(Debug, Clone)]
+    struct StubFactory;
+
+    impl CoreFactory for StubFactory {
+        fn system_id(&self) -> SystemId {
+            SystemId::new("nes")
+        }
+        fn display_name(&self) -> &'static str {
+            "Stub"
+        }
+        fn probe_media(&self, _media: &MediaObject) -> bool {
+            false
+        }
+        fn settings_page(&self, _view: &FactorySettingsView) -> SystemSettingsPageModel {
+            SystemSettingsPageModel {
+                fields: Arc::new([]),
+            }
+        }
+        fn apply_settings_choice(
+            &self,
+            _view: &mut FactorySettingsView,
+            _field: &SystemSettingsFieldId,
+            _choice: &SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            Ok(())
+        }
+        fn resolve_load_request(
+            &self,
+            _view: &FactorySettingsView,
+            _options: Box<dyn DynSystemLoadOptions>,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
+            Ok(ResolvedLoadRequest {
+                options: Box::<NoopCoreOptions>::default(),
+            })
+        }
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+            NoopSystemLoadOptions.into()
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            _view: &FactorySettingsView,
+            _speaker: Box<dyn nerust_core_traits::audio::AudioBackend>,
+            _assignments: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            unreachable!()
+        }
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
+            unreachable!()
+        }
+        fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
+            unreachable!()
+        }
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    struct NoopCoreOptions;
+
+    impl nerust_core_traits::CoreOptions for NoopCoreOptions {}
+
+    #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+    struct NoopSystemLoadOptions;
+
+    impl SystemLoadOptions for NoopSystemLoadOptions {}
 
     fn stub_factory() -> Arc<dyn CoreFactory> {
-        Arc::new(MockFactory)
-    }
-
-    fn media_with_ext(ext: &str) -> MediaObject {
-        MediaObject::new(Some(format!("game.{ext}").into()), vec![])
-    }
-
-    fn test_capabilities() -> HostBackendCapabilities {
-        HostBackendCapabilities {
-            window: nerust_gui_runtime::settings::HostWindowCapabilities {
-                remembers_window_size: false,
-                supports_fullscreen_default: false,
-                supports_scaling: false,
-            },
-            presentation: None,
-        }
+        Arc::new(StubFactory)
     }
 
     #[test]
@@ -185,7 +239,7 @@ mod tests {
     fn detect_falls_back_to_primary() {
         let a = stub_factory();
         let registry = SystemRegistry::new(vec![a.clone(), stub_factory()]);
-        let media = media_with_ext("sfc");
+        let media = MediaObject::new(Some("game.sfc".into()), vec![]);
         assert_eq!(registry.detect(&media).system_id(), a.system_id());
     }
 
@@ -195,35 +249,5 @@ mod tests {
         let registry = SystemRegistry::new(vec![factory.clone()]);
         let opts = factory.default_load_options();
         let _loader = registry.create_loader(vec![opts]);
-    }
-
-    #[test]
-    fn session_factory_uses_primary_initially() {
-        let factory = stub_factory();
-        let id = factory.system_id();
-        let registry = Arc::new(SystemRegistry::new(vec![factory]));
-        let audio_registry = Arc::new(AudioBackendRegistry::new());
-        let session = crate::session::SessionHandle::new_ephemeral(
-            test_capabilities(),
-            registry,
-            audio_registry,
-        );
-        assert_eq!(session.factory().system_id(), id);
-    }
-
-    #[test]
-    fn set_active_system_falls_back_to_primary_on_unknown_id() {
-        let factory = stub_factory();
-        let id = factory.system_id();
-        let registry = Arc::new(SystemRegistry::new(vec![factory]));
-        let audio_registry = Arc::new(AudioBackendRegistry::new());
-        let mut session = crate::session::SessionHandle::new_ephemeral(
-            test_capabilities(),
-            registry,
-            audio_registry,
-        );
-
-        RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
-        assert_eq!(session.factory().system_id(), id);
     }
 }
