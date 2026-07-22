@@ -17,9 +17,9 @@ use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory, FactoryError,
-        descriptor::SystemSettingsPageModel,
         load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
     },
+    identity::SystemId,
 };
 use nerust_emu_thread::{ConsoleMetrics, OperationError};
 use nerust_gui_runtime::settings::{
@@ -35,6 +35,7 @@ use thiserror::Error;
 
 use crate::{
     emu_core::EmuCore,
+    registry::SystemRegistry,
     session::persistence::PersistenceManager,
     settings::{self, factory::settings_view},
 };
@@ -64,7 +65,8 @@ pub enum KeyboardShortcut {
 }
 
 pub struct SessionHandle {
-    pub(super) factory: Arc<dyn CoreFactory>,
+    pub(super) registry: Arc<SystemRegistry>,
+    pub(super) active_system_id: SystemId,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
     pub(super) current_assignments: InputAssignments,
@@ -150,13 +152,18 @@ impl SessionHandle {
 
     fn new_inner(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
+        active_system_id: SystemId,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
+        let factory = registry
+            .find_by_id(&active_system_id)
+            .unwrap_or_else(|| registry.primary())
+            .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
                 default_shared_settings(),
@@ -187,7 +194,8 @@ impl SessionHandle {
             current_assignments: assignments,
             field_map,
             key_field_map: HashMap::new(),
-            factory,
+            registry,
+            active_system_id,
             capabilities,
             settings,
             settings_snapshot,
@@ -202,10 +210,11 @@ impl SessionHandle {
 
     pub fn new(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
-        Self::new_inner(capabilities, factory, audio_registry, true)
+        let active_system_id = registry.primary().system_id();
+        Self::new_inner(capabilities, registry, active_system_id, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -214,13 +223,14 @@ impl SessionHandle {
     /// the frontend provides an explicit settings root instead.
     pub fn new_with_settings_paths(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
     ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
+        let factory = registry.primary().clone();
         let defaults = SettingsSnapshot {
             shared: default_shared_settings(),
             local: default_local_settings(),
@@ -249,7 +259,8 @@ impl SessionHandle {
             current_assignments: assignments,
             field_map,
             key_field_map: HashMap::new(),
-            factory,
+            registry,
+            active_system_id: factory.system_id(),
             capabilities,
             settings,
             settings_snapshot,
@@ -265,10 +276,11 @@ impl SessionHandle {
     #[cfg(test)]
     pub fn new_ephemeral(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, factory, audio_registry, false)
+        let active_system_id = registry.primary().system_id();
+        Self::new_inner(capabilities, registry, active_system_id, audio_registry, false)
             .expect("core creation with defaults must succeed in tests")
     }
 
@@ -305,22 +317,22 @@ impl SessionHandle {
         &self.settings
     }
 
+    fn active_factory(&self) -> &Arc<dyn CoreFactory> {
+        self.registry
+            .find_by_id(&self.active_system_id)
+            .unwrap_or_else(|| self.registry.primary())
+    }
+
     pub fn factory(&self) -> &dyn CoreFactory {
-        &*self.factory
+        &**self.active_factory()
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
         self.current_assignments.to_string_pairs()
     }
 
-    pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        let system_id = self.factory.system_id();
-        let view = settings_view(settings, &system_id);
-        self.factory.settings_page(&view)
-    }
-
     pub fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        self.factory.default_load_options()
+        self.active_factory().default_load_options()
     }
 }
 
@@ -358,6 +370,10 @@ impl RomLoadTarget for SessionHandle {
     }
     fn resume(&mut self) {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+    }
+
+    fn set_active_system(&mut self, system_id: SystemId) {
+        self.active_system_id = system_id;
     }
 }
 
