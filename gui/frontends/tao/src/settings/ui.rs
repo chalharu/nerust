@@ -190,7 +190,7 @@ impl SettingsAppState {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let factory = registry.primary();
+        let factory = &registry.all()[0];
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -290,7 +290,7 @@ impl SettingsAppState {
         for (key, labels) in conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
-            self.registry.primary().system_id(),
+            self.registry.all()[self.input_tab_index].system_id(),
         ) {
             errors.push(format!("{}: {}", key.label(), labels.join(", ")));
         }
@@ -307,7 +307,7 @@ impl SettingsAppState {
         let (key, labels) = conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
-            self.registry.primary().system_id(),
+            self.registry.all()[self.input_tab_index].system_id(),
         )
         .into_iter()
         .next()?;
@@ -405,7 +405,9 @@ impl SettingsAppState {
                 }
                 // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
-                let sid = self.registry.primary().system_id().to_string();
+                let sid = self.registry.all()[self.input_tab_index]
+                    .system_id()
+                    .to_string();
                 self.draft.app_state.controller_assignments.insert(
                     sid,
                     self.controller_assignments
@@ -1042,7 +1044,7 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::build_topology;
-    let factory = state.registry.primary();
+    let factory = &state.registry.all()[state.input_tab_index];
     let slots = factory.input_system_factory().slots();
     build_topology(&state.controller_assignments, slots)
 }
