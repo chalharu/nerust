@@ -424,7 +424,9 @@ mod tests {
         },
         identity::SystemId,
     };
-    use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsApplyPlan};
+    use nerust_gui_runtime::settings::{
+        HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot,
+    };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
@@ -432,6 +434,7 @@ mod tests {
         load::RomLoadTarget,
         registry::SystemRegistry,
         session::{KeyboardShortcut, SessionHandle},
+        settings::factory::settings_view,
     };
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
@@ -644,5 +647,32 @@ mod tests {
             },
             presentation: None,
         }
+    }
+
+    #[test]
+    fn registry_all_produces_settings_page_per_system() {
+        use crate::settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        };
+        let factory = Arc::new(MockFactory);
+        let registry = SystemRegistry::new(vec![factory.clone(), factory]);
+        let snapshot = SettingsSnapshot {
+            shared: default_shared_settings(),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let pages: Vec<_> = registry
+            .all()
+            .iter()
+            .map(|f| {
+                let view = settings_view(&snapshot, &f.system_id());
+                f.settings_page(&view)
+            })
+            .collect();
+        assert_eq!(
+            pages.len(),
+            2,
+            "should produce one page per registered system"
+        );
     }
 }
