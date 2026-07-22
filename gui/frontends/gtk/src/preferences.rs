@@ -451,21 +451,51 @@ pub(crate) fn present_preferences_dialog(
     ));
 
     let _snapshot = state.borrow().settings_snapshot().clone();
-    // TODO: use gtk::Notebook to display settings for all registered systems.
-    // Currently only the first system's page is shown.
-    let system_page_model = &state.borrow().settings_pages()[0].1;
-    let filter_field = system_field_by_id(&system_page_model, "video.filter");
-    let filter_combo = combo_from_optional_system_field(filter_field, language);
-    let filter_label = filter_field
-        .map(|field| resolve_label(field.label_id, language))
-        .unwrap_or_else(|| resolve_label("nes.video.filter", language));
-    system_page.append(&labeled_row(&filter_label, &filter_combo));
-    let mmc3_field = system_field_by_id(&system_page_model, "core.mmc3_irq_variant");
-    let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
-    let mmc3_label = mmc3_field
-        .map(|field| resolve_label(field.label_id, language))
-        .unwrap_or_else(|| resolve_label("nes.core.mmc3_irq_variant", language));
-    system_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
+    let system_notebook = gtk::Notebook::new();
+    system_notebook.set_scrollable(true);
+    system_notebook.set_tab_pos(gtk::PositionType::Top);
+    system_page.append(&system_notebook);
+
+    struct SystemTab {
+        _page: gtk::Box,
+        filter_combo: gtk::ComboBoxText,
+        mmc3_combo: gtk::ComboBoxText,
+    }
+    let mut system_tabs: Vec<SystemTab> = Vec::new();
+    for (name, model) in &state.borrow().settings_pages() {
+        let tab_label = gtk::Label::new(Some(name));
+        let tab_page = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        tab_page.set_margin_start(6);
+        tab_page.set_margin_end(6);
+        tab_page.set_margin_top(6);
+        tab_page.set_margin_bottom(6);
+
+        let filter_field = system_field_by_id(model, "video.filter");
+        let filter_combo = combo_from_optional_system_field(filter_field, language);
+        let filter_label = filter_field
+            .map(|field| resolve_label(field.label_id, language))
+            .unwrap_or_else(|| resolve_label("video.filter", language));
+        tab_page.append(&labeled_row(&filter_label, &filter_combo));
+
+        let mmc3_field = system_field_by_id(model, "core.mmc3_irq_variant");
+        let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
+        let mmc3_label = mmc3_field
+            .map(|field| resolve_label(field.label_id, language))
+            .unwrap_or_else(|| resolve_label("core.mmc3_irq_variant", language));
+        tab_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
+
+        system_notebook.append_page(&tab_page, Some(&tab_label));
+        system_tabs.push(SystemTab {
+            _page: tab_page,
+            filter_combo,
+            mmc3_combo,
+        });
+    }
+    let first_tab = system_tabs
+        .first()
+        .expect("at least one system must be registered");
+    let filter_combo = &first_tab.filter_combo;
+    let mmc3_combo = &first_tab.mmc3_combo;
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
