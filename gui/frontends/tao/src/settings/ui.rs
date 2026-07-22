@@ -18,10 +18,7 @@ use iced::{
 use iced_winit::program::Program;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
-    factory::{
-        CoreFactory,
-        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
-    },
+    factory::descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
@@ -351,7 +348,7 @@ impl SettingsAppState {
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
                 let _ = apply_settings_choice(
-                    &*self.registry.primary().as_ref(),
+                    self.registry.primary().as_ref(),
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
                     &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
