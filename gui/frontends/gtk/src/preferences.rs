@@ -445,7 +445,6 @@ pub(crate) fn present_preferences_dialog(
     }
     let input_tabs = Rc::new(RefCell::new(input_tabs));
     let slot_combos = input_tabs.borrow()[0].slot_combos.clone();
-    let input_rows = input_tabs.borrow()[0].input_rows.clone();
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -719,70 +718,74 @@ pub(crate) fn present_preferences_dialog(
     }
     dialog.add_controller(key_controller);
 
-    for row in input_rows.borrow().iter().cloned() {
-        let capture_target = capture_target.clone();
-        let draft = draft.clone();
-        let widgets = widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            filter_combo,
-            mmc3_combo,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        );
-        let target = row.target.clone();
-        let _ = row.change_button.connect_clicked(move |_| {
-            *capture_target.borrow_mut() = Some(target.clone());
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
+    for tab in input_tabs.borrow().iter() {
+        for row in tab.input_rows.borrow().iter().cloned() {
+            let capture_target = capture_target.clone();
+            let draft = draft.clone();
+            let widgets = widget_bundle(
+                &ok_button,
+                &storage_dir_row,
+                &storage_error_label,
+                &input_conflict_label,
+                &language_combo,
+                &storage_policy_combo,
+                &storage_dir_entry,
+                &fullscreen_check,
+                &scaling_combo,
+                &vsync_check,
+                &mute_check,
+                &volume_spin,
+                &sample_rate_combo,
+                &latency_spin,
+                filter_combo,
+                mmc3_combo,
+                &system_tabs,
+                &input_tabs,
+                &capture_target,
+                language,
+                factory.clone(),
+            );
+            let target = row.target.clone();
+            let _ = row.change_button.connect_clicked(move |_| {
+                *capture_target.borrow_mut() = Some(target.clone());
+                refresh_all_from_draft(&draft.borrow(), &widgets);
+            });
+        }
     }
-    for row in input_rows.borrow().iter().cloned() {
-        let capture_target = capture_target.clone();
-        let draft = draft.clone();
-        let widgets = widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            filter_combo,
-            mmc3_combo,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        );
-        let target = row.target.clone();
-        let _ = row.clear_button.connect_clicked(move |_| {
-            apply_capture_target(&mut draft.borrow_mut(), &target, None);
-            *capture_target.borrow_mut() = None;
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
+    for tab in input_tabs.borrow().iter() {
+        for row in tab.input_rows.borrow().iter().cloned() {
+            let capture_target = capture_target.clone();
+            let draft = draft.clone();
+            let widgets = widget_bundle(
+                &ok_button,
+                &storage_dir_row,
+                &storage_error_label,
+                &input_conflict_label,
+                &language_combo,
+                &storage_policy_combo,
+                &storage_dir_entry,
+                &fullscreen_check,
+                &scaling_combo,
+                &vsync_check,
+                &mute_check,
+                &volume_spin,
+                &sample_rate_combo,
+                &latency_spin,
+                filter_combo,
+                mmc3_combo,
+                &system_tabs,
+                &input_tabs,
+                &capture_target,
+                language,
+                factory.clone(),
+            );
+            let target = row.target.clone();
+            let _ = row.clear_button.connect_clicked(move |_| {
+                apply_capture_target(&mut draft.borrow_mut(), &target, None);
+                *capture_target.borrow_mut() = None;
+                refresh_all_from_draft(&draft.borrow(), &widgets);
+            });
+        }
     }
 
     let finish_for_response = finish.clone();
