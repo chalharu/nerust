@@ -1126,31 +1126,33 @@ fn connect_local_updates(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    for (field_id, combo) in system_tabs.borrow()[0].field_widgets.iter() {
-        let draft = draft.clone();
-        let widgets = widgets.clone();
-        let factory = factory.clone();
-        let field_id = field_id.clone();
-        let _ = combo.connect_changed(move |combo| {
-            {
-                let mut snapshot = draft.borrow_mut();
-                let _ = apply_settings_choice(
-                    &*factory,
-                    &mut snapshot,
-                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                        field_id.clone().into(),
-                    ),
-                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                        combo
-                            .active_id()
-                            .map(|value| value.to_string())
-                            .unwrap_or_default()
-                            .into(),
-                    ),
-                );
-            }
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
+    for tab in system_tabs.borrow().iter() {
+        for (field_id, combo) in tab.field_widgets.iter() {
+            let draft = draft.clone();
+            let widgets = widgets.clone();
+            let factory = factory.clone();
+            let field_id = field_id.clone();
+            let _ = combo.connect_changed(move |combo| {
+                {
+                    let mut snapshot = draft.borrow_mut();
+                    let _ = apply_settings_choice(
+                        &*factory,
+                        &mut snapshot,
+                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                            field_id.clone().into(),
+                        ),
+                        &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                            combo
+                                .active_id()
+                                .map(|value| value.to_string())
+                                .unwrap_or_default()
+                                .into(),
+                        ),
+                    );
+                }
+                refresh_all_from_draft(&draft.borrow(), &widgets);
+            });
+        }
     }
 }
 fn refresh_validation(
