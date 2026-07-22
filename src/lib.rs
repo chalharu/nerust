@@ -121,7 +121,7 @@ mod tests {
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
-        load::{RomLoadTarget, RomLoader, RomLoaderError},
+        load::{RomLoadTarget, RomLoaderError},
         registry::SystemRegistry,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
