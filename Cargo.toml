@@ -174,7 +174,7 @@ rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }
 serde-saphyr = { version = "=0.0.29" }
 serde_bytes = { version = "=0.11.19" }
-serde_json = { version = "=1.0.150" }
+serde_json = { version = "=1.0.151" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
