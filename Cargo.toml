@@ -181,7 +181,7 @@ strum = { features = ["derive"], version = "=0.28.0" }
 tao = { version = "=0.35.3" }
 thiserror = { version = "=2.0.19" }
 time = { version = "=0.3.53" }
-typetag = { version = "=0.2.22" }
+typetag = { version = "=0.2.23" }
 wgpu = { version = "=30.0.0" }
 winit = { version = "=0.30.13" }
 zerocopy = { features = ["derive"], version = "=0.8.54" }
