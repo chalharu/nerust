@@ -45,6 +45,18 @@ struct InputRow {
     clear_button: gtk::Button,
 }
 
+struct SlotCombo {
+    slot_id: AttachmentId,
+    combo: gtk::ComboBoxText,
+}
+
+struct InputTab {
+    _factory: Arc<dyn CoreFactory>,
+    slot_combos: Rc<RefCell<Vec<SlotCombo>>>,
+    _key_binding_box: Rc<gtk::Box>,
+    input_rows: Rc<RefCell<Vec<InputRow>>>,
+}
+
 struct SystemTab {
     factory: Arc<dyn CoreFactory>,
     filter_combo: gtk::ComboBoxText,
@@ -187,19 +199,6 @@ pub(crate) fn present_preferences_dialog(
     input_notebook.set_scrollable(true);
     input_notebook.set_tab_pos(gtk::PositionType::Top);
     input_page.append(&input_notebook);
-
-    #[derive(Debug, Clone)]
-    struct SlotCombo {
-        slot_id: AttachmentId,
-        combo: gtk::ComboBoxText,
-    }
-
-    struct InputTab {
-        _factory: Arc<dyn CoreFactory>,
-        slot_combos: Rc<RefCell<Vec<SlotCombo>>>,
-        _key_binding_box: Rc<gtk::Box>,
-        input_rows: Rc<RefCell<Vec<InputRow>>>,
-    }
     let mut input_tabs: Vec<InputTab> = Vec::new();
     let input_conflict_label = gtk::Label::new(None);
     input_conflict_label.set_xalign(0.0);
@@ -562,7 +561,7 @@ pub(crate) fn present_preferences_dialog(
         filter_combo,
         mmc3_combo,
         &system_tabs,
-        &input_rows,
+        &input_tabs,
         &capture_target,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
@@ -598,7 +597,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -635,7 +634,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -671,7 +670,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -700,7 +699,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -741,7 +740,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -773,7 +772,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -811,7 +810,7 @@ pub(crate) fn present_preferences_dialog(
             filter_combo,
             mmc3_combo,
             &system_tabs,
-            &input_rows,
+            &input_tabs,
             &capture_target,
             language,
             factory.clone(),
@@ -932,7 +931,7 @@ struct WidgetBundle {
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
     system_tabs: Rc<RefCell<Vec<SystemTab>>>,
-    input_rows: Rc<RefCell<Vec<InputRow>>>,
+    input_tabs: Rc<RefCell<Vec<InputTab>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -986,7 +985,7 @@ fn widget_bundle(
     filter_combo: &gtk::ComboBoxText,
     mmc3_combo: &gtk::ComboBoxText,
     system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
-    input_rows: &Rc<RefCell<Vec<InputRow>>>,
+    input_tabs: &Rc<RefCell<Vec<InputTab>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
     factory: Arc<dyn CoreFactory>,
@@ -1009,7 +1008,7 @@ fn widget_bundle(
         filter_combo: filter_combo.clone(),
         mmc3_combo: mmc3_combo.clone(),
         system_tabs: system_tabs.clone(),
-        input_rows: input_rows.clone(),
+        input_tabs: input_tabs.clone(),
         capture_target: capture_target.clone(),
         language,
         factory,
@@ -1033,7 +1032,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.filter_combo,
         &widgets.mmc3_combo,
         &widgets.system_tabs,
-        &widgets.input_rows,
+        &widgets.input_tabs,
         &widgets.capture_target,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
@@ -1337,7 +1336,7 @@ fn apply_snapshot_to_widgets(
     _filter_combo: &gtk::ComboBoxText,
     _mmc3_combo: &gtk::ComboBoxText,
     system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
-    input_rows: &Rc<RefCell<Vec<InputRow>>>,
+    input_tabs: &Rc<RefCell<Vec<InputTab>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
@@ -1388,13 +1387,15 @@ fn apply_snapshot_to_widgets(
         apply_system_field_by_id_to_combo(&page, "core.mmc3_irq_variant", &tab.mmc3_combo);
     }
 
-    for row in input_rows.borrow().iter() {
-        row.value_label
-            .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
-                capture_label
-            } else {
-                current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
-            });
+    for tab in input_tabs.borrow().iter() {
+        for row in tab.input_rows.borrow().iter() {
+            row.value_label
+                .set_text(if capture_target.borrow().as_ref() == Some(&row.target) {
+                    capture_label
+                } else {
+                    current_binding_label(snapshot, &row.target).unwrap_or(unbound_label)
+                });
+        }
     }
 }
 
