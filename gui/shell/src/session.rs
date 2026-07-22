@@ -335,6 +335,10 @@ impl SessionHandle {
             .unwrap_or_else(|| self.registry.primary())
     }
 
+    pub fn active_factory_arc(&self) -> &Arc<dyn CoreFactory> {
+        self.active_factory()
+    }
+
     pub fn factory(&self) -> &dyn CoreFactory {
         &**self.active_factory()
     }
