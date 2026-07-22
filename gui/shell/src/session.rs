@@ -384,6 +384,16 @@ impl RomLoadTarget for SessionHandle {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
     }
 
+    /// Notifies the session that a ROM from a different system has been loaded.
+    ///
+    /// Updates `active_system_id` so that subsequent `factory()`,
+    /// `default_load_options()`, and settings page queries use the
+    /// correct system's factory.
+    ///
+    /// Note: when multi-system support is added, this method must also
+    /// trigger an EmuCore rebuild so that the running core matches the
+    /// detected system. Currently only NES cores exist, so the existing
+    /// EmuCore is always correct.
     fn set_active_system(&mut self, system_id: SystemId) {
         self.active_system_id = system_id;
     }
