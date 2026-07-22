@@ -407,7 +407,10 @@ mod tests {
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
-    use crate::{registry::SystemRegistry, session::{KeyboardShortcut, SessionHandle}};
+    use crate::{
+        registry::SystemRegistry,
+        session::{KeyboardShortcut, SessionHandle},
+    };
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
     /// call, then delegates to the inner factory for the fallback path.
