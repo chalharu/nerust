@@ -197,6 +197,60 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct MatchingStubFactory;
+
+    impl CoreFactory for MatchingStubFactory {
+        fn system_id(&self) -> SystemId {
+            SystemId::new("matched")
+        }
+        fn display_name(&self) -> &'static str {
+            "Matched"
+        }
+        fn probe_media(&self, _media: &MediaObject) -> bool {
+            true
+        }
+        fn settings_page(&self, _view: &FactorySettingsView) -> SystemSettingsPageModel {
+            SystemSettingsPageModel {
+                fields: Arc::new([]),
+            }
+        }
+        fn apply_settings_choice(
+            &self,
+            _view: &mut FactorySettingsView,
+            _field: &SystemSettingsFieldId,
+            _choice: &SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            Ok(())
+        }
+        fn resolve_load_request(
+            &self,
+            _view: &FactorySettingsView,
+            _options: Box<dyn DynSystemLoadOptions>,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
+            Ok(ResolvedLoadRequest {
+                options: Box::<NoopCoreOptions>::default(),
+            })
+        }
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+            NoopSystemLoadOptions.into()
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            _view: &FactorySettingsView,
+            _speaker: Box<dyn nerust_core_traits::audio::AudioBackend>,
+            _assignments: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            unreachable!()
+        }
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
+            unreachable!()
+        }
+        fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
+            unreachable!()
+        }
+    }
+
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     struct NoopCoreOptions;
 
@@ -241,6 +295,16 @@ mod tests {
         let registry = SystemRegistry::new(vec![a.clone(), stub_factory()]);
         let media = MediaObject::new(Some("game.sfc".into()), vec![]);
         assert_eq!(registry.detect(&media).system_id(), a.system_id());
+    }
+
+    #[test]
+    fn detect_returns_matching_factory() {
+        let fallback = stub_factory();
+        let matched = Arc::new(MatchingStubFactory);
+        let matched_id = matched.system_id();
+        let registry = SystemRegistry::new(vec![fallback, matched]);
+        let media = MediaObject::new(Some("game.nes".into()), vec![]);
+        assert_eq!(registry.detect(&media).system_id(), matched_id);
     }
 
     #[test]
