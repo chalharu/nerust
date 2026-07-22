@@ -59,8 +59,6 @@ struct InputTab {
 
 struct SystemTab {
     factory: Arc<dyn CoreFactory>,
-    filter_combo: gtk::ComboBoxText,
-    mmc3_combo: gtk::ComboBoxText,
     field_widgets: Vec<(String, gtk::ComboBoxText)>,
 }
 
@@ -529,23 +527,23 @@ pub(crate) fn present_preferences_dialog(
         system_notebook.append_page(&tab_page, Some(&tab_label));
         system_tabs.push(SystemTab {
             factory: (*factory).clone(),
-            filter_combo: field_widgets
-                .iter()
-                .find(|(id, _)| id == "video.filter")
-                .map(|(_, c)| c.clone())
-                .unwrap_or_else(gtk::ComboBoxText::new),
-            mmc3_combo: field_widgets
-                .iter()
-                .find(|(id, _)| id == "core.mmc3_irq_variant")
-                .map(|(_, c)| c.clone())
-                .unwrap_or_else(gtk::ComboBoxText::new),
             field_widgets,
         });
     }
     let system_tabs = Rc::new(RefCell::new(system_tabs));
     let first_tab = &system_tabs.borrow()[0];
-    let filter_combo = &first_tab.filter_combo;
-    let mmc3_combo = &first_tab.mmc3_combo;
+    let filter_combo = first_tab
+        .field_widgets
+        .iter()
+        .find(|(id, _)| id == "video.filter")
+        .map(|(_, c)| c)
+        .unwrap();
+    let mmc3_combo = first_tab
+        .field_widgets
+        .iter()
+        .find(|(id, _)| id == "core.mmc3_irq_variant")
+        .map(|(_, c)| c)
+        .unwrap();
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
