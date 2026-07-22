@@ -133,13 +133,13 @@ impl SessionHandle {
         &mut self,
         assignments: &InputAssignments,
     ) -> Result<(), crate::session::SessionError> {
-        let system_id = self.active_factory().system_id();
+        let factory = self.active_factory();
+        let system_id = factory.system_id();
         let view = settings_view(&self.settings_snapshot, &system_id);
         let speaker =
             crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
-        let parts = self
-            .active_factory()
-            .create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
+        let parts =
+            factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
         let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
         let was_paused = self.emu_core.metrics().paused;
         if let Some(loaded_media) = self.loaded_media.clone() {

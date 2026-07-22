@@ -23,7 +23,10 @@ pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
 }
 
-// Safety: all CoreFactory implementations are Send + Sync.
+// Safety: `Arc<dyn CoreFactory>` requires `dyn CoreFactory: Send + Sync`,
+// which is enforced at construction for each concrete factory type.
+// `NesFactory` and all future factories are `Send + Sync` (zero-sized or
+// containing only `Send + Sync` data).
 unsafe impl Send for SystemRegistry {}
 unsafe impl Sync for SystemRegistry {}
 
