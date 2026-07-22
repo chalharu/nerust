@@ -50,7 +50,7 @@ pub struct CoreParts {
 ///
 /// `FactorySettingsView` を介して設定を受け取ることで、
 /// gui/runtime の `SettingsSnapshot` への依存を回避している。
-pub trait CoreFactory {
+pub trait CoreFactory: Send + Sync {
     fn system_id(&self) -> SystemId;
 
     fn display_name(&self) -> &'static str;
