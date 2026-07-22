@@ -4,7 +4,7 @@ mod renderer;
 mod surface;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
 use gtk::{
     gio, glib,
@@ -57,7 +57,7 @@ impl State {
         };
         let session = SessionHandle::new(
             capabilities,
-            Arc::clone(&ctx.core_factory),
+            ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
         .unwrap_or_else(|e| {
@@ -81,9 +81,10 @@ impl State {
     }
 
     pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        let system_id = self.ctx.core_factory.system_id();
+        let factory = self.ctx.registry.primary();
+        let system_id = factory.system_id();
         let view = settings_view(self.session.settings_snapshot(), &system_id);
-        self.ctx.core_factory.settings_page(&view)
+        factory.settings_page(&view)
     }
 
     pub(crate) fn render_profile(&self) -> &VideoRenderProfile {

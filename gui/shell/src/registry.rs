@@ -23,6 +23,10 @@ pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
 }
 
+// Safety: all CoreFactory implementations are Send + Sync.
+unsafe impl Send for SystemRegistry {}
+unsafe impl Sync for SystemRegistry {}
+
 impl SystemRegistry {
     pub fn new(factories: Vec<Arc<dyn CoreFactory>>) -> Self {
         assert!(!factories.is_empty(), "at least one CoreFactory required");

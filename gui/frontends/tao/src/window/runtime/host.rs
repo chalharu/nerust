@@ -73,7 +73,7 @@ impl HostState {
         };
         let session = SessionHandle::new(
             capabilities,
-            Arc::clone(&ctx.core_factory),
+            ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
         .unwrap_or_else(|e| {
@@ -449,7 +449,7 @@ impl HostState {
 
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
-            self.ctx.core_factory.clone(),
+            self.ctx.registry.primary().clone(),
             self.ctx.audio_registry.clone(),
             event_loop,
         ) {
