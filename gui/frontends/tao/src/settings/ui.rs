@@ -78,6 +78,7 @@ pub(crate) enum Message {
     SelectPage(SettingsPage),
     SelectInputSection(InputPageSection),
     SelectSystemTab(usize),
+    SelectInputTab(usize),
     SetLanguage(Choice<AppLanguage>),
     SetStoragePolicy(Choice<StoragePolicy>),
     SetStorageDirectory(String),
@@ -177,6 +178,7 @@ pub(crate) struct SettingsAppState {
     initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
     system_tab_index: usize,
+    input_tab_index: usize,
     input_section: InputPageSection,
     storage_directory_input: String,
     error_message: Option<String>,
@@ -249,6 +251,7 @@ impl SettingsAppState {
             draft: snapshot.clone(),
             page: SettingsPage::General,
             system_tab_index: 0,
+            input_tab_index: 0,
             input_section: InputPageSection::Attachment(0),
             storage_directory_input,
             error_message: None,
@@ -317,6 +320,7 @@ impl SettingsAppState {
             Message::SelectPage(page) => self.page = page,
             Message::SelectInputSection(section) => self.input_section = section,
             Message::SelectSystemTab(index) => self.system_tab_index = index,
+            Message::SelectInputTab(index) => self.input_tab_index = index,
             Message::SetLanguage(choice) => self.draft.shared.general.language = choice.value,
             Message::SetStoragePolicy(choice) => {
                 self.draft.shared.persistence.storage_policy = choice.value;
@@ -573,14 +577,33 @@ impl SettingsAppState {
 
     fn input_page(&self) -> El<'_> {
         let language = self.language();
+        let factories = self.registry.all();
+        let factory = if factories.len() <= 1 {
+            &factories[0]
+        } else {
+            &factories[self.input_tab_index]
+        };
+
         let mut content = column![];
+
+        if factories.len() > 1 {
+            let tab_row = row(factories.iter().enumerate().map(|(i, f)| {
+                let btn_text = text(f.display_name()).size(14);
+                if i == self.input_tab_index {
+                    button(btn_text).style(button::primary).into()
+                } else {
+                    button(btn_text).on_press(Message::SelectInputTab(i)).into()
+                }
+            }))
+            .spacing(4);
+            content = content.push(tab_row);
+        }
+
         if let Some(conflict) = self.input_conflict() {
             content = content.push(text(conflict));
         }
 
-        // Show controller assignment pickers per slot.
-        // Multi-port controllers (e.g. FamicomSet: {P1,P2}) mark consumed slots as occupied.
-        let input_factory = self.registry.primary().input_system_factory();
+        let input_factory = factory.input_system_factory();
         let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
         if !controllers.is_empty() {
             // Build a set of occupied slot IDs
@@ -655,8 +678,7 @@ impl SettingsAppState {
             }
         }
 
-        let sections =
-            keyboard_binding_sections(&input_topology(self), self.registry.primary().system_id());
+        let sections = keyboard_binding_sections(&input_topology(self), factory.system_id());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(
