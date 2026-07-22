@@ -66,7 +66,7 @@ pub enum KeyboardShortcut {
 
 pub struct SessionHandle {
     pub(super) registry: Arc<SystemRegistry>,
-    pub(super) active_system_id: SystemId,
+    pub(super) active_system_id: Option<SystemId>,
     pub(super) emu_core: EmuCore,
     pub(super) gui_input: GuiInput,
     pub(super) current_assignments: InputAssignments,
@@ -153,16 +153,17 @@ impl SessionHandle {
     fn new_inner(
         capabilities: HostBackendCapabilities,
         registry: Arc<SystemRegistry>,
-        active_system_id: SystemId,
+        active_system_id: Option<SystemId>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let factory = registry
-            .find_by_id(&active_system_id)
-            .expect("active_system_id must match a registered factory")
+        let factory = active_system_id
+            .as_ref()
+            .and_then(|id| registry.find_by_id(id))
+            .unwrap_or_else(|| registry.primary())
             .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
@@ -213,14 +214,8 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
-        let active_system_id = registry.primary().system_id();
-        Self::new_inner(
-            capabilities,
-            registry,
-            active_system_id,
-            audio_registry,
-            true,
-        )
+        let id = registry.primary().system_id();
+        Self::new_inner(capabilities, registry, Some(id), audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -266,7 +261,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             registry,
-            active_system_id: factory.system_id(),
+            active_system_id: Some(factory.system_id()),
             capabilities,
             settings,
             settings_snapshot,
@@ -285,15 +280,9 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let active_system_id = registry.primary().system_id();
-        Self::new_inner(
-            capabilities,
-            registry,
-            active_system_id,
-            audio_registry,
-            false,
-        )
-        .expect("core creation with defaults must succeed in tests")
+        let id = registry.primary().system_id();
+        Self::new_inner(capabilities, registry, Some(id), audio_registry, false)
+            .expect("core creation with defaults must succeed in tests")
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -329,14 +318,16 @@ impl SessionHandle {
         &self.settings
     }
 
-    pub fn active_factory(&self) -> &Arc<dyn CoreFactory> {
-        self.registry
-            .find_by_id(&self.active_system_id)
-            .expect("active_system_id must match a registered factory")
+    pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
+        self.active_system_id
+            .as_ref()
+            .and_then(|id| self.registry.find_by_id(id))
     }
 
     pub fn factory(&self) -> &dyn CoreFactory {
-        &**self.active_factory()
+        self.active_factory()
+            .map(|a| &**a)
+            .expect("active_system_id does not match any registered factory")
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
@@ -344,7 +335,9 @@ impl SessionHandle {
     }
 
     pub fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        self.active_factory().default_load_options()
+        self.active_factory()
+            .expect("no active system")
+            .default_load_options()
     }
 }
 
@@ -395,10 +388,10 @@ impl RomLoadTarget for SessionHandle {
     /// detected system. Currently only NES cores exist, so the existing
     /// EmuCore is always correct.
     fn set_active_system(&mut self, system_id: SystemId) {
-        if system_id == self.active_system_id {
+        if self.active_system_id.as_ref() == Some(&system_id) {
             return;
         }
-        self.active_system_id = system_id;
+        self.active_system_id = Some(system_id);
 
         // Rebuild EmuCore with the new system's factory.
         // If a ROM is currently loaded, its state is preserved
@@ -626,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "active_system_id must match a registered factory")]
+    #[should_panic(expected = "no active system")]
     fn set_active_system_panics_on_unknown_id() {
         let factory = Arc::new(MockFactory);
         let registry = Arc::new(SystemRegistry::new(vec![factory]));

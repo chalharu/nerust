@@ -133,7 +133,7 @@ impl SessionHandle {
         &mut self,
         assignments: &InputAssignments,
     ) -> Result<(), crate::session::SessionError> {
-        let factory = self.active_factory();
+        let factory = self.active_factory().expect("no active system");
         let system_id = factory.system_id();
         let view = settings_view(&self.settings_snapshot, &system_id);
         let speaker =
@@ -199,7 +199,7 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        let system_id = self.active_factory().system_id();
+        let system_id = self.active_factory().expect("no active system").system_id();
         let Some(profile) = self
             .settings_snapshot
             .shared
