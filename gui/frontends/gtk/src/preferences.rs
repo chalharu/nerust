@@ -72,7 +72,7 @@ pub(crate) fn present_preferences_dialog(
     let finish = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
-    let factory: Arc<dyn CoreFactory> = state.borrow().ctx.core_factory.clone();
+    let factory: Arc<dyn CoreFactory> = state.borrow().ctx.registry.primary().clone();
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
