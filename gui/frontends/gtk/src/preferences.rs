@@ -444,7 +444,6 @@ pub(crate) fn present_preferences_dialog(
         });
     }
     let input_tabs = Rc::new(RefCell::new(input_tabs));
-    let slot_combos = input_tabs.borrow()[0].slot_combos.clone();
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -818,68 +817,67 @@ pub(crate) fn present_preferences_dialog(
             language,
             factory.clone(),
         );
-        let factory = factory.clone();
-        let slot_combos = slot_combos.clone();
+        let input_tabs_ok = input_tabs.clone();
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {
-                // Apply controller assignment changes
-                let input_factory = factory.input_system_factory();
-                let assignments = {
-                    let combos = slot_combos.borrow();
-                    let mut slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = combos
-                        .iter()
-                        .map(|sc| {
-                            let profile = sc.combo.active_text().and_then(|t| {
-                                let ctrls = input_factory.controllers();
-                                ctrls.iter().find(|c| c.label() == t).cloned()
-                            });
-                            (sc.slot_id, profile)
-                        })
-                        .collect();
-                    // Clear conflicting assignments from multi-port controllers
-                    let assigned = slots.clone();
-                    for (slot_id, ctrl_opt) in &assigned {
-                        let profile = match ctrl_opt {
-                            Some(p) => p.as_ref(),
-                            None => continue,
-                        };
-                        for ps in profile.port_sets() {
-                            if ps.ports.len() <= 1 {
-                                continue;
-                            }
-                            if !ps.ports.contains(slot_id) {
-                                continue;
-                            }
-                            for &port in ps.ports {
-                                if port != *slot_id
-                                    && let Some(other) = slots.iter_mut().find(|(s, _)| *s == port)
-                                {
-                                    other.1 = None;
+                for tab in input_tabs_ok.borrow().iter() {
+                    let factory = &tab._factory;
+                    let input_factory = factory.input_system_factory();
+                    let assignments = {
+                        let combos = tab.slot_combos.borrow();
+                        let mut slots: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> =
+                            combos
+                                .iter()
+                                .map(|sc| {
+                                    let profile = sc.combo.active_text().and_then(|t| {
+                                        let ctrls = input_factory.controllers();
+                                        ctrls.iter().find(|c| c.label() == t).cloned()
+                                    });
+                                    (sc.slot_id, profile)
+                                })
+                                .collect();
+                        let assigned = slots.clone();
+                        for (slot_id, ctrl_opt) in &assigned {
+                            let profile = match ctrl_opt {
+                                Some(p) => p.as_ref(),
+                                None => continue,
+                            };
+                            for ps in profile.port_sets() {
+                                if ps.ports.len() <= 1 {
+                                    continue;
+                                }
+                                if !ps.ports.contains(slot_id) {
+                                    continue;
+                                }
+                                for &port in ps.ports {
+                                    if port != *slot_id
+                                        && let Some(other) =
+                                            slots.iter_mut().find(|(s, _)| *s == port)
+                                    {
+                                        other.1 = None;
+                                    }
                                 }
                             }
                         }
+                        nerust_input_traits::InputAssignments { slots }
+                    };
+                    let current_pairs = state.borrow().session.current_assignments_pairs();
+                    let new_pairs = assignments.to_string_pairs();
+                    if current_pairs != new_pairs
+                        && let Err(e) = state
+                            .borrow_mut()
+                            .session
+                            .reassign_controllers(&assignments)
+                    {
+                        log::warn!("controller reassign failed: {e}");
                     }
-                    // Keep unassigned slots empty (allow disconnected ports).
-                    nerust_input_traits::InputAssignments { slots }
-                };
-                // Only rebuild core if assignments actually changed
-                let current_pairs = state.borrow().session.current_assignments_pairs();
-                let new_pairs = assignments.to_string_pairs();
-                if current_pairs != new_pairs
-                    && let Err(e) = state
+                    let sid = factory.system_id().to_string();
+                    draft
                         .borrow_mut()
-                        .session
-                        .reassign_controllers(&assignments)
-                {
-                    log::warn!("controller reassign failed: {e}");
+                        .app_state
+                        .controller_assignments
+                        .insert(sid, assignments.to_string_pairs());
                 }
-                // Persist assignments to draft
-                let sid = factory.system_id().to_string();
-                draft
-                    .borrow_mut()
-                    .app_state
-                    .controller_assignments
-                    .insert(sid, assignments.to_string_pairs());
 
                 let snapshot = draft.borrow().clone();
                 if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
