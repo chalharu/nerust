@@ -61,6 +61,7 @@ struct SystemTab {
     factory: Arc<dyn CoreFactory>,
     filter_combo: gtk::ComboBoxText,
     mmc3_combo: gtk::ComboBoxText,
+    field_widgets: Vec<(String, gtk::ComboBoxText)>,
 }
 
 /// Build a dynamic InputTopologyDescriptor from controller assignments.
@@ -517,25 +518,28 @@ pub(crate) fn present_preferences_dialog(
         tab_page.set_margin_top(6);
         tab_page.set_margin_bottom(6);
 
-        let filter_field = system_field_by_id(model, "video.filter");
-        let filter_combo = combo_from_optional_system_field(filter_field, language);
-        let filter_label = filter_field
-            .map(|field| resolve_label(field.label_id, language))
-            .unwrap_or_default();
-        tab_page.append(&labeled_row(&filter_label, &filter_combo));
-
-        let mmc3_field = system_field_by_id(model, "core.mmc3_irq_variant");
-        let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
-        let mmc3_label = mmc3_field
-            .map(|field| resolve_label(field.label_id, language))
-            .unwrap_or_default();
-        tab_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
+        let mut field_widgets: Vec<(String, gtk::ComboBoxText)> = Vec::new();
+        for field in model.fields.iter() {
+            let label = resolve_label(field.label_id, language);
+            let combo = combo_from_optional_system_field(Some(field), language);
+            tab_page.append(&labeled_row(&label, &combo));
+            field_widgets.push((field.id.as_str().to_string(), combo));
+        }
 
         system_notebook.append_page(&tab_page, Some(&tab_label));
         system_tabs.push(SystemTab {
             factory: (*factory).clone(),
-            filter_combo,
-            mmc3_combo,
+            filter_combo: field_widgets
+                .iter()
+                .find(|(id, _)| id == "video.filter")
+                .map(|(_, c)| c.clone())
+                .unwrap_or_else(|| gtk::ComboBoxText::new()),
+            mmc3_combo: field_widgets
+                .iter()
+                .find(|(id, _)| id == "core.mmc3_irq_variant")
+                .map(|(_, c)| c.clone())
+                .unwrap_or_else(|| gtk::ComboBoxText::new()),
+            field_widgets,
         });
     }
     let system_tabs = Rc::new(RefCell::new(system_tabs));
@@ -1384,8 +1388,9 @@ fn apply_snapshot_to_widgets(
         let sid = tab.factory.system_id();
         let view = settings_view(snapshot, &sid);
         let page = tab.factory.settings_page(&view);
-        apply_system_field_by_id_to_combo(&page, "video.filter", &tab.filter_combo);
-        apply_system_field_by_id_to_combo(&page, "core.mmc3_irq_variant", &tab.mmc3_combo);
+        for (field_id, combo) in &tab.field_widgets {
+            apply_system_field_by_id_to_combo(&page, field_id, combo);
+        }
     }
 
     for tab in input_tabs.borrow().iter() {
