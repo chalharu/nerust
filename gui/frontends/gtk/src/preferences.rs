@@ -73,6 +73,9 @@ pub(crate) fn present_preferences_dialog(
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
     let factory: Arc<dyn CoreFactory> = state.borrow().ctx.registry.primary().clone();
+    // TODO: when multi-system support is added, iterate registry.all()
+    // for apply_snapshot_to_widgets and connect_local_updates so each
+    // system tab's widgets are refreshed independently.
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
@@ -186,18 +189,13 @@ pub(crate) fn present_preferences_dialog(
     }
 
     struct InputTab {
-        #[allow(dead_code)]
         slot_combos: Rc<RefCell<Vec<SlotCombo>>>,
-        #[allow(dead_code)]
-        key_binding_box: Rc<gtk::Box>,
-        #[allow(dead_code)]
+        _key_binding_box: Rc<gtk::Box>,
         input_rows: Rc<RefCell<Vec<InputRow>>>,
     }
     let mut input_tabs: Vec<InputTab> = Vec::new();
-    let mut first_slot_combos = None;
-    let mut first_key_binding_box = None;
-    let mut first_input_rows = None;
-    let mut first_input_conflict_label = None;
+    let input_conflict_label = gtk::Label::new(None);
+    input_conflict_label.set_xalign(0.0);
 
     for factory in state.borrow().ctx.registry.all() {
         let tab_label = gtk::Label::new(Some(factory.display_name()));
@@ -420,8 +418,6 @@ pub(crate) fn present_preferences_dialog(
             }
         }
 
-        let input_conflict_label = gtk::Label::new(None);
-        input_conflict_label.set_xalign(0.0);
         tab_page.append(&input_conflict_label);
         tab_page.append(&*key_binding_box);
         rebuild_input_ui(
@@ -433,26 +429,15 @@ pub(crate) fn present_preferences_dialog(
             input_factory.slots(),
         );
 
-        if first_input_conflict_label.is_none() {
-            first_input_conflict_label = Some(input_conflict_label.clone());
-        }
-
         input_notebook.append_page(&tab_page, Some(&tab_label));
         input_tabs.push(InputTab {
             slot_combos: slot_combos.clone(),
-            key_binding_box: key_binding_box.clone(),
+            _key_binding_box: key_binding_box.clone(),
             input_rows: input_rows.clone(),
         });
-        if first_slot_combos.is_none() {
-            first_slot_combos = Some(slot_combos);
-            first_key_binding_box = Some(key_binding_box);
-            first_input_rows = Some(input_rows);
-        }
     }
-    let slot_combos = first_slot_combos.expect("at least one system must be registered");
-    let _key_binding_box = first_key_binding_box.expect("at least one system");
-    let input_rows = first_input_rows.expect("at least one system");
-    let input_conflict_label = first_input_conflict_label.expect("at least one system");
+    let slot_combos = input_tabs[0].slot_combos.clone();
+    let input_rows = input_tabs[0].input_rows.clone();
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
@@ -511,7 +496,6 @@ pub(crate) fn present_preferences_dialog(
     system_page.append(&system_notebook);
 
     struct SystemTab {
-        _page: gtk::Box,
         filter_combo: gtk::ComboBoxText,
         mmc3_combo: gtk::ComboBoxText,
     }
@@ -528,26 +512,23 @@ pub(crate) fn present_preferences_dialog(
         let filter_combo = combo_from_optional_system_field(filter_field, language);
         let filter_label = filter_field
             .map(|field| resolve_label(field.label_id, language))
-            .unwrap_or_else(|| resolve_label("video.filter", language));
+            .unwrap_or_default();
         tab_page.append(&labeled_row(&filter_label, &filter_combo));
 
         let mmc3_field = system_field_by_id(model, "core.mmc3_irq_variant");
         let mmc3_combo = combo_from_optional_system_field(mmc3_field, language);
         let mmc3_label = mmc3_field
             .map(|field| resolve_label(field.label_id, language))
-            .unwrap_or_else(|| resolve_label("core.mmc3_irq_variant", language));
+            .unwrap_or_default();
         tab_page.append(&labeled_row(&mmc3_label, &mmc3_combo));
 
         system_notebook.append_page(&tab_page, Some(&tab_label));
         system_tabs.push(SystemTab {
-            _page: tab_page,
             filter_combo,
             mmc3_combo,
         });
     }
-    let first_tab = system_tabs
-        .first()
-        .expect("at least one system must be registered");
+    let first_tab = &system_tabs[0];
     let filter_combo = &first_tab.filter_combo;
     let mmc3_combo = &first_tab.mmc3_combo;
 
