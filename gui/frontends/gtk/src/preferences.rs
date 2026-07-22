@@ -531,19 +531,6 @@ pub(crate) fn present_preferences_dialog(
         });
     }
     let system_tabs = Rc::new(RefCell::new(system_tabs));
-    let first_tab = &system_tabs.borrow()[0];
-    let filter_combo = first_tab
-        .field_widgets
-        .iter()
-        .find(|(id, _)| id == "video.filter")
-        .map(|(_, c)| c)
-        .unwrap();
-    let mmc3_combo = first_tab
-        .field_widgets
-        .iter()
-        .find(|(id, _)| id == "core.mmc3_irq_variant")
-        .map(|(_, c)| c)
-        .unwrap();
 
     apply_snapshot_to_widgets(
         &draft.borrow(),
@@ -558,8 +545,6 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
         &sample_rate_combo,
         &latency_spin,
-        filter_combo,
-        mmc3_combo,
         &system_tabs,
         &input_tabs,
         &capture_target,
@@ -594,8 +579,6 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            filter_combo,
-            mmc3_combo,
             &system_tabs,
             &input_tabs,
             &capture_target,
@@ -631,8 +614,6 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            filter_combo,
-            mmc3_combo,
             &system_tabs,
             &input_tabs,
             &capture_target,
@@ -666,8 +647,6 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            filter_combo,
-            mmc3_combo,
             &system_tabs,
             &input_tabs,
             &capture_target,
@@ -695,8 +674,6 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            filter_combo,
-            mmc3_combo,
             &system_tabs,
             &input_tabs,
             &capture_target,
@@ -737,8 +714,6 @@ pub(crate) fn present_preferences_dialog(
                 &volume_spin,
                 &sample_rate_combo,
                 &latency_spin,
-                filter_combo,
-                mmc3_combo,
                 &system_tabs,
                 &input_tabs,
                 &capture_target,
@@ -771,8 +746,6 @@ pub(crate) fn present_preferences_dialog(
                 &volume_spin,
                 &sample_rate_combo,
                 &latency_spin,
-                filter_combo,
-                mmc3_combo,
                 &system_tabs,
                 &input_tabs,
                 &capture_target,
@@ -810,8 +783,6 @@ pub(crate) fn present_preferences_dialog(
             &volume_spin,
             &sample_rate_combo,
             &latency_spin,
-            filter_combo,
-            mmc3_combo,
             &system_tabs,
             &input_tabs,
             &capture_target,
@@ -930,8 +901,6 @@ struct WidgetBundle {
     volume_spin: gtk::SpinButton,
     sample_rate_combo: gtk::ComboBoxText,
     latency_spin: gtk::SpinButton,
-    filter_combo: gtk::ComboBoxText,
-    mmc3_combo: gtk::ComboBoxText,
     system_tabs: Rc<RefCell<Vec<SystemTab>>>,
     input_tabs: Rc<RefCell<Vec<InputTab>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
@@ -984,8 +953,6 @@ fn widget_bundle(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
     system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
     input_tabs: &Rc<RefCell<Vec<InputTab>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
@@ -1007,8 +974,6 @@ fn widget_bundle(
         volume_spin: volume_spin.clone(),
         sample_rate_combo: sample_rate_combo.clone(),
         latency_spin: latency_spin.clone(),
-        filter_combo: filter_combo.clone(),
-        mmc3_combo: mmc3_combo.clone(),
         system_tabs: system_tabs.clone(),
         input_tabs: input_tabs.clone(),
         capture_target: capture_target.clone(),
@@ -1031,8 +996,6 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.volume_spin,
         &widgets.sample_rate_combo,
         &widgets.latency_spin,
-        &widgets.filter_combo,
-        &widgets.mmc3_combo,
         &widgets.system_tabs,
         &widgets.input_tabs,
         &widgets.capture_target,
@@ -1309,8 +1272,6 @@ fn apply_snapshot_to_widgets(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    _filter_combo: &gtk::ComboBoxText,
-    _mmc3_combo: &gtk::ComboBoxText,
     system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
     input_tabs: &Rc<RefCell<Vec<InputTab>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
