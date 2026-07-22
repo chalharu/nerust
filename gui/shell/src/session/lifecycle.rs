@@ -305,7 +305,7 @@ impl SessionHandle {
         self.persistence.clear_hidden();
     }
 
-    fn rebuild_for_settings(
+    pub(super) fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<(), SessionError> {
