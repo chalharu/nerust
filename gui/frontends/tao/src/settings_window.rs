@@ -16,8 +16,9 @@ use iced_winit::{
     program,
     runtime::user_interface::{Cache, UserInterface},
 };
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::registry::SystemRegistry;
 use nerust_gui_shell::settings::editor::CaptureTarget;
 use nerust_input_traits::InputAssignments;
 #[cfg(target_os = "macos")]
@@ -182,7 +183,7 @@ impl SettingsRenderer {
 impl SettingsWindowHandle {
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
     ) -> Option<Self> {
@@ -210,7 +211,7 @@ impl SettingsWindowHandle {
 
         let program = SettingsAppProgram {
             snapshot,
-            factory,
+            registry,
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
