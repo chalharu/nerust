@@ -444,8 +444,9 @@ pub(crate) fn present_preferences_dialog(
             input_rows: input_rows.clone(),
         });
     }
-    let slot_combos = input_tabs[0].slot_combos.clone();
-    let input_rows = input_tabs[0].input_rows.clone();
+    let input_tabs = Rc::new(RefCell::new(input_tabs));
+    let slot_combos = input_tabs.borrow()[0].slot_combos.clone();
+    let input_rows = input_tabs.borrow()[0].input_rows.clone();
 
     let fullscreen_check = gtk::CheckButton::with_label(text(language, UiText::FullscreenDefault));
     video_page.append(&fullscreen_check);
