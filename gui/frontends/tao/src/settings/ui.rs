@@ -351,6 +351,8 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
+                // TODO: use self.registry.all()[self.system_tab_index] when
+                // multi-system support is added, so each tab uses its factory.
                 let _ = apply_settings_choice(
                     self.registry.primary().as_ref(),
                     &mut self.draft,
@@ -823,36 +825,28 @@ impl SettingsAppState {
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
         let factories = self.registry.all();
-        if factories.len() <= 1 {
-            let system_id = self.registry.primary().system_id();
-            let view = settings_view(&self.draft, &system_id);
-            let model = self.registry.primary().settings_page(&view);
-            let mut content = column![];
-            for field in model.fields.iter() {
-                content = content.push(system_choice_row(field, language));
-            }
-            return content.spacing(16).into();
-        }
-
-        let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
         let factory = &factories[self.system_tab_index];
         let system_id = factory.system_id();
         let view = settings_view(&self.draft, &system_id);
         let model = factory.settings_page(&view);
 
-        let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
-            let btn_text = text(*name).size(14);
-            if i == self.system_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text)
-                    .on_press(Message::SelectSystemTab(i))
-                    .into()
-            }
-        }))
-        .spacing(4);
+        let mut content = column![];
+        if factories.len() > 1 {
+            let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
+            let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
+                let btn_text = text(*name).size(14);
+                if i == self.system_tab_index {
+                    button(btn_text).style(button::primary).into()
+                } else {
+                    button(btn_text)
+                        .on_press(Message::SelectSystemTab(i))
+                        .into()
+                }
+            }))
+            .spacing(4);
+            content = content.push(tab_row);
+        }
 
-        let mut content = column![tab_row];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field, language));
         }
