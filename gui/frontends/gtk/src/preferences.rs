@@ -650,8 +650,7 @@ pub(crate) fn present_preferences_dialog(
         &volume_spin,
         &sample_rate_combo,
         &latency_spin,
-        filter_combo,
-        mmc3_combo,
+        &system_tabs,
         widget_bundle(
             &ok_button,
             &storage_dir_row,
@@ -1095,8 +1094,7 @@ fn connect_local_updates(
     volume_spin: &gtk::SpinButton,
     sample_rate_combo: &gtk::ComboBoxText,
     latency_spin: &gtk::SpinButton,
-    filter_combo: &gtk::ComboBoxText,
-    mmc3_combo: &gtk::ComboBoxText,
+    system_tabs: &Rc<RefCell<Vec<SystemTab>>>,
     widgets: WidgetBundle,
 ) {
     {
@@ -1165,49 +1163,25 @@ fn connect_local_updates(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    {
+    for (field_id, combo) in system_tabs.borrow()[0].field_widgets.iter() {
         let draft = draft.clone();
         let widgets = widgets.clone();
         let factory = factory.clone();
-        let _ = filter_combo.connect_changed(move |combo| {
+        let field_id = field_id.clone();
+        let _ = combo.connect_changed(move |combo| {
             {
                 let mut snapshot = draft.borrow_mut();
                 let _ = apply_settings_choice(
                     &*factory,
                     &mut snapshot,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                        "video.filter".into(),
+                        field_id.clone().into(),
                     ),
                     &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
                         combo
                             .active_id()
                             .map(|value| value.to_string())
-                            .unwrap_or_else(|| "ntsc_composite".to_string())
-                            .into(),
-                    ),
-                );
-            }
-            refresh_all_from_draft(&draft.borrow(), &widgets);
-        });
-    }
-    {
-        let draft = draft.clone();
-        let widgets = widgets.clone();
-        let factory = factory.clone();
-        let _ = mmc3_combo.connect_changed(move |combo| {
-            {
-                let mut snapshot = draft.borrow_mut();
-                let _ = apply_settings_choice(
-                    &*factory,
-                    &mut snapshot,
-                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                        "core.mmc3_irq_variant".into(),
-                    ),
-                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                        combo
-                            .active_id()
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "auto".to_string())
+                            .unwrap_or_default()
                             .into(),
                     ),
                 );
@@ -1216,7 +1190,6 @@ fn connect_local_updates(
         });
     }
 }
-
 fn refresh_validation(
     snapshot: &SettingsSnapshot,
     language: AppLanguage,
