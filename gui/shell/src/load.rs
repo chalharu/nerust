@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use nerust_core_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
+use nerust_core_traits::{
+    factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    identity::SystemId,
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +29,10 @@ pub trait RomLoadTarget {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), RomLoaderError>;
     fn resume(&mut self);
+
+    /// Notifies the target of the detected system after a successful load.
+    /// Default implementation is a no-op for backward compatibility.
+    fn set_active_system(&mut self, _system_id: SystemId) {}
 }
 
 /// Loads and resolves a ROM file into a [`RomLoadTarget`].
