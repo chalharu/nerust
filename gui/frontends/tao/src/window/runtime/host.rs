@@ -449,7 +449,7 @@ impl HostState {
 
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
-            self.ctx.registry.primary().clone(),
+            self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
             event_loop,
         ) {

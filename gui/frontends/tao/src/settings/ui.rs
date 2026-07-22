@@ -25,14 +25,17 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
-use nerust_gui_shell::settings::{
-    bindings::{
-        conflicting_keys,
-        descriptors::{keyboard_binding_sections, shortcut_descriptors},
+use nerust_gui_shell::{
+    registry::SystemRegistry,
+    settings::{
+        bindings::{
+            conflicting_keys,
+            descriptors::{keyboard_binding_sections, shortcut_descriptors},
+        },
+        editor::{CaptureTarget, apply_capture_target, current_binding_label},
+        factory::{apply_settings_choice, resolve_label, settings_view},
+        i18n::{UiText, text as ui_text},
     },
-    editor::{CaptureTarget, apply_capture_target, current_binding_label},
-    factory::{apply_settings_choice, resolve_label, settings_view},
-    i18n::{UiText, text as ui_text},
 };
 use nerust_input_traits::{
     AttachmentId, ControllerProfile, InputAssignments, InputTopologyDescriptor,
@@ -77,6 +80,7 @@ pub(crate) enum InputPageSection {
 pub(crate) enum Message {
     SelectPage(SettingsPage),
     SelectInputSection(InputPageSection),
+    SelectSystemTab(usize),
     SetLanguage(Choice<AppLanguage>),
     SetStoragePolicy(Choice<StoragePolicy>),
     SetStorageDirectory(String),
@@ -102,7 +106,7 @@ pub(crate) enum Message {
 
 pub(crate) struct SettingsAppProgram {
     pub(crate) snapshot: SettingsSnapshot,
-    pub(crate) factory: Arc<dyn CoreFactory>,
+    pub(crate) registry: Arc<SystemRegistry>,
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -132,7 +136,7 @@ impl Program for SettingsAppProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         let state = SettingsAppState::new_with_shared(
             &self.snapshot,
-            self.factory.clone(),
+            self.registry.clone(),
             self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
@@ -168,13 +172,14 @@ pub(crate) struct SettingsAppState {
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
-    factory: Arc<dyn CoreFactory>,
+    registry: Arc<SystemRegistry>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
     controller_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>,
     /// Snapshot of initial assignments for change detection at Submit time.
     initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
+    system_tab_index: usize,
     input_section: InputPageSection,
     storage_directory_input: String,
     error_message: Option<String>,
@@ -183,9 +188,10 @@ pub(crate) struct SettingsAppState {
 impl SettingsAppState {
     pub(crate) fn new(
         snapshot: &SettingsSnapshot,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
+        let factory = registry.primary();
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -241,10 +247,11 @@ impl SettingsAppState {
                     )
                 })
                 .collect(),
-            factory,
+            registry,
             audio_registry,
             draft: snapshot.clone(),
             page: SettingsPage::General,
+            system_tab_index: 0,
             input_section: InputPageSection::Attachment(0),
             storage_directory_input,
             error_message: None,
@@ -253,14 +260,14 @@ impl SettingsAppState {
 
     pub(crate) fn new_with_shared(
         snapshot: &SettingsSnapshot,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
         pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
-        let mut state = Self::new(snapshot, factory, audio_registry);
+        let mut state = Self::new(snapshot, registry, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
         state.pending_assignments = pending_assignments;
@@ -283,7 +290,7 @@ impl SettingsAppState {
         for (key, labels) in conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
-            self.factory.system_id(),
+            self.registry.primary().system_id(),
         ) {
             errors.push(format!("{}: {}", key.label(), labels.join(", ")));
         }
@@ -300,7 +307,7 @@ impl SettingsAppState {
         let (key, labels) = conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
-            self.factory.system_id(),
+            self.registry.primary().system_id(),
         )
         .into_iter()
         .next()?;
@@ -312,6 +319,7 @@ impl SettingsAppState {
         match message {
             Message::SelectPage(page) => self.page = page,
             Message::SelectInputSection(section) => self.input_section = section,
+            Message::SelectSystemTab(index) => self.system_tab_index = index,
             Message::SetLanguage(choice) => self.draft.shared.general.language = choice.value,
             Message::SetStoragePolicy(choice) => {
                 self.draft.shared.persistence.storage_policy = choice.value;
@@ -343,7 +351,7 @@ impl SettingsAppState {
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
                 let _ = apply_settings_choice(
-                    &*self.factory,
+                    &*self.registry.primary().as_ref(),
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
                     &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
@@ -356,7 +364,9 @@ impl SettingsAppState {
                 controller_id,
             } => {
                 let profile = controller_id.as_ref().and_then(|id| {
-                    self.factory
+                    self.registry
+                        .primary()
+                        .as_ref()
                         .input_system_factory()
                         .controllers()
                         .iter()
@@ -394,7 +404,7 @@ impl SettingsAppState {
                 }
                 // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
-                let sid = self.factory.system_id().to_string();
+                let sid = self.registry.primary().system_id().to_string();
                 self.draft.app_state.controller_assignments.insert(
                     sid,
                     self.controller_assignments
@@ -573,7 +583,7 @@ impl SettingsAppState {
 
         // Show controller assignment pickers per slot.
         // Multi-port controllers (e.g. FamicomSet: {P1,P2}) mark consumed slots as occupied.
-        let input_factory = self.factory.input_system_factory();
+        let input_factory = self.registry.primary().input_system_factory();
         let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
         if !controllers.is_empty() {
             // Build a set of occupied slot IDs
@@ -648,7 +658,8 @@ impl SettingsAppState {
             }
         }
 
-        let sections = keyboard_binding_sections(&input_topology(self), self.factory.system_id());
+        let sections =
+            keyboard_binding_sections(&input_topology(self), self.registry.primary().system_id());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(
@@ -792,10 +803,37 @@ impl SettingsAppState {
 
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
-        let system_id = self.factory.system_id();
+        let factories = self.registry.all();
+        if factories.len() <= 1 {
+            let system_id = self.registry.primary().system_id();
+            let view = settings_view(&self.draft, &system_id);
+            let model = self.registry.primary().settings_page(&view);
+            let mut content = column![];
+            for field in model.fields.iter() {
+                content = content.push(system_choice_row(field, language));
+            }
+            return content.spacing(16).into();
+        }
+
+        let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
+        let factory = &factories[self.system_tab_index];
+        let system_id = factory.system_id();
         let view = settings_view(&self.draft, &system_id);
-        let model = self.factory.settings_page(&view);
-        let mut content = column![];
+        let model = factory.settings_page(&view);
+
+        let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
+            let btn_text = text(*name).size(14);
+            if i == self.system_tab_index {
+                button(btn_text).style(button::primary).into()
+            } else {
+                button(btn_text)
+                    .on_press(Message::SelectSystemTab(i))
+                    .into()
+            }
+        }))
+        .spacing(4);
+
+        let mut content = column![tab_row];
         for field in model.fields.iter() {
             content = content.push(system_choice_row(field, language));
         }
@@ -1001,7 +1039,8 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::build_topology;
-    let slots = state.factory.input_system_factory().slots();
+    let factory = state.registry.primary();
+    let slots = factory.input_system_factory().slots();
     build_topology(&state.controller_assignments, slots)
 }
 
