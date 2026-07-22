@@ -162,7 +162,7 @@ impl SessionHandle {
         };
         let factory = registry
             .find_by_id(&active_system_id)
-            .unwrap_or_else(|| registry.primary())
+            .expect("active_system_id must match a registered factory")
             .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
@@ -332,7 +332,7 @@ impl SessionHandle {
     pub fn active_factory(&self) -> &Arc<dyn CoreFactory> {
         self.registry
             .find_by_id(&self.active_system_id)
-            .unwrap_or_else(|| self.registry.primary())
+            .expect("active_system_id must match a registered factory")
     }
 
     pub fn factory(&self) -> &dyn CoreFactory {
@@ -626,16 +626,16 @@ mod tests {
     }
 
     #[test]
-    fn set_active_system_falls_back_to_primary_on_unknown_id() {
+    #[should_panic(expected = "active_system_id must match a registered factory")]
+    fn set_active_system_panics_on_unknown_id() {
         let factory = Arc::new(MockFactory);
-        let id = factory.system_id();
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
         RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
-        assert_eq!(session.factory().system_id(), id);
+        let _ = session.factory().system_id();
     }
 
     fn test_capabilities() -> HostBackendCapabilities {
