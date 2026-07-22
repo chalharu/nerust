@@ -207,10 +207,7 @@ mod tests {
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
-            .and_then(|s| {
-                let any: &mut dyn std::any::Any = &mut **s;
-                any.downcast_mut::<nerust_nes_settings::NesSettings>()
-            })
+            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
@@ -231,10 +228,7 @@ mod tests {
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
-            .and_then(|s| {
-                let any: &mut dyn std::any::Any = &mut **s;
-                any.downcast_mut::<nerust_nes_settings::NesSettings>()
-            })
+            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 

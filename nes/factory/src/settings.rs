@@ -12,23 +12,16 @@ use nerust_core_traits::factory::{
 use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
 use nerust_nes_settings::{NesSettings, NesVideoFilter};
 use nerust_render_traits::filter::FilterType;
+use nerust_settings_traits::SystemSettings;
 
 use crate::CommandLineOptions;
 
-pub(crate) fn deserialize_settings(bytes: &[u8]) -> NesSettings {
-    if bytes.is_empty() {
-        return NesSettings::default();
-    }
-    rmp_serde::from_slice(bytes).unwrap_or_default()
-}
-
-pub(crate) fn serialize_settings(s: &NesSettings) -> Vec<u8> {
-    rmp_serde::to_vec(s).unwrap_or_default()
-}
-
-pub(crate) fn filter_type_from_bytes(bytes: &[u8]) -> FilterType {
-    let settings = deserialize_settings(bytes);
-    match settings.video.filter {
+pub(crate) fn filter_type_from_bytes(settings: Option<&dyn SystemSettings>) -> FilterType {
+    let default_settings = NesSettings::default();
+    let nes_settings = settings
+        .and_then(|s| s.downcast_ref())
+        .unwrap_or(&default_settings);
+    match nes_settings.video.filter {
         NesVideoFilter::None => FilterType::None,
         NesVideoFilter::NtscComposite => FilterType::NtscComposite,
         NesVideoFilter::NtscSVideo => FilterType::NtscSVideo,
@@ -36,9 +29,13 @@ pub(crate) fn filter_type_from_bytes(bytes: &[u8]) -> FilterType {
     }
 }
 
-pub(crate) fn nes_settings_page(_view: &FactorySettingsView) -> SystemSettingsPageModel {
-    let current = deserialize_settings(&_view.system_config_bytes);
-    nes_settings_page_inner(&current)
+pub(crate) fn nes_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
+    nes_settings_page_inner(
+        view.system_config
+            .as_deref()
+            .and_then(|s| s.downcast_ref())
+            .unwrap_or(&NesSettings::default()),
+    )
 }
 
 fn nes_settings_page_inner(current: &NesSettings) -> SystemSettingsPageModel {
@@ -166,16 +163,13 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::{
-        DynCoreOptionsExt,
-        factory::{
-            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-            load::DynSystemLoadOptions,
-            settings::{FactorySettingsView, Language},
-        },
+    use nerust_core_traits::factory::{
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+        load::DynSystemLoadOptions,
+        settings::{FactorySettingsView, Language},
     };
     use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
-    use nerust_nes_settings::NesVideoFilter;
+    use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use nerust_render_traits::filter::FilterType;
 
     use crate::CommandLineOptions;
@@ -188,7 +182,7 @@ mod tests {
     fn test_view() -> FactorySettingsView {
         FactorySettingsView {
             language: Language::SystemDefault,
-            system_config_bytes: vec![],
+            system_config: Some(Box::new(NesSettings::default())),
         }
     }
 
@@ -202,20 +196,25 @@ mod tests {
     #[test]
     fn resolved_load_request_uses_saved_defaults() {
         let view = test_view();
-        let nes = super::deserialize_settings(&view.system_config_bytes);
+        let nes = view
+            .system_config
+            .as_deref()
+            .unwrap()
+            .downcast_ref::<NesSettings>()
+            .unwrap();
         let resolved =
-            resolve_nes_load_request_inner(&nes, &Language::SystemDefault, nec_options()).unwrap();
+            resolve_nes_load_request_inner(nes, &Language::SystemDefault, nec_options()).unwrap();
 
         let core_opts = &resolved
             .options
-            .into_inner::<CoreOptions>()
+            .downcast::<CoreOptions>()
             .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]
     fn system_page_choice_writeback_updates_snapshot() {
-        let mut nes = super::deserialize_settings(&[]);
+        let mut nes = NesSettings::default();
         apply_nes_settings_choice_inner(
             &mut nes,
             &SystemSettingsFieldId(Cow::Borrowed("core.mmc3_irq_variant")),
@@ -225,7 +224,7 @@ mod tests {
 
         let view = FactorySettingsView {
             language: Language::SystemDefault,
-            system_config_bytes: super::serialize_settings(&nes),
+            system_config: Some(Box::new(nes)),
         };
         let page = nes_settings_page(&view);
         assert_eq!(page.fields.len(), 2);
@@ -233,7 +232,7 @@ mod tests {
 
     #[test]
     fn explicit_load_options_win_over_saved_defaults() {
-        let mut nes = super::deserialize_settings(&[]);
+        let mut nes = NesSettings::default();
         nes.core.mmc3_irq_variant = Some(nerust_nes_settings::Mmc3IrqVariant::Sharp);
 
         let resolved =
@@ -241,19 +240,18 @@ mod tests {
 
         let core_opts = &resolved
             .options
-            .into_inner::<CoreOptions>()
+            .downcast::<CoreOptions>()
             .expect("valid core options");
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 
     #[test]
     fn saved_nes_filter_maps_to_screen_filter_type() {
-        let mut nes = super::deserialize_settings(&[]);
+        let mut nes = NesSettings::default();
         nes.video.filter = NesVideoFilter::NtscSVideo;
-        let bytes = super::serialize_settings(&nes);
 
         assert!(matches!(
-            filter_type_from_bytes(&bytes),
+            filter_type_from_bytes(Some(&nes)),
             FilterType::NtscSVideo
         ));
     }
@@ -272,7 +270,7 @@ mod tests {
 
     #[test]
     fn mmc3_irq_variant_round_trips_via_load_options() {
-        let nes = super::deserialize_settings(&[]); // defaults
+        let nes = NesSettings::default(); // defaults
         let resolved = resolve_nes_load_request_inner(
             &nes,
             &Language::SystemDefault,
@@ -283,7 +281,7 @@ mod tests {
         )
         .unwrap();
 
-        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
+        let core_opts = &resolved.options.downcast::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Sharp));
 
         let resolved = resolve_nes_load_request_inner(
@@ -295,7 +293,7 @@ mod tests {
             .into(),
         )
         .unwrap();
-        let core_opts = &resolved.options.into_inner::<CoreOptions>().unwrap();
+        let core_opts = &resolved.options.downcast::<CoreOptions>().unwrap();
         assert_eq!(core_opts.mmc3_irq_variant, Some(Mmc3IrqVariant::Nec));
     }
 }

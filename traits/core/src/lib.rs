@@ -8,9 +8,7 @@ use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::mpsc::Sender};
 
 use downcast_rs::Downcast;
 use dyn_clone::DynClone;
-use dyn_eq::DynEq;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
-use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // CoreError
@@ -82,7 +80,7 @@ pub struct CoreConfig {
     pub controllers: HashMap<usize, ControllerKind>,
     /// System-specific options (e.g. serialized `CoreOptions` for NES).
     /// Interpreted by the `ConsoleCore` implementation.
-    pub core_options: Option<Box<dyn DynCoreOptions>>,
+    pub core_options: Option<Box<dyn CoreOptions>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -187,36 +185,13 @@ pub trait ConsoleCore: Send {
     }
 }
 
-pub trait CoreOptions:
-    Serialize + for<'de> Deserialize<'de> + Debug + Clone + Eq + Send + Sync + 'static
-{
-}
+pub trait CoreOptions: Debug + DynClone + Downcast + Send {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoreOptionsWrapper<T: CoreOptions>(T);
+downcast_rs::impl_downcast!(CoreOptions);
+dyn_clone::clone_trait_object!(CoreOptions);
 
-pub trait DynCoreOptions: DynClone + Debug + DynEq + Downcast + Send + Sync {}
-
-impl<T: CoreOptions> DynCoreOptions for CoreOptionsWrapper<T> {}
-
-downcast_rs::impl_downcast!(DynCoreOptions);
-dyn_clone::clone_trait_object!(DynCoreOptions);
-dyn_eq::eq_trait_object!(DynCoreOptions);
-
-impl<T: CoreOptions> From<T> for Box<dyn DynCoreOptions> {
+impl<T: CoreOptions> From<T> for Box<dyn CoreOptions> {
     fn from(value: T) -> Self {
-        Box::new(CoreOptionsWrapper(value))
-    }
-}
-
-pub trait DynCoreOptionsExt: Sized {
-    fn into_inner<T: CoreOptions>(self) -> Result<T, Self>;
-}
-
-impl DynCoreOptionsExt for Box<dyn DynCoreOptions> {
-    fn into_inner<T: CoreOptions>(self) -> Result<T, Self> {
-        self.downcast::<CoreOptionsWrapper<T>>()
-            .map(|wrapper| wrapper.0)
-            .map_err(|boxed| boxed as Box<dyn DynCoreOptions>)
+        Box::new(value)
     }
 }

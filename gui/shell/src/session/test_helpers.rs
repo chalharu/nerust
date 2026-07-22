@@ -55,8 +55,7 @@ impl InputStateBuffer for TestInputBuffer {
         self.0 = [0; 2];
     }
     fn copy_state(&mut self, other: &dyn InputStateBuffer) {
-        let any: &dyn std::any::Any = other;
-        if let Some(src) = any.downcast_ref::<TestInputBuffer>() {
+        if let Some(src) = other.downcast_ref::<TestInputBuffer>() {
             self.0 = src.0;
         }
     }
@@ -237,15 +236,22 @@ impl CoreFactory for MockFactory {
         _: Box<dyn DynSystemLoadOptions>,
     ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
         Ok(ResolvedLoadRequest {
-            options: NoopCoreOptions::default().into(),
+            options: NoopCoreOptions.into(),
         })
     }
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        NoopSystemLoadOptions::default().into()
+        NoopSystemLoadOptions.into()
     }
     fn input_system_factory(&self) -> &dyn InputSystemFactory {
         static MOCK_INPUT: MockInputFactory = MockInputFactory;
         &MOCK_INPUT
+    }
+
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+        // CLI parsing not exercised in mock
+        unreachable!()
     }
 }
 

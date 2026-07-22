@@ -7,4 +7,5 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+downcast-rs.workspace = true
 thiserror.workspace = true

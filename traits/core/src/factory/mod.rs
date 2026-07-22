@@ -13,7 +13,9 @@ use crate::{
     audio::AudioBackend,
     factory::{
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        },
         settings::FactorySettingsView,
     },
     identity::SystemId,
@@ -27,6 +29,8 @@ pub enum FactoryError {
     InvalidChoice(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
+    #[error("invalid settings snapshot")]
+    InvalidSettings,
 }
 
 /// Raw parts produced by a system factory before EmuCore wrapping.
@@ -69,6 +73,8 @@ pub trait CoreFactory {
     ) -> Result<ResolvedLoadRequest, FactoryError>;
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
+
+    fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema>;
 
     fn create_core_and_adapter(
         &self,
