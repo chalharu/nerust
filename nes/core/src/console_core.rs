@@ -1,8 +1,6 @@
-use std::any::Any;
-
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, DynCoreOptionsExt, VideoSignalKind,
-    audio::AudioBackend, identity::SystemIdentity,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    identity::SystemIdentity,
 };
 use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
@@ -87,8 +85,7 @@ impl ConsoleCore for NesConsoleCore {
 
         // Take latest input and sync to controller
         self.emu_input.take();
-        let any: &dyn Any = &*self.emu_input.read_buf;
-        if let Some(state) = any.downcast_ref::<NesInputBuffer>() {
+        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
             self.controller.sync_input(&state.0);
         }
 
@@ -102,9 +99,9 @@ impl ConsoleCore for NesConsoleCore {
         let cartridge_data =
             crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
         let options = if let Some(core_options) = &config.core_options {
-            core_options
+            *core_options
                 .clone()
-                .into_inner()
+                .downcast::<CoreOptions>()
                 .map_err(|_| CoreError::InvalidCoreOptions)?
         } else {
             CoreOptions::default()

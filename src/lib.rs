@@ -63,7 +63,7 @@ fn parse_cli_args_from(
     factories: &[Arc<dyn CoreFactory>],
     args: impl IntoIterator<Item = String>,
 ) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
-    let defaults: Vec<_> = factories.iter().map(|f| f.default_load_options()).collect();
+    let defaults: Vec<_> = factories.iter().map(|f| f.load_options_schema()).collect();
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -174,7 +174,7 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use nerust_core_traits::{
-        DynCoreOptions,
+        CoreOptions,
         factory::{
             CoreFactory,
             load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
@@ -192,7 +192,7 @@ mod tests {
     use super::LiveRomLoader;
 
     struct LoadRecorder {
-        resolved: Option<Box<dyn DynCoreOptions>>,
+        resolved: Option<Box<dyn CoreOptions>>,
         resumed: bool,
         snapshot: SettingsSnapshot,
     }

@@ -44,7 +44,7 @@ pub trait RomLoader {
     ) -> Result<(), RomLoaderError>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum LoadRequest {
     Auto,
     Explicit {

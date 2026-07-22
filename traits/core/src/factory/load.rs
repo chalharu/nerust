@@ -1,12 +1,10 @@
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
-use clap::{ArgMatches, Args, Command};
+use clap::{ArgMatches, Args, Command, FromArgMatches};
 use downcast_rs::Downcast;
-use dyn_clone::DynClone;
 use dyn_eq::DynEq;
-use serde::{Deserialize, Serialize};
 
-use crate::DynCoreOptions;
+use crate::CoreOptions;
 
 #[derive(Debug, Clone)]
 pub struct MediaObject {
@@ -30,25 +28,34 @@ impl MediaObject {
     }
 }
 
-pub trait SystemLoadOptions:
-    Args + Serialize + for<'de> Deserialize<'de> + Debug + Clone + Eq + 'static
-{
+pub trait SystemLoadOptions: Args + Debug + Eq + 'static {}
+
+pub trait SystemLoadOptionsSchema: Debug + Eq + 'static {
+    type Options: SystemLoadOptions;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SystemLoadOptionsWrapper<T: SystemLoadOptions>(T);
 
-impl<T: SystemLoadOptions> SystemLoadOptionsWrapper<T> {
+#[derive(Debug, PartialEq, Eq)]
+pub struct SystemLoadOptionsSchemaWrapper<T: SystemLoadOptionsSchema>(T);
+
+impl<T: SystemLoadOptionsSchema> SystemLoadOptionsSchemaWrapper<T> {
     pub fn augment_args(&self, cmd: Command) -> Command {
-        <T as Args>::augment_args(cmd)
+        <T::Options as Args>::augment_args(cmd)
     }
 
-    pub fn arg_matches(&self, matches: &ArgMatches) -> Result<Self, clap::Error> {
-        T::from_arg_matches(matches).map(SystemLoadOptionsWrapper)
+    pub fn arg_matches(
+        &self,
+        matches: &ArgMatches,
+    ) -> Result<SystemLoadOptionsWrapper<T::Options>, clap::Error> {
+        <T::Options as FromArgMatches>::from_arg_matches(matches).map(SystemLoadOptionsWrapper)
     }
 }
 
-pub trait DynSystemLoadOptions: DynClone + Debug + DynEq + Downcast {
+pub trait DynSystemLoadOptions: Debug + DynEq + Downcast {}
+
+pub trait DynSystemLoadOptionsSchema: Debug + DynEq + Downcast {
     fn augment_args(&self, cmd: Command) -> Command;
     fn arg_matches(
         &self,
@@ -56,26 +63,35 @@ pub trait DynSystemLoadOptions: DynClone + Debug + DynEq + Downcast {
     ) -> Result<Box<dyn DynSystemLoadOptions>, clap::Error>;
 }
 
-impl<T: SystemLoadOptions> DynSystemLoadOptions for SystemLoadOptionsWrapper<T> {
+impl<T: SystemLoadOptionsSchema> DynSystemLoadOptionsSchema for SystemLoadOptionsSchemaWrapper<T> {
     fn augment_args(&self, cmd: Command) -> Command {
-        SystemLoadOptionsWrapper::<T>::augment_args(self, cmd)
+        SystemLoadOptionsSchemaWrapper::<T>::augment_args(self, cmd)
     }
 
     fn arg_matches(
         &self,
         matches: &ArgMatches,
     ) -> Result<Box<dyn DynSystemLoadOptions>, clap::Error> {
-        SystemLoadOptionsWrapper::<T>::arg_matches(self, matches).map(|x| Box::new(x) as _)
+        SystemLoadOptionsSchemaWrapper::<T>::arg_matches(self, matches).map(|x| Box::new(x) as _)
     }
 }
 
+impl<T: SystemLoadOptions> DynSystemLoadOptions for SystemLoadOptionsWrapper<T> {}
+
 downcast_rs::impl_downcast!(DynSystemLoadOptions);
-dyn_clone::clone_trait_object!(DynSystemLoadOptions);
 dyn_eq::eq_trait_object!(DynSystemLoadOptions);
+
+downcast_rs::impl_downcast!(DynSystemLoadOptionsSchema);
 
 impl<T: SystemLoadOptions> From<T> for Box<dyn DynSystemLoadOptions> {
     fn from(value: T) -> Self {
         Box::new(SystemLoadOptionsWrapper(value))
+    }
+}
+
+impl<T: SystemLoadOptionsSchema> From<T> for Box<dyn DynSystemLoadOptionsSchema> {
+    fn from(value: T) -> Self {
+        Box::new(SystemLoadOptionsSchemaWrapper(value))
     }
 }
 
@@ -91,7 +107,7 @@ impl DynSystemLoadOptionsExt for Box<dyn DynSystemLoadOptions> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ResolvedLoadRequest {
-    pub options: Box<dyn DynCoreOptions>,
+    pub options: Box<dyn CoreOptions>,
 }

@@ -49,8 +49,7 @@ impl InputStateBuffer for NesInputBuffer {
     }
 
     fn copy_state(&mut self, other: &dyn nerust_input_traits::InputStateBuffer) {
-        let any: &dyn std::any::Any = other;
-        if let Some(src) = any.downcast_ref::<NesInputBuffer>() {
+        if let Some(src) = other.downcast_ref::<NesInputBuffer>() {
             self.0 = src.0;
         }
     }

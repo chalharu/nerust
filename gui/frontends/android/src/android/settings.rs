@@ -59,8 +59,7 @@ impl AndroidSettings {
             .systems
             .get(&SystemId::new("nes"))
             .map(|s| {
-                let any: &dyn std::any::Any = &**s;
-                any.downcast_ref::<NesSettings>()
+                s.downcast_ref::<NesSettings>()
                     .map_or(NesVideoFilter::default(), |n| n.video.filter)
             })
             .unwrap_or_default();
@@ -92,8 +91,7 @@ impl AndroidSettings {
             .or_insert_with(|| {
                 Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>
             });
-        let any: &mut dyn std::any::Any = &mut **system;
-        let nes = any.downcast_mut::<NesSettings>().unwrap();
+        let nes = system.downcast_mut::<NesSettings>().unwrap();
         nes.video.filter = self.nes_filter;
     }
 
@@ -563,10 +561,7 @@ mod tests {
             .shared
             .systems
             .get_mut(&SystemId::new("nes"))
-            .map(|s| {
-                let any: &mut dyn std::any::Any = &mut **s;
-                any.downcast_mut::<NesSettings>().unwrap()
-            })
+            .map(|s| s.downcast_mut::<NesSettings>().unwrap())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
@@ -597,10 +592,7 @@ mod tests {
             .shared
             .systems
             .get(&SystemId::new("nes"))
-            .map(|s| {
-                let any: &dyn std::any::Any = &**s;
-                any.downcast_ref::<NesSettings>().unwrap()
-            })
+            .map(|s| s.downcast_ref::<NesSettings>().unwrap())
             .unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);
     }

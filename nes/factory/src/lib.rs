@@ -9,7 +9,10 @@ use nerust_core_traits::{
     factory::{
         CoreFactory, CoreParts, FactoryError,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+            SystemLoadOptions, SystemLoadOptionsSchema,
+        },
         settings::FactorySettingsView,
     },
     identity::SystemId,
@@ -17,7 +20,7 @@ use nerust_core_traits::{
 use nerust_input_traits::{
     Controller, ControllerCollection, ControllerProfile, EmuInput, GuiInput, ProfileId,
 };
-use serde::{Deserialize, Serialize};
+use nerust_nes_settings::NesSettings;
 
 #[derive(Debug)]
 pub struct NesFactory;
@@ -85,9 +88,14 @@ impl CoreFactory for NesFactory {
         field: &SystemSettingsFieldId,
         choice: &SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
-        let mut s = settings::deserialize_settings(&view.system_config_bytes);
-        settings::apply_nes_settings_choice_inner(&mut s, field, choice)?;
-        view.system_config_bytes = settings::serialize_settings(&s);
+        let deref_view = view
+            .system_config
+            .as_deref_mut()
+            .ok_or(FactoryError::InvalidSettings)?;
+        let nes = deref_view
+            .downcast_mut::<NesSettings>()
+            .ok_or(FactoryError::InvalidSettings)?;
+        settings::apply_nes_settings_choice_inner(nes, field, choice)?;
         Ok(())
     }
 
@@ -96,8 +104,14 @@ impl CoreFactory for NesFactory {
         view: &FactorySettingsView,
         options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<ResolvedLoadRequest, FactoryError> {
-        let nes = settings::deserialize_settings(&view.system_config_bytes);
-        settings::resolve_nes_load_request_inner(&nes, &view.language, options)
+        let deref_view = view
+            .system_config
+            .as_deref()
+            .ok_or(FactoryError::InvalidSettings)?;
+        let nes = deref_view
+            .downcast_ref::<NesSettings>()
+            .ok_or(FactoryError::InvalidSettings)?;
+        settings::resolve_nes_load_request_inner(nes, &view.language, options)
     }
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
@@ -107,9 +121,13 @@ impl CoreFactory for NesFactory {
     fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
         self
     }
+
+    fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
+        NesLoadOptionsSchema.into()
+    }
 }
 
-#[derive(Default, clap::Args, Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
+#[derive(Default, clap::Args, Eq, PartialEq, Clone, Debug)]
 struct CommandLineOptions {
     /// Override mapper 4 MMC3 IRQ behavior
     #[clap(long, value_enum)]
@@ -118,7 +136,13 @@ struct CommandLineOptions {
 
 impl SystemLoadOptions for CommandLineOptions {}
 
-#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq)]
+struct NesLoadOptionsSchema;
+impl SystemLoadOptionsSchema for NesLoadOptionsSchema {
+    type Options = CommandLineOptions;
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
 enum Mmc3IrqVariant {
     Sharp,
     Nec,
