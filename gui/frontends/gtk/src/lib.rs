@@ -81,7 +81,10 @@ impl State {
     }
 
     pub(crate) fn active_factory(&self) -> Arc<dyn CoreFactory> {
-        self.session.active_factory().clone()
+        self.session
+            .active_factory()
+            .expect("no active system")
+            .clone()
     }
 
     pub(crate) fn settings_pages(&self) -> Vec<(&'static str, SystemSettingsPageModel)> {
