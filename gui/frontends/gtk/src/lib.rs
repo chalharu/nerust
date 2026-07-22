@@ -4,7 +4,7 @@ mod renderer;
 mod surface;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::{
     gio, glib,
@@ -13,7 +13,7 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
+use nerust_core_traits::factory::{CoreFactory, descriptor::SystemSettingsPageModel};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
