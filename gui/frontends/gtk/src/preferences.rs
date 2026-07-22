@@ -72,10 +72,10 @@ pub(crate) fn present_preferences_dialog(
     let finish = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
+    // Primary factory is correct for the current single-system configuration.
+    // When multi-system support is added, iterate registry.all() and use each
+    // factory for its corresponding system tab's apply/refresh callbacks.
     let factory: Arc<dyn CoreFactory> = state.borrow().ctx.registry.primary().clone();
-    // TODO: when multi-system support is added, iterate registry.all()
-    // for apply_snapshot_to_widgets and connect_local_updates so each
-    // system tab's widgets are refreshed independently.
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");

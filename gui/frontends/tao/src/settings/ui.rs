@@ -351,8 +351,8 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                // TODO: use self.registry.all()[self.system_tab_index] when
-                // multi-system support is added, so each tab uses its factory.
+                // Primary factory is correct for the current single-system config.
+                // When multi-system is added, use self.registry.all()[self.system_tab_index].
                 let _ = apply_settings_choice(
                     self.registry.primary().as_ref(),
                     &mut self.draft,
