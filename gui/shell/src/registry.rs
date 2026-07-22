@@ -101,8 +101,12 @@ impl RomLoader for RegistryRomLoader {
             .ok_or_else(|| RomLoaderError::Io("unsupported ROM format".to_string()))?;
 
         let system_id = factory.system_id();
-        let view = settings_view(target.settings_snapshot(), &system_id);
 
+        // Notify the target BEFORE loading so it can rebuild the
+        // EmuCore with the correct factory if the system changed.
+        target.set_active_system(system_id);
+
+        let view = settings_view(target.settings_snapshot(), &system_id);
         let options = self
             .pending_options
             .get_mut(&system_id)
@@ -114,7 +118,6 @@ impl RomLoader for RegistryRomLoader {
             .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
         target.load_resolved(media, resolved)?;
 
-        target.set_active_system(system_id);
         target.resume();
         Ok(())
     }
