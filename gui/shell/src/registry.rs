@@ -119,3 +119,108 @@ impl RomLoader for RegistryRomLoader {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use nerust_core_traits::{
+        audio::AudioBackendRegistry,
+        factory::{CoreFactory, load::MediaObject},
+        identity::SystemId,
+    };
+    use nerust_gui_runtime::settings::HostBackendCapabilities;
+
+    use super::*;
+    use crate::load::RomLoadTarget;
+    use crate::session::test_helpers::MockFactory;
+
+    fn stub_factory() -> Arc<dyn CoreFactory> {
+        Arc::new(MockFactory)
+    }
+
+    fn media_with_ext(ext: &str) -> MediaObject {
+        MediaObject::new(Some(format!("game.{ext}").into()), vec![])
+    }
+
+    fn test_capabilities() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: None,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one CoreFactory required")]
+    fn new_panics_on_empty_vec() {
+        SystemRegistry::new(vec![]);
+    }
+
+    #[test]
+    fn primary_returns_first_registered() {
+        let a = stub_factory();
+        let b = stub_factory();
+        let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
+        assert_eq!(registry.primary().system_id(), a.system_id());
+        assert_eq!(registry.all().len(), 2);
+    }
+
+    #[test]
+    fn find_by_id_returns_factory() {
+        let factory = stub_factory();
+        let id = factory.system_id();
+        let registry = SystemRegistry::new(vec![factory.clone(), stub_factory()]);
+        assert!(registry.find_by_id(&id).is_some());
+        assert!(registry.find_by_id(&SystemId::new("snes")).is_none());
+    }
+
+    #[test]
+    fn detect_falls_back_to_primary() {
+        let a = stub_factory();
+        let registry = SystemRegistry::new(vec![a.clone(), stub_factory()]);
+        let media = media_with_ext("sfc");
+        assert_eq!(registry.detect(&media).system_id(), a.system_id());
+    }
+
+    #[test]
+    fn create_loader_accepts_options() {
+        let factory = stub_factory();
+        let registry = SystemRegistry::new(vec![factory.clone()]);
+        let opts = factory.default_load_options();
+        let _loader = registry.create_loader(vec![opts]);
+    }
+
+    #[test]
+    fn session_factory_uses_primary_initially() {
+        let factory = stub_factory();
+        let id = factory.system_id();
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let audio_registry = Arc::new(AudioBackendRegistry::new());
+        let session = crate::session::SessionHandle::new_ephemeral(
+            test_capabilities(),
+            registry,
+            audio_registry,
+        );
+        assert_eq!(session.factory().system_id(), id);
+    }
+
+    #[test]
+    fn set_active_system_falls_back_to_primary_on_unknown_id() {
+        let factory = stub_factory();
+        let id = factory.system_id();
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let audio_registry = Arc::new(AudioBackendRegistry::new());
+        let mut session = crate::session::SessionHandle::new_ephemeral(
+            test_capabilities(),
+            registry,
+            audio_registry,
+        );
+
+        RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
+        assert_eq!(session.factory().system_id(), id);
+    }
+}
