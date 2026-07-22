@@ -351,10 +351,9 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                // Primary factory is correct for the current single-system config.
-                // When multi-system is added, use self.registry.all()[self.system_tab_index].
+                let factory = &self.registry.all()[self.system_tab_index];
                 let _ = apply_settings_choice(
-                    self.registry.primary().as_ref(),
+                    factory.as_ref(),
                     &mut self.draft,
                     &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
                     &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
@@ -366,11 +365,10 @@ impl SettingsAppState {
                 slot,
                 controller_id,
             } => {
+                let input_factory =
+                    self.registry.all()[self.input_tab_index].input_system_factory();
                 let profile = controller_id.as_ref().and_then(|id| {
-                    self.registry
-                        .primary()
-                        .as_ref()
-                        .input_system_factory()
+                    input_factory
                         .controllers()
                         .iter()
                         .find(|p| p.profile_id().as_str() == id)
