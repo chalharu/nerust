@@ -319,9 +319,9 @@ impl SessionHandle {
         let restored_runtime_state = exported_core_bytes.is_some();
 
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
-        let system_id = self.factory.system_id();
+        let system_id = self.active_factory().system_id();
         let view = settings_view(next_settings, &system_id);
-        let parts = self.factory.create_core_and_adapter_with_assignments(
+        let parts = self.active_factory().create_core_and_adapter_with_assignments(
             &view,
             speaker,
             &self.current_assignments,
