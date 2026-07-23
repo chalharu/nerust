@@ -477,7 +477,7 @@ impl HostState {
         if let Some(mut snapshot) = pending {
             if let Some(assignments) = pending_assignments {
                 // Embed assignments in snapshot so apply_settings saves them
-                let sid = self.ctx.registry.all()[0].system_id().to_string();
+                let sid = self.ctx.registry.primary().system_id().to_string();
                 snapshot
                     .app_state
                     .controller_assignments
