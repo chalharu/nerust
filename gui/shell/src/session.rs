@@ -240,10 +240,7 @@ impl SessionHandle {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let factory = registry
-            .primary()
-            .expect("at least one system required")
-            .clone();
+        let factory = registry.primary().ok_or(SessionError::NoSystems)?.clone();
         let defaults = SettingsSnapshot {
             shared: default_shared_settings(),
             local: default_local_settings(),
