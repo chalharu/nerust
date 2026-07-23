@@ -81,10 +81,10 @@ pub fn run() {
         .unwrap();
 
     let gpu_factory = create_factory();
-    #[cfg(feature = "nes")]
-    let factories: Vec<Arc<dyn CoreFactory>> = vec![Arc::new(NesFactory)];
-    #[cfg(not(feature = "nes"))]
-    let factories: Vec<Arc<dyn CoreFactory>> = vec![];
+    let factories: Vec<Arc<dyn CoreFactory>> = vec![
+        #[cfg(feature = "nes")]
+        Arc::new(NesFactory),
+    ];
     let registry = Arc::new(SystemRegistry::new(factories));
     let audio_registry = Arc::new(create_audio_registry());
 
