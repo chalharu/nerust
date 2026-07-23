@@ -20,11 +20,11 @@ pub struct WindowSize {
 
 impl SessionHandle {
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu_core.metrics()
+        self.emu_core.as_ref().map(|c| c.metrics()).unwrap_or_default()
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let profile = self.emu_core.render_profile();
+        let profile = self.emu_core.as_ref().expect("no emu core").render_profile();
         WindowSize {
             width: profile.physical_size.width,
             height: profile.physical_size.height,
@@ -75,7 +75,7 @@ impl SessionHandle {
             } else {
                 volume
             };
-            let _ = self.emu_core.set_volume(volume);
+            let _ = self.emu_core.as_mut().expect("no emu core").set_volume(volume);
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
@@ -122,7 +122,7 @@ impl SessionHandle {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
         self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.load(&media, Some(resolved.options))?;
+        self.emu_core.as_mut().expect("no emu core").load(&media, Some(resolved.options))?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
@@ -156,7 +156,7 @@ impl SessionHandle {
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
         self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.unload()?;
+        self.emu_core.as_mut().expect("no emu core").unload()?;
         self.loaded_media = None;
         self.persistence.reset();
         Ok(())
@@ -191,7 +191,7 @@ impl SessionHandle {
                 if self.paused() {
                     Ok(SessionCommandOutcome::default())
                 } else {
-                    self.emu_core.pause()?;
+                    self.emu_core.as_mut().expect("no emu core").pause()?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: false,
@@ -200,7 +200,7 @@ impl SessionHandle {
             }
             SessionCommand::Resume => {
                 if self.paused() {
-                    self.emu_core.resume()?;
+                    self.emu_core.as_mut().expect("no emu core").resume()?;
                     Ok(SessionCommandOutcome {
                         executed: true,
                         needs_redraw: self.loaded(),
@@ -217,7 +217,7 @@ impl SessionHandle {
                 }
             }
             SessionCommand::Reset => {
-                self.emu_core.reset()?;
+                self.emu_core.as_mut().expect("no emu core").reset()?;
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -312,7 +312,7 @@ impl SessionHandle {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_core_bytes = if was_loaded {
-            Some(self.emu_core.save_state_raw()?)
+            Some(self.emu_core.as_ref().expect("no emu core").save_state_raw()?)
         } else {
             None
         };
@@ -339,7 +339,7 @@ impl SessionHandle {
             }
         }
 
-        self.emu_core = rebuilt_core;
+        self.emu_core = Some(rebuilt_core);
         self.gui_input = gui_input;
         self.field_map = field_map;
         if was_loaded {
@@ -367,7 +367,7 @@ impl SessionHandle {
                 let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
             }
             if was_paused {
-                self.emu_core.pause()?;
+                self.emu_core.as_mut().expect("no emu core").pause()?;
             }
         }
         Ok(())
