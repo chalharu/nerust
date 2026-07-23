@@ -286,7 +286,7 @@ impl AndroidFrontend {
         let system_id = self
             .session
             .factory()
-            .ok_or_else(|| "no active system".to_string())
+            .ok_or_else(|| "no active system".to_string())?
             .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
@@ -295,7 +295,7 @@ impl AndroidFrontend {
         let resolved = match self
             .session
             .factory()
-            .ok_or_else(|| "no active system".to_string())
+            .ok_or_else(|| "no active system".to_string())?
             .resolve_load_request(&view, options)
         {
             Ok(r) => r,
@@ -369,7 +369,7 @@ impl AndroidFrontend {
         let system_id = self
             .session
             .factory()
-            .ok_or_else(|| "no active system".to_string())
+            .ok_or_else(|| "no active system".to_string())?
             .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
@@ -378,7 +378,7 @@ impl AndroidFrontend {
         let resolved = match self
             .session
             .factory()
-            .ok_or_else(|| "no active system".to_string())
+            .ok_or_else(|| "no active system".to_string())?
             .resolve_load_request(&view, options)
         {
             Ok(r) => r,
