@@ -7,7 +7,6 @@ use nerust_core_traits::{
     factory::{CoreFactory, load::DynSystemLoadOptions},
 };
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
-use nerust_nes_factory::NesFactory;
 use nerust_render_traits::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
@@ -83,7 +82,7 @@ pub fn run() {
     let gpu_factory = create_factory();
     let factories: Vec<Arc<dyn CoreFactory>> = vec![
         #[cfg(feature = "nes")]
-        Arc::new(NesFactory),
+        Arc::new(nerust_nes_factory::NesFactory),
     ];
     let registry = Arc::new(SystemRegistry::new(factories));
     let audio_registry = Arc::new(create_audio_registry());
