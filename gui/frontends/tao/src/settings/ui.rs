@@ -199,54 +199,55 @@ impl SettingsAppState {
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
-        let (controller_assignments, initial_assignments_pairs) = if let Some(factory) =
-            registry.all().first()
-        {
-            let sid = factory.system_id().to_string();
-            let input_factory = factory.input_system_factory();
-            let default_assignments = input_factory.default_assignments();
-            let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
-                .app_state
-                .controller_assignments
-                .get(&sid)
-                .map(|pairs| {
-                    pairs
-                        .iter()
-                        .filter_map(|(slot_id, ctrl_opt)| {
-                            let att = match input_factory.resolve_slot(slot_id) {
-                                Some(a) => a,
-                                None => {
-                                    log::warn!("unknown persisted slot ID in settings: {slot_id}");
-                                    return None;
-                                }
-                            };
-                            let profile = ctrl_opt
-                                .as_ref()
-                                .and_then(|id| input_factory.resolve_controller(id));
-                            Some((att, profile))
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(|| {
-                    default_assignments
-                        .slots
-                        .iter()
-                        .map(|(slot_id, profile)| (*slot_id, profile.clone()))
-                        .collect()
-                });
-            let pairs: Vec<(String, Option<String>)> = assignments
-                .iter()
-                .map(|(s, c)| {
-                    (
-                        s.as_str().to_string(),
-                        c.as_ref().map(|p| p.profile_id().to_string()),
-                    )
-                })
-                .collect();
-            (assignments.clone(), pairs)
-        } else {
-            (vec![], vec![])
-        };
+        let (controller_assignments, initial_assignments_pairs, has_systems) =
+            if let Some(factory) = registry.all().first() {
+                let sid = factory.system_id().to_string();
+                let input_factory = factory.input_system_factory();
+                let default_assignments = input_factory.default_assignments();
+                let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
+                    .app_state
+                    .controller_assignments
+                    .get(&sid)
+                    .map(|pairs| {
+                        pairs
+                            .iter()
+                            .filter_map(|(slot_id, ctrl_opt)| {
+                                let att = match input_factory.resolve_slot(slot_id) {
+                                    Some(a) => a,
+                                    None => {
+                                        log::warn!(
+                                            "unknown persisted slot ID in settings: {slot_id}"
+                                        );
+                                        return None;
+                                    }
+                                };
+                                let profile = ctrl_opt
+                                    .as_ref()
+                                    .and_then(|id| input_factory.resolve_controller(id));
+                                Some((att, profile))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_else(|| {
+                        default_assignments
+                            .slots
+                            .iter()
+                            .map(|(slot_id, profile)| (*slot_id, profile.clone()))
+                            .collect()
+                    });
+                let pairs: Vec<(String, Option<String>)> = assignments
+                    .iter()
+                    .map(|(s, c)| {
+                        (
+                            s.as_str().to_string(),
+                            c.as_ref().map(|p| p.profile_id().to_string()),
+                        )
+                    })
+                    .collect();
+                (assignments.clone(), pairs, true)
+            } else {
+                (vec![], vec![], false)
+            };
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
@@ -258,8 +259,8 @@ impl SettingsAppState {
             audio_registry,
             draft: snapshot.clone(),
             page: SettingsPage::General,
-            system_tab_index: None,
-            input_tab_index: None,
+            system_tab_index: if has_systems { Some(0) } else { None },
+            input_tab_index: if has_systems { Some(0) } else { None },
             input_section: InputPageSection::Attachment(0),
             storage_directory_input,
             error_message: None,
