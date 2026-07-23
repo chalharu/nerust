@@ -35,7 +35,7 @@ use nerust_gui_shell::{
 };
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor, SlotInfo};
 
-use crate::State;
+use crate::{State, StateRef};
 
 #[derive(Clone)]
 struct InputRow {
@@ -72,7 +72,7 @@ fn dynamic_topology(
 
 pub(crate) fn present_preferences_dialog(
     parent: &gtk::ApplicationWindow,
-    state: Rc<RefCell<State>>,
+    state: StateRef,
     on_close: impl FnOnce() + 'static,
 ) {
     let language = state.borrow().settings_snapshot().shared.general.language;
@@ -856,7 +856,7 @@ pub(crate) fn present_preferences_dialog(
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
-                match apply_settings_without_reentrant_borrow(state.as_ref(), snapshot.clone()) {
+                match FrontendSession::apply_settings(&mut *state.borrow_mut(), snapshot.clone()) {
                     Ok(plan) => {
                         if plan.fullscreen_default_changed {
                             parent.set_fullscreened(snapshot.local.video.window.fullscreen_default);
@@ -912,6 +912,7 @@ struct WidgetBundle {
 
 type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
 
+#[allow(dead_code)]
 trait SettingsApplier {
     fn apply_settings(
         &mut self,
@@ -928,6 +929,7 @@ impl SettingsApplier for State {
     }
 }
 
+#[allow(dead_code)]
 fn apply_settings_without_reentrant_borrow<T: SettingsApplier>(
     state: &RefCell<T>,
     snapshot: SettingsSnapshot,
