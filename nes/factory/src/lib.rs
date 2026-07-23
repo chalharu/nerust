@@ -74,8 +74,8 @@ impl CoreFactory for NesFactory {
         )
     }
 
-    fn probe_media(&self, _media: &MediaObject) -> bool {
-        true
+    fn probe_media(&self, media: &MediaObject) -> bool {
+        media.bytes.len() >= 4 && media.bytes[..4] == [0x4E, 0x45, 0x53, 0x1A]
     }
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {

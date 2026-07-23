@@ -144,31 +144,7 @@ impl SessionHandle {
             media: media.clone(),
         });
 
-        let sidecars = self
-            .emu_core
-            .as_ref()
-            .and_then(|c| c.canonical_media_identity())
-            .and_then(|identity| {
-                log::info!(
-                    "load_resolved: identity={:?} path={:?}",
-                    identity,
-                    media.path.as_deref()
-                );
-                self.resolve_persistence_paths(media.path.as_deref(), &identity)
-                    .inspect(|_| {
-                        log::info!("load_resolved: resolved persistence paths");
-                    })
-            });
-        if let Some(sidecars) = sidecars {
-            self.persistence
-                .configure(sidecars.states_dir, sidecars.mapper_save_path);
-            if let Some(ref core) = self.emu_core {
-                self.persistence.refresh_slots(core);
-                let _ = self.persistence.load_mapper_save_if_needed(core);
-            }
-        } else {
-            log::info!("load_resolved: failed to resolve persistence paths");
-        }
+        self.setup_persistence(media.path.as_deref(), true);
 
         self.remember_last_successful_rom_directory(media.path.as_deref());
         Ok(())
@@ -406,29 +382,9 @@ impl SessionHandle {
             let rom_path = self
                 .loaded_media
                 .as_ref()
-                .and_then(|m| m.media.path.as_deref());
-            let sidecars = self
-                .emu_core
-                .as_ref()
-                .and_then(|c| c.canonical_media_identity())
-                .and_then(|identity| {
-                    log::info!(
-                        "rebuild_for_settings: identity={:?} path={:?}",
-                        identity,
-                        rom_path
-                    );
-                    self.resolve_persistence_paths(rom_path, &identity)
-                });
-            if let Some(sidecars) = sidecars {
-                self.persistence
-                    .configure(sidecars.states_dir, sidecars.mapper_save_path);
-                if let Some(ref core) = self.emu_core {
-                    self.persistence.refresh_slots(core);
-                }
-            }
-            if !restored_runtime_state && let Some(ref core) = self.emu_core {
-                let _ = self.persistence.load_mapper_save_if_needed(core);
-            }
+                .and_then(|m| m.media.path.clone());
+            let rom_path_deref = rom_path.as_deref();
+            self.setup_persistence(rom_path_deref, !restored_runtime_state);
             if was_paused && let Some(ref mut core) = self.emu_core {
                 core.pause()?;
             }
@@ -448,6 +404,26 @@ impl SessionHandle {
                 error
             })
             .ok()
+    }
+
+    fn setup_persistence(&mut self, rom_path: Option<&Path>, load_mapper_save: bool) -> bool {
+        let sidecars = self
+            .emu_core
+            .as_ref()
+            .and_then(|c| c.canonical_media_identity())
+            .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
+        let Some(sidecars) = sidecars else {
+            return false;
+        };
+        self.persistence
+            .configure(sidecars.states_dir, sidecars.mapper_save_path);
+        if let Some(ref core) = self.emu_core {
+            self.persistence.refresh_slots(core);
+            if load_mapper_save {
+                let _ = self.persistence.load_mapper_save_if_needed(core);
+            }
+        }
+        true
     }
 
     fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {
