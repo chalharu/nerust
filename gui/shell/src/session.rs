@@ -164,7 +164,7 @@ impl SessionHandle {
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
             .or_else(|| registry.primary())
-            .expect("at least one system must be registered")
+            .ok_or(SessionError::NoSystems)?
             .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
@@ -357,6 +357,8 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
+    #[error("no registered systems")]
+    NoSystems,
 }
 
 use crate::{
