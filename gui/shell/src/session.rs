@@ -68,7 +68,7 @@ pub struct SessionHandle {
     pub(super) registry: Arc<SystemRegistry>,
     pub(super) active_system_id: Option<SystemId>,
     pub(super) emu_core: Option<EmuCore>,
-    pub(super) gui_input: GuiInput,
+    pub(super) gui_input: Option<GuiInput>,
     pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
@@ -179,7 +179,6 @@ impl SessionHandle {
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
-            .or_else(|| registry.primary())
             .cloned();
         let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
             let sid = f.system_id().to_string();
@@ -190,11 +189,11 @@ impl SessionHandle {
                 &settings_snapshot,
                 &assignments,
             )?;
-            (Some(ec), gi, fm, assignments)
+            (Some(ec), Some(gi), fm, assignments)
         } else {
             (
                 None,
-                GuiInput::dummy(),
+                None,
                 HashMap::new(),
                 InputAssignments { slots: vec![] },
             )
@@ -269,7 +268,7 @@ impl SessionHandle {
         )?;
         let mut result = Self {
             emu_core: Some(ec),
-            gui_input: gi,
+            gui_input: Some(gi),
             current_assignments: assignments,
             field_map: fm,
             key_field_map: HashMap::new(),
@@ -315,7 +314,9 @@ impl SessionHandle {
     }
 
     pub fn swap_frame_buffer(&mut self) {
-        self.gui_input.publish();
+        if let Some(ref mut gui_input) = self.gui_input {
+            gui_input.publish();
+        }
         if let Some(ref mut core) = self.emu_core {
             core.swap_frame_buffer();
         }
