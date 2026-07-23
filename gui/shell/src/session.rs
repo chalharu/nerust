@@ -204,25 +204,28 @@ impl SessionHandle {
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
+            .or_else(|| registry.primary())
             .cloned();
-        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
-            let sid = f.system_id().to_string();
-            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
-            let (ec, gi, fm) = Self::create_core_with_assignments(
-                f,
-                &audio_registry,
-                &settings_snapshot,
-                &assignments,
-            )?;
-            (Some(ec), Some(gi), fm, assignments)
-        } else {
-            (
-                None,
-                None,
-                HashMap::new(),
-                InputAssignments { slots: vec![] },
-            )
-        };
+        let (emu_core, gui_input, field_map, assignments, resolved_system_id) =
+            if let Some(ref f) = factory {
+                let sid = f.system_id().to_string();
+                let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+                let (ec, gi, fm) = Self::create_core_with_assignments(
+                    f,
+                    &audio_registry,
+                    &settings_snapshot,
+                    &assignments,
+                )?;
+                (Some(ec), Some(gi), fm, assignments, Some(f.system_id()))
+            } else {
+                (
+                    None,
+                    None,
+                    HashMap::new(),
+                    InputAssignments { slots: vec![] },
+                    None,
+                )
+            };
         let mut result = Self {
             emu_core,
             gui_input,
@@ -230,7 +233,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             registry,
-            active_system_id,
+            active_system_id: resolved_system_id,
             capabilities,
             settings,
             settings_snapshot,
@@ -248,8 +251,7 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
-        let id = registry.primary().map(|p| p.system_id());
-        Self::new_inner(capabilities, registry, id, audio_registry, true)
+        Self::new_inner(capabilities, registry, None, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -262,11 +264,10 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
     ) -> Result<Self, SessionError> {
-        let id = registry.primary().map(|p| p.system_id());
         Self::new_inner_with_paths(
             capabilities,
             registry,
-            id,
+            None,
             audio_registry,
             true,
             Some(paths),
@@ -279,8 +280,7 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let id = registry.primary().map(|p| p.system_id());
-        Self::new_inner(capabilities, registry, id, audio_registry, false)
+        Self::new_inner(capabilities, registry, None, audio_registry, false)
             .expect("core creation with defaults must succeed in tests")
     }
 
