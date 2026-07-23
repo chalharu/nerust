@@ -92,7 +92,10 @@ pub(crate) fn present_preferences_dialog(
     // Primary factory is correct for the current single-system configuration.
     // When multi-system support is added, iterate registry.all() and use each
     // factory for its corresponding system tab's apply/refresh callbacks.
-    let factory: Arc<dyn CoreFactory> = state.borrow().active_factory();
+    let Some(factory) = state.borrow().active_factory() else {
+        log::warn!("no active system, cannot open preferences");
+        return;
+    };
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");

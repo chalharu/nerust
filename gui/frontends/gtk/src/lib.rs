@@ -80,11 +80,8 @@ impl State {
         self.session.frame_buffer()
     }
 
-    pub(crate) fn active_factory(&self) -> Arc<dyn CoreFactory> {
-        self.session
-            .active_factory()
-            .expect("no active system")
-            .clone()
+    pub(crate) fn active_factory(&self) -> Option<Arc<dyn CoreFactory>> {
+        self.session.active_factory().cloned()
     }
 
     pub(crate) fn settings_pages(&self) -> Vec<(&'static str, SystemSettingsPageModel)> {
