@@ -141,14 +141,19 @@ impl SessionHandle {
         let parts =
             factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
         let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
-        let was_paused = self.emu_core.metrics().paused;
+        let was_paused = self
+            .emu_core
+            .as_ref()
+            .map(|c| c.metrics())
+            .unwrap_or_default()
+            .paused;
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, None)?;
             if !was_paused {
                 rebuilt_core.resume()?;
             }
         }
-        self.emu_core = rebuilt_core;
+        self.emu_core = Some(rebuilt_core);
         self.gui_input = gui_input;
         self.field_map = field_map;
         self.current_assignments = assignments.clone();
