@@ -184,5 +184,5 @@ time = { version = "=0.3.54" }
 typetag = { version = "=0.2.23" }
 wgpu = { version = "=30.0.0" }
 winit = { version = "=0.30.13" }
-zerocopy = { features = ["derive"], version = "=0.8.54" }
+zerocopy = { features = ["derive"], version = "=0.8.55" }
 zip = { default-features = false, features = ["deflate"], version = "=8.6.0" }
