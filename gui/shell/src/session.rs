@@ -411,6 +411,7 @@ impl RomLoadTarget for SessionHandle {
         if let Err(e) = self.rebuild_for_settings(&snapshot) {
             log::error!("failed to rebuild core for {}: {e}", system_id);
         }
+        self.rebuild_key_field_map();
     }
 }
 
