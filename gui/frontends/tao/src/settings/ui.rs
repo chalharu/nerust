@@ -41,6 +41,8 @@ use nerust_keyboard::Key;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
+type PendingAssignments =
+    Rc<Mutex<Option<Vec<(nerust_core_traits::identity::SystemId, InputAssignments)>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -108,7 +110,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
@@ -168,7 +170,7 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     registry: Arc<SystemRegistry>,
     audio_registry: Arc<AudioBackendRegistry>,
@@ -264,7 +266,7 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
+        pending_assignments: PendingAssignments,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
         let mut state = Self::new(snapshot, registry, audio_registry);
@@ -451,13 +453,17 @@ impl SettingsAppState {
                     })
                     .collect();
                 if new_pairs != self.initial_assignments_pairs {
-                    *self.pending_assignments.lock().unwrap() = Some(InputAssignments {
-                        slots: self
-                            .controller_assignments
-                            .iter()
-                            .map(|(s, c)| (*s, c.clone()))
-                            .collect(),
-                    });
+                    let sid = self.registry.all()[self.input_tab_index].system_id();
+                    *self.pending_assignments.lock().unwrap() = Some(vec![(
+                        sid,
+                        InputAssignments {
+                            slots: self
+                                .controller_assignments
+                                .iter()
+                                .map(|(s, c)| (*s, c.clone()))
+                                .collect(),
+                        },
+                    )]);
                 }
                 self.should_close.store(true, Ordering::Release);
             }
