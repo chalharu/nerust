@@ -6,12 +6,12 @@ use std::{
 use gtk::{glib, prelude::*};
 use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
 
-use super::{StateRef, renderer::GtkRenderer};
+use super::{State, renderer::GtkRenderer};
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
     renderer: Rc<RefCell<GtkRenderer>>,
-    state: StateRef,
+    state: Rc<RefCell<State>>,
     last_size: Cell<SurfaceSize>,
 }
 
@@ -20,7 +20,7 @@ pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
 pub(crate) trait SurfaceExtend {
     fn bind(
         window: &gtk::ApplicationWindow,
-        state: StateRef,
+        state: Rc<RefCell<State>>,
         factory: Rc<dyn GpuFactory>,
     ) -> Surface;
     fn tick(&self) -> bool;
@@ -29,7 +29,7 @@ pub(crate) trait SurfaceExtend {
 impl SurfaceExtend for Surface {
     fn bind(
         window: &gtk::ApplicationWindow,
-        state: StateRef,
+        state: Rc<RefCell<State>>,
         factory: Rc<dyn GpuFactory>,
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
@@ -60,7 +60,7 @@ impl SurfaceExtend for Surface {
         let physical_size =
             SurfaceSize::new(width.saturating_mul(scale), height.saturating_mul(scale));
 
-        if let Some(mut state) = s.state.try_borrow_mut() {
+        if let Ok(mut state) = s.state.try_borrow_mut() {
             // Recreate the wgpu surface on resize (GDK may recreate the native
             // surface, invalidating the old wgpu surface).  OpenGL is unaffected.
             if physical_size != s.last_size.get() {
