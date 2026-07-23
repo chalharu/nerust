@@ -369,8 +369,8 @@ use crate::{
 };
 
 impl RomLoadTarget for SessionHandle {
-    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        SessionHandle::default_load_options(self).expect("no active system")
+    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+        SessionHandle::default_load_options(self)
     }
     fn settings_snapshot(&self) -> &SettingsSnapshot {
         SessionHandle::settings_snapshot(self)
