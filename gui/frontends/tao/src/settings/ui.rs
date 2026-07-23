@@ -293,6 +293,9 @@ impl SettingsAppState {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
+        if self.registry.all().is_empty() {
+            return errors;
+        }
         if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
             errors.push("At least one controller must be assigned".to_string());
         }
