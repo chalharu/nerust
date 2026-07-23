@@ -1531,8 +1531,12 @@ fn run_finish_callback(finish: &FinishCallback) {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::{cell::RefCell, sync::Arc};
 
+    use nerust_core_traits::factory::descriptor::{
+        SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
+        SystemSettingsFieldModel, SystemSettingsPageModel,
+    };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
         session::{SessionError, access::SettingsResult},
@@ -1541,7 +1545,10 @@ mod tests {
         },
     };
 
-    use super::{SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response};
+    use super::{
+        SettingsApplier, apply_settings_without_reentrant_borrow, should_apply_response,
+        system_field_by_id,
+    };
 
     #[derive(Default)]
     struct FakeState {
@@ -1588,5 +1595,21 @@ mod tests {
         assert!(should_apply_response(gtk::ResponseType::Ok));
         assert!(!should_apply_response(gtk::ResponseType::DeleteEvent));
         assert!(!should_apply_response(gtk::ResponseType::Cancel));
+    }
+
+    #[test]
+    fn system_field_by_id_finds_existing_field() {
+        let model = SystemSettingsPageModel {
+            fields: Arc::new([SystemSettingsFieldModel {
+                id: SystemSettingsFieldId("video.filter".into()),
+                label_id: "nes.video.filter",
+                kind: SystemSettingsFieldKind::Choice {
+                    selected: SystemSettingsChoiceId("ntsc_composite".into()),
+                    options: Arc::new([]),
+                },
+            }]),
+        };
+        assert!(system_field_by_id(&model, "video.filter").is_some());
+        assert!(system_field_by_id(&model, "nonexistent").is_none());
     }
 }
