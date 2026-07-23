@@ -324,10 +324,8 @@ impl SessionHandle {
             .and_then(|id| self.registry.find_by_id(id))
     }
 
-    pub fn factory(&self) -> &dyn CoreFactory {
-        self.active_factory()
-            .map(|a| &**a)
-            .expect("active_system_id does not match any registered factory")
+    pub fn factory(&self) -> Option<&dyn CoreFactory> {
+        self.active_factory().map(|a| &**a)
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
@@ -527,9 +525,13 @@ mod tests {
         let mut session = test_session();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(
                 &test_view(&session),
-                session.factory().default_load_options(),
+                session
+                    .factory()
+                    .expect("no active system")
+                    .default_load_options(),
             )
             .unwrap();
         assert!(
@@ -542,9 +544,13 @@ mod tests {
     #[test]
     fn session_rebuild_reuses_previously_resolved_load_request() {
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -615,7 +621,7 @@ mod tests {
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
-        assert_eq!(session.factory().system_id(), id);
+        assert_eq!(session.factory().expect("no active system").system_id(), id);
     }
 
     #[test]
@@ -628,7 +634,7 @@ mod tests {
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
         RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
-        let _ = session.factory().system_id();
+        let _ = session.factory().expect("no active system").system_id();
     }
 
     fn test_capabilities() -> HostBackendCapabilities {

@@ -283,7 +283,7 @@ pub(crate) fn test_rom_with_mapper4() -> Vec<u8> {
 }
 
 pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
-    let system_id = session.factory().system_id();
+    let system_id = session.factory().expect("no active system").system_id();
     settings_view(session.settings_snapshot(), &system_id)
 }
 

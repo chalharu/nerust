@@ -477,7 +477,12 @@ impl HostState {
         if let Some(mut snapshot) = pending {
             if let Some(assignments) = pending_assignments {
                 // Embed assignments in snapshot so apply_settings saves them
-                let sid = self.session.factory().system_id().to_string();
+                let sid = self
+                    .session
+                    .factory()
+                    .expect("no active system")
+                    .system_id()
+                    .to_string();
                 snapshot
                     .app_state
                     .controller_assignments

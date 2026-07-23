@@ -575,9 +575,13 @@ mod tests {
         let rom_path = temp_dir.join("test.nes");
 
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -606,9 +610,13 @@ mod tests {
         let rom_path = temp_dir.join("test.nes");
 
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -643,9 +651,13 @@ mod tests {
         let rom_path = temp_dir.join("test.nes");
 
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -673,9 +685,13 @@ mod tests {
         let rom_path = temp_dir.join("test.nes");
 
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -696,9 +712,13 @@ mod tests {
         drop(session);
 
         let mut session2 = test_session();
-        let options = session2.factory().default_load_options();
+        let options = session2
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session2
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session2), options)
             .unwrap();
         session2
