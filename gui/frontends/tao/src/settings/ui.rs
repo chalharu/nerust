@@ -24,6 +24,7 @@ use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_sett
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
     registry::SystemRegistry,
+    session::input::build_topology,
     settings::{
         bindings::{
             conflicting_keys,
@@ -293,24 +294,46 @@ impl SettingsAppState {
         if let Err(error) = validate_shared_settings(&self.draft.shared) {
             errors.push(error.to_string());
         }
-        if self.registry.all().is_empty() {
-            return errors;
-        }
-        if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
-            errors.push("At least one controller must be assigned".to_string());
-        }
-        let Some(factory) = self
-            .input_tab_index
-            .and_then(|i| self.registry.all().get(i))
-        else {
-            return errors;
-        };
-        for (key, labels) in conflicting_keys(
-            &self.draft.shared,
-            &input_topology(self),
-            factory.system_id(),
-        ) {
-            errors.push(format!("{}: {}", key.label(), labels.join(", ")));
+        for factory in self.registry.all() {
+            let sid = factory.system_id().to_string();
+            let input_factory = factory.input_system_factory();
+            let default_assignments = input_factory.default_assignments();
+            let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = self
+                .draft
+                .app_state
+                .controller_assignments
+                .get(&sid)
+                .map(|pairs| {
+                    pairs
+                        .iter()
+                        .filter_map(|(slot_id, ctrl_opt)| {
+                            let att = input_factory.resolve_slot(slot_id)?;
+                            let profile = ctrl_opt
+                                .as_ref()
+                                .and_then(|id| input_factory.resolve_controller(id));
+                            Some((att, profile))
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    default_assignments
+                        .slots
+                        .iter()
+                        .map(|(slot_id, profile)| (*slot_id, profile.clone()))
+                        .collect()
+                });
+            if !assignments.iter().any(|(_, c)| c.is_some()) {
+                errors.push(format!(
+                    "{}: At least one controller must be assigned",
+                    factory.display_name()
+                ));
+            }
+            let topology = build_topology(&assignments, input_factory.slots());
+            for (key, labels) in
+                conflicting_keys(&self.draft.shared, &topology, factory.system_id())
+            {
+                errors.push(format!("{}: {}", key.label(), labels.join(", ")));
+            }
         }
         errors
     }
