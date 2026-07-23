@@ -76,7 +76,7 @@ impl State {
         self.session.swap_frame_buffer();
     }
 
-    pub(crate) fn frame_buffer(&self) -> &FrameBuffer {
+    pub(crate) fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.session.frame_buffer()
     }
 
@@ -101,7 +101,7 @@ impl State {
             .collect()
     }
 
-    pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
+    pub(crate) fn render_profile(&self) -> Option<&VideoRenderProfile> {
         self.session.render_profile()
     }
 
