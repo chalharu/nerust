@@ -163,7 +163,8 @@ impl SessionHandle {
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
-            .unwrap_or_else(|| registry.primary())
+            .or_else(|| registry.primary())
+            .expect("at least one system must be registered")
             .clone();
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
@@ -214,8 +215,8 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
-        let id = registry.primary().system_id();
-        Self::new_inner(capabilities, registry, Some(id), audio_registry, true)
+        let id = registry.primary().map(|p| p.system_id());
+        Self::new_inner(capabilities, registry, id, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -231,7 +232,10 @@ impl SessionHandle {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let factory = registry.primary().clone();
+        let factory = registry
+            .primary()
+            .expect("at least one system required")
+            .clone();
         let defaults = SettingsSnapshot {
             shared: default_shared_settings(),
             local: default_local_settings(),
@@ -280,8 +284,8 @@ impl SessionHandle {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let id = registry.primary().system_id();
-        Self::new_inner(capabilities, registry, Some(id), audio_registry, false)
+        let id = registry.primary().map(|p| p.system_id());
+        Self::new_inner(capabilities, registry, id, audio_registry, false)
             .expect("core creation with defaults must succeed in tests")
     }
 

@@ -53,7 +53,7 @@ nerust_core_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
-nerust_nes_factory.workspace = true
+nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
 nerust_render_traits.workspace = true
@@ -65,8 +65,9 @@ nerust_tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [features]
-default = ["wgpu"]
+default = ["nes", "wgpu"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
+nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
 tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao"]
