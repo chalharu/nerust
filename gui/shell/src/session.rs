@@ -301,27 +301,25 @@ impl SessionHandle {
         }
     }
 
-    pub fn render_profile(&self) -> &VideoRenderProfile {
-        self.emu_core
-            .as_ref()
-            .expect("no emu core")
-            .render_profile()
+    pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
+        self.emu_core.as_ref().map(|c| c.render_profile())
     }
 
     pub fn swap_frame_buffer(&mut self) {
         self.gui_input.publish();
-        self.emu_core
-            .as_mut()
-            .expect("no emu core")
-            .swap_frame_buffer();
+        if let Some(ref mut core) = self.emu_core {
+            core.swap_frame_buffer();
+        }
     }
 
-    pub fn frame_buffer(&self) -> &FrameBuffer {
-        self.emu_core.as_ref().expect("no emu core").frame_buffer()
+    pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
+        self.emu_core.as_ref().map(|c| c.frame_buffer())
     }
 
     pub fn clear_display(&mut self) {
-        self.emu_core.as_mut().expect("no emu core").clear_display();
+        if let Some(ref mut core) = self.emu_core {
+            core.clear_display();
+        }
     }
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
@@ -369,6 +367,8 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
     #[error("no registered systems")]
     NoSystems,
+    #[error("no emulation core active")]
+    NoCore,
 }
 
 use crate::{
