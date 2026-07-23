@@ -10,6 +10,11 @@ use nerust_gui_settings::{
 use nerust_keyboard::Key;
 use nerust_nes_settings::NesSettings;
 
+/// Builds system-agnostic defaults plus per-system seed data.
+///
+/// When adding a new system, register its default settings and
+/// input bindings here. System-specific settings are keyed by
+/// `SystemId` in the `systems` and `input.systems` maps.
 pub fn default_shared_settings() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings {
         systems: BTreeMap::from([(

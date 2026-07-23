@@ -91,7 +91,13 @@ impl AndroidSettings {
             .or_insert_with(|| {
                 Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>
             });
-        let nes = system.downcast_mut::<NesSettings>().unwrap();
+        let nes = match system.downcast_mut::<NesSettings>() {
+            Some(nes) => nes,
+            None => {
+                log::warn!("apply_to_snapshot: system is not NES, skipping video filter");
+                return;
+            }
+        };
         nes.video.filter = self.nes_filter;
     }
 
