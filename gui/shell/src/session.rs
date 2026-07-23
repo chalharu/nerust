@@ -160,12 +160,6 @@ impl SessionHandle {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let factory = active_system_id
-            .as_ref()
-            .and_then(|id| registry.find_by_id(id))
-            .or_else(|| registry.primary())
-            .cloned()
-            .ok_or(SessionError::NoSystems)?;
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
                 default_shared_settings(),
@@ -182,19 +176,34 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let sid = factory.system_id().to_string();
-        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
-        let (ec, gi, fm) = Self::create_core_with_assignments(
-            &factory,
-            &audio_registry,
-            &settings_snapshot,
-            &assignments,
-        )?;
+        let factory = active_system_id
+            .as_ref()
+            .and_then(|id| registry.find_by_id(id))
+            .or_else(|| registry.primary())
+            .cloned();
+        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
+            let sid = f.system_id().to_string();
+            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+            let (ec, gi, fm) = Self::create_core_with_assignments(
+                f,
+                &audio_registry,
+                &settings_snapshot,
+                &assignments,
+            )?;
+            (Some(ec), gi, fm, assignments)
+        } else {
+            (
+                None,
+                GuiInput::dummy(),
+                HashMap::new(),
+                InputAssignments { slots: vec![] },
+            )
+        };
         let mut result = Self {
-            emu_core: Some(ec),
-            gui_input: gi,
+            emu_core,
+            gui_input,
             current_assignments: assignments,
-            field_map: fm,
+            field_map,
             key_field_map: HashMap::new(),
             registry,
             active_system_id,
