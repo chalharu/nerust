@@ -49,12 +49,13 @@ fn rebuild_input_map<B: InputBinding>(
     }
 }
 
-/// Map controller kind + port group index to device kind string.
-pub fn device_kind(ctrl_id: &'static str, group_index: usize) -> &'static str {
-    match (ctrl_id, group_index) {
-        ("nes.famicom", 1) => "nes.famicom_p2",
-        _ => ctrl_id,
-    }
+/// Map a controller profile + port group index to a device kind string.
+///
+/// Systems may have special port group naming (e.g. NES Famicom player 2).
+/// The profile is responsible for determining the device kind; this helper
+/// provides a default delegation through `profile_id()`.
+pub fn device_kind(profile: &dyn ControllerProfile, _group_index: usize) -> &'static str {
+    profile.profile_id().as_str()
 }
 
 /// Build an InputTopologyDescriptor from slot→controller assignments.
@@ -82,7 +83,7 @@ pub fn build_topology(
         for ps in profile.port_sets() {
             if ps.ports.contains(slot_att) {
                 for (gi, &port) in ps.ports.iter().enumerate() {
-                    let dk = device_kind(ctrl_id, gi);
+                    let dk = device_kind(profile, gi);
                     if seen_devices.insert((ctrl_id, gi)) {
                         let controls = profile.port_groups()[gi];
                         devices.push(DeviceDescriptor {
