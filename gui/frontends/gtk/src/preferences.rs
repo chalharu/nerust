@@ -559,29 +559,31 @@ pub(crate) fn present_preferences_dialog(
         factory.as_deref(),
     );
 
+    let widgets = widget_bundle(
+        &ok_button,
+        &storage_dir_row,
+        &storage_error_label,
+        &input_conflict_label,
+        &language_combo,
+        &storage_policy_combo,
+        &storage_dir_entry,
+        &fullscreen_check,
+        &scaling_combo,
+        &vsync_check,
+        &mute_check,
+        &volume_spin,
+        &sample_rate_combo,
+        &latency_spin,
+        &system_tabs,
+        &input_tabs,
+        &capture_target,
+        language,
+        factory.clone(),
+    );
+
     {
         let draft = draft.clone();
-        let widgets = widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        );
+        let widgets = widgets.clone();
         let _ = language_combo.connect_changed(move |combo| {
             draft.borrow_mut().shared.general.language = match combo.active_id().as_deref() {
                 Some("japanese") => AppLanguage::Japanese,
@@ -596,27 +598,7 @@ pub(crate) fn present_preferences_dialog(
         &draft,
         &storage_policy_combo,
         &storage_dir_entry,
-        widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        ),
+        widgets.clone(),
     );
     connect_local_updates(
         &draft,
@@ -629,54 +611,14 @@ pub(crate) fn present_preferences_dialog(
         &sample_rate_combo,
         &latency_spin,
         &system_tabs,
-        widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        ),
+        widgets.clone(),
     );
 
     let key_controller = gtk::EventControllerKey::new();
     {
         let draft = draft.clone();
         let capture_target = capture_target.clone();
-        let widgets = widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        );
+        let widgets = widgets.clone();
         let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
             let Some(target) = capture_target.borrow().clone() else {
                 return glib::Propagation::Proceed;
@@ -696,27 +638,7 @@ pub(crate) fn present_preferences_dialog(
         for row in tab.input_rows.borrow().iter().cloned() {
             let capture_target = capture_target.clone();
             let draft = draft.clone();
-            let widgets = widget_bundle(
-                &ok_button,
-                &storage_dir_row,
-                &storage_error_label,
-                &input_conflict_label,
-                &language_combo,
-                &storage_policy_combo,
-                &storage_dir_entry,
-                &fullscreen_check,
-                &scaling_combo,
-                &vsync_check,
-                &mute_check,
-                &volume_spin,
-                &sample_rate_combo,
-                &latency_spin,
-                &system_tabs,
-                &input_tabs,
-                &capture_target,
-                language,
-                factory.clone(),
-            );
+            let widgets = widgets.clone();
             let target = row.target.clone();
             let _ = row.change_button.connect_clicked(move |_| {
                 *capture_target.borrow_mut() = Some(target.clone());
@@ -728,27 +650,7 @@ pub(crate) fn present_preferences_dialog(
         for row in tab.input_rows.borrow().iter().cloned() {
             let capture_target = capture_target.clone();
             let draft = draft.clone();
-            let widgets = widget_bundle(
-                &ok_button,
-                &storage_dir_row,
-                &storage_error_label,
-                &input_conflict_label,
-                &language_combo,
-                &storage_policy_combo,
-                &storage_dir_entry,
-                &fullscreen_check,
-                &scaling_combo,
-                &vsync_check,
-                &mute_check,
-                &volume_spin,
-                &sample_rate_combo,
-                &latency_spin,
-                &system_tabs,
-                &input_tabs,
-                &capture_target,
-                language,
-                factory.clone(),
-            );
+            let widgets = widgets.clone();
             let target = row.target.clone();
             let _ = row.clear_button.connect_clicked(move |_| {
                 apply_capture_target(&mut draft.borrow_mut(), &target, None);
@@ -764,28 +666,7 @@ pub(crate) fn present_preferences_dialog(
         let state = state.clone();
         let parent = parent.clone();
         let error_label = error_label.clone();
-        let capture_target = capture_target.clone();
-        let widgets = widget_bundle(
-            &ok_button,
-            &storage_dir_row,
-            &storage_error_label,
-            &input_conflict_label,
-            &language_combo,
-            &storage_policy_combo,
-            &storage_dir_entry,
-            &fullscreen_check,
-            &scaling_combo,
-            &vsync_check,
-            &mute_check,
-            &volume_spin,
-            &sample_rate_combo,
-            &latency_spin,
-            &system_tabs,
-            &input_tabs,
-            &capture_target,
-            language,
-            factory.clone(),
-        );
+        let widgets = widgets.clone();
         let input_tabs_ok = input_tabs.clone();
         let _ = dialog.connect_response(move |dialog, response| {
             if should_apply_response(response) {

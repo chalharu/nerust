@@ -198,9 +198,14 @@ impl SessionHandle {
                 default_app_state(),
             )
         };
-        let settings_snapshot = settings
-            .snapshot()
-            .expect("settings snapshot should be readable");
+        let settings_snapshot = settings.snapshot().unwrap_or_else(|e| {
+            log::warn!("settings snapshot unavailable, using ephemeral defaults: {e}");
+            SettingsSnapshot {
+                shared: default_shared_settings(),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            }
+        });
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
