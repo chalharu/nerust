@@ -475,15 +475,15 @@ impl HostState {
         drop(handle);
         self.on_settings_closed();
         if let Some(mut snapshot) = pending {
-            if let Some(assignments) = pending_assignments {
-                // Embed assignments in snapshot so apply_settings saves them
-                let sid = self.ctx.registry.primary().system_id().to_string();
-                snapshot
-                    .app_state
-                    .controller_assignments
-                    .insert(sid, assignments.to_string_pairs());
-                if let Err(error) = self.session.reassign_controllers(&assignments) {
-                    log::warn!("controller reassign failed: {error}");
+            if let Some(per_system) = pending_assignments {
+                for (sid, assignments) in per_system {
+                    snapshot
+                        .app_state
+                        .controller_assignments
+                        .insert(sid.to_string(), assignments.to_string_pairs());
+                    if let Err(error) = self.session.reassign_controllers(&assignments) {
+                        log::warn!("controller reassign failed: {error}");
+                    }
                 }
             }
             match self.apply_settings(snapshot) {
