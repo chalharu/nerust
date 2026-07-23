@@ -403,9 +403,10 @@ impl RomLoadTarget for SessionHandle {
         }
         self.active_system_id = Some(system_id);
 
-        // Rebuild EmuCore with the new system's factory.
-        // If a ROM is currently loaded, its state is preserved
-        // and restored into the new core.
+        if let Some(factory) = self.active_factory() {
+            self.current_assignments = factory.input_system_factory().default_assignments();
+        }
+
         let snapshot = self.settings_snapshot.clone();
         if let Err(e) = self.rebuild_for_settings(&snapshot) {
             log::error!("failed to rebuild core for {}: {e}", system_id);
