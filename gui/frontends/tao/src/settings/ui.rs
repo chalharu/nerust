@@ -192,7 +192,6 @@ impl SettingsAppState {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let factory = &registry.all()[0];
         let storage_directory_input = snapshot
             .shared
             .persistence
@@ -200,11 +199,13 @@ impl SettingsAppState {
             .as_ref()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default();
-        let sid = factory.system_id().to_string();
-        let input_factory = factory.input_system_factory();
-        let default_assignments = input_factory.default_assignments();
-        let controller_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> =
-            snapshot
+        let (controller_assignments, initial_assignments_pairs) = if let Some(factory) =
+            registry.all().first()
+        {
+            let sid = factory.system_id().to_string();
+            let input_factory = factory.input_system_factory();
+            let default_assignments = input_factory.default_assignments();
+            let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
                 .app_state
                 .controller_assignments
                 .get(&sid)
@@ -233,13 +234,7 @@ impl SettingsAppState {
                         .map(|(slot_id, profile)| (*slot_id, profile.clone()))
                         .collect()
                 });
-        Self {
-            should_close: Arc::new(AtomicBool::new(false)),
-            pending_apply: Arc::new(Mutex::new(None)),
-            pending_assignments: Rc::new(Mutex::new(None)),
-            capture_target: Arc::new(Mutex::new(None)),
-            controller_assignments: controller_assignments.clone(),
-            initial_assignments_pairs: controller_assignments
+            let pairs: Vec<(String, Option<String>)> = assignments
                 .iter()
                 .map(|(s, c)| {
                     (
@@ -247,7 +242,18 @@ impl SettingsAppState {
                         c.as_ref().map(|p| p.profile_id().to_string()),
                     )
                 })
-                .collect(),
+                .collect();
+            (assignments.clone(), pairs)
+        } else {
+            (vec![], vec![])
+        };
+        Self {
+            should_close: Arc::new(AtomicBool::new(false)),
+            pending_apply: Arc::new(Mutex::new(None)),
+            pending_assignments: Rc::new(Mutex::new(None)),
+            capture_target: Arc::new(Mutex::new(None)),
+            controller_assignments,
+            initial_assignments_pairs,
             registry,
             audio_registry,
             draft: snapshot.clone(),
@@ -289,10 +295,13 @@ impl SettingsAppState {
         if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
             errors.push("At least one controller must be assigned".to_string());
         }
+        let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+            return errors;
+        };
         for (key, labels) in conflicting_keys(
             &self.draft.shared,
             &input_topology(self),
-            self.registry.all()[self.input_tab_index].system_id(),
+            factory.system_id(),
         ) {
             errors.push(format!("{}: {}", key.label(), labels.join(", ")));
         }
@@ -306,13 +315,10 @@ impl SettingsAppState {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let (key, labels) = conflicting_keys(
-            &self.draft.shared,
-            &input_topology(self),
-            self.registry.all()[self.input_tab_index].system_id(),
-        )
-        .into_iter()
-        .next()?;
+        let system_id = self.registry.all().get(self.input_tab_index)?.system_id();
+        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology(self), system_id)
+            .into_iter()
+            .next()?;
         Some(format!("{}: {}", key.label(), labels.join(", ")))
     }
 
@@ -353,22 +359,27 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                let factory = &self.registry.all()[self.system_tab_index];
-                let _ = apply_settings_choice(
-                    factory.as_ref(),
-                    &mut self.draft,
-                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
-                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                        choice.value.into(),
-                    ),
-                );
+                if let Some(factory) = self.registry.all().get(self.system_tab_index) {
+                    let _ = apply_settings_choice(
+                        factory.as_ref(),
+                        &mut self.draft,
+                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                            field.into(),
+                        ),
+                        &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                            choice.value.into(),
+                        ),
+                    );
+                }
             }
             Message::SetControllerSlot {
                 slot,
                 controller_id,
             } => {
-                let input_factory =
-                    self.registry.all()[self.input_tab_index].input_system_factory();
+                let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+                    return Task::none();
+                };
+                let input_factory = factory.input_system_factory();
                 let profile = controller_id.as_ref().and_then(|id| {
                     input_factory
                         .controllers()
@@ -407,9 +418,7 @@ impl SettingsAppState {
                 }
                 // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
-                let sid = self.registry.all()[self.input_tab_index]
-                    .system_id()
-                    .to_string();
+                let sid = factory.system_id().to_string();
                 self.draft.app_state.controller_assignments.insert(
                     sid,
                     self.controller_assignments
@@ -453,7 +462,10 @@ impl SettingsAppState {
                     })
                     .collect();
                 if new_pairs != self.initial_assignments_pairs {
-                    let sid = self.registry.all()[self.input_tab_index].system_id();
+                    let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+                        return Task::none();
+                    };
+                    let sid = factory.system_id();
                     *self.pending_assignments.lock().unwrap() = Some(vec![(
                         sid,
                         InputAssignments {
@@ -1050,7 +1062,12 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::build_topology;
-    let factory = &state.registry.all()[state.input_tab_index];
+    let Some(factory) = state.registry.all().get(state.input_tab_index) else {
+        return InputTopologyDescriptor {
+            ports: Vec::new(),
+            devices: Vec::new(),
+        };
+    };
     let slots = factory.input_system_factory().slots();
     build_topology(&state.controller_assignments, slots)
 }
