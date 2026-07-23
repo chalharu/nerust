@@ -13,7 +13,7 @@ use nerust_input_traits::{
 use nerust_keyboard::Key;
 
 use crate::{
-    session::{KeyboardShortcut, SessionHandle},
+    session::{KeyboardShortcut, SessionError, SessionHandle},
     settings::{bindings::events::shortcut::shortcut_action_for_key, factory::settings_view},
 };
 
@@ -133,7 +133,7 @@ impl SessionHandle {
         &mut self,
         assignments: &InputAssignments,
     ) -> Result<(), crate::session::SessionError> {
-        let factory = self.active_factory().expect("no active system");
+        let factory = self.active_factory().ok_or(SessionError::NoCore)?;
         let system_id = factory.system_id();
         let view = settings_view(&self.settings_snapshot, &system_id);
         let speaker =
@@ -180,10 +180,10 @@ impl SessionHandle {
             false
         };
 
-        if let Some(&field) = self.key_field_map.get(&key) {
-            if let Some(ref mut gui_input) = self.gui_input {
-                let _ = gui_input.state.set(field, InputValue::Digital(pressed));
-            }
+        if let Some(&field) = self.key_field_map.get(&key)
+            && let Some(ref mut gui_input) = self.gui_input
+        {
+            let _ = gui_input.state.set(field, InputValue::Digital(pressed));
         }
 
         if first_press {
