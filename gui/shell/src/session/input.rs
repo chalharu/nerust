@@ -206,7 +206,10 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        let system_id = self.active_factory().expect("no active system").system_id();
+        let Some(factory) = self.active_factory() else {
+            return;
+        };
+        let system_id = factory.system_id();
         let Some(profile) = self
             .settings_snapshot
             .shared
