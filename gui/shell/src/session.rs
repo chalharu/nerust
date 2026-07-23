@@ -164,7 +164,8 @@ impl SessionHandle {
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
             .or_else(|| registry.primary())
-            .cloned();
+            .cloned()
+            .ok_or(SessionError::NoSystems)?;
         let settings = if use_persistent {
             SettingsManager::load_or_ephemeral(
                 default_shared_settings(),
@@ -181,21 +182,19 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
-            let sid = f.system_id().to_string();
-            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
-            let (ec, gi, fm) = Self::create_core_with_assignments(
-                f, &audio_registry, &settings_snapshot, &assignments,
-            )?;
-            (Some(ec), gi, fm, assignments)
-        } else {
-            (None, GuiInput::default(), HashMap::new(), InputAssignments { slots: vec![] })
-        };
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (ec, gi, fm) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        )?;
         let mut result = Self {
-            emu_core,
-            gui_input,
+            emu_core: Some(ec),
+            gui_input: gi,
             current_assignments: assignments,
-            field_map,
+            field_map: fm,
             key_field_map: HashMap::new(),
             registry,
             active_system_id,
@@ -251,21 +250,19 @@ impl SessionHandle {
         let settings_snapshot = settings
             .snapshot()
             .expect("settings snapshot should be readable");
-        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
-            let sid = f.system_id().to_string();
-            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
-            let (ec, gi, fm) = Self::create_core_with_assignments(
-                f, &audio_registry, &settings_snapshot, &assignments,
-            )?;
-            (Some(ec), gi, fm, assignments)
-        } else {
-            (None, GuiInput::default(), HashMap::new(), InputAssignments { slots: vec![] })
-        };
+        let sid = factory.system_id().to_string();
+        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
+        let (ec, gi, fm) = Self::create_core_with_assignments(
+            &factory,
+            &audio_registry,
+            &settings_snapshot,
+            &assignments,
+        )?;
         let mut result = Self {
-            emu_core,
-            gui_input,
+            emu_core: Some(ec),
+            gui_input: gi,
             current_assignments: assignments,
-            field_map,
+            field_map: fm,
             key_field_map: HashMap::new(),
             registry,
             active_system_id: Some(factory.system_id()),
@@ -294,19 +291,29 @@ impl SessionHandle {
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
-            metrics: self.emu_core.as_ref().map(|c| c.metrics()).unwrap_or_default(),
+            metrics: self
+                .emu_core
+                .as_ref()
+                .map(|c| c.metrics())
+                .unwrap_or_default(),
             slots: Arc::from(self.persistence.slots().to_vec()),
             active_slot_id: self.persistence.active_slot_id(),
         }
     }
 
     pub fn render_profile(&self) -> &VideoRenderProfile {
-        self.emu_core.as_ref().expect("no emu core").render_profile()
+        self.emu_core
+            .as_ref()
+            .expect("no emu core")
+            .render_profile()
     }
 
     pub fn swap_frame_buffer(&mut self) {
         self.gui_input.publish();
-        self.emu_core.as_mut().expect("no emu core").swap_frame_buffer();
+        self.emu_core
+            .as_mut()
+            .expect("no emu core")
+            .swap_frame_buffer();
     }
 
     pub fn frame_buffer(&self) -> &FrameBuffer {
@@ -361,7 +368,7 @@ pub enum SessionError {
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
     #[error("no registered systems")]
-    
+    NoSystems,
 }
 
 use crate::{

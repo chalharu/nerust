@@ -20,11 +20,18 @@ pub struct WindowSize {
 
 impl SessionHandle {
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu_core.as_ref().map(|c| c.metrics()).unwrap_or_default()
+        self.emu_core
+            .as_ref()
+            .map(|c| c.metrics())
+            .unwrap_or_default()
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let profile = self.emu_core.as_ref().expect("no emu core").render_profile();
+        let profile = self
+            .emu_core
+            .as_ref()
+            .expect("no emu core")
+            .render_profile();
         WindowSize {
             width: profile.physical_size.width,
             height: profile.physical_size.height,
@@ -75,7 +82,11 @@ impl SessionHandle {
             } else {
                 volume
             };
-            let _ = self.emu_core.as_mut().expect("no emu core").set_volume(volume);
+            let _ = self
+                .emu_core
+                .as_mut()
+                .expect("no emu core")
+                .set_volume(volume);
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
@@ -121,14 +132,20 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.as_mut().expect("no emu core").load(&media, Some(resolved.options))?;
+        self.persistence
+            .flush_mapper_save(self.emu_core.as_ref().expect("no emu core"))?;
+        self.emu_core
+            .as_mut()
+            .expect("no emu core")
+            .load(&media, Some(resolved.options))?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
 
         let sidecars = self
             .emu_core
+            .as_ref()
+            .expect("no emu core")
             .canonical_media_identity()
             .and_then(|identity| {
                 log::info!(
@@ -144,8 +161,11 @@ impl SessionHandle {
         if let Some(sidecars) = sidecars {
             self.persistence
                 .configure(sidecars.states_dir, sidecars.mapper_save_path);
-            self.persistence.refresh_slots(&self.emu_core);
-            let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
+            self.persistence
+                .refresh_slots(self.emu_core.as_ref().expect("no emu core"));
+            let _ = self
+                .persistence
+                .load_mapper_save_if_needed(self.emu_core.as_ref().expect("no emu core"));
         } else {
             log::info!("load_resolved: failed to resolve persistence paths");
         }
@@ -155,7 +175,8 @@ impl SessionHandle {
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
-        self.persistence.flush_mapper_save(&self.emu_core)?;
+        self.persistence
+            .flush_mapper_save(self.emu_core.as_ref().expect("no emu core"))?;
         self.emu_core.as_mut().expect("no emu core").unload()?;
         self.loaded_media = None;
         self.persistence.reset();
@@ -163,7 +184,10 @@ impl SessionHandle {
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
+        if let Err(error) = self
+            .persistence
+            .flush_mapper_save(self.emu_core.as_ref().expect("no emu core"))
+        {
             log::warn!("mapper save flush before close failed: {error}");
         }
         // Persist the latest settings to disk.  Reload from the manager first
@@ -224,14 +248,16 @@ impl SessionHandle {
                 })
             }
             SessionCommand::CreateSlot => {
-                self.persistence.create_slot(&self.emu_core);
+                self.persistence
+                    .create_slot(self.emu_core.as_ref().expect("no emu core"));
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
                 })
             }
             SessionCommand::SaveActiveSlotOrNew => {
-                self.persistence.save_active_slot_or_new(&self.emu_core);
+                self.persistence
+                    .save_active_slot_or_new(self.emu_core.as_ref().expect("no emu core"));
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -239,7 +265,9 @@ impl SessionHandle {
             }
             SessionCommand::LoadActiveSlot => {
                 let was_paused = self.paused();
-                let executed = self.persistence.load_active_slot(&self.emu_core);
+                let executed = self
+                    .persistence
+                    .load_active_slot(self.emu_core.as_ref().expect("no emu core"));
                 Ok(SessionCommandOutcome {
                     executed,
                     needs_redraw: executed && was_paused && !self.paused(),
@@ -253,7 +281,11 @@ impl SessionHandle {
                 })
             }
             SessionCommand::SaveSlot(slot_id) => {
-                self.persistence.save_slot(slot_id, &self.emu_core, false);
+                self.persistence.save_slot(
+                    slot_id,
+                    self.emu_core.as_ref().expect("no emu core"),
+                    false,
+                );
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -261,14 +293,17 @@ impl SessionHandle {
             }
             SessionCommand::LoadSlot(slot_id) => {
                 let was_paused = self.paused();
-                let executed = self.persistence.load_slot(slot_id, &self.emu_core);
+                let executed = self
+                    .persistence
+                    .load_slot(slot_id, self.emu_core.as_ref().expect("no emu core"));
                 Ok(SessionCommandOutcome {
                     executed,
                     needs_redraw: executed && was_paused && !self.paused(),
                 })
             }
             SessionCommand::DeleteSlot(slot_id) => {
-                self.persistence.delete_slot(slot_id, &self.emu_core);
+                self.persistence
+                    .delete_slot(slot_id, self.emu_core.as_ref().expect("no emu core"));
                 Ok(SessionCommandOutcome {
                     executed: true,
                     needs_redraw: false,
@@ -294,11 +329,13 @@ impl SessionHandle {
     }
 
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
-        self.persistence.save_hidden(&self.emu_core)
+        self.persistence
+            .save_hidden(self.emu_core.as_ref().expect("no emu core"))
     }
 
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.persistence.load_hidden(&self.emu_core)
+        self.persistence
+            .load_hidden(self.emu_core.as_ref().expect("no emu core"))
     }
 
     pub fn clear_hidden_lifecycle_state(&mut self) {
@@ -312,7 +349,12 @@ impl SessionHandle {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_core_bytes = if was_loaded {
-            Some(self.emu_core.as_ref().expect("no emu core").save_state_raw()?)
+            Some(
+                self.emu_core
+                    .as_ref()
+                    .expect("no emu core")
+                    .save_state_raw()?,
+            )
         } else {
             None
         };
@@ -349,6 +391,8 @@ impl SessionHandle {
                 .and_then(|m| m.media.path.as_deref());
             let sidecars = self
                 .emu_core
+                .as_ref()
+                .expect("no emu core")
                 .canonical_media_identity()
                 .and_then(|identity| {
                     log::info!(
@@ -361,10 +405,13 @@ impl SessionHandle {
             if let Some(sidecars) = sidecars {
                 self.persistence
                     .configure(sidecars.states_dir, sidecars.mapper_save_path);
-                self.persistence.refresh_slots(&self.emu_core);
+                self.persistence
+                    .refresh_slots(self.emu_core.as_ref().expect("no emu core"));
             }
             if !restored_runtime_state {
-                let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
+                let _ = self
+                    .persistence
+                    .load_mapper_save_if_needed(self.emu_core.as_ref().expect("no emu core"));
             }
             if was_paused {
                 self.emu_core.as_mut().expect("no emu core").pause()?;
