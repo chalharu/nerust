@@ -27,7 +27,7 @@ use nerust_render_traits::{
 };
 
 use super::SessionHandle;
-use crate::{registry::SystemRegistry, settings::factory::settings_view};
+use crate::{load::RomLoadTarget, registry::SystemRegistry, settings::factory::settings_view};
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
 #[derive(
@@ -267,7 +267,9 @@ pub(crate) fn test_session() -> SessionHandle {
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let audio_registry = Arc::new(AudioBackendRegistry::new());
     let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
-    SessionHandle::new_ephemeral(capabilities, registry, audio_registry)
+    let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
+    session.set_active_system(factory.system_id());
+    session
 }
 
 pub(crate) fn test_rom() -> Vec<u8> {

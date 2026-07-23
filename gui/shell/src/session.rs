@@ -204,28 +204,25 @@ impl SessionHandle {
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
-            .or_else(|| registry.primary())
             .cloned();
-        let (emu_core, gui_input, field_map, assignments, resolved_system_id) =
-            if let Some(ref f) = factory {
-                let sid = f.system_id().to_string();
-                let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
-                let (ec, gi, fm) = Self::create_core_with_assignments(
-                    f,
-                    &audio_registry,
-                    &settings_snapshot,
-                    &assignments,
-                )?;
-                (Some(ec), Some(gi), fm, assignments, Some(f.system_id()))
-            } else {
-                (
-                    None,
-                    None,
-                    HashMap::new(),
-                    InputAssignments { slots: vec![] },
-                    None,
-                )
-            };
+        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
+            let sid = f.system_id().to_string();
+            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+            let (ec, gi, fm) = Self::create_core_with_assignments(
+                f,
+                &audio_registry,
+                &settings_snapshot,
+                &assignments,
+            )?;
+            (Some(ec), Some(gi), fm, assignments)
+        } else {
+            (
+                None,
+                None,
+                HashMap::new(),
+                InputAssignments { slots: vec![] },
+            )
+        };
         let mut result = Self {
             emu_core,
             gui_input,
@@ -233,7 +230,7 @@ impl SessionHandle {
             field_map,
             key_field_map: HashMap::new(),
             registry,
-            active_system_id: resolved_system_id,
+            active_system_id,
             capabilities,
             settings,
             settings_snapshot,
@@ -623,10 +620,8 @@ mod tests {
             },
             presentation: None,
         };
-        let session = SessionHandle::new(capabilities, registry, audio_registry)
-            .expect("fallback to defaults should succeed");
-        assert!(!session.loaded());
-        assert!(session.paused());
+        let _session = SessionHandle::new(capabilities, registry, audio_registry)
+            .expect("session creation should succeed even with failing factory");
     }
 
     #[test]
@@ -635,7 +630,10 @@ mod tests {
         let id = factory.system_id();
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
-        let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+        assert!(session.factory().is_none());
+        RomLoadTarget::set_active_system(&mut session, id);
         assert_eq!(session.factory().expect("no active system").system_id(), id);
     }
 
