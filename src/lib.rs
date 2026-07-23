@@ -81,7 +81,10 @@ pub fn run() {
         .unwrap();
 
     let gpu_factory = create_factory();
-    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(NesFactory)]));
+    let mut factories: Vec<Arc<dyn CoreFactory>> = Vec::new();
+    #[cfg(feature = "nes")]
+    factories.push(Arc::new(NesFactory));
+    let registry = Arc::new(SystemRegistry::new(factories));
     let audio_registry = Arc::new(create_audio_registry());
 
     let (options, core_options) = parse_cli_args(registry.all()).unwrap_or_else(|e| e.exit());
@@ -127,6 +130,7 @@ mod tests {
             default_app_state, default_local_settings, default_shared_settings,
         },
     };
+    #[cfg(feature = "nes")]
     use nerust_nes_factory::NesFactory;
 
     struct LoadRecorder {

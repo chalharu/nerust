@@ -25,7 +25,6 @@ pub struct SystemRegistry {
 
 impl SystemRegistry {
     pub fn new(factories: Vec<Arc<dyn CoreFactory>>) -> Self {
-        assert!(!factories.is_empty(), "at least one CoreFactory required");
         Self { factories }
     }
 
@@ -34,19 +33,19 @@ impl SystemRegistry {
         &self.factories
     }
 
-    /// Returns the primary (first registered) factory.
-    /// Used as the default system when no ROM is loaded.
-    pub fn primary(&self) -> &Arc<dyn CoreFactory> {
-        &self.factories[0]
+    /// Returns the primary (first registered) factory, if any.
+    /// None if no systems are registered.
+    pub fn primary(&self) -> Option<&Arc<dyn CoreFactory>> {
+        self.factories.first()
     }
 
     /// Returns the factory that handles the given media.
-    /// Falls back to the primary factory if no match.
-    pub fn detect(&self, media: &MediaObject) -> &Arc<dyn CoreFactory> {
+    /// None if no factory matches or registry is empty.
+    pub fn detect(&self, media: &MediaObject) -> Option<&Arc<dyn CoreFactory>> {
         self.factories
             .iter()
             .find(|f| f.probe_media(media))
-            .unwrap_or_else(|| self.primary())
+            .or_else(|| self.primary())
     }
 
     /// Finds a factory by its system ID.
@@ -266,9 +265,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "at least one CoreFactory required")]
-    fn new_panics_on_empty_vec() {
-        SystemRegistry::new(vec![]);
+    fn empty_registry_has_no_primary() {
+        let registry = SystemRegistry::new(vec![]);
+        assert!(registry.primary().is_none());
+        assert_eq!(registry.all().len(), 0);
     }
 
     #[test]
@@ -276,7 +276,7 @@ mod tests {
         let a = stub_factory();
         let b = stub_factory();
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
-        assert_eq!(registry.primary().system_id(), a.system_id());
+        assert_eq!(registry.primary().unwrap().system_id(), a.system_id());
         assert_eq!(registry.all().len(), 2);
     }
 
@@ -294,7 +294,7 @@ mod tests {
         let a = stub_factory();
         let registry = SystemRegistry::new(vec![a.clone(), stub_factory()]);
         let media = MediaObject::new(Some("game.sfc".into()), vec![]);
-        assert_eq!(registry.detect(&media).system_id(), a.system_id());
+        assert_eq!(registry.detect(&media).unwrap().system_id(), a.system_id());
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
         let matched_id = matched.system_id();
         let registry = SystemRegistry::new(vec![fallback, matched]);
         let media = MediaObject::new(Some("game.nes".into()), vec![]);
-        assert_eq!(registry.detect(&media).system_id(), matched_id);
+        assert_eq!(registry.detect(&media).unwrap().system_id(), matched_id);
     }
 
     #[test]
