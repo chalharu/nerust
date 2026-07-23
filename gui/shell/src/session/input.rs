@@ -51,11 +51,10 @@ fn rebuild_input_map<B: InputBinding>(
 
 /// Map a controller profile + port group index to a device kind string.
 ///
-/// Systems may have special port group naming (e.g. NES Famicom player 2).
-/// The profile is responsible for determining the device kind; this helper
-/// provides a default delegation through `profile_id()`.
-pub fn device_kind(profile: &dyn ControllerProfile, _group_index: usize) -> &'static str {
-    profile.profile_id().as_str()
+/// Delegates to `ControllerProfile::device_kind_for_group()`.
+/// Systems with special port group naming override the trait method.
+pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> &'static str {
+    profile.device_kind_for_group(group_index)
 }
 
 /// Build an InputTopologyDescriptor from slot→controller assignments.

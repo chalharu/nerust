@@ -301,4 +301,11 @@ impl ControllerProfile for FamicomSetProfile {
         const G: &[&[ControlInfo]] = &[P1, P2];
         G
     }
+
+    fn device_kind_for_group(&self, group_index: usize) -> &'static str {
+        match group_index {
+            1 => "nes.famicom_p2",
+            _ => "nes.famicom",
+        }
+    }
 }
