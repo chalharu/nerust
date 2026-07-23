@@ -861,11 +861,13 @@ pub(crate) fn present_preferences_dialog(
                         if plan.fullscreen_default_changed {
                             parent.set_fullscreened(snapshot.local.video.window.fullscreen_default);
                         }
-                        if plan.scaling_changed {
+                        if plan.scaling_changed
+                            && let Some(profile) = state.borrow().render_profile()
+                        {
                             apply_scaling_to_window(
                                 &parent,
                                 snapshot.local.video.window.scaling,
-                                state.borrow().render_profile(),
+                                profile,
                             );
                         }
                         dialog.close();

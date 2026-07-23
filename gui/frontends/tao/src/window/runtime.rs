@@ -57,8 +57,12 @@ impl WindowRuntime {
             .display_handle()
             .expect("failed to get display handle")
             .as_raw();
+        let Some(render_profile) = session.render_profile().cloned() else {
+            log::error!("no emulation core active, cannot create renderer");
+            return None;
+        };
         let config = RendererConfig {
-            render_profile: session.render_profile().clone(),
+            render_profile,
             vsync,
         };
         let mut renderer = self
@@ -194,8 +198,10 @@ impl WindowRuntime {
         }
 
         self.host.session_mut().swap_frame_buffer();
-        let result = renderer.render(self.host.session_mut().frame_buffer());
-        self.host.on_render_result(result);
+        if let Some(fb) = self.host.session_mut().frame_buffer() {
+            let result = renderer.render(fb);
+            self.host.on_render_result(result);
+        }
     }
 
     fn recreate_renderer(&mut self) {
