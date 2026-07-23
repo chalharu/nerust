@@ -12,7 +12,7 @@ use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::GpuFactory;
 
 use super::{
-    State, TITLE_UPDATE_INTERVAL, build_menu_model,
+    StateRef, TITLE_UPDATE_INTERVAL, build_menu_model,
     surface::{Surface, SurfaceExtend},
 };
 use crate::preferences::present_preferences_dialog;
@@ -27,7 +27,7 @@ pub(crate) struct StateMenus {
 pub(crate) struct WindowCore {
     application: gtk::Application,
     window: gtk::ApplicationWindow,
-    state: Rc<RefCell<State>>,
+    state: StateRef,
     open_dialog: Option<gtk::FileChooserNative>,
     close_action: gio::SimpleAction,
     pause_action: gio::SimpleAction,
@@ -51,13 +51,13 @@ pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        state: Rc<RefCell<State>>,
+        state: StateRef,
         factory: Rc<dyn GpuFactory>,
         state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
-    fn state(&self) -> Rc<RefCell<State>>;
+    fn state(&self) -> StateRef;
     fn realize(&self);
     fn close_request(&self) -> bool;
     fn open(&self);
@@ -80,21 +80,21 @@ fn key_event_pressed(event: KeyEventState) -> bool {
     matches!(event, KeyEventState::Press)
 }
 
-fn load_active_slot(state: &RefCell<State>) -> bool {
+fn load_active_slot(state: &StateRef) -> bool {
     let active_slot_id = state.borrow().active_slot_id();
     active_slot_id
         .is_some_and(|slot_id| FrontendSession::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
-    fn state(&self) -> Rc<RefCell<State>> {
+    fn state(&self) -> StateRef {
         self.borrow().state.clone()
     }
 
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
-        state: Rc<RefCell<State>>,
+        state: StateRef,
         factory: Rc<dyn GpuFactory>,
         state_menus: StateMenus,
     ) -> Window {
@@ -231,7 +231,7 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_load_active_action.connect_activate(move |_, _| {
                 let state = result.state();
-                if load_active_slot(state.as_ref()) {
+                if load_active_slot(&state) {
                     result.update_actions();
                 }
             });

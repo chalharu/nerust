@@ -4,13 +4,20 @@ mod renderer;
 mod surface;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 use gtk::{
     gio, glib,
     prelude::{
         ActionMapExt as _, ApplicationExt as _, ApplicationExtManual as _,
-        ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
+        ApplicationWindowExt as _, DialogExt as _, FileExt as _, GtkApplicationExt as _,
+        GtkWindowExt as _, WidgetExt as _,
     },
 };
 use nerust_core_traits::factory::{CoreFactory, descriptor::SystemSettingsPageModel};
@@ -39,6 +46,34 @@ use self::window::{StateMenus, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
+#[derive(Clone)]
+pub(crate) struct StateRef(Rc<RefCell<Option<State>>>);
+
+impl StateRef {
+    fn borrow(&self) -> Ref<'_, State> {
+        Ref::map(self.0.borrow(), |opt| opt.as_ref().unwrap())
+    }
+
+    fn borrow_mut(&self) -> RefMut<'_, State> {
+        RefMut::map(self.0.borrow_mut(), |opt| opt.as_mut().unwrap())
+    }
+
+    fn try_borrow_mut(&self) -> Option<RefMut<'_, State>> {
+        let inner = self.0.try_borrow_mut().ok()?;
+        if inner.is_some() {
+            Some(RefMut::map(inner, |opt| opt.as_mut().unwrap()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<State> for StateRef {
+    fn from(state: State) -> Self {
+        Self(Rc::new(RefCell::new(Some(state))))
+    }
+}
+
 pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
@@ -46,7 +81,7 @@ pub(crate) struct State {
 }
 
 impl State {
-    pub(crate) fn new(ctx: FrontendContext) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, SessionError> {
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
                 remembers_window_size: true,
@@ -59,17 +94,13 @@ impl State {
             capabilities,
             ctx.registry.clone(),
             ctx.audio_registry.clone(),
-        )
-        .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
-            std::process::exit(1);
-        });
+        )?;
 
-        Self {
+        Ok(Self {
             session,
             ctx,
             renderer_reload_pending: false,
-        }
+        })
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -252,11 +283,7 @@ impl State {
     }
 }
 
-fn build_window(
-    app: &gtk::Application,
-    factory: &Rc<dyn GpuFactory>,
-    state: Rc<RefCell<State>>,
-) -> Window {
+fn build_window(app: &gtk::Application, factory: &Rc<dyn GpuFactory>, state: StateRef) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let state_menu = gio::Menu::new();
@@ -385,14 +412,14 @@ pub(crate) fn build_menu_model(
 fn ensure_window(
     app: &gtk::Application,
     factory: &Rc<dyn GpuFactory>,
-    state: &Rc<RefCell<State>>,
+    state: &StateRef,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
         return window;
     }
 
-    let window = build_window(app, factory, Rc::clone(state));
+    let window = build_window(app, factory, state.clone());
     *current_window.borrow_mut() = Some(window.clone());
     window
 }
@@ -404,9 +431,31 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let state = Rc::new(RefCell::new(State::new(ctx)));
+    let state: StateRef = match State::new(ctx) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            let err = e.to_string();
+            let _state = StateRef(Rc::new(RefCell::new(None)));
+            let _ = app.connect_activate(move |_app| {
+                let dialog = gtk::MessageDialog::new(
+                    None::<&gtk::ApplicationWindow>,
+                    gtk::DialogFlags::MODAL,
+                    gtk::MessageType::Error,
+                    gtk::ButtonsType::Ok,
+                    format!("Failed to initialize: {err}"),
+                );
+                dialog.connect_response(|dialog, _| {
+                    dialog.close();
+                    std::process::exit(1);
+                });
+                dialog.show();
+            });
+            let _ = app.run();
+            return;
+        }
+    };
     {
-        let state = Rc::clone(&state);
+        let state = state.clone();
         let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
@@ -415,7 +464,7 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         });
     }
     {
-        let state = Rc::clone(&state);
+        let state = state.clone();
         let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
