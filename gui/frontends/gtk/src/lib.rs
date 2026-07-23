@@ -114,6 +114,9 @@ impl State {
         if let Err(e) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
             log::warn!("ROM load failed: {e}");
         }
+        if self.session.loaded() {
+            self.renderer_reload_pending = true;
+        }
     }
 
     pub(crate) fn loaded(&self) -> bool {
