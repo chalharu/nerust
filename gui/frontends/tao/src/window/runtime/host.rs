@@ -479,9 +479,8 @@ impl HostState {
                 // Embed assignments in snapshot so apply_settings saves them
                 let sid = self
                     .session
-                    .factory()
+                    .active_system_id()
                     .expect("no active system")
-                    .system_id()
                     .to_string();
                 snapshot
                     .app_state
