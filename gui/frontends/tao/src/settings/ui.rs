@@ -179,8 +179,8 @@ pub(crate) struct SettingsAppState {
     /// Snapshot of initial assignments for change detection at Submit time.
     initial_assignments_pairs: Vec<(String, Option<String>)>,
     page: SettingsPage,
-    system_tab_index: usize,
-    input_tab_index: usize,
+    system_tab_index: Option<usize>,
+    input_tab_index: Option<usize>,
     input_section: InputPageSection,
     storage_directory_input: String,
     error_message: Option<String>,
@@ -258,8 +258,8 @@ impl SettingsAppState {
             audio_registry,
             draft: snapshot.clone(),
             page: SettingsPage::General,
-            system_tab_index: 0,
-            input_tab_index: 0,
+            system_tab_index: None,
+            input_tab_index: None,
             input_section: InputPageSection::Attachment(0),
             storage_directory_input,
             error_message: None,
@@ -295,7 +295,10 @@ impl SettingsAppState {
         if !self.controller_assignments.iter().any(|(_, c)| c.is_some()) {
             errors.push("At least one controller must be assigned".to_string());
         }
-        let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+        let Some(factory) = self
+            .input_tab_index
+            .and_then(|i| self.registry.all().get(i))
+        else {
             return errors;
         };
         for (key, labels) in conflicting_keys(
@@ -315,7 +318,8 @@ impl SettingsAppState {
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let system_id = self.registry.all().get(self.input_tab_index)?.system_id();
+        let input_tab_index = self.input_tab_index?;
+        let system_id = self.registry.all().get(input_tab_index)?.system_id();
         let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology(self), system_id)
             .into_iter()
             .next()?;
@@ -327,8 +331,8 @@ impl SettingsAppState {
         match message {
             Message::SelectPage(page) => self.page = page,
             Message::SelectInputSection(section) => self.input_section = section,
-            Message::SelectSystemTab(index) => self.system_tab_index = index,
-            Message::SelectInputTab(index) => self.input_tab_index = index,
+            Message::SelectSystemTab(index) => self.system_tab_index = Some(index),
+            Message::SelectInputTab(index) => self.input_tab_index = Some(index),
             Message::SetLanguage(choice) => self.draft.shared.general.language = choice.value,
             Message::SetStoragePolicy(choice) => {
                 self.draft.shared.persistence.storage_policy = choice.value;
@@ -359,7 +363,10 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                if let Some(factory) = self.registry.all().get(self.system_tab_index) {
+                if let Some(factory) = self
+                    .system_tab_index
+                    .and_then(|i| self.registry.all().get(i))
+                {
                     let _ = apply_settings_choice(
                         factory.as_ref(),
                         &mut self.draft,
@@ -376,7 +383,10 @@ impl SettingsAppState {
                 slot,
                 controller_id,
             } => {
-                let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+                let Some(factory) = self
+                    .input_tab_index
+                    .and_then(|i| self.registry.all().get(i))
+                else {
                     return Task::none();
                 };
                 let input_factory = factory.input_system_factory();
@@ -462,7 +472,10 @@ impl SettingsAppState {
                     })
                     .collect();
                 if new_pairs != self.initial_assignments_pairs {
-                    let Some(factory) = self.registry.all().get(self.input_tab_index) else {
+                    let Some(factory) = self
+                        .input_tab_index
+                        .and_then(|i| self.registry.all().get(i))
+                    else {
                         return Task::none();
                     };
                     let sid = factory.system_id();
@@ -598,13 +611,16 @@ impl SettingsAppState {
     fn input_page(&self) -> El<'_> {
         let language = self.language();
         let factories = self.registry.all();
-        let factory = &factories[self.input_tab_index];
+        let Some(input_tab_index) = self.input_tab_index else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let factory = &factories[input_tab_index];
 
         let mut content = column![];
 
         let tab_row = row(factories.iter().enumerate().map(|(i, f)| {
             let btn_text = text(f.display_name()).size(14);
-            if i == self.input_tab_index {
+            if Some(i) == self.input_tab_index {
                 button(btn_text).style(button::primary).into()
             } else {
                 button(btn_text).on_press(Message::SelectInputTab(i)).into()
@@ -837,7 +853,10 @@ impl SettingsAppState {
     fn system_page(&self) -> El<'_> {
         let language = self.draft.shared.general.language;
         let factories = self.registry.all();
-        let factory = &factories[self.system_tab_index];
+        let Some(system_tab_index) = self.system_tab_index else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let factory = &factories[system_tab_index];
         let system_id = factory.system_id();
         let view = settings_view(&self.draft, &system_id);
         let model = factory.settings_page(&view);
@@ -846,7 +865,7 @@ impl SettingsAppState {
         let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
         let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
             let btn_text = text(*name).size(14);
-            if i == self.system_tab_index {
+            if Some(i) == self.system_tab_index {
                 button(btn_text).style(button::primary).into()
             } else {
                 button(btn_text)
@@ -1062,7 +1081,10 @@ fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
 
 fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
     use nerust_gui_shell::session::input::build_topology;
-    let Some(factory) = state.registry.all().get(state.input_tab_index) else {
+    let Some(factory) = state
+        .input_tab_index
+        .and_then(|i| state.registry.all().get(i))
+    else {
         return InputTopologyDescriptor {
             ports: Vec::new(),
             devices: Vec::new(),
