@@ -57,9 +57,7 @@ impl WindowRuntime {
             .display_handle()
             .expect("failed to get display handle")
             .as_raw();
-        let Some(render_profile) = session.render_profile().cloned() else {
-            return None;
-        };
+        let render_profile = session.render_profile().cloned()?;
         let config = RendererConfig {
             render_profile,
             vsync,
