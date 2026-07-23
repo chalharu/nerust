@@ -58,7 +58,6 @@ impl WindowRuntime {
             .expect("failed to get display handle")
             .as_raw();
         let Some(render_profile) = session.render_profile().cloned() else {
-            log::error!("no emulation core active, cannot create renderer");
             return None;
         };
         let config = RendererConfig {
