@@ -157,10 +157,35 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Result<Self, SessionError> {
+        Self::new_inner_with_paths(
+            capabilities,
+            registry,
+            active_system_id,
+            audio_registry,
+            use_persistent,
+            None,
+        )
+    }
+
+    fn new_inner_with_paths(
+        capabilities: HostBackendCapabilities,
+        registry: Arc<SystemRegistry>,
+        active_system_id: Option<SystemId>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        use_persistent: bool,
+        paths: Option<SettingsPaths>,
+    ) -> Result<Self, SessionError> {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let settings = if use_persistent {
+        let settings = if let Some(paths) = paths {
+            SettingsManager::load_or_ephemeral_with_paths(
+                paths,
+                default_shared_settings(),
+                default_local_settings(),
+                default_app_state(),
+            )
+        } else if use_persistent {
             SettingsManager::load_or_ephemeral(
                 default_shared_settings(),
                 default_local_settings(),
@@ -237,50 +262,15 @@ impl SessionHandle {
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
     ) -> Result<Self, SessionError> {
-        use crate::settings::defaults::seed::{
-            default_app_state, default_local_settings, default_shared_settings,
-        };
-        let factory = registry.primary().ok_or(SessionError::NoSystems)?.clone();
-        let defaults = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        };
-        let settings = SettingsManager::load_or_ephemeral_with_paths(
-            paths,
-            defaults.shared.clone(),
-            defaults.local.clone(),
-            defaults.app_state.clone(),
-        );
-        let settings_snapshot = settings
-            .snapshot()
-            .expect("settings snapshot should be readable");
-        let sid = factory.system_id().to_string();
-        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
-        let (ec, gi, fm) = Self::create_core_with_assignments(
-            &factory,
-            &audio_registry,
-            &settings_snapshot,
-            &assignments,
-        )?;
-        let mut result = Self {
-            emu_core: Some(ec),
-            gui_input: Some(gi),
-            current_assignments: assignments,
-            field_map: fm,
-            key_field_map: HashMap::new(),
-            registry,
-            active_system_id: Some(factory.system_id()),
+        let id = registry.primary().map(|p| p.system_id());
+        Self::new_inner_with_paths(
             capabilities,
-            settings,
-            settings_snapshot,
-            pressed_keys: BTreeSet::new(),
-            loaded_media: None,
-            persistence: PersistenceManager::new(),
+            registry,
+            id,
             audio_registry,
-        };
-        result.rebuild_key_field_map();
-        Ok(result)
+            true,
+            Some(paths),
+        )
     }
 
     #[cfg(test)]
