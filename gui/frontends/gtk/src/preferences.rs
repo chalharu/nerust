@@ -92,10 +92,7 @@ pub(crate) fn present_preferences_dialog(
     // Primary factory is correct for the current single-system configuration.
     // When multi-system support is added, iterate registry.all() and use each
     // factory for its corresponding system tab's apply/refresh callbacks.
-    let Some(factory) = state.borrow().active_factory() else {
-        log::warn!("no active system, cannot open preferences");
-        return;
-    };
+    let factory: Option<Arc<dyn CoreFactory>> = state.borrow().active_factory();
     let ok_button: gtk::Widget = dialog
         .widget_for_response(gtk::ResponseType::Ok)
         .expect("OK button");
@@ -553,7 +550,7 @@ pub(crate) fn present_preferences_dialog(
         &capture_target,
         text(language, UiText::Unbound),
         text(language, UiText::CapturePrompt),
-        factory.as_ref(),
+        factory.as_deref(),
     );
     refresh_validation(
         &draft.borrow(),
@@ -562,7 +559,7 @@ pub(crate) fn present_preferences_dialog(
         &storage_dir_row,
         &storage_error_label,
         &input_conflict_label,
-        factory.as_ref(),
+        factory.as_deref(),
     );
 
     {
@@ -626,7 +623,7 @@ pub(crate) fn present_preferences_dialog(
     );
     connect_local_updates(
         &draft,
-        &factory,
+        factory.as_ref(),
         &fullscreen_check,
         &scaling_combo,
         &vsync_check,
@@ -855,7 +852,9 @@ pub(crate) fn present_preferences_dialog(
                 }
 
                 let snapshot = draft.borrow().clone();
-                if !validation_errors(&snapshot, factory.as_ref()).is_empty() {
+                if let Some(ref f) = factory
+                    && !validation_errors(&snapshot, &**f).is_empty()
+                {
                     refresh_all_from_draft(&snapshot, &widgets);
                     return;
                 }
@@ -910,7 +909,7 @@ struct WidgetBundle {
     input_tabs: Rc<RefCell<Vec<InputTab>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
-    factory: Arc<dyn CoreFactory>,
+    factory: Option<Arc<dyn CoreFactory>>,
 }
 
 type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
@@ -962,7 +961,7 @@ fn widget_bundle(
     input_tabs: &Rc<RefCell<Vec<InputTab>>>,
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
-    factory: Arc<dyn CoreFactory>,
+    factory: Option<Arc<dyn CoreFactory>>,
 ) -> WidgetBundle {
     WidgetBundle {
         ok_button: ok_button.clone(),
@@ -1006,7 +1005,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.capture_target,
         text(widgets.language, UiText::Unbound),
         text(widgets.language, UiText::CapturePrompt),
-        widgets.factory.as_ref(),
+        widgets.factory.as_deref(),
     );
     refresh_validation(
         snapshot,
@@ -1015,7 +1014,7 @@ fn refresh_all_from_draft(snapshot: &SettingsSnapshot, widgets: &WidgetBundle) {
         &widgets.storage_dir_row,
         &widgets.storage_error_label,
         &widgets.input_conflict_label,
-        widgets.factory.as_ref(),
+        widgets.factory.as_deref(),
     );
 }
 
@@ -1054,7 +1053,7 @@ fn connect_general_updates(
 #[expect(clippy::too_many_arguments)]
 fn connect_local_updates(
     draft: &Rc<RefCell<SettingsSnapshot>>,
-    factory: &Arc<dyn CoreFactory>,
+    factory: Option<&Arc<dyn CoreFactory>>,
     fullscreen_check: &gtk::CheckButton,
     scaling_combo: &gtk::ComboBoxText,
     vsync_check: &gtk::CheckButton,
@@ -1131,35 +1130,38 @@ fn connect_local_updates(
             refresh_all_from_draft(&draft.borrow(), &widgets);
         });
     }
-    for tab in system_tabs.borrow().iter() {
-        for (field_id, combo) in tab.field_widgets.iter() {
-            let draft = draft.clone();
-            let widgets = widgets.clone();
-            let factory = factory.clone();
-            let field_id = field_id.clone();
-            let _ = combo.connect_changed(move |combo| {
-                {
-                    let mut snapshot = draft.borrow_mut();
-                    let _ = apply_settings_choice(
-                        &*factory,
-                        &mut snapshot,
-                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                            field_id.clone().into(),
-                        ),
-                        &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                            combo
-                                .active_id()
-                                .map(|value| value.to_string())
-                                .unwrap_or_default()
-                                .into(),
-                        ),
-                    );
-                }
-                refresh_all_from_draft(&draft.borrow(), &widgets);
-            });
+    if let Some(factory) = factory {
+        for tab in system_tabs.borrow().iter() {
+            for (field_id, combo) in tab.field_widgets.iter() {
+                let draft = draft.clone();
+                let widgets = widgets.clone();
+                let factory = factory.clone();
+                let field_id = field_id.clone();
+                let _ = combo.connect_changed(move |combo| {
+                    {
+                        let mut snapshot = draft.borrow_mut();
+                        let _ = apply_settings_choice(
+                            &*factory,
+                            &mut snapshot,
+                            &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                                field_id.clone().into(),
+                            ),
+                            &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                                combo
+                                    .active_id()
+                                    .map(|value| value.to_string())
+                                    .unwrap_or_default()
+                                    .into(),
+                            ),
+                        );
+                    }
+                    refresh_all_from_draft(&draft.borrow(), &widgets);
+                });
+            }
         }
     }
 }
+
 fn refresh_validation(
     snapshot: &SettingsSnapshot,
     language: AppLanguage,
@@ -1167,8 +1169,27 @@ fn refresh_validation(
     storage_dir_row: &gtk::Box,
     storage_error_label: &gtk::Label,
     input_conflict_label: &gtk::Label,
-    factory: &dyn CoreFactory,
+    factory: Option<&dyn CoreFactory>,
 ) {
+    let Some(factory) = factory else {
+        let storage_error = validate_shared_settings(&snapshot.shared)
+            .err()
+            .map(|error| error.to_string());
+        let has_errors = storage_error.is_some();
+        ok_button.set_sensitive(!has_errors);
+        storage_dir_row.set_visible(matches!(
+            snapshot.shared.persistence.storage_policy,
+            StoragePolicy::CustomDirectory
+        ));
+        if let Some(error) = storage_error {
+            storage_error_label.set_text(&error);
+            storage_error_label.set_visible(true);
+        } else {
+            storage_error_label.set_visible(false);
+        }
+        input_conflict_label.set_visible(false);
+        return;
+    };
     let system = factory.system_id();
     let sid = system.to_string();
     let input_factory = factory.input_system_factory();
@@ -1284,7 +1305,7 @@ fn apply_snapshot_to_widgets(
     capture_target: &Rc<RefCell<Option<CaptureTarget>>>,
     unbound_label: &str,
     capture_label: &str,
-    _factory: &dyn CoreFactory,
+    _factory: Option<&dyn CoreFactory>,
 ) {
     language_combo.set_active_id(Some(match snapshot.shared.general.language {
         AppLanguage::Japanese => "japanese",
