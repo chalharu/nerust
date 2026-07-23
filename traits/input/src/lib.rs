@@ -589,27 +589,6 @@ impl GuiInput {
         }
     }
 
-    pub fn dummy() -> Self {
-        #[derive(Debug)]
-        struct ZeroBuf;
-        impl InputStateBuffer for ZeroBuf {
-            fn set(&mut self, _field: usize, _value: InputValue) -> Result<(), BufferError> {
-                Ok(())
-            }
-            fn clear(&mut self) {}
-            fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
-        }
-        let buf: Box<dyn InputStateBuffer> = Box::new(ZeroBuf);
-        let shared = Arc::new(Mutex::new(buf));
-        let flag = Arc::new(AtomicBool::new(false));
-        GuiInput {
-            shared,
-            flag,
-            state: Box::new(ZeroBuf),
-            write_buf: Box::new(ZeroBuf),
-        }
-    }
-
     /// Must be called every frame. Copies absolute state into shared.
     pub fn publish(&mut self) {
         // Prepare write_buf from absolute state (fast concrete copy)

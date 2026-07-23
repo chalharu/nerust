@@ -399,7 +399,7 @@ impl SessionHandle {
         }
 
         self.emu_core = Some(rebuilt_core);
-        self.gui_input = gui_input;
+        self.gui_input = Some(gui_input);
         self.field_map = field_map;
         if was_loaded {
             let rom_path = self

@@ -154,7 +154,7 @@ impl SessionHandle {
             }
         }
         self.emu_core = Some(rebuilt_core);
-        self.gui_input = gui_input;
+        self.gui_input = Some(gui_input);
         self.field_map = field_map;
         self.current_assignments = assignments.clone();
         self.rebuild_key_field_map();
@@ -163,9 +163,10 @@ impl SessionHandle {
 
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        if let Some(&field) = self.field_map.get(&(event.attachment, event.control)) {
-            let _ = self
-                .gui_input
+        if let Some(&field) = self.field_map.get(&(event.attachment, event.control))
+            && let Some(ref mut gui_input) = self.gui_input
+        {
+            let _ = gui_input
                 .state
                 .set(field, InputValue::Digital(event.is_pressed()));
         }
@@ -180,10 +181,9 @@ impl SessionHandle {
         };
 
         if let Some(&field) = self.key_field_map.get(&key) {
-            let _ = self
-                .gui_input
-                .state
-                .set(field, InputValue::Digital(pressed));
+            if let Some(ref mut gui_input) = self.gui_input {
+                let _ = gui_input.state.set(field, InputValue::Digital(pressed));
+            }
         }
 
         if first_press {
@@ -200,7 +200,9 @@ impl SessionHandle {
 
     pub fn clear_input(&mut self) {
         self.pressed_keys.clear();
-        self.gui_input.clear();
+        if let Some(ref mut gui_input) = self.gui_input {
+            gui_input.clear();
+        }
     }
 
     pub fn rebuild_key_field_map(&mut self) {
