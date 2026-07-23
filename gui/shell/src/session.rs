@@ -328,6 +328,10 @@ impl SessionHandle {
         self.active_factory().map(|a| &**a)
     }
 
+    pub fn active_system_id(&self) -> Option<&SystemId> {
+        self.active_system_id.as_ref()
+    }
+
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
         self.current_assignments.to_string_pairs()
     }
