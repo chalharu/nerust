@@ -35,7 +35,7 @@ pub fn apply_settings_choice(
 fn resolve_nes_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
-) -> String {
+) -> Option<String> {
     use nerust_gui_settings::language::AppLanguage;
     let localized = |en: &str, ja: &str| -> String {
         match language {
@@ -44,16 +44,16 @@ fn resolve_nes_label(
         }
     };
     match label_id {
-        "nes.video.filter" => localized("Filter", "フィルター"),
-        "nes.filter.none" => localized("None", "なし"),
-        "nes.filter.ntsc_composite" => localized("NTSC Composite", "NTSC コンポジット"),
-        "nes.filter.ntsc_svideo" => localized("NTSC S-Video", "NTSC S-ビデオ"),
-        "nes.filter.ntsc_rgb" => localized("NTSC RGB", "NTSC RGB"),
-        "nes.core.mmc3_irq_variant" => localized("MMC3 IRQ Variant", "MMC3 IRQ バリアント"),
-        "nes.mmc3.auto" => localized("Auto", "自動"),
-        "nes.mmc3.sharp" => localized("Sharp", "Sharp"),
-        "nes.mmc3.nec" => localized("Nec", "Nec"),
-        _ => label_id.to_string(),
+        "nes.video.filter" => Some(localized("Filter", "フィルター")),
+        "nes.filter.none" => Some(localized("None", "なし")),
+        "nes.filter.ntsc_composite" => Some(localized("NTSC Composite", "NTSC コンポジット")),
+        "nes.filter.ntsc_svideo" => Some(localized("NTSC S-Video", "NTSC S-ビデオ")),
+        "nes.filter.ntsc_rgb" => Some(localized("NTSC RGB", "NTSC RGB")),
+        "nes.core.mmc3_irq_variant" => Some(localized("MMC3 IRQ Variant", "MMC3 IRQ バリアント")),
+        "nes.mmc3.auto" => Some(localized("Auto", "自動")),
+        "nes.mmc3.sharp" => Some(localized("Sharp", "Sharp")),
+        "nes.mmc3.nec" => Some(localized("Nec", "Nec")),
+        _ => None,
     }
 }
 
@@ -61,8 +61,5 @@ pub fn resolve_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> String {
-    if label_id.starts_with("nes.") {
-        return resolve_nes_label(label_id, language);
-    }
-    label_id.to_string()
+    resolve_nes_label(label_id, language).unwrap_or_else(|| label_id.to_string())
 }

@@ -140,8 +140,8 @@ mod tests {
     }
 
     impl RomLoadTarget for LoadRecorder {
-        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-            unreachable!()
+        fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+            None
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
             &self.snapshot

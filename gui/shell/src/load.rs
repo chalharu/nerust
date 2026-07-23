@@ -21,7 +21,7 @@ pub enum RomLoaderError {
 /// Abstracts the session operations needed by `RomLoader` implementations,
 /// allowing them to work with any type (not just `SessionHandle`).
 pub trait RomLoadTarget {
-    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
+    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
     fn load_resolved(
         &mut self,

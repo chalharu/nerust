@@ -42,10 +42,7 @@ impl SystemRegistry {
     /// Returns the factory that handles the given media.
     /// None if no factory matches or registry is empty.
     pub fn detect(&self, media: &MediaObject) -> Option<&Arc<dyn CoreFactory>> {
-        self.factories
-            .iter()
-            .find(|f| f.probe_media(media))
-            .or_else(|| self.primary())
+        self.factories.iter().find(|f| f.probe_media(media))
     }
 
     /// Finds a factory by its system ID.
@@ -110,7 +107,11 @@ impl RomLoader for RegistryRomLoader {
             .pending_options
             .get_mut(&system_id)
             .and_then(|opt| opt.take())
-            .unwrap_or_else(|| target.default_load_options());
+            .unwrap_or_else(|| {
+                target
+                    .default_load_options()
+                    .unwrap_or_else(|| factory.default_load_options())
+            });
 
         let resolved = factory
             .resolve_load_request(&view, options)
@@ -290,11 +291,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_falls_back_to_primary() {
-        let a = stub_factory();
-        let registry = SystemRegistry::new(vec![a.clone(), stub_factory()]);
+    fn detect_returns_none_when_no_factory_matches() {
+        let registry = SystemRegistry::new(vec![stub_factory()]);
         let media = MediaObject::new(Some("game.sfc".into()), vec![]);
-        assert_eq!(registry.detect(&media).unwrap().system_id(), a.system_id());
+        assert!(registry.detect(&media).is_none());
     }
 
     #[test]

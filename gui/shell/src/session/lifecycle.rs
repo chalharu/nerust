@@ -39,7 +39,8 @@ impl SessionHandle {
 
     pub fn window_title(&self) -> String {
         let metrics = self.metrics();
-        window_title(metrics.paused, metrics)
+        let name = self.active_factory().map(|f| f.display_name());
+        window_title(metrics.paused, metrics, name)
     }
 
     pub fn loaded(&self) -> bool {
