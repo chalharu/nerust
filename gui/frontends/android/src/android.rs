@@ -279,11 +279,14 @@ impl AndroidFrontend {
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
-        let options = self.session.default_load_options();
+        let options = self
+            .session
+            .default_load_options()
+            .ok_or_else(|| "no active system".to_string())?;
         let system_id = self
             .session
             .factory()
-            .expect("no active system")
+            .ok_or_else(|| "no active system".to_string())
             .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
@@ -292,7 +295,7 @@ impl AndroidFrontend {
         let resolved = match self
             .session
             .factory()
-            .expect("no active system")
+            .ok_or_else(|| "no active system".to_string())
             .resolve_load_request(&view, options)
         {
             Ok(r) => r,
@@ -359,11 +362,14 @@ impl AndroidFrontend {
                 )
             })?;
         let media = MediaObject::new(Some(path), bytes);
-        let options = self.session.default_load_options();
+        let options = self
+            .session
+            .default_load_options()
+            .ok_or_else(|| "no active system".to_string())?;
         let system_id = self
             .session
             .factory()
-            .expect("no active system")
+            .ok_or_else(|| "no active system".to_string())
             .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
@@ -372,7 +378,7 @@ impl AndroidFrontend {
         let resolved = match self
             .session
             .factory()
-            .expect("no active system")
+            .ok_or_else(|| "no active system".to_string())
             .resolve_load_request(&view, options)
         {
             Ok(r) => r,
@@ -633,8 +639,12 @@ impl AndroidFrontend {
             .display_handle()
             .expect("failed to get display handle")
             .as_raw();
+        let Some(render_profile) = self.session.render_profile().cloned() else {
+            log::warn!("rebuild_renderer: no emulation core active");
+            return;
+        };
         let config = RendererConfig {
-            render_profile: self.session.render_profile().clone(),
+            render_profile,
             vsync,
         };
         let renderer_result = self
@@ -870,7 +880,11 @@ impl AndroidFrontend {
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
-        match renderer.render(self.session.frame_buffer()) {
+        let Some(fb) = self.session.frame_buffer() else {
+            self.shell.needs_redraw = false;
+            return;
+        };
+        match renderer.render(fb) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);
