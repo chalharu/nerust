@@ -38,7 +38,7 @@ fn test_metadata(slot_id: u64, has_thumbnail: bool) -> StateArchiveMetadata {
         slot_id,
         saved_at_unix_ms: unix_millis(SystemTime::now()).unwrap(),
         has_thumbnail,
-        system_id: Some(Box::new(DummySystemId)),
+        system_id: Box::new(DummySystemId),
         identity_bytes: vec![1, 2, 3, 4],
         options_bytes: Vec::new(),
         emulator_version: "test".into(),
