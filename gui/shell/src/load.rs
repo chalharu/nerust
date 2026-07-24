@@ -1,12 +1,25 @@
 use std::path::Path;
 
-use nerust_core_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
+use nerust_core_traits::{
+    factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    identity::SystemId,
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SystemActivationError {
+    #[error("system not registered: {0}")]
+    NotRegistered(SystemId),
+    #[error("system activation failed: {0}")]
+    Activation(String),
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RomLoaderError {
     #[error("I/O error: {0}")]
     Io(String),
+    #[error("unsupported ROM format")]
+    Detect(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
     #[error("ROM load failed: {0}")]
@@ -18,7 +31,7 @@ pub enum RomLoaderError {
 /// Abstracts the session operations needed by `RomLoader` implementations,
 /// allowing them to work with any type (not just `SessionHandle`).
 pub trait RomLoadTarget {
-    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions>;
+    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
     fn load_resolved(
         &mut self,
@@ -26,6 +39,13 @@ pub trait RomLoadTarget {
         resolved: ResolvedLoadRequest,
     ) -> Result<(), RomLoaderError>;
     fn resume(&mut self);
+
+    /// Notifies the target of the detected system for the ROM being loaded.
+    /// Returns `Err` if the system is not recognised or activation fails.
+    /// Default implementation accepts any system (no-op).
+    fn set_active_system(&mut self, _system_id: SystemId) -> Result<(), SystemActivationError> {
+        Ok(())
+    }
 }
 
 /// Loads and resolves a ROM file into a [`RomLoadTarget`].

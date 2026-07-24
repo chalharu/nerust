@@ -1,25 +1,12 @@
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use clap::Command;
 use log::LevelFilter;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
-    factory::{
-        CoreFactory,
-        load::{DynSystemLoadOptions, MediaObject},
-    },
+    factory::{CoreFactory, load::DynSystemLoadOptions},
 };
-use nerust_gui_runtime::rom::load_rom_path;
-use nerust_gui_shell::{
-    context::FrontendContext,
-    load::{RomLoadTarget, RomLoader, RomLoaderError},
-    settings::factory::settings_view,
-};
-use nerust_nes_factory::NesFactory;
+use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
 use nerust_render_traits::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
@@ -85,36 +72,6 @@ fn parse_cli_args_from(
     Ok((options, parsed))
 }
 
-struct LiveRomLoader {
-    factory: Arc<dyn CoreFactory>,
-    pending_options: Option<Box<dyn DynSystemLoadOptions>>,
-}
-
-impl RomLoader for LiveRomLoader {
-    fn load_rom(
-        &mut self,
-        path: &Path,
-        target: &mut dyn RomLoadTarget,
-    ) -> Result<(), RomLoaderError> {
-        let loaded = load_rom_path(path).map_err(|e| RomLoaderError::Io(e.to_string()))?;
-        let (rom_path, data) = loaded.into_parts();
-        let media = MediaObject::new(Some(rom_path), data);
-        let options = self
-            .pending_options
-            .take()
-            .unwrap_or_else(|| target.default_load_options());
-        let system_id = self.factory.system_id();
-        let view = settings_view(target.settings_snapshot(), &system_id);
-        let resolved = self
-            .factory
-            .resolve_load_request(&view, options)
-            .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
-        target.load_resolved(media, resolved)?;
-        target.resume();
-        Ok(())
-    }
-}
-
 pub fn run() {
     SimpleLogger::new()
         .with_level(LevelFilter::Warn)
@@ -123,35 +80,20 @@ pub fn run() {
         .unwrap();
 
     let gpu_factory = create_factory();
-    let core_factories: Vec<Arc<dyn CoreFactory>> = vec![Arc::new(NesFactory)];
+    let factories: Vec<Arc<dyn CoreFactory>> = vec![
+        #[cfg(feature = "nes")]
+        Arc::new(nerust_nes_factory::NesFactory),
+    ];
+    let registry = Arc::new(SystemRegistry::new(factories));
     let audio_registry = Arc::new(create_audio_registry());
 
-    let (options, core_options) = parse_cli_args(&core_factories).unwrap_or_else(|e| e.exit());
+    let (options, core_options) = parse_cli_args(registry.all()).unwrap_or_else(|e| e.exit());
 
-    let rom_loaders = core_factories
-        .iter()
-        .zip(core_options)
-        .map(|(f, o)| {
-            Box::new(LiveRomLoader {
-                factory: f.clone(),
-                pending_options: Some(o),
-            }) as Box<dyn RomLoader>
-        })
-        .collect::<Vec<_>>();
-
-    // TODO: 本当は複数の RomLoader をまとめるような構造体を作るべきだが、今は NES しかないので最初の一つだけ使う
-    let rom_loader = rom_loaders
-        .into_iter()
-        .next()
-        .expect("No RomLoader available");
+    let rom_loader = registry.create_loader(core_options);
 
     let ctx = FrontendContext {
         gpu_factory: Rc::from(gpu_factory),
-        // TODO: 本当は複数の CoreFactory をまとめるような構造体を作るべきだが、今は NES しかないので最初の一つだけ使う
-        core_factory: core_factories
-            .into_iter()
-            .next()
-            .expect("No CoreFactory available"),
+        registry,
         rom_loader,
         audio_registry,
     };
@@ -171,7 +113,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use nerust_core_traits::{
         CoreOptions,
@@ -182,14 +124,14 @@ mod tests {
     };
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
-        load::{RomLoadTarget, RomLoader, RomLoaderError},
+        load::{RomLoadTarget, RomLoaderError},
+        registry::SystemRegistry,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         },
     };
+    #[cfg(feature = "nes")]
     use nerust_nes_factory::NesFactory;
-
-    use super::LiveRomLoader;
 
     struct LoadRecorder {
         resolved: Option<Box<dyn CoreOptions>>,
@@ -198,8 +140,8 @@ mod tests {
     }
 
     impl RomLoadTarget for LoadRecorder {
-        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-            unreachable!()
+        fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+            None
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
             &self.snapshot
@@ -218,28 +160,29 @@ mod tests {
     }
 
     #[test]
-    fn live_rom_loader_uses_pending_options_when_set() {
+    fn registry_rom_loader_uses_pending_options() {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
-        let pending = Some(factory.default_load_options());
-        let mut loader = LiveRomLoader {
-            factory: factory.clone(),
-            pending_options: pending,
-        };
-        fn make_snapshot() -> SettingsSnapshot {
-            SettingsSnapshot {
-                shared: default_shared_settings(),
-                local: default_local_settings(),
-                app_state: default_app_state(),
-            }
-        }
+        let pending = factory.default_load_options();
+        let shared = default_shared_settings(std::slice::from_ref(&factory));
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let mut loader = registry.create_loader(vec![pending]);
 
         let mut target = LoadRecorder {
             resolved: None,
             resumed: false,
-            snapshot: make_snapshot(),
+            snapshot: SettingsSnapshot {
+                shared,
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
         };
 
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
+        let rom_path = std::env::temp_dir().join("nerust_test_rom.nes");
+        let nes_bytes = vec![0x4E, 0x45, 0x53, 0x1A, 1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        std::fs::write(&rom_path, &nes_bytes).expect("write rom");
+
+        let result = loader.load_rom(&rom_path, &mut target);
+        let _ = std::fs::remove_file(&rom_path);
         assert!(result.is_ok());
         assert!(target.resumed);
         assert!(target.resolved.is_some(), "expected non-empty core options");

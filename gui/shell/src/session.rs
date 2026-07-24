@@ -4,7 +4,6 @@ pub mod input;
 pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) mod test_helpers;
 pub mod title;
 
@@ -17,9 +16,9 @@ use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{
         CoreFactory, FactoryError,
-        descriptor::SystemSettingsPageModel,
         load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
     },
+    identity::SystemId,
 };
 use nerust_emu_thread::{ConsoleMetrics, OperationError};
 use nerust_gui_runtime::settings::{
@@ -35,6 +34,7 @@ use thiserror::Error;
 
 use crate::{
     emu_core::EmuCore,
+    registry::SystemRegistry,
     session::persistence::PersistenceManager,
     settings::{self, factory::settings_view},
 };
@@ -64,9 +64,10 @@ pub enum KeyboardShortcut {
 }
 
 pub struct SessionHandle {
-    pub(super) factory: Arc<dyn CoreFactory>,
-    pub(super) emu_core: EmuCore,
-    pub(super) gui_input: GuiInput,
+    pub(super) registry: Arc<SystemRegistry>,
+    pub(super) active_system_id: Option<SystemId>,
+    pub(super) emu_core: Option<EmuCore>,
+    pub(super) gui_input: Option<GuiInput>,
     pub(super) current_assignments: InputAssignments,
     pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
@@ -131,7 +132,7 @@ impl SessionHandle {
                         default_app_state, default_local_settings, default_shared_settings,
                     };
                     let fallback = SettingsSnapshot {
-                        shared: default_shared_settings(),
+                        shared: default_shared_settings(std::slice::from_ref(factory)),
                         local: default_local_settings(),
                         app_state: default_app_state(),
                     };
@@ -148,46 +149,103 @@ impl SessionHandle {
         Ok(EmuCore::from_parts(parts))
     }
 
-    fn new_inner(
-        capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
-        audio_registry: Arc<AudioBackendRegistry>,
+    fn init_settings_manager(
+        registry: &SystemRegistry,
         use_persistent: bool,
-    ) -> Result<Self, SessionError> {
+        paths: Option<SettingsPaths>,
+    ) -> (SettingsManager, SettingsSnapshot) {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
-        let settings = if use_persistent {
+        let defaults_shared = default_shared_settings(registry.all());
+        let settings = if let Some(paths) = paths {
+            SettingsManager::load_or_ephemeral_with_paths(
+                paths,
+                defaults_shared,
+                default_local_settings(),
+                default_app_state(),
+            )
+        } else if use_persistent {
             SettingsManager::load_or_ephemeral(
-                default_shared_settings(),
+                defaults_shared,
                 default_local_settings(),
                 default_app_state(),
             )
         } else {
             SettingsManager::ephemeral(
-                default_shared_settings(),
+                defaults_shared,
                 default_local_settings(),
                 default_app_state(),
             )
         };
-        let settings_snapshot = settings
-            .snapshot()
-            .expect("settings snapshot should be readable");
-        let sid = factory.system_id().to_string();
-        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
-        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
-            &factory,
-            &audio_registry,
-            &settings_snapshot,
-            &assignments,
-        )?;
+        let settings_snapshot = settings.snapshot().unwrap_or_else(|e| {
+            log::warn!("settings snapshot unavailable, using ephemeral defaults: {e}");
+            SettingsSnapshot {
+                shared: default_shared_settings(registry.all()),
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            }
+        });
+        (settings, settings_snapshot)
+    }
+
+    fn new_inner(
+        capabilities: HostBackendCapabilities,
+        registry: Arc<SystemRegistry>,
+        active_system_id: Option<SystemId>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        use_persistent: bool,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner_with_paths(
+            capabilities,
+            registry,
+            active_system_id,
+            audio_registry,
+            use_persistent,
+            None,
+        )
+    }
+
+    fn new_inner_with_paths(
+        capabilities: HostBackendCapabilities,
+        registry: Arc<SystemRegistry>,
+        active_system_id: Option<SystemId>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        use_persistent: bool,
+        paths: Option<SettingsPaths>,
+    ) -> Result<Self, SessionError> {
+        let (settings, settings_snapshot) =
+            Self::init_settings_manager(&registry, use_persistent, paths);
+        let factory = active_system_id
+            .as_ref()
+            .and_then(|id| registry.find_by_id(id))
+            .cloned();
+        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
+            let sid = f.system_id().to_string();
+            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+            let (ec, gi, fm) = Self::create_core_with_assignments(
+                f,
+                &audio_registry,
+                &settings_snapshot,
+                &assignments,
+            )?;
+            (Some(ec), Some(gi), fm, assignments)
+        } else {
+            (
+                None,
+                None,
+                HashMap::new(),
+                InputAssignments { slots: vec![] },
+            )
+        };
         let mut result = Self {
             emu_core,
             gui_input,
             current_assignments: assignments,
             field_map,
             key_field_map: HashMap::new(),
-            factory,
+            registry,
+            active_system_id,
             capabilities,
             settings,
             settings_snapshot,
@@ -202,10 +260,10 @@ impl SessionHandle {
 
     pub fn new(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Result<Self, SessionError> {
-        Self::new_inner(capabilities, factory, audio_registry, true)
+        Self::new_inner(capabilities, registry, None, audio_registry, true)
     }
 
     /// Create a session with settings persisted at the given paths.
@@ -214,87 +272,63 @@ impl SessionHandle {
     /// the frontend provides an explicit settings root instead.
     pub fn new_with_settings_paths(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         paths: SettingsPaths,
     ) -> Result<Self, SessionError> {
-        use crate::settings::defaults::seed::{
-            default_app_state, default_local_settings, default_shared_settings,
-        };
-        let defaults = SettingsSnapshot {
-            shared: default_shared_settings(),
-            local: default_local_settings(),
-            app_state: default_app_state(),
-        };
-        let settings = SettingsManager::load_or_ephemeral_with_paths(
-            paths,
-            defaults.shared.clone(),
-            defaults.local.clone(),
-            defaults.app_state.clone(),
-        );
-        let settings_snapshot = settings
-            .snapshot()
-            .expect("settings snapshot should be readable");
-        let sid = factory.system_id().to_string();
-        let assignments = Self::load_assignments(&factory, &settings_snapshot, &sid);
-        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
-            &factory,
-            &audio_registry,
-            &settings_snapshot,
-            &assignments,
-        )?;
-        let mut result = Self {
-            emu_core,
-            gui_input,
-            current_assignments: assignments,
-            field_map,
-            key_field_map: HashMap::new(),
-            factory,
+        Self::new_inner_with_paths(
             capabilities,
-            settings,
-            settings_snapshot,
-            pressed_keys: BTreeSet::new(),
-            loaded_media: None,
-            persistence: PersistenceManager::new(),
+            registry,
+            None,
             audio_registry,
-        };
-        result.rebuild_key_field_map();
-        Ok(result)
+            true,
+            Some(paths),
+        )
     }
 
     #[cfg(test)]
     pub fn new_ephemeral(
         capabilities: HostBackendCapabilities,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        Self::new_inner(capabilities, factory, audio_registry, false)
+        Self::new_inner(capabilities, registry, None, audio_registry, false)
             .expect("core creation with defaults must succeed in tests")
     }
 
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
-            metrics: self.emu_core.metrics(),
+            metrics: self
+                .emu_core
+                .as_ref()
+                .map(|c| c.metrics())
+                .unwrap_or_default(),
             slots: Arc::from(self.persistence.slots().to_vec()),
             active_slot_id: self.persistence.active_slot_id(),
         }
     }
 
-    pub fn render_profile(&self) -> &VideoRenderProfile {
-        self.emu_core.render_profile()
+    pub fn render_profile(&self) -> Option<&VideoRenderProfile> {
+        self.emu_core.as_ref().map(|c| c.render_profile())
     }
 
     pub fn swap_frame_buffer(&mut self) {
-        self.gui_input.publish();
-        self.emu_core.swap_frame_buffer();
+        if let Some(ref mut gui_input) = self.gui_input {
+            gui_input.publish();
+        }
+        if let Some(ref mut core) = self.emu_core {
+            core.swap_frame_buffer();
+        }
     }
 
-    pub fn frame_buffer(&self) -> &FrameBuffer {
-        self.emu_core.frame_buffer()
+    pub fn frame_buffer(&self) -> Option<&FrameBuffer> {
+        self.emu_core.as_ref().map(|c| c.frame_buffer())
     }
 
     pub fn clear_display(&mut self) {
-        self.emu_core.clear_display();
+        if let Some(ref mut core) = self.emu_core {
+            core.clear_display();
+        }
     }
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
@@ -305,22 +339,26 @@ impl SessionHandle {
         &self.settings
     }
 
-    pub fn factory(&self) -> &dyn CoreFactory {
-        &*self.factory
+    pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
+        self.active_system_id
+            .as_ref()
+            .and_then(|id| self.registry.find_by_id(id))
+    }
+
+    pub fn factory(&self) -> Option<&dyn CoreFactory> {
+        self.active_factory().map(|a| &**a)
+    }
+
+    pub fn active_system_id(&self) -> Option<&SystemId> {
+        self.active_system_id.as_ref()
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
         self.current_assignments.to_string_pairs()
     }
 
-    pub fn settings_page(&self, settings: &SettingsSnapshot) -> SystemSettingsPageModel {
-        let system_id = self.factory.system_id();
-        let view = settings_view(settings, &system_id);
-        self.factory.settings_page(&view)
-    }
-
-    pub fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        self.factory.default_load_options()
+    pub fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+        self.active_factory().map(|f| f.default_load_options())
     }
 }
 
@@ -334,15 +372,17 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
+    #[error("no emulation core active")]
+    NoCore,
 }
 
 use crate::{
-    load::{RomLoadTarget, RomLoaderError},
+    load::{RomLoadTarget, RomLoaderError, SystemActivationError},
     session::commands::SessionCommand,
 };
 
 impl RomLoadTarget for SessionHandle {
-    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
         SessionHandle::default_load_options(self)
     }
     fn settings_snapshot(&self) -> &SettingsSnapshot {
@@ -358,6 +398,49 @@ impl RomLoadTarget for SessionHandle {
     }
     fn resume(&mut self) {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
+    }
+
+    /// Notifies the session of the detected system for the ROM being loaded.
+    ///
+    /// Called by `RegistryRomLoader` before loading the ROM into the session.
+    /// Rebuilds the `EmuCore` immediately with the correct factory so that
+    /// `load_resolved` (the next call) can load ROM data into a properly
+    /// configured core. This is the core entry-point for lazy system activation.
+    fn set_active_system(&mut self, system_id: SystemId) -> Result<(), SystemActivationError> {
+        if self.active_system_id.as_ref() == Some(&system_id) {
+            return Ok(());
+        }
+        let factory = self
+            .registry
+            .find_by_id(&system_id)
+            .cloned()
+            .ok_or(SystemActivationError::NotRegistered(system_id))?;
+        let system_key = system_id.to_string();
+        let assignments = Self::load_assignments(&factory, &self.settings_snapshot, &system_key);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &self.audio_registry,
+            &self.settings_snapshot,
+            &assignments,
+        )
+        .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+
+        if let Some(ref core) = self.emu_core {
+            self.persistence
+                .flush_mapper_save(core)
+                .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+        }
+
+        self.active_system_id = Some(system_id);
+        self.current_assignments = assignments;
+        self.emu_core = Some(emu_core);
+        self.gui_input = Some(gui_input);
+        self.field_map = field_map;
+        self.loaded_media = None;
+        self.persistence.reset();
+        self.pressed_keys.clear();
+        self.rebuild_key_field_map();
+        Ok(())
     }
 }
 
@@ -375,11 +458,18 @@ mod tests {
         },
         identity::SystemId,
     };
-    use nerust_gui_runtime::settings::SettingsApplyPlan;
+    use nerust_gui_runtime::settings::{
+        HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot,
+    };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
     use super::test_helpers::*;
-    use crate::session::{KeyboardShortcut, SessionHandle};
+    use crate::{
+        load::{RomLoadTarget, SystemActivationError},
+        registry::SystemRegistry,
+        session::{KeyboardShortcut, SessionHandle},
+        settings::factory::settings_view,
+    };
 
     /// Factory that fails on first `create_core_and_adapter_with_assignments`
     /// call, then delegates to the inner factory for the fallback path.
@@ -478,9 +568,13 @@ mod tests {
         let mut session = test_session();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(
                 &test_view(&session),
-                session.factory().default_load_options(),
+                session
+                    .factory()
+                    .expect("no active system")
+                    .default_load_options(),
             )
             .unwrap();
         assert!(
@@ -493,9 +587,13 @@ mod tests {
     #[test]
     fn session_rebuild_reuses_previously_resolved_load_request() {
         let mut session = test_session();
-        let options = session.factory().default_load_options();
+        let options = session
+            .factory()
+            .expect("no active system")
+            .default_load_options();
         let resolved = session
             .factory()
+            .expect("no active system")
             .resolve_load_request(&test_view(&session), options)
             .unwrap();
         session
@@ -543,6 +641,7 @@ mod tests {
     #[test]
     fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
         let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
+        let registry = Arc::new(SystemRegistry::new(vec![failing]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
             window: nerust_gui_runtime::settings::HostWindowCapabilities {
@@ -552,9 +651,103 @@ mod tests {
             },
             presentation: None,
         };
-        let session = SessionHandle::new(capabilities, failing, audio_registry)
-            .expect("fallback to defaults should succeed");
+        let _session = SessionHandle::new(capabilities, registry, audio_registry)
+            .expect("session creation should succeed even with failing factory");
+    }
+
+    #[test]
+    fn session_factory_uses_primary_initially() {
+        let factory = Arc::new(MockFactory);
+        let id = factory.system_id();
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+        assert!(session.factory().is_none());
+        RomLoadTarget::set_active_system(&mut session, id)
+            .expect("test setup should succeed for known system");
+        assert_eq!(session.factory().expect("no active system").system_id(), id);
+    }
+
+    #[test]
+    fn set_active_system_rejects_unknown_id() {
+        let factory = Arc::new(MockFactory);
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+
+        let err =
+            RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown")).unwrap_err();
+        assert!(matches!(err, SystemActivationError::NotRegistered(_)));
+        assert!(session.active_system_id().is_none());
+        assert!(session.factory().is_none());
+    }
+
+    #[test]
+    fn switching_system_discards_previous_loaded_runtime_state() {
+        let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+        let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+        let second_id = second.system_id();
+        let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+
+        RomLoadTarget::set_active_system(&mut session, first.system_id()).unwrap();
+        let resolved = session
+            .factory()
+            .unwrap()
+            .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+            .unwrap();
+        session
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
+            .unwrap();
+        assert!(session.loaded());
+
+        RomLoadTarget::set_active_system(&mut session, second_id).unwrap();
+
+        assert_eq!(session.active_system_id(), Some(&second_id));
         assert!(!session.loaded());
-        assert!(session.paused());
+        assert!(session.loaded_media.is_none());
+        assert!(session.slots().is_empty());
+    }
+
+    fn test_capabilities() -> HostBackendCapabilities {
+        HostBackendCapabilities {
+            window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: false,
+                supports_scaling: false,
+            },
+            presentation: None,
+        }
+    }
+
+    #[test]
+    fn registry_all_produces_settings_page_for_registered_system() {
+        use crate::settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        };
+        let factory = Arc::new(MockFactory);
+        let registry = SystemRegistry::new(vec![factory]);
+        let snapshot = SettingsSnapshot {
+            shared: default_shared_settings(&[]),
+            local: default_local_settings(),
+            app_state: default_app_state(),
+        };
+        let pages: Vec<_> = registry
+            .all()
+            .iter()
+            .map(|f| {
+                let view = settings_view(&snapshot, &f.system_id());
+                f.settings_page(&view)
+            })
+            .collect();
+        assert_eq!(
+            pages.len(),
+            1,
+            "should produce one page per registered system"
+        );
     }
 }

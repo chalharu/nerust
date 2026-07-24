@@ -39,13 +39,13 @@ mod tests {
 
     use super::controller_event_for_key;
     use crate::{
-        settings::defaults::seed::default_shared_settings,
+        settings::defaults::seed::test_nes_defaults,
         test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_A, TEST_CTRL_MIC, test_resolve},
     };
 
     #[test]
     fn keyboard_bindings_resolve_to_nes_input_events() {
-        let settings = default_shared_settings();
+        let settings = test_nes_defaults();
         let event = controller_event_for_key(
             &settings,
             SystemId::new("nes"),
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn keyboard_bindings_support_player_two_controls() {
-        let mut settings = default_shared_settings();
+        let mut settings = test_nes_defaults();
         settings
             .input
             .systems

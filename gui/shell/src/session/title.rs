@@ -1,7 +1,16 @@
 use nerust_emu_thread::ConsoleMetrics;
 
-pub fn window_title(paused: bool, console_metrics: ConsoleMetrics) -> String {
-    let state = if paused { "Nes -- Paused" } else { "Nes" };
+pub fn window_title(
+    paused: bool,
+    console_metrics: ConsoleMetrics,
+    system_name: Option<&str>,
+) -> String {
+    let label = system_name.unwrap_or("");
+    let state = if paused {
+        format!("{label} -- Paused")
+    } else {
+        label.to_string()
+    };
     if console_metrics.loaded {
         format!(
             "{state} | FPS {:.1} | Speed x{:.2}",
@@ -28,6 +37,7 @@ mod tests {
                 speed_multiplier: 1.01,
                 ..ConsoleMetrics::default()
             },
+            Some("Nes"),
         );
 
         assert!(title.contains("FPS 59.9"));
@@ -36,7 +46,7 @@ mod tests {
 
     #[test]
     fn window_title_marks_no_rom() {
-        assert!(window_title(true, ConsoleMetrics::default()).contains("Paused"));
-        assert!(window_title(true, ConsoleMetrics::default()).contains("No ROM"));
+        assert!(window_title(true, ConsoleMetrics::default(), Some("Nes")).contains("Paused"));
+        assert!(window_title(true, ConsoleMetrics::default(), Some("Nes")).contains("No ROM"));
     }
 }

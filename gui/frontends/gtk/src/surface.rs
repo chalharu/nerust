@@ -80,21 +80,19 @@ impl SurfaceExtend for Surface {
                 log::info!("reinit physical={:?}", physical_size);
                 if let Some(surf) = s.window.surface()
                     && let Some(display) = gdk::Display::default()
+                    && let Some(profile) = state.render_profile()
                 {
                     super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                        s.renderer.borrow_mut().realize(
-                            wh,
-                            dh,
-                            physical_size,
-                            state.render_profile(),
-                        );
+                        s.renderer
+                            .borrow_mut()
+                            .realize(wh, dh, physical_size, profile);
                     });
                 }
             }
 
-            s.renderer
-                .borrow_mut()
-                .render(state.frame_buffer(), physical_size);
+            if let Some(fb) = state.frame_buffer() {
+                s.renderer.borrow_mut().render(fb, physical_size);
+            }
         }
 
         true

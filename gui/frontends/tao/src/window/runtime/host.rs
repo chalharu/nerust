@@ -73,12 +73,12 @@ impl HostState {
         };
         let session = SessionHandle::new(
             capabilities,
-            Arc::clone(&ctx.core_factory),
+            ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
         .unwrap_or_else(|e| {
             log::error!("failed to create core: {e}");
-            std::process::abort();
+            std::process::exit(1);
         });
         Self {
             window: None,
@@ -449,7 +449,7 @@ impl HostState {
 
         match crate::settings_window::SettingsWindowHandle::new(
             self.session.settings_snapshot().clone(),
-            self.ctx.core_factory.clone(),
+            self.ctx.registry.clone(),
             self.ctx.audio_registry.clone(),
             event_loop,
         ) {
@@ -475,15 +475,17 @@ impl HostState {
         drop(handle);
         self.on_settings_closed();
         if let Some(mut snapshot) = pending {
-            if let Some(assignments) = pending_assignments {
-                // Embed assignments in snapshot so apply_settings saves them
-                let sid = self.session.factory().system_id().to_string();
-                snapshot
-                    .app_state
-                    .controller_assignments
-                    .insert(sid, assignments.to_string_pairs());
-                if let Err(error) = self.session.reassign_controllers(&assignments) {
-                    log::warn!("controller reassign failed: {error}");
+            if let Some(per_system) = pending_assignments {
+                for (sid, assignments) in per_system {
+                    snapshot
+                        .app_state
+                        .controller_assignments
+                        .insert(sid.to_string(), assignments.to_string_pairs());
+                    if self.session.active_system_id() == Some(&sid)
+                        && let Err(error) = self.session.reassign_controllers(&assignments)
+                    {
+                        log::warn!("controller reassign failed: {error}");
+                    }
                 }
             }
             match self.apply_settings(snapshot) {

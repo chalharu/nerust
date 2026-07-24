@@ -16,10 +16,14 @@ use iced_winit::{
     program,
     runtime::user_interface::{Cache, UserInterface},
 };
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::registry::SystemRegistry;
 use nerust_gui_shell::settings::editor::CaptureTarget;
 use nerust_input_traits::InputAssignments;
+
+use crate::settings::ui::PendingAssignments;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
@@ -145,7 +149,7 @@ pub(crate) struct SettingsWindowHandle {
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: Rc<Mutex<Option<InputAssignments>>>,
+    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     cursor: mouse::Cursor,
@@ -182,7 +186,7 @@ impl SettingsRenderer {
 impl SettingsWindowHandle {
     pub(crate) fn new(
         snapshot: SettingsSnapshot,
-        factory: Arc<dyn CoreFactory>,
+        registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         event_loop: &EventLoopWindowTarget<crate::app_menu::UserEvent>,
     ) -> Option<Self> {
@@ -210,7 +214,7 @@ impl SettingsWindowHandle {
 
         let program = SettingsAppProgram {
             snapshot,
-            factory,
+            registry,
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
@@ -347,7 +351,7 @@ impl SettingsWindowHandle {
         self.pending_apply.lock().unwrap().take()
     }
 
-    pub(crate) fn take_pending_assignments(&mut self) -> Option<InputAssignments> {
+    pub(crate) fn take_pending_assignments(&mut self) -> Option<Vec<(SystemId, InputAssignments)>> {
         self.pending_assignments.lock().unwrap().take()
     }
 

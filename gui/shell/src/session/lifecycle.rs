@@ -1,18 +1,23 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
-use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_core_traits::factory::{
+    CoreFactory,
+    load::{MediaObject, ResolvedLoadRequest},
+};
 use nerust_emu_thread::ConsoleMetrics;
 
 use crate::{
+    emu_core::EmuCore,
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
+        persistence::PersistenceManager,
         title::window_title,
     },
     settings::factory::settings_view,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct WindowSize {
     pub width: f32,
     pub height: f32,
@@ -20,11 +25,17 @@ pub struct WindowSize {
 
 impl SessionHandle {
     pub fn metrics(&self) -> ConsoleMetrics {
-        self.emu_core.metrics()
+        self.emu_core
+            .as_ref()
+            .map(|c| c.metrics())
+            .unwrap_or_default()
     }
 
     pub fn window_size(&self) -> WindowSize {
-        let profile = self.emu_core.render_profile();
+        let Some(core) = self.emu_core.as_ref() else {
+            return WindowSize::default();
+        };
+        let profile = core.render_profile();
         WindowSize {
             width: profile.physical_size.width,
             height: profile.physical_size.height,
@@ -33,7 +44,8 @@ impl SessionHandle {
 
     pub fn window_title(&self) -> String {
         let metrics = self.metrics();
-        window_title(metrics.paused, metrics)
+        let name = self.active_factory().map(|f| f.display_name());
+        window_title(metrics.paused, metrics, name)
     }
 
     pub fn loaded(&self) -> bool {
@@ -75,12 +87,18 @@ impl SessionHandle {
             } else {
                 volume
             };
-            let _ = self.emu_core.set_volume(volume);
+            if let Some(ref mut core) = self.emu_core
+                && let Err(e) = core.set_volume(volume)
+            {
+                log::warn!("set_volume failed: {e}");
+            }
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            if plan.session_rebuild_required {
-                let _ = self.rebuild_for_settings(&previous);
+            if plan.session_rebuild_required
+                && let Err(e) = self.rebuild_for_settings(&previous)
+            {
+                log::warn!("failed to rollback settings rebuild: {e}");
             }
             return Err(SessionError::Settings(error));
         }
@@ -121,49 +139,42 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.load(&media, Some(resolved.options))?;
+        {
+            let Some(core) = self.emu_core.as_ref() else {
+                return Err(SessionError::NoCore);
+            };
+            self.persistence.flush_mapper_save(core)?;
+        }
+        self.emu_core
+            .as_mut()
+            .ok_or(SessionError::NoCore)?
+            .load(&media, Some(resolved.options))?;
         self.loaded_media = Some(super::LoadedMedia {
             media: media.clone(),
         });
 
-        let sidecars = self
-            .emu_core
-            .canonical_media_identity()
-            .and_then(|identity| {
-                log::info!(
-                    "load_resolved: identity={:?} path={:?}",
-                    identity,
-                    media.path.as_deref()
-                );
-                self.resolve_persistence_paths(media.path.as_deref(), &identity)
-                    .inspect(|_| {
-                        log::info!("load_resolved: resolved persistence paths");
-                    })
-            });
-        if let Some(sidecars) = sidecars {
-            self.persistence
-                .configure(sidecars.states_dir, sidecars.mapper_save_path);
-            self.persistence.refresh_slots(&self.emu_core);
-            let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
-        } else {
-            log::info!("load_resolved: failed to resolve persistence paths");
-        }
+        self.setup_persistence(media.path.as_deref(), true);
 
         self.remember_last_successful_rom_directory(media.path.as_deref());
         Ok(())
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
-        self.persistence.flush_mapper_save(&self.emu_core)?;
-        self.emu_core.unload()?;
+        if let Some(ref core) = self.emu_core {
+            self.persistence.flush_mapper_save(core)?;
+        }
+        if let Some(ref mut core) = self.emu_core {
+            core.unload()?;
+        }
         self.loaded_media = None;
         self.persistence.reset();
         Ok(())
     }
 
     pub fn flush_before_exit(&mut self) {
-        if let Err(error) = self.persistence.flush_mapper_save(&self.emu_core) {
+        if let Some(ref core) = self.emu_core
+            && let Err(error) = self.persistence.flush_mapper_save(core)
+        {
             log::warn!("mapper save flush before close failed: {error}");
         }
         // Persist the latest settings to disk.  Reload from the manager first
@@ -187,101 +198,107 @@ impl SessionHandle {
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
         match command {
-            SessionCommand::Pause => {
-                if self.paused() {
-                    Ok(SessionCommandOutcome::default())
-                } else {
-                    self.emu_core.pause()?;
-                    Ok(SessionCommandOutcome {
-                        executed: true,
-                        needs_redraw: false,
-                    })
-                }
-            }
-            SessionCommand::Resume => {
-                if self.paused() {
-                    self.emu_core.resume()?;
-                    Ok(SessionCommandOutcome {
-                        executed: true,
-                        needs_redraw: self.loaded(),
-                    })
-                } else {
-                    Ok(SessionCommandOutcome::default())
-                }
-            }
-            SessionCommand::TogglePause => {
-                if self.paused() {
-                    self.run_command(SessionCommand::Resume)
-                } else {
-                    self.run_command(SessionCommand::Pause)
-                }
-            }
-            SessionCommand::Reset => {
-                self.emu_core.reset()?;
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::CreateSlot => {
-                self.persistence.create_slot(&self.emu_core);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
+            SessionCommand::Pause => self.cmd_pause(),
+            SessionCommand::Resume => self.cmd_resume(),
+            SessionCommand::TogglePause => self.cmd_toggle_pause(),
+            SessionCommand::Reset => self.cmd_reset(),
+            SessionCommand::CreateSlot => Ok(self.slot_op(|p, c| p.create_slot(c))),
             SessionCommand::SaveActiveSlotOrNew => {
-                self.persistence.save_active_slot_or_new(&self.emu_core);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
+                Ok(self.slot_op(|p, c| p.save_active_slot_or_new(c)))
             }
-            SessionCommand::LoadActiveSlot => {
-                let was_paused = self.paused();
-                let executed = self.persistence.load_active_slot(&self.emu_core);
-                Ok(SessionCommandOutcome {
-                    executed,
-                    needs_redraw: executed && was_paused && !self.paused(),
-                })
-            }
-            SessionCommand::SelectActiveSlot(slot_id) => {
-                self.persistence.select_active_slot(slot_id);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::SaveSlot(slot_id) => {
-                self.persistence.save_slot(slot_id, &self.emu_core, false);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::LoadSlot(slot_id) => {
-                let was_paused = self.paused();
-                let executed = self.persistence.load_slot(slot_id, &self.emu_core);
-                Ok(SessionCommandOutcome {
-                    executed,
-                    needs_redraw: executed && was_paused && !self.paused(),
-                })
-            }
-            SessionCommand::DeleteSlot(slot_id) => {
-                self.persistence.delete_slot(slot_id, &self.emu_core);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::SelectNextSlot => Ok(SessionCommandOutcome {
-                executed: self.persistence.select_adjacent_slot(true).is_some(),
-                needs_redraw: false,
-            }),
-            SessionCommand::SelectPreviousSlot => Ok(SessionCommandOutcome {
-                executed: self.persistence.select_adjacent_slot(false).is_some(),
-                needs_redraw: false,
-            }),
+            SessionCommand::LoadActiveSlot => Ok(self.load_slot_op(|p, c| p.load_active_slot(c))),
+            SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
+            SessionCommand::SaveSlot(id) => Ok(self.slot_op(|p, c| p.save_slot(id, c, false))),
+            SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
+            SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
+            SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(true)),
+            SessionCommand::SelectPreviousSlot => Ok(self.cmd_adjacent_slot(false)),
+        }
+    }
+
+    fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if self.paused() {
+            return Ok(SessionCommandOutcome::default());
+        }
+        self.core_mut()?.pause()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        })
+    }
+
+    fn cmd_resume(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if !self.paused() {
+            return Ok(SessionCommandOutcome::default());
+        }
+        self.core_mut()?.resume()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: self.loaded(),
+        })
+    }
+
+    fn cmd_toggle_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if self.paused() {
+            self.cmd_resume()
+        } else {
+            self.cmd_pause()
+        }
+    }
+
+    fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        self.core_mut()?.reset()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        })
+    }
+
+    fn cmd_select_active_slot(&mut self, slot_id: u64) -> SessionCommandOutcome {
+        self.persistence.select_active_slot(slot_id);
+        SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        }
+    }
+
+    fn cmd_adjacent_slot(&mut self, forward: bool) -> SessionCommandOutcome {
+        SessionCommandOutcome {
+            executed: self.persistence.select_adjacent_slot(forward).is_some(),
+            needs_redraw: false,
+        }
+    }
+
+    fn core_mut(&mut self) -> Result<&EmuCore, SessionError> {
+        self.emu_core.as_ref().ok_or(SessionError::NoCore)
+    }
+
+    fn slot_op(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore),
+    ) -> SessionCommandOutcome {
+        if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core);
+        }
+        SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        }
+    }
+
+    fn load_slot_op(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+    ) -> SessionCommandOutcome {
+        let was_paused = self.paused();
+        let executed = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core)
+        } else {
+            false
+        };
+        SessionCommandOutcome {
+            executed,
+            needs_redraw: executed && was_paused && !self.paused(),
         }
     }
 
@@ -294,39 +311,42 @@ impl SessionHandle {
     }
 
     pub fn save_hidden_lifecycle_state(&mut self) -> bool {
-        self.persistence.save_hidden(&self.emu_core)
+        self.emu_core
+            .as_ref()
+            .is_some_and(|core| self.persistence.save_hidden(core))
     }
 
     pub fn load_hidden_lifecycle_state(&mut self) -> bool {
-        self.persistence.load_hidden(&self.emu_core)
+        self.emu_core
+            .as_ref()
+            .is_some_and(|core| self.persistence.load_hidden(core))
     }
 
     pub fn clear_hidden_lifecycle_state(&mut self) {
         self.persistence.clear_hidden();
     }
 
-    fn rebuild_for_settings(
+    pub(super) fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<(), SessionError> {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
         let exported_core_bytes = if was_loaded {
-            Some(self.emu_core.save_state_raw()?)
+            Some(
+                self.emu_core
+                    .as_ref()
+                    .ok_or(SessionError::NoCore)?
+                    .save_state_raw()?,
+            )
         } else {
             None
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
-        let system_id = self.factory.system_id();
-        let view = settings_view(next_settings, &system_id);
-        let parts = self.factory.create_core_and_adapter_with_assignments(
-            &view,
-            speaker,
-            &self.current_assignments,
-        )?;
-        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
+        let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
+        let (rebuilt_core, gui_input, field_map) =
+            self.build_core_for_settings(next_settings, &factory)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, None)?;
@@ -338,38 +358,37 @@ impl SessionHandle {
             }
         }
 
-        self.emu_core = rebuilt_core;
-        self.gui_input = gui_input;
+        self.emu_core = Some(rebuilt_core);
+        self.gui_input = Some(gui_input);
         self.field_map = field_map;
         if was_loaded {
             let rom_path = self
                 .loaded_media
                 .as_ref()
-                .and_then(|m| m.media.path.as_deref());
-            let sidecars = self
-                .emu_core
-                .canonical_media_identity()
-                .and_then(|identity| {
-                    log::info!(
-                        "rebuild_for_settings: identity={:?} path={:?}",
-                        identity,
-                        rom_path
-                    );
-                    self.resolve_persistence_paths(rom_path, &identity)
-                });
-            if let Some(sidecars) = sidecars {
-                self.persistence
-                    .configure(sidecars.states_dir, sidecars.mapper_save_path);
-                self.persistence.refresh_slots(&self.emu_core);
-            }
-            if !restored_runtime_state {
-                let _ = self.persistence.load_mapper_save_if_needed(&self.emu_core);
-            }
-            if was_paused {
-                self.emu_core.pause()?;
+                .and_then(|m| m.media.path.clone());
+            let rom_path_deref = rom_path.as_deref();
+            self.setup_persistence(rom_path_deref, !restored_runtime_state);
+            if was_paused && let Some(ref mut core) = self.emu_core {
+                core.pause()?;
             }
         }
         Ok(())
+    }
+
+    fn build_core_for_settings(
+        &self,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        factory: &Arc<dyn CoreFactory>,
+    ) -> Result<super::CoreParts, SessionError> {
+        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
+        let system_id = factory.system_id();
+        let view = settings_view(next_settings, &system_id);
+        let parts = factory.create_core_and_adapter_with_assignments(
+            &view,
+            speaker,
+            &self.current_assignments,
+        )?;
+        Ok(crate::emu_core::EmuCore::from_parts(parts))
     }
 
     fn resolve_persistence_paths(
@@ -384,6 +403,26 @@ impl SessionHandle {
                 error
             })
             .ok()
+    }
+
+    fn setup_persistence(&mut self, rom_path: Option<&Path>, load_mapper_save: bool) -> bool {
+        let sidecars = self
+            .emu_core
+            .as_ref()
+            .and_then(|c| c.canonical_media_identity())
+            .and_then(|identity| self.resolve_persistence_paths(rom_path, &identity));
+        let Some(sidecars) = sidecars else {
+            return false;
+        };
+        self.persistence
+            .configure(sidecars.states_dir, sidecars.mapper_save_path);
+        if let Some(ref core) = self.emu_core {
+            self.persistence.refresh_slots(core);
+            if load_mapper_save && let Err(e) = self.persistence.load_mapper_save_if_needed(core) {
+                log::warn!("load_mapper_save_if_needed failed: {e}");
+            }
+        }
+        true
     }
 
     fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {

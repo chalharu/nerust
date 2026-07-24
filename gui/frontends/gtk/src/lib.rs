@@ -13,7 +13,7 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use nerust_core_traits::factory::descriptor::SystemSettingsPageModel;
+use nerust_core_traits::factory::{CoreFactory, descriptor::SystemSettingsPageModel};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -57,12 +57,12 @@ impl State {
         };
         let session = SessionHandle::new(
             capabilities,
-            Arc::clone(&ctx.core_factory),
+            ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
         .unwrap_or_else(|e| {
             log::error!("failed to create core: {e}");
-            std::process::abort();
+            std::process::exit(1);
         });
 
         Self {
@@ -76,17 +76,29 @@ impl State {
         self.session.swap_frame_buffer();
     }
 
-    pub(crate) fn frame_buffer(&self) -> &FrameBuffer {
+    pub(crate) fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.session.frame_buffer()
     }
 
-    pub(crate) fn settings_page(&self) -> SystemSettingsPageModel {
-        let system_id = self.ctx.core_factory.system_id();
-        let view = settings_view(self.session.settings_snapshot(), &system_id);
-        self.ctx.core_factory.settings_page(&view)
+    pub(crate) fn active_factory(&self) -> Option<Arc<dyn CoreFactory>> {
+        self.session.active_factory().cloned()
     }
 
-    pub(crate) fn render_profile(&self) -> &VideoRenderProfile {
+    pub(crate) fn settings_pages(&self) -> Vec<(&'static str, SystemSettingsPageModel)> {
+        let snapshot = self.session.settings_snapshot();
+        self.ctx
+            .registry
+            .all()
+            .iter()
+            .map(|factory| {
+                let system_id = factory.system_id();
+                let view = settings_view(snapshot, &system_id);
+                (factory.display_name(), factory.settings_page(&view))
+            })
+            .collect()
+    }
+
+    pub(crate) fn render_profile(&self) -> Option<&VideoRenderProfile> {
         self.session.render_profile()
     }
 
@@ -101,6 +113,9 @@ impl State {
     pub(crate) fn load_path(&mut self, path: &Path) {
         if let Err(e) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
             log::warn!("ROM load failed: {e}");
+        }
+        if self.session.loaded() {
+            self.renderer_reload_pending = true;
         }
     }
 

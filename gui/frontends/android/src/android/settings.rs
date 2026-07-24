@@ -41,6 +41,11 @@ const FILTER_CHOICES: &[NesVideoFilter] = &[
 ///
 /// Derived from [`SettingsSnapshot`] on the way in; applied back via
 /// [`AndroidSettings::apply_to_snapshot`] on the way out.
+///
+/// TODO: generalize to multi-system — replace `nes_filter` with
+/// per-system settings obtained via `CoreFactory::settings_page()`
+/// and `SystemDefaults` trait.  See `gui/shell/src/settings/seed.rs`
+/// for the factory-iteration pattern used in desktop frontends.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AndroidSettings {
     pub audio_muted: bool,
@@ -91,7 +96,13 @@ impl AndroidSettings {
             .or_insert_with(|| {
                 Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>
             });
-        let nes = system.downcast_mut::<NesSettings>().unwrap();
+        let nes = match system.downcast_mut::<NesSettings>() {
+            Some(nes) => nes,
+            None => {
+                log::warn!("apply_to_snapshot: system is not NES, skipping video filter");
+                return;
+            }
+        };
         nes.video.filter = self.nes_filter;
     }
 

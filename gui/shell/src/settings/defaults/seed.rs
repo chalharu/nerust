@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use nerust_core_traits::identity::SystemId;
+use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
@@ -8,27 +8,35 @@ use nerust_gui_settings::{
     shared::DesktopSharedSettings,
 };
 use nerust_keyboard::Key;
-use nerust_nes_settings::NesSettings;
 
-pub fn default_shared_settings() -> DesktopSharedSettings {
-    let mut settings = DesktopSharedSettings {
-        systems: BTreeMap::from([(
-            SystemId::new("nes"),
-            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
-        )]),
-        ..Default::default()
-    };
-    let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
-    nes_input.implicit_keyboard_profile_mut().bindings =
-        crate::keyboard_defaults::default_nes_bindings();
-    let _ = nes_input
-        .keyboard_profiles
-        .entry(IMPLICIT_PROFILE_ID.to_string())
-        .or_default();
+pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSharedSettings {
+    let mut settings = DesktopSharedSettings::default();
+    for factory in factories {
+        let Some(sd) = factory.as_system_defaults() else {
+            continue;
+        };
+        let sid = factory.system_id();
+        if let Some(sys_settings) = sd.default_system_settings() {
+            settings.systems.insert(sid, sys_settings);
+        }
+        if let Some(attachment) = sd.default_input_attachment_id()
+            && let Some(control_prefix) = sd.default_input_control_prefix()
+        {
+            let mut input = nerust_gui_settings::input::SystemInputSettings::default();
+            input.implicit_keyboard_profile_mut().bindings =
+                crate::keyboard_defaults::default_system_bindings(attachment, control_prefix);
+            let _ = input
+                .keyboard_profiles
+                .entry(IMPLICIT_PROFILE_ID.to_string())
+                .or_default();
+            settings.input.systems.insert(sid, input);
+        }
+    }
+    seed_global_shortcuts(&mut settings);
     settings
-        .input
-        .systems
-        .insert(SystemId::new("nes"), nes_input);
+}
+
+fn seed_global_shortcuts(settings: &mut DesktopSharedSettings) {
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
@@ -59,7 +67,6 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
             key: None,
         },
     ];
-    settings
 }
 
 pub fn default_local_settings() -> HostBackendLocalSettings {
@@ -70,20 +77,41 @@ pub fn default_app_state() -> DesktopAppState {
     DesktopAppState::default()
 }
 
+/// NES defaults for tests that need concrete input settings but don't
+/// depend on the `nes/factory` crate (e.g. binding conflict tests in
+/// `gui/shell` itself). Production paths use `default_shared_settings`
+/// with factory iteration via `SystemDefaults`.
+#[cfg(test)]
+pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
+    use nerust_core_traits::identity::SystemId;
+    let mut settings = default_shared_settings(&[]);
+    // Explicit NES seed for tests — avoids depending on nes/factory crate.
+    // Production paths use factory.default_system_settings() instead.
+    settings.systems.insert(
+        SystemId::new("nes"),
+        Box::new(nerust_nes_settings::NesSettings::default())
+            as Box<dyn nerust_settings_traits::SystemSettings>,
+    );
+    let mut input = nerust_gui_settings::input::SystemInputSettings::default();
+    input.implicit_keyboard_profile_mut().bindings =
+        crate::keyboard_defaults::default_system_bindings("nes.attachment.player1", "nes.control");
+    let _ = input
+        .keyboard_profiles
+        .entry(IMPLICIT_PROFILE_ID.to_string())
+        .or_default();
+    settings.input.systems.insert(SystemId::new("nes"), input);
+    settings
+}
+
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::input::ShortcutAction;
 
     use super::default_shared_settings;
-    use crate::test_support::TEST_CTRL_MIC;
 
     #[test]
-    fn default_settings_seed_nes_bindings_and_system_settings() {
-        let settings = default_shared_settings();
-
-        assert!(settings.systems.contains_key(&SystemId::new("nes")));
-        assert!(settings.input.systems.contains_key(&SystemId::new("nes")));
+    fn default_settings_include_global_shortcuts() {
+        let settings = default_shared_settings(&[]);
         assert!(
             settings
                 .input
@@ -91,18 +119,6 @@ mod tests {
                 .keyboard
                 .iter()
                 .any(|binding| binding.action == ShortcutAction::Reset && binding.key.is_none())
-        );
-        assert!(
-            !settings
-                .input
-                .systems
-                .get(&SystemId::new("nes"))
-                .unwrap()
-                .implicit_keyboard_profile()
-                .unwrap()
-                .bindings
-                .iter()
-                .any(|binding| binding.control.as_str() == TEST_CTRL_MIC.as_str())
         );
     }
 }

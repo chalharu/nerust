@@ -40,7 +40,7 @@ pub struct CoreParts {
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     pub render_profile: nerust_render_traits::VideoRenderProfile,
-    pub palette: Box<[u32; 256]>,
+    pub palette: Box<[u32]>,
 }
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。
@@ -50,7 +50,7 @@ pub struct CoreParts {
 ///
 /// `FactorySettingsView` を介して設定を受け取ることで、
 /// gui/runtime の `SettingsSnapshot` への依存を回避している。
-pub trait CoreFactory {
+pub trait CoreFactory: Send + Sync {
     fn system_id(&self) -> SystemId;
 
     fn display_name(&self) -> &'static str;
@@ -98,4 +98,40 @@ pub trait CoreFactory {
 
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
+
+    /// Access the [`SystemDefaults`] facet of this factory.
+    ///
+    /// Returns `None` for factories that only provide core creation
+    /// (ISP separation — GUI integration methods live on `SystemDefaults`).
+    fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
+        None
+    }
+}
+
+/// System-specific GUI integration defaults.
+///
+/// Separated from [`CoreFactory`] to respect ISP: factories that only
+/// provide core creation are not forced to implement label resolution,
+/// keyboard binding seeds, or default system settings.
+pub trait SystemDefaults: Send + Sync {
+    /// Default system-specific settings to seed into the shared settings map.
+    fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
+        None
+    }
+
+    /// Resolve a system-specific label ID to a localized string.
+    /// `language` is "ja" or "en". Returns None if unknown (display raw ID).
+    fn resolve_label(&self, _label_id: &str, _language: &str) -> Option<String> {
+        None
+    }
+
+    /// Attachment ID prefix for default keyboard bindings.
+    fn default_input_attachment_id(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Control ID prefix for default keyboard bindings.
+    fn default_input_control_prefix(&self) -> Option<&'static str> {
+        None
+    }
 }
