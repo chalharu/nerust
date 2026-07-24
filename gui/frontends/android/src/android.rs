@@ -283,13 +283,16 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
 
-        let factory = self
-            .session
-            .registry()
-            .detect(&media)
-            .map_err(|e| format!("failed to detect ROM system: {e}"))?
-            .ok_or_else(|| "unsupported ROM format".to_string())?;
-        let system_id = factory.system_id();
+        let (factory, system_id) = {
+            let f = self
+                .session
+                .registry()
+                .detect(&media)
+                .map_err(|e| format!("failed to detect ROM system: {e}"))?
+                .ok_or_else(|| "unsupported ROM format".to_string())?;
+            let id = f.system_id();
+            (f.clone(), id)
+        };
 
         nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
             .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
@@ -366,13 +369,16 @@ impl AndroidFrontend {
             })?;
         let media = MediaObject::new(Some(path), bytes);
 
-        let factory = self
-            .session
-            .registry()
-            .detect(&media)
-            .map_err(|e| format!("failed to detect ROM system: {e}"))?
-            .ok_or_else(|| "unsupported ROM format".to_string())?;
-        let system_id = factory.system_id();
+        let (factory, system_id) = {
+            let f = self
+                .session
+                .registry()
+                .detect(&media)
+                .map_err(|e| format!("failed to detect ROM system: {e}"))?
+                .ok_or_else(|| "unsupported ROM format".to_string())?;
+            let id = f.system_id();
+            (f.clone(), id)
+        };
 
         nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
             .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
