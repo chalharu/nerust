@@ -347,29 +347,25 @@ pub(crate) fn present_preferences_dialog(
                         // Clear multi-port conflicts
                         let snapshot = current_assignments.clone();
                         for (slot_id, ctrl_opt) in &snapshot {
-                            let profile = match ctrl_opt {
-                                Some(p) => p.as_ref(),
-                                None => continue,
+                            let Some(profile) = ctrl_opt.as_ref().map(|p| p.as_ref()) else {
+                                continue;
                             };
+                            nerust_gui_shell::session::input::clear_multi_port_conflicts(
+                                *slot_id,
+                                profile,
+                                &mut current_assignments,
+                            );
+                            // Also clear the combo boxes for cleared slots
                             for ps in profile.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(slot_id) {
+                                if ps.ports.len() <= 1 || !ps.ports.contains(slot_id) {
                                     continue;
                                 }
                                 for &port in ps.ports {
                                     if port != *slot_id
-                                        && let Some(other) =
-                                            current_assignments.iter_mut().find(|(s, _)| *s == port)
-                                    {
-                                        other.1 = None;
-                                        // Also clear the combo box for this slot
-                                        if let Some(sc_item) =
+                                        && let Some(sc_item) =
                                             sc.borrow().iter().find(|s| s.slot_id == port)
-                                        {
-                                            sc_item.combo.set_active(Some(0));
-                                        }
+                                    {
+                                        sc_item.combo.set_active(Some(0));
                                     }
                                 }
                             }
@@ -689,26 +685,12 @@ pub(crate) fn present_preferences_dialog(
                                 .collect();
                         let assigned = slots.clone();
                         for (slot_id, ctrl_opt) in &assigned {
-                            let profile = match ctrl_opt {
-                                Some(p) => p.as_ref(),
-                                None => continue,
+                            let Some(profile) = ctrl_opt.as_ref().map(|p| p.as_ref()) else {
+                                continue;
                             };
-                            for ps in profile.port_sets() {
-                                if ps.ports.len() <= 1 {
-                                    continue;
-                                }
-                                if !ps.ports.contains(slot_id) {
-                                    continue;
-                                }
-                                for &port in ps.ports {
-                                    if port != *slot_id
-                                        && let Some(other) =
-                                            slots.iter_mut().find(|(s, _)| *s == port)
-                                    {
-                                        other.1 = None;
-                                    }
-                                }
-                            }
+                            nerust_gui_shell::session::input::clear_multi_port_conflicts(
+                                *slot_id, profile, &mut slots,
+                            );
                         }
                         nerust_input_traits::InputAssignments { slots }
                     };

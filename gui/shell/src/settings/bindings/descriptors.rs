@@ -60,9 +60,9 @@ const SHORTCUT_DESCRIPTORS: &[ShortcutDescriptor] = &[
 
 pub fn keyboard_binding_descriptors(
     topology: &InputTopologyDescriptor,
+    system: SystemId,
 ) -> Vec<KeyboardBindingDescriptor> {
-    // system ID is irrelevant for pure binding descriptors (sections carry the system)
-    keyboard_binding_sections(topology, SystemId::new("nes"))
+    keyboard_binding_sections(topology, system)
         .into_iter()
         .flat_map(|section| section.bindings)
         .collect()
