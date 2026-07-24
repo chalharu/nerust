@@ -40,6 +40,11 @@ pub fn apply_settings_choice(
 ) -> Result<(), nerust_core_traits::factory::FactoryError> {
     let system_id = factory.system_id();
     let mut view = settings_view(snapshot, system_id.as_ref());
+    if view.system_config.is_none() {
+        view.system_config = factory
+            .as_system_defaults()
+            .and_then(|defaults| defaults.default_system_settings());
+    }
     factory.apply_settings_choice(&mut view, field, choice)?;
     if let Some(settings) = view.system_config {
         snapshot.shared.systems.insert(system_id, settings);
@@ -68,6 +73,7 @@ mod tests {
         identity::SystemId,
     };
     use nerust_gui_settings::language::AppLanguage;
+    use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use std::sync::Arc;
 
     use crate::session::test_helpers::DummySystemId;
@@ -94,10 +100,16 @@ mod tests {
         }
         fn apply_settings_choice(
             &self,
-            _: &mut FactorySettingsView,
+            view: &mut FactorySettingsView,
             _: &SystemSettingsFieldId,
             _: &SystemSettingsChoiceId,
         ) -> Result<(), FactoryError> {
+            let settings = view
+                .system_config
+                .as_deref_mut()
+                .and_then(|settings| settings.downcast_mut::<NesSettings>())
+                .ok_or(FactoryError::InvalidSettings)?;
+            settings.video.filter = NesVideoFilter::NtscRgb;
             Ok(())
         }
         fn resolve_load_request(
@@ -130,6 +142,12 @@ mod tests {
     }
 
     impl SystemDefaults for LabelFactory {
+        fn default_system_settings(
+            &self,
+        ) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
+            Some(Box::new(NesSettings::default()))
+        }
+
         fn resolve_label(&self, label_id: &str, _language: &str) -> Option<String> {
             self.labels
                 .iter()
@@ -161,5 +179,31 @@ mod tests {
         };
         let result = resolve_label("test.lang", AppLanguage::Japanese, &factory);
         assert_eq!(result, "ja:日本語");
+    }
+
+    #[test]
+    fn apply_choice_seeds_missing_system_settings_from_factory_defaults() {
+        let factory = LabelFactory { labels: vec![] };
+        let mut snapshot = nerust_gui_runtime::settings::SettingsSnapshot {
+            shared: nerust_gui_settings::shared::DesktopSharedSettings::default(),
+            local: nerust_gui_settings::local::HostBackendLocalSettings::default(),
+            app_state: nerust_gui_settings::app_state::DesktopAppState::default(),
+        };
+
+        apply_settings_choice(
+            &factory,
+            &mut snapshot,
+            &SystemSettingsFieldId("video.filter".into()),
+            &SystemSettingsChoiceId("ntsc_rgb".into()),
+        )
+        .unwrap();
+
+        let settings = snapshot
+            .shared
+            .systems
+            .get(&(Box::new(DummySystemId) as Box<_>))
+            .and_then(|settings| settings.downcast_ref::<NesSettings>())
+            .unwrap();
+        assert_eq!(settings.video.filter, NesVideoFilter::NtscRgb);
     }
 }
