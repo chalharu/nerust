@@ -1,15 +1,19 @@
-use std::{path::PathBuf, rc::Rc, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, rc::Rc, sync::Arc};
 
 use clap::Command;
 use log::LevelFilter;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::{CoreFactory, load::DynSystemLoadOptions},
+    identity::SystemId,
 };
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
 use nerust_render_traits::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
+
+type LoadOptionsBySystem = HashMap<SystemId, Box<dyn DynSystemLoadOptions>>;
+type CliParseResult = Result<(RunOptions, LoadOptionsBySystem), clap::Error>;
 
 fn create_factory() -> Box<dyn GpuFactory> {
     #[cfg(all(feature = "wgpu", not(any(feature = "opengl", feature = "softbuffer"))))]
@@ -40,17 +44,16 @@ fn create_audio_registry() -> AudioBackendRegistry {
     reg
 }
 
-fn parse_cli_args(
-    factories: &[Arc<dyn CoreFactory>],
-) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
+fn parse_cli_args(factories: &[Arc<dyn CoreFactory>]) -> CliParseResult {
     parse_cli_args_from(factories, std::env::args())
 }
 
 fn parse_cli_args_from(
     factories: &[Arc<dyn CoreFactory>],
     args: impl IntoIterator<Item = String>,
-) -> Result<(RunOptions, Vec<Box<dyn DynSystemLoadOptions>>), clap::Error> {
+) -> CliParseResult {
     let defaults: Vec<_> = factories.iter().map(|f| f.load_options_schema()).collect();
+    validate_unique_cli_arguments(factories, &defaults)?;
 
     let mut app = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -65,11 +68,39 @@ fn parse_cli_args_from(
     let options = RunOptions {
         rom_path: matches.get_one::<String>("filename").map(PathBuf::from),
     };
-    let parsed = defaults
+    let parsed = factories
         .iter()
-        .map(|opt| opt.arg_matches(&matches))
-        .collect::<Result<Vec<_>, _>>()?;
+        .zip(&defaults)
+        .map(|(factory, schema)| {
+            schema
+                .arg_matches(&matches)
+                .map(|options| (factory.system_id(), options))
+        })
+        .collect::<Result<HashMap<_, _>, _>>()?;
     Ok((options, parsed))
+}
+
+fn validate_unique_cli_arguments(
+    factories: &[Arc<dyn CoreFactory>],
+    schemas: &[Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema>],
+) -> Result<(), clap::Error> {
+    let mut owners: HashMap<String, SystemId> = HashMap::new();
+    for (factory, schema) in factories.iter().zip(schemas) {
+        let system_id = factory.system_id();
+        let command = schema.augment_args(Command::new("system-options"));
+        for argument in command.get_arguments() {
+            let argument_id = argument.get_id().as_str().to_string();
+            if let Some(previous) = owners.insert(argument_id.clone(), system_id) {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    format!(
+                        "CLI argument '{argument_id}' is declared by both {previous} and {system_id}"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn run() {
@@ -89,7 +120,9 @@ pub fn run() {
 
     let (options, core_options) = parse_cli_args(registry.all()).unwrap_or_else(|e| e.exit());
 
-    let rom_loader = registry.create_loader(core_options);
+    let rom_loader = registry
+        .create_loader(core_options)
+        .expect("CLI options must belong to registered systems");
 
     let ctx = FrontendContext {
         gpu_factory: Rc::from(gpu_factory),
@@ -113,7 +146,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Arc};
 
     use nerust_core_traits::{
         CoreOptions,
@@ -162,10 +195,13 @@ mod tests {
     #[test]
     fn registry_rom_loader_uses_pending_options() {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let system_id = factory.system_id();
         let pending = factory.default_load_options();
         let shared = default_shared_settings(std::slice::from_ref(&factory));
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
-        let mut loader = registry.create_loader(vec![pending]);
+        let mut loader = registry
+            .create_loader(HashMap::from([(system_id, pending)]))
+            .unwrap();
 
         let mut target = LoadRecorder {
             resolved: None,
@@ -196,7 +232,10 @@ mod tests {
         let result = super::parse_cli_args_from(&factories, ["nerust".into()]);
 
         let (_options, parsed) = result.expect("parse should succeed with no args");
-        assert_eq!(parsed.len(), 1, "one factory should produce one option set");
+        assert!(
+            parsed.contains_key(&factories[0].system_id()),
+            "factory options should be keyed by system ID"
+        );
     }
 
     #[test]

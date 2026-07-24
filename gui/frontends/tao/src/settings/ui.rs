@@ -366,20 +366,22 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
             Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
             Message::SetSystemChoice(field, choice) => {
-                if let Some(factory) = self
+                let Some(factory) = self
                     .system_tab_index
                     .and_then(|i| self.registry.all().get(i))
-                {
-                    let _ = apply_settings_choice(
-                        factory.as_ref(),
-                        &mut self.draft,
-                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                            field.into(),
-                        ),
-                        &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                            choice.value.into(),
-                        ),
-                    );
+                else {
+                    return Task::none();
+                };
+                if let Err(error) = apply_settings_choice(
+                    factory.as_ref(),
+                    &mut self.draft,
+                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
+                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                        choice.value.into(),
+                    ),
+                ) {
+                    log::error!("failed to apply system settings choice: {error}");
+                    self.error_message = Some(error.to_string());
                 }
             }
             Message::SetControllerSlot {

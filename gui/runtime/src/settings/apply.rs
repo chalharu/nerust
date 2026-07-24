@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_settings_traits::SystemSettings;
 
@@ -12,9 +13,12 @@ pub fn derive_apply_plan(
     capabilities: &HostBackendCapabilities,
     before: &SettingsSnapshot,
     after: &SettingsSnapshot,
+    active_system_id: Option<&SystemId>,
 ) -> SettingsApplyPlan {
     let audio_changed = before.local.audio != after.local.audio;
-    let visual_changed = live_system_settings_changed(&before.shared, &after.shared);
+    let visual_changed = active_system_id.is_some_and(|system_id| {
+        live_system_settings_changed(&before.shared, &after.shared, system_id)
+    });
     let window_capabilities = capabilities.window;
     let presentation_capabilities = capabilities.presentation;
     let scaling_changed = before.local.video.window.scaling != after.local.video.window.scaling;
@@ -111,16 +115,12 @@ fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
 fn live_system_settings_changed(
     before: &DesktopSharedSettings,
     after: &DesktopSharedSettings,
+    system_id: &SystemId,
 ) -> bool {
-    before.systems.iter().any(|(system_id, before_settings)| {
-        system_live_settings_changed(
-            Some(&**before_settings),
-            after.systems.get(system_id).map(|s| &**s),
-        )
-    }) || after
-        .systems
-        .iter()
-        .any(|(system_id, _)| !before.systems.contains_key(system_id))
+    system_live_settings_changed(
+        before.systems.get(system_id).map(|settings| &**settings),
+        after.systems.get(system_id).map(|settings| &**settings),
+    )
 }
 
 fn system_live_settings_changed(
@@ -175,7 +175,7 @@ mod tests {
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert_eq!(
             plan,
@@ -211,7 +211,7 @@ mod tests {
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert!(plan.session_rebuild_required);
     }
@@ -232,7 +232,7 @@ mod tests {
             .unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert!(!plan.session_rebuild_required);
     }
@@ -247,7 +247,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&gtk_caps(), &before, &after);
+        let plan = derive_apply_plan(&gtk_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -264,7 +264,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -281,10 +281,31 @@ mod tests {
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after);
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
+        assert!(!plan.session_rebuild_required);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn inactive_system_change_does_not_rebuild_active_session() {
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        let mut after = before.clone();
+        let mut inactive = nerust_nes_settings::NesSettings::default();
+        inactive.video.filter = NesVideoFilter::NtscRgb;
+        after
+            .shared
+            .systems
+            .insert(SystemId::new("snes"), Box::new(inactive));
+
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+
         assert!(!plan.session_rebuild_required);
         assert!(!plan.renderer_rebuild_required);
     }

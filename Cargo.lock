@@ -2848,6 +2848,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_settings_traits",
  "serde",
+ "serde_json",
  "thiserror 2.0.19",
 ]
 

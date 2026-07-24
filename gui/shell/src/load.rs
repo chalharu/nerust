@@ -18,7 +18,7 @@ pub enum SystemActivationError {
 pub enum RomLoaderError {
     #[error("I/O error: {0}")]
     Io(String),
-    #[error("unsupported ROM format")]
+    #[error("ROM detection failed: {0}")]
     Detect(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
