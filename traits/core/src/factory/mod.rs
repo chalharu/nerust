@@ -40,7 +40,7 @@ pub struct CoreParts {
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     pub render_profile: nerust_render_traits::VideoRenderProfile,
-    pub palette: Box<[u32; 256]>,
+    pub palette: Box<[u32]>,
 }
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。
