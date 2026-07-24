@@ -58,7 +58,7 @@ macro_rules! declare_system_id {
         )]
         pub(crate) struct $name;
 
-        #[$crate::identity::__private::_typetag_serde]
+        #[$crate::identity::__private::_typetag_serde(name = concat!(module_path!(), "::", stringify!($name)))]
         impl SystemId for $name {}
 
         impl ToString for $name {
@@ -78,7 +78,7 @@ macro_rules! declare_system_id {
                 true
             }
         }
-        
+
         impl Eq for $name {}
     };
 }
