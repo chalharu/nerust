@@ -16,13 +16,14 @@ use iced_winit::{
     program,
     runtime::user_interface::{Cache, UserInterface},
 };
-use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
+use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_gui_shell::settings::editor::CaptureTarget;
 use nerust_input_traits::InputAssignments;
 
-type PendingAssignments = std::rc::Rc<std::sync::Mutex<Option<Vec<(SystemId, InputAssignments)>>>>;
+use crate::settings::ui::PendingAssignments;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{

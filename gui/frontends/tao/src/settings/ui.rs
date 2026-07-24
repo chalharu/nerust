@@ -45,7 +45,7 @@ use nerust_keyboard::Key;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
-type PendingAssignments =
+pub(crate) type PendingAssignments =
     Rc<Mutex<Option<Vec<(nerust_core_traits::identity::SystemId, InputAssignments)>>>>;
 
 // ---------------------------------------------------------------------------

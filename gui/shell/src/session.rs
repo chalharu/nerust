@@ -363,8 +363,6 @@ pub enum SessionError {
     Persistence(#[from] PersistenceError),
     #[error("factory: {0}")]
     Factory(#[from] FactoryError),
-    #[error("no registered systems")]
-    NoSystems,
     #[error("no emulation core active")]
     NoCore,
 }
@@ -393,18 +391,18 @@ impl RomLoadTarget for SessionHandle {
         let _ = SessionHandle::run_command(self, SessionCommand::Resume);
     }
 
-    /// Notifies the session that a ROM from a different system has been loaded.
+    /// Notifies the session of the detected system for the ROM being loaded.
     ///
-    /// Updates `active_system_id` so that subsequent `factory()`,
-    /// `default_load_options()`, and settings page queries use the
-    /// correct system's factory.
-    ///
-    /// Note: when multi-system support is added, this method must also
-    /// trigger an EmuCore rebuild so that the running core matches the
-    /// detected system. Currently only NES cores exist, so the existing
-    /// EmuCore is always correct.
+    /// Called by `RegistryRomLoader` before loading the ROM into the session.
+    /// Rebuilds the `EmuCore` immediately with the correct factory so that
+    /// `load_resolved` (the next call) can load ROM data into a properly
+    /// configured core. This is the core entry-point for lazy system activation.
     fn set_active_system(&mut self, system_id: SystemId) {
         if self.active_system_id.as_ref() == Some(&system_id) {
+            return;
+        }
+        if self.registry.find_by_id(&system_id).is_none() {
+            log::error!("set_active_system: unknown system_id: {system_id}");
             return;
         }
         self.active_system_id = Some(system_id);
@@ -646,8 +644,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "no active system")]
-    fn set_active_system_panics_on_unknown_id() {
+    fn set_active_system_ignores_unknown_id() {
         let factory = Arc::new(MockFactory);
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -655,7 +652,8 @@ mod tests {
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
         RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
-        let _ = session.factory().expect("no active system").system_id();
+        assert!(session.active_system_id().is_none());
+        assert!(session.factory().is_none());
     }
 
     fn test_capabilities() -> HostBackendCapabilities {

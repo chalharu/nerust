@@ -43,7 +43,9 @@ const FILTER_CHOICES: &[NesVideoFilter] = &[
 /// [`AndroidSettings::apply_to_snapshot`] on the way out.
 ///
 /// TODO: generalize to multi-system — replace `nes_filter` with
-/// per-system settings obtained via `CoreFactory::settings_page()`.
+/// per-system settings obtained via `CoreFactory::settings_page()`
+/// and `SystemDefaults` trait.  See `gui/shell/src/settings/seed.rs`
+/// for the factory-iteration pattern used in desktop frontends.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AndroidSettings {
     pub audio_muted: bool,
