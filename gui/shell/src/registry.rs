@@ -14,6 +14,14 @@ use crate::{
     settings::factory::settings_view,
 };
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RegistryError {
+    #[error("load options provided for unregistered system: {0}")]
+    UnregisteredOptions(SystemId),
+    #[error("multiple systems matched the media: {0:?}")]
+    AmbiguousMedia(Vec<SystemId>),
+}
+
 /// Registry of all supported console systems.
 ///
 /// Handles system auto-detection and dispatching to the correct
@@ -42,10 +50,24 @@ impl SystemRegistry {
         &self.factories
     }
 
-    /// Returns the factory that handles the given media.
-    /// None if no factory matches or registry is empty.
-    pub fn detect(&self, media: &MediaObject) -> Option<&Arc<dyn CoreFactory>> {
-        self.factories.iter().find(|f| f.probe_media(media))
+    /// Returns the sole factory that handles the given media.
+    ///
+    /// Returns `Ok(None)` when no factory matches and an error when multiple
+    /// factories claim the same media, avoiding registration-order dispatch.
+    pub fn detect(
+        &self,
+        media: &MediaObject,
+    ) -> Result<Option<&Arc<dyn CoreFactory>>, RegistryError> {
+        let mut matches = self.factories.iter().filter(|f| f.probe_media(media));
+        let Some(first) = matches.next() else {
+            return Ok(None);
+        };
+        let Some(second) = matches.next() else {
+            return Ok(Some(first));
+        };
+        let mut system_ids = vec![first.system_id(), second.system_id()];
+        system_ids.extend(matches.map(|factory| factory.system_id()));
+        Err(RegistryError::AmbiguousMedia(system_ids))
     }
 
     /// Finds a factory by its system ID. O(1) lookup.
@@ -55,24 +77,28 @@ impl SystemRegistry {
 
     /// Creates a `RomLoader` that auto-detects the system for each load.
     ///
-    /// `pending_options` maps each factory (by registration order) to
-    /// CLI-provided load options. Each option is consumed on the first
+    /// `pending_options` maps each system ID to CLI-provided load options.
+    /// Each option is consumed on the first
     /// load of the corresponding system; subsequent loads fall back to
     /// `RomLoadTarget::default_load_options()`.
     pub fn create_loader(
         self: &Arc<Self>,
-        pending_options: Vec<Box<dyn DynSystemLoadOptions>>,
-    ) -> Box<dyn RomLoader> {
-        let opt_by_id: HashMap<SystemId, Option<Box<dyn DynSystemLoadOptions>>> = self
-            .factories
-            .iter()
-            .zip(pending_options.into_iter().map(Some))
-            .map(|(f, opt)| (f.system_id(), opt))
+        pending_options: HashMap<SystemId, Box<dyn DynSystemLoadOptions>>,
+    ) -> Result<Box<dyn RomLoader>, RegistryError> {
+        if let Some(system_id) = pending_options
+            .keys()
+            .find(|system_id| !self.by_id.contains_key(system_id))
+        {
+            return Err(RegistryError::UnregisteredOptions(*system_id));
+        }
+        let pending_options = pending_options
+            .into_iter()
+            .map(|(system_id, options)| (system_id, Some(options)))
             .collect();
-        Box::new(RegistryRomLoader {
+        Ok(Box::new(RegistryRomLoader {
             registry: Arc::clone(self),
-            pending_options: opt_by_id,
-        })
+            pending_options,
+        }))
     }
 }
 
@@ -95,9 +121,8 @@ impl RomLoader for RegistryRomLoader {
 
         let factory = self
             .registry
-            .all()
-            .iter()
-            .find(|f| f.probe_media(&media))
+            .detect(&media)
+            .map_err(|error| RomLoaderError::Detect(error.to_string()))?
             .ok_or_else(|| RomLoaderError::Detect("unsupported ROM format".to_string()))?;
 
         let system_id = factory.system_id();
@@ -204,11 +229,11 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct MatchingStubFactory;
+    struct MatchingStubFactory(SystemId);
 
     impl CoreFactory for MatchingStubFactory {
         fn system_id(&self) -> SystemId {
-            SystemId::new("matched")
+            self.0
         }
         fn display_name(&self) -> &'static str {
             "Matched"
@@ -280,7 +305,7 @@ mod tests {
     #[test]
     fn all_preserves_registration_order() {
         let a = stub_factory();
-        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory);
+        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("matched")));
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
         assert_eq!(registry.all().len(), 2);
         assert_eq!(registry.all()[0].system_id(), a.system_id());
@@ -306,17 +331,34 @@ mod tests {
     fn detect_returns_none_when_no_factory_matches() {
         let registry = SystemRegistry::new(vec![stub_factory()]);
         let media = MediaObject::new(Some("game.sfc".into()), vec![]);
-        assert!(registry.detect(&media).is_none());
+        assert!(registry.detect(&media).unwrap().is_none());
     }
 
     #[test]
     fn detect_returns_matching_factory() {
         let fallback = stub_factory();
-        let matched = Arc::new(MatchingStubFactory);
+        let matched = Arc::new(MatchingStubFactory(SystemId::new("matched")));
         let matched_id = matched.system_id();
         let registry = SystemRegistry::new(vec![fallback, matched]);
         let media = MediaObject::new(Some("game.nes".into()), vec![]);
-        assert_eq!(registry.detect(&media).unwrap().system_id(), matched_id);
+        assert_eq!(
+            registry.detect(&media).unwrap().unwrap().system_id(),
+            matched_id
+        );
+    }
+
+    #[test]
+    fn detect_rejects_ambiguous_media() {
+        let first: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("first")));
+        let second: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("second")));
+        let registry = SystemRegistry::new(vec![first, second]);
+        let media = MediaObject::new(Some("game.rom".into()), vec![]);
+
+        assert!(matches!(
+            registry.detect(&media),
+            Err(RegistryError::AmbiguousMedia(ids))
+                if ids == vec![SystemId::new("first"), SystemId::new("second")]
+        ));
     }
 
     #[test]
@@ -324,6 +366,19 @@ mod tests {
         let factory = stub_factory();
         let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
         let opts = factory.default_load_options();
-        let _loader = registry.create_loader(vec![opts]);
+        let _loader = registry
+            .create_loader(HashMap::from([(factory.system_id(), opts)]))
+            .unwrap();
+    }
+
+    #[test]
+    fn create_loader_rejects_options_for_unregistered_system() {
+        let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
+        let options = NoopSystemLoadOptions.into();
+
+        assert!(matches!(
+            registry.create_loader(HashMap::from([(SystemId::new("snes"), options)])),
+            Err(RegistryError::UnregisteredOptions(id)) if id == SystemId::new("snes")
+        ));
     }
 }

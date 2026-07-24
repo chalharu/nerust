@@ -254,7 +254,10 @@ impl AndroidFrontend {
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
     fn refresh_dialog_caches(&self) {
         library::update_cached_entries(self.storage.rom_library.entries());
-        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
         settings::update_cached_settings(&current);
     }
 
@@ -427,12 +430,19 @@ impl AndroidFrontend {
             return;
         };
         log::info!("handle_settings_result: applying Android settings");
-        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw) else {
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
+        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw, &current) else {
             log::error!("Android settings dialog returned an unrecognisable result: {raw:?}");
             return;
         };
         let mut next = self.session.settings_snapshot().clone();
-        android_settings.apply_to_snapshot(&mut next);
+        if let Err(error) = android_settings.apply_to_snapshot(&mut next, self.session.registry()) {
+            log::error!("failed to update Android system settings: {error}");
+            return;
+        }
         match self.apply_settings(next) {
             Ok(result) => {
                 if result.renderer_needs_rebuild {
@@ -514,7 +524,10 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
         match settings::request_show_settings_dialog(&self.app, &current) {
             Ok(true) => {}
             Ok(false) => {

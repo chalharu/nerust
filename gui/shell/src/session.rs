@@ -45,6 +45,8 @@ type CoreParts = (
     HashMap<(AttachmentId, DigitalControlId), usize>,
 );
 
+type CoreCreation = (CoreParts, InputAssignments);
+
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
@@ -119,13 +121,13 @@ impl SessionHandle {
         registry: &AudioBackendRegistry,
         snapshot: &SettingsSnapshot,
         assignments: &InputAssignments,
-    ) -> Result<CoreParts, SessionError> {
+    ) -> Result<CoreCreation, SessionError> {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
         let view = settings_view(snapshot, &system_id);
-        let parts =
+        let (parts, applied_assignments) =
             match factory.create_core_and_adapter_with_assignments(&view, speaker, assignments) {
-                Ok(parts) => parts,
+                Ok(parts) => (parts, assignments.clone()),
                 Err(_) => {
                     log::warn!("core creation with loaded settings failed; using defaults");
                     use crate::settings::defaults::seed::{
@@ -138,15 +140,21 @@ impl SessionHandle {
                     };
                     let fallback_speaker = settings::build_speaker(registry, &fallback.local);
                     let fallback_view = settings_view(&fallback, &system_id);
-                    factory
-                        .create_core_and_adapter(&fallback_view, fallback_speaker)
+                    let fallback_assignments = factory.input_system_factory().default_assignments();
+                    let parts = factory
+                        .create_core_and_adapter_with_assignments(
+                            &fallback_view,
+                            fallback_speaker,
+                            &fallback_assignments,
+                        )
                         .map_err(|e| {
                             log::error!("core creation failed even with default settings: {e}");
                             SessionError::Factory(e)
-                        })?
+                        })?;
+                    (parts, fallback_assignments)
                 }
             };
-        Ok(EmuCore::from_parts(parts))
+        Ok((EmuCore::from_parts(parts), applied_assignments))
     }
 
     fn init_settings_manager(
@@ -222,14 +230,14 @@ impl SessionHandle {
             .cloned();
         let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
             let sid = f.system_id().to_string();
-            let assignments = Self::load_assignments(f, &settings_snapshot, &sid);
-            let (ec, gi, fm) = Self::create_core_with_assignments(
+            let requested_assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+            let ((ec, gi, fm), applied_assignments) = Self::create_core_with_assignments(
                 f,
                 &audio_registry,
                 &settings_snapshot,
-                &assignments,
+                &requested_assignments,
             )?;
-            (Some(ec), Some(gi), fm, assignments)
+            (Some(ec), Some(gi), fm, applied_assignments)
         } else {
             (
                 None,
@@ -345,6 +353,10 @@ impl SessionHandle {
             .and_then(|id| self.registry.find_by_id(id))
     }
 
+    pub fn registry(&self) -> &SystemRegistry {
+        &self.registry
+    }
+
     pub fn factory(&self) -> Option<&dyn CoreFactory> {
         self.active_factory().map(|a| &**a)
     }
@@ -416,14 +428,16 @@ impl RomLoadTarget for SessionHandle {
             .cloned()
             .ok_or(SystemActivationError::NotRegistered(system_id))?;
         let system_key = system_id.to_string();
-        let assignments = Self::load_assignments(&factory, &self.settings_snapshot, &system_key);
-        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
-            &factory,
-            &self.audio_registry,
-            &self.settings_snapshot,
-            &assignments,
-        )
-        .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+        let requested_assignments =
+            Self::load_assignments(&factory, &self.settings_snapshot, &system_key);
+        let ((emu_core, gui_input, field_map), applied_assignments) =
+            Self::create_core_with_assignments(
+                &factory,
+                &self.audio_registry,
+                &self.settings_snapshot,
+                &requested_assignments,
+            )
+            .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
         if let Some(ref core) = self.emu_core {
             self.persistence
@@ -432,7 +446,7 @@ impl RomLoadTarget for SessionHandle {
         }
 
         self.active_system_id = Some(system_id);
-        self.current_assignments = assignments;
+        self.current_assignments = applied_assignments;
         self.emu_core = Some(emu_core);
         self.gui_input = Some(gui_input);
         self.field_map = field_map;
@@ -496,14 +510,15 @@ mod tests {
         }
         fn create_core_and_adapter_with_assignments(
             &self,
-            _: &FactorySettingsView,
-            _: Box<dyn AudioBackend>,
-            _: &InputAssignments,
+            view: &FactorySettingsView,
+            speaker: Box<dyn AudioBackend>,
+            assignments: &InputAssignments,
         ) -> Result<CoreParts, FactoryError> {
-            if self.has_failed.swap(true, AcqRel) {
-                unreachable!()
+            if !self.has_failed.swap(true, AcqRel) {
+                return Err(FactoryError::Create("simulated failure".into()));
             }
-            Err(FactoryError::Create("simulated failure".into()))
+            self.inner
+                .create_core_and_adapter_with_assignments(view, speaker, assignments)
         }
         fn create_core_and_adapter(
             &self,
@@ -641,6 +656,8 @@ mod tests {
     #[test]
     fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
         let failing = Arc::new(FailingOnceFactory::new(Arc::new(MockFactory)));
+        let system_id = failing.system_id();
+        let expected_assignments = failing.input_system_factory().default_assignments();
         let registry = Arc::new(SystemRegistry::new(vec![failing]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
@@ -651,8 +668,25 @@ mod tests {
             },
             presentation: None,
         };
-        let _session = SessionHandle::new(capabilities, registry, audio_registry)
+        let mut session = SessionHandle::new(capabilities, registry, audio_registry)
             .expect("session creation should succeed even with failing factory");
+        session
+            .settings_snapshot
+            .app_state
+            .controller_assignments
+            .insert(
+                system_id.to_string(),
+                vec![
+                    ("nes.attachment.player1".to_string(), None),
+                    ("nes.attachment.player2".to_string(), None),
+                ],
+            );
+        RomLoadTarget::set_active_system(&mut session, system_id)
+            .expect("fallback core creation should succeed");
+        assert_eq!(
+            session.current_assignments.to_string_pairs(),
+            expected_assignments.to_string_pairs()
+        );
     }
 
     #[test]

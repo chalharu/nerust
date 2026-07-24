@@ -1005,7 +1005,7 @@ fn connect_local_updates(
             let _ = combo.connect_changed(move |combo| {
                 {
                     let mut snapshot = draft.borrow_mut();
-                    let _ = apply_settings_choice(
+                    if let Err(error) = apply_settings_choice(
                         &*factory,
                         &mut snapshot,
                         &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
@@ -1018,7 +1018,9 @@ fn connect_local_updates(
                                 .unwrap_or_default()
                                 .into(),
                         ),
-                    );
+                    ) {
+                        log::error!("failed to apply system settings choice: {error}");
+                    }
                 }
                 refresh_all_from_draft(&draft.borrow(), &widgets);
             });

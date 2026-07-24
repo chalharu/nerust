@@ -75,6 +75,7 @@ impl SessionHandle {
             &self.capabilities,
             &previous,
             &next_settings,
+            self.active_system_id(),
         );
 
         if plan.session_rebuild_required {
@@ -124,6 +125,7 @@ impl SessionHandle {
             &self.capabilities,
             &self.settings_snapshot,
             &next_settings,
+            self.active_system_id(),
         );
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
