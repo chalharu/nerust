@@ -410,19 +410,35 @@ impl RomLoadTarget for SessionHandle {
         if self.active_system_id.as_ref() == Some(&system_id) {
             return Ok(());
         }
-        if self.registry.find_by_id(&system_id).is_none() {
-            return Err(SystemActivationError::NotRegistered(system_id));
+        let factory = self
+            .registry
+            .find_by_id(&system_id)
+            .cloned()
+            .ok_or(SystemActivationError::NotRegistered(system_id))?;
+        let system_key = system_id.to_string();
+        let assignments = Self::load_assignments(&factory, &self.settings_snapshot, &system_key);
+        let (emu_core, gui_input, field_map) = Self::create_core_with_assignments(
+            &factory,
+            &self.audio_registry,
+            &self.settings_snapshot,
+            &assignments,
+        )
+        .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+
+        if let Some(ref core) = self.emu_core {
+            self.persistence
+                .flush_mapper_save(core)
+                .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
         }
+
         self.active_system_id = Some(system_id);
-
-        if let Some(factory) = self.active_factory() {
-            self.current_assignments = factory.input_system_factory().default_assignments();
-        }
-
-        let snapshot = self.settings_snapshot.clone();
-        if let Err(e) = self.rebuild_for_settings(&snapshot) {
-            log::error!("failed to rebuild core for {}: {e}", system_id);
-        }
+        self.current_assignments = assignments;
+        self.emu_core = Some(emu_core);
+        self.gui_input = Some(gui_input);
+        self.field_map = field_map;
+        self.loaded_media = None;
+        self.persistence.reset();
+        self.pressed_keys.clear();
         self.rebuild_key_field_map();
         Ok(())
     }
@@ -668,6 +684,35 @@ mod tests {
         assert!(session.factory().is_none());
     }
 
+    #[test]
+    fn switching_system_discards_previous_loaded_runtime_state() {
+        let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+        let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+        let second_id = second.system_id();
+        let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+
+        RomLoadTarget::set_active_system(&mut session, first.system_id()).unwrap();
+        let resolved = session
+            .factory()
+            .unwrap()
+            .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+            .unwrap();
+        session
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
+            .unwrap();
+        assert!(session.loaded());
+
+        RomLoadTarget::set_active_system(&mut session, second_id).unwrap();
+
+        assert_eq!(session.active_system_id(), Some(&second_id));
+        assert!(!session.loaded());
+        assert!(session.loaded_media.is_none());
+        assert!(session.slots().is_empty());
+    }
+
     fn test_capabilities() -> HostBackendCapabilities {
         HostBackendCapabilities {
             window: nerust_gui_runtime::settings::HostWindowCapabilities {
@@ -680,12 +725,12 @@ mod tests {
     }
 
     #[test]
-    fn registry_all_produces_settings_page_per_system() {
+    fn registry_all_produces_settings_page_for_registered_system() {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
         let factory = Arc::new(MockFactory);
-        let registry = SystemRegistry::new(vec![factory.clone(), factory]);
+        let registry = SystemRegistry::new(vec![factory]);
         let snapshot = SettingsSnapshot {
             shared: default_shared_settings(&[]),
             local: default_local_settings(),
@@ -701,7 +746,7 @@ mod tests {
             .collect();
         assert_eq!(
             pages.len(),
-            2,
+            1,
             "should produce one page per registered system"
         );
     }

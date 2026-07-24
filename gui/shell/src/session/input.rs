@@ -229,6 +229,7 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
+        self.key_field_map.clear();
         let Some(factory) = self.active_factory() else {
             return;
         };

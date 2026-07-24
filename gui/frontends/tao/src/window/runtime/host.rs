@@ -481,7 +481,9 @@ impl HostState {
                         .app_state
                         .controller_assignments
                         .insert(sid.to_string(), assignments.to_string_pairs());
-                    if let Err(error) = self.session.reassign_controllers(&assignments) {
+                    if self.session.active_system_id() == Some(&sid)
+                        && let Err(error) = self.session.reassign_controllers(&assignments)
+                    {
                         log::warn!("controller reassign failed: {error}");
                     }
                 }

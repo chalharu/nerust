@@ -10,6 +10,8 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 pub enum SystemActivationError {
     #[error("system not registered: {0}")]
     NotRegistered(SystemId),
+    #[error("system activation failed: {0}")]
+    Activation(String),
 }
 
 #[derive(Debug, thiserror::Error)]
