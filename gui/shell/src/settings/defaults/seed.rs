@@ -11,7 +11,6 @@ use nerust_keyboard::Key;
 
 pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings::default();
-    #[cfg(test)]
     if factories.is_empty() {
         seed_nes_defaults(&mut settings);
     }
@@ -37,7 +36,7 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
     settings
 }
 
-#[cfg(test)]
+/// Legacy NES defaults — used when no factories are registered.
 fn seed_nes_defaults(settings: &mut DesktopSharedSettings) {
     use nerust_core_traits::identity::SystemId;
     settings.systems.insert(
