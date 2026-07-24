@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn keyboard_bindings_resolve_to_nes_input_events() {
-        let settings = default_shared_settings();
+        let settings = default_shared_settings(&[]);
         let event = controller_event_for_key(
             &settings,
             SystemId::new("nes"),
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn keyboard_bindings_support_player_two_controls() {
-        let mut settings = default_shared_settings();
+        let mut settings = default_shared_settings(&[]);
         settings
             .input
             .systems

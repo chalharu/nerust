@@ -6,7 +6,7 @@ pub fn current_or_default(manager: &SettingsManager) -> SettingsSnapshot {
     manager.snapshot().unwrap_or_else(|error| {
         log::warn!("settings read failed; using defaults: {error}");
         SettingsSnapshot {
-            shared: default_shared_settings(),
+            shared: default_shared_settings(&[]),
             local: default_local_settings(),
             app_state: default_app_state(),
         }
@@ -25,7 +25,7 @@ mod tests {
     #[test]
     fn current_or_default_falls_back_for_ephemeral_manager_reads() {
         let manager = SettingsManager::ephemeral(
-            default_shared_settings(),
+            default_shared_settings(&[]),
             default_local_settings(),
             default_app_state(),
         );

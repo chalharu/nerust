@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
-        let mut settings = default_shared_settings();
+        let mut settings = default_shared_settings(&[]);
         settings
             .input
             .shortcuts

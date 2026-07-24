@@ -112,7 +112,7 @@ mod tests {
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
-            shared: default_shared_settings(),
+            shared: default_shared_settings(&[]),
             local: default_local_settings(),
             app_state: default_app_state(),
         }
