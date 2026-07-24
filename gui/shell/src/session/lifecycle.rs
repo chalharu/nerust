@@ -1,6 +1,9 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
-use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_core_traits::factory::{
+    CoreFactory,
+    load::{MediaObject, ResolvedLoadRequest},
+};
 use nerust_emu_thread::ConsoleMetrics;
 
 use crate::{
@@ -341,16 +344,9 @@ impl SessionHandle {
         };
         let restored_runtime_state = exported_core_bytes.is_some();
 
-        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
-        let system_id = factory.system_id();
-        let view = settings_view(next_settings, &system_id);
-        let parts = factory.create_core_and_adapter_with_assignments(
-            &view,
-            speaker,
-            &self.current_assignments,
-        )?;
-        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
+        let (rebuilt_core, gui_input, field_map) =
+            self.build_core_for_settings(next_settings, &factory)?;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, None)?;
@@ -377,6 +373,22 @@ impl SessionHandle {
             }
         }
         Ok(())
+    }
+
+    fn build_core_for_settings(
+        &self,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        factory: &Arc<dyn CoreFactory>,
+    ) -> Result<super::CoreParts, SessionError> {
+        let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
+        let system_id = factory.system_id();
+        let view = settings_view(next_settings, &system_id);
+        let parts = factory.create_core_and_adapter_with_assignments(
+            &view,
+            speaker,
+            &self.current_assignments,
+        )?;
+        Ok(crate::emu_core::EmuCore::from_parts(parts))
     }
 
     fn resolve_persistence_paths(
