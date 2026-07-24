@@ -21,11 +21,18 @@ use crate::{
 /// can be added by appending to the `Vec` at construction time.
 pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
+    by_id: HashMap<SystemId, Arc<dyn CoreFactory>>,
 }
 
 impl SystemRegistry {
     pub fn new(factories: Vec<Arc<dyn CoreFactory>>) -> Self {
-        Self { factories }
+        let mut by_id = HashMap::with_capacity(factories.len());
+        for f in &factories {
+            if by_id.insert(f.system_id(), Arc::clone(f)).is_some() {
+                log::warn!("SystemRegistry: duplicate system_id: {}", f.system_id());
+            }
+        }
+        Self { factories, by_id }
     }
 
     /// Returns all registered factories, for CLI argument augmentation.
@@ -45,9 +52,9 @@ impl SystemRegistry {
         self.factories.iter().find(|f| f.probe_media(media))
     }
 
-    /// Finds a factory by its system ID.
+    /// Finds a factory by its system ID. O(1) lookup.
     pub fn find_by_id(&self, id: &SystemId) -> Option<&Arc<dyn CoreFactory>> {
-        self.factories.iter().find(|f| f.system_id() == *id)
+        self.by_id.get(id)
     }
 
     /// Creates a `RomLoader` that auto-detects the system for each load.
