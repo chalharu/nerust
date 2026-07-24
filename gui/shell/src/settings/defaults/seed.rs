@@ -75,7 +75,7 @@ pub fn default_app_state() -> DesktopAppState {
 }
 
 #[cfg(test)]
-pub fn test_nes_defaults() -> DesktopSharedSettings {
+pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
     use nerust_core_traits::identity::SystemId;
     let mut settings = default_shared_settings(&[]);
     settings.systems.insert(
