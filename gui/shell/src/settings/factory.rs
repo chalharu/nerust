@@ -32,7 +32,7 @@ pub fn apply_settings_choice(
     Ok(())
 }
 
-fn resolve_nes_label(
+fn resolve_system_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> Option<String> {
@@ -62,6 +62,6 @@ pub fn resolve_label(
     language: nerust_gui_settings::language::AppLanguage,
 ) -> String {
     // Per-system label resolvers return Some(translated) or None.
-    // The first match wins; add new resolvers before the final fallback.
-    resolve_nes_label(label_id, language).unwrap_or_else(|| label_id.to_string())
+    // Add new system entries to resolve_system_label before the fallback.
+    resolve_system_label(label_id, language).unwrap_or_else(|| label_id.to_string())
 }
