@@ -60,7 +60,7 @@ impl EmuThread {
         mut core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         frame_ready: Arc<AtomicBool>,
-        palette: Box<[u32; 256]>,
+        palette: Box<[u32]>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(8);
         let frame_count: Arc<std::sync::atomic::AtomicU64> =

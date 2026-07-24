@@ -61,5 +61,7 @@ pub fn resolve_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
 ) -> String {
+    // Per-system label resolvers return Some(translated) or None.
+    // The first match wins; add new resolvers before the final fallback.
     resolve_nes_label(label_id, language).unwrap_or_else(|| label_id.to_string())
 }

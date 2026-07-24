@@ -26,8 +26,11 @@ pub fn default_keyboard_key(abstract_key: AbstractKey) -> Vec<Key> {
     }
 }
 
-/// Generate default NES keyboard bindings using abstract key mappings.
-/// Matches the hardcoded defaults previously in seed.rs.
+/// Generate NES keyboard bindings using abstract key mappings.
+///
+/// For new systems, add a corresponding `default_<system>_bindings()`
+/// function that calls `default_keyboard_key()` with the system's
+/// attachment and control IDs.
 pub fn default_nes_bindings() -> Vec<KeyboardBinding> {
     use AbstractKey::*;
     let p1 = |control: &str, ak: AbstractKey| -> Vec<KeyboardBinding> {

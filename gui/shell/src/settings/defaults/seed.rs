@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::{
     app_state::DesktopAppState,
@@ -12,17 +10,19 @@ use nerust_nes_settings::NesSettings;
 
 /// Builds system-agnostic defaults plus per-system seed data.
 ///
-/// When adding a new system, register its default settings and
-/// input bindings here. System-specific settings are keyed by
-/// `SystemId` in the `systems` and `input.systems` maps.
+/// Add a `seed_<system>_defaults(&mut settings)` call per system.
 pub fn default_shared_settings() -> DesktopSharedSettings {
-    let mut settings = DesktopSharedSettings {
-        systems: BTreeMap::from([(
-            SystemId::new("nes"),
-            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
-        )]),
-        ..Default::default()
-    };
+    let mut settings = DesktopSharedSettings::default();
+    seed_nes_defaults(&mut settings);
+    seed_global_shortcuts(&mut settings);
+    settings
+}
+
+fn seed_nes_defaults(settings: &mut DesktopSharedSettings) {
+    settings.systems.insert(
+        SystemId::new("nes"),
+        Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+    );
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings =
         crate::keyboard_defaults::default_nes_bindings();
@@ -34,6 +34,9 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
         .input
         .systems
         .insert(SystemId::new("nes"), nes_input);
+}
+
+fn seed_global_shortcuts(settings: &mut DesktopSharedSettings) {
     settings.input.shortcuts.keyboard = vec![
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
@@ -64,7 +67,6 @@ pub fn default_shared_settings() -> DesktopSharedSettings {
             key: None,
         },
     ];
-    settings
 }
 
 pub fn default_local_settings() -> HostBackendLocalSettings {
