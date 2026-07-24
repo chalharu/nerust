@@ -4,7 +4,6 @@ pub mod input;
 pub mod lifecycle;
 pub mod persistence;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) mod test_helpers;
 pub mod title;
 
@@ -150,31 +149,11 @@ impl SessionHandle {
         Ok(EmuCore::from_parts(parts))
     }
 
-    fn new_inner(
-        capabilities: HostBackendCapabilities,
-        registry: Arc<SystemRegistry>,
-        active_system_id: Option<SystemId>,
-        audio_registry: Arc<AudioBackendRegistry>,
-        use_persistent: bool,
-    ) -> Result<Self, SessionError> {
-        Self::new_inner_with_paths(
-            capabilities,
-            registry,
-            active_system_id,
-            audio_registry,
-            use_persistent,
-            None,
-        )
-    }
-
-    fn new_inner_with_paths(
-        capabilities: HostBackendCapabilities,
-        registry: Arc<SystemRegistry>,
-        active_system_id: Option<SystemId>,
-        audio_registry: Arc<AudioBackendRegistry>,
+    fn init_settings_manager(
+        registry: &SystemRegistry,
         use_persistent: bool,
         paths: Option<SettingsPaths>,
-    ) -> Result<Self, SessionError> {
+    ) -> (SettingsManager, SettingsSnapshot) {
         use crate::settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
         };
@@ -207,6 +186,36 @@ impl SessionHandle {
                 app_state: default_app_state(),
             }
         });
+        (settings, settings_snapshot)
+    }
+
+    fn new_inner(
+        capabilities: HostBackendCapabilities,
+        registry: Arc<SystemRegistry>,
+        active_system_id: Option<SystemId>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        use_persistent: bool,
+    ) -> Result<Self, SessionError> {
+        Self::new_inner_with_paths(
+            capabilities,
+            registry,
+            active_system_id,
+            audio_registry,
+            use_persistent,
+            None,
+        )
+    }
+
+    fn new_inner_with_paths(
+        capabilities: HostBackendCapabilities,
+        registry: Arc<SystemRegistry>,
+        active_system_id: Option<SystemId>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        use_persistent: bool,
+        paths: Option<SettingsPaths>,
+    ) -> Result<Self, SessionError> {
+        let (settings, settings_snapshot) =
+            Self::init_settings_manager(&registry, use_persistent, paths);
         let factory = active_system_id
             .as_ref()
             .and_then(|id| registry.find_by_id(id))
