@@ -516,8 +516,8 @@ pub(crate) fn present_preferences_dialog(
 
         let mut field_widgets: Vec<(String, gtk::ComboBoxText)> = Vec::new();
         for field in model.fields.iter() {
-            let label = resolve_label(field.label_id, language);
-            let combo = combo_from_optional_system_field(Some(field), language);
+            let label = resolve_label(field.label_id, language, factory.as_ref());
+            let combo = combo_from_optional_system_field(Some(field), language, factory.as_ref());
             tab_page.append(&labeled_row(&label, &combo));
             field_widgets.push((field.id.as_str().to_string(), combo));
         }
@@ -1356,12 +1356,13 @@ fn system_field_by_id<'a>(
 fn combo_from_optional_system_field(
     field: Option<&SystemSettingsFieldModel>,
     language: nerust_gui_settings::language::AppLanguage,
+    factory: &dyn CoreFactory,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     if let Some(field) = field {
         let SystemSettingsFieldKind::Choice { options, .. } = &field.kind;
         for option in options.iter() {
-            let label = resolve_label(option.label_id, language);
+            let label = resolve_label(option.label_id, language, factory);
             combo.append(Some(option.id.as_str()), &label);
         }
     }
@@ -1471,7 +1472,7 @@ mod tests {
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
-            shared: default_shared_settings(),
+            shared: default_shared_settings(&[]),
             local: default_local_settings(),
             app_state: default_app_state(),
         }

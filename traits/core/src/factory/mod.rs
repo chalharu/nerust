@@ -98,4 +98,26 @@ pub trait CoreFactory: Send + Sync {
 
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
+
+    /// Default system-specific settings to seed into the shared settings map.
+    fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
+        None
+    }
+
+    /// Resolve a system-specific label ID to a localized string.
+    /// `language` is "ja" or "en". Returns None if unknown (display raw ID).
+    fn resolve_label(&self, _label_id: &str, _language: &str) -> Option<String> {
+        None
+    }
+
+    /// Attachment ID prefix for default keyboard bindings.
+    /// Returns None if this system has no default keyboard bindings.
+    fn default_input_attachment_id(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Control ID prefix for default keyboard bindings.
+    fn default_input_control_prefix(&self) -> Option<&'static str> {
+        None
+    }
 }

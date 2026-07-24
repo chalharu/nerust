@@ -1,5 +1,8 @@
 use nerust_core_traits::{
-    factory::settings::{FactorySettingsView, Language},
+    factory::{
+        CoreFactory,
+        settings::{FactorySettingsView, Language},
+    },
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -32,36 +35,16 @@ pub fn apply_settings_choice(
     Ok(())
 }
 
-fn resolve_system_label(
-    label_id: &str,
-    language: nerust_gui_settings::language::AppLanguage,
-) -> Option<String> {
-    use nerust_gui_settings::language::AppLanguage;
-    let localized = |en: &str, ja: &str| -> String {
-        match language {
-            AppLanguage::Japanese => ja.to_string(),
-            _ => en.to_string(),
-        }
-    };
-    match label_id {
-        "nes.video.filter" => Some(localized("Filter", "フィルター")),
-        "nes.filter.none" => Some(localized("None", "なし")),
-        "nes.filter.ntsc_composite" => Some(localized("NTSC Composite", "NTSC コンポジット")),
-        "nes.filter.ntsc_svideo" => Some(localized("NTSC S-Video", "NTSC S-ビデオ")),
-        "nes.filter.ntsc_rgb" => Some(localized("NTSC RGB", "NTSC RGB")),
-        "nes.core.mmc3_irq_variant" => Some(localized("MMC3 IRQ Variant", "MMC3 IRQ バリアント")),
-        "nes.mmc3.auto" => Some(localized("Auto", "自動")),
-        "nes.mmc3.sharp" => Some(localized("Sharp", "Sharp")),
-        "nes.mmc3.nec" => Some(localized("Nec", "Nec")),
-        _ => None,
-    }
-}
-
 pub fn resolve_label(
     label_id: &str,
     language: nerust_gui_settings::language::AppLanguage,
+    factory: &dyn CoreFactory,
 ) -> String {
-    // Per-system label resolvers return Some(translated) or None.
-    // Add new system entries to resolve_system_label before the fallback.
-    resolve_system_label(label_id, language).unwrap_or_else(|| label_id.to_string())
+    let lang = match language {
+        nerust_gui_settings::language::AppLanguage::Japanese => "ja",
+        _ => "en",
+    };
+    factory
+        .resolve_label(label_id, lang)
+        .unwrap_or_else(|| label_id.to_string())
 }

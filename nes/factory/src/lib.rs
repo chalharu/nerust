@@ -125,6 +125,41 @@ impl CoreFactory for NesFactory {
     fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
         NesLoadOptionsSchema.into()
     }
+
+    fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
+        Some(Box::new(NesSettings::default()))
+    }
+
+    fn resolve_label(&self, label_id: &str, language: &str) -> Option<String> {
+        let localized = |en: &str, ja: &str| -> String {
+            match language {
+                "ja" => ja.to_string(),
+                _ => en.to_string(),
+            }
+        };
+        match label_id {
+            "nes.video.filter" => Some(localized("Filter", "フィルター")),
+            "nes.filter.none" => Some(localized("None", "なし")),
+            "nes.filter.ntsc_composite" => Some(localized("NTSC Composite", "NTSC コンポジット")),
+            "nes.filter.ntsc_svideo" => Some(localized("NTSC S-Video", "NTSC S-ビデオ")),
+            "nes.filter.ntsc_rgb" => Some(localized("NTSC RGB", "NTSC RGB")),
+            "nes.core.mmc3_irq_variant" => {
+                Some(localized("MMC3 IRQ Variant", "MMC3 IRQ バリアント"))
+            }
+            "nes.mmc3.auto" => Some(localized("Auto", "自動")),
+            "nes.mmc3.sharp" => Some(localized("Sharp", "Sharp")),
+            "nes.mmc3.nec" => Some(localized("Nec", "Nec")),
+            _ => None,
+        }
+    }
+
+    fn default_input_attachment_id(&self) -> Option<&'static str> {
+        Some("nes.attachment.player1")
+    }
+
+    fn default_input_control_prefix(&self) -> Option<&'static str> {
+        Some("nes.control")
+    }
 }
 
 #[derive(Default, clap::Args, Eq, PartialEq, Clone, Debug)]
