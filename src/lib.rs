@@ -12,7 +12,7 @@ use nerust_render_traits::renderer::GpuFactory;
 use nerust_run_options::RunOptions;
 use simple_logger::SimpleLogger;
 
-type LoadOptionsBySystem = HashMap<SystemId, Box<dyn DynSystemLoadOptions>>;
+type LoadOptionsBySystem = HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>;
 type CliParseResult = Result<(RunOptions, LoadOptionsBySystem), clap::Error>;
 
 fn create_factory() -> Box<dyn GpuFactory> {
@@ -84,13 +84,13 @@ fn validate_unique_cli_arguments(
     factories: &[Arc<dyn CoreFactory>],
     schemas: &[Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema>],
 ) -> Result<(), clap::Error> {
-    let mut owners: HashMap<String, SystemId> = HashMap::new();
+    let mut owners: HashMap<String, Box<dyn SystemId>> = HashMap::new();
     for (factory, schema) in factories.iter().zip(schemas) {
         let system_id = factory.system_id();
         let command = schema.augment_args(Command::new("system-options"));
         for argument in command.get_arguments() {
             let argument_id = argument.get_id().as_str().to_string();
-            if let Some(previous) = owners.insert(argument_id.clone(), system_id) {
+            if let Some(previous) = owners.insert(argument_id.clone(), system_id.clone()) {
                 return Err(clap::Error::raw(
                     clap::error::ErrorKind::ArgumentConflict,
                     format!(

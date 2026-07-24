@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 #[cfg(test)]
-use std::{collections::BTreeMap, env};
+use std::{collections::HashMap, env};
 
 #[cfg(test)]
-use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_core_traits::identity::SystemIdentity;
 use nerust_gui_settings::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
+
+#[cfg(test)]
+use crate::test::DummySystemId;
 
 pub mod apply;
 pub mod manager;
@@ -130,14 +133,14 @@ pub(crate) fn gtk_caps() -> HostBackendCapabilities {
 
 #[cfg(test)]
 pub(crate) fn test_system_identity() -> SystemIdentity {
-    SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])
+    SystemIdentity::new(Box::new(DummySystemId), vec![4, 1, 0x11, 0x22, 0x33])
 }
 
 #[cfg(test)]
 pub(crate) fn test_shared_defaults() -> DesktopSharedSettings {
     DesktopSharedSettings {
-        systems: BTreeMap::from([(
-            SystemId::new("nes"),
+        systems: HashMap::from([(
+            Box::new(DummySystemId) as Box<_>,
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()

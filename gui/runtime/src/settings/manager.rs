@@ -211,7 +211,7 @@ impl SettingsManager {
 
     pub fn resolve_persistence_paths(
         &self,
-        system: SystemId,
+        system: &dyn SystemId,
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
@@ -227,7 +227,7 @@ impl SettingsManager {
 
     pub fn resolve_persistence_paths_with_import(
         &self,
-        system: SystemId,
+        system: &dyn SystemId,
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
@@ -245,9 +245,8 @@ impl SettingsManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs};
+    use std::{collections::HashMap, fs};
 
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
@@ -258,6 +257,8 @@ mod tests {
     };
     use nerust_keyboard::Key;
     use nerust_nes_settings::NesVideoFilter;
+
+    use crate::test::DummySystemId;
 
     use super::{
         super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults},
@@ -273,7 +274,7 @@ mod tests {
         );
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::new("nes"), {
+            systems: HashMap::from([(Box::new(DummySystemId) as Box<_>, {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
@@ -321,7 +322,7 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
@@ -423,7 +424,7 @@ mod tests {
         let nes_settings = snap
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes_settings.video.filter = NesVideoFilter::NtscRgb;
@@ -441,7 +442,7 @@ mod tests {
         let _nes2 = snap2
             .shared
             .systems
-            .get(&SystemId::new("nes"))
+            .get(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_ref::<nerust_nes_settings::NesSettings>())
             .unwrap();
         assert_eq!(

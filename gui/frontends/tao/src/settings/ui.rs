@@ -48,9 +48,9 @@ use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 type ControllerAssignments = Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>;
-type AssignmentsBySystem = HashMap<SystemId, ControllerAssignments>;
-type AssignmentPairsBySystem = HashMap<SystemId, Vec<(String, Option<String>)>>;
-pub(crate) type PendingAssignments = Rc<Mutex<Option<Vec<(SystemId, InputAssignments)>>>>;
+type AssignmentsBySystem = HashMap<Box<dyn SystemId>, ControllerAssignments>;
+type AssignmentPairsBySystem = HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>;
+pub(crate) type PendingAssignments = Rc<Mutex<Option<Vec<(Box<dyn SystemId>, InputAssignments)>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -219,7 +219,7 @@ impl SettingsAppState {
             .collect();
         let initial_assignments_pairs = controller_assignments
             .iter()
-            .map(|(sid, assignments)| (*sid, assignment_pairs(assignments)))
+            .map(|(sid, assignments)| (sid.clone_box(), assignment_pairs(assignments)))
             .collect();
         let has_systems = !registry.all().is_empty();
         Self {
@@ -268,7 +268,7 @@ impl SettingsAppState {
             errors.push(error.to_string());
         }
         for factory in self.registry.all() {
-            let sid = factory.system_id().to_string();
+            let sid = factory.system_id();
             let input_factory = factory.input_system_factory();
             let default_assignments = input_factory.default_assignments();
             let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = self
@@ -303,7 +303,7 @@ impl SettingsAppState {
             }
             let topology = build_topology(&assignments, input_factory.slots());
             for (key, labels) in
-                conflicting_keys(&self.draft.shared, &topology, factory.system_id())
+                conflicting_keys(&self.draft.shared, &topology, factory.system_id().as_ref())
             {
                 errors.push(format!("{}: {}", key.label(), labels.join(", ")));
             }
@@ -320,9 +320,13 @@ impl SettingsAppState {
     fn input_conflict(&self) -> Option<String> {
         let input_tab_index = self.input_tab_index?;
         let system_id = self.registry.all().get(input_tab_index)?.system_id();
-        let (key, labels) = conflicting_keys(&self.draft.shared, &input_topology(self), system_id)
-            .into_iter()
-            .next()?;
+        let (key, labels) = conflicting_keys(
+            &self.draft.shared,
+            &input_topology(self),
+            system_id.as_ref(),
+        )
+        .into_iter()
+        .next()?;
         Some(format!("{}: {}", key.label(), labels.join(", ")))
     }
 
@@ -419,11 +423,10 @@ impl SettingsAppState {
                 }
                 // Keep unassigned slots empty (allow disconnected ports).
                 // Sync to draft.app_state for persistence
-                let sid = system_id.to_string();
                 self.draft
                     .app_state
                     .controller_assignments
-                    .insert(sid, assignment_pairs(assignments));
+                    .insert(system_id, assignment_pairs(assignments));
             }
             Message::StartCapture(target) => {
                 *self.capture_target.lock().expect("capture target mutex") = Some(target);
@@ -459,7 +462,7 @@ impl SettingsAppState {
                     })
                     .map(|(sid, assignments)| {
                         (
-                            *sid,
+                            sid.clone_box(),
                             InputAssignments {
                                 slots: assignments.clone(),
                             },
@@ -693,7 +696,8 @@ impl SettingsAppState {
             }
         }
 
-        let sections = keyboard_binding_sections(&input_topology(self), factory.system_id());
+        let sections =
+            keyboard_binding_sections(&input_topology(self), factory.system_id().as_ref());
         let mut navigation = row![].spacing(16).align_y(Alignment::Center);
         for (index, section) in sections.iter().enumerate() {
             navigation = navigation.push(input_section_radio_label(
@@ -843,7 +847,7 @@ impl SettingsAppState {
         };
         let factory = &factories[system_tab_index];
         let system_id = factory.system_id();
-        let view = settings_view(&self.draft, &system_id);
+        let view = settings_view(&self.draft, system_id.as_ref());
         let model = factory.settings_page(&view);
 
         let mut content = column![];
@@ -1079,7 +1083,7 @@ fn assignments_for_factory(
     snapshot
         .app_state
         .controller_assignments
-        .get(&factory.system_id().to_string())
+        .get(&factory.system_id())
         .map(|pairs| {
             pairs
                 .iter()

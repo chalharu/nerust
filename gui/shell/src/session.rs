@@ -9,6 +9,7 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
+    ops::Deref,
     sync::Arc,
 };
 
@@ -67,7 +68,7 @@ pub enum KeyboardShortcut {
 
 pub struct SessionHandle {
     pub(super) registry: Arc<SystemRegistry>,
-    pub(super) active_system_id: Option<SystemId>,
+    pub(super) active_system_id: Option<Box<dyn SystemId>>,
     pub(super) emu_core: Option<EmuCore>,
     pub(super) gui_input: Option<GuiInput>,
     pub(super) current_assignments: InputAssignments,
@@ -88,7 +89,7 @@ impl SessionHandle {
     fn load_assignments(
         factory: &Arc<dyn CoreFactory>,
         snapshot: &SettingsSnapshot,
-        system_id: &str,
+        system_id: &dyn SystemId,
     ) -> InputAssignments {
         let persisted = snapshot.app_state.controller_assignments.get(system_id);
         match persisted {
@@ -124,7 +125,7 @@ impl SessionHandle {
     ) -> Result<CoreCreation, SessionError> {
         let speaker = settings::build_speaker(registry, &snapshot.local);
         let system_id = factory.system_id();
-        let view = settings_view(snapshot, &system_id);
+        let view = settings_view(snapshot, system_id.as_ref());
         let (parts, applied_assignments) =
             match factory.create_core_and_adapter_with_assignments(&view, speaker, assignments) {
                 Ok(parts) => (parts, assignments.clone()),
@@ -139,7 +140,7 @@ impl SessionHandle {
                         app_state: default_app_state(),
                     };
                     let fallback_speaker = settings::build_speaker(registry, &fallback.local);
-                    let fallback_view = settings_view(&fallback, &system_id);
+                    let fallback_view = settings_view(&fallback, system_id.as_ref());
                     let fallback_assignments = factory.input_system_factory().default_assignments();
                     let parts = factory
                         .create_core_and_adapter_with_assignments(
@@ -200,7 +201,7 @@ impl SessionHandle {
     fn new_inner(
         capabilities: HostBackendCapabilities,
         registry: Arc<SystemRegistry>,
-        active_system_id: Option<SystemId>,
+        active_system_id: Option<Box<dyn SystemId>>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
     ) -> Result<Self, SessionError> {
@@ -217,7 +218,7 @@ impl SessionHandle {
     fn new_inner_with_paths(
         capabilities: HostBackendCapabilities,
         registry: Arc<SystemRegistry>,
-        active_system_id: Option<SystemId>,
+        active_system_id: Option<Box<dyn SystemId>>,
         audio_registry: Arc<AudioBackendRegistry>,
         use_persistent: bool,
         paths: Option<SettingsPaths>,
@@ -226,11 +227,11 @@ impl SessionHandle {
             Self::init_settings_manager(&registry, use_persistent, paths);
         let factory = active_system_id
             .as_ref()
-            .and_then(|id| registry.find_by_id(id))
+            .and_then(|id| registry.find_by_id(id.as_ref()))
             .cloned();
         let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
-            let sid = f.system_id().to_string();
-            let requested_assignments = Self::load_assignments(f, &settings_snapshot, &sid);
+            let sid = f.system_id();
+            let requested_assignments = Self::load_assignments(f, &settings_snapshot, sid.as_ref());
             let ((ec, gi, fm), applied_assignments) = Self::create_core_with_assignments(
                 f,
                 &audio_registry,
@@ -350,7 +351,7 @@ impl SessionHandle {
     pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
         self.active_system_id
             .as_ref()
-            .and_then(|id| self.registry.find_by_id(id))
+            .and_then(|id| self.registry.find_by_id(id.as_ref()))
     }
 
     pub fn registry(&self) -> &SystemRegistry {
@@ -361,8 +362,8 @@ impl SessionHandle {
         self.active_factory().map(|a| &**a)
     }
 
-    pub fn active_system_id(&self) -> Option<&SystemId> {
-        self.active_system_id.as_ref()
+    pub fn active_system_id(&self) -> Option<&dyn SystemId> {
+        self.active_system_id.as_ref().map(|x| x.deref())
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
@@ -418,18 +419,17 @@ impl RomLoadTarget for SessionHandle {
     /// Rebuilds the `EmuCore` immediately with the correct factory so that
     /// `load_resolved` (the next call) can load ROM data into a properly
     /// configured core. This is the core entry-point for lazy system activation.
-    fn set_active_system(&mut self, system_id: SystemId) -> Result<(), SystemActivationError> {
-        if self.active_system_id.as_ref() == Some(&system_id) {
+    fn set_active_system(&mut self, system_id: &dyn SystemId) -> Result<(), SystemActivationError> {
+        if self.active_system_id.as_ref().map(|x| x.as_ref()) == Some(system_id) {
             return Ok(());
         }
         let factory = self
             .registry
-            .find_by_id(&system_id)
+            .find_by_id(system_id)
             .cloned()
-            .ok_or(SystemActivationError::NotRegistered(system_id))?;
-        let system_key = system_id.to_string();
+            .ok_or(SystemActivationError::NotRegistered(system_id.clone_box()))?;
         let requested_assignments =
-            Self::load_assignments(&factory, &self.settings_snapshot, &system_key);
+            Self::load_assignments(&factory, &self.settings_snapshot, system_id);
         let ((emu_core, gui_input, field_map), applied_assignments) =
             Self::create_core_with_assignments(
                 &factory,
@@ -445,7 +445,7 @@ impl RomLoadTarget for SessionHandle {
                 .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
         }
 
-        self.active_system_id = Some(system_id);
+        self.active_system_id = Some(system_id.clone_box());
         self.current_assignments = applied_assignments;
         self.emu_core = Some(emu_core);
         self.gui_input = Some(gui_input);
@@ -502,7 +502,7 @@ mod tests {
     }
 
     impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
-        fn system_id(&self) -> SystemId {
+        fn system_id(&self) -> Box<dyn SystemId> {
             self.inner.system_id()
         }
         fn display_name(&self) -> &'static str {
@@ -675,13 +675,13 @@ mod tests {
             .app_state
             .controller_assignments
             .insert(
-                system_id.to_string(),
+                system_id.clone(),
                 vec![
                     ("nes.attachment.player1".to_string(), None),
                     ("nes.attachment.player2".to_string(), None),
                 ],
             );
-        RomLoadTarget::set_active_system(&mut session, system_id)
+        RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
             .expect("fallback core creation should succeed");
         assert_eq!(
             session.current_assignments.to_string_pairs(),
@@ -698,7 +698,7 @@ mod tests {
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
         assert!(session.factory().is_none());
-        RomLoadTarget::set_active_system(&mut session, id)
+        RomLoadTarget::set_active_system(&mut session, id.as_ref())
             .expect("test setup should succeed for known system");
         assert_eq!(session.factory().expect("no active system").system_id(), id);
     }
@@ -711,8 +711,7 @@ mod tests {
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-        let err =
-            RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown")).unwrap_err();
+        let err = RomLoadTarget::set_active_system(&mut session, &DummyOtherSystemId).unwrap_err();
         assert!(matches!(err, SystemActivationError::NotRegistered(_)));
         assert!(session.active_system_id().is_none());
         assert!(session.factory().is_none());
@@ -728,7 +727,7 @@ mod tests {
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-        RomLoadTarget::set_active_system(&mut session, first.system_id()).unwrap();
+        RomLoadTarget::set_active_system(&mut session, first.system_id().as_ref()).unwrap();
         let resolved = session
             .factory()
             .unwrap()
@@ -739,9 +738,9 @@ mod tests {
             .unwrap();
         assert!(session.loaded());
 
-        RomLoadTarget::set_active_system(&mut session, second_id).unwrap();
+        RomLoadTarget::set_active_system(&mut session, second_id.as_ref()).unwrap();
 
-        assert_eq!(session.active_system_id(), Some(&second_id));
+        assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
         assert!(!session.loaded());
         assert!(session.loaded_media.is_none());
         assert!(session.slots().is_empty());
@@ -774,7 +773,7 @@ mod tests {
             .all()
             .iter()
             .map(|f| {
-                let view = settings_view(&snapshot, &f.system_id());
+                let view = settings_view(&snapshot, f.system_id().as_ref());
                 f.settings_page(&view)
             })
             .collect();

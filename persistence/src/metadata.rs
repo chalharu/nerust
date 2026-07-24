@@ -19,7 +19,7 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
-    pub(crate) system_id: SystemId,
+    pub(crate) system_id: Option<Box<dyn SystemId>>,
     #[serde(with = "serde_bytes")]
     pub(crate) identity_bytes: Vec<u8>,
     #[serde(with = "serde_bytes")]
@@ -38,7 +38,7 @@ pub(crate) struct StateArchiveMetadataV1 {
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
-    pub(crate) system_id: SystemId,
+    pub(crate) system_id: Option<Box<dyn SystemId>>,
     pub(crate) mapper_type: u32,
     pub(crate) sub_mapper_type: u32,
     pub(crate) prg_rom_crc64: u64,
@@ -66,7 +66,7 @@ impl Default for StateArchiveMetadataV1 {
             slot_id: 0,
             saved_at_unix_ms: 0,
             has_thumbnail: false,
-            system_id: default_system_id(),
+            system_id: None,
             mapper_type: 0,
             sub_mapper_type: 0,
             prg_rom_crc64: 0,
@@ -177,10 +177,6 @@ pub(crate) fn convert_v1_to_v2(
     })
 }
 
-const fn default_system_id() -> SystemId {
-    SystemId::new("nes")
-}
-
 // ---------------------------------------------------------------------------
 // v2 read/write
 // ---------------------------------------------------------------------------
@@ -232,7 +228,7 @@ pub(crate) fn encode_slot_metadata(
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
         has_thumbnail,
-        system_id: identity.system_id,
+        system_id: Some(identity.system_id.clone()),
         identity_bytes: identity.identity_bytes.clone(),
         options_bytes: Vec::new(),
         emulator_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -243,5 +239,9 @@ pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
     identity: &SystemIdentity,
 ) -> bool {
-    metadata.system_id == identity.system_id && metadata.identity_bytes == identity.identity_bytes
+    metadata
+        .system_id
+        .as_ref()
+        .is_some_and(|sid| *sid == identity.system_id)
+        && metadata.identity_bytes == identity.identity_bytes
 }

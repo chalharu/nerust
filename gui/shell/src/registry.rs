@@ -17,9 +17,9 @@ use crate::{
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RegistryError {
     #[error("load options provided for unregistered system: {0}")]
-    UnregisteredOptions(SystemId),
+    UnregisteredOptions(Box<dyn SystemId>),
     #[error("multiple systems matched the media: {0:?}")]
-    AmbiguousMedia(Vec<SystemId>),
+    AmbiguousMedia(Vec<Box<dyn SystemId>>),
 }
 
 /// Registry of all supported console systems.
@@ -29,7 +29,7 @@ pub enum RegistryError {
 /// can be added by appending to the `Vec` at construction time.
 pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
-    by_id: HashMap<SystemId, Arc<dyn CoreFactory>>,
+    by_id: HashMap<Box<dyn SystemId>, Arc<dyn CoreFactory>>,
 }
 
 impl SystemRegistry {
@@ -38,7 +38,7 @@ impl SystemRegistry {
         for f in &factories {
             let system_id = f.system_id();
             assert!(
-                by_id.insert(system_id, Arc::clone(f)).is_none(),
+                by_id.insert(system_id.clone(), Arc::clone(f)).is_none(),
                 "SystemRegistry: duplicate system_id: {system_id}"
             );
         }
@@ -71,7 +71,7 @@ impl SystemRegistry {
     }
 
     /// Finds a factory by its system ID. O(1) lookup.
-    pub fn find_by_id(&self, id: &SystemId) -> Option<&Arc<dyn CoreFactory>> {
+    pub fn find_by_id(&self, id: &dyn SystemId) -> Option<&Arc<dyn CoreFactory>> {
         self.by_id.get(id)
     }
 
@@ -83,13 +83,13 @@ impl SystemRegistry {
     /// `RomLoadTarget::default_load_options()`.
     pub fn create_loader(
         self: &Arc<Self>,
-        pending_options: HashMap<SystemId, Box<dyn DynSystemLoadOptions>>,
+        pending_options: HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>,
     ) -> Result<Box<dyn RomLoader>, RegistryError> {
         if let Some(system_id) = pending_options
             .keys()
-            .find(|system_id| !self.by_id.contains_key(system_id))
+            .find(|system_id| !self.by_id.contains_key(system_id.as_ref()))
         {
-            return Err(RegistryError::UnregisteredOptions(*system_id));
+            return Err(RegistryError::UnregisteredOptions(system_id.clone()));
         }
         let pending_options = pending_options
             .into_iter()
@@ -106,7 +106,7 @@ impl SystemRegistry {
 /// ROM auto-detection via `probe_media()`.
 struct RegistryRomLoader {
     registry: Arc<SystemRegistry>,
-    pending_options: HashMap<SystemId, Option<Box<dyn DynSystemLoadOptions>>>,
+    pending_options: HashMap<Box<dyn SystemId>, Option<Box<dyn DynSystemLoadOptions>>>,
 }
 
 impl RomLoader for RegistryRomLoader {
@@ -130,10 +130,10 @@ impl RomLoader for RegistryRomLoader {
         // Notify the target BEFORE loading so it can rebuild the
         // EmuCore with the correct factory if the system changed.
         target
-            .set_active_system(system_id)
+            .set_active_system(system_id.as_ref())
             .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
 
-        let view = settings_view(target.settings_snapshot(), &system_id);
+        let view = settings_view(target.settings_snapshot(), system_id.as_ref());
         let options = self
             .pending_options
             .get_mut(&system_id)
@@ -156,7 +156,7 @@ impl RomLoader for RegistryRomLoader {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{any::TypeId, hash::Hash, sync::Arc};
 
     use nerust_core_traits::{
         factory::{
@@ -171,15 +171,52 @@ mod tests {
         identity::SystemId,
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
+    use serde::{Deserialize, Serialize};
 
     use super::*;
+
+    #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+    pub(crate) struct DummySystemId;
+
+    #[typetag::serde]
+    impl SystemId for DummySystemId {}
+
+    impl ToString for DummySystemId {
+        fn to_string(&self) -> String {
+            "dummy".to_string()
+        }
+    }
+
+    impl Hash for DummySystemId {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            TypeId::of::<Self>().hash(state);
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+    pub(crate) struct DummyOtherSystemId;
+
+    #[typetag::serde]
+    impl SystemId for DummyOtherSystemId {}
+
+    impl ToString for DummyOtherSystemId {
+        fn to_string(&self) -> String {
+            "dummy".to_string()
+        }
+    }
+
+    impl Hash for DummyOtherSystemId {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            TypeId::of::<Self>().hash(state);
+        }
+    }
 
     #[derive(Debug, Clone)]
     struct StubFactory;
 
     impl CoreFactory for StubFactory {
-        fn system_id(&self) -> SystemId {
-            SystemId::new("nes")
+        fn system_id(&self) -> Box<dyn SystemId> {
+            Box::new(DummySystemId)
         }
         fn display_name(&self) -> &'static str {
             "Stub"
@@ -229,11 +266,11 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct MatchingStubFactory(SystemId);
+    struct MatchingStubFactory(Box<dyn SystemId>);
 
     impl CoreFactory for MatchingStubFactory {
-        fn system_id(&self) -> SystemId {
-            self.0
+        fn system_id(&self) -> Box<dyn SystemId> {
+            self.0.clone()
         }
         fn display_name(&self) -> &'static str {
             "Matched"
@@ -305,7 +342,7 @@ mod tests {
     #[test]
     fn all_preserves_registration_order() {
         let a = stub_factory();
-        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("matched")));
+        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
         assert_eq!(registry.all().len(), 2);
         assert_eq!(registry.all()[0].system_id(), a.system_id());
@@ -317,8 +354,8 @@ mod tests {
         let factory = stub_factory();
         let id = factory.system_id();
         let registry = SystemRegistry::new(vec![factory.clone()]);
-        assert!(registry.find_by_id(&id).is_some());
-        assert!(registry.find_by_id(&SystemId::new("snes")).is_none());
+        assert!(registry.find_by_id(id.as_ref()).is_some());
+        assert!(registry.find_by_id(&DummyOtherSystemId).is_none());
     }
 
     #[test]
@@ -337,7 +374,7 @@ mod tests {
     #[test]
     fn detect_returns_matching_factory() {
         let fallback = stub_factory();
-        let matched = Arc::new(MatchingStubFactory(SystemId::new("matched")));
+        let matched = Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
         let matched_id = matched.system_id();
         let registry = SystemRegistry::new(vec![fallback, matched]);
         let media = MediaObject::new(Some("game.nes".into()), vec![]);
@@ -349,15 +386,16 @@ mod tests {
 
     #[test]
     fn detect_rejects_ambiguous_media() {
-        let first: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("first")));
-        let second: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(SystemId::new("second")));
+        let first: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummySystemId)));
+        let second: Arc<dyn CoreFactory> =
+            Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
         let registry = SystemRegistry::new(vec![first, second]);
         let media = MediaObject::new(Some("game.rom".into()), vec![]);
 
         assert!(matches!(
             registry.detect(&media),
             Err(RegistryError::AmbiguousMedia(ids))
-                if ids == vec![SystemId::new("first"), SystemId::new("second")]
+                if ids == vec![Box::new(DummySystemId) as Box<dyn SystemId>, Box::new(DummyOtherSystemId)]
         ));
     }
 
@@ -377,8 +415,8 @@ mod tests {
         let options = NoopSystemLoadOptions.into();
 
         assert!(matches!(
-            registry.create_loader(HashMap::from([(SystemId::new("snes"), options)])),
-            Err(RegistryError::UnregisteredOptions(id)) if id == SystemId::new("snes")
+            registry.create_loader(HashMap::from([(Box::new(DummyOtherSystemId) as Box<_>, options)])),
+            Err(RegistryError::UnregisteredOptions(id)) if id.as_ref() == &DummyOtherSystemId as &dyn SystemId
         ));
     }
 }

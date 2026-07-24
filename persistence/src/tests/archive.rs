@@ -3,7 +3,6 @@ use std::{
     io::{Cursor, Write},
 };
 
-use nerust_core_traits::identity::SystemId;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 use super::{prepare_test_dir, test_identity, test_metadata};
@@ -14,6 +13,7 @@ use crate::{
         THUMBNAIL_ENTRY,
     },
     slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot},
+    tests::DummySystemId,
     thumbnail::ThumbnailSource,
 };
 
@@ -143,7 +143,7 @@ fn v1_archive_converts_to_v2_on_read() {
         slot_id: 42,
         saved_at_unix_ms: 1_000_000,
         has_thumbnail: false,
-        system_id: SystemId::new("nes"),
+        system_id: Some(Box::new(DummySystemId)),
         mapper_type: 4,
         sub_mapper_type: 1,
         prg_rom_crc64: 0x11,
@@ -189,7 +189,7 @@ fn v1_conversion_identity_bytes_are_deterministic() {
         slot_id: 0,
         saved_at_unix_ms: 0,
         has_thumbnail: false,
-        system_id: SystemId::new("nes"),
+        system_id: Some(Box::new(DummySystemId)),
         mapper_type: 4,
         sub_mapper_type: 1,
         prg_rom_crc64: 0x11,

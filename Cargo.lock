@@ -1063,6 +1063,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c2d035d21af5cde1a6f5c7b444a5bf963520a9f142e5d06931178433d7d5388"
 
 [[package]]
+name = "dyn-hash"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fdab65db9274e0168143841eb8f864a0a21f8b1b8d2ba6812bbe6024346e99e"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2843,6 +2849,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "dyn-clone",
  "dyn-eq",
+ "dyn-hash",
  "log",
  "nerust_input_traits",
  "nerust_render_traits",
@@ -2850,6 +2857,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "typetag",
 ]
 
 [[package]]
@@ -2915,6 +2923,7 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "thiserror 2.0.19",
+ "typetag",
 ]
 
 [[package]]
@@ -2949,6 +2958,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "thiserror 2.0.19",
+ "typetag",
 ]
 
 [[package]]
@@ -3046,6 +3056,7 @@ dependencies = [
  "serde_bytes",
  "thiserror 2.0.19",
  "time",
+ "typetag",
  "windows-sys 0.61.2",
  "zip",
 ]

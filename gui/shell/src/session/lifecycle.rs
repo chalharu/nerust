@@ -384,7 +384,7 @@ impl SessionHandle {
     ) -> Result<super::CoreParts, SessionError> {
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = factory.system_id();
-        let view = settings_view(next_settings, &system_id);
+        let view = settings_view(next_settings, system_id.as_ref());
         let parts = factory.create_core_and_adapter_with_assignments(
             &view,
             speaker,
@@ -399,7 +399,7 @@ impl SessionHandle {
         identity: &nerust_core_traits::identity::SystemIdentity,
     ) -> Option<nerust_persistence::sidecar::SidecarPaths> {
         self.settings
-            .resolve_persistence_paths_with_import(identity.system_id, rom_path, identity)
+            .resolve_persistence_paths_with_import(identity.system_id.as_ref(), rom_path, identity)
             .map_err(|error| {
                 log::warn!("failed to resolve persistence paths: {error}");
                 error

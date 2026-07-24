@@ -351,7 +351,9 @@ impl SettingsWindowHandle {
         self.pending_apply.lock().unwrap().take()
     }
 
-    pub(crate) fn take_pending_assignments(&mut self) -> Option<Vec<(SystemId, InputAssignments)>> {
+    pub(crate) fn take_pending_assignments(
+        &mut self,
+    ) -> Option<Vec<(Box<dyn SystemId>, InputAssignments)>> {
         self.pending_assignments.lock().unwrap().take()
     }
 

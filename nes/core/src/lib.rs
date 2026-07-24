@@ -20,7 +20,7 @@ mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
 pub(crate) mod rom_format;
-pub(crate) mod rom_identity;
+pub mod rom_identity;
 pub mod rom_parse;
 
 use crc::{CRC_64_XZ, Crc, Digest};

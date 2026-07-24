@@ -17,7 +17,7 @@ pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSha
         };
         let sid = factory.system_id();
         if let Some(sys_settings) = sd.default_system_settings() {
-            settings.systems.insert(sid, sys_settings);
+            settings.systems.insert(sid.clone(), sys_settings);
         }
         if let Some(attachment) = sd.default_input_attachment_id()
             && let Some(control_prefix) = sd.default_input_control_prefix()
@@ -83,12 +83,13 @@ pub fn default_app_state() -> DesktopAppState {
 /// with factory iteration via `SystemDefaults`.
 #[cfg(test)]
 pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
-    use nerust_core_traits::identity::SystemId;
+    use crate::session::test_helpers::DummySystemId;
+
     let mut settings = default_shared_settings(&[]);
     // Explicit NES seed for tests — avoids depending on nes/factory crate.
     // Production paths use factory.default_system_settings() instead.
     settings.systems.insert(
-        SystemId::new("nes"),
+        Box::new(DummySystemId),
         Box::new(nerust_nes_settings::NesSettings::default())
             as Box<dyn nerust_settings_traits::SystemSettings>,
     );
@@ -99,7 +100,10 @@ pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
         .or_default();
-    settings.input.systems.insert(SystemId::new("nes"), input);
+    settings
+        .input
+        .systems
+        .insert(Box::new(DummySystemId), input);
     settings
 }
 

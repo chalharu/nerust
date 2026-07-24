@@ -1,5 +1,7 @@
 use std::{
+    any::TypeId,
     fs,
+    hash::Hash,
     path::PathBuf,
     rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicBool},
@@ -25,6 +27,7 @@ use nerust_input_traits::{
 use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
+use serde::{Deserialize, Serialize};
 
 use super::SessionHandle;
 use crate::{load::RomLoadTarget, registry::SystemRegistry, settings::factory::settings_view};
@@ -92,7 +95,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            SystemId::new("nes"),
+            Box::new(DummySystemId),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -193,10 +196,46 @@ impl InputSystemFactory for MockInputFactory {
     }
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct DummySystemId;
+
+#[typetag::serde]
+impl SystemId for DummySystemId {}
+
+impl ToString for DummySystemId {
+    fn to_string(&self) -> String {
+        "dummy".to_string()
+    }
+}
+
+impl Hash for DummySystemId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        TypeId::of::<Self>().hash(state);
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct DummyOtherSystemId;
+
+#[typetag::serde]
+impl SystemId for DummyOtherSystemId {}
+
+impl ToString for DummyOtherSystemId {
+    fn to_string(&self) -> String {
+        "dummy".to_string()
+    }
+}
+
+impl Hash for DummyOtherSystemId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        TypeId::of::<Self>().hash(state);
+    }
+}
+
 pub(crate) struct MockFactory;
 impl CoreFactory for MockFactory {
-    fn system_id(&self) -> SystemId {
-        SystemId::new("nes")
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummySystemId)
     }
 
     fn display_name(&self) -> &'static str {
@@ -257,8 +296,8 @@ impl CoreFactory for MockFactory {
 
 pub(crate) struct AlternateMockFactory;
 impl CoreFactory for AlternateMockFactory {
-    fn system_id(&self) -> SystemId {
-        SystemId::new("alternate")
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummyOtherSystemId)
     }
 
     fn display_name(&self) -> &'static str {
@@ -331,7 +370,7 @@ pub(crate) fn test_session() -> SessionHandle {
     let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
     let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
     session
-        .set_active_system(factory.system_id())
+        .set_active_system(factory.system_id().as_ref())
         .expect("test setup failed");
     session
 }
@@ -350,7 +389,7 @@ pub(crate) fn test_rom_with_mapper4() -> Vec<u8> {
 
 pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
     let system_id = session.factory().expect("no active system").system_id();
-    settings_view(session.settings_snapshot(), &system_id)
+    settings_view(session.settings_snapshot(), system_id.as_ref())
 }
 
 pub(crate) fn unique_temp_dir(label: &str) -> PathBuf {
