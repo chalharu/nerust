@@ -246,3 +246,101 @@ impl SessionHandle {
         rebuild_input_map(&self.field_map, &profile.bindings, &mut self.key_field_map);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use nerust_input_traits::{AttachmentId, ControlInfo, ControllerProfile, PortSet, ProfileId};
+
+    use super::*;
+
+    /// Single-port mock: "test.standard" profile with one port.
+    #[derive(Debug)]
+    struct MockSinglePort;
+    impl ControllerProfile for MockSinglePort {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.standard")
+        }
+        fn label(&self) -> &'static str {
+            "Test Standard"
+        }
+        fn port_sets(&self) -> &[PortSet] {
+            static P: &[AttachmentId] = &[AttachmentId::new("test.slot")];
+            static S: &[PortSet] = &[PortSet { ports: P }];
+            S
+        }
+        fn port_groups(&self) -> &[&[ControlInfo]] {
+            &[]
+        }
+    }
+
+    /// Multi-port mock: "test.multi" profile with P1/P2 ports in one set.
+    #[derive(Debug)]
+    struct MockMultiPort;
+    impl ControllerProfile for MockMultiPort {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.multi")
+        }
+        fn label(&self) -> &'static str {
+            "Test Multi"
+        }
+        fn port_sets(&self) -> &[PortSet] {
+            static P: &[AttachmentId] =
+                &[AttachmentId::new("test.p1"), AttachmentId::new("test.p2")];
+            static S: &[PortSet] = &[PortSet { ports: P }];
+            S
+        }
+        fn port_groups(&self) -> &[&[ControlInfo]] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn clear_multi_port_does_nothing_for_single_port() {
+        let profile = MockSinglePort;
+        let slot = AttachmentId::new("test.slot");
+        let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> =
+            vec![(slot, Some(Rc::new(MockSinglePort)))];
+        clear_multi_port_conflicts(slot, &profile, &mut assignments);
+        assert!(assignments[0].1.is_some());
+    }
+
+    #[test]
+    fn clear_multi_port_clears_other_ports() {
+        let profile = MockMultiPort;
+        let p1 = AttachmentId::new("test.p1");
+        let p2 = AttachmentId::new("test.p2");
+        let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = vec![
+            (p1, Some(Rc::new(MockMultiPort))),
+            (p2, Some(Rc::new(MockMultiPort))),
+        ];
+        clear_multi_port_conflicts(p1, &profile, &mut assignments);
+        assert!(assignments[0].1.is_some(), "P1 should stay assigned");
+        assert!(assignments[1].1.is_none(), "P2 should be cleared");
+    }
+
+    #[test]
+    fn clear_multi_port_does_not_clear_unrelated() {
+        let profile = MockMultiPort;
+        let p1 = AttachmentId::new("test.p1");
+        let p2 = AttachmentId::new("test.p2");
+        let other = AttachmentId::new("test.other");
+        let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = vec![
+            (other, Some(Rc::new(MockSinglePort))),
+            (p1, Some(Rc::new(MockMultiPort))),
+            (p2, Some(Rc::new(MockMultiPort))),
+        ];
+        clear_multi_port_conflicts(p1, &profile, &mut assignments);
+        assert!(assignments[0].1.is_some(), "Unrelated port unchanged");
+        assert!(assignments[1].1.is_some(), "P1 stays");
+        assert!(assignments[2].1.is_none(), "P2 cleared");
+    }
+
+    #[test]
+    fn device_kind_delegates_to_profile_method() {
+        let profile = MockSinglePort;
+        let kind = device_kind(&profile, 0);
+        assert_eq!(kind, "test.standard");
+    }
+}
