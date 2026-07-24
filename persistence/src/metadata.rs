@@ -19,7 +19,7 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
-    pub(crate) system_id: Option<Box<dyn SystemId>>,
+    pub(crate) system_id: Box<dyn SystemId>,
     #[serde(with = "serde_bytes")]
     pub(crate) identity_bytes: Vec<u8>,
     #[serde(with = "serde_bytes")]
@@ -67,7 +67,7 @@ pub(crate) fn encode_slot_metadata(
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
         has_thumbnail,
-        system_id: Some(identity.system_id.clone()),
+        system_id: identity.system_id.clone(),
         identity_bytes: identity.identity_bytes.clone(),
         options_bytes: Vec::new(),
         emulator_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -78,9 +78,5 @@ pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
     identity: &SystemIdentity,
 ) -> bool {
-    metadata
-        .system_id
-        .as_ref()
-        .is_some_and(|sid| *sid == identity.system_id)
-        && metadata.identity_bytes == identity.identity_bytes
+    metadata.system_id == identity.system_id && metadata.identity_bytes == identity.identity_bytes
 }
