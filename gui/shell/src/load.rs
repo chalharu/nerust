@@ -10,6 +10,8 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 pub enum RomLoaderError {
     #[error("I/O error: {0}")]
     Io(String),
+    #[error("unsupported ROM format")]
+    Detect(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
     #[error("ROM load failed: {0}")]

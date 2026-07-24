@@ -164,7 +164,7 @@ mod tests {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let pending = factory.default_load_options();
         let shared = default_shared_settings(std::slice::from_ref(&factory));
-        let registry = SystemRegistry::new(vec![factory]);
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let mut loader = registry.create_loader(vec![pending]);
 
         let mut target = LoadRecorder {
