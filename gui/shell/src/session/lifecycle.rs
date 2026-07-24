@@ -251,10 +251,7 @@ impl SessionHandle {
         })
     }
 
-    fn cmd_select_active_slot(
-        &mut self,
-        slot_id: u64,
-    ) -> SessionCommandOutcome {
+    fn cmd_select_active_slot(&mut self, slot_id: u64) -> SessionCommandOutcome {
         self.persistence.select_active_slot(slot_id);
         SessionCommandOutcome {
             executed: true,
