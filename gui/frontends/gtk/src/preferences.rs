@@ -90,9 +90,10 @@ pub(crate) fn present_preferences_dialog(
     let draft = Rc::new(RefCell::new(state.borrow().settings_snapshot().clone()));
     let capture_target = Rc::new(RefCell::new(None::<CaptureTarget>));
     let factory: Option<Arc<dyn CoreFactory>> = state.borrow().active_factory();
-    let ok_button: gtk::Widget = dialog
-        .widget_for_response(gtk::ResponseType::Ok)
-        .expect("OK button");
+    let Some(ok_button) = dialog.widget_for_response(gtk::ResponseType::Ok) else {
+        log::error!("preferences dialog missing OK button, aborting");
+        return;
+    };
     if let Some(action_box) = ok_button
         .parent()
         .and_then(|parent| parent.downcast::<gtk::Box>().ok())

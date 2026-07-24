@@ -470,14 +470,21 @@ impl SettingsAppState {
                 );
             }
             Message::StartCapture(target) => {
-                *self.capture_target.lock().unwrap() = Some(target);
+                *self.capture_target.lock().expect("capture target mutex") = Some(target);
             }
             Message::ClearCapture(target) => {
                 apply_capture_target(&mut self.draft, &target, None);
-                self.capture_target.lock().unwrap().take();
+                self.capture_target
+                    .lock()
+                    .expect("capture target mutex")
+                    .take();
             }
             Message::CaptureKey(key) => {
-                let target = self.capture_target.lock().unwrap().take();
+                let target = self
+                    .capture_target
+                    .lock()
+                    .expect("capture target mutex")
+                    .take();
                 if let Some(target) = target {
                     apply_capture_target(&mut self.draft, &target, Some(key));
                 }
@@ -486,7 +493,7 @@ impl SettingsAppState {
                 if !self.validation_errors().is_empty() {
                     return Task::none();
                 }
-                *self.pending_apply.lock().unwrap() = Some(self.draft.clone());
+                *self.pending_apply.lock().expect("pending apply mutex") = Some(self.draft.clone());
                 // Only push assignments if they actually changed
                 let new_pairs: Vec<(String, Option<String>)> = self
                     .controller_assignments
@@ -506,7 +513,10 @@ impl SettingsAppState {
                         return Task::none();
                     };
                     let sid = factory.system_id();
-                    *self.pending_assignments.lock().unwrap() = Some(vec![(
+                    *self
+                        .pending_assignments
+                        .lock()
+                        .expect("pending assignments mutex") = Some(vec![(
                         sid,
                         InputAssignments {
                             slots: self
@@ -790,7 +800,7 @@ impl SettingsAppState {
         rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
     ) -> El<'a> {
         let language = self.language();
-        let current_capture = self.capture_target.lock().unwrap();
+        let current_capture = self.capture_target.lock().expect("capture target mutex");
         let mut content = column![text(title)];
         for (label, target) in rows {
             let binding_label = if current_capture.as_ref() == Some(&target) {
@@ -973,12 +983,18 @@ fn labeled_slider<'a>(label: &'static str, value: String, slider: impl Into<El<'
     .into()
 }
 
-fn selected_choice<T: Clone + Eq>(value: T, options: impl Into<Vec<Choice<T>>>) -> Choice<T> {
+fn selected_choice<T: Clone + Eq + std::fmt::Debug>(
+    value: T,
+    options: impl Into<Vec<Choice<T>>>,
+) -> Choice<T> {
+    let options: Vec<_> = options.into();
     options
-        .into()
         .into_iter()
         .find(|choice| choice.value == value)
-        .unwrap()
+        .unwrap_or_else(|| Choice {
+            value: value.clone(),
+            label: format!("{value:?}"),
+        })
 }
 
 fn system_choice_row(
