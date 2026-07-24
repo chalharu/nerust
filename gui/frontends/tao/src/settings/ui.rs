@@ -18,7 +18,10 @@ use iced::{
 use iced_winit::program::Program;
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
-    factory::descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
+    factory::{
+        CoreFactory,
+        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
+    },
 };
 use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
@@ -914,7 +917,7 @@ impl SettingsAppState {
         content = content.push(tab_row);
 
         for field in model.fields.iter() {
-            content = content.push(system_choice_row(field, language));
+            content = content.push(system_choice_row(field, language, factory.as_ref()));
         }
         content.spacing(16).into()
     }
@@ -1000,13 +1003,14 @@ fn selected_choice<T: Clone + Eq + std::fmt::Debug>(
 fn system_choice_row(
     field: &SystemSettingsFieldModel,
     language: nerust_gui_settings::language::AppLanguage,
+    factory: &dyn CoreFactory,
 ) -> El<'static> {
     let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
     let choices = options
         .iter()
         .map(|option| Choice {
             value: option.id.as_str().to_string(),
-            label: resolve_label(option.label_id, language),
+            label: resolve_label(option.label_id, language, factory),
         })
         .collect::<Vec<_>>();
     let selected = choices
@@ -1020,7 +1024,7 @@ fn system_choice_row(
         });
     let field_id = field.id.as_str().to_string();
     row![
-        text(resolve_label(field.label_id, language)).width(Length::Fixed(220.0)),
+        text(resolve_label(field.label_id, language, factory)).width(Length::Fixed(220.0)),
         pick_list(choices, Some(selected), move |choice| {
             Message::SetSystemChoice(field_id.clone(), choice)
         })

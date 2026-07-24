@@ -133,7 +133,7 @@ impl SessionHandle {
                         default_app_state, default_local_settings, default_shared_settings,
                     };
                     let fallback = SettingsSnapshot {
-                        shared: default_shared_settings(),
+                        shared: default_shared_settings(&[]),
                         local: default_local_settings(),
                         app_state: default_app_state(),
                     };
@@ -181,19 +181,19 @@ impl SessionHandle {
         let settings = if let Some(paths) = paths {
             SettingsManager::load_or_ephemeral_with_paths(
                 paths,
-                default_shared_settings(),
+                default_shared_settings(&[]),
                 default_local_settings(),
                 default_app_state(),
             )
         } else if use_persistent {
             SettingsManager::load_or_ephemeral(
-                default_shared_settings(),
+                default_shared_settings(&[]),
                 default_local_settings(),
                 default_app_state(),
             )
         } else {
             SettingsManager::ephemeral(
-                default_shared_settings(),
+                default_shared_settings(&[]),
                 default_local_settings(),
                 default_app_state(),
             )
@@ -201,7 +201,7 @@ impl SessionHandle {
         let settings_snapshot = settings.snapshot().unwrap_or_else(|e| {
             log::warn!("settings snapshot unavailable, using ephemeral defaults: {e}");
             SettingsSnapshot {
-                shared: default_shared_settings(),
+                shared: default_shared_settings(&[]),
                 local: default_local_settings(),
                 app_state: default_app_state(),
             }
@@ -676,7 +676,7 @@ mod tests {
         let factory = Arc::new(MockFactory);
         let registry = SystemRegistry::new(vec![factory.clone(), factory]);
         let snapshot = SettingsSnapshot {
-            shared: default_shared_settings(),
+            shared: default_shared_settings(&[]),
             local: default_local_settings(),
             app_state: default_app_state(),
         };
