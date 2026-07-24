@@ -427,27 +427,12 @@ impl SettingsAppState {
                         .find(|p| p.profile_id().as_str() == id)
                         .cloned()
                 });
-                // For multi-port controllers (port_set with >1 port),
-                // clear other occupied slots in the same set.
                 if let Some(ref p) = profile {
-                    for ps in p.port_sets() {
-                        if ps.ports.len() <= 1 {
-                            continue;
-                        }
-                        if !ps.ports.contains(&slot) {
-                            continue;
-                        }
-                        for &port in ps.ports {
-                            if port != slot
-                                && let Some(other) = self
-                                    .controller_assignments
-                                    .iter_mut()
-                                    .find(|(s, _)| *s == port)
-                            {
-                                other.1 = None;
-                            }
-                        }
-                    }
+                    nerust_gui_shell::session::input::clear_multi_port_conflicts(
+                        slot,
+                        p.as_ref(),
+                        &mut self.controller_assignments,
+                    );
                 }
                 if let Some(entry) = self
                     .controller_assignments
