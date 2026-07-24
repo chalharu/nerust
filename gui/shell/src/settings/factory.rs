@@ -57,7 +57,7 @@ pub fn resolve_label(label_id: &str, language: AppLanguage, factory: &dyn CoreFa
 mod tests {
     use nerust_core_traits::{
         factory::{
-            CoreFactory, FactoryError,
+            CoreFactory, FactoryError, SystemDefaults,
             descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
             load::{
                 DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
@@ -121,6 +121,12 @@ mod tests {
         fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
             unimplemented!()
         }
+        fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
+            Some(self)
+        }
+    }
+
+    impl SystemDefaults for LabelFactory {
         fn resolve_label(&self, label_id: &str, _language: &str) -> Option<String> {
             self.labels
                 .iter()

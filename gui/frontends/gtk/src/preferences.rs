@@ -599,7 +599,6 @@ pub(crate) fn present_preferences_dialog(
     );
     connect_local_updates(
         &draft,
-        factory.as_ref(),
         &fullscreen_check,
         &scaling_combo,
         &vsync_check,
@@ -770,6 +769,9 @@ struct WidgetBundle {
     input_tabs: Rc<RefCell<Vec<InputTab>>>,
     capture_target: Rc<RefCell<Option<CaptureTarget>>>,
     language: AppLanguage,
+    /// Stored as `Arc` (rather than `&dyn`) because `WidgetBundle` is
+    /// cloned several times to be captured by GTK signal handlers.
+    /// The `Arc` clone cost is a single atomic increment.
     factory: Option<Arc<dyn CoreFactory>>,
 }
 
@@ -914,7 +916,6 @@ fn connect_general_updates(
 #[expect(clippy::too_many_arguments)]
 fn connect_local_updates(
     draft: &Rc<RefCell<SettingsSnapshot>>,
-    _factory: Option<&Arc<dyn CoreFactory>>,
     fullscreen_check: &gtk::CheckButton,
     scaling_combo: &gtk::ComboBoxText,
     vsync_check: &gtk::CheckButton,
