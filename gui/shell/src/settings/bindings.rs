@@ -61,13 +61,11 @@ mod tests {
     use nerust_keyboard::Key;
 
     use super::conflicting_keys;
-    use crate::{
-        settings::defaults::seed::default_shared_settings, test_support::single_port_topology,
-    };
+    use crate::{settings::defaults::seed::test_nes_defaults, test_support::single_port_topology};
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
-        let mut settings = default_shared_settings(&[]);
+        let mut settings = test_nes_defaults();
         settings
             .input
             .shortcuts
