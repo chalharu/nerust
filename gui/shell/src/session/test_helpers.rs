@@ -268,7 +268,9 @@ pub(crate) fn test_session() -> SessionHandle {
     let audio_registry = Arc::new(AudioBackendRegistry::new());
     let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
     let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
-    session.set_active_system(factory.system_id());
+    session
+        .set_active_system(factory.system_id())
+        .expect("test setup failed");
     session
 }
 
