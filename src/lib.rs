@@ -163,24 +163,20 @@ mod tests {
     fn registry_rom_loader_uses_pending_options() {
         let factory: Arc<dyn CoreFactory> = Arc::new(NesFactory);
         let pending = factory.default_load_options();
+        let shared = default_shared_settings(std::slice::from_ref(&factory));
         let registry = SystemRegistry::new(vec![factory]);
         let mut loader = registry.create_loader(vec![pending]);
-
-        fn make_snapshot() -> SettingsSnapshot {
-            SettingsSnapshot {
-                shared: default_shared_settings(&[]),
-                local: default_local_settings(),
-                app_state: default_app_state(),
-            }
-        }
 
         let mut target = LoadRecorder {
             resolved: None,
             resumed: false,
-            snapshot: make_snapshot(),
+            snapshot: SettingsSnapshot {
+                shared,
+                local: default_local_settings(),
+                app_state: default_app_state(),
+            },
         };
 
-        // Write a minimal valid NES ROM to a temp file
         let rom_path = std::env::temp_dir().join("nerust_test_rom.nes");
         let nes_bytes = vec![0x4E, 0x45, 0x53, 0x1A, 1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         std::fs::write(&rom_path, &nes_bytes).expect("write rom");

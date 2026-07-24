@@ -104,15 +104,13 @@ mod tests {
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{
-        settings::defaults::seed::{
-            default_app_state, default_local_settings, default_shared_settings,
-        },
+        settings::defaults::seed::{default_app_state, default_local_settings, test_nes_defaults},
         test_support::{TEST_ATT_P1, TEST_CTRL_A},
     };
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
-            shared: default_shared_settings(&[]),
+            shared: test_nes_defaults(),
             local: default_local_settings(),
             app_state: default_app_state(),
         }
