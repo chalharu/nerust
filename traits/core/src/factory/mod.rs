@@ -99,38 +99,12 @@ pub trait CoreFactory: Send + Sync {
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
 
-    // -- Optional system presentation methods.
-    //    Logically part of SystemDefaults; bridged here until call sites
-    //    migrate to as_system_defaults() for full ISP separation.
-
-    /// Access the SystemDefaults facet, if this factory provides one.
+    /// Access the [`SystemDefaults`] facet of this factory.
+    ///
+    /// Returns `None` for factories that only provide core creation
+    /// (ISP separation — GUI integration methods live on `SystemDefaults`).
     fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
         None
-    }
-
-    /// Default system-specific settings to seed into the shared settings map.
-    fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
-        self.as_system_defaults()
-            .and_then(|d| d.default_system_settings())
-    }
-
-    /// Resolve a system-specific label ID to a localized string.
-    /// `language` is "ja" or "en". Returns None if unknown (display raw ID).
-    fn resolve_label(&self, _label_id: &str, _language: &str) -> Option<String> {
-        self.as_system_defaults()
-            .and_then(|d| d.resolve_label(_label_id, _language))
-    }
-
-    /// Attachment ID prefix for default keyboard bindings.
-    fn default_input_attachment_id(&self) -> Option<&'static str> {
-        self.as_system_defaults()
-            .and_then(|d| d.default_input_attachment_id())
-    }
-
-    /// Control ID prefix for default keyboard bindings.
-    fn default_input_control_prefix(&self) -> Option<&'static str> {
-        self.as_system_defaults()
-            .and_then(|d| d.default_input_control_prefix())
     }
 }
 

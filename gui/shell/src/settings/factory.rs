@@ -49,7 +49,8 @@ pub fn apply_settings_choice(
 
 pub fn resolve_label(label_id: &str, language: AppLanguage, factory: &dyn CoreFactory) -> String {
     factory
-        .resolve_label(label_id, language_to_str(language))
+        .as_system_defaults()
+        .and_then(|d| d.resolve_label(label_id, language_to_str(language)))
         .unwrap_or_else(|| label_id.to_string())
 }
 

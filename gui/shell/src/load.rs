@@ -6,6 +6,8 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
+use crate::session::SessionError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RomLoaderError {
     #[error("I/O error: {0}")]
@@ -32,9 +34,12 @@ pub trait RomLoadTarget {
     ) -> Result<(), RomLoaderError>;
     fn resume(&mut self);
 
-    /// Notifies the target of the detected system after a successful load.
-    /// Default implementation is a no-op for backward compatibility.
-    fn set_active_system(&mut self, _system_id: SystemId) {}
+    /// Notifies the target of the detected system for the ROM being loaded.
+    /// Returns `Err` if the system is not recognised or activation fails.
+    /// Default implementation accepts any system (no-op).
+    fn set_active_system(&mut self, _system_id: SystemId) -> Result<(), SessionError> {
+        Ok(())
+    }
 }
 
 /// Loads and resolves a ROM file into a [`RomLoadTarget`].
