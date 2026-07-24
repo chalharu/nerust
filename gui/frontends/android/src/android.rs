@@ -282,30 +282,30 @@ impl AndroidFrontend {
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
+
+        let factory = self
+            .session
+            .registry()
+            .detect(&media)
+            .map_err(|e| format!("failed to detect ROM system: {e}"))?
+            .ok_or_else(|| "unsupported ROM format".to_string())?;
+        let system_id = factory.system_id();
+
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
+            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+
         let options = self
             .session
             .default_load_options()
             .ok_or_else(|| "no active system".to_string())?;
-        let system_id = self
-            .session
-            .factory()
-            .ok_or_else(|| "no active system".to_string())?
-            .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
             &system_id,
         );
-        let resolved = match self
-            .session
-            .factory()
-            .ok_or_else(|| "no active system".to_string())?
+        let resolved = factory
             .resolve_load_request(&view, options)
-        {
-            Ok(r) => r,
-            Err(error) => {
-                return Err(format!("failed to start ROM {id} from library: {error}"));
-            }
-        };
+            .map_err(|e| format!("failed to start ROM {id} from library: {e}"))?;
+
         if let Err(error) = self.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
@@ -365,33 +365,32 @@ impl AndroidFrontend {
                 )
             })?;
         let media = MediaObject::new(Some(path), bytes);
+
+        let factory = self
+            .session
+            .registry()
+            .detect(&media)
+            .map_err(|e| format!("failed to detect ROM system: {e}"))?
+            .ok_or_else(|| "unsupported ROM format".to_string())?;
+        let system_id = factory.system_id();
+
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
+            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+
         let options = self
             .session
             .default_load_options()
             .ok_or_else(|| "no active system".to_string())?;
-        let system_id = self
-            .session
-            .factory()
-            .ok_or_else(|| "no active system".to_string())?
-            .system_id();
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
             &system_id,
         );
-        let resolved = match self
-            .session
-            .factory()
-            .ok_or_else(|| "no active system".to_string())?
-            .resolve_load_request(&view, options)
-        {
-            Ok(r) => r,
-            Err(error) => {
-                return Err(format!(
-                    "failed to load imported Android ROM {}: {error}",
-                    entry.display_name
-                ));
-            }
-        };
+        let resolved = factory.resolve_load_request(&view, options).map_err(|e| {
+            format!(
+                "failed to load imported Android ROM {}: {e}",
+                entry.display_name
+            )
+        })?;
         if let Err(error) = self.session.load_resolved(media, resolved) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
