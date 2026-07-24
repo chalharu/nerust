@@ -25,7 +25,7 @@ fn seed_nes_defaults(settings: &mut DesktopSharedSettings) {
     );
     let mut nes_input = nerust_gui_settings::input::SystemInputSettings::default();
     nes_input.implicit_keyboard_profile_mut().bindings =
-        crate::keyboard_defaults::default_nes_bindings();
+        crate::keyboard_defaults::default_system_bindings("nes.attachment.player1", "nes.control");
     let _ = nes_input
         .keyboard_profiles
         .entry(IMPLICIT_PROFILE_ID.to_string())
