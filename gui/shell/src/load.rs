@@ -9,7 +9,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 #[derive(Debug, thiserror::Error)]
 pub enum SystemActivationError {
     #[error("system not registered: {0}")]
-    NotRegistered(SystemId),
+    NotRegistered(Box<dyn SystemId>),
     #[error("system activation failed: {0}")]
     Activation(String),
 }
@@ -43,7 +43,10 @@ pub trait RomLoadTarget {
     /// Notifies the target of the detected system for the ROM being loaded.
     /// Returns `Err` if the system is not recognised or activation fails.
     /// Default implementation accepts any system (no-op).
-    fn set_active_system(&mut self, _system_id: SystemId) -> Result<(), SystemActivationError> {
+    fn set_active_system(
+        &mut self,
+        _system_id: &dyn SystemId,
+    ) -> Result<(), SystemActivationError> {
         Ok(())
     }
 }

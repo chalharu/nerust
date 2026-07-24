@@ -23,7 +23,7 @@ fn language_to_str(lang: AppLanguage) -> &'static str {
     }
 }
 
-pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
+pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &dyn SystemId) -> FactorySettingsView {
     let language = language_to_factory_lang(snapshot.shared.general.language);
     let system_config = snapshot.shared.systems.get(system_id).cloned();
     FactorySettingsView {
@@ -39,7 +39,7 @@ pub fn apply_settings_choice(
     choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
 ) -> Result<(), nerust_core_traits::factory::FactoryError> {
     let system_id = factory.system_id();
-    let mut view = settings_view(snapshot, &system_id);
+    let mut view = settings_view(snapshot, system_id.as_ref());
     factory.apply_settings_choice(&mut view, field, choice)?;
     if let Some(settings) = view.system_config {
         snapshot.shared.systems.insert(system_id, settings);
@@ -70,14 +70,16 @@ mod tests {
     use nerust_gui_settings::language::AppLanguage;
     use std::sync::Arc;
 
+    use crate::session::test_helpers::DummySystemId;
+
     use super::*;
 
     struct LabelFactory {
         labels: Vec<(&'static str, &'static str)>,
     }
     impl CoreFactory for LabelFactory {
-        fn system_id(&self) -> SystemId {
-            SystemId::new("test")
+        fn system_id(&self) -> Box<dyn SystemId> {
+            Box::new(DummySystemId)
         }
         fn display_name(&self) -> &'static str {
             "Test"

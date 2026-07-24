@@ -216,7 +216,7 @@ pub(crate) fn present_preferences_dialog(
         let factory2 = factory.clone();
 
         // Read current assignments to pre-select combo boxes.
-        let sid = factory.system_id().to_string();
+        let sid = factory.system_id();
         let default_assignments = factory.input_system_factory().default_assignments();
         let current_assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = draft
             .borrow()
@@ -269,7 +269,12 @@ pub(crate) fn present_preferences_dialog(
                 key_binding_box.remove(&child);
             }
             let topology = dynamic_topology(assignments, slots);
-            let rows = build_input_rows(language, key_binding_box, &topology, factory.system_id());
+            let rows = build_input_rows(
+                language,
+                key_binding_box,
+                &topology,
+                factory.system_id().as_ref(),
+            );
             *input_rows.borrow_mut() = rows;
         }
 
@@ -693,8 +698,8 @@ pub(crate) fn present_preferences_dialog(
                         }
                         nerust_input_traits::InputAssignments { slots }
                     };
-                    let is_active =
-                        state.borrow().session.active_system_id() == Some(&factory.system_id());
+                    let is_active = state.borrow().session.active_system_id()
+                        == Some(factory.system_id().as_ref());
                     if is_active {
                         let current_pairs = state.borrow().session.current_assignments_pairs();
                         let new_pairs = assignments.to_string_pairs();
@@ -707,7 +712,7 @@ pub(crate) fn present_preferences_dialog(
                             log::warn!("controller reassign failed: {e}");
                         }
                     }
-                    let sid = factory.system_id().to_string();
+                    let sid = factory.system_id();
                     draft
                         .borrow_mut()
                         .app_state
@@ -1057,12 +1062,11 @@ fn refresh_validation(
         return;
     };
     let system = factory.system_id();
-    let sid = system.to_string();
     let input_factory = factory.input_system_factory();
     let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
         .controller_assignments
-        .get(&sid)
+        .get(&system)
         .map(|pairs| {
             pairs
                 .iter()
@@ -1088,7 +1092,7 @@ fn refresh_validation(
     let conflicts = conflicting_keys(
         &snapshot.shared,
         &dynamic_topology(&assignments, input_factory.slots()),
-        system,
+        system.as_ref(),
     );
     let has_errors = storage_error.is_some()
         || !conflicts.is_empty()
@@ -1114,7 +1118,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     if let Err(error) = validate_shared_settings(&snapshot.shared) {
         errors.push(error.to_string());
     }
-    let sid = factory.system_id().to_string();
+    let sid = factory.system_id();
     let input_factory = factory.input_system_factory();
     let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = snapshot
         .app_state
@@ -1145,7 +1149,7 @@ fn validation_errors(snapshot: &SettingsSnapshot, factory: &dyn CoreFactory) -> 
     for (key, labels) in conflicting_keys(
         &snapshot.shared,
         &dynamic_topology(&assignments, input_factory.slots()),
-        factory.system_id(),
+        factory.system_id().as_ref(),
     ) {
         errors.push(format!("{}: {}", key.label(), labels.join(", ")));
     }
@@ -1212,7 +1216,7 @@ fn apply_snapshot_to_widgets(
     latency_spin.set_value(f64::from(snapshot.local.audio.latency_ms));
     for tab in system_tabs.borrow().iter() {
         let sid = tab.factory.system_id();
-        let view = settings_view(snapshot, &sid);
+        let view = settings_view(snapshot, sid.as_ref());
         let page = tab.factory.settings_page(&view);
         for (field_id, combo) in &tab.field_widgets {
             apply_system_field_by_id_to_combo(&page, field_id, combo);
@@ -1235,7 +1239,7 @@ fn build_input_rows(
     language: AppLanguage,
     input_page: &gtk::Box,
     topology: &InputTopologyDescriptor,
-    system: SystemId,
+    system: &dyn SystemId,
 ) -> Vec<InputRow> {
     let input_stack = gtk::Stack::new();
     input_stack.set_hexpand(true);
@@ -1267,7 +1271,7 @@ fn build_input_rows(
                 index as i32,
                 descriptor.control_label,
                 CaptureTarget::Binding {
-                    system: descriptor.system,
+                    system: descriptor.system.clone_box(),
                     attachment: descriptor.attachment.as_str().to_string(),
                     control: descriptor.control.as_str().to_string(),
                 },

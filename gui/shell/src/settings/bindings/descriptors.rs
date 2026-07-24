@@ -4,9 +4,9 @@ use nerust_input_traits::{
     AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyboardBindingDescriptor {
-    pub system: SystemId,
+    pub system: Box<dyn SystemId>,
     pub attachment: AttachmentId,
     pub attachment_label: &'static str,
     pub control: DigitalControlId,
@@ -15,7 +15,7 @@ pub struct KeyboardBindingDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyboardBindingSectionDescriptor {
-    pub system: SystemId,
+    pub system: Box<dyn SystemId>,
     pub attachment: AttachmentId,
     pub attachment_label: &'static str,
     pub bindings: Vec<KeyboardBindingDescriptor>,
@@ -60,7 +60,7 @@ const SHORTCUT_DESCRIPTORS: &[ShortcutDescriptor] = &[
 
 pub fn keyboard_binding_descriptors(
     topology: &InputTopologyDescriptor,
-    system: SystemId,
+    system: &dyn SystemId,
 ) -> Vec<KeyboardBindingDescriptor> {
     keyboard_binding_sections(topology, system)
         .into_iter()
@@ -70,7 +70,7 @@ pub fn keyboard_binding_descriptors(
 
 pub fn keyboard_binding_sections(
     topology: &InputTopologyDescriptor,
-    system: SystemId,
+    system: &dyn SystemId,
 ) -> Vec<KeyboardBindingSectionDescriptor> {
     topology
         .ports
@@ -83,7 +83,7 @@ pub fn keyboard_binding_sections(
                 .iter()
                 .filter_map(|control| match control {
                     ControlDescriptor::Digital(control) => Some(KeyboardBindingDescriptor {
-                        system,
+                        system: system.clone_box(),
                         attachment: attachment.id,
                         attachment_label: attachment.label,
                         control: control.id,
@@ -93,7 +93,7 @@ pub fn keyboard_binding_sections(
                 })
                 .collect::<Vec<_>>();
             Some(KeyboardBindingSectionDescriptor {
-                system,
+                system: system.clone_box(),
                 attachment: attachment.id,
                 attachment_label: attachment.label,
                 bindings,
@@ -108,14 +108,15 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::identity::SystemId;
-
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use crate::test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology};
+    use crate::{
+        session::test_helpers::DummySystemId,
+        test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology},
+    };
 
     #[test]
     fn topology_driven_sections_keep_player_boundaries() {
-        let sections = keyboard_binding_sections(&dual_port_topology(), SystemId::new("nes"));
+        let sections = keyboard_binding_sections(&dual_port_topology(), &DummySystemId);
 
         assert_eq!(sections.len(), 2);
         assert_eq!(sections[0].attachment, TEST_ATT_P1);

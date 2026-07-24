@@ -92,7 +92,7 @@ impl State {
             .iter()
             .map(|factory| {
                 let system_id = factory.system_id();
-                let view = settings_view(snapshot, &system_id);
+                let view = settings_view(snapshot, system_id.as_ref());
                 (factory.display_name(), factory.settings_page(&view))
             })
             .collect()

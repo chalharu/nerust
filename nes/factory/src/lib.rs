@@ -26,8 +26,8 @@ use nerust_nes_settings::NesSettings;
 pub struct NesFactory;
 
 impl CoreFactory for NesFactory {
-    fn system_id(&self) -> SystemId {
-        SystemId::new("nes")
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(nerust_nes_core::rom_identity::NesSystemId)
     }
 
     fn display_name(&self) -> &'static str {

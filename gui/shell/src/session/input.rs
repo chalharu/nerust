@@ -158,7 +158,7 @@ impl SessionHandle {
     ) -> Result<(), crate::session::SessionError> {
         let factory = self.active_factory().ok_or(SessionError::NoCore)?;
         let system_id = factory.system_id();
-        let view = settings_view(&self.settings_snapshot, &system_id);
+        let view = settings_view(&self.settings_snapshot, system_id.as_ref());
         let speaker =
             crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
         let parts =

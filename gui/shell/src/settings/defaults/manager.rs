@@ -15,11 +15,13 @@ pub fn current_or_default(manager: &SettingsManager) -> SettingsSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::manager::SettingsManager;
 
-    use super::{current_or_default, default_app_state, default_local_settings};
-    use crate::settings::defaults::seed::test_nes_defaults;
+    use super::{default_app_state, default_local_settings};
+    use crate::{
+        session::test_helpers::DummySystemId,
+        settings::defaults::{manager::current_or_default, seed::test_nes_defaults},
+    };
 
     #[test]
     fn current_or_default_falls_back_for_ephemeral_manager_reads() {
@@ -30,7 +32,7 @@ mod tests {
             current_or_default(&manager)
                 .shared
                 .systems
-                .contains_key(&SystemId::new("nes"))
+                .contains_key(&(Box::new(DummySystemId) as Box<_>))
         );
     }
 }

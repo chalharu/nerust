@@ -17,6 +17,9 @@ thiserror.workspace = true
 time = { features = ["formatting", "local-offset", "macros"], workspace = true }
 zip.workspace = true
 
+[dev-dependencies]
+typetag.workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["serde_bytes"]
 

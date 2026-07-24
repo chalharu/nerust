@@ -1,4 +1,7 @@
+use std::{any::TypeId, hash::Hash};
+
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use serde::{Deserialize, Serialize};
 
 use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
@@ -24,6 +27,25 @@ pub struct RomIdentity {
 impl RomIdentity {
     pub fn into_system_identity(self) -> Result<SystemIdentity, rmp_serde::encode::Error> {
         let identity_bytes = rmp_serde::to_vec_named(&self)?;
-        Ok(SystemIdentity::new(SystemId::new("nes"), identity_bytes))
+        Ok(SystemIdentity::new(Box::new(NesSystemId), identity_bytes))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
+pub struct NesSystemId;
+
+#[typetag::serde]
+impl SystemId for NesSystemId {}
+
+// ZSTなのでHashを実装しなければ他のZSTと同一のHashになってしまう
+impl Hash for NesSystemId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        TypeId::of::<Self>().hash(state);
+    }
+}
+
+impl ToString for NesSystemId {
+    fn to_string(&self) -> String {
+        "nes".to_string()
     }
 }

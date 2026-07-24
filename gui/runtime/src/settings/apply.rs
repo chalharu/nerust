@@ -13,7 +13,7 @@ pub fn derive_apply_plan(
     capabilities: &HostBackendCapabilities,
     before: &SettingsSnapshot,
     after: &SettingsSnapshot,
-    active_system_id: Option<&SystemId>,
+    active_system_id: Option<&dyn SystemId>,
 ) -> SettingsApplyPlan {
     let audio_changed = before.local.audio != after.local.audio;
     let visual_changed = active_system_id.is_some_and(|system_id| {
@@ -115,7 +115,7 @@ fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
 fn live_system_settings_changed(
     before: &DesktopSharedSettings,
     after: &DesktopSharedSettings,
-    system_id: &SystemId,
+    system_id: &dyn SystemId,
 ) -> bool {
     system_live_settings_changed(
         before.systems.get(system_id).map(|settings| &**settings),
@@ -148,12 +148,13 @@ impl LocalSettingsExt for HostBackendLocalSettings {
 mod tests {
     use std::fs;
 
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::{
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };
     use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
+
+    use crate::test::{DummyOtherSystemId, DummySystemId};
 
     use super::{
         super::{
@@ -175,7 +176,7 @@ mod tests {
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert_eq!(
             plan,
@@ -206,12 +207,12 @@ mod tests {
         let nes = after
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.session_rebuild_required);
     }
@@ -227,12 +228,12 @@ mod tests {
         let nes = after
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.session_rebuild_required);
     }
@@ -247,7 +248,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&gtk_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&gtk_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -264,7 +265,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -281,7 +282,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -302,9 +303,9 @@ mod tests {
         after
             .shared
             .systems
-            .insert(SystemId::new("snes"), Box::new(inactive));
+            .insert(Box::new(DummyOtherSystemId) as Box<_>, Box::new(inactive));
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&SystemId::new("nes")));
+        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.session_rebuild_required);
         assert!(!plan.renderer_rebuild_required);

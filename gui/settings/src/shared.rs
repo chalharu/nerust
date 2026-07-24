@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_settings_traits::SystemSettings as SystemSettingsTrait;
@@ -14,7 +14,7 @@ pub struct DesktopSharedSettings {
     pub general: GeneralSettings,
     pub persistence: PersistenceSettings,
     pub input: InputSettings,
-    pub systems: BTreeMap<SystemId, Box<dyn SystemSettingsTrait>>,
+    pub systems: HashMap<Box<dyn SystemId>, Box<dyn SystemSettingsTrait>>,
 }
 
 impl Default for DesktopSharedSettings {
@@ -24,7 +24,7 @@ impl Default for DesktopSharedSettings {
             general: GeneralSettings::default(),
             persistence: PersistenceSettings::default(),
             input: InputSettings::default(),
-            systems: BTreeMap::new(),
+            systems: HashMap::new(),
         }
     }
 }

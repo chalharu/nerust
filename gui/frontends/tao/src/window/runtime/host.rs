@@ -480,8 +480,8 @@ impl HostState {
                     snapshot
                         .app_state
                         .controller_assignments
-                        .insert(sid.to_string(), assignments.to_string_pairs());
-                    if self.session.active_system_id() == Some(&sid)
+                        .insert(sid.clone(), assignments.to_string_pairs());
+                    if self.session.active_system_id() == Some(sid.as_ref())
                         && let Err(error) = self.session.reassign_controllers(&assignments)
                     {
                         log::warn!("controller reassign failed: {error}");
