@@ -78,6 +78,8 @@ pub fn default_app_state() -> DesktopAppState {
 pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
     use nerust_core_traits::identity::SystemId;
     let mut settings = default_shared_settings(&[]);
+    // Explicit NES seed for tests — avoids depending on nes/factory crate.
+    // Production paths use factory.default_system_settings() instead.
     settings.systems.insert(
         SystemId::new("nes"),
         Box::new(nerust_nes_settings::NesSettings::default())
