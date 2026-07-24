@@ -99,6 +99,8 @@ pub trait CoreFactory: Send + Sync {
     /// Returns this factory's input system factory for negotiation.
     fn input_system_factory(&self) -> &dyn InputSystemFactory;
 
+    // -- Optional GUI integration methods (ISP: could be SystemDefaults trait) --
+
     /// Default system-specific settings to seed into the shared settings map.
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
         None
@@ -111,7 +113,6 @@ pub trait CoreFactory: Send + Sync {
     }
 
     /// Attachment ID prefix for default keyboard bindings.
-    /// Returns None if this system has no default keyboard bindings.
     fn default_input_attachment_id(&self) -> Option<&'static str> {
         None
     }

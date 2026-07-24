@@ -82,14 +82,18 @@ impl SessionHandle {
             } else {
                 volume
             };
-            if let Some(ref mut core) = self.emu_core {
-                let _ = core.set_volume(volume);
+            if let Some(ref mut core) = self.emu_core
+                && let Err(e) = core.set_volume(volume)
+            {
+                log::warn!("set_volume failed: {e}");
             }
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            if plan.session_rebuild_required {
-                let _ = self.rebuild_for_settings(&previous);
+            if plan.session_rebuild_required
+                && let Err(e) = self.rebuild_for_settings(&previous)
+            {
+                log::warn!("failed to rollback settings rebuild: {e}");
             }
             return Err(SessionError::Settings(error));
         }
@@ -419,8 +423,8 @@ impl SessionHandle {
             .configure(sidecars.states_dir, sidecars.mapper_save_path);
         if let Some(ref core) = self.emu_core {
             self.persistence.refresh_slots(core);
-            if load_mapper_save {
-                let _ = self.persistence.load_mapper_save_if_needed(core);
+            if load_mapper_save && let Err(e) = self.persistence.load_mapper_save_if_needed(core) {
+                log::warn!("load_mapper_save_if_needed failed: {e}");
             }
         }
         true
