@@ -156,9 +156,10 @@ impl RomLoader for RegistryRomLoader {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, hash::Hash, sync::Arc};
+    use std::sync::Arc;
 
     use nerust_core_traits::{
+        declare_system_id,
         factory::{
             CoreFactory, CoreParts, FactoryError,
             descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
@@ -171,45 +172,11 @@ mod tests {
         identity::SystemId,
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
-    use serde::{Deserialize, Serialize};
 
     use super::*;
 
-    #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-    pub(crate) struct DummySystemId;
-
-    #[typetag::serde]
-    impl SystemId for DummySystemId {}
-
-    impl ToString for DummySystemId {
-        fn to_string(&self) -> String {
-            "dummy".to_string()
-        }
-    }
-
-    impl Hash for DummySystemId {
-        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            TypeId::of::<Self>().hash(state);
-        }
-    }
-
-    #[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-    pub(crate) struct DummyOtherSystemId;
-
-    #[typetag::serde]
-    impl SystemId for DummyOtherSystemId {}
-
-    impl ToString for DummyOtherSystemId {
-        fn to_string(&self) -> String {
-            "dummy".to_string()
-        }
-    }
-
-    impl Hash for DummyOtherSystemId {
-        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-            TypeId::of::<Self>().hash(state);
-        }
-    }
+    declare_system_id!(DummySystemId, "dummy");
+    declare_system_id!(DummyOtherSystemId, "other");
 
     #[derive(Debug, Clone)]
     struct StubFactory;
