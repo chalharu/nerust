@@ -6,13 +6,25 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_settings::language::AppLanguage;
+
+fn language_to_factory_lang(lang: AppLanguage) -> Language {
+    match lang {
+        AppLanguage::Japanese => Language::Japanese,
+        AppLanguage::English => Language::English,
+        _ => Language::SystemDefault,
+    }
+}
+
+fn language_to_str(lang: AppLanguage) -> &'static str {
+    match lang {
+        AppLanguage::Japanese => "ja",
+        _ => "en",
+    }
+}
 
 pub fn settings_view(snapshot: &SettingsSnapshot, system_id: &SystemId) -> FactorySettingsView {
-    let language = match snapshot.shared.general.language {
-        nerust_gui_settings::language::AppLanguage::Japanese => Language::Japanese,
-        nerust_gui_settings::language::AppLanguage::English => Language::English,
-        _ => Language::SystemDefault,
-    };
+    let language = language_to_factory_lang(snapshot.shared.general.language);
     let system_config = snapshot.shared.systems.get(system_id).cloned();
     FactorySettingsView {
         language,
@@ -35,17 +47,9 @@ pub fn apply_settings_choice(
     Ok(())
 }
 
-pub fn resolve_label(
-    label_id: &str,
-    language: nerust_gui_settings::language::AppLanguage,
-    factory: &dyn CoreFactory,
-) -> String {
-    let lang = match language {
-        nerust_gui_settings::language::AppLanguage::Japanese => "ja",
-        _ => "en",
-    };
+pub fn resolve_label(label_id: &str, language: AppLanguage, factory: &dyn CoreFactory) -> String {
     factory
-        .resolve_label(label_id, lang)
+        .resolve_label(label_id, language_to_str(language))
         .unwrap_or_else(|| label_id.to_string())
 }
 
