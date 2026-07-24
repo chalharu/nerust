@@ -43,7 +43,7 @@ impl dyn SystemId {
 pub mod __private {
     pub use serde::Deserialize as _serde_deserialize;
     pub use serde::Serialize as _serde_serialize;
-    pub use typetag::serde as _typetag_serde;
+    pub use typetag;
 }
 
 #[macro_export]
@@ -58,8 +58,15 @@ macro_rules! declare_system_id {
         )]
         pub(crate) struct $name;
 
-        #[$crate::identity::__private::_typetag_serde(name = concat!(module_path!(), "::", stringify!($name)))]
-        impl SystemId for $name {}
+        const _: () = {
+            // typetag's proc macro emits `typetag::...` paths at the call site.
+            // Keep that implementation detail available without requiring the
+            // calling crate to depend on typetag directly.
+            use $crate::identity::__private::typetag;
+
+            #[$crate::identity::__private::typetag::serde(name = concat!(module_path!(), "::", stringify!($name)))]
+            impl SystemId for $name {}
+        };
 
         impl ToString for $name {
             fn to_string(&self) -> String {
