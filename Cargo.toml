@@ -94,7 +94,7 @@ version = "0.1.0-dev"
 [workspace.dependencies]
 android_logger = { version = "=0.15.1" }
 bitflags = { features = ["serde"], version = "=2.13.1" }
-clap = { features = ["derive"], version = "=4.6.2" }
+clap = { features = ["derive"], version = "=4.6.4" }
 cpal = { version = "=0.18.1" }
 crc = { version = "=3.4.0" }
 cubeb = { version = "=0.36.0" }
