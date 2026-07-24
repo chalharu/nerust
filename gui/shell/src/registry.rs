@@ -40,12 +40,6 @@ impl SystemRegistry {
         &self.factories
     }
 
-    /// Returns the primary (first registered) factory, if any.
-    /// None if no systems are registered.
-    pub fn primary(&self) -> Option<&Arc<dyn CoreFactory>> {
-        self.factories.first()
-    }
-
     /// Returns the factory that handles the given media.
     /// None if no factory matches or registry is empty.
     pub fn detect(&self, media: &MediaObject) -> Option<&Arc<dyn CoreFactory>> {
@@ -276,19 +270,18 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_has_no_primary() {
+    fn empty_registry_all_returns_empty_slice() {
         let registry = SystemRegistry::new(vec![]);
-        assert!(registry.primary().is_none());
         assert_eq!(registry.all().len(), 0);
     }
 
     #[test]
-    fn primary_returns_first_registered() {
+    fn all_preserves_registration_order() {
         let a = stub_factory();
         let b = stub_factory();
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
-        assert_eq!(registry.primary().unwrap().system_id(), a.system_id());
         assert_eq!(registry.all().len(), 2);
+        assert_eq!(registry.all()[0].system_id(), a.system_id());
     }
 
     #[test]
