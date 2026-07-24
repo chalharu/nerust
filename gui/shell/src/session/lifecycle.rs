@@ -4,9 +4,11 @@ use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 use nerust_emu_thread::ConsoleMetrics;
 
 use crate::{
+    emu_core::EmuCore,
     session::{
         SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
+        persistence::PersistenceManager,
         title::window_title,
     },
     settings::factory::settings_view,
@@ -193,126 +195,110 @@ impl SessionHandle {
         command: SessionCommand,
     ) -> Result<SessionCommandOutcome, SessionError> {
         match command {
-            SessionCommand::Pause => {
-                if self.paused() {
-                    Ok(SessionCommandOutcome::default())
-                } else {
-                    self.emu_core
-                        .as_mut()
-                        .ok_or(SessionError::NoCore)?
-                        .pause()?;
-                    Ok(SessionCommandOutcome {
-                        executed: true,
-                        needs_redraw: false,
-                    })
-                }
-            }
-            SessionCommand::Resume => {
-                if self.paused() {
-                    self.emu_core
-                        .as_mut()
-                        .ok_or(SessionError::NoCore)?
-                        .resume()?;
-                    Ok(SessionCommandOutcome {
-                        executed: true,
-                        needs_redraw: self.loaded(),
-                    })
-                } else {
-                    Ok(SessionCommandOutcome::default())
-                }
-            }
-            SessionCommand::TogglePause => {
-                if self.paused() {
-                    self.run_command(SessionCommand::Resume)
-                } else {
-                    self.run_command(SessionCommand::Pause)
-                }
-            }
-            SessionCommand::Reset => {
-                self.emu_core
-                    .as_mut()
-                    .ok_or(SessionError::NoCore)?
-                    .reset()?;
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::CreateSlot => {
-                if let Some(ref core) = self.emu_core {
-                    self.persistence.create_slot(core);
-                }
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
+            SessionCommand::Pause => self.cmd_pause(),
+            SessionCommand::Resume => self.cmd_resume(),
+            SessionCommand::TogglePause => self.cmd_toggle_pause(),
+            SessionCommand::Reset => self.cmd_reset(),
+            SessionCommand::CreateSlot => Ok(self.slot_op(|p, c| p.create_slot(c))),
             SessionCommand::SaveActiveSlotOrNew => {
-                if let Some(ref core) = self.emu_core {
-                    self.persistence.save_active_slot_or_new(core);
-                }
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
+                Ok(self.slot_op(|p, c| p.save_active_slot_or_new(c)))
             }
-            SessionCommand::LoadActiveSlot => {
-                let was_paused = self.paused();
-                let executed = if let Some(ref core) = self.emu_core {
-                    self.persistence.load_active_slot(core)
-                } else {
-                    false
-                };
-                Ok(SessionCommandOutcome {
-                    executed,
-                    needs_redraw: executed && was_paused && !self.paused(),
-                })
-            }
-            SessionCommand::SelectActiveSlot(slot_id) => {
-                self.persistence.select_active_slot(slot_id);
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::SaveSlot(slot_id) => {
-                if let Some(ref core) = self.emu_core {
-                    self.persistence.save_slot(slot_id, core, false);
-                }
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::LoadSlot(slot_id) => {
-                let was_paused = self.paused();
-                let executed = if let Some(ref core) = self.emu_core {
-                    self.persistence.load_slot(slot_id, core)
-                } else {
-                    false
-                };
-                Ok(SessionCommandOutcome {
-                    executed,
-                    needs_redraw: executed && was_paused && !self.paused(),
-                })
-            }
-            SessionCommand::DeleteSlot(slot_id) => {
-                if let Some(ref core) = self.emu_core {
-                    self.persistence.delete_slot(slot_id, core);
-                }
-                Ok(SessionCommandOutcome {
-                    executed: true,
-                    needs_redraw: false,
-                })
-            }
-            SessionCommand::SelectNextSlot => Ok(SessionCommandOutcome {
-                executed: self.persistence.select_adjacent_slot(true).is_some(),
-                needs_redraw: false,
-            }),
-            SessionCommand::SelectPreviousSlot => Ok(SessionCommandOutcome {
-                executed: self.persistence.select_adjacent_slot(false).is_some(),
-                needs_redraw: false,
-            }),
+            SessionCommand::LoadActiveSlot => Ok(self.load_slot_op(|p, c| p.load_active_slot(c))),
+            SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
+            SessionCommand::SaveSlot(id) => Ok(self.slot_op(|p, c| p.save_slot(id, c, false))),
+            SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
+            SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
+            SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(true)),
+            SessionCommand::SelectPreviousSlot => Ok(self.cmd_adjacent_slot(false)),
+        }
+    }
+
+    fn cmd_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if self.paused() {
+            return Ok(SessionCommandOutcome::default());
+        }
+        self.core_mut()?.pause()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        })
+    }
+
+    fn cmd_resume(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if !self.paused() {
+            return Ok(SessionCommandOutcome::default());
+        }
+        self.core_mut()?.resume()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: self.loaded(),
+        })
+    }
+
+    fn cmd_toggle_pause(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        if self.paused() {
+            self.cmd_resume()
+        } else {
+            self.cmd_pause()
+        }
+    }
+
+    fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        self.core_mut()?.reset()?;
+        Ok(SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        })
+    }
+
+    fn cmd_select_active_slot(
+        &mut self,
+        slot_id: u64,
+    ) -> SessionCommandOutcome {
+        self.persistence.select_active_slot(slot_id);
+        SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        }
+    }
+
+    fn cmd_adjacent_slot(&mut self, forward: bool) -> SessionCommandOutcome {
+        SessionCommandOutcome {
+            executed: self.persistence.select_adjacent_slot(forward).is_some(),
+            needs_redraw: false,
+        }
+    }
+
+    fn core_mut(&mut self) -> Result<&EmuCore, SessionError> {
+        self.emu_core.as_ref().ok_or(SessionError::NoCore)
+    }
+
+    fn slot_op(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore),
+    ) -> SessionCommandOutcome {
+        if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core);
+        }
+        SessionCommandOutcome {
+            executed: true,
+            needs_redraw: false,
+        }
+    }
+
+    fn load_slot_op(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+    ) -> SessionCommandOutcome {
+        let was_paused = self.paused();
+        let executed = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core)
+        } else {
+            false
+        };
+        SessionCommandOutcome {
+            executed,
+            needs_redraw: executed && was_paused && !self.paused(),
         }
     }
 
