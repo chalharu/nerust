@@ -113,7 +113,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use nerust_core_traits::{
         CoreOptions,
@@ -180,7 +180,13 @@ mod tests {
             snapshot: make_snapshot(),
         };
 
-        let result = loader.load_rom(Path::new("Cargo.toml"), &mut target);
+        // Write a minimal valid NES ROM to a temp file
+        let rom_path = std::env::temp_dir().join("nerust_test_rom.nes");
+        let nes_bytes = vec![0x4E, 0x45, 0x53, 0x1A, 1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        std::fs::write(&rom_path, &nes_bytes).expect("write rom");
+
+        let result = loader.load_rom(&rom_path, &mut target);
+        let _ = std::fs::remove_file(&rom_path);
         assert!(result.is_ok());
         assert!(target.resumed);
         assert!(target.resolved.is_some(), "expected non-empty core options");
