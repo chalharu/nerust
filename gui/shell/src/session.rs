@@ -365,12 +365,10 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
     #[error("no emulation core active")]
     NoCore,
-    #[error("system not registered: {0}")]
-    NoSystem(SystemId),
 }
 
 use crate::{
-    load::{RomLoadTarget, RomLoaderError},
+    load::{RomLoadTarget, RomLoaderError, SystemActivationError},
     session::commands::SessionCommand,
 };
 
@@ -399,12 +397,12 @@ impl RomLoadTarget for SessionHandle {
     /// Rebuilds the `EmuCore` immediately with the correct factory so that
     /// `load_resolved` (the next call) can load ROM data into a properly
     /// configured core. This is the core entry-point for lazy system activation.
-    fn set_active_system(&mut self, system_id: SystemId) -> Result<(), SessionError> {
+    fn set_active_system(&mut self, system_id: SystemId) -> Result<(), SystemActivationError> {
         if self.active_system_id.as_ref() == Some(&system_id) {
             return Ok(());
         }
         if self.registry.find_by_id(&system_id).is_none() {
-            return Err(SessionError::NoSystem(system_id));
+            return Err(SystemActivationError::NotRegistered(system_id));
         }
         self.active_system_id = Some(system_id);
 
@@ -442,7 +440,7 @@ mod tests {
 
     use super::test_helpers::*;
     use crate::{
-        load::RomLoadTarget,
+        load::{RomLoadTarget, SystemActivationError},
         registry::SystemRegistry,
         session::{KeyboardShortcut, SessionHandle},
         settings::factory::settings_view,
@@ -656,7 +654,7 @@ mod tests {
 
         let err =
             RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown")).unwrap_err();
-        assert!(matches!(err, crate::session::SessionError::NoSystem(_)));
+        assert!(matches!(err, SystemActivationError::NotRegistered(_)));
         assert!(session.active_system_id().is_none());
         assert!(session.factory().is_none());
     }
