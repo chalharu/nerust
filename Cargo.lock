@@ -2923,7 +2923,6 @@ dependencies = [
  "serde-saphyr",
  "serde_json",
  "thiserror 2.0.19",
- "typetag",
 ]
 
 [[package]]
@@ -2958,7 +2957,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "thiserror 2.0.19",
- "typetag",
 ]
 
 [[package]]
@@ -3056,7 +3054,6 @@ dependencies = [
  "serde_bytes",
  "thiserror 2.0.19",
  "time",
- "typetag",
  "windows-sys 0.61.2",
  "zip",
 ]

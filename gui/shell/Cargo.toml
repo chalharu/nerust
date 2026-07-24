@@ -25,4 +25,3 @@ nerust_settings_traits.workspace = true
 [dev-dependencies]
 clap.workspace = true
 nerust_core_traits.workspace = true
-typetag.workspace = true
