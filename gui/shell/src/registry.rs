@@ -57,7 +57,7 @@ impl SystemRegistry {
     /// load of the corresponding system; subsequent loads fall back to
     /// `RomLoadTarget::default_load_options()`.
     pub fn create_loader(
-        &self,
+        self: &Arc<Self>,
         pending_options: Vec<Box<dyn DynSystemLoadOptions>>,
     ) -> Box<dyn RomLoader> {
         let opt_by_id: HashMap<SystemId, Option<Box<dyn DynSystemLoadOptions>>> = self
@@ -67,7 +67,7 @@ impl SystemRegistry {
             .map(|(f, opt)| (f.system_id(), opt))
             .collect();
         Box::new(RegistryRomLoader {
-            registry: self.factories.clone(),
+            registry: Arc::clone(self),
             pending_options: opt_by_id,
         })
     }
@@ -76,7 +76,7 @@ impl SystemRegistry {
 /// `RomLoader` that dispatches to the correct `CoreFactory` based on
 /// ROM auto-detection via `probe_media()`.
 struct RegistryRomLoader {
-    registry: Vec<Arc<dyn CoreFactory>>,
+    registry: Arc<SystemRegistry>,
     pending_options: HashMap<SystemId, Option<Box<dyn DynSystemLoadOptions>>>,
 }
 
@@ -92,9 +92,10 @@ impl RomLoader for RegistryRomLoader {
 
         let factory = self
             .registry
+            .all()
             .iter()
             .find(|f| f.probe_media(&media))
-            .ok_or_else(|| RomLoaderError::Io("unsupported ROM format".to_string()))?;
+            .ok_or_else(|| RomLoaderError::Detect("unsupported ROM format".to_string()))?;
 
         let system_id = factory.system_id();
 
@@ -310,7 +311,7 @@ mod tests {
     #[test]
     fn create_loader_accepts_options() {
         let factory = stub_factory();
-        let registry = SystemRegistry::new(vec![factory.clone()]);
+        let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
         let opts = factory.default_load_options();
         let _loader = registry.create_loader(vec![opts]);
     }
