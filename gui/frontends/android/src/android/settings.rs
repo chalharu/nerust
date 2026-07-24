@@ -41,6 +41,9 @@ const FILTER_CHOICES: &[NesVideoFilter] = &[
 ///
 /// Derived from [`SettingsSnapshot`] on the way in; applied back via
 /// [`AndroidSettings::apply_to_snapshot`] on the way out.
+///
+/// TODO: generalize to multi-system — replace `nes_filter` with
+/// per-system settings obtained via `CoreFactory::settings_page()`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AndroidSettings {
     pub audio_muted: bool,

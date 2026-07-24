@@ -127,6 +127,29 @@ pub fn build_topology(
     }
 }
 
+/// Clear other occupied slots in the same multi-port set.
+///
+/// When a controller occupies a port group with >1 ports,
+/// other ports in that set must be cleared to avoid conflicts.
+pub fn clear_multi_port_conflicts(
+    slot: AttachmentId,
+    profile: &dyn ControllerProfile,
+    assignments: &mut [(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+) {
+    for ps in profile.port_sets() {
+        if ps.ports.len() <= 1 || !ps.ports.contains(&slot) {
+            continue;
+        }
+        for &port in ps.ports {
+            if port != slot
+                && let Some(other) = assignments.iter_mut().find(|(s, _)| *s == port)
+            {
+                other.1 = None;
+            }
+        }
+    }
+}
+
 impl SessionHandle {
     /// Reassign controllers and rebuild the core.
     pub fn reassign_controllers(

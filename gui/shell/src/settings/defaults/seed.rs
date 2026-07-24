@@ -11,34 +11,33 @@ use nerust_keyboard::Key;
 
 pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings::default();
+    #[cfg(test)]
     if factories.is_empty() {
         seed_nes_defaults(&mut settings);
-    } else {
-        for factory in factories {
-            let sid = factory.system_id();
-            if let Some(sys_settings) = factory.default_system_settings() {
-                settings.systems.insert(sid, sys_settings);
-            }
-            if let Some(attachment) = factory.default_input_attachment_id()
-                && let Some(control_prefix) = factory.default_input_control_prefix()
-            {
-                let mut input = nerust_gui_settings::input::SystemInputSettings::default();
-                input.implicit_keyboard_profile_mut().bindings =
-                    crate::keyboard_defaults::default_system_bindings(attachment, control_prefix);
-                let _ = input
-                    .keyboard_profiles
-                    .entry(IMPLICIT_PROFILE_ID.to_string())
-                    .or_default();
-                settings.input.systems.insert(sid, input);
-            }
+    }
+    for factory in factories {
+        let sid = factory.system_id();
+        if let Some(sys_settings) = factory.default_system_settings() {
+            settings.systems.insert(sid, sys_settings);
+        }
+        if let Some(attachment) = factory.default_input_attachment_id()
+            && let Some(control_prefix) = factory.default_input_control_prefix()
+        {
+            let mut input = nerust_gui_settings::input::SystemInputSettings::default();
+            input.implicit_keyboard_profile_mut().bindings =
+                crate::keyboard_defaults::default_system_bindings(attachment, control_prefix);
+            let _ = input
+                .keyboard_profiles
+                .entry(IMPLICIT_PROFILE_ID.to_string())
+                .or_default();
+            settings.input.systems.insert(sid, input);
         }
     }
     seed_global_shortcuts(&mut settings);
     settings
 }
 
-/// Legacy NES defaults — used when no factories are registered (tests).
-/// Production paths pass factories and use the per-system seed above.
+#[cfg(test)]
 fn seed_nes_defaults(settings: &mut DesktopSharedSettings) {
     use nerust_core_traits::identity::SystemId;
     settings.systems.insert(
