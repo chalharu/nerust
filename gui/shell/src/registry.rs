@@ -101,7 +101,9 @@ impl RomLoader for RegistryRomLoader {
 
         // Notify the target BEFORE loading so it can rebuild the
         // EmuCore with the correct factory if the system changed.
-        target.set_active_system(system_id);
+        target
+            .set_active_system(system_id)
+            .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
 
         let view = settings_view(target.settings_snapshot(), &system_id);
         let options = self

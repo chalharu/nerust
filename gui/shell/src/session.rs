@@ -365,6 +365,8 @@ pub enum SessionError {
     Factory(#[from] FactoryError),
     #[error("no emulation core active")]
     NoCore,
+    #[error("system not registered: {0}")]
+    NoSystem(SystemId),
 }
 
 use crate::{
@@ -397,13 +399,12 @@ impl RomLoadTarget for SessionHandle {
     /// Rebuilds the `EmuCore` immediately with the correct factory so that
     /// `load_resolved` (the next call) can load ROM data into a properly
     /// configured core. This is the core entry-point for lazy system activation.
-    fn set_active_system(&mut self, system_id: SystemId) {
+    fn set_active_system(&mut self, system_id: SystemId) -> Result<(), SessionError> {
         if self.active_system_id.as_ref() == Some(&system_id) {
-            return;
+            return Ok(());
         }
         if self.registry.find_by_id(&system_id).is_none() {
-            log::error!("set_active_system: unknown system_id: {system_id}");
-            return;
+            return Err(SessionError::NoSystem(system_id));
         }
         self.active_system_id = Some(system_id);
 
@@ -416,6 +417,7 @@ impl RomLoadTarget for SessionHandle {
             log::error!("failed to rebuild core for {}: {e}", system_id);
         }
         self.rebuild_key_field_map();
+        Ok(())
     }
 }
 
@@ -639,19 +641,22 @@ mod tests {
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
         assert!(session.factory().is_none());
-        RomLoadTarget::set_active_system(&mut session, id);
+        RomLoadTarget::set_active_system(&mut session, id)
+            .expect("test setup should succeed for known system");
         assert_eq!(session.factory().expect("no active system").system_id(), id);
     }
 
     #[test]
-    fn set_active_system_ignores_unknown_id() {
+    fn set_active_system_rejects_unknown_id() {
         let factory = Arc::new(MockFactory);
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let mut session =
             SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-        RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown"));
+        let err =
+            RomLoadTarget::set_active_system(&mut session, SystemId::new("unknown")).unwrap_err();
+        assert!(matches!(err, crate::session::SessionError::NoSystem(_)));
         assert!(session.active_system_id().is_none());
         assert!(session.factory().is_none());
     }
