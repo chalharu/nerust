@@ -217,7 +217,7 @@ impl AndroidFrontend {
             settings_paths,
         )
         .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
+            log::error!("fatal: session creation failed — settings I/O may be corrupted: {e}");
             std::process::abort();
         });
         let restore_pending = storage.has_restore_pending();
