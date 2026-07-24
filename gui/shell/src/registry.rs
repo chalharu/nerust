@@ -28,9 +28,11 @@ impl SystemRegistry {
     pub fn new(factories: Vec<Arc<dyn CoreFactory>>) -> Self {
         let mut by_id = HashMap::with_capacity(factories.len());
         for f in &factories {
-            if by_id.insert(f.system_id(), Arc::clone(f)).is_some() {
-                log::warn!("SystemRegistry: duplicate system_id: {}", f.system_id());
-            }
+            let system_id = f.system_id();
+            assert!(
+                by_id.insert(system_id, Arc::clone(f)).is_none(),
+                "SystemRegistry: duplicate system_id: {system_id}"
+            );
         }
         Self { factories, by_id }
     }
@@ -278,19 +280,26 @@ mod tests {
     #[test]
     fn all_preserves_registration_order() {
         let a = stub_factory();
-        let b = stub_factory();
+        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory);
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
         assert_eq!(registry.all().len(), 2);
         assert_eq!(registry.all()[0].system_id(), a.system_id());
+        assert_eq!(registry.all()[1].system_id(), b.system_id());
     }
 
     #[test]
     fn find_by_id_returns_factory() {
         let factory = stub_factory();
         let id = factory.system_id();
-        let registry = SystemRegistry::new(vec![factory.clone(), stub_factory()]);
+        let registry = SystemRegistry::new(vec![factory.clone()]);
         assert!(registry.find_by_id(&id).is_some());
         assert!(registry.find_by_id(&SystemId::new("snes")).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate system_id")]
+    fn duplicate_system_id_is_rejected() {
+        SystemRegistry::new(vec![stub_factory(), stub_factory()]);
     }
 
     #[test]

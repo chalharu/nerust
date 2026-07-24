@@ -693,15 +693,19 @@ pub(crate) fn present_preferences_dialog(
                         }
                         nerust_input_traits::InputAssignments { slots }
                     };
-                    let current_pairs = state.borrow().session.current_assignments_pairs();
-                    let new_pairs = assignments.to_string_pairs();
-                    if current_pairs != new_pairs
-                        && let Err(e) = state
-                            .borrow_mut()
-                            .session
-                            .reassign_controllers(&assignments)
-                    {
-                        log::warn!("controller reassign failed: {e}");
+                    let is_active =
+                        state.borrow().session.active_system_id() == Some(&factory.system_id());
+                    if is_active {
+                        let current_pairs = state.borrow().session.current_assignments_pairs();
+                        let new_pairs = assignments.to_string_pairs();
+                        if current_pairs != new_pairs
+                            && let Err(e) = state
+                                .borrow_mut()
+                                .session
+                                .reassign_controllers(&assignments)
+                        {
+                            log::warn!("controller reassign failed: {e}");
+                        }
                     }
                     let sid = factory.system_id().to_string();
                     draft

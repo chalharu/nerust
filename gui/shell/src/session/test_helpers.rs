@@ -255,6 +255,68 @@ impl CoreFactory for MockFactory {
     }
 }
 
+pub(crate) struct AlternateMockFactory;
+impl CoreFactory for AlternateMockFactory {
+    fn system_id(&self) -> SystemId {
+        SystemId::new("alternate")
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Alternate (test)"
+    }
+
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
+    ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+        MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
+    }
+
+    fn probe_media(&self, media: &MediaObject) -> bool {
+        MockFactory.probe_media(media)
+    }
+
+    fn settings_page(
+        &self,
+        view: &FactorySettingsView,
+    ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+        MockFactory.settings_page(view)
+    }
+
+    fn apply_settings_choice(
+        &self,
+        view: &mut FactorySettingsView,
+        field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
+        choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+    ) -> Result<(), FactoryError> {
+        MockFactory.apply_settings_choice(view, field, choice)
+    }
+
+    fn resolve_load_request(
+        &self,
+        view: &FactorySettingsView,
+        options: Box<dyn DynSystemLoadOptions>,
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
+        MockFactory.resolve_load_request(view, options)
+    }
+
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        MockFactory.default_load_options()
+    }
+
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        MockFactory.input_system_factory()
+    }
+
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+        MockFactory.load_options_schema()
+    }
+}
+
 pub(crate) fn test_session() -> SessionHandle {
     let capabilities = HostBackendCapabilities {
         window: HostWindowCapabilities {
