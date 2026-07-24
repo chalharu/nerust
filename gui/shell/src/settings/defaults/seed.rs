@@ -74,6 +74,10 @@ pub fn default_app_state() -> DesktopAppState {
     DesktopAppState::default()
 }
 
+/// NES defaults for tests that need concrete input settings but don't
+/// depend on the `nes/factory` crate (e.g. binding conflict tests in
+/// `gui/shell` itself). Production paths use `default_shared_settings`
+/// with factory iteration via `SystemDefaults`.
 #[cfg(test)]
 pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
     use nerust_core_traits::identity::SystemId;

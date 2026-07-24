@@ -7,7 +7,7 @@ use std::rc::Rc;
 use nerust_core_traits::{
     audio::AudioBackend,
     factory::{
-        CoreFactory, CoreParts, FactoryError,
+        CoreFactory, CoreParts, FactoryError, SystemDefaults,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
         load::{
             DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
@@ -126,6 +126,12 @@ impl CoreFactory for NesFactory {
         NesLoadOptionsSchema.into()
     }
 
+    fn as_system_defaults(&self) -> Option<&dyn SystemDefaults> {
+        Some(self)
+    }
+}
+
+impl SystemDefaults for NesFactory {
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
         Some(Box::new(NesSettings::default()))
     }
