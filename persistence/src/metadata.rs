@@ -11,7 +11,7 @@ use crate::{error::PersistenceError, time::unix_millis};
 pub(crate) const METADATA_ENTRY: &str = "metadata.msgpack";
 pub(crate) const STATE_ENTRY: &str = "state.bin";
 pub(crate) const THUMBNAIL_ENTRY: &str = "thumbnail.png";
-pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 2;
+pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct StateArchiveMetadata {
