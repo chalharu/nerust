@@ -3,33 +3,19 @@ mod sidecar;
 mod slots;
 mod time;
 
-use std::{any::TypeId, env, fs, hash::Hash, path::PathBuf, time::SystemTime};
+use std::{env, fs, path::PathBuf, time::SystemTime};
 
-use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use serde::{Deserialize, Serialize};
+use nerust_core_traits::{
+    declare_system_id,
+    identity::{SystemId, SystemIdentity},
+};
 
 use crate::{
     metadata::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata},
     time::unix_millis,
 };
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub(crate) struct DummySystemId;
-
-#[typetag::serde]
-impl SystemId for DummySystemId {}
-
-impl ToString for DummySystemId {
-    fn to_string(&self) -> String {
-        "dummy".to_string()
-    }
-}
-
-impl Hash for DummySystemId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        TypeId::of::<Self>().hash(state);
-    }
-}
+declare_system_id!(DummySystemId, "dummy");
 
 fn prepare_test_dir(name: &str) -> PathBuf {
     let dir = test_dir(name);

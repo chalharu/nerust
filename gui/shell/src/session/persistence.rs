@@ -515,7 +515,7 @@ impl PersistenceManager {
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
             Err(error) => {
-                log::warn!("loading hidden lifecycle state failed: {error}");
+                eprintln!("loading hidden lifecycle state failed: {error}");
                 let _ = self.backend.delete_autosave(dir);
                 false
             }
