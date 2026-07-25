@@ -1,8 +1,8 @@
-use nerust_gui_shell::settings::{
+use nerust_keyboard::Key;
+use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
 };
-use nerust_keyboard::Key;
 
 use super::{
     dto::CaptureStateView,
@@ -39,11 +39,7 @@ impl CaptureViewModel {
 
     pub fn clear_binding(&self, target: &CaptureTarget) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
-            nerust_gui_shell::settings::editor::apply_capture_target(
-                &mut state.draft,
-                target,
-                None,
-            );
+            nerust_settings_core::editor::apply_capture_target(&mut state.draft, target, None);
             state.capture_target = None;
             Ok(())
         })
@@ -53,7 +49,7 @@ impl CaptureViewModel {
         let target = self.editor.current().capture_target.clone();
         let Some(target) = target else { return };
         let _ = self.editor.transact(|state| {
-            nerust_gui_shell::settings::editor::apply_capture_target(
+            nerust_settings_core::editor::apply_capture_target(
                 &mut state.draft,
                 &target,
                 Some(key),

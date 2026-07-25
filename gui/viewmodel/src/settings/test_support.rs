@@ -157,7 +157,7 @@ impl CoreFactory for TestCoreFactory {
 
 /// Helper to create a SettingsViewModel with a test factory.
 pub fn test_vm() -> SettingsViewModel {
-    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::snapshot::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
@@ -167,8 +167,5 @@ pub fn test_vm() -> SettingsViewModel {
         app_state: DesktopAppState::default(),
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
-    let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-        factory,
-    ]));
-    SettingsViewModel::new(snapshot, registry, Arc::new([]))
+    SettingsViewModel::new(snapshot, vec![factory], Arc::new([]))
 }

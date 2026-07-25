@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
+use crate::settings::catalog::FactoryCatalog;
+use nerust_gui_settings::snapshot::SettingsSnapshot;
 
 use super::{
     ValidationState, audio::AudioSettingsViewModel, capture::CaptureViewModel,
@@ -26,13 +26,12 @@ pub struct SettingsViewModel {
 impl SettingsViewModel {
     pub fn new(
         snapshot: SettingsSnapshot,
-        registry: Arc<SystemRegistry>,
+        factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>>,
         supported_sample_rates: Arc<[u32]>,
     ) -> Self {
-        let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
-            registry.all().iter().map(Arc::clone).collect();
+        let catalog = FactoryCatalog::new(factories.clone());
 
-        let mut editor = SettingsEditor::new(snapshot, registry, supported_sample_rates);
+        let mut editor = SettingsEditor::new(snapshot, catalog, supported_sample_rates);
 
         editor.set_validator(validator);
 
@@ -85,16 +84,20 @@ impl SettingsViewModel {
 }
 
 fn validator(state: &super::EditorState) -> super::ValidationState {
-    use nerust_gui_runtime::settings::apply::validate_shared_settings;
-    use nerust_gui_shell::{session::input::build_topology, settings::bindings::conflicting_keys};
+    use nerust_gui_settings::shared::StoragePolicy;
+    use nerust_settings_core::{bindings::conflicting_keys, input::build_topology};
 
     let mut issues = Vec::new();
 
-    // Storage policy validation
-    if let Err(e) = validate_shared_settings(&state.draft.shared) {
+    // Storage policy validation (structural only — fs metadata checked at apply time)
+    if matches!(
+        state.draft.shared.persistence.storage_policy,
+        StoragePolicy::CustomDirectory
+    ) && state.draft.shared.persistence.storage_directory.is_none()
+    {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Persistence,
-            message: e.to_string(),
+            message: "Custom storage directory required".into(),
         });
     }
 
@@ -119,7 +122,7 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     }
 
     // Per-system validation: controller assignment + key conflicts
-    for factory in state.registry.all() {
+    for factory in state.catalog.all() {
         let sid = factory.system_id();
         let input_factory = factory.input_system_factory();
         let pairs: Vec<(String, Option<String>)> = state
@@ -219,7 +222,7 @@ mod tests {
 
     #[test]
     fn validator_detects_unknown_profile() {
-        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::snapshot::SettingsSnapshot;
         use nerust_gui_settings::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
@@ -240,12 +243,10 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-            factory,
-        ]));
+        let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]);
         let supported_sample_rates: Arc<[u32]> = Arc::new([]);
 
-        let mut editor = SettingsEditor::new(snapshot, registry, supported_sample_rates);
+        let mut editor = SettingsEditor::new(snapshot, catalog, supported_sample_rates);
         editor.set_validator(validator);
 
         // finish() should reject because of the unknown profile

@@ -1,15 +1,13 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
-use nerust_gui_shell::{
-    session::input::{build_topology, clear_multi_port_conflicts},
-    settings::{
-        bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
-        editor::{CaptureTarget, current_binding_label},
-        i18n::{UiText, text as ui_text},
-    },
-};
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
+use nerust_settings_core::{
+    bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
+    editor::{CaptureTarget, current_binding_label},
+    i18n::{UiText, text as ui_text},
+    input::{build_topology, clear_multi_port_conflicts},
+};
 
 use super::{
     EditorState,
@@ -121,7 +119,7 @@ impl InputSettingsViewModel {
         let profile_id = profile_id.map(|s| s.to_string());
         self.editor.transact(move |state| {
             let factory = state
-                .registry
+                .catalog
                 .find_by_id(factory_id.as_ref())
                 .cloned()
                 .ok_or(ViewModelError::UnknownSystem(factory_id.to_string()))?;
@@ -353,12 +351,11 @@ mod tests {
     #[test]
     fn change_one_slot_preserves_other() {
         use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
-        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::snapshot::SettingsSnapshot;
         use nerust_gui_settings::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };
-        use nerust_gui_shell::registry::SystemRegistry;
         use std::sync::Arc;
 
         // Create a snapshot with both P1 and P2 assigned
@@ -378,8 +375,7 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let registry = Arc::new(SystemRegistry::new(vec![factory]));
-        let vm = super::super::SettingsViewModel::new(snapshot, registry, Arc::new([]));
+        let vm = super::super::SettingsViewModel::new(snapshot, vec![factory], Arc::new([]));
         let input_vm = &vm.inputs()[0];
 
         // Both P1 and P2 have controllers initially
@@ -418,12 +414,11 @@ mod tests {
     fn set_slot_missing_from_persisted_pairs_adds_it() {
         use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
         use nerust_core_traits::factory::CoreFactory;
-        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::snapshot::SettingsSnapshot;
         use nerust_gui_settings::{
             app_state::DesktopAppState, local::HostBackendLocalSettings,
             shared::DesktopSharedSettings,
         };
-        use nerust_gui_shell::registry::SystemRegistry;
         use std::sync::Arc;
 
         // Only P1 is in persisted pairs — P2 is absent entirely.
@@ -440,8 +435,7 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let registry = Arc::new(SystemRegistry::new(vec![factory]));
-        let vm = super::super::SettingsViewModel::new(snapshot, registry, Arc::new([]));
+        let vm = super::super::SettingsViewModel::new(snapshot, vec![factory], Arc::new([]));
         let input_vm = &vm.inputs()[0];
 
         // P2 is absent from the projection initially

@@ -1,5 +1,5 @@
 use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
-use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
+use nerust_settings_core::i18n::{UiText, text as ui_text};
 use std::path::PathBuf;
 
 use super::{

@@ -7,7 +7,7 @@ use nerust_core_traits::{
     },
     identity::SystemId,
 };
-use nerust_gui_shell::settings::factory::{apply_settings_choice, resolve_label, settings_view};
+use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 
 use super::{
     EditorState,
@@ -65,7 +65,7 @@ impl SystemSettingsViewModel {
         self.editor.transact(move |state| {
             // Find factory by ID from the registry
             let factory = state
-                .registry
+                .catalog
                 .find_by_id(factory_id.as_ref())
                 .cloned()
                 .ok_or(ViewModelError::UnknownSystem(factory_id.to_string()))?;

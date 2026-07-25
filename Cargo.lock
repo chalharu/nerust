@@ -2965,11 +2965,10 @@ name = "nerust_gui_viewmodel"
 version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
- "nerust_gui_runtime",
  "nerust_gui_settings",
- "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_settings_core",
  "serde",
  "thiserror 2.0.19",
  "typetag",
@@ -3168,6 +3167,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_settings_core"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_gui_settings",
+ "nerust_input_traits",
+ "nerust_keyboard",
+]
+
+[[package]]
 name = "nerust_settings_traits"
 version = "0.1.0-dev"
 dependencies = [
@@ -3221,6 +3230,7 @@ dependencies = [
  "nerust_persistence",
  "nerust_render_traits",
  "nerust_run_options",
+ "nerust_settings_core",
  "raw-window-handle",
  "rfd",
  "tao",
