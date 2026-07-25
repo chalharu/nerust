@@ -1,4 +1,7 @@
-use nerust_gui_shell::settings::editor::CaptureTarget;
+use nerust_gui_shell::settings::{
+    editor::CaptureTarget,
+    i18n::{UiText, text as ui_text},
+};
 use nerust_keyboard::Key;
 
 use super::{
@@ -74,7 +77,9 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
         prompt: state
             .capture_target
             .as_ref()
-            .map(|_| "Press a key...".to_string())
+            .map(|_| {
+                ui_text(state.draft.shared.general.language, UiText::CapturePrompt).to_string()
+            })
             .unwrap_or_default(),
     }
 }

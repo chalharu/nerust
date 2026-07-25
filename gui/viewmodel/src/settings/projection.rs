@@ -16,9 +16,13 @@ pub(crate) trait ProjectionNode {
     fn is_synced(&self, current: &EditorState) -> bool;
 }
 
+type ApplyNotification = Option<Box<dyn FnOnce()>>;
+
 /// A prepared value ready to be silently applied to its property cache.
+/// Returns an optional notification closure to be invoked after all
+/// projections have been applied.
 pub(crate) trait PreparedProjection {
-    fn apply(self: Box<Self>);
+    fn apply(self: Box<Self>) -> ApplyNotification;
 }
 
 /// A concrete PreparedProjection that updates an ObservablePropertyInner.
@@ -28,8 +32,29 @@ struct InnerProjection<T: Clone + PartialEq + 'static> {
 }
 
 impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
-    fn apply(self: Box<Self>) {
-        self.inner.replace(self.value);
+    #[allow(clippy::type_complexity)]
+    fn apply(self: Box<Self>) -> Option<Box<dyn FnOnce()>> {
+        if *self.inner.value.borrow() == self.value {
+            return None;
+        }
+        *self.inner.value.borrow_mut() = self.value;
+        let snapshot: Vec<Rc<dyn Fn(&T)>> = self
+            .inner
+            .observers
+            .borrow()
+            .iter()
+            .map(|(_, cb)| Rc::clone(cb))
+            .collect();
+        if snapshot.is_empty() {
+            return None;
+        }
+        // Capture the current value for callbacks
+        let value = self.inner.get();
+        Some(Box::new(move || {
+            for cb in &snapshot {
+                cb(&value);
+            }
+        }))
     }
 }
 
@@ -48,8 +73,7 @@ impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
 
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>> {
         let new_value = (self.project)(candidate);
-        let old_value = self.inner.get();
-        if new_value == old_value {
+        if self.inner.get() == new_value {
             return None;
         }
         Some(Box::new(InnerProjection {

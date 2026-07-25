@@ -1,4 +1,5 @@
 use nerust_gui_settings::local::ScalingMode;
+use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
 
 use super::{
     dto::{ChoiceView, VideoView},
@@ -49,13 +50,14 @@ impl VideoSettingsViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> VideoView {
+    let lang = state.draft.shared.general.language;
     VideoView {
         fullscreen_default: state.draft.local.video.window.fullscreen_default,
         scaling: state.draft.local.video.window.scaling,
         scaling_choices: vec![
             ChoiceView {
                 value: ScalingMode::FitToWindow,
-                label: "Fit to Window".into(),
+                label: ui_text(lang, UiText::FitToWindow).to_string(),
             },
             ChoiceView {
                 value: ScalingMode::X1,

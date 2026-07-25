@@ -143,18 +143,26 @@ impl SettingsEditor {
 
         *self.current.borrow_mut() = candidate;
 
-        // Apply prepared projections silently before asserting sync
+        // Apply prepared projections silently; collect notification
+        // closures to invoke after all values are in place.
+        let mut notifications: Vec<Box<dyn FnOnce()>> = Vec::new();
         for projection in prepared {
-            projection.apply();
+            if let Some(notify) = projection.apply() {
+                notifications.push(notify);
+            }
         }
 
         #[cfg(debug_assertions)]
         self.projections.assert_all_synced(&self.current.borrow());
 
-        // Notify revision observers
+        // Collect revision observer callbacks
         let rev_callbacks = self.revision_inner.set(rev_value);
 
+        // Fire all notifications: first projection observers, then revision
         let _guard = NotificationGuard::enter(&self.notifying);
+        for notify in notifications {
+            notify();
+        }
         if let Some(callbacks) = rev_callbacks {
             for cb in &callbacks {
                 cb(&rev_value);

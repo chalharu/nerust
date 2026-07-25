@@ -48,9 +48,9 @@ impl<T: Clone + PartialEq + 'static> ReadOnlyObservableProperty<T> {
 }
 
 pub(crate) struct ObservablePropertyInner<T> {
-    value: RefCell<T>,
-    next_observer_id: Cell<u64>,
-    observers: RefCell<ObserverList<T>>,
+    pub(crate) value: RefCell<T>,
+    pub(crate) next_observer_id: Cell<u64>,
+    pub(crate) observers: RefCell<ObserverList<T>>,
 }
 
 impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {

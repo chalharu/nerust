@@ -1,4 +1,5 @@
 use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
+use nerust_gui_shell::settings::i18n::{UiText, text as ui_text};
 use std::path::PathBuf;
 
 use super::{
@@ -57,30 +58,30 @@ fn project_view(state: &super::EditorState) -> GeneralView {
         language_choices: vec![
             ChoiceView {
                 value: AppLanguage::SystemDefault,
-                label: "System Default".into(),
+                label: ui_text(lang, UiText::SystemDefault).to_string(),
             },
             ChoiceView {
                 value: AppLanguage::Japanese,
-                label: "Japanese".into(),
+                label: ui_text(lang, UiText::Japanese).to_string(),
             },
             ChoiceView {
                 value: AppLanguage::English,
-                label: "English".into(),
+                label: ui_text(lang, UiText::English).to_string(),
             },
         ],
         storage_policy: state.draft.shared.persistence.storage_policy,
         storage_policy_choices: vec![
             ChoiceView {
                 value: StoragePolicy::Sidecar,
-                label: "Sidecar".into(),
+                label: ui_text(lang, UiText::Sidecar).to_string(),
             },
             ChoiceView {
                 value: StoragePolicy::AppSharedData,
-                label: "App Shared Data".into(),
+                label: ui_text(lang, UiText::AppSharedData).to_string(),
             },
             ChoiceView {
                 value: StoragePolicy::CustomDirectory,
-                label: "Custom Directory".into(),
+                label: ui_text(lang, UiText::CustomDirectory).to_string(),
             },
         ],
         storage_directory: state

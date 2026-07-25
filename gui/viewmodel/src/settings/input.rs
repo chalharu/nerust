@@ -6,6 +6,7 @@ use nerust_gui_shell::{
     settings::{
         bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
         editor::{CaptureTarget, current_binding_label},
+        i18n::{UiText, text as ui_text},
     },
 };
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
@@ -19,6 +20,59 @@ use super::{
     editor::{SettingsEditor, ViewModelError},
     property::ReadOnlyObservableProperty,
 };
+
+/// Resolve persisted (slot_id, controller_id) pairs into resolved
+/// (AttachmentId, Option<Rc<dyn ControllerProfile>>) assignments.
+fn resolve_assignments(
+    pairs: &[(String, Option<String>)],
+    input_factory: &dyn nerust_input_traits::InputSystemFactory,
+) -> Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> {
+    let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = pairs
+        .iter()
+        .filter_map(|(slot_id, _)| {
+            let att = input_factory.resolve_slot(slot_id)?;
+            Some((att, None::<Rc<dyn ControllerProfile>>))
+        })
+        .collect();
+    for (slot_id, ctrl_opt) in pairs {
+        if let Some(id) = ctrl_opt
+            && let Some(profile) = input_factory.resolve_controller(id)
+            && let Some(entry) = assignments
+                .iter_mut()
+                .find(|(s, _)| s.to_string() == *slot_id)
+        {
+            entry.1 = Some(profile);
+        }
+    }
+    assignments
+}
+
+fn persisted_pairs(
+    draft: &super::EditorState,
+    factory: &dyn CoreFactory,
+) -> Vec<(String, Option<String>)> {
+    let sid = factory.system_id();
+    let input_factory = factory.input_system_factory();
+    draft
+        .draft
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| {
+            let defaults = input_factory.default_assignments();
+            defaults
+                .slots
+                .iter()
+                .map(|(slot_id, ctrl)| {
+                    (
+                        slot_id.to_string(),
+                        ctrl.as_ref().map(|p| p.profile_id().to_string()),
+                    )
+                })
+                .collect()
+        })
+}
 
 /// Per-system input settings view model.
 #[derive(Clone)]
@@ -73,7 +127,7 @@ impl InputSettingsViewModel {
                 .ok_or(ViewModelError::UnknownSystem(factory_id.to_string()))?;
             let input_factory = factory.input_system_factory();
 
-            // Resolve profile ID to a ControllerProfile
+            // Resolve the requested profile
             let profile: Option<Rc<dyn ControllerProfile>> = match &profile_id {
                 Some(id) => Some(
                     input_factory
@@ -83,38 +137,10 @@ impl InputSettingsViewModel {
                 None => None,
             };
 
-            // Get current assignment pairs
-            let sid = factory.system_id();
-            let pairs: Vec<(String, Option<String>)> = state
-                .draft
-                .app_state
-                .controller_assignments
-                .get(&sid)
-                .cloned()
-                .unwrap_or_else(|| {
-                    let defaults = input_factory.default_assignments();
-                    defaults
-                        .slots
-                        .iter()
-                        .map(|(slot_id, ctrl)| {
-                            (
-                                slot_id.to_string(),
-                                ctrl.as_ref().map(|p| p.profile_id().to_string()),
-                            )
-                        })
-                        .collect()
-                });
+            let mut assignments =
+                resolve_assignments(&persisted_pairs(state, factory.as_ref()), input_factory);
 
-            // Build assignments with resolved profiles
-            let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = pairs
-                .iter()
-                .filter_map(|(slot_id, _)| {
-                    let att = input_factory.resolve_slot(slot_id)?;
-                    Some((att, None::<Rc<dyn ControllerProfile>>))
-                })
-                .collect();
-
-            // Apply the new slot selection
+            // Apply the new slot (with multi-port conflict resolution)
             if let Some(ref p) = profile {
                 clear_multi_port_conflicts(slot, p.as_ref(), &mut assignments);
             }
@@ -136,7 +162,7 @@ impl InputSettingsViewModel {
                 .draft
                 .app_state
                 .controller_assignments
-                .insert(sid, pairs);
+                .insert(factory.system_id(), pairs);
             Ok(())
         })
     }
@@ -153,46 +179,7 @@ fn project_view(
     let controllers = input_factory.controllers();
     let language = state.draft.shared.general.language;
 
-    // Resolve assignments
-    let pairs = state
-        .draft
-        .app_state
-        .controller_assignments
-        .get(&system_id)
-        .cloned()
-        .unwrap_or_else(|| {
-            let defaults = input_factory.default_assignments();
-            defaults
-                .slots
-                .iter()
-                .map(|(slot_id, ctrl)| {
-                    (
-                        slot_id.to_string(),
-                        ctrl.as_ref().map(|p| p.profile_id().to_string()),
-                    )
-                })
-                .collect()
-        });
-
-    let mut assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = pairs
-        .iter()
-        .filter_map(|(slot_id, _)| {
-            let att = input_factory.resolve_slot(slot_id)?;
-            Some((att, None::<Rc<dyn ControllerProfile>>))
-        })
-        .collect();
-
-    // Resolve profiles
-    for (slot_id, ctrl_opt) in &pairs {
-        if let Some(id) = ctrl_opt
-            && let Some(profile) = input_factory.resolve_controller(id)
-            && let Some(entry) = assignments
-                .iter_mut()
-                .find(|(s, _)| s.to_string() == *slot_id)
-        {
-            entry.1 = Some(profile);
-        }
-    }
+    let assignments = resolve_assignments(&persisted_pairs(state, factory), input_factory);
 
     // Build set of occupied slots (from multi-port controllers)
     let mut occupied = std::collections::HashSet::new();
@@ -218,11 +205,7 @@ fn project_view(
 
             let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
                 value: None,
-                label: nerust_gui_shell::settings::i18n::text(
-                    language,
-                    nerust_gui_shell::settings::i18n::UiText::None,
-                )
-                .to_string(),
+                label: ui_text(language, UiText::None).to_string(),
             }];
 
             choices.extend(
@@ -271,21 +254,13 @@ fn project_view(
                         };
                         let value = if capture_target.as_ref() == Some(&target) {
                             BindingValueView::Capturing(
-                                nerust_gui_shell::settings::i18n::text(
-                                    language,
-                                    nerust_gui_shell::settings::i18n::UiText::CapturePrompt,
-                                )
-                                .to_string(),
+                                ui_text(language, UiText::CapturePrompt).to_string(),
                             )
                         } else {
                             match current_binding_label(&state.draft, &target) {
                                 Some(label) => BindingValueView::Bound(label.to_string()),
                                 None => BindingValueView::Unbound(
-                                    nerust_gui_shell::settings::i18n::text(
-                                        language,
-                                        nerust_gui_shell::settings::i18n::UiText::Unbound,
-                                    )
-                                    .to_string(),
+                                    ui_text(language, UiText::Unbound).to_string(),
                                 ),
                             }
                         };

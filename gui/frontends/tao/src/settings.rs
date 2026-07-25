@@ -161,10 +161,25 @@ pub(crate) struct SettingsAppState {
 }
 
 impl SettingsAppState {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(
         snapshot: &SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
+    ) -> Self {
+        Self::new_with_invalidation(
+            snapshot,
+            registry,
+            audio_registry,
+            Rc::new(Cell::new(false)),
+        )
+    }
+
+    fn new_with_invalidation(
+        snapshot: &SettingsSnapshot,
+        registry: Arc<SystemRegistry>,
+        audio_registry: Arc<AudioBackendRegistry>,
+        view_invalidated: Rc<Cell<bool>>,
     ) -> Self {
         let supported_sample_rates: Arc<[u32]> = {
             let rates = audio_registry.supported_rates();
@@ -179,7 +194,6 @@ impl SettingsAppState {
             Arc::clone(&registry),
             supported_sample_rates,
         );
-        let view_invalidated = Rc::new(Cell::new(false));
         let invalidated = Rc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
             invalidated.set(true);
@@ -214,10 +228,10 @@ impl SettingsAppState {
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
         view_invalidated: Rc<Cell<bool>>,
     ) -> Self {
-        let mut state = Self::new(snapshot, registry, audio_registry);
+        let mut state =
+            Self::new_with_invalidation(snapshot, registry, audio_registry, view_invalidated);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
-        state.view_invalidated = view_invalidated;
         state
     }
 
