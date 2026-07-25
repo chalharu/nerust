@@ -49,9 +49,8 @@ pub mod __private {
 
 #[macro_export]
 macro_rules! declare_system_id {
-    // The persisted typetag is `<Cargo package name>::<system ID>`. Both inputs
-    // are compatibility contracts; keep them stable and use each system ID at
-    // most once within a package.
+    // The persisted typetag is the globally unique logical system ID. Keep it
+    // stable and declare each system ID exactly once in the final binary.
     ($visibility:vis $name:ident, $system_id:literal) => {
         #[derive(
             Debug,
@@ -68,7 +67,7 @@ macro_rules! declare_system_id {
             // calling crate to depend on typetag directly.
             use $crate::identity::__private::typetag;
 
-            #[$crate::identity::__private::typetag::serde(name = concat!(env!("CARGO_PKG_NAME"), "::", $system_id))]
+            #[$crate::identity::__private::typetag::serde(name = $system_id)]
             impl SystemId for $name {}
         };
 
@@ -112,15 +111,9 @@ mod tests {
     }
 
     #[test]
-    fn system_id_typetag_uses_package_namespace_and_stable_id() {
-        assert_eq!(
-            serialized_tag(Box::new(FirstSystemId)),
-            "nerust_core_traits::first"
-        );
-        assert_eq!(
-            serialized_tag(Box::new(RenamableRustType)),
-            "nerust_core_traits::second"
-        );
+    fn system_id_typetag_uses_stable_logical_id() {
+        assert_eq!(serialized_tag(Box::new(FirstSystemId)), "first");
+        assert_eq!(serialized_tag(Box::new(RenamableRustType)), "second");
     }
 
     #[test]
