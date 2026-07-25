@@ -413,4 +413,61 @@ mod tests {
         let result = input_vm.set_controller_slot(unknown_slot, None);
         assert!(result.is_err(), "changing unknown slot should return error");
     }
+
+    #[test]
+    fn set_slot_missing_from_persisted_pairs_adds_it() {
+        use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
+        use nerust_core_traits::factory::CoreFactory;
+        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::{
+            app_state::DesktopAppState, local::HostBackendLocalSettings,
+            shared::DesktopSharedSettings,
+        };
+        use nerust_gui_shell::registry::SystemRegistry;
+        use std::sync::Arc;
+
+        // Only P1 is in persisted pairs — P2 is absent entirely.
+        let test_factory = TestCoreFactory(TestInputFactory::new());
+        let sid = CoreFactory::system_id(&test_factory);
+        let mut snapshot = SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        snapshot.app_state.controller_assignments.insert(
+            sid,
+            vec![(P1_SLOT.to_string(), Some("test.ctrl.p1".to_string()))],
+        );
+
+        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let vm = super::super::SettingsViewModel::new(snapshot, registry, Arc::new([]));
+        let input_vm = &vm.inputs()[0];
+
+        // P2 is absent from the projection initially
+        let view0 = input_vm.view.get();
+        assert_eq!(view0.slots.len(), 2, "factory exposes 2 slots");
+        assert!(
+            view0.slots[1].selected_profile_id.is_none(),
+            "P2 absent from persisted pairs"
+        );
+
+        // Set P2 to a controller
+        input_vm
+            .set_controller_slot(P2_SLOT, Some("test.ctrl.p2"))
+            .unwrap();
+
+        // Both P1 and P2 should now have controllers
+        let view1 = input_vm.view.get();
+        assert!(view1.slots[0].selected_profile_id.is_some(), "P1 unchanged");
+        assert!(
+            view1.slots[1].selected_profile_id.is_some(),
+            "P2 added via set_controller_slot"
+        );
+        assert_eq!(
+            view1.slots[1].selected_profile_id.as_deref(),
+            Some("test.ctrl.p2"),
+            "P2 has the requested profile"
+        );
+    }
 }
