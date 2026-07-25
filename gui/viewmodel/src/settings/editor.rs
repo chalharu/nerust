@@ -69,14 +69,16 @@ impl StoragePathValidator for NoopStoragePathValidator {
 /// Mutable state for the settings editor.
 #[derive(Clone)]
 pub struct EditorState {
-    pub initial: SettingsSnapshot,
-    pub draft: SettingsSnapshot,
-    pub capture_target: Option<CaptureTarget>,
+    pub(crate) draft: SettingsSnapshot,
+    pub(crate) capture_target: Option<CaptureTarget>,
     pub validation: ValidationState,
     pub revision: u64,
     pub(crate) catalog: FactoryCatalog,
-    pub supported_sample_rates: Arc<[u32]>,
-    pub storage_validator: Rc<dyn StoragePathValidator>,
+    pub(crate) supported_sample_rates: Arc<[u32]>,
+    pub(crate) storage_validator: Rc<dyn StoragePathValidator>,
+    /// Tracks which validation scopes have changed since last revalidation.
+    /// When `None`, all scopes need revalidation (initial state or forced).
+    pub(crate) dirty_scopes: Option<Vec<super::ValidationScope>>,
 }
 
 /// Lightweight handle to the shared editor state and projection hub.
@@ -99,7 +101,6 @@ impl SettingsEditor {
         validator: impl Fn(&EditorState) -> ValidationState + 'static,
     ) -> Self {
         let editor_state = EditorState {
-            initial: snapshot.clone(),
             draft: snapshot,
             capture_target: None,
             validation: ValidationState { issues: vec![] },
@@ -107,6 +108,7 @@ impl SettingsEditor {
             catalog,
             supported_sample_rates,
             storage_validator,
+            dirty_scopes: None,
         };
         let initial_validation = validator(&editor_state);
         let current = Rc::new(RefCell::new(EditorState {
@@ -122,6 +124,17 @@ impl SettingsEditor {
             validator: Rc::new(validator),
             notifying: Rc::new(Cell::new(false)),
             revision_inner,
+        }
+    }
+
+    /// Mark the given scopes as needing revalidation.
+    /// Passing `None` forces full revalidation.
+    pub fn mark_dirty(&self, scopes: Option<Vec<super::ValidationScope>>) {
+        let mut state = self.current.borrow_mut();
+        match (&mut state.dirty_scopes, scopes) {
+            (_, None) => state.dirty_scopes = None,
+            (None, Some(_)) => {} // already full
+            (Some(existing), Some(new)) => existing.extend(new),
         }
     }
 
@@ -157,12 +170,17 @@ impl SettingsEditor {
         let mut candidate = original.clone();
         let result = mutate(&mut candidate)?;
 
-        if candidate.draft == original.draft && candidate.capture_target == original.capture_target
+        if candidate.draft == original.draft
+            && candidate.capture_target == original.capture_target
+            && candidate.dirty_scopes == original.dirty_scopes
         {
             return Ok(result);
         }
 
+        // Re-validate: currently full revalidation. When dirty_scopes is Some
+        // and narrowed, this can be changed to scoped validation.
         candidate.validation = (self.validator)(&candidate);
+        candidate.dirty_scopes = None;
         candidate.revision = original.revision + 1;
         let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
