@@ -1,7 +1,4 @@
-use std::{any::TypeId, hash::Hash};
-
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use serde::{Deserialize, Serialize};
 
 use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
@@ -31,22 +28,4 @@ impl RomIdentity {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
-pub struct NesSystemId;
-
-#[typetag::serde]
-impl SystemId for NesSystemId {}
-
-// ZSTなのでHashを実装しなければ他のZSTと同一のHashになってしまう
-impl Hash for NesSystemId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        TypeId::of::<Self>().hash(state);
-    }
-}
-
-#[allow(clippy::to_string_trait_impl)]
-impl ToString for NesSystemId {
-    fn to_string(&self) -> String {
-        "nes".to_string()
-    }
-}
+nerust_core_traits::declare_system_id!(pub NesSystemId, "nes");

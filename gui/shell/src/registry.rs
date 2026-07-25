@@ -179,8 +179,8 @@ mod tests {
 
     use super::*;
 
-    declare_system_id!(DummySystemId, "dummy");
-    declare_system_id!(DummyOtherSystemId, "other");
+    declare_system_id!(DummySystemId, "registry-dummy");
+    declare_system_id!(DummyOtherSystemId, "registry-other");
 
     #[derive(Debug, Clone)]
     struct StubFactory;

@@ -3,7 +3,7 @@ use nerust_core_traits::{declare_system_id, identity::SystemId};
 use super::{STATE_ARCHIVE_SCHEMA_VERSION, StateArchiveMetadata};
 use crate::error::PersistenceError;
 
-declare_system_id!(LegacyNesSystemId, "nes");
+declare_system_id!(LegacyNesSystemId, "nes-legacy");
 
 pub(super) fn matches_system_id(stored: &dyn SystemId, current: &dyn SystemId) -> bool {
     stored == &LegacyNesSystemId as &dyn SystemId && current.to_string() == "nes"
