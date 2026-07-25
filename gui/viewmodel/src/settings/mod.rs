@@ -7,6 +7,7 @@ mod general;
 mod input;
 mod projection;
 pub mod property;
+pub(crate) mod state;
 mod settings_viewmodel;
 mod system;
 #[cfg(test)]
@@ -15,10 +16,9 @@ mod validation;
 mod video;
 
 #[cfg(test)]
-pub use editor::NoopStoragePathValidator;
-pub use editor::{
-    EditorState, SettingsEditor, StoragePathError, StoragePathValidator, ViewModelError,
-};
+pub use state::NoopStoragePathValidator;
+pub use editor::SettingsEditor;
+pub use state::{EditorState, StoragePathError, StoragePathValidator, ViewModelError};
 pub use property::{ReadOnlyObservableProperty, Subscription};
 pub use settings_viewmodel::SettingsViewModel;
 pub use validation::{ValidationIssue, ValidationScope, ValidationState};

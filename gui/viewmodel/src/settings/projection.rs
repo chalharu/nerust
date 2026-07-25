@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::{
-    EditorState,
     property::{ObservablePropertyInner, ReadOnlyObservableProperty},
+    state::EditorState,
 };
 
 /// A node responsible for computing one projection from [`EditorState`].
