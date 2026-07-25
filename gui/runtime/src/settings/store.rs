@@ -137,7 +137,8 @@ fn recover_snapshot(defaults: &SettingsSnapshot, raw: &Value) -> SettingsSnapsho
                 }
             }
             "app_state" => {
-                if let Ok(v) = field_val.clone().deserialize_into() {
+                let filtered = filter_unknown_controller_assignments(field_val, defaults);
+                if let Ok(v) = filtered.deserialize_into() {
                     result.app_state = v;
                 }
             }
@@ -145,6 +146,20 @@ fn recover_snapshot(defaults: &SettingsSnapshot, raw: &Value) -> SettingsSnapsho
         }
     }
     result
+}
+
+fn filter_unknown_controller_assignments(app_state: &Value, defaults: &SettingsSnapshot) -> Value {
+    let mut filtered = app_state.clone();
+    let Ok(defaults) = serde_value::to_value(&defaults.shared) else {
+        return filtered;
+    };
+    retain_known_map_entries_with_keys_from(
+        &mut filtered,
+        &["controller_assignments"],
+        &defaults,
+        &["systems"],
+    );
+    filtered
 }
 
 fn filter_unknown_systems(
@@ -161,13 +176,22 @@ fn filter_unknown_systems(
 }
 
 fn retain_known_map_entries(value: &mut Value, defaults: &Value, path: &[&str]) {
-    let Some(Value::Map(default_map)) = value_at_path(defaults, path) else {
+    retain_known_map_entries_with_keys_from(value, path, defaults, path);
+}
+
+fn retain_known_map_entries_with_keys_from(
+    value: &mut Value,
+    value_path: &[&str],
+    known: &Value,
+    known_path: &[&str],
+) {
+    let Some(Value::Map(known_map)) = value_at_path(known, known_path) else {
         return;
     };
-    let Some(Value::Map(map)) = value_at_path_mut(value, path) else {
+    let Some(Value::Map(map)) = value_at_path_mut(value, value_path) else {
         return;
     };
-    map.retain(|key, _| default_map.contains_key(key));
+    map.retain(|key, _| known_map.contains_key(key));
 }
 
 fn value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
