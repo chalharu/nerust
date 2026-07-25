@@ -64,46 +64,69 @@ impl PreferencesBinding {
         ok_button: gtk::Widget,
         error_label: gtk::Label,
     ) -> Rc<Self> {
-        // Create binding, subscribe, return Rc directly
-        let mut subs = Vec::new();
+        // Read initial values before vm is moved into new_cyclic
+        let gv = vm.general.view.get();
+        let ok_sensitive = vm.finish().is_ok();
 
-        let pending = Rc::new(std::cell::RefCell::new(None::<Rc<Self>>));
+        let binding: Rc<Self> = Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
+            let mut subs = Vec::new();
 
-        let weak = Rc::downgrade(&pending);
-        subs.push(vm.general.view.observe(move |v| {
-            let pending = weak.upgrade().expect("PreferencesBinding leaked");
-            let b = pending.borrow();
-            let Some(ref b) = *b else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            b.general.language_combo.set_active_id(Some(match v.language {
-                AppLanguage::Japanese => "japanese",
-                AppLanguage::English => "english",
-                AppLanguage::SystemDefault => "system_default",
+            subs.push(vm.general.view.observe({
+                let weak = weak.clone();
+                move |v| {
+                    let Some(b) = weak.upgrade() else { return };
+                    if b.refreshing.get() {
+                        return;
+                    }
+                    b.refreshing.set(true);
+                    b.general.language_combo.set_active_id(Some(match v.language {
+                        AppLanguage::Japanese => "japanese",
+                        AppLanguage::English => "english",
+                        AppLanguage::SystemDefault => "system_default",
+                    }));
+                    b.general.storage_policy_combo.set_active_id(Some(match v.storage_policy {
+                        StoragePolicy::AppSharedData => "app_shared_data",
+                        StoragePolicy::CustomDirectory => "custom_directory",
+                        StoragePolicy::Sidecar => "sidecar",
+                    }));
+                    let show_dir = matches!(v.storage_policy, StoragePolicy::CustomDirectory);
+                    b.general.storage_dir_row.set_visible(show_dir);
+                    b.refreshing.set(false);
+                }
             }));
-            b.general.storage_policy_combo.set_active_id(Some(match v.storage_policy {
+
+            Self {
+                vm,
+                _subscriptions: subs,
+                general,
+                video,
+                audio,
+                ok_button,
+                error_label,
+                storage_directory_input: String::new(),
+                refreshing: Cell::new(false),
+            }
+        });
+
+        // Initial widget population from current ViewModel state
+        binding.general.language_combo.set_active_id(Some(match gv.language {
+            AppLanguage::Japanese => "japanese",
+            AppLanguage::English => "english",
+            AppLanguage::SystemDefault => "system_default",
+        }));
+        binding
+            .general
+            .storage_policy_combo
+            .set_active_id(Some(match gv.storage_policy {
                 StoragePolicy::AppSharedData => "app_shared_data",
                 StoragePolicy::CustomDirectory => "custom_directory",
                 StoragePolicy::Sidecar => "sidecar",
             }));
-            let show_dir = matches!(v.storage_policy, StoragePolicy::CustomDirectory);
-            b.general.storage_dir_row.set_visible(show_dir);
-        }));
+        let show_dir = matches!(gv.storage_policy, StoragePolicy::CustomDirectory);
+        binding.general.storage_dir_row.set_visible(show_dir);
 
-        let binding = Rc::new(Self {
-            vm,
-            _subscriptions: subs,
-            general,
-            video,
-            audio,
-            ok_button,
-            error_label,
-            storage_directory_input: String::new(),
-            refreshing: Cell::new(false),
-        });
+        binding.ok_button.set_sensitive(ok_sensitive);
 
-        *pending.borrow_mut() = Some(Rc::clone(&binding));
         binding
     }
 
