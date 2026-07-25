@@ -3,12 +3,17 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::Arc,
 };
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{registry::SystemRegistry, settings::editor::CaptureTarget};
 
-use super::{ValidationState, projection::ProjectionHub};
+use super::{
+    ValidationState,
+    projection::ProjectionHub,
+    property::{ObservablePropertyInner, ReadOnlyObservableProperty},
+};
 
 /// Error type for view model operations.
 #[derive(Debug, thiserror::Error)]
@@ -35,8 +40,8 @@ pub struct EditorState {
     pub capture_target: Option<CaptureTarget>,
     pub validation: ValidationState,
     pub revision: u64,
-    pub registry: Rc<SystemRegistry>,
-    pub supported_sample_rates: Rc<[u32]>,
+    pub registry: Arc<SystemRegistry>,
+    pub supported_sample_rates: Arc<[u32]>,
 }
 
 /// Lightweight handle to the shared editor state and projection hub.
@@ -48,13 +53,14 @@ pub struct SettingsEditor {
     projections: ProjectionHub,
     validator: Rc<dyn Fn(&EditorState) -> ValidationState>,
     notifying: Rc<Cell<bool>>,
+    revision_inner: Rc<ObservablePropertyInner<u64>>,
 }
 
 impl SettingsEditor {
     pub fn new(
         snapshot: SettingsSnapshot,
-        registry: Rc<SystemRegistry>,
-        supported_sample_rates: Rc<[u32]>,
+        registry: Arc<SystemRegistry>,
+        supported_sample_rates: Arc<[u32]>,
     ) -> Self {
         let current = Rc::new(RefCell::new(EditorState {
             initial: snapshot.clone(),
@@ -66,12 +72,19 @@ impl SettingsEditor {
             supported_sample_rates,
         }));
 
+        let revision_inner = Rc::new(ObservablePropertyInner::new(0u64));
+
         Self {
             current,
             projections: ProjectionHub::new(),
             validator: Rc::new(|_| ValidationState { issues: vec![] }),
             notifying: Rc::new(Cell::new(false)),
+            revision_inner,
         }
+    }
+
+    pub fn revision_prop(&self) -> ReadOnlyObservableProperty<u64> {
+        ReadOnlyObservableProperty::new(Rc::clone(&self.revision_inner))
     }
 
     pub fn current(&self) -> std::cell::Ref<'_, EditorState> {
@@ -125,17 +138,27 @@ impl SettingsEditor {
 
         candidate.validation = (self.validator)(&candidate);
         candidate.revision = original.revision + 1;
+        let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
 
         *self.current.borrow_mut() = candidate;
 
+        // Apply prepared projections silently before asserting sync
+        for projection in prepared {
+            projection.apply();
+        }
+
         #[cfg(debug_assertions)]
         self.projections.assert_all_synced(&self.current.borrow());
 
+        // Notify revision observers
+        let rev_callbacks = self.revision_inner.set(rev_value);
+
         let _guard = NotificationGuard::enter(&self.notifying);
-        for _projection in prepared {
-            // Apply silently — callback notification happens here
-            // In the full implementation, callbacks are invoked here.
+        if let Some(callbacks) = rev_callbacks {
+            for cb in &callbacks {
+                cb(&rev_value);
+            }
         }
 
         Ok(result)
@@ -182,8 +205,8 @@ mod tests {
     }
 
     fn test_editor() -> SettingsEditor {
-        let registry = Rc::new(SystemRegistry::new(Vec::new()));
-        SettingsEditor::new(empty_snapshot(), registry, Rc::new([]))
+        let registry = Arc::new(SystemRegistry::new(Vec::new()));
+        SettingsEditor::new(empty_snapshot(), registry, Arc::new([]))
     }
 
     #[test]
