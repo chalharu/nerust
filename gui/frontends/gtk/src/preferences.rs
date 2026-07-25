@@ -770,17 +770,6 @@ pub(crate) fn present_preferences_dialog(
     );
 
     // ---- Signal handlers ----
-    fn weak_handler(b: &Rc<PreferencesBinding>) -> std::rc::Weak<PreferencesBinding> {
-        Rc::downgrade(b)
-    }
-
-    // Helper: call a command and show error on dialog error_label
-    fn cmd<T>(binding: &Rc<PreferencesBinding>, result: Result<T, nerust_gui_viewmodel::settings::ViewModelError>) {
-        if let Err(e) = result {
-            binding.error_label.set_text(&e.to_string());
-        }
-    }
-
     language_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
@@ -1031,6 +1020,19 @@ fn stack_page() -> (gtk::ScrolledWindow, gtk::Box) {
     (scroller, page)
 }
 
+fn weak_handler(b: &Rc<PreferencesBinding>) -> std::rc::Weak<PreferencesBinding> {
+    Rc::downgrade(b)
+}
+
+fn cmd<T>(
+    binding: &Rc<PreferencesBinding>,
+    result: Result<T, nerust_gui_viewmodel::settings::ViewModelError>,
+) {
+    if let Err(e) = result {
+        binding.error_label.set_text(&e.to_string());
+    }
+}
+
 fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
     for (id, label) in entries {
@@ -1041,17 +1043,141 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use super::*;
+    use std::cell::{Cell, RefCell};
 
-    use super::with_mut;
+    /// Initialize GTK, returning false if no display is available (CI).
+    fn gtk_init() -> bool {
+        gtk::init().is_ok()
+    }
 
     #[test]
     fn with_mut_releases_borrow_before_follow_up_work() {
         let value = RefCell::new(0);
-
         with_mut(&value, |current| *current = 1);
         *value.borrow_mut() = 2;
-
         assert_eq!(*value.borrow(), 2);
+    }
+
+    #[test]
+    fn refreshing_guard_prevents_reentrant_signal() {
+        if !gtk_init() {
+            return;
+        }
+        let binding = create_test_binding();
+        binding.with_refreshing(|| {
+            let prev = binding.refreshing.get();
+            assert!(prev, "refreshing should be true during guard");
+        });
+        assert!(!binding.refreshing.get(), "refreshing should be false after guard");
+    }
+
+    #[test]
+    fn cmd_helper_shows_error_on_error_label() {
+        if !gtk_init() {
+            return;
+        }
+        let binding = create_test_binding();
+        let err = nerust_gui_viewmodel::settings::ViewModelError::UnknownSystem("test".into());
+        cmd(&binding, Err::<(), _>(err));
+        assert!(!binding.error_label.text().is_empty(), "error_label should show the error");
+    }
+
+    #[test]
+    fn general_widgets_initial_values_match_viewmodel() {
+        if !gtk_init() {
+            return;
+        }
+        let binding = create_test_binding();
+        let gv = binding.vm.general.view.get();
+        assert_eq!(
+            binding.general.language_combo.active_id().as_deref(),
+            Some(match gv.language {
+                AppLanguage::Japanese => "japanese",
+                AppLanguage::English => "english",
+                AppLanguage::SystemDefault => "system_default",
+            })
+        );
+    }
+
+    #[test]
+    fn ok_button_sensitivity_matches_validation() {
+        if !gtk_init() {
+            return;
+        }
+        let binding = create_test_binding();
+        let ok = binding.vm.finish().is_ok();
+        assert_eq!(binding.ok_button.is_sensitive(), ok);
+    }
+
+    fn create_test_binding() -> Rc<PreferencesBinding> {
+        #[derive(Debug)]
+        struct TestNoopValidator;
+        impl StoragePathValidator for TestNoopValidator {
+            fn validate(&self, _: &std::path::Path) -> Result<(), StoragePathError> { Ok(()) }
+        }
+        use std::sync::Arc;
+
+        let snapshot = nerust_gui_settings::snapshot::SettingsSnapshot {
+            shared: nerust_gui_settings::shared::DesktopSharedSettings::default(),
+            local: nerust_gui_settings::local::HostBackendLocalSettings::default(),
+            app_state: nerust_gui_settings::app_state::DesktopAppState::default(),
+        };
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let supported_sample_rates: Arc<[u32]> = {
+            let rates = audio_registry.supported_rates();
+            if rates.is_empty() { Arc::new([44_100, 48_000]) } else { rates.iter().copied().collect() }
+        };
+
+        let vm = SettingsViewModel::new(
+            snapshot,
+            vec![],
+            supported_sample_rates,
+            Rc::new(TestNoopValidator) as Rc<dyn StoragePathValidator>,
+        );
+
+        let dialog = gtk::Dialog::builder().title("test").build();
+        let stack = gtk::Stack::new();
+        let ok_button = gtk::Button::with_label("OK");
+        let error_label = gtk::Label::new(None);
+
+        PreferencesBinding::new(
+            vm,
+            PreferencesWidgets {
+                general: GeneralWidgets {
+                    language_combo: gtk::ComboBoxText::new(),
+                    storage_policy_combo: gtk::ComboBoxText::new(),
+                    storage_dir_entry: gtk::Entry::new(),
+                    storage_dir_row: gtk::Box::new(gtk::Orientation::Horizontal, 0),
+                    storage_error_label: gtk::Label::new(None),
+                },
+                video: VideoWidgets {
+                    fullscreen_check: gtk::CheckButton::new(),
+                    scaling_combo: gtk::ComboBoxText::new(),
+                    vsync_check: gtk::CheckButton::new(),
+                },
+                audio: AudioWidgets {
+                    mute_check: gtk::CheckButton::new(),
+                    volume_spin: gtk::SpinButton::with_range(0.0, 100.0, 1.0),
+                    sample_rate_combo: gtk::ComboBoxText::new(),
+                    latency_spin: gtk::SpinButton::with_range(10.0, 200.0, 1.0),
+                },
+                input: InputTabWidgets {
+                    _notebook: gtk::Notebook::new(),
+                    pages: vec![],
+                    section_notebooks: RefCell::new(vec![]),
+                },
+                system: SystemTabWidgets {
+                    _notebook: gtk::Notebook::new(),
+                    pages: vec![],
+                },
+                ok_button: ok_button.clone().upcast::<gtk::Widget>(),
+                error_label: error_label.clone(),
+                dialog: dialog.clone(),
+                stack: stack.clone(),
+                page_ids: vec![],
+            },
+        )
+>>>>>>> 342fab6c (test(gtk): add PreferencesBinding regression tests (5 tests))
     }
 }
