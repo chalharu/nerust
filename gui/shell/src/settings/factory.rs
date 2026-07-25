@@ -76,7 +76,7 @@ mod tests {
     use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use std::sync::Arc;
 
-    use crate::session::test_helpers::DummySystemId;
+    use crate::test_support::DummySystemId;
 
     use super::*;
 

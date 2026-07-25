@@ -109,9 +109,8 @@ pub fn shortcut_descriptors() -> &'static [ShortcutDescriptor] {
 #[cfg(test)]
 mod tests {
     use super::{keyboard_binding_sections, shortcut_descriptors};
-    use crate::{
-        session::test_helpers::DummySystemId,
-        test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology},
+    use crate::test_support::{
+        DummySystemId, TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_MIC, dual_port_topology,
     };
 
     #[test]

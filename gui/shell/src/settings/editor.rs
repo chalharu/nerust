@@ -103,9 +103,8 @@ mod tests {
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{
-        session::test_helpers::DummySystemId,
-        settings::defaults::seed::{default_app_state, default_local_settings, test_nes_defaults},
-        test_support::{TEST_ATT_P1, TEST_CTRL_A},
+        settings::defaults::seed::{default_app_state, default_local_settings},
+        test_support::{DummySystemId, TEST_ATT_P1, TEST_CTRL_A, test_nes_defaults},
     };
 
     fn snapshot() -> SettingsSnapshot {

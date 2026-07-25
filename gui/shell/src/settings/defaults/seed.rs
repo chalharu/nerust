@@ -77,36 +77,6 @@ pub fn default_app_state() -> DesktopAppState {
     DesktopAppState::default()
 }
 
-/// NES defaults for tests that need concrete input settings but don't
-/// depend on the `nes/factory` crate (e.g. binding conflict tests in
-/// `gui/shell` itself). Production paths use `default_shared_settings`
-/// with factory iteration via `SystemDefaults`.
-#[cfg(test)]
-pub(crate) fn test_nes_defaults() -> DesktopSharedSettings {
-    use crate::session::test_helpers::DummySystemId;
-
-    let mut settings = default_shared_settings(&[]);
-    // Explicit NES seed for tests — avoids depending on nes/factory crate.
-    // Production paths use factory.default_system_settings() instead.
-    settings.systems.insert(
-        Box::new(DummySystemId),
-        Box::new(nerust_nes_settings::NesSettings::default())
-            as Box<dyn nerust_settings_traits::SystemSettings>,
-    );
-    let mut input = nerust_gui_settings::input::SystemInputSettings::default();
-    input.implicit_keyboard_profile_mut().bindings =
-        crate::keyboard_defaults::default_system_bindings("nes.attachment.player1", "nes.control");
-    let _ = input
-        .keyboard_profiles
-        .entry(IMPLICIT_PROFILE_ID.to_string())
-        .or_default();
-    settings
-        .input
-        .systems
-        .insert(Box::new(DummySystemId), input);
-    settings
-}
-
 #[cfg(test)]
 mod tests {
     use nerust_gui_settings::input::ShortcutAction;
