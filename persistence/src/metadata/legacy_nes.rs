@@ -19,6 +19,54 @@ fn validate_nes_system_id(system_id: &str) -> Result<(), PersistenceError> {
     }
 }
 
+const MISTAGGED_V3_NES_TAGS: &[&str] = &[
+    "NesSystemId",
+    "nerust_nes_core::rom_identity::NesSystemId",
+    "nerust_nes_core::nes",
+];
+
+#[derive(serde::Deserialize)]
+struct MistaggedSystemId {
+    sid: String,
+}
+
+#[derive(serde::Deserialize)]
+struct MistaggedStateArchiveMetadataV3 {
+    schema_version: u32,
+    slot_id: u64,
+    saved_at_unix_ms: u64,
+    has_thumbnail: bool,
+    system_id: MistaggedSystemId,
+    #[serde(with = "serde_bytes")]
+    identity_bytes: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    options_bytes: Vec<u8>,
+    emulator_version: String,
+}
+
+pub(super) fn decode_mistagged_v3(
+    bytes: &[u8],
+) -> Result<Option<StateArchiveMetadata>, PersistenceError> {
+    let metadata: MistaggedStateArchiveMetadataV3 = match rmp_serde::from_slice(bytes) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(None),
+    };
+    debug_assert_eq!(metadata.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+    if !MISTAGGED_V3_NES_TAGS.contains(&metadata.system_id.sid.as_str()) {
+        return Ok(None);
+    }
+    Ok(Some(StateArchiveMetadata {
+        schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+        slot_id: metadata.slot_id,
+        saved_at_unix_ms: metadata.saved_at_unix_ms,
+        has_thumbnail: metadata.has_thumbnail,
+        system_id: Box::new(LegacyNesSystemId),
+        identity_bytes: metadata.identity_bytes,
+        options_bytes: metadata.options_bytes,
+        emulator_version: metadata.emulator_version,
+    }))
+}
+
 #[derive(serde::Deserialize)]
 struct StateArchiveMetadataV2 {
     schema_version: u32,
