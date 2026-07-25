@@ -4,7 +4,7 @@ description.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
-name = "nerust_gui_viewmodel"
+name = "nerust_settings_core"
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -14,9 +14,3 @@ nerust_core_traits.workspace = true
 nerust_gui_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard.workspace = true
-nerust_settings_core.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-serde.workspace = true
-typetag.workspace = true

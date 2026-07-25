@@ -1,5 +1,6 @@
 mod audio;
 mod capture;
+pub(crate) mod catalog;
 pub mod dto;
 mod editor;
 mod general;

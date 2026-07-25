@@ -19,14 +19,14 @@ use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
-use nerust_gui_shell::{
-    registry::SystemRegistry,
-    settings::{
-        bindings::descriptors::shortcut_descriptors,
-        editor::{CaptureTarget, current_binding_label},
-        i18n::{UiText, text as ui_text},
-    },
+use nerust_gui_shell::registry::SystemRegistry;
+
+use nerust_settings_core::{
+    editor::{CaptureTarget, current_binding_label},
+    i18n::{UiText, text as ui_text},
 };
+
+use nerust_gui_shell::settings::bindings::descriptors::shortcut_descriptors;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, dto::ChoiceView};
 use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
@@ -189,11 +189,9 @@ impl SettingsAppState {
                 rates.iter().copied().collect()
             }
         };
-        let vm = SettingsViewModel::new(
-            snapshot.clone(),
-            Arc::clone(&registry),
-            supported_sample_rates,
-        );
+        let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
+            registry.all().iter().map(Arc::clone).collect();
+        let vm = SettingsViewModel::new(snapshot.clone(), factories, supported_sample_rates);
         let invalidated = Rc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
             invalidated.set(true);

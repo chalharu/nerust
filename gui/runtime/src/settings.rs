@@ -4,9 +4,9 @@ use std::{collections::HashMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::SystemIdentity;
-use nerust_gui_settings::{
-    app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
-};
+use nerust_gui_settings::local::HostBackendLocalSettings;
+#[cfg(test)]
+use nerust_gui_settings::shared::DesktopSharedSettings;
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
 
@@ -83,12 +83,8 @@ pub struct SettingsPaths {
     pub central_storage_root: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SettingsSnapshot {
-    pub shared: DesktopSharedSettings,
-    pub local: HostBackendLocalSettings,
-    pub app_state: DesktopAppState,
-}
+/// Re-exported from nerust_gui_settings for backwards compatibility.
+pub use nerust_gui_settings::snapshot::SettingsSnapshot;
 
 /// Lossless Serde representation of the settings file.
 ///
@@ -220,20 +216,8 @@ fn value_at_path_mut<'a>(
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct SettingsApplyPlan {
-    pub language_changed: bool,
-    pub bindings_changed: bool,
-    pub persistence_changed: bool,
-    pub session_rebuild_required: bool,
-    pub audio_volume_changed: bool,
-    pub renderer_rebuild_required: bool,
-    pub window_settings_changed: bool,
-    pub backend_presentation_changed: bool,
-    pub scaling_changed: bool,
-    pub vsync_changed: bool,
-    pub fullscreen_default_changed: bool,
-}
+/// Re-exported from nerust_gui_settings for backwards compatibility.
+pub use nerust_gui_settings::snapshot::SettingsApplyPlan;
 
 #[cfg(test)]
 pub(crate) fn tao_caps() -> HostBackendCapabilities {

@@ -6,8 +6,10 @@ use std::{
     sync::Arc,
 };
 
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{registry::SystemRegistry, settings::editor::CaptureTarget};
+use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::editor::CaptureTarget;
+
+use super::catalog::FactoryCatalog;
 
 use super::{
     ValidationState,
@@ -40,7 +42,7 @@ pub struct EditorState {
     pub capture_target: Option<CaptureTarget>,
     pub validation: ValidationState,
     pub revision: u64,
-    pub registry: Arc<SystemRegistry>,
+    pub(crate) catalog: FactoryCatalog,
     pub supported_sample_rates: Arc<[u32]>,
 }
 
@@ -57,9 +59,10 @@ pub struct SettingsEditor {
 }
 
 impl SettingsEditor {
+    #[allow(private_interfaces)]
     pub fn new(
         snapshot: SettingsSnapshot,
-        registry: Arc<SystemRegistry>,
+        catalog: FactoryCatalog,
         supported_sample_rates: Arc<[u32]>,
     ) -> Self {
         let current = Rc::new(RefCell::new(EditorState {
@@ -68,7 +71,7 @@ impl SettingsEditor {
             capture_target: None,
             validation: ValidationState { issues: vec![] },
             revision: 0,
-            registry,
+            catalog,
             supported_sample_rates,
         }));
 
@@ -215,8 +218,8 @@ mod tests {
     }
 
     fn test_editor() -> SettingsEditor {
-        let registry = Arc::new(SystemRegistry::new(Vec::new()));
-        SettingsEditor::new(empty_snapshot(), registry, Arc::new([]))
+        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
+        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]))
     }
 
     #[test]

@@ -20,6 +20,7 @@ nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
+nerust_settings_core.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard = { features = ["iced", "tao"], workspace = true }
 nerust_persistence.workspace = true
