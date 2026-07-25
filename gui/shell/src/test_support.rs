@@ -61,5 +61,3 @@ pub fn test_nes_defaults() -> DesktopSharedSettings {
     ];
     settings
 }
-
-
