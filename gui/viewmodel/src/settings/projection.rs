@@ -1,4 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use super::{
     EditorState,
@@ -63,12 +66,14 @@ impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
 #[derive(Clone)]
 pub(crate) struct ProjectionHub {
     nodes: Rc<RefCell<Vec<Rc<dyn ProjectionNode>>>>,
+    sealed: Rc<Cell<bool>>,
 }
 
 impl ProjectionHub {
     pub fn new() -> Self {
         Self {
             nodes: Rc::new(RefCell::new(Vec::new())),
+            sealed: Rc::new(Cell::new(false)),
         }
     }
 
@@ -82,6 +87,10 @@ impl ProjectionHub {
         T: Clone + PartialEq + 'static,
         P: Fn(&EditorState) -> T + 'static,
     {
+        assert!(
+            !self.sealed.get(),
+            "cannot register projection '{name}' after hub is sealed"
+        );
         let inner = Rc::new(ObservablePropertyInner::new(initial));
         let node = FuncProjectionNode {
             name,
@@ -100,7 +109,9 @@ impl ProjectionHub {
             .collect()
     }
 
-    pub fn seal(&self) {}
+    pub fn seal(&self) {
+        self.sealed.set(true);
+    }
 
     #[cfg(debug_assertions)]
     pub fn assert_all_synced(&self, current: &EditorState) {
