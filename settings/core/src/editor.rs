@@ -97,28 +97,24 @@ pub fn apply_capture_target(
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::declare_system_id;
     use nerust_gui_settings::{
-        input::{
-            InputSettings, KeyboardBinding, PersistedControlId,
-            ShortcutAction, ShortcutBinding, ShortcutSettings, SystemInputSettings,
-        },
-        snapshot::SettingsSnapshot,
-        shared::DesktopSharedSettings,
         app_state::DesktopAppState,
+        input::{
+            InputSettings, KeyboardBinding, PersistedControlId, ShortcutAction, ShortcutBinding,
+            ShortcutSettings, SystemInputSettings,
+        },
         local::HostBackendLocalSettings,
+        shared::DesktopSharedSettings,
+        snapshot::SettingsSnapshot,
     };
     use nerust_keyboard::Key;
-    use nerust_core_traits::declare_system_id;
 
     use super::*;
 
     declare_system_id!(pub TestSysId, "test");
 
-    fn snapshot_with_binding(
-        attachment: &str,
-        control: &str,
-        key: Key,
-    ) -> SettingsSnapshot {
+    fn snapshot_with_binding(attachment: &str, control: &str, key: Key) -> SettingsSnapshot {
         let mut snapshot = SettingsSnapshot {
             shared: DesktopSharedSettings::default(),
             local: HostBackendLocalSettings::default(),
@@ -131,10 +127,11 @@ mod tests {
             PersistedControlId::digital(control.to_string()),
             key,
         ));
-        snapshot.shared.input.systems.insert(
-            Box::new(TestSysId),
-            sys,
-        );
+        snapshot
+            .shared
+            .input
+            .systems
+            .insert(Box::new(TestSysId), sys);
         snapshot
     }
 

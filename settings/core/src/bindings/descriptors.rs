@@ -124,7 +124,8 @@ mod tests {
     use nerust_gui_settings::input::ShortcutAction;
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
-        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor, PortId,
+        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
+        PortId,
     };
 
     use super::{keyboard_binding_sections, shortcut_descriptors};
@@ -215,9 +216,10 @@ mod tests {
 
     #[test]
     fn shortcuts_remain_stable() {
-        assert!(shortcut_descriptors().iter().any(|descriptor| matches!(
-            descriptor.action,
-            ShortcutAction::ToggleFullscreen
-        )));
+        assert!(
+            shortcut_descriptors()
+                .iter()
+                .any(|descriptor| matches!(descriptor.action, ShortcutAction::ToggleFullscreen))
+        );
     }
 }

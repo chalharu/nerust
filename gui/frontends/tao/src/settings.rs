@@ -27,7 +27,7 @@ use nerust_settings_core::{
 };
 
 use nerust_gui_viewmodel::settings::{
-    dto::ChoiceView, SettingsViewModel, StoragePathError, StoragePathValidator,
+    SettingsViewModel, StoragePathError, StoragePathValidator, dto::ChoiceView,
 };
 use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;

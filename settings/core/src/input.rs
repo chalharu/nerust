@@ -155,7 +155,10 @@ mod tests {
 
     #[test]
     fn clear_multi_port_does_nothing_for_single_port() {
-        let mut assignments = vec![(P1, Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>))];
+        let mut assignments = vec![(
+            P1,
+            Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>),
+        )];
         clear_multi_port_conflicts(P1, &SinglePortProfile, &mut assignments);
         assert!(assignments[0].1.is_some());
     }
