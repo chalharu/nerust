@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    hash::Hash,
-};
+use std::{collections::HashMap, hash::Hash};
 
 use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{

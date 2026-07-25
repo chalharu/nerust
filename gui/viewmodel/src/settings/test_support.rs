@@ -171,6 +171,7 @@ pub fn test_vm() -> SettingsViewModel {
         snapshot,
         vec![factory],
         Arc::new([]),
-        Rc::new(super::editor::NoopStoragePathValidator) as Rc<dyn super::editor::StoragePathValidator>,
+        Rc::new(super::editor::NoopStoragePathValidator)
+            as Rc<dyn super::editor::StoragePathValidator>,
     )
 }

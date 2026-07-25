@@ -11,10 +11,10 @@ use nerust_gui_settings::snapshot::SettingsSnapshot;
 use nerust_settings_core::editor::CaptureTarget;
 
 use super::{
+    ValidationState,
     catalog::FactoryCatalog,
     projection::ProjectionHub,
     property::{ObservablePropertyInner, ReadOnlyObservableProperty},
-    ValidationState,
 };
 
 /// Storage path validation error.
@@ -55,9 +55,11 @@ pub enum ViewModelError {
     InvalidCaptureTarget,
 }
 
-/// No-op validator for use in tests / ephemeral contexts.
+/// No-op validator for use in tests.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct NoopStoragePathValidator;
+#[cfg(test)]
 impl StoragePathValidator for NoopStoragePathValidator {
     fn validate(&self, _path: &Path) -> Result<(), StoragePathError> {
         Ok(())
@@ -326,9 +328,10 @@ mod tests {
 
         let editor = test_editor();
 
-        let prop: ReadOnlyObservableProperty<bool> = editor
-            .projections()
-            .register("test_proj", false, |state| state.draft.local.audio.muted);
+        let prop: ReadOnlyObservableProperty<bool> =
+            editor
+                .projections()
+                .register("test_proj", false, |state| state.draft.local.audio.muted);
 
         let observed = Rc::new(Cell::new(false));
         let observed_cb = Rc::clone(&observed);
@@ -343,6 +346,9 @@ mod tests {
             })
             .unwrap();
 
-        assert!(observed.get(), "projection observer should have fired after transact");
+        assert!(
+            observed.get(),
+            "projection observer should have fired after transact"
+        );
     }
 }

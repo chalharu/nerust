@@ -3174,6 +3174,7 @@ dependencies = [
  "nerust_gui_settings",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_settings_traits",
  "serde",
  "typetag",
 ]

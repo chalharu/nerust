@@ -4,10 +4,14 @@ use crate::settings::catalog::FactoryCatalog;
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 
 use super::{
-    ValidationState, audio::AudioSettingsViewModel, capture::CaptureViewModel,
+    ValidationState,
+    audio::AudioSettingsViewModel,
+    capture::CaptureViewModel,
     editor::{SettingsEditor, StoragePathValidator},
-    general::GeneralSettingsViewModel, input::InputSettingsViewModel,
-    property::ReadOnlyObservableProperty, system::SystemSettingsViewModel,
+    general::GeneralSettingsViewModel,
+    input::InputSettingsViewModel,
+    property::ReadOnlyObservableProperty,
+    system::SystemSettingsViewModel,
     video::VideoSettingsViewModel,
 };
 
@@ -33,12 +37,8 @@ impl SettingsViewModel {
     ) -> Self {
         let catalog = FactoryCatalog::new(factories.clone());
 
-        let mut editor = SettingsEditor::new(
-            snapshot,
-            catalog,
-            supported_sample_rates,
-            storage_validator,
-        );
+        let mut editor =
+            SettingsEditor::new(snapshot, catalog, supported_sample_rates, storage_validator);
 
         editor.set_validator(validator);
 
@@ -265,7 +265,8 @@ mod tests {
             snapshot,
             catalog,
             supported_sample_rates,
-            Rc::new(crate::settings::NoopStoragePathValidator) as Rc<dyn crate::settings::StoragePathValidator>,
+            Rc::new(crate::settings::NoopStoragePathValidator)
+                as Rc<dyn crate::settings::StoragePathValidator>,
         );
         editor.set_validator(validator);
 

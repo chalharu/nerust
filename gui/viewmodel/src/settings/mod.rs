@@ -14,9 +14,10 @@ pub(crate) mod test_support;
 mod validation;
 mod video;
 
+#[cfg(test)]
+pub use editor::NoopStoragePathValidator;
 pub use editor::{
-    EditorState, NoopStoragePathValidator, SettingsEditor, StoragePathError, StoragePathValidator,
-    ViewModelError,
+    EditorState, SettingsEditor, StoragePathError, StoragePathValidator, ViewModelError,
 };
 pub use property::{ReadOnlyObservableProperty, Subscription};
 pub use settings_viewmodel::SettingsViewModel;

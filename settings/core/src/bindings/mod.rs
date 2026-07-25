@@ -59,16 +59,17 @@ pub fn conflicting_keys(
 
 #[cfg(test)]
 mod tests {
+    use nerust_core_traits::declare_system_id;
     use nerust_gui_settings::{
         input::{KeyboardBinding, PersistedControlId, SystemInputSettings},
         shared::DesktopSharedSettings,
     };
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
-        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor, PortId,
+        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
+        PortId,
     };
     use nerust_keyboard::Key;
-    use nerust_core_traits::declare_system_id;
 
     use super::conflicting_keys;
 
@@ -130,10 +131,7 @@ mod tests {
             PersistedControlId::digital("test.ctrl.b".to_string()),
             Key::KeyZ,
         ));
-        settings.input.systems.insert(
-            Box::new(TestSysId),
-            sys,
-        );
+        settings.input.systems.insert(Box::new(TestSysId), sys);
 
         let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
         assert!(conflicts.contains_key(&Key::KeyZ));
@@ -154,10 +152,7 @@ mod tests {
             PersistedControlId::digital("test.ctrl.b".to_string()),
             Key::KeyX,
         ));
-        settings.input.systems.insert(
-            Box::new(TestSysId),
-            sys,
-        );
+        settings.input.systems.insert(Box::new(TestSysId), sys);
 
         let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
         assert!(!conflicts.contains_key(&Key::KeyZ));
