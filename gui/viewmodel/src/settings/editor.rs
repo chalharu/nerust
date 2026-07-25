@@ -79,6 +79,8 @@ pub struct EditorState {
     /// Tracks which validation scopes have changed since last revalidation.
     /// When `None`, all scopes need revalidation (initial state or forced).
     pub(crate) dirty_scopes: Option<Vec<super::ValidationScope>>,
+    /// Cached snapshot, invalidated when revision advances.
+    cached_snapshot: SettingsSnapshot,
 }
 
 /// Lightweight handle to the shared editor state and projection hub.
@@ -101,6 +103,7 @@ impl SettingsEditor {
         validator: impl Fn(&EditorState) -> ValidationState + 'static,
     ) -> Self {
         let editor_state = EditorState {
+            cached_snapshot: snapshot.clone(),
             draft: snapshot,
             capture_target: None,
             validation: ValidationState { issues: vec![] },
@@ -151,7 +154,7 @@ impl SettingsEditor {
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
-        self.current.borrow().draft.clone()
+        self.current.borrow().cached_snapshot.clone()
     }
 
     pub(crate) fn projections(&self) -> &ProjectionHub {
@@ -166,13 +169,22 @@ impl SettingsEditor {
             return Err(ViewModelError::ReentrantMutation);
         }
 
-        let original = self.current.borrow().clone();
-        let mut candidate = original.clone();
+        // Single clone — capture pre-mutation state for no-op detection
+        let (prev_draft, prev_capture, prev_scopes, prev_revision) = {
+            let s = self.current.borrow();
+            (
+                s.draft.clone(),
+                s.capture_target.clone(),
+                s.dirty_scopes.clone(),
+                s.revision,
+            )
+        };
+        let mut candidate = self.current.borrow().clone();
         let result = mutate(&mut candidate)?;
 
-        if candidate.draft == original.draft
-            && candidate.capture_target == original.capture_target
-            && candidate.dirty_scopes == original.dirty_scopes
+        if candidate.draft == prev_draft
+            && candidate.capture_target == prev_capture
+            && candidate.dirty_scopes == prev_scopes
         {
             return Ok(result);
         }
@@ -181,7 +193,8 @@ impl SettingsEditor {
         // and narrowed, this can be changed to scoped validation.
         candidate.validation = (self.validator)(&candidate);
         candidate.dirty_scopes = None;
-        candidate.revision = original.revision + 1;
+        candidate.revision = prev_revision + 1;
+        candidate.cached_snapshot = candidate.draft.clone();
         let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
 
