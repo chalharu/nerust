@@ -152,6 +152,12 @@ impl SettingsDocument {
             &["shared", "input", "systems"],
             &updated.known_input_system_keys,
         );
+        preserve_unknown_map_entries(
+            &self.value,
+            &mut updated.value,
+            &["app_state", "controller_assignments"],
+            &updated.known_system_keys,
+        );
         Ok(updated)
     }
 }

@@ -406,6 +406,10 @@ mod tests {
         .unwrap();
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.general.language = AppLanguage::Japanese;
+        snapshot.app_state.controller_assignments.insert(
+            Box::new(DummySystemId),
+            vec![("known.slot".into(), Some("known.controller".into()))],
+        );
         manager.save_snapshot(snapshot).unwrap();
         drop(manager);
 
@@ -418,6 +422,10 @@ mod tests {
             .replace(
                 "  systems:\n    ? sid:",
                 "  systems:\n    ? sid: future::SystemId\n    : system: FutureSettings\n      preserved: true\n    ? sid:",
+            )
+            .replace(
+                "  controller_assignments:\n    ? sid:",
+                "  controller_assignments:\n    ? sid: future::ControllerSystemId\n    : preserved_controller: true\n    ? sid:",
             );
         fs::write(&paths.settings_file, contents).unwrap();
 
@@ -436,11 +444,21 @@ mod tests {
                 .systems
                 .contains_key(&(Box::new(DummySystemId) as Box<_>))
         );
+        assert!(
+            snapshot
+                .app_state
+                .controller_assignments
+                .contains_key(&(Box::new(DummySystemId) as Box<_>))
+        );
 
         snapshot.local.audio.muted = true;
         snapshot
             .shared
             .systems
+            .remove(&(Box::new(DummySystemId) as Box<_>));
+        snapshot
+            .app_state
+            .controller_assignments
             .remove(&(Box::new(DummySystemId) as Box<_>));
         manager.save_snapshot(snapshot).unwrap();
 
@@ -450,7 +468,9 @@ mod tests {
         assert!(saved.contains("preserved: true"));
         assert!(saved.contains("sid: future::InputSystemId"));
         assert!(saved.contains("preserved:"));
-        assert!(!saved.contains("nerust_gui_runtime::test::DummySystemId"));
+        assert!(saved.contains("sid: future::ControllerSystemId"));
+        assert!(saved.contains("preserved_controller: true"));
+        assert!(!saved.contains("sid: nerust_gui_runtime::dummy"));
 
         let reloaded = manager.reload().unwrap();
         assert_eq!(reloaded.shared.general.language, AppLanguage::Japanese);
