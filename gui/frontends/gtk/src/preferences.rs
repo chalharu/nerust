@@ -13,7 +13,6 @@ use gtk::prelude::{
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
 use nerust_core_traits::factory::CoreFactory;
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::session::access::FrontendSession as _;
 use nerust_gui_viewmodel::settings::{
     SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
@@ -27,7 +26,9 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
 };
 
-use crate::State;
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode};
+
+use crate::{mapping::*, State};
 
 // ---------------------------------------------------------------------------
 // Widget group structs
@@ -281,40 +282,22 @@ impl PreferencesBinding {
 
         self.general.language_combo.remove_all();
         for choice in &view.language_choices {
-            self.general.language_combo.append(
-                Some(match choice.value {
-                    AppLanguage::Japanese => "japanese",
-                    AppLanguage::English => "english",
-                    AppLanguage::SystemDefault => "system_default",
-                }),
-                &choice.label,
-            );
+            self.general
+                .language_combo
+                .append(Some(map_language_id(choice.value)), &choice.label);
         }
         self.general
             .language_combo
-            .set_active_id(Some(match view.language {
-                AppLanguage::Japanese => "japanese",
-                AppLanguage::English => "english",
-                AppLanguage::SystemDefault => "system_default",
-            }));
+            .set_active_id(Some(map_language_id(view.language)));
         self.general.storage_policy_combo.remove_all();
         for choice in &view.storage_policy_choices {
-            self.general.storage_policy_combo.append(
-                Some(match choice.value {
-                    StoragePolicy::AppSharedData => "app_shared_data",
-                    StoragePolicy::CustomDirectory => "custom_directory",
-                    StoragePolicy::Sidecar => "sidecar",
-                }),
-                &choice.label,
-            );
+            self.general
+                .storage_policy_combo
+                .append(Some(map_storage_policy_id(choice.value)), &choice.label);
         }
         self.general
             .storage_policy_combo
-            .set_active_id(Some(match view.storage_policy {
-                StoragePolicy::AppSharedData => "app_shared_data",
-                StoragePolicy::CustomDirectory => "custom_directory",
-                StoragePolicy::Sidecar => "sidecar",
-            }));
+            .set_active_id(Some(map_storage_policy_id(view.storage_policy)));
         self.general
             .storage_dir_row
             .set_visible(view.show_storage_directory);
@@ -331,28 +314,13 @@ impl PreferencesBinding {
             .set_active(view.fullscreen_default);
         self.video.scaling_combo.remove_all();
         for choice in &view.scaling_choices {
-            self.video.scaling_combo.append(
-                Some(match choice.value {
-                    ScalingMode::FitToWindow => "fit",
-                    ScalingMode::X1 => "1",
-                    ScalingMode::X2 => "2",
-                    ScalingMode::X3 => "3",
-                    ScalingMode::X4 => "4",
-                    ScalingMode::X5 => "5",
-                }),
-                &choice.label,
-            );
+            self.video
+                .scaling_combo
+                .append(Some(map_scaling_id(choice.value)), &choice.label);
         }
         self.video
             .scaling_combo
-            .set_active_id(Some(match view.scaling {
-                ScalingMode::FitToWindow => "fit",
-                ScalingMode::X1 => "1",
-                ScalingMode::X2 => "2",
-                ScalingMode::X3 => "3",
-                ScalingMode::X4 => "4",
-                ScalingMode::X5 => "5",
-            }));
+            .set_active_id(Some(map_scaling_id(view.scaling)));
         self.video.vsync_check.set_active(view.vsync);
     }
 
@@ -891,30 +859,16 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let lang = match combo.active_id().as_deref() {
-                Some("japanese") => AppLanguage::Japanese,
-                Some("english") => AppLanguage::English,
-                _ => AppLanguage::SystemDefault,
-            };
-            cmd(&b, b.vm.general.set_language(lang));
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.general.set_language(parse_language_id(combo.active_id().as_deref())));
         }
     });
     storage_policy_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let policy = match combo.active_id().as_deref() {
-                Some("app_shared_data") => StoragePolicy::AppSharedData,
-                Some("custom_directory") => StoragePolicy::CustomDirectory,
-                _ => StoragePolicy::Sidecar,
-            };
-            cmd(&b, b.vm.general.set_storage_policy(policy));
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.general.set_storage_policy(parse_storage_policy_id(combo.active_id().as_deref())));
         }
     });
     storage_dir_entry.connect_changed({
@@ -943,18 +897,8 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let scaling = match combo.active_id().as_deref() {
-                Some("1") => ScalingMode::X1,
-                Some("2") => ScalingMode::X2,
-                Some("3") => ScalingMode::X3,
-                Some("4") => ScalingMode::X4,
-                Some("5") => ScalingMode::X5,
-                _ => ScalingMode::FitToWindow,
-            };
-            cmd(&b, b.vm.video.set_scaling(scaling));
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.video.set_scaling(parse_scaling_id(combo.active_id().as_deref())));
         }
     });
     vsync_check.connect_toggled({
@@ -1245,11 +1189,7 @@ mod tests {
         let gv = binding.vm.general.view.get();
         assert_eq!(
             binding.general.language_combo.active_id().as_deref(),
-            Some(match gv.language {
-                AppLanguage::Japanese => "japanese",
-                AppLanguage::English => "english",
-                AppLanguage::SystemDefault => "system_default",
-            })
+            Some(map_language_id(gv.language))
         );
     });
 
