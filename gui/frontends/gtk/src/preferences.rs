@@ -1119,6 +1119,20 @@ fn weak_handler(b: &Rc<PreferencesBinding>) -> std::rc::Weak<PreferencesBinding>
     Rc::downgrade(b)
 }
 
+/// Execute `f` with an upgraded weak reference if the Rc is still alive.
+/// Returns `true` if the weak was upgraded and `f` was called.
+fn with_upgraded_weak<T, F>(weak: &std::rc::Weak<T>, f: F) -> bool
+where
+    F: FnOnce(&T),
+{
+    if let Some(b) = weak.upgrade() {
+        f(&b);
+        true
+    } else {
+        false
+    }
+}
+
 /// Schedule a closure to run on the GLib main loop after the current
 /// signal emission completes. The closure receives a strong reference
 /// to the binding only if it is still alive.
@@ -1128,9 +1142,7 @@ where
 {
     let weak = weak.clone();
     glib::idle_add_local_once(move || {
-        if let Some(b) = weak.upgrade() {
-            f(&b);
-        }
+        with_upgraded_weak(&weak, f);
     });
 }
 
@@ -1228,41 +1240,37 @@ mod tests {
         assert_eq!(binding.ok_button.is_sensitive(), ok);
     });
 
-    // Pure Rc/Weak upgrade tests — no GTK needed, run on all platforms.
+    // Pure with_upgraded_weak tests — no GTK needed, run on all platforms.
     #[test]
-    fn weak_upgrade_returns_some_when_alive() {
+    fn with_upgraded_weak_calls_closure_when_alive() {
         use std::rc::Rc;
         let rc = Rc::new(42);
         let weak = Rc::downgrade(&rc);
-        assert_eq!(weak.upgrade().map(|v| *v), Some(42));
+        let mut value = 0;
+        let called = with_upgraded_weak(&weak, |v| value = *v);
+        assert!(called);
+        assert_eq!(value, 42);
     }
 
     #[test]
-    fn weak_upgrade_returns_none_after_drop() {
-        use std::rc::{Rc, Weak};
-        let weak: Weak<i32> = {
-            let rc = Rc::new(42);
-            Rc::downgrade(&rc)
-        };
-        assert!(
-            weak.upgrade().is_none(),
-            "upgrade after drop should return None"
-        );
-    }
-
-    #[test]
-    fn schedule_idle_with_dead_weak_is_noop() {
+    fn with_upgraded_weak_skips_closure_after_drop() {
         use std::rc::{Rc, Weak};
         let weak: Weak<i32> = {
             let rc = Rc::new(42);
             Rc::downgrade(&rc)
         };
         let mut executed = false;
-        // Simulate what schedule_idle does: upgrade weak, run closure if alive
-        if let Some(_b) = weak.upgrade() {
-            executed = true;
-        }
+        let called = with_upgraded_weak(&weak, |_| executed = true);
+        assert!(!called, "should not execute closure after drop");
         assert!(!executed, "closure should not run after weak is dropped");
+    }
+
+    #[test]
+    fn with_upgraded_weak_returns_false_for_null_weak() {
+        use std::rc::Weak;
+        let weak: Weak<i32> = Weak::new();
+        let called = with_upgraded_weak(&weak, |_| {});
+        assert!(!called);
     }
 
     fn create_test_binding() -> Rc<PreferencesBinding> {
