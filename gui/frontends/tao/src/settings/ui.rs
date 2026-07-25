@@ -1,6 +1,5 @@
 use std::{
     cell::Cell,
-    collections::HashMap,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -17,7 +16,7 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory, identity::SystemId};
+use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
@@ -29,13 +28,12 @@ use nerust_gui_shell::{
     },
 };
 use nerust_gui_viewmodel::settings::{SettingsViewModel, dto::ChoiceView};
-use nerust_input_traits::{AttachmentId, ControllerProfile};
+use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
-type ControllerAssignments = Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>;
-type AssignmentsBySystem = HashMap<Box<dyn SystemId>, ControllerAssignments>;
+
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -243,21 +241,6 @@ impl SettingsAppState {
         } else {
             None
         }
-    }
-
-    fn input_conflict(&self) -> Option<String> {
-        // Simplified: check if any validation issue is input-scoped
-        let state = self.vm.finish().err()?;
-        state
-            .issues
-            .iter()
-            .find(|i| {
-                matches!(
-                    i.scope,
-                    nerust_gui_viewmodel::settings::ValidationScope::Input(_)
-                )
-            })
-            .map(|i| i.message.clone())
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -661,38 +644,6 @@ impl SettingsAppState {
         content.spacing(8).into()
     }
 
-    fn input_section<'a>(
-        &'a self,
-        title: &'static str,
-        rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
-    ) -> El<'a> {
-        let language = self.language();
-        let capture = self.vm.capture.view.get();
-        let mut content = column![text(title)];
-        for (label, target) in rows {
-            let binding_label = if capture.target.as_ref() == Some(&target) {
-                ui_text(language, UiText::CapturePrompt)
-            } else {
-                current_binding_label(&self.vm.snapshot(), &target)
-                    .unwrap_or(ui_text(language, UiText::Unbound))
-            };
-            content = content.push(
-                row![
-                    text(label).width(Length::Fixed(180.0)),
-                    text(binding_label).width(Length::Fill),
-                    button(ui_text(language, UiText::Change))
-                        .on_press(Message::StartCapture(target.clone())),
-                    button(ui_text(language, UiText::Clear))
-                        .on_press(Message::ClearCapture(target)),
-                ]
-                .spacing(12)
-                .width(Length::Fill)
-                .align_y(Alignment::Center),
-            );
-        }
-        content.spacing(8).into()
-    }
-
     fn video_page(&self) -> El<'_> {
         let video = self.vm.video.view.get();
         let language = self.language();
@@ -855,36 +806,6 @@ fn default_font() -> Font {
     Font::DEFAULT
 }
 
-fn assignments_for_factory(
-    snapshot: &SettingsSnapshot,
-    factory: &dyn CoreFactory,
-) -> Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> {
-    let input_factory = factory.input_system_factory();
-    snapshot
-        .app_state
-        .controller_assignments
-        .get(&factory.system_id())
-        .map(|pairs| {
-            pairs
-                .iter()
-                .filter_map(|(slot_id, ctrl_opt)| {
-                    let attachment = match input_factory.resolve_slot(slot_id) {
-                        Some(attachment) => attachment,
-                        None => {
-                            log::warn!("unknown persisted slot ID in settings: {slot_id}");
-                            return None;
-                        }
-                    };
-                    let profile = ctrl_opt
-                        .as_ref()
-                        .and_then(|id| input_factory.resolve_controller(id));
-                    Some((attachment, profile))
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| input_factory.default_assignments().slots)
-}
-
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
     physical.try_into().ok()
 }
@@ -892,7 +813,10 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
 #[cfg(test)]
 mod tests {
     use iced::keyboard::key::{Code, Physical};
-    use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_core_traits::{
+    audio::AudioBackendRegistry,
+    factory::descriptor::SystemSettingsChoiceId,
+};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState,
