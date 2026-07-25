@@ -57,6 +57,25 @@ struct LegacyMetadataV1 {
     save_chr_ram_len: u64,
 }
 
+#[derive(serde::Serialize)]
+struct MistaggedSystemIdV3<'a> {
+    sid: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct MistaggedMetadataV3<'a> {
+    schema_version: u32,
+    slot_id: u64,
+    saved_at_unix_ms: u64,
+    has_thumbnail: bool,
+    system_id: MistaggedSystemIdV3<'a>,
+    #[serde(with = "serde_bytes")]
+    identity_bytes: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    options_bytes: Vec<u8>,
+    emulator_version: String,
+}
+
 fn write_legacy_archive(path: &std::path::Path, metadata: &impl serde::Serialize) {
     let file = OpenOptions::new()
         .write(true)
@@ -120,6 +139,62 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
     assert_eq!(loaded.machine_state, b"machine-state");
     assert!(loaded.thumbnail_png.is_some());
     assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+}
+
+#[test]
+fn state_archive_reads_known_mistagged_v3_nes_metadata() {
+    for (slot_id, tag) in [
+        (21, "NesSystemId"),
+        (22, "nerust_nes_core::rom_identity::NesSystemId"),
+        (23, "nerust_nes_core::nes"),
+    ] {
+        let dir = prepare_test_dir(&format!("state-archive-v3-mistagged-{slot_id}"));
+        let path = state_slot_path(&dir, slot_id);
+        write_legacy_archive(
+            &path,
+            &MistaggedMetadataV3 {
+                schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+                slot_id,
+                saved_at_unix_ms: 1234,
+                has_thumbnail: false,
+                system_id: MistaggedSystemIdV3 { sid: tag },
+                identity_bytes: vec![1, 2, 3, 4],
+                options_bytes: vec![5, 6],
+                emulator_version: "mistagged-v3".into(),
+            },
+        );
+
+        let loaded = load_state_slot_for_identity(&path, &test_nes_identity())
+            .unwrap()
+            .expect("known mistagged NES metadata should match the current NES identity");
+        assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+        assert_eq!(loaded.summary.slot_id, slot_id);
+        assert_eq!(loaded.summary.emulator_version, "mistagged-v3");
+        assert_eq!(loaded.machine_state, b"legacy-state");
+    }
+}
+
+#[test]
+fn state_archive_rejects_unknown_mistagged_v3_metadata() {
+    let dir = prepare_test_dir("state-archive-v3-unknown-tag");
+    let path = state_slot_path(&dir, 24);
+    write_legacy_archive(
+        &path,
+        &MistaggedMetadataV3 {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+            slot_id: 24,
+            saved_at_unix_ms: 1234,
+            has_thumbnail: false,
+            system_id: MistaggedSystemIdV3 {
+                sid: "future_system::SystemId",
+            },
+            identity_bytes: vec![1, 2, 3, 4],
+            options_bytes: Vec::new(),
+            emulator_version: "unknown-v3".into(),
+        },
+    );
+
+    assert!(load_state_slot(&path).is_err());
 }
 
 #[test]

@@ -51,7 +51,11 @@ pub(crate) fn read_metadata<R: Read + Seek>(
         PersistenceError::Validation("unrecognized state archive metadata format".into())
     })?;
     match version.schema_version {
-        STATE_ARCHIVE_SCHEMA_VERSION => rmp_serde::from_slice(&metadata_bytes).map_err(Into::into),
+        STATE_ARCHIVE_SCHEMA_VERSION => match rmp_serde::from_slice(&metadata_bytes) {
+            Ok(metadata) => Ok(metadata),
+            Err(error) => legacy_nes::decode_mistagged_v3(&metadata_bytes)?
+                .ok_or_else(|| PersistenceError::from(error)),
+        },
         2 => legacy_nes::decode_v2(&metadata_bytes),
         1 => legacy_nes::decode_v1(&metadata_bytes),
         version => Err(PersistenceError::Validation(format!(
