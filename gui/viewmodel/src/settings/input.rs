@@ -3,10 +3,10 @@ use std::{rc::Rc, sync::Arc};
 use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
 use nerust_settings_core::{
-    bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     bindings::descriptors::shortcut_descriptors,
+    bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
-    i18n::{text as ui_text, UiText},
+    i18n::{UiText, text as ui_text},
     input::{build_topology, clear_multi_port_conflicts},
 };
 

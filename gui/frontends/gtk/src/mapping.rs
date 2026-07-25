@@ -44,13 +44,22 @@ mod tests {
     fn map_language_id_all_variants() {
         assert_eq!(map_language_id(AppLanguage::Japanese), "japanese");
         assert_eq!(map_language_id(AppLanguage::English), "english");
-        assert_eq!(map_language_id(AppLanguage::SystemDefault), "system_default");
+        assert_eq!(
+            map_language_id(AppLanguage::SystemDefault),
+            "system_default"
+        );
     }
 
     #[test]
     fn map_storage_policy_id_all_variants() {
-        assert_eq!(map_storage_policy_id(StoragePolicy::AppSharedData), "app_shared_data");
-        assert_eq!(map_storage_policy_id(StoragePolicy::CustomDirectory), "custom_directory");
+        assert_eq!(
+            map_storage_policy_id(StoragePolicy::AppSharedData),
+            "app_shared_data"
+        );
+        assert_eq!(
+            map_storage_policy_id(StoragePolicy::CustomDirectory),
+            "custom_directory"
+        );
         assert_eq!(map_storage_policy_id(StoragePolicy::Sidecar), "sidecar");
     }
 

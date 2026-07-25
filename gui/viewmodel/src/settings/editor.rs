@@ -320,7 +320,8 @@ mod tests {
                 ValidationState { issues: vec![] }
             }
         };
-        let editor = SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, check_storage);
+        let editor =
+            SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, check_storage);
         assert!(!editor.current().validation.can_submit());
     }
 

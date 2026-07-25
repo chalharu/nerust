@@ -37,8 +37,13 @@ impl SettingsViewModel {
     ) -> Self {
         let catalog = FactoryCatalog::new(factories.clone());
 
-        let editor =
-            SettingsEditor::new(snapshot, catalog, supported_sample_rates, storage_validator, validator);
+        let editor = SettingsEditor::new(
+            snapshot,
+            catalog,
+            supported_sample_rates,
+            storage_validator,
+            validator,
+        );
 
         let revision = editor.revision_prop();
 
