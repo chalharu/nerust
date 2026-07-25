@@ -3,7 +3,7 @@ pub mod descriptors;
 use std::collections::BTreeMap;
 
 use nerust_core_traits::identity::SystemId;
-use nerust_gui_settings::{input::ShortcutAction, shared::DesktopSharedSettings};
+use nerust_gui_settings::shared::DesktopSharedSettings;
 use nerust_input_traits::InputTopologyDescriptor;
 use nerust_keyboard::Key;
 
