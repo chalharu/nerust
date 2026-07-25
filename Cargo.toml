@@ -8,6 +8,7 @@ members = [
   "gui/runtime",
   "gui/settings",
   "gui/shell",
+  "gui/viewmodel",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -135,6 +136,7 @@ nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_settings = { path = "gui/settings" }
 nerust_gui_shell = { path = "gui/shell" }
+nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_keyboard = { default-features = false, path = "keyboard" }
 nerust_nes_controller = { path = "nes/controller" }
