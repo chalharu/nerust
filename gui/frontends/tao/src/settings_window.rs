@@ -42,6 +42,7 @@ pub(crate) struct UiState {
         UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
     >,
     instance: program::Instance<SettingsAppProgram>,
+    view_invalidated: Rc<Cell<bool>>,
 }
 
 impl UiState {
@@ -73,11 +74,13 @@ impl UiState {
         window_id: iced::window::Id,
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
+        view_invalidated: Rc<Cell<bool>>,
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
             ui: std::mem::ManuallyDrop::new(ui),
             instance,
+            view_invalidated,
         }
     }
 
@@ -87,7 +90,11 @@ impl UiState {
         &mut self.ui
     }
 
-    /// Process messages, then rebuild UI with updated instance + old cache.
+    /// Process messages, then conditionally rebuild UI.
+    ///
+    /// Rebuilds only when `view_invalidated` is set or when the message
+    /// list is non-empty (initial render). Navigation-only messages and
+    /// domain changes both set the flag via `SettingsAppState::update()`.
     fn process_messages(
         &mut self,
         messages: Vec<Message>,
@@ -95,9 +102,10 @@ impl UiState {
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
     ) {
-        if messages.is_empty() {
+        if messages.is_empty() && !self.view_invalidated.get() {
             return;
         }
+
         // Step 1: Replace UI with a placeholder, extract old cache.
         let placeholder = std::mem::replace(
             &mut *self.ui,
@@ -125,6 +133,8 @@ impl UiState {
             Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
         );
         let _ = stale.into_cache(); // discard placeholder
+
+        self.view_invalidated.set(false);
     }
 }
 
@@ -212,7 +222,7 @@ impl SettingsWindowHandle {
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
-            view_invalidated,
+            view_invalidated: Rc::clone(&view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
         let scale_factor = window.scale_factor() as f32;
@@ -238,7 +248,13 @@ impl SettingsWindowHandle {
             scale_factor,
         )
         .logical_size();
-        let ui_state = UiState::new(instance, window_id, bounds, &mut renderer);
+        let ui_state = UiState::new(
+            instance,
+            window_id,
+            bounds,
+            &mut renderer,
+            Rc::clone(&view_invalidated),
+        );
 
         window.request_redraw();
 
