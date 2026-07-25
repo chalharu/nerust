@@ -37,10 +37,8 @@ impl SettingsViewModel {
     ) -> Self {
         let catalog = FactoryCatalog::new(factories.clone());
 
-        let mut editor =
-            SettingsEditor::new(snapshot, catalog, supported_sample_rates, storage_validator);
-
-        editor.set_validator(validator);
+        let editor =
+            SettingsEditor::new(snapshot, catalog, supported_sample_rates, storage_validator, validator);
 
         let revision = editor.revision_prop();
 
@@ -261,14 +259,14 @@ mod tests {
         let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]);
         let supported_sample_rates: Arc<[u32]> = Arc::new([]);
 
-        let mut editor = SettingsEditor::new(
+        let editor = SettingsEditor::new(
             snapshot,
             catalog,
             supported_sample_rates,
             Rc::new(crate::settings::NoopStoragePathValidator)
                 as Rc<dyn crate::settings::StoragePathValidator>,
+            validator,
         );
-        editor.set_validator(validator);
 
         // finish() should reject because of the unknown profile
         assert!(editor.finish().is_err());

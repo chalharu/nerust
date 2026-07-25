@@ -96,8 +96,9 @@ impl SettingsEditor {
         catalog: FactoryCatalog,
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
+        validator: impl Fn(&EditorState) -> ValidationState + 'static,
     ) -> Self {
-        let current = Rc::new(RefCell::new(EditorState {
+        let editor_state = EditorState {
             initial: snapshot.clone(),
             draft: snapshot,
             capture_target: None,
@@ -106,6 +107,11 @@ impl SettingsEditor {
             catalog,
             supported_sample_rates,
             storage_validator,
+        };
+        let initial_validation = validator(&editor_state);
+        let current = Rc::new(RefCell::new(EditorState {
+            validation: initial_validation,
+            ..editor_state
         }));
 
         let revision_inner = Rc::new(ObservablePropertyInner::new(0u64));
@@ -113,16 +119,10 @@ impl SettingsEditor {
         Self {
             current,
             projections: ProjectionHub::new(),
-            validator: Rc::new(|_| ValidationState { issues: vec![] }),
+            validator: Rc::new(validator),
             notifying: Rc::new(Cell::new(false)),
             revision_inner,
         }
-    }
-
-    pub fn set_validator(&mut self, validator: impl Fn(&EditorState) -> ValidationState + 'static) {
-        let result = validator(&self.current.borrow());
-        self.validator = Rc::new(validator);
-        self.current.borrow_mut().validation = result;
     }
 
     pub fn revision_prop(&self) -> ReadOnlyObservableProperty<u64> {
@@ -237,7 +237,8 @@ mod tests {
     fn test_editor() -> SettingsEditor {
         let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
         let noop = Rc::new(NoopStoragePathValidator);
-        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop)
+        let always_valid = |_: &EditorState| ValidationState { issues: vec![] };
+        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, always_valid)
     }
 
     #[test]
@@ -304,10 +305,10 @@ mod tests {
     }
 
     #[test]
-    fn set_validator_runs_initial_validation() {
-        let mut editor = test_editor();
-        assert!(editor.current().validation.can_submit());
-        editor.set_validator(|state| {
+    fn validator_checks_storage_directory() {
+        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
+        let noop = Rc::new(NoopStoragePathValidator);
+        let check_storage = |state: &EditorState| {
             if state.draft.shared.persistence.storage_directory.is_none() {
                 ValidationState {
                     issues: vec![super::super::ValidationIssue {
@@ -318,7 +319,8 @@ mod tests {
             } else {
                 ValidationState { issues: vec![] }
             }
-        });
+        };
+        let editor = SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, check_storage);
         assert!(!editor.current().validation.can_submit());
     }
 
