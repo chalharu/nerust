@@ -12,8 +12,8 @@ use iced::{
     Font, Length, Task, Theme,
     alignment::Alignment,
     widget::{
-        button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
-        text_input,
+        Column, button, checkbox, column, container, pick_list, radio, row, scrollable, slider,
+        text, text_input,
     },
 };
 use iced_winit::program::Program;
@@ -23,6 +23,7 @@ use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::Sto
 use nerust_gui_shell::{
     registry::SystemRegistry,
     settings::{
+        bindings::descriptors::shortcut_descriptors,
         editor::{CaptureTarget, current_binding_label},
         i18n::{UiText, text as ui_text},
     },
@@ -72,7 +73,10 @@ pub(crate) enum Message {
     SetVolume(u8),
     SetSampleRate(ChoiceView<u32>),
     SetLatency(u16),
-    SetSystemChoice(String, ChoiceView<String>),
+    SetSystemChoice(
+        String,
+        ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
+    ),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(Key),
@@ -343,14 +347,31 @@ impl SettingsAppState {
                     self.error_message = Some(e.to_string());
                 }
             }
-            Message::SetSystemChoice(field, _choice) => {
-                log::warn!("SetSystemChoice not yet wired to view model: {field}");
+            Message::SetSystemChoice(field, choice) => {
+                let system_tab_index = self.system_tab_index;
+                if let Some(idx) = system_tab_index
+                    && let Some(system_vm) = self.vm.systems().get(idx)
+                    && let Err(e) = system_vm.set_choice(
+                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
+                            field.into(),
+                        ),
+                        &choice.value,
+                    )
+                {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::SetControllerSlot {
-                slot: _slot,
-                controller_id: _,
+                slot,
+                controller_id,
             } => {
-                log::warn!("SetControllerSlot not yet wired to view model");
+                let input_tab_index = self.input_tab_index;
+                if let Some(idx) = input_tab_index
+                    && let Some(input_vm) = self.vm.inputs().get(idx)
+                    && let Err(e) = input_vm.set_controller_slot(slot, controller_id.as_deref())
+                {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::StartCapture(target) => {
                 if let Err(e) = self.vm.capture.start_capture(target) {
@@ -480,10 +501,164 @@ impl SettingsAppState {
     }
 
     fn input_page(&self) -> El<'_> {
-        let _language = self.language();
-        column![text("Input settings — migration in progress").size(14)]
+        let language = self.language();
+        let Some(input_tab_index) = self.input_tab_index else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let inputs = self.vm.inputs();
+        let Some(input_vm) = inputs.get(input_tab_index) else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let view = input_vm.view.get();
+
+        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
+
+        // Tab buttons
+        let names: Vec<String> = inputs
+            .iter()
+            .map(|vm| vm.display_name().to_string())
+            .collect();
+        let tab_row = row(names.iter().enumerate().map(|(i, name)| {
+            let btn_text = text(name.clone()).size(14);
+            if Some(i) == self.input_tab_index {
+                button(btn_text).style(button::primary).into()
+            } else {
+                button(btn_text).on_press(Message::SelectInputTab(i)).into()
+            }
+        }))
+        .spacing(4);
+        content = content.push(tab_row);
+
+        // Conflicts
+        for conflict in &view.conflicts {
+            content = content.push(text(conflict.message.clone()));
+        }
+
+        // Controller slots
+        for slot in &view.slots {
+            if slot.occupied_by_other_slot {
+                content = content.push(text(format!("{} — (occupied)", slot.label)));
+                continue;
+            }
+            let current = slot.selected_profile_id.as_ref().and_then(|id| {
+                slot.choices
+                    .iter()
+                    .find(|c| c.value.as_deref() == Some(id.as_str()))
+                    .cloned()
+            });
+            let slot_id = slot.slot_id;
+            let pick = pick_list(
+                slot.choices.clone(),
+                current,
+                move |choice: ChoiceView<Option<String>>| Message::SetControllerSlot {
+                    slot: slot_id,
+                    controller_id: choice.value,
+                },
+            );
+            content = content.push(text(slot.label.clone())).push(pick);
+        }
+
+        // Build navigation tabs as owned data to avoid lifetime issues
+        let section_labels: Vec<String> = view.sections.iter().map(|s| s.label.clone()).collect();
+        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
+        for (index, label) in section_labels.iter().enumerate() {
+            navigation = navigation.push(radio(
+                label.clone(),
+                InputPageSection::Attachment(index),
+                Some(self.input_section),
+                Message::SelectInputSection,
+            ));
+        }
+        navigation = navigation.push(radio(
+            ui_text(language, UiText::Shortcuts),
+            InputPageSection::Shortcuts,
+            Some(self.input_section),
+            Message::SelectInputSection,
+        ));
+
+        // Content section: clone all data upfront to avoid lifetime issues
+        let input_section_content = match self.input_section {
+            InputPageSection::Attachment(index) => {
+                if let Some(section) = view.sections.get(index) {
+                    let rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView> =
+                        section.rows.clone();
+                    let title = section.label.clone();
+                    self.binding_section(title, rows)
+                } else {
+                    column![text("")].into()
+                }
+            }
+            InputPageSection::Shortcuts => self.shortcuts_section(),
+        };
+
+        content
+            .push(navigation)
+            .push(input_section_content)
             .spacing(16)
             .into()
+    }
+
+    fn binding_section(
+        &self,
+        title: String,
+        rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView>,
+    ) -> El<'_> {
+        let language = self.language();
+        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![text(title)];
+        for row in rows {
+            let binding_label = match &row.value {
+                nerust_gui_viewmodel::settings::dto::BindingValueView::Bound(l) => l.clone(),
+                nerust_gui_viewmodel::settings::dto::BindingValueView::Unbound(l) => l.clone(),
+                nerust_gui_viewmodel::settings::dto::BindingValueView::Capturing(l) => l.clone(),
+            };
+            let target = row.target.clone();
+            content = content.push(
+                row![
+                    text(row.label.clone()).width(Length::Fixed(180.0)),
+                    text(binding_label).width(Length::Fill),
+                    button(ui_text(language, UiText::Change))
+                        .on_press(Message::StartCapture(target.clone())),
+                    button(ui_text(language, UiText::Clear))
+                        .on_press(Message::ClearCapture(target)),
+                ]
+                .spacing(12)
+                .width(Length::Fill)
+                .align_y(Alignment::Center),
+            );
+        }
+        content.spacing(8).into()
+    }
+
+    fn shortcuts_section(&self) -> El<'static> {
+        let language = self.language();
+        let capture = self.vm.capture.view.get();
+        let snapshot = self.vm.snapshot();
+        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> =
+            column![text(ui_text(language, UiText::Shortcuts).to_string())];
+        for desc in shortcut_descriptors() {
+            let target = CaptureTarget::Shortcut(desc.action);
+            let binding_label = if capture.target.as_ref() == Some(&target) {
+                ui_text(language, UiText::CapturePrompt).to_string()
+            } else {
+                current_binding_label(&snapshot, &target)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| ui_text(language, UiText::Unbound).to_string())
+            };
+            content = content.push(
+                row![
+                    text(desc.label).width(Length::Fixed(180.0)),
+                    text(binding_label).width(Length::Fill),
+                    button(ui_text(language, UiText::Change))
+                        .on_press(Message::StartCapture(target.clone())),
+                    button(ui_text(language, UiText::Clear))
+                        .on_press(Message::ClearCapture(target)),
+                ]
+                .spacing(12)
+                .width(Length::Fill)
+                .align_y(Alignment::Center),
+            );
+        }
+        content.spacing(8).into()
     }
 
     fn input_section<'a>(
@@ -569,9 +744,52 @@ impl SettingsAppState {
 
     fn system_page(&self) -> El<'_> {
         let _language = self.language();
-        column![text("System settings — migration in progress").size(14)]
-            .spacing(16)
-            .into()
+        let system_tab_index = self.system_tab_index;
+        let Some(system_tab_index) = system_tab_index else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let systems = self.vm.systems();
+        let Some(system_vm) = systems.get(system_tab_index) else {
+            return column![text("No systems available").size(14)].into();
+        };
+        let view = system_vm.view.get();
+
+        let mut content = column![];
+
+        // Tab buttons
+        let tab_row = row(systems.iter().enumerate().map(|(i, vm)| {
+            let btn_text = text(vm.display_name()).size(14);
+            if Some(i) == self.system_tab_index {
+                button(btn_text).style(button::primary).into()
+            } else {
+                button(btn_text)
+                    .on_press(Message::SelectSystemTab(i))
+                    .into()
+            }
+        }))
+        .spacing(4);
+        content = content.push(tab_row);
+
+        // Fields
+        for field in &view.fields {
+            let choices: Vec<
+                nerust_gui_viewmodel::settings::dto::ChoiceView<
+                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+                >,
+            > = field.choices.clone();
+            let selected = choices.iter().find(|c| c.value == field.selected).cloned();
+            let label = field.label.clone();
+            let field_id_str = field.id.0.to_string();
+            content = content.push(labeled_pick_list(
+                &label,
+                choices,
+                selected,
+                move |choice: nerust_gui_viewmodel::settings::dto::ChoiceView<
+                    nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+                >| { Message::SetSystemChoice(field_id_str.clone(), choice) },
+            ));
+        }
+        content.spacing(16).into()
     }
 }
 
@@ -594,32 +812,14 @@ fn page_radio(
     .into()
 }
 
-fn input_section_radio(
-    language: AppLanguage,
-    label: UiText,
-    value: InputPageSection,
-    selected: InputPageSection,
-) -> El<'static> {
-    input_section_radio_label(ui_text(language, label), value, selected)
-}
-
-fn input_section_radio_label(
-    label: &'static str,
-    value: InputPageSection,
-    selected: InputPageSection,
-) -> El<'static> {
-    radio(label, value, Some(selected), Message::SelectInputSection).into()
-}
-
-fn labeled_pick_list<T: Clone + PartialEq + Eq + 'static>(
-    label: &'static str,
-    options: impl Into<Vec<ChoiceView<T>>>,
+fn labeled_pick_list<'a, T: Clone + PartialEq + Eq + 'static>(
+    label: &str,
+    options: Vec<ChoiceView<T>>,
     selected: Option<ChoiceView<T>>,
-    on_select: fn(ChoiceView<T>) -> Message,
-) -> El<'static> {
-    let options = options.into();
+    on_select: impl Fn(ChoiceView<T>) -> Message + 'a,
+) -> El<'a> {
     row![
-        text(label).width(Length::Fixed(220.0)),
+        text(label.to_string()).width(Length::Fixed(220.0)),
         pick_list(options, selected, on_select).width(Length::Shrink)
     ]
     .spacing(12)

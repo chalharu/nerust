@@ -5,8 +5,9 @@ use nerust_gui_shell::registry::SystemRegistry;
 
 use super::{
     ValidationState, audio::AudioSettingsViewModel, capture::CaptureViewModel,
-    editor::SettingsEditor, general::GeneralSettingsViewModel,
-    property::ReadOnlyObservableProperty, video::VideoSettingsViewModel,
+    editor::SettingsEditor, general::GeneralSettingsViewModel, input::InputSettingsViewModel,
+    property::ReadOnlyObservableProperty, system::SystemSettingsViewModel,
+    video::VideoSettingsViewModel,
 };
 
 /// Root settings view model, composing all page-level sub-view models.
@@ -18,6 +19,8 @@ pub struct SettingsViewModel {
     pub video: VideoSettingsViewModel,
     pub audio: AudioSettingsViewModel,
     pub capture: CaptureViewModel,
+    systems: Vec<SystemSettingsViewModel>,
+    inputs: Vec<InputSettingsViewModel>,
 }
 
 impl SettingsViewModel {
@@ -26,20 +29,30 @@ impl SettingsViewModel {
         registry: Arc<SystemRegistry>,
         supported_sample_rates: Arc<[u32]>,
     ) -> Self {
+        let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
+            registry.all().iter().map(Arc::clone).collect();
+
         let mut editor = SettingsEditor::new(snapshot, registry, supported_sample_rates);
 
-        // Set up validator
         editor.set_validator(|_state| super::ValidationState { issues: vec![] });
 
         let revision = editor.revision_prop();
 
-        // Create sub-view models (they register their projectors with the hub)
         let general = GeneralSettingsViewModel::new(&editor);
         let video = VideoSettingsViewModel::new(&editor);
         let audio = AudioSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
 
-        // Seal the hub so no more projections can be registered
+        let systems: Vec<SystemSettingsViewModel> = factories
+            .iter()
+            .map(|f| SystemSettingsViewModel::new(&editor, f))
+            .collect();
+
+        let inputs: Vec<InputSettingsViewModel> = factories
+            .iter()
+            .map(|f| InputSettingsViewModel::new(&editor, f))
+            .collect();
+
         editor.projections().seal();
 
         Self {
@@ -49,6 +62,8 @@ impl SettingsViewModel {
             video,
             audio,
             capture,
+            systems,
+            inputs,
         }
     }
 
@@ -60,11 +75,11 @@ impl SettingsViewModel {
         self.editor.finish()
     }
 
-    pub fn systems(&self) -> &[super::system::SystemSettingsViewModel] {
-        &[]
+    pub fn systems(&self) -> &[SystemSettingsViewModel] {
+        &self.systems
     }
 
-    pub fn inputs(&self) -> &[super::input::InputSettingsViewModel] {
-        &[]
+    pub fn inputs(&self) -> &[InputSettingsViewModel] {
+        &self.inputs
     }
 }
