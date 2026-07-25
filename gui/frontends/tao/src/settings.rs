@@ -861,6 +861,34 @@ mod tests {
     }
 
     #[test]
+    fn revision_callback_shares_external_view_invalidated_cell() {
+        use std::cell::Cell;
+
+        let external = Rc::new(Cell::new(false));
+        let mut state = SettingsAppState::new_with_shared(
+            &empty_snapshot(),
+            Arc::new(SystemRegistry::new(Vec::new())),
+            Arc::new(AudioBackendRegistry::new()),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+            Rc::clone(&external),
+        );
+
+        dispatch(
+            &mut state,
+            Message::SetLanguage(ChoiceView {
+                value: AppLanguage::Japanese,
+                label: "Japanese".into(),
+            }),
+        );
+
+        assert!(
+            external.get(),
+            "revision callback should have set the externally-shared cell"
+        );
+    }
+
+    #[test]
     fn physical_key_mapping_matches_tao_bindings() {
         assert_eq!(
             keyboard_key_from_physical(Physical::Code(Code::KeyZ)),

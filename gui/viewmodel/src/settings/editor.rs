@@ -272,6 +272,40 @@ mod tests {
     }
 
     #[test]
+    fn projection_observer_fires_after_transaction() {
+        use super::super::property::ReadOnlyObservableProperty;
+        use std::rc::Rc;
+
+        let editor = test_editor();
+
+        // Register a projection via the hub
+        let prop: ReadOnlyObservableProperty<bool> =
+            editor
+                .projections()
+                .register("test_proj", false, |state| state.draft.local.audio.muted);
+
+        // Observe the projection
+        let observed = Rc::new(Cell::new(false));
+        let observed_cb = Rc::clone(&observed);
+        let _sub = prop.observe(move |v| {
+            observed_cb.set(*v);
+        });
+
+        // Mutate via transact — projection observer should fire
+        editor
+            .transact(|state| {
+                state.draft.local.audio.muted = true;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(
+            observed.get(),
+            "projection observer should have fired after transact"
+        );
+    }
+
+    #[test]
     fn set_validator_runs_initial_validation() {
         let mut editor = test_editor();
         // Initial validation should be empty (default snapshot is valid)
