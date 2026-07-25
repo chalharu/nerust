@@ -141,27 +141,51 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
                     })
                     .collect()
             });
-        let unknown = pairs
-            .iter()
-            .filter(|(slot_id, _)| input_factory.resolve_slot(slot_id).is_none())
-            .count();
-        if unknown > 0 {
-            issues.push(super::ValidationIssue {
-                scope: super::ValidationScope::Input(sid.clone_box()),
-                message: format!("{}: {} unknown slot ID(s)", factory.display_name(), unknown),
-            });
-        }
-        // Resolve assignments for conflict detection
+        let mut unknown_slots = 0u32;
+        let mut unknown_profiles = 0u32;
         let assignments: Vec<_> = pairs
             .iter()
             .filter_map(|(slot_id, ctrl_opt)| {
-                let att = input_factory.resolve_slot(slot_id)?;
-                let profile = ctrl_opt
-                    .as_ref()
-                    .and_then(|id| input_factory.resolve_controller(id));
+                let att = match input_factory.resolve_slot(slot_id) {
+                    Some(a) => a,
+                    None => {
+                        unknown_slots += 1;
+                        return None;
+                    }
+                };
+                let profile = match ctrl_opt.as_ref() {
+                    Some(id) => match input_factory.resolve_controller(id) {
+                        Some(p) => Some(p),
+                        None => {
+                            unknown_profiles += 1;
+                            None
+                        }
+                    },
+                    None => None,
+                };
                 Some((att, profile))
             })
             .collect();
+        if unknown_slots > 0 {
+            issues.push(super::ValidationIssue {
+                scope: super::ValidationScope::Input(sid.clone_box()),
+                message: format!(
+                    "{}: {} unknown slot ID(s)",
+                    factory.display_name(),
+                    unknown_slots
+                ),
+            });
+        }
+        if unknown_profiles > 0 {
+            issues.push(super::ValidationIssue {
+                scope: super::ValidationScope::Input(sid.clone_box()),
+                message: format!(
+                    "{}: {} unknown controller profile ID(s)",
+                    factory.display_name(),
+                    unknown_profiles
+                ),
+            });
+        }
         let has_controller = assignments.iter().any(|(_, c)| c.is_some());
         if !has_controller {
             issues.push(super::ValidationIssue {

@@ -104,7 +104,9 @@ impl SettingsEditor {
     }
 
     pub fn set_validator(&mut self, validator: impl Fn(&EditorState) -> ValidationState + 'static) {
+        let result = validator(&self.current.borrow());
         self.validator = Rc::new(validator);
+        self.current.borrow_mut().validation = result;
     }
 
     pub(crate) fn projections(&self) -> &ProjectionHub {
@@ -267,6 +269,30 @@ mod tests {
             }],
         };
         assert!(editor.finish().is_err());
+    }
+
+    #[test]
+    fn set_validator_runs_initial_validation() {
+        let mut editor = test_editor();
+        // Initial validation should be empty (default snapshot is valid)
+        assert!(editor.current().validation.can_submit());
+
+        // Set a validator that flags persistence issues
+        editor.set_validator(|state| {
+            if state.draft.shared.persistence.storage_directory.is_none() {
+                ValidationState {
+                    issues: vec![super::super::ValidationIssue {
+                        scope: super::super::ValidationScope::Persistence,
+                        message: "no storage dir".into(),
+                    }],
+                }
+            } else {
+                ValidationState { issues: vec![] }
+            }
+        });
+
+        // set_validator should run validation immediately
+        assert!(!editor.current().validation.can_submit());
     }
 
     #[test]
