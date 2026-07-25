@@ -137,8 +137,18 @@ impl InputSettingsViewModel {
                 None => None,
             };
 
+            // Validate the target slot exists
+            input_factory
+                .resolve_slot(slot.as_str())
+                .ok_or(ViewModelError::UnknownSlot(slot.to_string()))?;
+
             let mut assignments =
                 resolve_assignments(&persisted_pairs(state, factory.as_ref()), input_factory);
+
+            // Ensure the target slot is present in assignments
+            if !assignments.iter().any(|(s, _)| *s == slot) {
+                assignments.push((slot, None));
+            }
 
             // Apply the new slot (with multi-port conflict resolution)
             if let Some(ref p) = profile {
