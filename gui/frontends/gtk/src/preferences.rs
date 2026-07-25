@@ -468,45 +468,43 @@ pub(crate) fn present_preferences_dialog(
         });
     }
 
-    // Submit
+    // Submit — _binding is cloned into the closure to keep it alive
+    // as long as the dialog is open.
     let parent_clone = parent.clone();
     let state_clone = state.clone();
     let finish_cb = Rc::new(std::cell::RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
-    {
-        let weak = Rc::downgrade(&_binding);
-        dialog.connect_response(move |dialog, response| {
-            if response != gtk::ResponseType::Ok {
-                dialog.close();
-                if let Some(cb) = finish_cb.borrow_mut().take() {
-                    cb();
-                }
-                return;
+    let _binding_owned = Rc::clone(&_binding);
+    dialog.connect_response(move |dialog, response| {
+        if response != gtk::ResponseType::Ok {
+            dialog.close();
+            if let Some(cb) = finish_cb.borrow_mut().take() {
+                cb();
             }
-            let Some(b) = weak.upgrade() else { return };
-            match b.vm.finish() {
-                Ok(snapshot) => {
-                    let plan = state_clone.borrow_mut().session.apply_settings(snapshot);
-                    match plan {
-                        Ok(result) => {
-                            if result.fullscreen_default_changed {
-                                parent_clone.set_fullscreened(
-                                    b.vm.snapshot().local.video.window.fullscreen_default,
-                                );
-                            }
-                            dialog.close();
-                            if let Some(cb) = finish_cb.borrow_mut().take() {
-                                cb();
-                            }
+            return;
+        }
+        match _binding_owned.vm.finish() {
+            Ok(snapshot) => {
+                let plan = state_clone.borrow_mut().session.apply_settings(snapshot);
+                match plan {
+                    Ok(result) => {
+                        if result.fullscreen_default_changed {
+                            parent_clone.set_fullscreened(
+                                _binding_owned.vm.snapshot().local.video.window.fullscreen_default,
+                            );
                         }
-                        Err(e) => {
-                            b.error_label.set_text(&e.to_string());
+                        dialog.close();
+                        if let Some(cb) = finish_cb.borrow_mut().take() {
+                            cb();
                         }
                     }
+                    Err(e) => {
+                        _binding_owned.error_label.set_text(&e.to_string());
+                    }
                 }
-                Err(_) => {}
             }
-        });
-    }
+            Err(_) => {}
+        }
+    });
 
     dialog.present();
 }
