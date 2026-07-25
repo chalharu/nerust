@@ -9,6 +9,7 @@ use super::{
 };
 
 /// A node responsible for computing one projection from [`EditorState`].
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(crate) trait ProjectionNode {
     fn name(&self) -> &'static str;
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>>;
@@ -34,6 +35,7 @@ impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
 
 /// A concrete ProjectionNode that computes T from EditorState.
 struct FuncProjectionNode<T: Clone + PartialEq + 'static> {
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     name: &'static str,
     inner: Rc<ObservablePropertyInner<T>>,
     project: Box<dyn Fn(&EditorState) -> T>,
