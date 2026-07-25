@@ -33,19 +33,26 @@ struct GeneralWidgets {
     storage_dir_entry: gtk::Entry,
     storage_dir_row: gtk::Box,
     storage_error_label: gtk::Label,
+    language_label: gtk::Label,
+    storage_policy_label: gtk::Label,
+    storage_dir_label: gtk::Label,
 }
 
 struct VideoWidgets {
     fullscreen_check: gtk::CheckButton,
     scaling_combo: gtk::ComboBoxText,
+    scaling_label: gtk::Label,
     vsync_check: gtk::CheckButton,
 }
 
 struct AudioWidgets {
     mute_check: gtk::CheckButton,
     volume_spin: gtk::SpinButton,
+    volume_label: gtk::Label,
     sample_rate_combo: gtk::ComboBoxText,
+    sample_rate_label: gtk::Label,
     latency_spin: gtk::SpinButton,
+    latency_label: gtk::Label,
 }
 
 struct InputTabWidgets {
@@ -221,6 +228,18 @@ impl PreferencesBinding {
             }
         }
 
+        // Update row labels stored in widget groups
+        self.general.language_label.set_text(ui_text(lang, UiText::Language));
+        self.general.storage_policy_label.set_text(ui_text(lang, UiText::SaveStoragePolicy));
+        self.general.storage_dir_label.set_text(ui_text(lang, UiText::SaveStorageDirectory));
+        self.video.fullscreen_check.set_label(Some(ui_text(lang, UiText::FullscreenDefault)));
+        self.video.scaling_label.set_text(ui_text(lang, UiText::Scaling));
+        self.video.vsync_check.set_label(Some(ui_text(lang, UiText::Vsync)));
+        self.audio.mute_check.set_label(Some(ui_text(lang, UiText::Mute)));
+        self.audio.volume_label.set_text(ui_text(lang, UiText::MasterVolume));
+        self.audio.sample_rate_label.set_text(ui_text(lang, UiText::SampleRate));
+        self.audio.latency_label.set_text(ui_text(lang, UiText::AudioLatency));
+
         self.general.language_combo.remove_all();
         for choice in &view.language_choices {
             self.general.language_combo.append(
@@ -381,7 +400,9 @@ impl PreferencesBinding {
                     return;
                 };
                 if let Some(vm) = binding.vm.systems().get(index) {
-                    let _ = vm.set_choice(&field_id, &choice.value);
+                    if let Err(e) = vm.set_choice(&field_id, &choice.value) {
+                        binding.error_label.set_text(&e.to_string());
+                    }
                 }
             });
             page.append(&labeled_row(&field.label, &combo));
@@ -436,7 +457,9 @@ impl PreferencesBinding {
                     .active_id()
                     .and_then(|id| (id.as_str() != "__none__").then(|| id.to_string()));
                 if let Some(vm) = binding.vm.inputs().get(index) {
-                    let _ = vm.set_controller_slot(slot_id, profile.as_deref());
+                    if let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref()) {
+                        binding.error_label.set_text(&e.to_string());
+                    }
                 }
             });
             page.append(&labeled_row(&slot.label, &combo));
@@ -491,13 +514,17 @@ impl PreferencesBinding {
         let change_target = target.clone();
         change.connect_clicked(move |_| {
             if let Some(binding) = weak.upgrade() {
-                let _ = binding.vm.capture.start_capture(change_target.clone());
+                if let Err(e) = binding.vm.capture.start_capture(change_target.clone()) {
+                    binding.error_label.set_text(&e.to_string());
+                }
             }
         });
         let weak = self.self_weak.clone();
         clear.connect_clicked(move |_| {
             if let Some(binding) = weak.upgrade() {
-                let _ = binding.vm.capture.clear_binding(&target);
+                if let Err(e) = binding.vm.capture.clear_binding(&target) {
+                    binding.error_label.set_text(&e.to_string());
+                }
             }
         });
         row.append(&name);
@@ -632,21 +659,33 @@ pub(crate) fn present_preferences_dialog(
     content.append(&error_label);
 
     // ---- General page ----
+    let language_label = gtk::Label::new(Some("Language"));
     let language_combo = combo_box(&[
         ("system_default", "System Default"),
         ("japanese", "Japanese"),
         ("english", "English"),
     ]);
-    general_page.append(&labeled_row("Language", &language_combo));
+    let lang_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    lang_row.append(&language_label);
+    lang_row.append(&language_combo);
+    general_page.append(&lang_row);
 
+    let storage_policy_label = gtk::Label::new(Some("Save Storage Policy"));
     let storage_policy_combo = combo_box(&[
         ("sidecar", "Sidecar"),
         ("app_shared_data", "App Shared Data"),
         ("custom_directory", "Custom Directory"),
     ]);
-    general_page.append(&labeled_row("Save Storage Policy", &storage_policy_combo));
+    let sp_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    sp_row.append(&storage_policy_label);
+    sp_row.append(&storage_policy_combo);
+    general_page.append(&sp_row);
+
+    let storage_dir_label = gtk::Label::new(Some("Save Storage Directory"));
     let storage_dir_entry = gtk::Entry::new();
-    let storage_dir_row = labeled_row("Save Storage Directory", &storage_dir_entry);
+    let storage_dir_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    storage_dir_row.append(&storage_dir_label);
+    storage_dir_row.append(&storage_dir_entry);
     let storage_error_label = gtk::Label::new(None);
     storage_error_label.set_xalign(0.0);
     general_page.append(&storage_dir_row);
@@ -655,6 +694,7 @@ pub(crate) fn present_preferences_dialog(
     // ---- Video page ----
     let fullscreen_check = gtk::CheckButton::with_label("Fullscreen Default");
     video_page.append(&fullscreen_check);
+    let scaling_label = gtk::Label::new(Some("Scaling"));
     let scaling_combo = combo_box(&[
         ("fit", "Fit to Window"),
         ("1", "1x"),
@@ -663,15 +703,23 @@ pub(crate) fn present_preferences_dialog(
         ("4", "4x"),
         ("5", "5x"),
     ]);
-    video_page.append(&labeled_row("Scaling", &scaling_combo));
+    let scaling_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    scaling_row.append(&scaling_label);
+    scaling_row.append(&scaling_combo);
+    video_page.append(&scaling_row);
     let vsync_check = gtk::CheckButton::with_label("Vsync");
     video_page.append(&vsync_check);
 
     // ---- Audio page ----
     let mute_check = gtk::CheckButton::with_label("Mute");
     audio_page.append(&mute_check);
+    let volume_label = gtk::Label::new(Some("Master Volume"));
     let volume_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
-    audio_page.append(&labeled_row("Master Volume", &volume_spin));
+    let vol_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    vol_row.append(&volume_label);
+    vol_row.append(&volume_spin);
+    audio_page.append(&vol_row);
+    let sample_rate_label = gtk::Label::new(Some("Sample Rate"));
     let sample_rate_combo = {
         let rates: &[u32] = if audio_registry.supported_rates().is_empty() {
             &[44_100, 48_000]
@@ -685,9 +733,16 @@ pub(crate) fn present_preferences_dialog(
         }
         combo
     };
-    audio_page.append(&labeled_row("Sample Rate", &sample_rate_combo));
+    let sr_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    sr_row.append(&sample_rate_label);
+    sr_row.append(&sample_rate_combo);
+    audio_page.append(&sr_row);
+    let latency_label = gtk::Label::new(Some("Audio Latency"));
     let latency_spin = gtk::SpinButton::with_range(10.0, 200.0, 1.0);
-    audio_page.append(&labeled_row("Audio Latency", &latency_spin));
+    let lat_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    lat_row.append(&latency_label);
+    lat_row.append(&latency_spin);
+    audio_page.append(&lat_row);
 
     // ---- Input page (tabs) ----
     let input_notebook = gtk::Notebook::new();
@@ -730,17 +785,24 @@ pub(crate) fn present_preferences_dialog(
         storage_dir_entry: storage_dir_entry.clone(),
         storage_dir_row: storage_dir_row.clone(),
         storage_error_label: storage_error_label.clone(),
+        language_label,
+        storage_policy_label,
+        storage_dir_label,
     };
     let video_w = VideoWidgets {
         fullscreen_check: fullscreen_check.clone(),
         scaling_combo: scaling_combo.clone(),
+        scaling_label,
         vsync_check: vsync_check.clone(),
     };
     let audio_w = AudioWidgets {
         mute_check: mute_check.clone(),
         volume_spin: volume_spin.clone(),
+        volume_label,
         sample_rate_combo: sample_rate_combo.clone(),
+        sample_rate_label,
         latency_spin: latency_spin.clone(),
+        latency_label,
     };
     let input_w = InputTabWidgets {
         _notebook: input_notebook,
@@ -1041,14 +1103,23 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
     combo
 }
 
+/// GTK widget tests — only run on Linux with a display server.
+/// macOS requires main-thread GTK init which Rust test harness cannot
+/// guarantee. These tests compile on all platforms but only execute
+/// when `gtk::init()` succeeds.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::{Cell, RefCell};
+    use std::cell::RefCell;
 
-    /// Initialize GTK, returning false if no display is available (CI).
-    fn gtk_init() -> bool {
+    #[cfg(not(target_os = "macos"))]
+    fn gtk_available() -> bool {
         gtk::init().is_ok()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn gtk_available() -> bool {
+        false
     }
 
     #[test]
@@ -1059,35 +1130,36 @@ mod tests {
         assert_eq!(*value.borrow(), 2);
     }
 
-    #[test]
-    fn refreshing_guard_prevents_reentrant_signal() {
-        if !gtk_init() {
-            return;
-        }
+    macro_rules! gtk_test {
+        ($name:ident, $body:expr) => {
+            #[test]
+            fn $name() {
+                if !gtk_available() {
+                    eprintln!("skipped (no GTK display)");
+                    return;
+                }
+                $body()
+            }
+        };
+    }
+
+    gtk_test!(refreshing_guard_prevents_reentrant_signal, || {
         let binding = create_test_binding();
         binding.with_refreshing(|| {
             let prev = binding.refreshing.get();
             assert!(prev, "refreshing should be true during guard");
         });
         assert!(!binding.refreshing.get(), "refreshing should be false after guard");
-    }
+    });
 
-    #[test]
-    fn cmd_helper_shows_error_on_error_label() {
-        if !gtk_init() {
-            return;
-        }
+    gtk_test!(cmd_helper_shows_error_on_error_label, || {
         let binding = create_test_binding();
         let err = nerust_gui_viewmodel::settings::ViewModelError::UnknownSystem("test".into());
         cmd(&binding, Err::<(), _>(err));
         assert!(!binding.error_label.text().is_empty(), "error_label should show the error");
-    }
+    });
 
-    #[test]
-    fn general_widgets_initial_values_match_viewmodel() {
-        if !gtk_init() {
-            return;
-        }
+    gtk_test!(general_widgets_initial_values_match_viewmodel, || {
         let binding = create_test_binding();
         let gv = binding.vm.general.view.get();
         assert_eq!(
@@ -1098,17 +1170,13 @@ mod tests {
                 AppLanguage::SystemDefault => "system_default",
             })
         );
-    }
+    });
 
-    #[test]
-    fn ok_button_sensitivity_matches_validation() {
-        if !gtk_init() {
-            return;
-        }
+    gtk_test!(ok_button_sensitivity_matches_validation, || {
         let binding = create_test_binding();
         let ok = binding.vm.finish().is_ok();
         assert_eq!(binding.ok_button.is_sensitive(), ok);
-    }
+    });
 
     fn create_test_binding() -> Rc<PreferencesBinding> {
         #[derive(Debug)]
@@ -1150,17 +1218,24 @@ mod tests {
                     storage_dir_entry: gtk::Entry::new(),
                     storage_dir_row: gtk::Box::new(gtk::Orientation::Horizontal, 0),
                     storage_error_label: gtk::Label::new(None),
+                    language_label: gtk::Label::new(None),
+                    storage_policy_label: gtk::Label::new(None),
+                    storage_dir_label: gtk::Label::new(None),
                 },
                 video: VideoWidgets {
                     fullscreen_check: gtk::CheckButton::new(),
                     scaling_combo: gtk::ComboBoxText::new(),
+                    scaling_label: gtk::Label::new(None),
                     vsync_check: gtk::CheckButton::new(),
                 },
                 audio: AudioWidgets {
                     mute_check: gtk::CheckButton::new(),
                     volume_spin: gtk::SpinButton::with_range(0.0, 100.0, 1.0),
+                    volume_label: gtk::Label::new(None),
                     sample_rate_combo: gtk::ComboBoxText::new(),
+                    sample_rate_label: gtk::Label::new(None),
                     latency_spin: gtk::SpinButton::with_range(10.0, 200.0, 1.0),
+                    latency_label: gtk::Label::new(None),
                 },
                 input: InputTabWidgets {
                     _notebook: gtk::Notebook::new(),
