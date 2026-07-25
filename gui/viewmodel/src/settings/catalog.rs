@@ -39,3 +39,36 @@ impl FactoryCatalog {
         self.by_id.get(id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use nerust_core_traits::factory::CoreFactory;
+
+    use super::FactoryCatalog;
+    use crate::settings::test_support::{TestCoreFactory, TestInputFactory, TestSystemId};
+
+    #[test]
+    fn empty_catalog() {
+        let c = FactoryCatalog::new(vec![]);
+        assert!(c.all().is_empty());
+        assert!(c.find_by_id(&TestSystemId).is_none());
+    }
+
+    #[test]
+    fn single_factory_findable_by_id() {
+        let f: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
+        let c = FactoryCatalog::new(vec![Arc::clone(&f)]);
+        assert_eq!(c.all().len(), 1);
+        assert!(c.find_by_id(&TestSystemId).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate SystemId")]
+    fn duplicate_id_panics() {
+        let f: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
+        let f2: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
+        let _c = FactoryCatalog::new(vec![f, f2]);
+    }
+}

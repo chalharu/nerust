@@ -51,6 +51,54 @@ impl GeneralSettingsViewModel {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
+    use crate::settings::test_support::test_vm;
+
+    #[test]
+    fn set_language_updates_projection() {
+        let vm = test_vm();
+        vm.general.set_language(AppLanguage::Japanese).unwrap();
+        let view = vm.general.view.get();
+        assert_eq!(view.language, AppLanguage::Japanese);
+    }
+
+    #[test]
+    fn set_storage_policy_updates_projection() {
+        let vm = test_vm();
+        vm.general.set_storage_policy(StoragePolicy::CustomDirectory).unwrap();
+        let view = vm.general.view.get();
+        assert_eq!(view.storage_policy, StoragePolicy::CustomDirectory);
+        assert!(view.show_storage_directory);
+    }
+
+    #[test]
+    fn set_storage_directory_updates_projection() {
+        let vm = test_vm();
+        let p = std::path::PathBuf::from("/tmp/test");
+        vm.general.set_storage_directory(Some(p.clone())).unwrap();
+        let view = vm.general.view.get();
+        assert_eq!(view.storage_directory, "/tmp/test");
+    }
+
+    #[test]
+    fn language_choices_are_localized() {
+        let vm = test_vm();
+        let view = vm.general.view.get();
+        assert_eq!(view.language_choices.len(), 3);
+    }
+
+    #[test]
+    fn set_same_language_is_noop() {
+        let vm = test_vm();
+        let rev_before = vm.revision.get();
+        vm.general.set_language(AppLanguage::SystemDefault).unwrap();
+        assert_eq!(vm.revision.get(), rev_before, "revision should not advance");
+    }
+}
+
+#[allow(clippy::items_after_test_module)]
 fn project_view(state: &super::EditorState) -> GeneralView {
     let lang = state.draft.shared.general.language;
     GeneralView {

@@ -73,3 +73,48 @@ fn project_view(state: &super::EditorState) -> AudioView {
         latency_ms: state.draft.local.audio.latency_ms,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::settings::test_support::test_vm;
+
+    #[test]
+    fn set_mute_updates_projection() {
+        let vm = test_vm();
+        vm.audio.set_mute(true).unwrap();
+        let view = vm.audio.view.get();
+        assert!(view.muted);
+    }
+
+    #[test]
+    fn set_volume_updates_projection() {
+        let vm = test_vm();
+        vm.audio.set_volume(42).unwrap();
+        let view = vm.audio.view.get();
+        assert_eq!(view.volume_percent, 42);
+    }
+
+    #[test]
+    fn set_sample_rate_updates_projection() {
+        let vm = test_vm();
+        vm.audio.set_sample_rate(44_100).unwrap();
+        let view = vm.audio.view.get();
+        assert_eq!(view.sample_rate, 44_100);
+    }
+
+    #[test]
+    fn set_latency_updates_projection() {
+        let vm = test_vm();
+        vm.audio.set_latency(75).unwrap();
+        let view = vm.audio.view.get();
+        assert_eq!(view.latency_ms, 75);
+    }
+
+    #[test]
+    fn set_same_mute_is_noop() {
+        let vm = test_vm();
+        let rev_before = vm.revision.get();
+        vm.audio.set_mute(false).unwrap();
+        assert_eq!(vm.revision.get(), rev_before, "revision should not advance");
+    }
+}
