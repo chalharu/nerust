@@ -13,7 +13,7 @@ const STATES_DIR_NAME: &str = "states";
 pub fn resolve_persistence_paths(
     shared: &DesktopSharedSettings,
     paths: Option<&SettingsPaths>,
-    system: SystemId,
+    system: &dyn SystemId,
     rom_path: Option<&Path>,
     identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
@@ -23,7 +23,7 @@ pub fn resolve_persistence_paths(
 pub fn resolve_persistence_paths_with_import(
     shared: &DesktopSharedSettings,
     paths: Option<&SettingsPaths>,
-    system: SystemId,
+    system: &dyn SystemId,
     rom_path: Option<&Path>,
     identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
@@ -32,14 +32,14 @@ pub fn resolve_persistence_paths_with_import(
     Ok(resolved)
 }
 
-pub fn system_storage_key(_system: SystemId, identity: &SystemIdentity) -> String {
+pub fn system_storage_key(_system: &dyn SystemId, identity: &SystemIdentity) -> String {
     let checksum = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&identity.identity_bytes);
     format!("{:08x}-{:08x}", identity.identity_bytes.len(), checksum)
 }
 
 pub fn resolve_central_storage_paths(
     root: &Path,
-    system: SystemId,
+    system: &dyn SystemId,
     identity: &SystemIdentity,
 ) -> SidecarPaths {
     let base = root
@@ -54,7 +54,7 @@ pub fn resolve_central_storage_paths(
 fn resolve_current_persistence_paths(
     shared: &DesktopSharedSettings,
     paths: Option<&SettingsPaths>,
-    system: SystemId,
+    system: &dyn SystemId,
     rom_path: Option<&Path>,
     identity: &SystemIdentity,
 ) -> Result<SidecarPaths, SettingsError> {
@@ -87,7 +87,7 @@ fn resolve_current_persistence_paths(
 fn maybe_auto_import_storage(
     shared: &DesktopSharedSettings,
     paths: Option<&SettingsPaths>,
-    system: SystemId,
+    system: &dyn SystemId,
     rom_path: Option<&Path>,
     identity: &SystemIdentity,
     destination: &SidecarPaths,
@@ -191,9 +191,10 @@ fn copy_storage_contents(
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::shared::StoragePolicy;
     use nerust_persistence::sidecar::resolve_sidecars;
+
+    use crate::test::DummySystemId;
 
     use super::{
         super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity},
@@ -204,13 +205,13 @@ mod tests {
     fn central_storage_paths_use_system_and_identity_not_rom_path() {
         let root = PathBuf::from("/base");
         let identity = test_system_identity();
-        let first = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
-        let second = resolve_central_storage_paths(&root, SystemId::new("nes"), &identity);
+        let first = resolve_central_storage_paths(&root, &DummySystemId, &identity);
+        let second = resolve_central_storage_paths(&root, &DummySystemId, &identity);
 
         assert_eq!(first, second);
         assert!(first.mapper_save_path.ends_with("mapper.sav"));
         assert!(first.states_dir.ends_with("states"));
-        assert!(!system_storage_key(SystemId::new("nes"), &identity).is_empty());
+        assert!(!system_storage_key(&DummySystemId, &identity).is_empty());
     }
 
     #[test]
@@ -234,7 +235,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
-            SystemId::new("nes"),
+            &DummySystemId,
             Some(&rom_path),
             &identity,
         )
@@ -260,7 +261,7 @@ mod tests {
 
         let central_root = root.join("central");
         let identity = test_system_identity();
-        let central = resolve_central_storage_paths(&central_root, SystemId::new("nes"), &identity);
+        let central = resolve_central_storage_paths(&central_root, &DummySystemId, &identity);
         fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&central.mapper_save_path, b"central").unwrap();
 
@@ -272,7 +273,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             None,
-            SystemId::new("nes"),
+            &DummySystemId,
             Some(&rom_path),
             &identity,
         )
@@ -291,7 +292,7 @@ mod tests {
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let custom_root = root.join("custom");
         let identity = test_system_identity();
-        let custom = resolve_central_storage_paths(&custom_root, SystemId::new("nes"), &identity);
+        let custom = resolve_central_storage_paths(&custom_root, &DummySystemId, &identity);
         fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
         fs::write(&custom.mapper_save_path, b"custom").unwrap();
 
@@ -306,7 +307,7 @@ mod tests {
         let resolved = resolve_persistence_paths_with_import(
             &shared,
             Some(&paths),
-            SystemId::new("nes"),
+            &DummySystemId,
             Some(&rom_path),
             &test_system_identity(),
         )

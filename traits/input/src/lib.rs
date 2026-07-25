@@ -447,6 +447,15 @@ pub trait ControllerProfile: std::fmt::Debug + Send + Sync {
     fn label(&self) -> &'static str;
     fn port_sets(&self) -> &[PortSet];
     fn port_groups(&self) -> &[&[ControlInfo]];
+
+    /// Device kind identifier for a given port group index.
+    ///
+    /// Override when different port groups within the same profile
+    /// represent different device kinds (e.g. NES Famicom P2 has
+    /// a microphone that P1 doesn't).
+    fn device_kind_for_group(&self, _group_index: usize) -> &'static str {
+        self.profile_id().as_str()
+    }
 }
 
 /// System port layout query. Factory → Frontend.

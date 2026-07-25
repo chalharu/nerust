@@ -27,7 +27,9 @@ use nerust_render_traits::{
 };
 
 use super::SessionHandle;
-use crate::settings::factory::settings_view;
+use crate::{load::RomLoadTarget, registry::SystemRegistry};
+
+pub(crate) use crate::test_support::{DummyOtherSystemId, DummySystemId};
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
 #[derive(
@@ -92,7 +94,7 @@ impl ConsoleCore for MockConsoleCore {
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
-            SystemId::new("nes"),
+            Box::new(DummySystemId),
             rom.get(6..8).unwrap_or(&[0, 0]).to_vec(),
         ));
         Ok(())
@@ -195,8 +197,8 @@ impl InputSystemFactory for MockInputFactory {
 
 pub(crate) struct MockFactory;
 impl CoreFactory for MockFactory {
-    fn system_id(&self) -> SystemId {
-        SystemId::new("nes")
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummySystemId)
     }
 
     fn display_name(&self) -> &'static str {
@@ -255,6 +257,68 @@ impl CoreFactory for MockFactory {
     }
 }
 
+pub(crate) struct AlternateMockFactory;
+impl CoreFactory for AlternateMockFactory {
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummyOtherSystemId)
+    }
+
+    fn display_name(&self) -> &'static str {
+        "Alternate (test)"
+    }
+
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
+    ) -> Result<nerust_core_traits::factory::CoreParts, FactoryError> {
+        MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
+    }
+
+    fn probe_media(&self, media: &MediaObject) -> bool {
+        MockFactory.probe_media(media)
+    }
+
+    fn settings_page(
+        &self,
+        view: &FactorySettingsView,
+    ) -> nerust_core_traits::factory::descriptor::SystemSettingsPageModel {
+        MockFactory.settings_page(view)
+    }
+
+    fn apply_settings_choice(
+        &self,
+        view: &mut FactorySettingsView,
+        field: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
+        choice: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+    ) -> Result<(), FactoryError> {
+        MockFactory.apply_settings_choice(view, field, choice)
+    }
+
+    fn resolve_load_request(
+        &self,
+        view: &FactorySettingsView,
+        options: Box<dyn DynSystemLoadOptions>,
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
+        MockFactory.resolve_load_request(view, options)
+    }
+
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        MockFactory.default_load_options()
+    }
+
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        MockFactory.input_system_factory()
+    }
+
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+        MockFactory.load_options_schema()
+    }
+}
+
 pub(crate) fn test_session() -> SessionHandle {
     let capabilities = HostBackendCapabilities {
         window: HostWindowCapabilities {
@@ -266,7 +330,12 @@ pub(crate) fn test_session() -> SessionHandle {
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
     let audio_registry = Arc::new(AudioBackendRegistry::new());
-    SessionHandle::new_ephemeral(capabilities, factory, audio_registry)
+    let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
+    let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
+    session
+        .set_active_system(factory.system_id().as_ref())
+        .expect("test setup failed");
+    session
 }
 
 pub(crate) fn test_rom() -> Vec<u8> {
@@ -282,8 +351,21 @@ pub(crate) fn test_rom_with_mapper4() -> Vec<u8> {
 }
 
 pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
-    let system_id = session.factory().system_id();
-    settings_view(session.settings_snapshot(), &system_id)
+    let system_id = session.factory().expect("no active system").system_id();
+    let snapshot = session.settings_snapshot();
+    let language = match snapshot.shared.general.language {
+        nerust_gui_settings::language::AppLanguage::Japanese => {
+            nerust_core_traits::factory::settings::Language::Japanese
+        }
+        nerust_gui_settings::language::AppLanguage::English => {
+            nerust_core_traits::factory::settings::Language::English
+        }
+        _ => nerust_core_traits::factory::settings::Language::SystemDefault,
+    };
+    FactorySettingsView {
+        language,
+        system_config: snapshot.shared.systems.get(system_id.as_ref()).cloned(),
+    }
 }
 
 pub(crate) fn unique_temp_dir(label: &str) -> PathBuf {

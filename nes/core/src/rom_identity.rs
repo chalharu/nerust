@@ -1,4 +1,4 @@
-use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
@@ -24,6 +24,8 @@ pub struct RomIdentity {
 impl RomIdentity {
     pub fn into_system_identity(self) -> Result<SystemIdentity, rmp_serde::encode::Error> {
         let identity_bytes = rmp_serde::to_vec_named(&self)?;
-        Ok(SystemIdentity::new(SystemId::new("nes"), identity_bytes))
+        Ok(SystemIdentity::new(Box::new(NesSystemId), identity_bytes))
     }
 }
+
+nerust_core_traits::declare_system_id!(pub NesSystemId, "nes");

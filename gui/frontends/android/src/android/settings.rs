@@ -10,9 +10,18 @@ use std::sync::{
 /// presents the choices and returns the user's selections.
 use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
-use nerust_core_traits::identity::SystemId;
+use nerust_core_traits::{
+    factory::{
+        FactoryError,
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind},
+    },
+    identity::SystemId,
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_nes_settings::{NesSettings, NesVideoFilter};
+use nerust_gui_shell::{
+    registry::SystemRegistry,
+    settings::factory::{apply_settings_choice, resolve_label, settings_view},
+};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -25,14 +34,6 @@ const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
 const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
 
-/// All four variants in declaration order (matches `NesVideoFilter`'s natural ordering).
-const FILTER_CHOICES: &[NesVideoFilter] = &[
-    NesVideoFilter::None,
-    NesVideoFilter::NtscComposite,
-    NesVideoFilter::NtscSVideo,
-    NesVideoFilter::NtscRgb,
-];
-
 // ---------------------------------------------------------------------------
 // Data model
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ const FILTER_CHOICES: &[NesVideoFilter] = &[
 ///
 /// Derived from [`SettingsSnapshot`] on the way in; applied back via
 /// [`AndroidSettings::apply_to_snapshot`] on the way out.
+///
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AndroidSettings {
     pub audio_muted: bool,
@@ -48,21 +50,53 @@ pub(crate) struct AndroidSettings {
     pub latency_ms: u16,
     pub sample_rate: u32,
     pub vsync: bool,
-    pub nes_filter: NesVideoFilter,
+    system_choices: Vec<AndroidSystemChoice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AndroidSystemChoice {
+    system_id: Box<dyn SystemId>,
+    field_id: SystemSettingsFieldId,
+    label: String,
+    selected: SystemSettingsChoiceId,
+    options: Vec<(SystemSettingsChoiceId, String)>,
 }
 
 impl AndroidSettings {
     /// Extract Android-relevant fields from the full settings snapshot.
-    pub(crate) fn from_snapshot(snapshot: &SettingsSnapshot) -> Self {
-        let nes_filter = snapshot
-            .shared
-            .systems
-            .get(&SystemId::new("nes"))
-            .map(|s| {
-                s.downcast_ref::<NesSettings>()
-                    .map_or(NesVideoFilter::default(), |n| n.video.filter)
+    pub(crate) fn from_snapshot(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> Self {
+        let language = snapshot.shared.general.language;
+        let system_choices = registry
+            .all()
+            .iter()
+            .flat_map(|factory| {
+                let system_id = factory.system_id();
+                let view = settings_view(snapshot, system_id.as_ref());
+                factory
+                    .settings_page(&view)
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
+                        AndroidSystemChoice {
+                            system_id: system_id.clone(),
+                            field_id: field.id.clone(),
+                            label: resolve_label(field.label_id, language, factory.as_ref()),
+                            selected: selected.clone(),
+                            options: options
+                                .iter()
+                                .map(|option| {
+                                    (
+                                        option.id.clone(),
+                                        resolve_label(option.label_id, language, factory.as_ref()),
+                                    )
+                                })
+                                .collect(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default();
+            .collect();
 
         Self {
             audio_muted: snapshot.local.audio.muted,
@@ -70,29 +104,36 @@ impl AndroidSettings {
             latency_ms: snapshot.local.audio.latency_ms,
             sample_rate: snapshot.local.audio.sample_rate,
             vsync: snapshot.local.video.presentation.vsync,
-            nes_filter,
+            system_choices,
         }
     }
 
     /// Write the Android-relevant fields back into a full settings snapshot.
     ///
     /// Fields not exposed by the Android UI are left untouched.
-    pub(crate) fn apply_to_snapshot(&self, snapshot: &mut SettingsSnapshot) {
+    pub(crate) fn apply_to_snapshot(
+        &self,
+        snapshot: &mut SettingsSnapshot,
+        registry: &SystemRegistry,
+    ) -> Result<(), FactoryError> {
         snapshot.local.audio.muted = self.audio_muted;
         snapshot.local.audio.master_volume_percent = self.master_volume_percent;
         snapshot.local.audio.latency_ms = self.latency_ms;
         snapshot.local.audio.sample_rate = self.sample_rate;
         snapshot.local.video.presentation.vsync = self.vsync;
 
-        let system = snapshot
-            .shared
-            .systems
-            .entry(SystemId::new("nes"))
-            .or_insert_with(|| {
-                Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>
-            });
-        let nes = system.downcast_mut::<NesSettings>().unwrap();
-        nes.video.filter = self.nes_filter;
+        for choice in &self.system_choices {
+            let factory = registry
+                .find_by_id(choice.system_id.as_ref())
+                .ok_or(FactoryError::InvalidSettings)?;
+            apply_settings_choice(
+                factory.as_ref(),
+                snapshot,
+                &choice.field_id,
+                &choice.selected,
+            )?;
+        }
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -100,32 +141,42 @@ impl AndroidSettings {
     // -----------------------------------------------------------------------
 
     /// Stable setting keys sent to Kotlin (also used for decoding the result).
-    pub(crate) fn dialog_keys() -> &'static [&'static str] {
-        &[
-            "audio_muted",
-            "master_volume",
-            "latency_ms",
-            "sample_rate",
-            "vsync",
-            "nes_filter",
-        ]
+    pub(crate) fn dialog_keys(&self) -> Vec<String> {
+        let mut keys = vec![
+            "audio_muted".to_string(),
+            "master_volume".to_string(),
+            "latency_ms".to_string(),
+            "sample_rate".to_string(),
+            "vsync".to_string(),
+        ];
+        keys.extend(
+            self.system_choices
+                .iter()
+                .map(|choice| format!("system.{}.{}", choice.system_id, choice.field_id.as_str())),
+        );
+        keys
     }
 
     /// Human-readable labels, one per key, in the same order.
-    pub(crate) fn dialog_labels() -> &'static [&'static str] {
-        &[
-            "Mute",
-            "Volume",
-            "Audio Latency (ms)",
-            "Sample Rate (Hz)",
-            "VSync",
-            "NES Video Filter",
-        ]
+    pub(crate) fn dialog_labels(&self) -> Vec<String> {
+        let mut labels = vec![
+            "Mute".to_string(),
+            "Volume".to_string(),
+            "Audio Latency (ms)".to_string(),
+            "Sample Rate (Hz)".to_string(),
+            "VSync".to_string(),
+        ];
+        labels.extend(
+            self.system_choices
+                .iter()
+                .map(|choice| choice.label.clone()),
+        );
+        labels
     }
 
     /// Tab-separated choice labels, one string per setting, in key order.
-    pub(crate) fn dialog_choices() -> Vec<String> {
-        vec![
+    pub(crate) fn dialog_choices(&self) -> Vec<String> {
+        let mut choices = vec![
             "Off\tOn".to_string(),
             join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
             join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
@@ -135,8 +186,13 @@ impl AndroidSettings {
                     .map(|value| format!("{value} Hz")),
             ),
             "Off\tOn".to_string(),
-            "None\tNTSC Composite\tNTSC S-Video\tNTSC RGB".to_string(),
-        ]
+        ];
+        choices.extend(
+            self.system_choices.iter().map(|choice| {
+                join_tab_labels(choice.options.iter().map(|(_, label)| label.clone()))
+            }),
+        );
+        choices
     }
 
     /// Index of the current choice for each setting, in key order, as strings.
@@ -148,35 +204,35 @@ impl AndroidSettings {
             .iter()
             .position(|&v| v == self.sample_rate)
             .unwrap_or(SAMPLE_RATE_CHOICES.len().saturating_sub(1)); // default: highest rate
-        let filter_idx = FILTER_CHOICES
-            .iter()
-            .position(|&v| v == self.nes_filter)
-            .unwrap_or_else(|| {
-                log::warn!("NES video filter is not representable on Android, defaulting to None");
-                0
-            });
-
-        vec![
+        let mut indices = vec![
             (self.audio_muted as usize).to_string(),
             volume_idx.to_string(),
             latency_idx.to_string(),
             sample_rate_idx.to_string(),
             (self.vsync as usize).to_string(),
-            filter_idx.to_string(),
-        ]
+        ];
+        indices.extend(self.system_choices.iter().map(|choice| {
+            choice
+                .options
+                .iter()
+                .position(|(id, _)| id == &choice.selected)
+                .unwrap_or_default()
+                .to_string()
+        }));
+        indices
     }
 
     /// Build an `AndroidSettings` from a comma-separated list of choice indices
     /// (as returned by the Kotlin callback).
     ///
     /// Returns `None` if the string is malformed or any index is out of range.
-    pub(crate) fn from_choice_indices(raw: &str) -> Option<Self> {
+    pub(crate) fn from_choice_indices(raw: &str, current: &Self) -> Option<Self> {
         let indices: Vec<usize> = raw
             .split(',')
             .map(|s| s.trim().parse::<usize>().ok())
             .collect::<Option<_>>()?;
 
-        if indices.len() != Self::dialog_keys().len() {
+        if indices.len() != current.dialog_keys().len() {
             return None;
         }
 
@@ -198,7 +254,10 @@ impl AndroidSettings {
             1 => true,
             _ => return None,
         };
-        let nes_filter = *FILTER_CHOICES.get(indices[5])?;
+        let mut system_choices = current.system_choices.clone();
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[5..]) {
+            choice.selected = choice.options.get(*selected_index)?.0.clone();
+        }
 
         Some(Self {
             audio_muted,
@@ -206,7 +265,7 @@ impl AndroidSettings {
             latency_ms,
             sample_rate,
             vsync,
-            nes_filter,
+            system_choices,
         })
     }
 }
@@ -260,15 +319,9 @@ impl CachedSettingsData {
 
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    let keys: Vec<String> = AndroidSettings::dialog_keys()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let labels: Vec<String> = AndroidSettings::dialog_labels()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let choices = AndroidSettings::dialog_choices();
+    let keys = current.dialog_keys();
+    let labels = current.dialog_labels();
+    let choices = current.dialog_choices();
     let current_indices = current.current_indices();
     *CACHED_SETTINGS
         .lock()
@@ -342,15 +395,9 @@ pub(crate) fn request_show_settings_dialog(
         return Ok(false);
     }
 
-    let keys: Vec<String> = AndroidSettings::dialog_keys()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let labels: Vec<String> = AndroidSettings::dialog_labels()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let choices = AndroidSettings::dialog_choices();
+    let keys = current.dialog_keys();
+    let labels = current.dialog_labels();
+    let choices = current.dialog_choices();
     let current_indices = current.current_indices();
 
     let app = app.clone();
@@ -507,21 +554,22 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::identity::SystemId;
+    use std::sync::Arc;
+
+    use nerust_core_traits::factory::CoreFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
-        app_state::DesktopAppState,
-        local::HostBackendLocalSettings,
-        nes::{NesSettings, NesVideoFilter},
-        shared::{DesktopSharedSettings, SystemSettings},
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
+    use nerust_nes_factory::NesFactory;
+    use nerust_nes_settings::{NesSettings, NesVideoFilter};
 
     use super::*;
 
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();
         shared.systems.insert(
-            SystemId::new("nes"),
+            NesFactory.system_id(),
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
         SettingsSnapshot {
@@ -531,12 +579,30 @@ mod tests {
         }
     }
 
+    fn registry() -> SystemRegistry {
+        SystemRegistry::new(vec![Arc::new(NesFactory)])
+    }
+
+    fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
+        AndroidSettings::from_snapshot(snapshot, registry)
+    }
+
+    fn set_system_choice(settings: &mut AndroidSettings, field_id: &str, choice_id: &str) {
+        let choice = settings
+            .system_choices
+            .iter_mut()
+            .find(|choice| choice.field_id.as_str() == field_id)
+            .expect("system field should exist");
+        choice.selected = SystemSettingsChoiceId(choice_id.to_string().into());
+    }
+
     #[test]
     fn round_trips_default_snapshot() {
         let snapshot = default_snapshot();
-        let android = AndroidSettings::from_snapshot(&snapshot);
+        let registry = registry();
+        let android = android_settings(&snapshot, &registry);
         let mut out = default_snapshot();
-        android.apply_to_snapshot(&mut out);
+        android.apply_to_snapshot(&mut out, &registry).unwrap();
         // The round-trip should not change anything when starting from defaults.
         assert_eq!(out.local.audio.muted, snapshot.local.audio.muted);
         assert_eq!(
@@ -560,28 +626,33 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(NesFactory.system_id().as_ref())
             .map(|s| s.downcast_mut::<NesSettings>().unwrap())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
 
-        let android = AndroidSettings::from_snapshot(&snapshot);
-        assert_eq!(android.nes_filter, NesVideoFilter::NtscSVideo);
+        let registry = registry();
+        let android = android_settings(&snapshot, &registry);
+        let filter = android
+            .system_choices
+            .iter()
+            .find(|choice| choice.field_id.as_str() == "video.filter")
+            .unwrap();
+        assert_eq!(filter.selected.as_str(), "ntsc_svideo");
     }
 
     #[test]
     fn apply_to_snapshot_writes_all_fields() {
-        let android = AndroidSettings {
-            audio_muted: true,
-            master_volume_percent: 50,
-            latency_ms: 75,
-            sample_rate: 44_100,
-            vsync: false,
-            nes_filter: NesVideoFilter::NtscRgb,
-        };
-
+        let registry = registry();
         let mut snapshot = default_snapshot();
-        android.apply_to_snapshot(&mut snapshot);
+        let mut android = android_settings(&snapshot, &registry);
+        android.audio_muted = true;
+        android.master_volume_percent = 50;
+        android.latency_ms = 75;
+        android.sample_rate = 44_100;
+        android.vsync = false;
+        set_system_choice(&mut android, "video.filter", "ntsc_rgb");
+        android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
 
         assert!(snapshot.local.audio.muted);
         assert_eq!(snapshot.local.audio.master_volume_percent, 50);
@@ -591,7 +662,7 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get(&SystemId::new("nes"))
+            .get(NesFactory.system_id().as_ref())
             .map(|s| s.downcast_ref::<NesSettings>().unwrap())
             .unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);
@@ -600,60 +671,66 @@ mod tests {
     #[test]
     fn current_indices_matches_defaults() {
         let snapshot = default_snapshot();
-        let android = AndroidSettings::from_snapshot(&snapshot);
+        let registry = registry();
+        let android = android_settings(&snapshot, &registry);
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
-        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1"]);
+        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1", "0"]);
     }
 
     #[test]
     fn from_choice_indices_round_trips() {
-        let original = AndroidSettings {
-            audio_muted: true,
-            master_volume_percent: 25,
-            latency_ms: 100,
-            sample_rate: 44_100,
-            vsync: false,
-            nes_filter: NesVideoFilter::NtscSVideo,
-        };
-
+        let registry = registry();
         let mut snapshot = default_snapshot();
-        original.apply_to_snapshot(&mut snapshot);
-        let recovered = AndroidSettings::from_snapshot(&snapshot);
+        let mut original = android_settings(&snapshot, &registry);
+        original.audio_muted = true;
+        original.master_volume_percent = 25;
+        original.latency_ms = 100;
+        original.sample_rate = 44_100;
+        original.vsync = false;
+        set_system_choice(&mut original, "video.filter", "ntsc_svideo");
+        original
+            .apply_to_snapshot(&mut snapshot, &registry)
+            .unwrap();
+        let recovered = android_settings(&snapshot, &registry);
         let indices_str = recovered.current_indices().join(",");
 
-        let parsed = AndroidSettings::from_choice_indices(&indices_str).unwrap();
+        let parsed = AndroidSettings::from_choice_indices(&indices_str, &recovered).unwrap();
         assert_eq!(parsed, original);
     }
 
     #[test]
     fn from_choice_indices_round_trips_non_default_audio_values() {
-        let original = AndroidSettings {
-            audio_muted: false,
-            master_volume_percent: 83,
-            latency_ms: 37,
-            sample_rate: 44_100,
-            vsync: true,
-            nes_filter: NesVideoFilter::None,
-        };
+        let registry = registry();
+        let mut original = android_settings(&default_snapshot(), &registry);
+        original.audio_muted = false;
+        original.master_volume_percent = 83;
+        original.latency_ms = 37;
+        original.sample_rate = 44_100;
+        original.vsync = true;
+        set_system_choice(&mut original, "video.filter", "none");
 
         let indices_str = original.current_indices().join(",");
-        let parsed = AndroidSettings::from_choice_indices(&indices_str).unwrap();
+        let parsed = AndroidSettings::from_choice_indices(&indices_str, &original).unwrap();
         assert_eq!(parsed, original);
     }
 
     #[test]
     fn from_choice_indices_rejects_out_of_range() {
-        assert!(AndroidSettings::from_choice_indices("0,101,1,1,1,1").is_none());
-        assert!(AndroidSettings::from_choice_indices("0,4,191,1,1,1").is_none());
-        assert!(AndroidSettings::from_choice_indices("2,4,1,1,1,1").is_none());
-        assert!(AndroidSettings::from_choice_indices("0,4,1,1,2,1").is_none());
+        let registry = registry();
+        let current = android_settings(&default_snapshot(), &registry);
+        assert!(AndroidSettings::from_choice_indices("0,101,1,1,1,1,0", &current).is_none());
+        assert!(AndroidSettings::from_choice_indices("0,4,191,1,1,1,0", &current).is_none());
+        assert!(AndroidSettings::from_choice_indices("2,4,1,1,1,1,0", &current).is_none());
+        assert!(AndroidSettings::from_choice_indices("0,4,1,1,2,1,0", &current).is_none());
     }
 
     #[test]
     fn dialog_choices_cover_full_android_audio_range() {
-        let choices = AndroidSettings::dialog_choices();
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let choices = android.dialog_choices();
         let volume_choices: Vec<_> = choices[1].split('\t').collect();
         let latency_choices: Vec<_> = choices[2].split('\t').collect();
         let sample_rate_choices: Vec<_> = choices[3].split('\t').collect();
@@ -686,17 +763,20 @@ mod tests {
 
     #[test]
     fn from_choice_indices_rejects_wrong_length() {
-        assert!(AndroidSettings::from_choice_indices("0,4,1,1,1").is_none()); // too short
-        assert!(AndroidSettings::from_choice_indices("0,4,1,1,1,1,0").is_none()); // too long
+        let registry = registry();
+        let current = android_settings(&default_snapshot(), &registry);
+        assert!(AndroidSettings::from_choice_indices("0,4,1,1,1", &current).is_none());
+        assert!(AndroidSettings::from_choice_indices("0,4,1,1,1,1,0,0", &current).is_none());
     }
 
     #[test]
     fn dialog_arrays_are_consistent_length() {
-        let n = AndroidSettings::dialog_keys().len();
-        assert_eq!(AndroidSettings::dialog_labels().len(), n);
-        assert_eq!(AndroidSettings::dialog_choices().len(), n);
         let snapshot = default_snapshot();
-        let android = AndroidSettings::from_snapshot(&snapshot);
+        let registry = registry();
+        let android = android_settings(&snapshot, &registry);
+        let n = android.dialog_keys().len();
+        assert_eq!(android.dialog_labels().len(), n);
+        assert_eq!(android.dialog_choices().len(), n);
         assert_eq!(android.current_indices().len(), n);
     }
 }

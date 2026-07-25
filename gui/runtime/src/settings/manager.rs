@@ -12,10 +12,10 @@ use nerust_gui_settings::{
 use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{
-    SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
+    SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
     apply::{validate_local_settings, validate_shared_settings},
     persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
-    store::{load_snapshot, save_snapshot_store, settings_paths},
+    store::{load_settings, save_snapshot_store, settings_paths},
 };
 
 #[derive(Clone, Debug)]
@@ -27,6 +27,7 @@ pub struct SettingsManager {
 struct SettingsState {
     defaults: SettingsSnapshot,
     current: SettingsSnapshot,
+    document: SettingsDocument,
     store: SettingsStore,
 }
 
@@ -51,11 +52,12 @@ impl SettingsManager {
             local: local_defaults,
             app_state: app_state_defaults,
         };
-        let current = load_snapshot(&paths.settings_file, &defaults);
+        let (current, document) = load_settings(&paths.settings_file, &defaults);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
                 current,
+                document,
                 store: SettingsStore::FileBacked(paths),
             })),
         })
@@ -103,11 +105,12 @@ impl SettingsManager {
         paths: SettingsPaths,
         defaults: &SettingsSnapshot,
     ) -> Result<Self, SettingsError> {
-        let current = load_snapshot(&paths.settings_file, defaults);
+        let (current, document) = load_settings(&paths.settings_file, defaults);
         Ok(Self {
             inner: Arc::new(RwLock::new(SettingsState {
                 defaults: defaults.clone(),
                 current,
+                document,
                 store: SettingsStore::FileBacked(paths),
             })),
         })
@@ -125,6 +128,8 @@ impl SettingsManager {
         };
         Self {
             inner: Arc::new(RwLock::new(SettingsState {
+                document: SettingsDocument::from_snapshot(&defaults)
+                    .expect("serializing validated default settings should succeed"),
                 current: defaults.clone(),
                 defaults,
                 store: SettingsStore::Ephemeral,
@@ -169,8 +174,10 @@ impl SettingsManager {
             .inner
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
-        save_snapshot_store(&guard.store, &snapshot)?;
+        let document = guard.document.updated_with(&snapshot)?;
+        save_snapshot_store(&guard.store, &document)?;
         guard.current = snapshot;
+        guard.document = document;
         Ok(())
     }
 
@@ -179,13 +186,14 @@ impl SettingsManager {
             .inner
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
-        let loaded = match &guard.store {
+        let (loaded, document) = match &guard.store {
             SettingsStore::FileBacked(paths) => {
-                load_snapshot(&paths.settings_file, &guard.defaults)
+                load_settings(&paths.settings_file, &guard.defaults)
             }
-            SettingsStore::Ephemeral => guard.current.clone(),
+            SettingsStore::Ephemeral => (guard.current.clone(), guard.document.clone()),
         };
         guard.current = loaded.clone();
+        guard.document = document;
         Ok(loaded)
     }
 
@@ -211,7 +219,7 @@ impl SettingsManager {
 
     pub fn resolve_persistence_paths(
         &self,
-        system: SystemId,
+        system: &dyn SystemId,
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
@@ -227,7 +235,7 @@ impl SettingsManager {
 
     pub fn resolve_persistence_paths_with_import(
         &self,
-        system: SystemId,
+        system: &dyn SystemId,
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
@@ -245,9 +253,8 @@ impl SettingsManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs};
+    use std::{collections::HashMap, fs};
 
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_settings::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
@@ -258,6 +265,8 @@ mod tests {
     };
     use nerust_keyboard::Key;
     use nerust_nes_settings::NesVideoFilter;
+
+    use crate::test::DummySystemId;
 
     use super::{
         super::{SettingsPaths, test_local_defaults, test_root, test_shared_defaults},
@@ -273,7 +282,7 @@ mod tests {
         );
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.input = InputSettings {
-            systems: BTreeMap::from([(SystemId::new("nes"), {
+            systems: HashMap::from([(Box::new(DummySystemId) as Box<_>, {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
                     IMPLICIT_PROFILE_ID.to_string(),
@@ -321,7 +330,7 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
@@ -338,6 +347,134 @@ mod tests {
         .unwrap();
 
         assert_eq!(reloaded, snapshot);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_registered_system_settings_are_seeded_from_defaults() {
+        let root = test_root("missing-system-settings");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let paths = SettingsPaths::from_root(root.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.systems.clear();
+        snapshot.shared.input.systems.clear();
+        manager.save_snapshot(snapshot).unwrap();
+        drop(manager);
+
+        let reloaded = SettingsManager::load_with_paths(
+            paths,
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap()
+        .snapshot()
+        .unwrap();
+
+        assert!(
+            reloaded
+                .shared
+                .systems
+                .contains_key(&(Box::new(DummySystemId) as Box<_>))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unknown_system_settings_survive_load_and_save() {
+        let root = test_root("unknown-system-settings");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let paths = SettingsPaths::from_root(root.clone());
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let mut snapshot = manager.snapshot().unwrap();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        snapshot.app_state.controller_assignments.insert(
+            Box::new(DummySystemId),
+            vec![("known.slot".into(), Some("known.controller".into()))],
+        );
+        manager.save_snapshot(snapshot).unwrap();
+        drop(manager);
+
+        let contents = fs::read_to_string(&paths.settings_file).unwrap();
+        let contents = contents
+            .replace(
+                "    systems: {}",
+                "    systems:\n      ? sid: future::InputSystemId\n      : keyboard_profiles:\n          preserved:\n            bindings: []\n        controller_profiles: {}",
+            )
+            .replace(
+                "  systems:\n    ? sid:",
+                "  systems:\n    ? sid: future::SystemId\n    : system: FutureSettings\n      preserved: true\n    ? sid:",
+            )
+            .replace(
+                "  controller_assignments:\n    ? sid:",
+                "  controller_assignments:\n    ? sid: future::ControllerSystemId\n    : preserved_controller: true\n    ? sid:",
+            );
+        fs::write(&paths.settings_file, contents).unwrap();
+
+        let manager = SettingsManager::load_with_paths(
+            paths.clone(),
+            test_shared_defaults(),
+            test_local_defaults(),
+            DesktopAppState::default(),
+        )
+        .unwrap();
+        let mut snapshot = manager.snapshot().unwrap();
+        assert_eq!(snapshot.shared.general.language, AppLanguage::Japanese);
+        assert!(
+            snapshot
+                .shared
+                .systems
+                .contains_key(&(Box::new(DummySystemId) as Box<_>))
+        );
+        assert!(
+            snapshot
+                .app_state
+                .controller_assignments
+                .contains_key(&(Box::new(DummySystemId) as Box<_>))
+        );
+
+        snapshot.local.audio.muted = true;
+        snapshot
+            .shared
+            .systems
+            .remove(&(Box::new(DummySystemId) as Box<_>));
+        snapshot
+            .app_state
+            .controller_assignments
+            .remove(&(Box::new(DummySystemId) as Box<_>));
+        manager.save_snapshot(snapshot).unwrap();
+
+        let saved = fs::read_to_string(&paths.settings_file).unwrap();
+        assert!(saved.contains("sid: future::SystemId"));
+        assert!(saved.contains("system: FutureSettings"));
+        assert!(saved.contains("preserved: true"));
+        assert!(saved.contains("sid: future::InputSystemId"));
+        assert!(saved.contains("preserved:"));
+        assert!(saved.contains("sid: future::ControllerSystemId"));
+        assert!(saved.contains("preserved_controller: true"));
+        assert!(!saved.contains("sid: dummy"));
+
+        let reloaded = manager.reload().unwrap();
+        assert_eq!(reloaded.shared.general.language, AppLanguage::Japanese);
+        assert!(reloaded.local.audio.muted);
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -423,7 +560,7 @@ mod tests {
         let nes_settings = snap
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes_settings.video.filter = NesVideoFilter::NtscRgb;
@@ -441,7 +578,7 @@ mod tests {
         let _nes2 = snap2
             .shared
             .systems
-            .get(&SystemId::new("nes"))
+            .get(&(Box::new(DummySystemId) as Box<_>))
             .and_then(|s| s.downcast_ref::<nerust_nes_settings::NesSettings>())
             .unwrap();
         assert_eq!(

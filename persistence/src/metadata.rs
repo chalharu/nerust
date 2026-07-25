@@ -1,3 +1,5 @@
+mod legacy_nes;
+
 use std::{
     io::{Read, Seek},
     time::SystemTime,
@@ -11,7 +13,7 @@ use crate::{error::PersistenceError, time::unix_millis};
 pub(crate) const METADATA_ENTRY: &str = "metadata.msgpack";
 pub(crate) const STATE_ENTRY: &str = "state.bin";
 pub(crate) const THUMBNAIL_ENTRY: &str = "thumbnail.png";
-pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 2;
+pub(crate) const STATE_ARCHIVE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct StateArchiveMetadata {
@@ -19,7 +21,7 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) slot_id: u64,
     pub(crate) saved_at_unix_ms: u64,
     pub(crate) has_thumbnail: bool,
-    pub(crate) system_id: SystemId,
+    pub(crate) system_id: Box<dyn SystemId>,
     #[serde(with = "serde_bytes")]
     pub(crate) identity_bytes: Vec<u8>,
     #[serde(with = "serde_bytes")]
@@ -27,162 +29,13 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) emulator_version: String,
 }
 
-// ---------------------------------------------------------------------------
-// v1 backward compat — deserialize old format and convert to v2
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub(crate) struct StateArchiveMetadataV1 {
-    pub(crate) schema_version: u32,
-    pub(crate) slot_id: u64,
-    pub(crate) saved_at_unix_ms: u64,
-    pub(crate) has_thumbnail: bool,
-    pub(crate) system_id: SystemId,
-    pub(crate) mapper_type: u32,
-    pub(crate) sub_mapper_type: u32,
-    pub(crate) prg_rom_crc64: u64,
-    pub(crate) chr_rom_crc64: u64,
-    pub(crate) trainer_crc64: u64,
-    pub(crate) emulator_version: String,
-    pub(crate) rom_format: u32,
-    pub(crate) mirror_mode_kind: u32,
-    #[serde(with = "serde_bytes")]
-    pub(crate) mirror_mode_custom_lut: Vec<u8>,
-    pub(crate) has_battery: bool,
-    pub(crate) trainer_len: u64,
-    pub(crate) prg_rom_len: u64,
-    pub(crate) chr_rom_len: u64,
-    pub(crate) prg_ram_len: u64,
-    pub(crate) save_prg_ram_len: u64,
-    pub(crate) chr_ram_len: u64,
-    pub(crate) save_chr_ram_len: u64,
-}
-
-impl Default for StateArchiveMetadataV1 {
-    fn default() -> Self {
-        Self {
-            schema_version: 1,
-            slot_id: 0,
-            saved_at_unix_ms: 0,
-            has_thumbnail: false,
-            system_id: default_system_id(),
-            mapper_type: 0,
-            sub_mapper_type: 0,
-            prg_rom_crc64: 0,
-            chr_rom_crc64: 0,
-            trainer_crc64: 0,
-            emulator_version: String::new(),
-            rom_format: 0,
-            mirror_mode_kind: 0,
-            mirror_mode_custom_lut: Vec::new(),
-            has_battery: false,
-            trainer_len: 0,
-            prg_rom_len: 0,
-            chr_rom_len: 0,
-            prg_ram_len: 0,
-            save_prg_ram_len: 0,
-            chr_ram_len: 0,
-            save_chr_ram_len: 0,
-        }
-    }
-}
-
-#[derive(serde::Serialize)]
-enum RomFormatConv {
-    INes,
-    Nes20,
-}
-
-#[derive(serde::Serialize)]
-enum MirrorModeConv {
-    Horizontal,
-    Vertical,
-    Single0,
-    Single1,
-    Four,
-    Custom([u8; 4]),
-}
-
-/// Struct matching the serde field names of `nes_core::rom_identity::RomIdentity`
-/// so that v1→v2 conversion produces the same `identity_bytes` as a freshly loaded ROM.
-#[derive(serde::Serialize)]
-struct V1RomIdentity {
-    format: RomFormatConv,
-    mapper_type: u16,
-    sub_mapper_type: u8,
-    mirror_mode: MirrorModeConv,
-    has_battery: bool,
-    trainer_len: usize,
-    prg_rom_len: usize,
-    chr_rom_len: usize,
-    prg_ram_len: usize,
-    save_prg_ram_len: usize,
-    chr_ram_len: usize,
-    save_chr_ram_len: usize,
-    prg_rom_crc64: u64,
-    chr_rom_crc64: u64,
-    trainer_crc64: u64,
-}
-
-pub(crate) fn convert_v1_to_v2(
-    v1: StateArchiveMetadataV1,
-) -> Result<StateArchiveMetadata, PersistenceError> {
-    let mirror_mode = match (v1.mirror_mode_kind, v1.mirror_mode_custom_lut.as_slice()) {
-        (0, _) => MirrorModeConv::Horizontal,
-        (1, _) => MirrorModeConv::Vertical,
-        (2, _) => MirrorModeConv::Single0,
-        (3, _) => MirrorModeConv::Single1,
-        (4, _) => MirrorModeConv::Four,
-        (5, lut) if lut.len() == 4 => {
-            let mut arr = [0u8; 4];
-            arr.copy_from_slice(lut);
-            MirrorModeConv::Custom(arr)
-        }
-        _ => MirrorModeConv::Horizontal,
-    };
-    let format = match v1.rom_format {
-        0 => RomFormatConv::INes,
-        1 => RomFormatConv::Nes20,
-        _ => RomFormatConv::INes,
-    };
-    let identity = V1RomIdentity {
-        format,
-        mapper_type: v1.mapper_type as u16,
-        sub_mapper_type: v1.sub_mapper_type as u8,
-        mirror_mode,
-        has_battery: v1.has_battery,
-        trainer_len: v1.trainer_len as usize,
-        prg_rom_len: v1.prg_rom_len as usize,
-        chr_rom_len: v1.chr_rom_len as usize,
-        prg_ram_len: v1.prg_ram_len as usize,
-        save_prg_ram_len: v1.save_prg_ram_len as usize,
-        chr_ram_len: v1.chr_ram_len as usize,
-        save_chr_ram_len: v1.save_chr_ram_len as usize,
-        prg_rom_crc64: v1.prg_rom_crc64,
-        chr_rom_crc64: v1.chr_rom_crc64,
-        trainer_crc64: v1.trainer_crc64,
-    };
-    let identity_bytes = rmp_serde::to_vec_named(&identity)
-        .map_err(|e| PersistenceError::Validation(format!("v1 identity encoding failed: {e}")))?;
-    Ok(StateArchiveMetadata {
-        schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
-        slot_id: v1.slot_id,
-        saved_at_unix_ms: v1.saved_at_unix_ms,
-        has_thumbnail: v1.has_thumbnail,
-        system_id: v1.system_id,
-        identity_bytes,
-        options_bytes: Vec::new(),
-        emulator_version: v1.emulator_version,
-    })
-}
-
-const fn default_system_id() -> SystemId {
-    SystemId::new("nes")
+#[derive(serde::Deserialize)]
+struct SchemaVersion {
+    schema_version: u32,
 }
 
 // ---------------------------------------------------------------------------
-// v2 read/write
+// Current read/write
 // ---------------------------------------------------------------------------
 
 pub(crate) fn read_metadata<R: Read + Seek>(
@@ -194,31 +47,21 @@ pub(crate) fn read_metadata<R: Read + Seek>(
     let metadata_bytes =
         crate::fs_ops::read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
 
-    // Try v2.
-    if let Ok(meta) = rmp_serde::from_slice::<StateArchiveMetadata>(metadata_bytes.as_slice()) {
-        if meta.schema_version == STATE_ARCHIVE_SCHEMA_VERSION {
-            return Ok(meta);
-        }
-        return Err(PersistenceError::Validation(format!(
-            "unsupported state archive schema version: {}",
-            meta.schema_version
-        )));
+    let version = rmp_serde::from_slice::<SchemaVersion>(&metadata_bytes).map_err(|_| {
+        PersistenceError::Validation("unrecognized state archive metadata format".into())
+    })?;
+    match version.schema_version {
+        STATE_ARCHIVE_SCHEMA_VERSION => match rmp_serde::from_slice(&metadata_bytes) {
+            Ok(metadata) => Ok(metadata),
+            Err(error) => legacy_nes::decode_mistagged_v3(&metadata_bytes)?
+                .ok_or_else(|| PersistenceError::from(error)),
+        },
+        2 => legacy_nes::decode_v2(&metadata_bytes),
+        1 => legacy_nes::decode_v1(&metadata_bytes),
+        version => Err(PersistenceError::Validation(format!(
+            "unsupported state archive schema version: {version}"
+        ))),
     }
-
-    // Fall back to v1 conversion.
-    if let Ok(v1) = rmp_serde::from_slice::<StateArchiveMetadataV1>(metadata_bytes.as_slice()) {
-        if v1.schema_version == 1 {
-            return convert_v1_to_v2(v1);
-        }
-        return Err(PersistenceError::Validation(format!(
-            "unsupported state archive schema version: {}",
-            v1.schema_version
-        )));
-    }
-
-    Err(PersistenceError::Validation(
-        "unrecognized state archive metadata format".into(),
-    ))
 }
 
 pub(crate) fn encode_slot_metadata(
@@ -232,7 +75,7 @@ pub(crate) fn encode_slot_metadata(
         slot_id,
         saved_at_unix_ms: unix_millis(saved_at)?,
         has_thumbnail,
-        system_id: identity.system_id,
+        system_id: identity.system_id.clone(),
         identity_bytes: identity.identity_bytes.clone(),
         options_bytes: Vec::new(),
         emulator_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -243,5 +86,7 @@ pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
     identity: &SystemIdentity,
 ) -> bool {
-    metadata.system_id == identity.system_id && metadata.identity_bytes == identity.identity_bytes
+    (metadata.system_id == identity.system_id
+        || legacy_nes::matches_system_id(metadata.system_id.as_ref(), identity.system_id.as_ref()))
+        && metadata.identity_bytes == identity.identity_bytes
 }

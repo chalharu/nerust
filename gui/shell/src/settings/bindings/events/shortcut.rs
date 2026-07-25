@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn shortcuts_resolve_to_session_commands() {
-        let settings = default_shared_settings();
+        let settings = default_shared_settings(&[]);
 
         assert_eq!(
             shortcut_command_for_key(&settings, Key::F5),
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn fullscreen_shortcut_is_exposed_as_action() {
-        let settings = default_shared_settings();
+        let settings = default_shared_settings(&[]);
 
         assert_eq!(
             shortcut_action_for_key(&settings, Key::F11),

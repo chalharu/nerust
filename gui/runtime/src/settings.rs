@@ -1,14 +1,17 @@
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 #[cfg(test)]
-use std::{collections::BTreeMap, env};
+use std::{collections::HashMap, env};
 
 #[cfg(test)]
-use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_core_traits::identity::SystemIdentity;
 use nerust_gui_settings::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
 #[cfg(test)]
 use nerust_nes_settings::NesSettings;
+
+#[cfg(test)]
+use crate::test::DummySystemId;
 
 pub mod apply;
 pub mod manager;
@@ -87,6 +90,136 @@ pub struct SettingsSnapshot {
     pub app_state: DesktopAppState,
 }
 
+/// Lossless Serde representation of the settings file.
+///
+/// Unlike `SettingsSnapshot`, this retains entries that the running build does
+/// not know how to interpret, such as settings for an unavailable system.
+#[derive(Debug, Clone)]
+pub(super) struct SettingsDocument {
+    value: serde_value::Value,
+    known_system_keys: BTreeSet<serde_value::Value>,
+    known_input_system_keys: BTreeSet<serde_value::Value>,
+}
+
+impl SettingsDocument {
+    pub(super) fn from_snapshot(snapshot: &SettingsSnapshot) -> Result<Self, SettingsError> {
+        let value = serde_value::to_value(snapshot)
+            .map_err(|error| SettingsError::Serialize(Box::new(error)))?;
+        Ok(Self::from_value_with_known_systems(value, snapshot))
+    }
+
+    pub(super) fn from_value_with_known_systems(
+        value: serde_value::Value,
+        known: &SettingsSnapshot,
+    ) -> Self {
+        let known_value =
+            serde_value::to_value(known).expect("serializing validated settings should succeed");
+        Self {
+            value,
+            known_system_keys: map_keys_at_path(&known_value, &["shared", "systems"]),
+            known_input_system_keys: map_keys_at_path(
+                &known_value,
+                &["shared", "input", "systems"],
+            ),
+        }
+    }
+
+    pub(super) fn value(&self) -> &serde_value::Value {
+        &self.value
+    }
+
+    pub(super) fn into_snapshot(self) -> Result<SettingsSnapshot, serde_value::DeserializerError> {
+        self.value.deserialize_into()
+    }
+
+    pub(super) fn updated_with(&self, snapshot: &SettingsSnapshot) -> Result<Self, SettingsError> {
+        let mut updated = Self::from_snapshot(snapshot)?;
+        updated
+            .known_system_keys
+            .extend(self.known_system_keys.iter().cloned());
+        updated
+            .known_input_system_keys
+            .extend(self.known_input_system_keys.iter().cloned());
+        preserve_unknown_map_entries(
+            &self.value,
+            &mut updated.value,
+            &["shared", "systems"],
+            &updated.known_system_keys,
+        );
+        preserve_unknown_map_entries(
+            &self.value,
+            &mut updated.value,
+            &["shared", "input", "systems"],
+            &updated.known_input_system_keys,
+        );
+        preserve_unknown_map_entries(
+            &self.value,
+            &mut updated.value,
+            &["app_state", "controller_assignments"],
+            &updated.known_system_keys,
+        );
+        Ok(updated)
+    }
+}
+
+fn preserve_unknown_map_entries(
+    source: &serde_value::Value,
+    destination: &mut serde_value::Value,
+    path: &[&str],
+    known_keys: &BTreeSet<serde_value::Value>,
+) {
+    let Some(serde_value::Value::Map(source_map)) = value_at_path(source, path) else {
+        return;
+    };
+    let Some(serde_value::Value::Map(destination_map)) = value_at_path_mut(destination, path)
+    else {
+        return;
+    };
+    for (key, value) in source_map {
+        if known_keys.contains(key) {
+            continue;
+        }
+        destination_map
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
+}
+
+fn map_keys_at_path(value: &serde_value::Value, path: &[&str]) -> BTreeSet<serde_value::Value> {
+    match value_at_path(value, path) {
+        Some(serde_value::Value::Map(map)) => map.keys().cloned().collect(),
+        _ => BTreeSet::new(),
+    }
+}
+
+fn value_at_path<'a>(
+    value: &'a serde_value::Value,
+    path: &[&str],
+) -> Option<&'a serde_value::Value> {
+    path.iter().try_fold(value, |current, segment| {
+        let serde_value::Value::Map(map) = current else {
+            return None;
+        };
+        map.get(&serde_value::Value::String((*segment).to_string()))
+    })
+}
+
+fn value_at_path_mut<'a>(
+    value: &'a mut serde_value::Value,
+    path: &[&str],
+) -> Option<&'a mut serde_value::Value> {
+    let Some((segment, remaining)) = path.split_first() else {
+        return Some(value);
+    };
+    let serde_value::Value::Map(map) = value else {
+        return None;
+    };
+    value_at_path_mut(
+        map.get_mut(&serde_value::Value::String((*segment).to_string()))?,
+        remaining,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SettingsApplyPlan {
     pub language_changed: bool,
@@ -130,14 +263,14 @@ pub(crate) fn gtk_caps() -> HostBackendCapabilities {
 
 #[cfg(test)]
 pub(crate) fn test_system_identity() -> SystemIdentity {
-    SystemIdentity::new(SystemId::new("nes"), vec![4, 1, 0x11, 0x22, 0x33])
+    SystemIdentity::new(Box::new(DummySystemId), vec![4, 1, 0x11, 0x22, 0x33])
 }
 
 #[cfg(test)]
 pub(crate) fn test_shared_defaults() -> DesktopSharedSettings {
     DesktopSharedSettings {
-        systems: BTreeMap::from([(
-            SystemId::new("nes"),
+        systems: HashMap::from([(
+            Box::new(DummySystemId) as Box<_>,
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()

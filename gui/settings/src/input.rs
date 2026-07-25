@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, DigitalControlId};
@@ -9,7 +9,7 @@ pub const IMPLICIT_PROFILE_ID: &str = "default";
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InputSettings {
-    pub systems: BTreeMap<SystemId, SystemInputSettings>,
+    pub systems: HashMap<Box<dyn SystemId>, SystemInputSettings>,
     pub shortcuts: ShortcutSettings,
 }
 

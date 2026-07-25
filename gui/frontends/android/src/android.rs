@@ -26,10 +26,13 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_shell::session::{
-    SessionError, SessionHandle,
-    access::{FrontendSession, SettingsResult},
-    commands::{SessionCommand, SessionCommandOutcome},
+use nerust_gui_shell::{
+    registry::SystemRegistry,
+    session::{
+        SessionError, SessionHandle,
+        access::{FrontendSession, SettingsResult},
+        commands::{SessionCommand, SessionCommandOutcome},
+    },
 };
 use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
 use nerust_render_traits::{
@@ -209,12 +212,12 @@ impl AndroidFrontend {
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
-            core_factory,
+            Arc::new(SystemRegistry::new(vec![core_factory])),
             audio_registry,
             settings_paths,
         )
         .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
+            log::error!("fatal: session creation failed — settings I/O may be corrupted: {e}");
             std::process::abort();
         });
         let restore_pending = storage.has_restore_pending();
@@ -251,7 +254,10 @@ impl AndroidFrontend {
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
     fn refresh_dialog_caches(&self) {
         library::update_cached_entries(self.storage.rom_library.entries());
-        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
         settings::update_cached_settings(&current);
     }
 
@@ -276,18 +282,36 @@ impl AndroidFrontend {
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
-        let options = self.session.default_load_options();
-        let system_id = self.session.factory().system_id();
+
+        let (factory, system_id) = {
+            let f = self
+                .session
+                .registry()
+                .detect(&media)
+                .map_err(|e| format!("failed to detect ROM system: {e}"))?
+                .ok_or_else(|| "unsupported ROM format".to_string())?;
+            let id = f.system_id();
+            (f.clone(), id)
+        };
+
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(
+            &mut self.session,
+            system_id.as_ref(),
+        )
+        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+
+        let options = self
+            .session
+            .default_load_options()
+            .ok_or_else(|| "no active system".to_string())?;
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
-            &system_id,
+            system_id.as_ref(),
         );
-        let resolved = match self.session.factory().resolve_load_request(&view, options) {
-            Ok(r) => r,
-            Err(error) => {
-                return Err(format!("failed to start ROM {id} from library: {error}"));
-            }
-        };
+        let resolved = factory
+            .resolve_load_request(&view, options)
+            .map_err(|e| format!("failed to start ROM {id} from library: {e}"))?;
+
         if let Err(error) = self.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM {id} from library: {error}"));
         }
@@ -347,21 +371,38 @@ impl AndroidFrontend {
                 )
             })?;
         let media = MediaObject::new(Some(path), bytes);
-        let options = self.session.default_load_options();
-        let system_id = self.session.factory().system_id();
+
+        let (factory, system_id) = {
+            let f = self
+                .session
+                .registry()
+                .detect(&media)
+                .map_err(|e| format!("failed to detect ROM system: {e}"))?
+                .ok_or_else(|| "unsupported ROM format".to_string())?;
+            let id = f.system_id();
+            (f.clone(), id)
+        };
+
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(
+            &mut self.session,
+            system_id.as_ref(),
+        )
+        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+
+        let options = self
+            .session
+            .default_load_options()
+            .ok_or_else(|| "no active system".to_string())?;
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
-            &system_id,
+            system_id.as_ref(),
         );
-        let resolved = match self.session.factory().resolve_load_request(&view, options) {
-            Ok(r) => r,
-            Err(error) => {
-                return Err(format!(
-                    "failed to load imported Android ROM {}: {error}",
-                    entry.display_name
-                ));
-            }
-        };
+        let resolved = factory.resolve_load_request(&view, options).map_err(|e| {
+            format!(
+                "failed to load imported Android ROM {}: {e}",
+                entry.display_name
+            )
+        })?;
         if let Err(error) = self.session.load_resolved(media, resolved) {
             if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
                 log::error!(
@@ -400,12 +441,19 @@ impl AndroidFrontend {
             return;
         };
         log::info!("handle_settings_result: applying Android settings");
-        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw) else {
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
+        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw, &current) else {
             log::error!("Android settings dialog returned an unrecognisable result: {raw:?}");
             return;
         };
         let mut next = self.session.settings_snapshot().clone();
-        android_settings.apply_to_snapshot(&mut next);
+        if let Err(error) = android_settings.apply_to_snapshot(&mut next, self.session.registry()) {
+            log::error!("failed to update Android system settings: {error}");
+            return;
+        }
         match self.apply_settings(next) {
             Ok(result) => {
                 if result.renderer_needs_rebuild {
@@ -487,7 +535,10 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let current = AndroidSettings::from_snapshot(self.session.settings_snapshot());
+        let current = AndroidSettings::from_snapshot(
+            self.session.settings_snapshot(),
+            self.session.registry(),
+        );
         match settings::request_show_settings_dialog(&self.app, &current) {
             Ok(true) => {}
             Ok(false) => {
@@ -612,8 +663,12 @@ impl AndroidFrontend {
             .display_handle()
             .expect("failed to get display handle")
             .as_raw();
+        let Some(render_profile) = self.session.render_profile().cloned() else {
+            log::warn!("rebuild_renderer: no emulation core active");
+            return;
+        };
         let config = RendererConfig {
-            render_profile: self.session.render_profile().clone(),
+            render_profile,
             vsync,
         };
         let renderer_result = self
@@ -849,7 +904,11 @@ impl AndroidFrontend {
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
-        match renderer.render(self.session.frame_buffer()) {
+        let Some(fb) = self.session.frame_buffer() else {
+            self.shell.needs_redraw = false;
+            return;
+        };
+        match renderer.render(fb) {
             RenderResult::Presented => {
                 self.shell
                     .on_frame_presented(self.session.metrics().frame_counter);

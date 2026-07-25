@@ -8,7 +8,7 @@ use nerust_keyboard::Key;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
     Binding {
-        system: SystemId,
+        system: Box<dyn SystemId>,
         attachment: String,
         control: String,
     },
@@ -66,7 +66,7 @@ pub fn apply_capture_target(
                 .shared
                 .input
                 .systems
-                .entry(*system)
+                .entry(system.clone_box())
                 .or_default()
                 .implicit_keyboard_profile_mut();
             profile.bindings.retain(|binding| {
@@ -97,22 +97,19 @@ pub fn apply_capture_target(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::identity::SystemId;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::input::ShortcutAction;
     use nerust_keyboard::Key;
 
     use super::{CaptureTarget, apply_capture_target, current_binding_key};
     use crate::{
-        settings::defaults::seed::{
-            default_app_state, default_local_settings, default_shared_settings,
-        },
-        test_support::{TEST_ATT_P1, TEST_CTRL_A},
+        settings::defaults::seed::{default_app_state, default_local_settings},
+        test_support::{DummySystemId, TEST_ATT_P1, TEST_CTRL_A, test_nes_defaults},
     };
 
     fn snapshot() -> SettingsSnapshot {
         SettingsSnapshot {
-            shared: default_shared_settings(),
+            shared: test_nes_defaults(),
             local: default_local_settings(),
             app_state: default_app_state(),
         }
@@ -126,7 +123,7 @@ mod tests {
             current_binding_key(
                 &snapshot,
                 &CaptureTarget::Binding {
-                    system: SystemId::new("nes"),
+                    system: Box::new(DummySystemId),
                     attachment: TEST_ATT_P1.as_str().to_string(),
                     control: TEST_CTRL_A.as_str().to_string(),
                 }
@@ -139,7 +136,7 @@ mod tests {
     fn updates_existing_control_binding() {
         let mut snapshot = snapshot();
         let target = CaptureTarget::Binding {
-            system: SystemId::new("nes"),
+            system: Box::new(DummySystemId),
             attachment: TEST_ATT_P1.as_str().to_string(),
             control: TEST_CTRL_A.as_str().to_string(),
         };
