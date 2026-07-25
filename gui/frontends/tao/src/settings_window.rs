@@ -30,7 +30,7 @@ use tao::{
 };
 
 use crate::{
-    settings::ui::{Message, SettingsAppProgram},
+    settings::{Message, SettingsAppProgram},
     tao_conversions::*,
 };
 
@@ -286,7 +286,7 @@ impl SettingsWindowHandle {
             repeat: false,
             ..
         }) = &mapped
-            && let Some(key) = crate::settings::ui::keyboard_key_from_physical(*physical_key)
+            && let Some(key) = crate::settings::keyboard_key_from_physical(*physical_key)
         {
             messages.push(Message::CaptureKey(key));
         }
