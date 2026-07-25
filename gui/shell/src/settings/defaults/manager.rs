@@ -19,8 +19,8 @@ mod tests {
 
     use super::{default_app_state, default_local_settings};
     use crate::{
-        session::test_helpers::DummySystemId,
-        settings::defaults::{manager::current_or_default, seed::test_nes_defaults},
+        settings::defaults::manager::current_or_default,
+        test_support::{DummySystemId, test_nes_defaults},
     };
 
     #[test]

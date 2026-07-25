@@ -37,10 +37,9 @@ mod tests {
     use nerust_keyboard::Key;
 
     use super::controller_event_for_key;
-    use crate::{
-        session::test_helpers::DummySystemId,
-        settings::defaults::seed::test_nes_defaults,
-        test_support::{TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_A, TEST_CTRL_MIC, test_resolve},
+    use crate::test_support::{
+        DummySystemId, TEST_ATT_P1, TEST_ATT_P2, TEST_CTRL_A, TEST_CTRL_MIC, test_nes_defaults,
+        test_resolve,
     };
 
     #[test]

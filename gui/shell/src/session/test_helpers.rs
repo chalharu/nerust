@@ -9,7 +9,6 @@ use std::{
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreOptions,
     audio::{AudioBackend, AudioBackendRegistry},
-    declare_system_id,
     factory::{
         CoreFactory, FactoryError,
         load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
@@ -28,7 +27,9 @@ use nerust_render_traits::{
 };
 
 use super::SessionHandle;
-use crate::{load::RomLoadTarget, registry::SystemRegistry, settings::factory::settings_view};
+use crate::{load::RomLoadTarget, registry::SystemRegistry};
+
+pub(crate) use crate::test_support::{DummyOtherSystemId, DummySystemId};
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
 #[derive(
@@ -194,9 +195,6 @@ impl InputSystemFactory for MockInputFactory {
     }
 }
 
-declare_system_id!(DummySystemId, "dummy");
-declare_system_id!(DummyOtherSystemId, "other");
-
 pub(crate) struct MockFactory;
 impl CoreFactory for MockFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
@@ -354,7 +352,20 @@ pub(crate) fn test_rom_with_mapper4() -> Vec<u8> {
 
 pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
     let system_id = session.factory().expect("no active system").system_id();
-    settings_view(session.settings_snapshot(), system_id.as_ref())
+    let snapshot = session.settings_snapshot();
+    let language = match snapshot.shared.general.language {
+        nerust_gui_settings::language::AppLanguage::Japanese => {
+            nerust_core_traits::factory::settings::Language::Japanese
+        }
+        nerust_gui_settings::language::AppLanguage::English => {
+            nerust_core_traits::factory::settings::Language::English
+        }
+        _ => nerust_core_traits::factory::settings::Language::SystemDefault,
+    };
+    FactorySettingsView {
+        language,
+        system_config: snapshot.shared.systems.get(system_id.as_ref()).cloned(),
+    }
 }
 
 pub(crate) fn unique_temp_dir(label: &str) -> PathBuf {

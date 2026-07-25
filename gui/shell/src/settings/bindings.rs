@@ -60,10 +60,7 @@ mod tests {
     use nerust_keyboard::Key;
 
     use super::conflicting_keys;
-    use crate::{
-        session::test_helpers::DummySystemId, settings::defaults::seed::test_nes_defaults,
-        test_support::single_port_topology,
-    };
+    use crate::test_support::{DummySystemId, single_port_topology, test_nes_defaults};
 
     #[test]
     fn detects_conflicts_across_controls_and_shortcuts() {
