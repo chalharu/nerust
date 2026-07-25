@@ -3,8 +3,6 @@ pub mod commands;
 pub mod input;
 pub mod lifecycle;
 pub mod persistence;
-#[cfg(test)]
-pub(crate) mod test_helpers;
 pub mod title;
 
 use std::{
@@ -497,7 +495,7 @@ mod tests {
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
-    use super::test_helpers::*;
+    use crate::test_helpers::*;
     use crate::{
         load::{RomLoadTarget, SystemActivationError},
         registry::SystemRegistry,
@@ -764,7 +762,7 @@ mod tests {
 
     #[test]
     fn apply_settings_rebuilds_when_assignments_change() {
-        use crate::session::test_helpers::TEST_SLOT_P1;
+        use crate::test_helpers::TEST_SLOT_P1;
         let mut session = test_session();
         let prev_pairs = session.current_assignments.to_string_pairs();
 

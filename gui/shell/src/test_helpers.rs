@@ -26,7 +26,7 @@ use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
 
-use super::SessionHandle;
+use crate::session::SessionHandle;
 use crate::{load::RomLoadTarget, registry::SystemRegistry};
 
 pub(crate) use crate::test_support::{DummyOtherSystemId, DummySystemId};

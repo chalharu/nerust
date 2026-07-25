@@ -567,7 +567,7 @@ mod tests {
     use nerust_core_traits::factory::load::MediaObject;
     use nerust_persistence::slots::autosave_state_slot_path;
 
-    use super::super::test_helpers::*;
+    use crate::test_helpers::*;
 
     #[test]
     fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
