@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{Arc, Mutex, atomic::AtomicBool},
+};
 
 use iced::{Event, Point, Size, advanced::renderer, keyboard, mouse, theme};
 use iced_tiny_skia::{
@@ -16,7 +20,7 @@ use iced_winit::{
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
-use nerust_gui_shell::settings::editor::CaptureTarget;
+
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
@@ -143,7 +147,6 @@ pub(crate) struct SettingsWindowHandle {
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
     pub(crate) should_close: Arc<AtomicBool>,
-    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     cursor: mouse::Cursor,
     clipboard: Clipboard,
 }
@@ -184,7 +187,7 @@ impl SettingsWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
-        let capture_target = Arc::new(Mutex::new(None));
+        let view_invalidated = Rc::new(Cell::new(false));
 
         #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
         let mut wb = WindowBuilder::new()
@@ -209,7 +212,7 @@ impl SettingsWindowHandle {
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
-            capture_target: capture_target.clone(),
+            view_invalidated,
         };
         let (instance, _task) = program::Instance::new(program);
         let scale_factor = window.scale_factor() as f32;
@@ -254,7 +257,6 @@ impl SettingsWindowHandle {
             modifiers: keyboard::Modifiers::default(),
             pending_apply,
             should_close,
-            capture_target,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         })
@@ -263,19 +265,14 @@ impl SettingsWindowHandle {
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
         let mut messages = Vec::new();
 
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+            && let Some(key) = crate::settings::ui::keyboard_key_from_physical(*physical_key)
         {
-            let capture_guard = self.capture_target.lock().unwrap();
-            if capture_guard.is_some()
-                && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    physical_key,
-                    repeat: false,
-                    ..
-                }) = &mapped
-                && let Some(key) = crate::settings::ui::keyboard_key_from_physical(*physical_key)
-            {
-                drop(capture_guard);
-                messages.push(Message::CaptureKey(key));
-            }
+            messages.push(Message::CaptureKey(key));
         }
 
         self.ui_state.ui_mut().update(

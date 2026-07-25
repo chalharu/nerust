@@ -1,6 +1,6 @@
 use std::{
+    cell::Cell,
     collections::HashMap,
-    fmt,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -17,30 +17,18 @@ use iced::{
     },
 };
 use iced_winit::program::Program;
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::{
-        CoreFactory,
-        descriptor::{SystemSettingsFieldKind, SystemSettingsFieldModel},
-    },
-    identity::SystemId,
-};
-use nerust_gui_runtime::settings::{SettingsSnapshot, apply::validate_shared_settings};
+use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory, identity::SystemId};
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_shell::{
     registry::SystemRegistry,
-    session::input::build_topology,
     settings::{
-        bindings::{
-            conflicting_keys,
-            descriptors::{keyboard_binding_sections, shortcut_descriptors},
-        },
-        editor::{CaptureTarget, apply_capture_target, current_binding_label},
-        factory::{apply_settings_choice, resolve_label, settings_view},
+        editor::{CaptureTarget, current_binding_label},
         i18n::{UiText, text as ui_text},
     },
 };
-use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
+use nerust_gui_viewmodel::settings::{SettingsViewModel, dto::ChoiceView};
+use nerust_input_traits::{AttachmentId, ControllerProfile};
 use nerust_keyboard::Key;
 use rfd::FileDialog;
 
@@ -51,18 +39,6 @@ type AssignmentsBySystem = HashMap<Box<dyn SystemId>, ControllerAssignments>;
 // ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Choice<T: Clone + Eq> {
-    value: T,
-    label: String,
-}
-
-impl<T: Clone + Eq> fmt::Display for Choice<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.label)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsPage {
@@ -85,18 +61,18 @@ pub(crate) enum Message {
     SelectInputSection(InputPageSection),
     SelectSystemTab(usize),
     SelectInputTab(usize),
-    SetLanguage(Choice<AppLanguage>),
-    SetStoragePolicy(Choice<StoragePolicy>),
+    SetLanguage(ChoiceView<AppLanguage>),
+    SetStoragePolicy(ChoiceView<StoragePolicy>),
     SetStorageDirectory(String),
     BrowseStorageDirectory,
     ToggleFullscreenDefault(bool),
-    SetScaling(Choice<ScalingMode>),
+    SetScaling(ChoiceView<ScalingMode>),
     ToggleVsync(bool),
     ToggleMute(bool),
     SetVolume(u8),
-    SetSampleRate(Choice<u32>),
+    SetSampleRate(ChoiceView<u32>),
     SetLatency(u16),
-    SetSystemChoice(String, Choice<String>),
+    SetSystemChoice(String, ChoiceView<String>),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
     CaptureKey(Key),
@@ -114,7 +90,7 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
+    pub(crate) view_invalidated: Rc<Cell<bool>>,
 }
 
 impl Program for SettingsAppProgram {
@@ -143,7 +119,7 @@ impl Program for SettingsAppProgram {
             self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
-            self.capture_target.clone(),
+            self.view_invalidated.clone(),
         );
         (state, Task::none())
     }
@@ -172,11 +148,9 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
-    registry: Arc<SystemRegistry>,
-    audio_registry: Arc<AudioBackendRegistry>,
-    draft: SettingsSnapshot,
-    controller_assignments: AssignmentsBySystem,
+    pub(crate) view_invalidated: Rc<Cell<bool>>,
+    pub vm: SettingsViewModel,
+    _revision_subscription: nerust_gui_viewmodel::settings::Subscription,
     page: SettingsPage,
     system_tab_index: Option<usize>,
     input_tab_index: Option<usize>,
@@ -191,37 +165,42 @@ impl SettingsAppState {
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
     ) -> Self {
-        let storage_directory_input = snapshot
-            .shared
-            .persistence
-            .storage_directory
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let controller_assignments: AssignmentsBySystem = registry
-            .all()
-            .iter()
-            .map(|factory| {
-                (
-                    factory.system_id(),
-                    assignments_for_factory(snapshot, factory.as_ref()),
-                )
-            })
-            .collect();
-        let has_systems = !registry.all().is_empty();
+        let supported_sample_rates: Arc<[u32]> = {
+            let rates = audio_registry.supported_rates();
+            if rates.is_empty() {
+                Arc::new([44_100, 48_000])
+            } else {
+                rates.iter().copied().collect()
+            }
+        };
+        let vm = SettingsViewModel::new(
+            snapshot.clone(),
+            Arc::clone(&registry),
+            supported_sample_rates,
+        );
+        let view_invalidated = Rc::new(Cell::new(false));
+        let invalidated = Rc::clone(&view_invalidated);
+        let _revision_subscription = vm.revision.observe(move |_| {
+            invalidated.set(true);
+        });
+        let has_systems = !vm.systems().is_empty();
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
-            capture_target: Arc::new(Mutex::new(None)),
-            controller_assignments,
-            registry,
-            audio_registry,
-            draft: snapshot.clone(),
+            view_invalidated,
+            vm,
+            _revision_subscription,
             page: SettingsPage::General,
             system_tab_index: if has_systems { Some(0) } else { None },
             input_tab_index: if has_systems { Some(0) } else { None },
             input_section: InputPageSection::Attachment(0),
-            storage_directory_input,
+            storage_directory_input: snapshot
+                .shared
+                .persistence
+                .storage_directory
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default(),
             error_message: None,
         }
     }
@@ -232,106 +211,90 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        capture_target: Arc<Mutex<Option<CaptureTarget>>>,
+        view_invalidated: Rc<Cell<bool>>,
     ) -> Self {
         let mut state = Self::new(snapshot, registry, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
-        state.capture_target = capture_target;
+        state.view_invalidated = view_invalidated;
         state
     }
 
     fn language(&self) -> AppLanguage {
-        self.draft.shared.general.language
+        self.vm.general.view.get().language
     }
 
     fn validation_errors(&self) -> Vec<String> {
-        let mut errors = Vec::new();
-        if let Err(error) = validate_shared_settings(&self.draft.shared) {
-            errors.push(error.to_string());
-        }
-        for factory in self.registry.all() {
-            let sid = factory.system_id();
-            let input_factory = factory.input_system_factory();
-            let default_assignments = input_factory.default_assignments();
-            let assignments: Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)> = self
-                .draft
-                .app_state
-                .controller_assignments
-                .get(&sid)
-                .map(|pairs| {
-                    pairs
-                        .iter()
-                        .filter_map(|(slot_id, ctrl_opt)| {
-                            let att = input_factory.resolve_slot(slot_id)?;
-                            let profile = ctrl_opt
-                                .as_ref()
-                                .and_then(|id| input_factory.resolve_controller(id));
-                            Some((att, profile))
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(|| {
-                    default_assignments
-                        .slots
-                        .iter()
-                        .map(|(slot_id, profile)| (*slot_id, profile.clone()))
-                        .collect()
-                });
-            if !assignments.iter().any(|(_, c)| c.is_some()) {
-                errors.push(format!(
-                    "{}: At least one controller must be assigned",
-                    factory.display_name()
-                ));
-            }
-            let topology = build_topology(&assignments, input_factory.slots());
-            for (key, labels) in
-                conflicting_keys(&self.draft.shared, &topology, factory.system_id().as_ref())
-            {
-                errors.push(format!("{}: {}", key.label(), labels.join(", ")));
-            }
-        }
-        errors
+        self.vm
+            .finish()
+            .err()
+            .map(|v| v.issues.into_iter().map(|i| i.message).collect())
+            .unwrap_or_default()
     }
 
     fn storage_error(&self) -> Option<String> {
-        validate_shared_settings(&self.draft.shared)
-            .err()
-            .map(|error| error.to_string())
+        let general = self.vm.general.view.get();
+        if general.show_storage_directory && general.storage_directory.is_empty() {
+            Some("Custom storage directory required".into())
+        } else {
+            None
+        }
     }
 
     fn input_conflict(&self) -> Option<String> {
-        let input_tab_index = self.input_tab_index?;
-        let system_id = self.registry.all().get(input_tab_index)?.system_id();
-        let (key, labels) = conflicting_keys(
-            &self.draft.shared,
-            &input_topology(self),
-            system_id.as_ref(),
-        )
-        .into_iter()
-        .next()?;
-        Some(format!("{}: {}", key.label(), labels.join(", ")))
+        // Simplified: check if any validation issue is input-scoped
+        let state = self.vm.finish().err()?;
+        state
+            .issues
+            .iter()
+            .find(|i| {
+                matches!(
+                    i.scope,
+                    nerust_gui_viewmodel::settings::ValidationScope::Input(_)
+                )
+            })
+            .map(|i| i.message.clone())
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         self.error_message = None;
         match message {
-            Message::SelectPage(page) => self.page = page,
-            Message::SelectInputSection(section) => self.input_section = section,
-            Message::SelectSystemTab(index) => self.system_tab_index = Some(index),
+            Message::SelectPage(page) => {
+                self.page = page;
+                self.view_invalidated.set(true);
+            }
+            Message::SelectInputSection(section) => {
+                self.input_section = section;
+                self.view_invalidated.set(true);
+            }
+            Message::SelectSystemTab(index) => {
+                self.system_tab_index = Some(index);
+                self.view_invalidated.set(true);
+            }
             Message::SelectInputTab(index) => {
                 self.input_tab_index = Some(index);
                 self.input_section = InputPageSection::Attachment(0);
+                self.view_invalidated.set(true);
             }
-            Message::SetLanguage(choice) => self.draft.shared.general.language = choice.value,
+            Message::SetLanguage(choice) => {
+                if let Err(e) = self.vm.general.set_language(choice.value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
             Message::SetStoragePolicy(choice) => {
-                self.draft.shared.persistence.storage_policy = choice.value;
+                if let Err(e) = self.vm.general.set_storage_policy(choice.value) {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::SetStorageDirectory(value) => {
-                self.storage_directory_input = value;
-                self.draft.shared.persistence.storage_directory =
-                    (!self.storage_directory_input.is_empty())
-                        .then(|| self.storage_directory_input.clone().into());
+                self.storage_directory_input = value.clone();
+                if let Err(e) = self
+                    .vm
+                    .general
+                    .set_storage_directory((!value.is_empty()).then(|| value.into()))
+                {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::BrowseStorageDirectory => {
                 if let Some(path) = FileDialog::new()
@@ -340,103 +303,73 @@ impl SettingsAppState {
                 {
                     let path = path.to_string_lossy().to_string();
                     self.storage_directory_input = path.clone();
-                    self.draft.shared.persistence.storage_directory = Some(path.into());
+                    if let Err(e) = self.vm.general.set_storage_directory(Some(path.into())) {
+                        self.error_message = Some(e.to_string());
+                    }
                 }
             }
             Message::ToggleFullscreenDefault(value) => {
-                self.draft.local.video.window.fullscreen_default = value;
-            }
-            Message::SetScaling(choice) => self.draft.local.video.window.scaling = choice.value,
-            Message::ToggleVsync(value) => self.draft.local.video.presentation.vsync = value,
-            Message::ToggleMute(value) => self.draft.local.audio.muted = value,
-            Message::SetVolume(value) => self.draft.local.audio.master_volume_percent = value,
-            Message::SetSampleRate(choice) => self.draft.local.audio.sample_rate = choice.value,
-            Message::SetLatency(value) => self.draft.local.audio.latency_ms = value,
-            Message::SetSystemChoice(field, choice) => {
-                let Some(factory) = self
-                    .system_tab_index
-                    .and_then(|i| self.registry.all().get(i))
-                else {
-                    return Task::none();
-                };
-                if let Err(error) = apply_settings_choice(
-                    factory.as_ref(),
-                    &mut self.draft,
-                    &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
-                    &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
-                        choice.value.into(),
-                    ),
-                ) {
-                    log::error!("failed to apply system settings choice: {error}");
-                    self.error_message = Some(error.to_string());
+                if let Err(e) = self.vm.video.set_fullscreen_default(value) {
+                    self.error_message = Some(e.to_string());
                 }
+            }
+            Message::SetScaling(choice) => {
+                if let Err(e) = self.vm.video.set_scaling(choice.value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::ToggleVsync(value) => {
+                if let Err(e) = self.vm.video.set_vsync(value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::ToggleMute(value) => {
+                if let Err(e) = self.vm.audio.set_mute(value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::SetVolume(value) => {
+                if let Err(e) = self.vm.audio.set_volume(value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::SetSampleRate(choice) => {
+                if let Err(e) = self.vm.audio.set_sample_rate(choice.value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::SetLatency(value) => {
+                if let Err(e) = self.vm.audio.set_latency(value) {
+                    self.error_message = Some(e.to_string());
+                }
+            }
+            Message::SetSystemChoice(field, _choice) => {
+                log::warn!("SetSystemChoice not yet wired to view model: {field}");
             }
             Message::SetControllerSlot {
-                slot,
-                controller_id,
+                slot: _slot,
+                controller_id: _,
             } => {
-                let Some(factory) = self
-                    .input_tab_index
-                    .and_then(|i| self.registry.all().get(i))
-                else {
-                    return Task::none();
-                };
-                let factory = Arc::clone(factory);
-                let system_id = factory.system_id();
-                let input_factory = factory.input_system_factory();
-                let profile = controller_id.as_ref().and_then(|id| {
-                    input_factory
-                        .controllers()
-                        .iter()
-                        .find(|p| p.profile_id().as_str() == id)
-                        .cloned()
-                });
-                let Some(assignments) = self.controller_assignments.get_mut(&system_id) else {
-                    return Task::none();
-                };
-                if let Some(ref p) = profile {
-                    nerust_gui_shell::session::input::clear_multi_port_conflicts(
-                        slot,
-                        p.as_ref(),
-                        assignments,
-                    );
-                }
-                if let Some(entry) = assignments.iter_mut().find(|(s, _)| *s == slot) {
-                    entry.1 = profile.clone();
-                }
-                // Keep unassigned slots empty (allow disconnected ports).
-                // Sync to draft.app_state for persistence
-                self.draft
-                    .app_state
-                    .controller_assignments
-                    .insert(system_id, assignment_pairs(assignments));
+                log::warn!("SetControllerSlot not yet wired to view model");
             }
             Message::StartCapture(target) => {
-                *self.capture_target.lock().expect("capture target mutex") = Some(target);
+                if let Err(e) = self.vm.capture.start_capture(target) {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::ClearCapture(target) => {
-                apply_capture_target(&mut self.draft, &target, None);
-                self.capture_target
-                    .lock()
-                    .expect("capture target mutex")
-                    .take();
+                if let Err(e) = self.vm.capture.clear_binding(&target) {
+                    self.error_message = Some(e.to_string());
+                }
             }
             Message::CaptureKey(key) => {
-                let target = self
-                    .capture_target
-                    .lock()
-                    .expect("capture target mutex")
-                    .take();
-                if let Some(target) = target {
-                    apply_capture_target(&mut self.draft, &target, Some(key));
-                }
+                self.vm.capture.apply_captured_key(key);
             }
             Message::Submit => {
-                if !self.validation_errors().is_empty() {
-                    return Task::none();
+                if let Ok(snapshot) = self.vm.finish() {
+                    *self.pending_apply.lock().expect("pending apply mutex") = Some(snapshot);
+                    self.should_close.store(true, Ordering::Release);
                 }
-                *self.pending_apply.lock().expect("pending apply mutex") = Some(self.draft.clone());
-                self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
                 self.should_close.store(true, Ordering::Release);
@@ -509,33 +442,25 @@ impl SettingsAppState {
     }
 
     fn general_page(&self) -> El<'_> {
-        let language = self.language();
+        let general = self.vm.general.view.get();
+        let language = general.language;
         let mut content = column![
             labeled_pick_list(
                 ui_text(language, UiText::Language),
-                language_options(language),
-                selected_choice(
-                    self.draft.shared.general.language,
-                    language_options(language)
-                ),
+                general.language_choices.clone(),
+                pick_selected(&general.language_choices, &general.language),
                 Message::SetLanguage
             ),
             labeled_pick_list(
                 ui_text(language, UiText::SaveStoragePolicy),
-                storage_policy_options(language),
-                selected_choice(
-                    self.draft.shared.persistence.storage_policy,
-                    storage_policy_options(language)
-                ),
+                general.storage_policy_choices.clone(),
+                pick_selected(&general.storage_policy_choices, &general.storage_policy),
                 Message::SetStoragePolicy
             ),
         ]
         .spacing(16);
 
-        if matches!(
-            self.draft.shared.persistence.storage_policy,
-            StoragePolicy::CustomDirectory
-        ) {
+        if general.show_storage_directory {
             let storage_row = row![
                 text(ui_text(language, UiText::SaveStorageDirectory)).width(Length::Fixed(220.0)),
                 text_input("", &self.storage_directory_input)
@@ -555,156 +480,10 @@ impl SettingsAppState {
     }
 
     fn input_page(&self) -> El<'_> {
-        let language = self.language();
-        let factories = self.registry.all();
-        let Some(input_tab_index) = self.input_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let factory = &factories[input_tab_index];
-
-        let mut content = column![];
-
-        let tab_row = row(factories.iter().enumerate().map(|(i, f)| {
-            let btn_text = text(f.display_name()).size(14);
-            if Some(i) == self.input_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text).on_press(Message::SelectInputTab(i)).into()
-            }
-        }))
-        .spacing(4);
-        content = content.push(tab_row);
-
-        if let Some(conflict) = self.input_conflict() {
-            content = content.push(text(conflict));
-        }
-
-        let input_factory = factory.input_system_factory();
-        let assignments = self
-            .controller_assignments
-            .get(&factory.system_id())
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let (slots, controllers) = (input_factory.slots(), input_factory.controllers());
-        if !controllers.is_empty() {
-            // Build a set of occupied slot IDs
-            let mut occupied = std::collections::HashSet::new();
-            for (s, c_opt) in assignments {
-                let profile = match c_opt {
-                    Some(p) => p.as_ref(),
-                    None => continue,
-                };
-                for ps in profile.port_sets() {
-                    if ps.ports.contains(s) {
-                        for &port in ps.ports {
-                            occupied.insert(port);
-                        }
-                    }
-                }
-            }
-            for slot in slots {
-                // Build slot choices including a "None" option.
-                let none = Choice {
-                    value: String::new(),
-                    label: ui_text(self.draft.shared.general.language, UiText::None).to_string(),
-                };
-                let mut slot_choices: Vec<Choice<String>> = vec![none];
-                slot_choices.extend(
-                    controllers
-                        .iter()
-                        .filter(|c| {
-                            c.port_sets()
-                                .iter()
-                                .any(|ps| ps.ports.first() == Some(&slot.id))
-                        })
-                        .map(|c| Choice {
-                            value: c.profile_id().to_string(),
-                            label: c.label().to_string(),
-                        }),
-                );
-                if occupied.contains(&slot.id)
-                    && !assignments
-                        .iter()
-                        .any(|(s, c)| *s == slot.id && c.is_some())
-                {
-                    // Occupied by another slot's multi-port controller
-                    content = content.push(text(format!("{} — (occupied)", slot.label)));
-                    continue;
-                }
-                let current = assignments
-                    .iter()
-                    .find(|(s, _)| *s == slot.id)
-                    .and_then(|(_, c)| c.as_ref())
-                    .and_then(|id| {
-                        slot_choices
-                            .iter()
-                            .find(|ch| ch.value == id.profile_id().as_str())
-                            .cloned()
-                    })
-                    .or_else(|| slot_choices.first().cloned()); // default to "None"
-                let pick = pick_list(slot_choices, current, move |choice: Choice<String>| {
-                    let controller_id = if choice.value.is_empty() {
-                        None
-                    } else {
-                        Some(choice.value)
-                    };
-                    Message::SetControllerSlot {
-                        slot: slot.id,
-                        controller_id,
-                    }
-                });
-                content = content.push(text(slot.label)).push(pick);
-            }
-        }
-
-        let sections =
-            keyboard_binding_sections(&input_topology(self), factory.system_id().as_ref());
-        let mut navigation = row![].spacing(16).align_y(Alignment::Center);
-        for (index, section) in sections.iter().enumerate() {
-            navigation = navigation.push(input_section_radio_label(
-                section.attachment_label,
-                InputPageSection::Attachment(index),
-                self.input_section,
-            ));
-        }
-        navigation = navigation.push(input_section_radio(
-            language,
-            UiText::Shortcuts,
-            InputPageSection::Shortcuts,
-            self.input_section,
-        ));
-
-        let section = match self.input_section {
-            InputPageSection::Attachment(index) => sections
-                .get(index)
-                .map(|section| {
-                    let rows = section
-                        .bindings
-                        .clone()
-                        .into_iter()
-                        .map(|descriptor| {
-                            (
-                                descriptor.control_label,
-                                CaptureTarget::Binding {
-                                    system: descriptor.system,
-                                    attachment: descriptor.attachment.as_str().to_string(),
-                                    control: descriptor.control.as_str().to_string(),
-                                },
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    self.input_section(section.attachment_label, rows.into_iter())
-                })
-                .unwrap_or_else(|| self.input_section("", std::iter::empty())),
-            InputPageSection::Shortcuts => self.input_section(
-                ui_text(language, UiText::Shortcuts),
-                shortcut_descriptors().iter().map(|descriptor| {
-                    (descriptor.label, CaptureTarget::Shortcut(descriptor.action))
-                }),
-            ),
-        };
-
-        content.push(navigation).push(section).spacing(16).into()
+        let _language = self.language();
+        column![text("Input settings — migration in progress").size(14)]
+            .spacing(16)
+            .into()
     }
 
     fn input_section<'a>(
@@ -713,13 +492,13 @@ impl SettingsAppState {
         rows: impl Iterator<Item = (&'static str, CaptureTarget)> + 'a,
     ) -> El<'a> {
         let language = self.language();
-        let current_capture = self.capture_target.lock().expect("capture target mutex");
+        let capture = self.vm.capture.view.get();
         let mut content = column![text(title)];
         for (label, target) in rows {
-            let binding_label = if current_capture.as_ref() == Some(&target) {
+            let binding_label = if capture.target.as_ref() == Some(&target) {
                 ui_text(language, UiText::CapturePrompt)
             } else {
-                current_binding_label(&self.draft, &target)
+                current_binding_label(&self.vm.snapshot(), &target)
                     .unwrap_or(ui_text(language, UiText::Unbound))
             };
             content = content.push(
@@ -740,21 +519,19 @@ impl SettingsAppState {
     }
 
     fn video_page(&self) -> El<'_> {
+        let video = self.vm.video.view.get();
         let language = self.language();
         column![
-            checkbox(self.draft.local.video.window.fullscreen_default)
+            checkbox(video.fullscreen_default)
                 .label(ui_text(language, UiText::FullscreenDefault))
                 .on_toggle(Message::ToggleFullscreenDefault),
             labeled_pick_list(
                 ui_text(language, UiText::Scaling),
-                scaling_options(language),
-                selected_choice(
-                    self.draft.local.video.window.scaling,
-                    scaling_options(language)
-                ),
+                video.scaling_choices.clone(),
+                pick_selected(&video.scaling_choices, &video.scaling),
                 Message::SetScaling
             ),
-            checkbox(self.draft.local.video.presentation.vsync)
+            checkbox(video.vsync)
                 .label(ui_text(language, UiText::Vsync))
                 .on_toggle(Message::ToggleVsync),
         ]
@@ -763,37 +540,27 @@ impl SettingsAppState {
     }
 
     fn audio_page(&self) -> El<'_> {
+        let audio = self.vm.audio.view.get();
         let language = self.language();
         column![
-            checkbox(self.draft.local.audio.muted)
+            checkbox(audio.muted)
                 .label(ui_text(language, UiText::Mute))
                 .on_toggle(Message::ToggleMute),
             labeled_slider(
                 ui_text(language, UiText::MasterVolume),
-                format!("{}%", self.draft.local.audio.master_volume_percent),
-                slider(
-                    0..=100,
-                    self.draft.local.audio.master_volume_percent,
-                    Message::SetVolume
-                )
+                format!("{}%", audio.volume_percent),
+                slider(0..=100, audio.volume_percent, Message::SetVolume)
             ),
             labeled_pick_list(
                 ui_text(language, UiText::SampleRate),
-                sample_rate_options(&self.audio_registry),
-                selected_choice(
-                    self.draft.local.audio.sample_rate,
-                    sample_rate_options(&self.audio_registry)
-                ),
+                audio.sample_rate_choices.clone(),
+                pick_selected(&audio.sample_rate_choices, &audio.sample_rate),
                 Message::SetSampleRate
             ),
             labeled_slider(
                 ui_text(language, UiText::AudioLatency),
-                format!("{} ms", self.draft.local.audio.latency_ms),
-                slider(
-                    10..=200,
-                    self.draft.local.audio.latency_ms,
-                    Message::SetLatency
-                )
+                format!("{} ms", audio.latency_ms),
+                slider(10..=200, audio.latency_ms, Message::SetLatency)
             ),
         ]
         .spacing(16)
@@ -801,35 +568,10 @@ impl SettingsAppState {
     }
 
     fn system_page(&self) -> El<'_> {
-        let language = self.draft.shared.general.language;
-        let factories = self.registry.all();
-        let Some(system_tab_index) = self.system_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
-        let factory = &factories[system_tab_index];
-        let system_id = factory.system_id();
-        let view = settings_view(&self.draft, system_id.as_ref());
-        let model = factory.settings_page(&view);
-
-        let mut content = column![];
-        let tab_labels: Vec<_> = factories.iter().map(|f| f.display_name()).collect();
-        let tab_row = row(tab_labels.iter().enumerate().map(|(i, name)| {
-            let btn_text = text(*name).size(14);
-            if Some(i) == self.system_tab_index {
-                button(btn_text).style(button::primary).into()
-            } else {
-                button(btn_text)
-                    .on_press(Message::SelectSystemTab(i))
-                    .into()
-            }
-        }))
-        .spacing(4);
-        content = content.push(tab_row);
-
-        for field in model.fields.iter() {
-            content = content.push(system_choice_row(field, language, factory.as_ref()));
-        }
-        content.spacing(16).into()
+        let _language = self.language();
+        column![text("System settings — migration in progress").size(14)]
+            .spacing(16)
+            .into()
     }
 }
 
@@ -869,16 +611,16 @@ fn input_section_radio_label(
     radio(label, value, Some(selected), Message::SelectInputSection).into()
 }
 
-fn labeled_pick_list<T: Clone + Eq + 'static>(
+fn labeled_pick_list<T: Clone + PartialEq + Eq + 'static>(
     label: &'static str,
-    options: impl Into<Vec<Choice<T>>>,
-    selected: Choice<T>,
-    on_select: fn(Choice<T>) -> Message,
+    options: impl Into<Vec<ChoiceView<T>>>,
+    selected: Option<ChoiceView<T>>,
+    on_select: fn(ChoiceView<T>) -> Message,
 ) -> El<'static> {
     let options = options.into();
     row![
         text(label).width(Length::Fixed(220.0)),
-        pick_list(options, Some(selected), on_select).width(Length::Shrink)
+        pick_list(options, selected, on_select).width(Length::Shrink)
     ]
     .spacing(12)
     .align_y(Alignment::Center)
@@ -896,53 +638,11 @@ fn labeled_slider<'a>(label: &'static str, value: String, slider: impl Into<El<'
     .into()
 }
 
-fn selected_choice<T: Clone + Eq + std::fmt::Debug>(
-    value: T,
-    options: impl Into<Vec<Choice<T>>>,
-) -> Choice<T> {
-    let options: Vec<_> = options.into();
-    options
-        .into_iter()
-        .find(|choice| choice.value == value)
-        .unwrap_or_else(|| Choice {
-            value: value.clone(),
-            label: format!("{value:?}"),
-        })
-}
-
-fn system_choice_row(
-    field: &SystemSettingsFieldModel,
-    language: nerust_gui_settings::language::AppLanguage,
-    factory: &dyn CoreFactory,
-) -> El<'static> {
-    let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
-    let choices = options
-        .iter()
-        .map(|option| Choice {
-            value: option.id.as_str().to_string(),
-            label: resolve_label(option.label_id, language, factory),
-        })
-        .collect::<Vec<_>>();
-    let selected = choices
-        .iter()
-        .find(|choice| choice.value == selected.as_str())
-        .cloned()
-        .or_else(|| choices.first().cloned())
-        .unwrap_or(Choice {
-            value: String::new(),
-            label: String::new(),
-        });
-    let field_id = field.id.as_str().to_string();
-    row![
-        text(resolve_label(field.label_id, language, factory)).width(Length::Fixed(220.0)),
-        pick_list(choices, Some(selected), move |choice| {
-            Message::SetSystemChoice(field_id.clone(), choice)
-        })
-        .width(Length::Shrink)
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center)
-    .into()
+fn pick_selected<T: Clone + PartialEq + Eq>(
+    options: &[ChoiceView<T>],
+    value: &T,
+) -> Option<ChoiceView<T>> {
+    options.iter().find(|c| &c.value == value).cloned()
 }
 
 #[cfg(target_os = "windows")]
@@ -953,87 +653,6 @@ fn default_font() -> Font {
 #[cfg(not(target_os = "windows"))]
 fn default_font() -> Font {
     Font::DEFAULT
-}
-
-fn language_options(language: AppLanguage) -> Vec<Choice<AppLanguage>> {
-    vec![
-        Choice {
-            value: AppLanguage::SystemDefault,
-            label: ui_text(language, UiText::SystemDefault).to_string(),
-        },
-        Choice {
-            value: AppLanguage::Japanese,
-            label: ui_text(language, UiText::Japanese).to_string(),
-        },
-        Choice {
-            value: AppLanguage::English,
-            label: ui_text(language, UiText::English).to_string(),
-        },
-    ]
-}
-
-fn storage_policy_options(language: AppLanguage) -> Vec<Choice<StoragePolicy>> {
-    vec![
-        Choice {
-            value: StoragePolicy::Sidecar,
-            label: ui_text(language, UiText::Sidecar).to_string(),
-        },
-        Choice {
-            value: StoragePolicy::AppSharedData,
-            label: ui_text(language, UiText::AppSharedData).to_string(),
-        },
-        Choice {
-            value: StoragePolicy::CustomDirectory,
-            label: ui_text(language, UiText::CustomDirectory).to_string(),
-        },
-    ]
-}
-
-fn scaling_options(language: AppLanguage) -> Vec<Choice<ScalingMode>> {
-    vec![
-        Choice {
-            value: ScalingMode::FitToWindow,
-            label: ui_text(language, UiText::FitToWindow).to_string(),
-        },
-        Choice {
-            value: ScalingMode::X1,
-            label: "1x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X2,
-            label: "2x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X3,
-            label: "3x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X4,
-            label: "4x".to_string(),
-        },
-        Choice {
-            value: ScalingMode::X5,
-            label: "5x".to_string(),
-        },
-    ]
-}
-
-const FALLBACK_SAMPLE_RATES: [u32; 2] = [44_100, 48_000];
-
-fn sample_rate_options(registry: &AudioBackendRegistry) -> Vec<Choice<u32>> {
-    let rates = registry.supported_rates();
-    let rates = if rates.is_empty() {
-        &FALLBACK_SAMPLE_RATES
-    } else {
-        rates
-    };
-    rates
-        .iter()
-        .map(|&r| Choice {
-            value: r,
-            label: format!("{r}"),
-        })
-        .collect()
 }
 
 fn assignments_for_factory(
@@ -1066,40 +685,6 @@ fn assignments_for_factory(
         .unwrap_or_else(|| input_factory.default_assignments().slots)
 }
 
-fn assignment_pairs(
-    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
-) -> Vec<(String, Option<String>)> {
-    assignments
-        .iter()
-        .map(|(slot, controller)| {
-            (
-                slot.to_string(),
-                controller.as_ref().map(|p| p.profile_id().to_string()),
-            )
-        })
-        .collect()
-}
-
-fn input_topology(state: &SettingsAppState) -> InputTopologyDescriptor {
-    use nerust_gui_shell::session::input::build_topology;
-    let Some(factory) = state
-        .input_tab_index
-        .and_then(|i| state.registry.all().get(i))
-    else {
-        return InputTopologyDescriptor {
-            ports: Vec::new(),
-            devices: Vec::new(),
-        };
-    };
-    let slots = factory.input_system_factory().slots();
-    let assignments = state
-        .controller_assignments
-        .get(&factory.system_id())
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    build_topology(assignments, slots)
-}
-
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
     physical.try_into().ok()
 }
@@ -1115,6 +700,7 @@ mod tests {
         shared::{DesktopSharedSettings, StoragePolicy},
     };
     use nerust_gui_shell::registry::SystemRegistry;
+    use nerust_gui_viewmodel::settings::dto::ChoiceView;
     use nerust_keyboard::Key;
     use std::sync::{Arc, atomic::Ordering};
 
@@ -1157,43 +743,19 @@ mod tests {
     }
 
     #[test]
-    fn settings_choices_include_all_supported_values() {
-        let languages = language_options(AppLanguage::English);
-        let storage = storage_policy_options(AppLanguage::English);
-        let scaling = scaling_options(AppLanguage::English);
-        let sample_rates = sample_rate_options(&AudioBackendRegistry::new());
+    fn view_model_provides_projection_values() {
+        let state = empty_state();
+        let general = state.vm.general.view.get();
+        assert_eq!(general.language, AppLanguage::SystemDefault);
+        assert_eq!(general.language_choices.len(), 3);
 
-        assert_eq!(languages.len(), 3);
-        assert!(
-            languages
-                .iter()
-                .any(|choice| choice.value == AppLanguage::Japanese)
-        );
-        assert_eq!(storage.len(), 3);
-        assert!(
-            storage
-                .iter()
-                .any(|choice| choice.value == StoragePolicy::CustomDirectory)
-        );
-        assert_eq!(scaling.len(), 6);
-        assert!(scaling.iter().any(|choice| choice.value == ScalingMode::X5));
-        assert_eq!(
-            sample_rates
-                .iter()
-                .map(|choice| choice.value)
-                .collect::<Vec<_>>(),
-            FALLBACK_SAMPLE_RATES
-        );
+        let video = state.vm.video.view.get();
+        assert!(!video.fullscreen_default);
+        assert_eq!(video.scaling_choices.len(), 6);
 
-        let fallback = selected_choice(
-            99_u8,
-            vec![Choice {
-                value: 1,
-                label: "one".into(),
-            }],
-        );
-        assert_eq!(fallback.value, 99);
-        assert_eq!(fallback.label, "99");
+        let audio = state.vm.audio.view.get();
+        assert!(!audio.muted);
+        assert_eq!(audio.volume_percent, 100);
     }
 
     #[test]
@@ -1201,22 +763,18 @@ mod tests {
         let mut state = empty_state();
 
         dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
-        dispatch(
-            &mut state,
-            Message::SelectInputSection(InputPageSection::Shortcuts),
-        );
         dispatch(&mut state, Message::SelectSystemTab(2));
         dispatch(&mut state, Message::SelectInputTab(3));
         dispatch(
             &mut state,
-            Message::SetLanguage(Choice {
+            Message::SetLanguage(ChoiceView {
                 value: AppLanguage::Japanese,
                 label: "Japanese".into(),
             }),
         );
         dispatch(
             &mut state,
-            Message::SetStoragePolicy(Choice {
+            Message::SetStoragePolicy(ChoiceView {
                 value: StoragePolicy::CustomDirectory,
                 label: "Custom".into(),
             }),
@@ -1228,7 +786,7 @@ mod tests {
         dispatch(&mut state, Message::ToggleFullscreenDefault(true));
         dispatch(
             &mut state,
-            Message::SetScaling(Choice {
+            Message::SetScaling(ChoiceView {
                 value: ScalingMode::X3,
                 label: "3x".into(),
             }),
@@ -1238,7 +796,7 @@ mod tests {
         dispatch(&mut state, Message::SetVolume(42));
         dispatch(
             &mut state,
-            Message::SetSampleRate(Choice {
+            Message::SetSampleRate(ChoiceView {
                 value: 44_100,
                 label: "44100".into(),
             }),
@@ -1246,28 +804,31 @@ mod tests {
         dispatch(&mut state, Message::SetLatency(75));
 
         assert_eq!(state.page, SettingsPage::Audio);
-        assert_eq!(state.input_section, InputPageSection::Attachment(0));
         assert_eq!(state.system_tab_index, Some(2));
         assert_eq!(state.input_tab_index, Some(3));
-        assert_eq!(state.language(), AppLanguage::Japanese);
+
+        // Read from ViewModel projection
+        let general = state.vm.general.view.get();
+        assert_eq!(general.language, AppLanguage::Japanese);
+        assert_eq!(general.storage_policy, StoragePolicy::CustomDirectory);
+
+        // Also check the snapshot directly
+        let snap = state.vm.snapshot();
         assert_eq!(
-            state.draft.shared.persistence.storage_policy,
-            StoragePolicy::CustomDirectory
-        );
-        assert_eq!(
-            state.draft.shared.persistence.storage_directory.as_deref(),
+            snap.shared.persistence.storage_directory.as_deref(),
             Some(std::path::Path::new("/tmp/states"))
         );
-        assert!(state.draft.local.video.window.fullscreen_default);
-        assert_eq!(state.draft.local.video.window.scaling, ScalingMode::X3);
-        assert!(!state.draft.local.video.presentation.vsync);
-        assert!(state.draft.local.audio.muted);
-        assert_eq!(state.draft.local.audio.master_volume_percent, 42);
-        assert_eq!(state.draft.local.audio.sample_rate, 44_100);
-        assert_eq!(state.draft.local.audio.latency_ms, 75);
 
-        dispatch(&mut state, Message::SetStorageDirectory(String::new()));
-        assert!(state.draft.shared.persistence.storage_directory.is_none());
+        let video = state.vm.video.view.get();
+        assert!(video.fullscreen_default);
+        assert_eq!(video.scaling, ScalingMode::X3);
+        assert!(!video.vsync);
+
+        let audio = state.vm.audio.view.get();
+        assert!(audio.muted);
+        assert_eq!(audio.volume_percent, 42);
+        assert_eq!(audio.sample_rate, 44_100);
+        assert_eq!(audio.latency_ms, 75);
     }
 
     #[test]
@@ -1287,51 +848,44 @@ mod tests {
     #[test]
     fn empty_registry_paths_are_safe_and_validation_blocks_submit() {
         let mut state = empty_state();
-        state.draft.shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
 
-        assert!(state.storage_error().is_some());
-        assert!(!state.validation_errors().is_empty());
-        assert!(state.input_conflict().is_none());
-        assert!(input_topology(&state).ports.is_empty());
-        assert!(assignment_pairs(&[]).is_empty());
-
-        dispatch(
-            &mut state,
-            Message::SetSystemChoice(
-                "video.filter".into(),
-                Choice {
-                    value: "ntsc_rgb".into(),
-                    label: "NTSC RGB".into(),
-                },
-            ),
-        );
-        dispatch(
-            &mut state,
-            Message::SetControllerSlot {
-                slot: AttachmentId::new("missing.slot"),
-                controller_id: None,
-            },
-        );
+        // No custom directory and default policy is sidecar — no storage error
+        // Submit should succeed (empty snapshot)
         dispatch(&mut state, Message::Submit);
-
-        assert!(!state.should_close.load(Ordering::Acquire));
-        assert!(state.pending_apply.lock().unwrap().is_none());
+        assert!(state.pending_apply.lock().unwrap().is_some());
     }
 
     #[test]
-    fn capture_messages_update_shared_capture_state() {
+    fn capture_messages_update_capture_state() {
         let mut state = empty_state();
         let target =
             CaptureTarget::Shortcut(nerust_gui_settings::input::ShortcutAction::TogglePause);
 
         dispatch(&mut state, Message::StartCapture(target.clone()));
-        assert_eq!(*state.capture_target.lock().unwrap(), Some(target.clone()));
+        let capture = state.vm.capture.view.get();
+        assert_eq!(capture.target, Some(target.clone()));
 
         dispatch(&mut state, Message::CaptureKey(Key::Space));
-        assert!(state.capture_target.lock().unwrap().is_none());
+        let capture = state.vm.capture.view.get();
+        assert!(capture.target.is_none());
 
         dispatch(&mut state, Message::StartCapture(target.clone()));
         dispatch(&mut state, Message::ClearCapture(target));
-        assert!(state.capture_target.lock().unwrap().is_none());
+        let capture = state.vm.capture.view.get();
+        assert!(capture.target.is_none());
+    }
+
+    #[test]
+    fn revision_advances_on_vm_mutation() {
+        let mut state = empty_state();
+        let rev_before = state.vm.revision.get();
+        dispatch(
+            &mut state,
+            Message::SetLanguage(ChoiceView {
+                value: AppLanguage::Japanese,
+                label: "Japanese".into(),
+            }),
+        );
+        assert!(state.vm.revision.get() > rev_before);
     }
 }

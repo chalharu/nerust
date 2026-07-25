@@ -62,6 +62,10 @@ impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {
         }
     }
 
+    pub(crate) fn get(&self) -> T {
+        self.value.borrow().clone()
+    }
+
     /// Set the value and return callbacks to invoke if changed.
     /// Returns `None` if the value is unchanged.
     pub(crate) fn set(&self, value: T) -> Option<CallbackSnapshot<T>> {
@@ -76,6 +80,11 @@ impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {
             .map(|(_, cb)| Rc::clone(cb))
             .collect();
         Some(snapshot)
+    }
+
+    /// Replace the value without notifying observers.
+    pub(crate) fn replace(&self, value: T) {
+        *self.value.borrow_mut() = value;
     }
 }
 
