@@ -1244,7 +1244,10 @@ mod tests {
             let rc = Rc::new(42);
             Rc::downgrade(&rc)
         };
-        assert!(weak.upgrade().is_none(), "upgrade after drop should return None");
+        assert!(
+            weak.upgrade().is_none(),
+            "upgrade after drop should return None"
+        );
     }
 
     #[test]
