@@ -19,11 +19,7 @@ use nerust_gui_viewmodel::settings::{
         VideoView,
     },
 };
-use nerust_settings_core::{
-    bindings::descriptors::shortcut_descriptors,
-    editor::{CaptureTarget, current_binding_label},
-    i18n::{UiText, text as ui_text},
-};
+use nerust_settings_core::{editor::CaptureTarget, i18n::{UiText, text as ui_text}};
 
 use crate::State;
 
@@ -71,6 +67,9 @@ struct PreferencesWidgets {
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
     error_label: gtk::Label,
+    dialog: gtk::Dialog,
+    stack: gtk::Stack,
+    page_ids: Vec<&'static str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +87,9 @@ struct PreferencesBinding {
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
     error_label: gtk::Label,
+    dialog: gtk::Dialog,
+    stack: gtk::Stack,
+    page_ids: Vec<&'static str>,
     refreshing: Cell<bool>,
 }
 
@@ -101,6 +103,9 @@ impl PreferencesBinding {
             system,
             ok_button,
             error_label,
+            dialog,
+            stack,
+            page_ids,
         } = widgets;
         let gv = vm.general.view.get();
         let vv = vm.video.view.get();
@@ -173,6 +178,9 @@ impl PreferencesBinding {
                 system,
                 ok_button,
                 error_label,
+                dialog,
+                stack,
+                page_ids,
                 refreshing: Cell::new(false),
             }
         });
@@ -196,6 +204,23 @@ impl PreferencesBinding {
     }
 
     fn refresh_general(&self, view: &GeneralView) {
+        // Update localized labels
+        let lang = view.language;
+        self.dialog.set_title(Some(ui_text(lang, UiText::Preferences)));
+        for page_id in self.page_ids.iter() {
+            if let Some(child) = self.stack.child_by_name(page_id) {
+                let label = match *page_id {
+                    "general" => ui_text(lang, UiText::General),
+                    "input" => ui_text(lang, UiText::Input),
+                    "video" => ui_text(lang, UiText::Video),
+                    "audio" => ui_text(lang, UiText::Audio),
+                    "system" => ui_text(lang, UiText::System),
+                    _ => continue,
+                };
+                self.stack.page(&child).set_title(label);
+            }
+        }
+
         self.general.language_combo.remove_all();
         for choice in &view.language_choices {
             self.general.language_combo.append(
@@ -431,27 +456,7 @@ impl PreferencesBinding {
                 .append_page(&section_page, Some(&gtk::Label::new(Some(&section.label))));
         }
 
-        let shortcuts_page = input_section_page();
-        let snapshot = self.vm.snapshot();
-        let capture = self.vm.capture.view.get();
-        for descriptor in shortcut_descriptors() {
-            let target = CaptureTarget::Shortcut(descriptor.action);
-            let value = if capture.target.as_ref() == Some(&target) {
-                capture.prompt.clone()
-            } else {
-                current_binding_label(&snapshot, &target)
-                    .unwrap_or(ui_text(self.language(), UiText::Unbound))
-                    .to_string()
-            };
-            self.append_capture_row(&shortcuts_page, descriptor.label, &value, target);
-        }
-        sections_notebook.append_page(
-            &shortcuts_page,
-            Some(&gtk::Label::new(Some(ui_text(
-                self.language(),
-                UiText::Shortcuts,
-            )))),
-        );
+        // Shortcuts are included as the last section in the projection
         if let Some(selected) = selected_section
             && selected < sections_notebook.n_pages()
         {
@@ -747,6 +752,7 @@ pub(crate) fn present_preferences_dialog(
         pages: system_pages,
     };
 
+    let page_ids: Vec<&'static str> = vec!["general", "input", "video", "audio", "system"];
     let _binding = PreferencesBinding::new(
         vm,
         PreferencesWidgets {
@@ -757,6 +763,9 @@ pub(crate) fn present_preferences_dialog(
             system: system_w,
             ok_button,
             error_label,
+            dialog: dialog.clone(),
+            stack: stack.clone(),
+            page_ids,
         },
     );
 
@@ -765,65 +774,62 @@ pub(crate) fn present_preferences_dialog(
         Rc::downgrade(b)
     }
 
+    // Helper: call a command and show error on dialog error_label
+    fn cmd<T>(binding: &Rc<PreferencesBinding>, result: Result<T, nerust_gui_viewmodel::settings::ViewModelError>) {
+        if let Err(e) = result {
+            binding.error_label.set_text(&e.to_string());
+        }
+    }
+
     language_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
+            if b.refreshing.get() { return; }
             let lang = match combo.active_id().as_deref() {
                 Some("japanese") => AppLanguage::Japanese,
                 Some("english") => AppLanguage::English,
                 _ => AppLanguage::SystemDefault,
             };
-            let _ = b.vm.general.set_language(lang);
+            cmd(&b, b.vm.general.set_language(lang));
         }
     });
     storage_policy_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
+            if b.refreshing.get() { return; }
             let policy = match combo.active_id().as_deref() {
                 Some("app_shared_data") => StoragePolicy::AppSharedData,
                 Some("custom_directory") => StoragePolicy::CustomDirectory,
                 _ => StoragePolicy::Sidecar,
             };
-            let _ = b.vm.general.set_storage_policy(policy);
+            cmd(&b, b.vm.general.set_storage_policy(policy));
         }
     });
     storage_dir_entry.connect_changed({
         let w = weak_handler(&_binding);
         move |entry| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
+            if b.refreshing.get() { return; }
             let text = entry.text();
             let path = (!text.is_empty()).then(|| std::path::PathBuf::from(text.as_str()));
-            let _ = b.vm.general.set_storage_directory(path);
+            cmd(&b, b.vm.general.set_storage_directory(path));
         }
     });
     fullscreen_check.connect_toggled({
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let _ = b.vm.video.set_fullscreen_default(button.is_active());
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.video.set_fullscreen_default(button.is_active()));
         }
     });
     scaling_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
+            if b.refreshing.get() { return; }
             let scaling = match combo.active_id().as_deref() {
                 Some("1") => ScalingMode::X1,
                 Some("2") => ScalingMode::X2,
@@ -832,61 +838,51 @@ pub(crate) fn present_preferences_dialog(
                 Some("5") => ScalingMode::X5,
                 _ => ScalingMode::FitToWindow,
             };
-            let _ = b.vm.video.set_scaling(scaling);
+            cmd(&b, b.vm.video.set_scaling(scaling));
         }
     });
     vsync_check.connect_toggled({
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let _ = b.vm.video.set_vsync(button.is_active());
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.video.set_vsync(button.is_active()));
         }
     });
     mute_check.connect_toggled({
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let _ = b.vm.audio.set_mute(button.is_active());
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.audio.set_mute(button.is_active()));
         }
     });
     volume_spin.connect_value_changed({
         let w = weak_handler(&_binding);
         move |spin| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let _ = b.vm.audio.set_volume(spin.value() as u8);
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.audio.set_volume(spin.value() as u8));
         }
     });
     sample_rate_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
+            if b.refreshing.get() { return; }
             let rate = combo
                 .active_id()
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(48_000);
-            let _ = b.vm.audio.set_sample_rate(rate);
+            cmd(&b, b.vm.audio.set_sample_rate(rate));
         }
     });
     latency_spin.connect_value_changed({
         let w = weak_handler(&_binding);
         move |spin| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let _ = b.vm.audio.set_latency(spin.value() as u16);
+            if b.refreshing.get() { return; }
+            cmd(&b, b.vm.audio.set_latency(spin.value() as u16));
         }
     });
 

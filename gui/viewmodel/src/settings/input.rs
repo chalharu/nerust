@@ -4,8 +4,9 @@ use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
 use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
 use nerust_settings_core::{
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
+    bindings::descriptors::shortcut_descriptors,
     editor::{CaptureTarget, current_binding_label},
-    i18n::{UiText, text as ui_text},
+    i18n::{text as ui_text, UiText},
     input::{build_topology, clear_multi_port_conflicts},
 };
 
@@ -247,44 +248,75 @@ fn project_view(
 
     // Build topology and key binding sections
     let topology: InputTopologyDescriptor = build_topology(&assignments, slots_descs);
-    let sections: Vec<BindingSectionView> =
-        keyboard_binding_sections(&topology, system_id.as_ref())
-            .into_iter()
-            .map(|section| {
-                let rows: Vec<BindingRowView> = section
-                    .bindings
-                    .iter()
-                    .map(|descriptor| {
-                        let target = CaptureTarget::Binding {
-                            system: descriptor.system.clone_box(),
-                            attachment: descriptor.attachment.as_str().to_string(),
-                            control: descriptor.control.as_str().to_string(),
-                        };
-                        let value = if capture_target.as_ref() == Some(&target) {
-                            BindingValueView::Capturing(
-                                ui_text(language, UiText::CapturePrompt).to_string(),
-                            )
-                        } else {
-                            match current_binding_label(&state.draft, &target) {
-                                Some(label) => BindingValueView::Bound(label.to_string()),
-                                None => BindingValueView::Unbound(
-                                    ui_text(language, UiText::Unbound).to_string(),
-                                ),
+    let sections: Vec<BindingSectionView> = {
+        let mut s: Vec<BindingSectionView> =
+            keyboard_binding_sections(&topology, system_id.as_ref())
+                .into_iter()
+                .map(|section| {
+                    let rows: Vec<BindingRowView> = section
+                        .bindings
+                        .iter()
+                        .map(|descriptor| {
+                            let target = CaptureTarget::Binding {
+                                system: descriptor.system.clone_box(),
+                                attachment: descriptor.attachment.as_str().to_string(),
+                                control: descriptor.control.as_str().to_string(),
+                            };
+                            let value = if capture_target.as_ref() == Some(&target) {
+                                BindingValueView::Capturing(
+                                    ui_text(language, UiText::CapturePrompt).to_string(),
+                                )
+                            } else {
+                                match current_binding_label(&state.draft, &target) {
+                                    Some(label) => BindingValueView::Bound(label.to_string()),
+                                    None => BindingValueView::Unbound(
+                                        ui_text(language, UiText::Unbound).to_string(),
+                                    ),
+                                }
+                            };
+                            BindingRowView {
+                                target,
+                                label: descriptor.control_label.to_string(),
+                                value,
                             }
-                        };
-                        BindingRowView {
-                            target,
-                            label: descriptor.control_label.to_string(),
-                            value,
-                        }
-                    })
-                    .collect();
-                BindingSectionView {
-                    label: section.attachment_label.to_string(),
-                    rows,
+                        })
+                        .collect();
+                    BindingSectionView {
+                        label: section.attachment_label.to_string(),
+                        rows,
+                    }
+                })
+                .collect();
+        // Add shortcuts section from descriptors
+        let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
+            .iter()
+            .map(|desc| {
+                let target = CaptureTarget::Shortcut(desc.action);
+                let value = if capture_target.as_ref() == Some(&target) {
+                    BindingValueView::Capturing(
+                        ui_text(language, UiText::CapturePrompt).to_string(),
+                    )
+                } else {
+                    match current_binding_label(&state.draft, &target) {
+                        Some(label) => BindingValueView::Bound(label.to_string()),
+                        None => BindingValueView::Unbound(
+                            ui_text(language, UiText::Unbound).to_string(),
+                        ),
+                    }
+                };
+                BindingRowView {
+                    target,
+                    label: desc.label.to_string(),
+                    value,
                 }
             })
             .collect();
+        s.push(BindingSectionView {
+            label: ui_text(language, UiText::Shortcuts).to_string(),
+            rows: shortcut_rows,
+        });
+        s
+    };
 
     // Build conflict messages
     let conflicts: Vec<InputConflictView> =
