@@ -74,6 +74,10 @@ impl SettingsViewModel {
         self.editor.finish()
     }
 
+    pub fn set_storage_validator(&self, validator: Box<dyn super::editor::StoragePathValidator>) {
+        self.editor.set_storage_validator(validator);
+    }
+
     pub fn systems(&self) -> &[SystemSettingsViewModel] {
         &self.systems
     }
@@ -89,16 +93,29 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
 
     let mut issues = Vec::new();
 
-    // Storage policy validation (structural only — fs metadata checked at apply time)
+    // Storage policy validation
     if matches!(
         state.draft.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
-    ) && state.draft.shared.persistence.storage_directory.is_none()
-    {
-        issues.push(super::ValidationIssue {
-            scope: super::ValidationScope::Persistence,
-            message: "Custom storage directory required".into(),
-        });
+    ) {
+        if let Some(ref path) = state.draft.shared.persistence.storage_directory {
+            // Filesystem validation via injected port
+            if let Some(ref validator) = state.storage_validator {
+                if let Err(e) = validator.validate(path) {
+                    issues.push(super::ValidationIssue {
+                        scope: super::ValidationScope::Persistence,
+                        message: e,
+                    });
+                }
+            } else {
+                // No port injected (e.g. tests): structural check only
+            }
+        } else {
+            issues.push(super::ValidationIssue {
+                scope: super::ValidationScope::Persistence,
+                message: "Custom storage directory required".into(),
+            });
+        }
     }
 
     // Audio range validation
