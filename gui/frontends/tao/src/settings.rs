@@ -395,8 +395,6 @@ impl SettingsAppState {
 
     fn view(&self) -> El<'_> {
         let language = self.language();
-        let validation_errors = self.validation_errors();
-        let can_submit = validation_errors.is_empty();
 
         let sidebar = column![
             page_radio(language, UiText::General, SettingsPage::General, self.page),
@@ -431,14 +429,11 @@ impl SettingsAppState {
 
         if let Some(error_message) = self.error_message.as_ref() {
             root = root.push(text(error_message.clone()));
-        } else if let Some(first_error) = validation_errors.first() {
-            root = root.push(text(first_error.clone()));
         }
 
         let buttons = row![
             button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
-            button(ui_text(language, UiText::Ok))
-                .on_press_maybe(can_submit.then_some(Message::Submit)),
+            button(ui_text(language, UiText::Ok)).on_press(Message::Submit),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
