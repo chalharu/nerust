@@ -8,6 +8,6 @@ pub mod slots;
 mod test {
     use nerust_core_traits::{declare_system_id, identity::SystemId};
 
-    declare_system_id!(DummySystemId, "dummy");
-    declare_system_id!(DummyOtherSystemId, "other");
+    declare_system_id!(pub(crate) DummySystemId, "dummy");
+    declare_system_id!(pub(crate) DummyOtherSystemId, "other");
 }

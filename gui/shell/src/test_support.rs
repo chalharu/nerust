@@ -10,8 +10,8 @@ use nerust_input_traits::{
 };
 use nerust_keyboard::Key;
 
-declare_system_id!(DummySystemId, "dummy");
-declare_system_id!(DummyOtherSystemId, "other");
+declare_system_id!(pub(crate) DummySystemId, "dummy");
+declare_system_id!(pub(crate) DummyOtherSystemId, "other");
 
 pub fn test_nes_defaults() -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings::default();

@@ -49,7 +49,10 @@ pub mod __private {
 
 #[macro_export]
 macro_rules! declare_system_id {
-    ($name:ident, $value:expr) => {
+    // The persisted typetag is `<Cargo package name>::<system ID>`. Both inputs
+    // are compatibility contracts; keep them stable and use each system ID at
+    // most once within a package.
+    ($visibility:vis $name:ident, $system_id:literal) => {
         #[derive(
             Debug,
             Clone,
@@ -57,7 +60,7 @@ macro_rules! declare_system_id {
             $crate::identity::__private::_serde_serialize,
             $crate::identity::__private::_serde_deserialize,
         )]
-        pub(crate) struct $name;
+        $visibility struct $name;
 
         const _: () = {
             // typetag's proc macro emits `typetag::...` paths at the call site.
@@ -65,14 +68,14 @@ macro_rules! declare_system_id {
             // calling crate to depend on typetag directly.
             use $crate::identity::__private::typetag;
 
-            #[$crate::identity::__private::typetag::serde(name = concat!(module_path!(), "::", stringify!($name)))]
+            #[$crate::identity::__private::typetag::serde(name = concat!(env!("CARGO_PKG_NAME"), "::", $system_id))]
             impl SystemId for $name {}
         };
 
         #[allow(clippy::to_string_trait_impl)]
         impl ToString for $name {
             fn to_string(&self) -> String {
-                $value.to_string()
+                $system_id.to_string()
             }
         }
 
@@ -90,4 +93,42 @@ macro_rules! declare_system_id {
 
         impl Eq for $name {}
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::SystemId;
+
+    crate::declare_system_id!(FirstSystemId, "first");
+    crate::declare_system_id!(RenamableRustType, "second");
+
+    fn serialized_tag(system_id: Box<dyn SystemId>) -> String {
+        let Value::Object(object) = serde_json::to_value(system_id).unwrap() else {
+            panic!("system ID should serialize as an object");
+        };
+        object.get("sid").unwrap().as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn system_id_typetag_uses_package_namespace_and_stable_id() {
+        assert_eq!(
+            serialized_tag(Box::new(FirstSystemId)),
+            "nerust_core_traits::first"
+        );
+        assert_eq!(
+            serialized_tag(Box::new(RenamableRustType)),
+            "nerust_core_traits::second"
+        );
+    }
+
+    #[test]
+    fn system_id_typetag_round_trips() {
+        let encoded =
+            serde_json::to_string(&(Box::new(FirstSystemId) as Box<dyn SystemId>)).unwrap();
+        let decoded: Box<dyn SystemId> = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.as_ref(), &FirstSystemId as &dyn SystemId);
+    }
 }
