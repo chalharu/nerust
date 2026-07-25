@@ -1,8 +1,13 @@
+#[cfg(test)]
 use nerust_core_traits::identity::SystemId;
+#[cfg(test)]
 use nerust_gui_settings::shared::DesktopSharedSettings;
+#[cfg(test)]
 use nerust_input_traits::DigitalInputEvent;
+#[cfg(test)]
 use nerust_keyboard::Key;
 
+#[cfg(test)]
 pub fn controller_event_for_key<F>(
     settings: &DesktopSharedSettings,
     system: &dyn SystemId,
