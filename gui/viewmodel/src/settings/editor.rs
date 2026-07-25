@@ -1,0 +1,270 @@
+#![allow(dead_code)]
+
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_shell::{
+    registry::SystemRegistry,
+    settings::editor::CaptureTarget,
+};
+
+use super::{
+    projection::ProjectionHub,
+    ValidationState,
+};
+
+/// Error type for view model operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ViewModelError {
+    #[error("settings mutation is not allowed during property notification")]
+    ReentrantMutation,
+    #[error("unknown system: {0}")]
+    UnknownSystem(String),
+    #[error("unknown controller slot: {0}")]
+    UnknownSlot(String),
+    #[error("unknown controller profile: {0}")]
+    UnknownController(String),
+    #[error("invalid system settings choice")]
+    InvalidSystemChoice,
+    #[error("capture target is not available in the current topology")]
+    InvalidCaptureTarget,
+}
+
+/// Mutable state for the settings editor.
+#[derive(Clone)]
+pub struct EditorState {
+    pub initial: SettingsSnapshot,
+    pub draft: SettingsSnapshot,
+    pub capture_target: Option<CaptureTarget>,
+    pub validation: ValidationState,
+    pub revision: u64,
+    pub registry: Rc<SystemRegistry>,
+    pub supported_sample_rates: Rc<[u32]>,
+}
+
+/// Lightweight handle to the shared editor state and projection hub.
+///
+/// All mutations go through [`SettingsEditor::transact()`].
+#[derive(Clone)]
+pub struct SettingsEditor {
+    current: Rc<RefCell<EditorState>>,
+    projections: ProjectionHub,
+    validator: Rc<dyn Fn(&EditorState) -> ValidationState>,
+    notifying: Rc<Cell<bool>>,
+}
+
+impl SettingsEditor {
+    pub fn new(
+        snapshot: SettingsSnapshot,
+        registry: Rc<SystemRegistry>,
+        supported_sample_rates: Rc<[u32]>,
+    ) -> Self {
+        let current = Rc::new(RefCell::new(EditorState {
+            initial: snapshot.clone(),
+            draft: snapshot,
+            capture_target: None,
+            validation: ValidationState { issues: vec![] },
+            revision: 0,
+            registry,
+            supported_sample_rates,
+        }));
+
+        Self {
+            current,
+            projections: ProjectionHub::new(),
+            validator: Rc::new(|_| ValidationState { issues: vec![] }),
+            notifying: Rc::new(Cell::new(false)),
+        }
+    }
+
+    pub fn current(&self) -> std::cell::Ref<'_, EditorState> {
+        self.current.borrow()
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.current.borrow().revision
+    }
+
+    pub fn snapshot(&self) -> SettingsSnapshot {
+        self.current.borrow().draft.clone()
+    }
+
+    pub(crate) fn registry(&self) -> std::cell::Ref<'_, EditorState> {
+        self.current.borrow()
+    }
+
+    pub fn set_validator(&mut self, validator: impl Fn(&EditorState) -> ValidationState + 'static) {
+        self.validator = Rc::new(validator);
+    }
+
+    pub(crate) fn projections(&self) -> &ProjectionHub {
+        &self.projections
+    }
+
+    /// Execute a domain mutation within a clone-on-write transaction.
+    ///
+    /// 1. Clones current state to `candidate`
+    /// 2. Applies `mutate` to `candidate`
+    /// 3. Re-validates and advances revision
+    /// 4. Prepares all projections from `candidate`
+    /// 5. Silent-applies prepared projections
+    /// 6. Notifies callbacks
+    pub fn transact<R>(
+        &self,
+        mutate: impl FnOnce(&mut EditorState) -> Result<R, ViewModelError>,
+    ) -> Result<R, ViewModelError> {
+        if self.notifying.get() {
+            return Err(ViewModelError::ReentrantMutation);
+        }
+
+        let original = self.current.borrow().clone();
+        let mut candidate = original.clone();
+        let result = mutate(&mut candidate)?;
+
+        if candidate.draft == original.draft
+            && candidate.capture_target == original.capture_target
+        {
+            return Ok(result);
+        }
+
+        candidate.validation = (self.validator)(&candidate);
+        candidate.revision = original.revision + 1;
+        let prepared = self.projections.prepare_all(&candidate);
+
+        *self.current.borrow_mut() = candidate;
+
+        #[cfg(debug_assertions)]
+        self.projections.assert_all_synced(&self.current.borrow());
+
+        let _guard = NotificationGuard::enter(&self.notifying);
+        for _projection in prepared {
+            // Apply silently — callback notification happens here
+            // In the full implementation, callbacks are invoked here.
+        }
+
+        Ok(result)
+    }
+
+    pub fn finish(&self) -> Result<SettingsSnapshot, ValidationState> {
+        let state = self.current.borrow();
+        if state.validation.can_submit() {
+            Ok(state.draft.clone())
+        } else {
+            Err(state.validation.clone())
+        }
+    }
+}
+
+struct NotificationGuard(Rc<Cell<bool>>);
+
+impl NotificationGuard {
+    fn enter(notifying: &Rc<Cell<bool>>) -> Self {
+        notifying.set(true);
+        Self(Rc::clone(notifying))
+    }
+}
+
+impl Drop for NotificationGuard {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nerust_gui_settings::{
+        app_state::DesktopAppState,
+        local::HostBackendLocalSettings,
+        shared::DesktopSharedSettings,
+    };
+
+    fn empty_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        }
+    }
+
+    fn test_editor() -> SettingsEditor {
+        let registry = Rc::new(SystemRegistry::new(Vec::new()));
+        SettingsEditor::new(
+            empty_snapshot(),
+            registry,
+            Rc::new([]),
+        )
+    }
+
+    #[test]
+    fn transact_noop_does_not_advance_revision() {
+        let editor = test_editor();
+        let rev_before = editor.revision();
+        let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
+        assert!(result.is_ok());
+        assert_eq!(editor.revision(), rev_before);
+    }
+
+    #[test]
+    fn transact_mutation_advances_revision() {
+        let editor = test_editor();
+
+        let result: Result<(), ViewModelError> = editor.transact(|state| {
+            state.draft.local.audio.muted = true;
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(editor.revision(), 1);
+    }
+
+    #[test]
+    fn transact_error_does_not_change_state() {
+        let editor = test_editor();
+
+        let result: Result<(), ViewModelError> = editor.transact(|state| {
+            state.draft.local.audio.muted = true;
+            Err(ViewModelError::UnknownSystem("test".into()))
+        });
+        assert!(result.is_err());
+        assert!(!editor.current().draft.local.audio.muted);
+    }
+
+    #[test]
+    fn finish_returns_draft_on_valid() {
+        let editor = test_editor();
+        assert!(editor.finish().is_ok());
+    }
+
+    #[test]
+    fn finish_rejects_invalid_state() {
+        let editor = test_editor();
+        // Manually set validation to invalid
+        editor.current.borrow_mut().validation = ValidationState {
+            issues: vec![super::super::ValidationIssue {
+                scope: super::super::ValidationScope::Persistence,
+                message: "test error".into(),
+            }],
+        };
+        assert!(editor.finish().is_err());
+    }
+
+    #[test]
+    fn noop_mutation_skips_validation() {
+        let editor = test_editor();
+        // Set up an invalid state directly
+        editor.current.borrow_mut().validation = ValidationState {
+            issues: vec![super::super::ValidationIssue {
+                scope: super::super::ValidationScope::Persistence,
+                message: "test".into(),
+            }],
+        };
+        // A no-op transact should short-circuit without re-validating
+        // But since validation happens inside transact(), the error persists
+        let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
+        assert!(result.is_ok());
+        assert!(!editor.current().validation.can_submit());
+    }
+}
