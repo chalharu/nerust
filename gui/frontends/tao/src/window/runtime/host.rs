@@ -471,23 +471,9 @@ impl HostState {
         mut handle: crate::settings_window::SettingsWindowHandle,
     ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
-        let pending_assignments = handle.take_pending_assignments();
         drop(handle);
         self.on_settings_closed();
-        if let Some(mut snapshot) = pending {
-            if let Some(per_system) = pending_assignments {
-                for (sid, assignments) in per_system {
-                    snapshot
-                        .app_state
-                        .controller_assignments
-                        .insert(sid.clone(), assignments.to_string_pairs());
-                    if self.session.active_system_id() == Some(sid.as_ref())
-                        && let Err(error) = self.session.reassign_controllers(&assignments)
-                    {
-                        log::warn!("controller reassign failed: {error}");
-                    }
-                }
-            }
+        if let Some(snapshot) = pending {
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),
                 Err(error) => {

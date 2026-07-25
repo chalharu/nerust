@@ -41,7 +41,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_input_traits::{
-    AttachmentId, ControllerProfile, InputAssignments, InputTopologyDescriptor,
+    AttachmentId, ControllerProfile, InputTopologyDescriptor,
 };
 use nerust_keyboard::Key;
 use rfd::FileDialog;
@@ -49,8 +49,6 @@ use rfd::FileDialog;
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 type ControllerAssignments = Vec<(AttachmentId, Option<Rc<dyn ControllerProfile>>)>;
 type AssignmentsBySystem = HashMap<Box<dyn SystemId>, ControllerAssignments>;
-type AssignmentPairsBySystem = HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>;
-pub(crate) type PendingAssignments = Rc<Mutex<Option<Vec<(Box<dyn SystemId>, InputAssignments)>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -118,7 +116,6 @@ pub(crate) struct SettingsAppProgram {
     pub(crate) audio_registry: Arc<AudioBackendRegistry>,
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
 }
 
@@ -148,7 +145,6 @@ impl Program for SettingsAppProgram {
             self.audio_registry.clone(),
             self.should_close.clone(),
             self.pending_apply.clone(),
-            self.pending_assignments.clone(),
             self.capture_target.clone(),
         );
         (state, Task::none())
@@ -178,14 +174,11 @@ impl Program for SettingsAppProgram {
 pub(crate) struct SettingsAppState {
     pub(crate) should_close: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     registry: Arc<SystemRegistry>,
     audio_registry: Arc<AudioBackendRegistry>,
     draft: SettingsSnapshot,
     controller_assignments: AssignmentsBySystem,
-    /// Snapshot of initial assignments for change detection at Submit time.
-    initial_assignments_pairs: AssignmentPairsBySystem,
     page: SettingsPage,
     system_tab_index: Option<usize>,
     input_tab_index: Option<usize>,
@@ -217,18 +210,12 @@ impl SettingsAppState {
                 )
             })
             .collect();
-        let initial_assignments_pairs = controller_assignments
-            .iter()
-            .map(|(sid, assignments)| (sid.clone_box(), assignment_pairs(assignments)))
-            .collect();
         let has_systems = !registry.all().is_empty();
         Self {
             should_close: Arc::new(AtomicBool::new(false)),
             pending_apply: Arc::new(Mutex::new(None)),
-            pending_assignments: Rc::new(Mutex::new(None)),
             capture_target: Arc::new(Mutex::new(None)),
             controller_assignments,
-            initial_assignments_pairs,
             registry,
             audio_registry,
             draft: snapshot.clone(),
@@ -247,13 +234,11 @@ impl SettingsAppState {
         audio_registry: Arc<AudioBackendRegistry>,
         should_close: Arc<AtomicBool>,
         pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-        pending_assignments: PendingAssignments,
         capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     ) -> Self {
         let mut state = Self::new(snapshot, registry, audio_registry);
         state.should_close = should_close;
         state.pending_apply = pending_apply;
-        state.pending_assignments = pending_assignments;
         state.capture_target = capture_target;
         state
     }
@@ -453,28 +438,6 @@ impl SettingsAppState {
                     return Task::none();
                 }
                 *self.pending_apply.lock().expect("pending apply mutex") = Some(self.draft.clone());
-                let changed = self
-                    .controller_assignments
-                    .iter()
-                    .filter(|(sid, assignments)| {
-                        self.initial_assignments_pairs.get(*sid)
-                            != Some(&assignment_pairs(assignments))
-                    })
-                    .map(|(sid, assignments)| {
-                        (
-                            sid.clone_box(),
-                            InputAssignments {
-                                slots: assignments.clone(),
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                if !changed.is_empty() {
-                    *self
-                        .pending_assignments
-                        .lock()
-                        .expect("pending assignments mutex") = Some(changed);
-                }
                 self.should_close.store(true, Ordering::Release);
             }
             Message::Cancel => {
@@ -1316,7 +1279,6 @@ mod tests {
 
         assert!(submitted.should_close.load(Ordering::Acquire));
         assert!(submitted.pending_apply.lock().unwrap().is_some());
-        assert!(submitted.pending_assignments.lock().unwrap().is_none());
 
         let mut cancelled = empty_state();
         dispatch(&mut cancelled, Message::Cancel);
