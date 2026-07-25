@@ -12,6 +12,8 @@ version.workspace = true
 [dependencies]
 nerust_core_traits.workspace = true
 nerust_gui_runtime.workspace = true
+serde.workspace = true
+typetag.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_input_traits.workspace = true

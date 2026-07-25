@@ -209,3 +209,57 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
 
     super::ValidationState { issues }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::editor::SettingsEditor;
+    use crate::settings::test_support::{P1_SLOT, TestCoreFactory, TestInputFactory};
+    use nerust_core_traits::factory::CoreFactory;
+
+    #[test]
+    fn validator_detects_unknown_profile() {
+        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::{
+            app_state::DesktopAppState, local::HostBackendLocalSettings,
+            shared::DesktopSharedSettings,
+        };
+
+        let mut snapshot = SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+
+        // Insert using the factory's system_id
+        let test_factory = TestCoreFactory(TestInputFactory::new());
+        let sid = test_factory.system_id();
+        snapshot.app_state.controller_assignments.insert(
+            sid,
+            vec![(P1_SLOT.to_string(), Some("unknown.profile.id".into()))],
+        );
+
+        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            factory,
+        ]));
+        let supported_sample_rates: Arc<[u32]> = Arc::new([]);
+
+        let mut editor = SettingsEditor::new(snapshot, registry, supported_sample_rates);
+        editor.set_validator(validator);
+
+        // finish() should reject because of the unknown profile
+        assert!(editor.finish().is_err());
+
+        // Check that the issue mentions unknown profile
+        let err = editor.finish().unwrap_err();
+        let has_unknown_profile = err
+            .issues
+            .iter()
+            .any(|i| i.message.contains("unknown controller profile"));
+        assert!(
+            has_unknown_profile,
+            "validator should flag unknown profile ID"
+        );
+    }
+}
