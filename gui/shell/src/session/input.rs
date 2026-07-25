@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    rc::Rc,
 };
 
 use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
-    AttachmentId, ControllerProfile, DigitalControlId, DigitalInputEvent, InputAssignments,
-    InputValue, SlotInfo,
+    AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
 use nerust_keyboard::Key;
 
