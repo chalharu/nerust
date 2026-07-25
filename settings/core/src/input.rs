@@ -100,3 +100,100 @@ pub fn clear_multi_port_conflicts(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use nerust_input_traits::{AttachmentId, ControllerProfile, PortSet, ProfileId};
+
+    use super::{build_topology, clear_multi_port_conflicts, device_kind};
+
+    #[derive(Debug)]
+    struct SinglePortProfile;
+    impl ControllerProfile for SinglePortProfile {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.single")
+        }
+        fn label(&self) -> &'static str {
+            "Single"
+        }
+        fn port_sets(&self) -> &[PortSet] {
+            static PORTS: [PortSet; 1] = [PortSet { ports: &[P1] }];
+            &PORTS
+        }
+        fn port_groups(&self) -> &[&[nerust_input_traits::ControlInfo]] {
+            static EMPTY: [nerust_input_traits::ControlInfo; 0] = [];
+            static GROUPS: [&[nerust_input_traits::ControlInfo]; 1] = [&EMPTY];
+            &GROUPS
+        }
+    }
+
+    #[derive(Debug)]
+    struct MultiPortProfile;
+    impl ControllerProfile for MultiPortProfile {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.multi")
+        }
+        fn label(&self) -> &'static str {
+            "Multi"
+        }
+        fn port_sets(&self) -> &[PortSet] {
+            static PORTS: [PortSet; 1] = [PortSet { ports: &[P1, P2] }];
+            &PORTS
+        }
+        fn port_groups(&self) -> &[&[nerust_input_traits::ControlInfo]] {
+            static EMPTY: [nerust_input_traits::ControlInfo; 0] = [];
+            static GROUPS: [&[nerust_input_traits::ControlInfo]; 1] = [&EMPTY];
+            &GROUPS
+        }
+    }
+
+    const P1: AttachmentId = AttachmentId::new("p1");
+    const P2: AttachmentId = AttachmentId::new("p2");
+    const OTHER: AttachmentId = AttachmentId::new("other");
+
+    #[test]
+    fn clear_multi_port_does_nothing_for_single_port() {
+        let mut assignments = vec![(P1, Some(Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>))];
+        clear_multi_port_conflicts(P1, &SinglePortProfile, &mut assignments);
+        assert!(assignments[0].1.is_some());
+    }
+
+    #[test]
+    fn clear_multi_port_clears_other_ports() {
+        let p = Rc::new(MultiPortProfile) as Rc<dyn ControllerProfile>;
+        let mut assignments = vec![(P1, Some(Rc::clone(&p))), (P2, Some(Rc::clone(&p)))];
+        clear_multi_port_conflicts(P1, &MultiPortProfile, &mut assignments);
+        assert!(assignments[0].1.is_some());
+        assert!(assignments[1].1.is_none());
+    }
+
+    #[test]
+    fn clear_multi_port_does_not_clear_unrelated() {
+        let multi = Rc::new(MultiPortProfile) as Rc<dyn ControllerProfile>;
+        let single = Rc::new(SinglePortProfile) as Rc<dyn ControllerProfile>;
+        let mut assignments = vec![
+            (OTHER, Some(Rc::clone(&single))),
+            (P1, Some(Rc::clone(&multi))),
+            (P2, Some(Rc::clone(&multi))),
+        ];
+        clear_multi_port_conflicts(P1, &MultiPortProfile, &mut assignments);
+        assert!(assignments[0].1.is_some(), "unrelated slot untouched");
+        assert!(assignments[1].1.is_some());
+        assert!(assignments[2].1.is_none());
+    }
+
+    #[test]
+    fn device_kind_delegates_to_profile_method() {
+        assert_eq!(device_kind(&SinglePortProfile, 0), "test.single");
+        assert_eq!(device_kind(&MultiPortProfile, 0), "test.multi");
+    }
+
+    #[test]
+    fn build_topology_empty_assignments() {
+        let topology = build_topology(&[], &[]);
+        assert!(topology.ports.is_empty());
+        assert!(topology.devices.is_empty());
+    }
+}
