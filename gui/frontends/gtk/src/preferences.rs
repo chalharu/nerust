@@ -1,3 +1,5 @@
+#![allow(dead_code, clippy::collapsible_if)]
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -73,6 +75,7 @@ struct PreferencesWidgets {
     input: InputTabWidgets,
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
+    cancel_button: gtk::Widget,
     error_label: gtk::Label,
     dialog: gtk::Dialog,
     stack: gtk::Stack,
@@ -93,6 +96,7 @@ struct PreferencesBinding {
     input: InputTabWidgets,
     system: SystemTabWidgets,
     ok_button: gtk::Widget,
+    cancel_button: gtk::Widget,
     error_label: gtk::Label,
     dialog: gtk::Dialog,
     stack: gtk::Stack,
@@ -109,6 +113,7 @@ impl PreferencesBinding {
             input,
             system,
             ok_button,
+            cancel_button,
             error_label,
             dialog,
             stack,
@@ -184,6 +189,7 @@ impl PreferencesBinding {
                 input,
                 system,
                 ok_button,
+                cancel_button,
                 error_label,
                 dialog,
                 stack,
@@ -226,6 +232,14 @@ impl PreferencesBinding {
                 };
                 self.stack.page(&child).set_title(label);
             }
+        }
+
+        // Update button labels
+        if let Some(btn) = self.ok_button.downcast_ref::<gtk::Button>() {
+            btn.set_label(ui_text(lang, UiText::Ok));
+        }
+        if let Some(btn) = self.cancel_button.downcast_ref::<gtk::Button>() {
+            btn.set_label(ui_text(lang, UiText::Cancel));
         }
 
         // Update row labels stored in widget groups
@@ -402,6 +416,9 @@ impl PreferencesBinding {
                 if let Some(vm) = binding.vm.systems().get(index) {
                     if let Err(e) = vm.set_choice(&field_id, &choice.value) {
                         binding.error_label.set_text(&e.to_string());
+                        binding.with_refreshing(|| {
+                            binding.rebuild_system_page(index, &vm.view.get());
+                        });
                     }
                 }
             });
@@ -459,6 +476,9 @@ impl PreferencesBinding {
                 if let Some(vm) = binding.vm.inputs().get(index) {
                     if let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref()) {
                         binding.error_label.set_text(&e.to_string());
+                        binding.with_refreshing(|| {
+                            binding.rebuild_input_page(index, &vm.view.get());
+                        });
                     }
                 }
             });
@@ -510,18 +530,18 @@ impl PreferencesBinding {
         current.set_hexpand(true);
         let change = gtk::Button::with_label(ui_text(self.language(), UiText::Change));
         let clear = gtk::Button::with_label(ui_text(self.language(), UiText::Clear));
-        let weak = self.self_weak.clone();
-        let change_target = target.clone();
+        let weak_c = self.self_weak.clone();
+        let change_target_c = target.clone();
         change.connect_clicked(move |_| {
-            if let Some(binding) = weak.upgrade() {
-                if let Err(e) = binding.vm.capture.start_capture(change_target.clone()) {
+            if let Some(binding) = weak_c.upgrade() {
+                if let Err(e) = binding.vm.capture.start_capture(change_target_c.clone()) {
                     binding.error_label.set_text(&e.to_string());
                 }
             }
         });
-        let weak = self.self_weak.clone();
+        let weak_cl = self.self_weak.clone();
         clear.connect_clicked(move |_| {
-            if let Some(binding) = weak.upgrade() {
+            if let Some(binding) = weak_cl.upgrade() {
                 if let Err(e) = binding.vm.capture.clear_binding(&target) {
                     binding.error_label.set_text(&e.to_string());
                 }
@@ -603,13 +623,8 @@ pub(crate) fn present_preferences_dialog(
         .default_width(900)
         .default_height(560)
         .build();
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    dialog.add_button("OK", gtk::ResponseType::Ok);
-
-    let Some(ok_button) = dialog.widget_for_response(gtk::ResponseType::Ok) else {
-        log::error!("preferences dialog missing OK button, aborting");
-        return;
-    };
+    let cancel_button = dialog.add_button("Cancel", gtk::ResponseType::Cancel);
+    let ok_button = dialog.add_button("OK", gtk::ResponseType::Ok);
     if let Some(action_box) = ok_button
         .parent()
         .and_then(|parent| parent.downcast::<gtk::Box>().ok())
@@ -824,6 +839,7 @@ pub(crate) fn present_preferences_dialog(
             input: input_w,
             system: system_w,
             ok_button,
+            cancel_button,
             error_label,
             dialog: dialog.clone(),
             stack: stack.clone(),
@@ -1134,11 +1150,11 @@ mod tests {
         ($name:ident, $body:expr) => {
             #[test]
             fn $name() {
-                if !gtk_available() {
+                if gtk_available() {
+                    $body()
+                } else {
                     eprintln!("skipped (no GTK display)");
-                    return;
                 }
-                $body()
             }
         };
     }
@@ -1247,6 +1263,7 @@ mod tests {
                     pages: vec![],
                 },
                 ok_button: ok_button.clone().upcast::<gtk::Widget>(),
+                cancel_button: gtk::Button::new().upcast::<gtk::Widget>(),
                 error_label: error_label.clone(),
                 dialog: dialog.clone(),
                 stack: stack.clone(),
