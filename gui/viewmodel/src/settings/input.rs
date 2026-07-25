@@ -64,7 +64,6 @@ impl InputSettingsViewModel {
         profile_id: Option<&str>,
     ) -> Result<(), ViewModelError> {
         let factory_id = self.factory_id.clone_box();
-        let slot = slot;
         let profile_id = profile_id.map(|s| s.to_string());
         self.editor.transact(move |state| {
             let factory = state
