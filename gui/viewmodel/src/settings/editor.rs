@@ -6,15 +6,9 @@ use std::{
 };
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{
-    registry::SystemRegistry,
-    settings::editor::CaptureTarget,
-};
+use nerust_gui_shell::{registry::SystemRegistry, settings::editor::CaptureTarget};
 
-use super::{
-    projection::ProjectionHub,
-    ValidationState,
-};
+use super::{ValidationState, projection::ProjectionHub};
 
 /// Error type for view model operations.
 #[derive(Debug, thiserror::Error)]
@@ -124,8 +118,7 @@ impl SettingsEditor {
         let mut candidate = original.clone();
         let result = mutate(&mut candidate)?;
 
-        if candidate.draft == original.draft
-            && candidate.capture_target == original.capture_target
+        if candidate.draft == original.draft && candidate.capture_target == original.capture_target
         {
             return Ok(result);
         }
@@ -177,9 +170,7 @@ impl Drop for NotificationGuard {
 mod tests {
     use super::*;
     use nerust_gui_settings::{
-        app_state::DesktopAppState,
-        local::HostBackendLocalSettings,
-        shared::DesktopSharedSettings,
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
 
     fn empty_snapshot() -> SettingsSnapshot {
@@ -192,11 +183,7 @@ mod tests {
 
     fn test_editor() -> SettingsEditor {
         let registry = Rc::new(SystemRegistry::new(Vec::new()));
-        SettingsEditor::new(
-            empty_snapshot(),
-            registry,
-            Rc::new([]),
-        )
+        SettingsEditor::new(empty_snapshot(), registry, Rc::new([]))
     }
 
     #[test]
