@@ -122,13 +122,25 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     for factory in state.registry.all() {
         let sid = factory.system_id();
         let input_factory = factory.input_system_factory();
-        let pairs = state
+        let pairs: Vec<(String, Option<String>)> = state
             .draft
             .app_state
             .controller_assignments
             .get(&sid)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                input_factory
+                    .default_assignments()
+                    .slots
+                    .iter()
+                    .map(|(slot_id, ctrl)| {
+                        (
+                            slot_id.to_string(),
+                            ctrl.as_ref().map(|p| p.profile_id().to_string()),
+                        )
+                    })
+                    .collect()
+            });
         let unknown = pairs
             .iter()
             .filter(|(slot_id, _)| input_factory.resolve_slot(slot_id).is_none())
