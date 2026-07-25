@@ -3,19 +3,96 @@ use std::{
     io::{Cursor, Write},
 };
 
-use nerust_core_traits::identity::SystemId;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-use super::{prepare_test_dir, test_identity, test_metadata};
+use super::{prepare_test_dir, test_identity, test_metadata, test_nes_identity};
 use crate::{
     archive::build_state_archive,
-    metadata::{
-        METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, StateArchiveMetadataV1,
-        THUMBNAIL_ENTRY,
+    metadata::{METADATA_ENTRY, STATE_ARCHIVE_SCHEMA_VERSION, STATE_ENTRY, THUMBNAIL_ENTRY},
+    slots::{
+        load_state_slot, load_state_slot_for_identity, scan_state_slots, state_slot_path,
+        write_state_slot,
     },
-    slots::{load_state_slot, scan_state_slots, state_slot_path, write_state_slot},
     thumbnail::ThumbnailSource,
 };
+
+#[derive(serde::Serialize)]
+struct LegacyMetadataV2 {
+    schema_version: u32,
+    slot_id: u64,
+    saved_at_unix_ms: u64,
+    has_thumbnail: bool,
+    system_id: String,
+    #[serde(with = "serde_bytes")]
+    identity_bytes: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    options_bytes: Vec<u8>,
+    emulator_version: String,
+}
+
+#[derive(serde::Serialize)]
+struct LegacyMetadataV1 {
+    schema_version: u32,
+    slot_id: u64,
+    saved_at_unix_ms: u64,
+    has_thumbnail: bool,
+    system_id: String,
+    mapper_type: u32,
+    sub_mapper_type: u32,
+    prg_rom_crc64: u64,
+    chr_rom_crc64: u64,
+    trainer_crc64: u64,
+    emulator_version: String,
+    rom_format: u32,
+    mirror_mode_kind: u32,
+    #[serde(with = "serde_bytes")]
+    mirror_mode_custom_lut: Vec<u8>,
+    has_battery: bool,
+    trainer_len: u64,
+    prg_rom_len: u64,
+    chr_rom_len: u64,
+    prg_ram_len: u64,
+    save_prg_ram_len: u64,
+    chr_ram_len: u64,
+    save_chr_ram_len: u64,
+}
+
+#[derive(serde::Serialize)]
+struct MistaggedSystemIdV3<'a> {
+    sid: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct MistaggedMetadataV3<'a> {
+    schema_version: u32,
+    slot_id: u64,
+    saved_at_unix_ms: u64,
+    has_thumbnail: bool,
+    system_id: MistaggedSystemIdV3<'a>,
+    #[serde(with = "serde_bytes")]
+    identity_bytes: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    options_bytes: Vec<u8>,
+    emulator_version: String,
+}
+
+fn write_legacy_archive(path: &std::path::Path, metadata: &impl serde::Serialize) {
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .unwrap();
+    let mut writer = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    writer.start_file(METADATA_ENTRY, options).unwrap();
+    writer
+        .write_all(&rmp_serde::to_vec_named(metadata).unwrap())
+        .unwrap();
+    writer.start_file(STATE_ENTRY, options).unwrap();
+    writer.write_all(b"legacy-state").unwrap();
+    writer.finish().unwrap();
+}
 
 #[test]
 fn metadata_only_archive_is_not_listed_as_state_slot() {
@@ -62,6 +139,157 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
     assert_eq!(loaded.machine_state, b"machine-state");
     assert!(loaded.thumbnail_png.is_some());
     assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+}
+
+#[test]
+fn state_archive_reads_known_mistagged_v3_nes_metadata() {
+    for (slot_id, tag) in [
+        (21, "NesSystemId"),
+        (22, "nerust_nes_core::rom_identity::NesSystemId"),
+        (23, "nerust_nes_core::nes"),
+    ] {
+        let dir = prepare_test_dir(&format!("state-archive-v3-mistagged-{slot_id}"));
+        let path = state_slot_path(&dir, slot_id);
+        write_legacy_archive(
+            &path,
+            &MistaggedMetadataV3 {
+                schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+                slot_id,
+                saved_at_unix_ms: 1234,
+                has_thumbnail: false,
+                system_id: MistaggedSystemIdV3 { sid: tag },
+                identity_bytes: vec![1, 2, 3, 4],
+                options_bytes: vec![5, 6],
+                emulator_version: "mistagged-v3".into(),
+            },
+        );
+
+        let loaded = load_state_slot_for_identity(&path, &test_nes_identity())
+            .unwrap()
+            .expect("known mistagged NES metadata should match the current NES identity");
+        assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+        assert_eq!(loaded.summary.slot_id, slot_id);
+        assert_eq!(loaded.summary.emulator_version, "mistagged-v3");
+        assert_eq!(loaded.machine_state, b"legacy-state");
+    }
+}
+
+#[test]
+fn state_archive_rejects_unknown_mistagged_v3_metadata() {
+    let dir = prepare_test_dir("state-archive-v3-unknown-tag");
+    let path = state_slot_path(&dir, 24);
+    write_legacy_archive(
+        &path,
+        &MistaggedMetadataV3 {
+            schema_version: STATE_ARCHIVE_SCHEMA_VERSION,
+            slot_id: 24,
+            saved_at_unix_ms: 1234,
+            has_thumbnail: false,
+            system_id: MistaggedSystemIdV3 {
+                sid: "future_system::SystemId",
+            },
+            identity_bytes: vec![1, 2, 3, 4],
+            options_bytes: Vec::new(),
+            emulator_version: "unknown-v3".into(),
+        },
+    );
+
+    assert!(load_state_slot(&path).is_err());
+}
+
+#[test]
+fn state_archive_reads_v2_string_system_id_metadata() {
+    let dir = prepare_test_dir("state-archive-v2");
+    let path = state_slot_path(&dir, 12);
+    write_legacy_archive(
+        &path,
+        &LegacyMetadataV2 {
+            schema_version: 2,
+            slot_id: 12,
+            saved_at_unix_ms: 1234,
+            has_thumbnail: false,
+            system_id: "nes".into(),
+            identity_bytes: vec![1, 2, 3, 4],
+            options_bytes: vec![5, 6],
+            emulator_version: "v2".into(),
+        },
+    );
+
+    let loaded = load_state_slot(&path).unwrap();
+    assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+    assert_eq!(loaded.summary.slot_id, 12);
+    assert_eq!(loaded.summary.emulator_version, "v2");
+    assert_eq!(loaded.machine_state, b"legacy-state");
+    assert!(
+        load_state_slot_for_identity(&path, &test_nes_identity())
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn state_archive_rejects_non_nes_legacy_metadata() {
+    let dir = prepare_test_dir("state-archive-v2-non-nes");
+    let path = state_slot_path(&dir, 13);
+    write_legacy_archive(
+        &path,
+        &LegacyMetadataV2 {
+            schema_version: 2,
+            slot_id: 13,
+            saved_at_unix_ms: 1234,
+            has_thumbnail: false,
+            system_id: "snes".into(),
+            identity_bytes: vec![1, 2, 3, 4],
+            options_bytes: Vec::new(),
+            emulator_version: "v2".into(),
+        },
+    );
+
+    let error = load_state_slot(&path).expect_err("non-NES legacy metadata should reject");
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported legacy state archive system: snes")
+    );
+}
+
+#[test]
+fn state_archive_reads_v1_string_system_id_metadata() {
+    let dir = prepare_test_dir("state-archive-v1");
+    let path = state_slot_path(&dir, 11);
+    write_legacy_archive(
+        &path,
+        &LegacyMetadataV1 {
+            schema_version: 1,
+            slot_id: 11,
+            saved_at_unix_ms: 1234,
+            has_thumbnail: false,
+            system_id: "Nes".into(),
+            mapper_type: 4,
+            sub_mapper_type: 1,
+            prg_rom_crc64: 10,
+            chr_rom_crc64: 20,
+            trainer_crc64: 30,
+            emulator_version: "v1".into(),
+            rom_format: 1,
+            mirror_mode_kind: 5,
+            mirror_mode_custom_lut: vec![0, 1, 1, 0],
+            has_battery: true,
+            trainer_len: 512,
+            prg_rom_len: 32768,
+            chr_rom_len: 8192,
+            prg_ram_len: 8192,
+            save_prg_ram_len: 8192,
+            chr_ram_len: 0,
+            save_chr_ram_len: 0,
+        },
+    );
+
+    let loaded = load_state_slot(&path).unwrap();
+    assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
+    assert_eq!(loaded.summary.slot_id, 11);
+    assert_eq!(loaded.summary.emulator_version, "v1");
+    assert_eq!(loaded.machine_state, b"legacy-state");
 }
 
 #[test]
@@ -127,98 +355,4 @@ fn invalid_thumbnail_bytes_are_preserved_as_opaque_blob() {
         loaded.thumbnail_png,
         Some(vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
     );
-}
-
-#[test]
-fn v1_archive_converts_to_v2_on_read() {
-    use std::io::Write;
-
-    use zip::{ZipWriter, write::SimpleFileOptions};
-
-    let dir = prepare_test_dir("v1-to-v2-conversion");
-    let path = state_slot_path(&dir, 42);
-
-    let v1 = StateArchiveMetadataV1 {
-        schema_version: 1,
-        slot_id: 42,
-        saved_at_unix_ms: 1_000_000,
-        has_thumbnail: false,
-        system_id: SystemId::new("nes"),
-        mapper_type: 4,
-        sub_mapper_type: 1,
-        prg_rom_crc64: 0x11,
-        chr_rom_crc64: 0x22,
-        trainer_crc64: 0x33,
-        emulator_version: "test-v1".into(),
-        rom_format: 0,
-        mirror_mode_kind: 0,
-        mirror_mode_custom_lut: Vec::new(),
-        has_battery: true,
-        trainer_len: 0,
-        prg_rom_len: 0x8000,
-        chr_rom_len: 0x2000,
-        prg_ram_len: 0,
-        save_prg_ram_len: 0x2000,
-        chr_ram_len: 0,
-        save_chr_ram_len: 0,
-    };
-
-    let cursor = Cursor::new(Vec::new());
-    let mut writer = ZipWriter::new(cursor);
-    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    writer.start_file(METADATA_ENTRY, opts).unwrap();
-    writer
-        .write_all(&rmp_serde::to_vec_named(&v1).unwrap())
-        .unwrap();
-    writer.start_file(STATE_ENTRY, opts).unwrap();
-    writer.write_all(b"v1-machine-state").unwrap();
-    let archive_bytes = writer.finish().unwrap().into_inner();
-    fs::write(&path, archive_bytes).unwrap();
-
-    let loaded = load_state_slot(&path).unwrap();
-    assert_eq!(loaded.summary.slot_id, 42);
-    assert_eq!(loaded.machine_state, b"v1-machine-state");
-    assert_eq!(loaded.summary.schema_version, STATE_ARCHIVE_SCHEMA_VERSION);
-    assert!(loaded.thumbnail_png.is_none());
-}
-
-#[test]
-fn v1_conversion_identity_bytes_are_deterministic() {
-    let v1 = StateArchiveMetadataV1 {
-        schema_version: 1,
-        slot_id: 0,
-        saved_at_unix_ms: 0,
-        has_thumbnail: false,
-        system_id: SystemId::new("nes"),
-        mapper_type: 4,
-        sub_mapper_type: 1,
-        prg_rom_crc64: 0x11,
-        chr_rom_crc64: 0x22,
-        trainer_crc64: 0x33,
-        emulator_version: String::new(),
-        rom_format: 0,
-        mirror_mode_kind: 0,
-        mirror_mode_custom_lut: Vec::new(),
-        has_battery: true,
-        trainer_len: 0,
-        prg_rom_len: 0x8000,
-        chr_rom_len: 0x2000,
-        prg_ram_len: 0,
-        save_prg_ram_len: 0x2000,
-        chr_ram_len: 0,
-        save_chr_ram_len: 0,
-    };
-
-    // Convert twice and assert the identity_bytes are stable.
-    let result_a = crate::metadata::convert_v1_to_v2(v1).unwrap();
-    let result_b = crate::metadata::convert_v1_to_v2(StateArchiveMetadataV1 {
-        schema_version: 1,
-        ..Default::default()
-    })
-    .unwrap();
-
-    assert_eq!(result_a.slot_id, 0);
-    assert_eq!(result_b.slot_id, 0);
-    assert!(!result_a.identity_bytes.is_empty());
-    assert!(!result_b.identity_bytes.is_empty());
 }

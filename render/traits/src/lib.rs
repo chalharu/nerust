@@ -135,8 +135,8 @@ pub enum PixelFormat {
 
     /// 1 byte/pixel, palette index + palette LUT.
     PaletteIndex {
-        /// 256エントリのRGBAパレット (u32 = 0xRRGGBBAA)
-        palette: Box<[u32; 256]>,
+        /// RGBA palette entries (u32 = 0xRRGGBBAA)
+        palette: Box<[u32]>,
     },
 }
 
@@ -265,8 +265,8 @@ impl FrameBuffer {
         &self.format
     }
 
-    /// PaletteIndex 形式の場合、パレットテーブルへの参照を返す。
-    pub fn palette(&self) -> Option<&[u32; 256]> {
+    ///  PaletteIndex 形式の場合、パレットテーブルへの参照を返す。
+    pub fn palette(&self) -> Option<&[u32]> {
         match &self.format {
             PixelFormat::PaletteIndex { palette } => Some(palette.as_ref()),
             PixelFormat::Rgba => None,
