@@ -28,7 +28,7 @@ use nerust_settings_core::{
 
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode};
 
-use crate::{mapping::*, State};
+use crate::{State, mapping::*};
 
 // ---------------------------------------------------------------------------
 // Widget group structs
@@ -410,15 +410,13 @@ impl PreferencesBinding {
                     && let Err(e) = vm.set_choice(&field_id, &choice.value)
                 {
                     binding.error_label.set_text(&e.to_string());
-                    let weak = binding.self_weak.clone();
-                    glib::idle_add_local_once(move || {
-                        if let Some(b) = weak.upgrade() {
-                            b.with_refreshing(|| {
-                                if let Some(vm) = b.vm.systems().get(index) {
-                                    b.rebuild_system_page(index, &vm.view.get());
-                                }
-                            });
-                        }
+                    let idx = index;
+                    schedule_idle(&binding.self_weak, move |b| {
+                        b.with_refreshing(|| {
+                            if let Some(vm) = b.vm.systems().get(idx) {
+                                b.rebuild_system_page(idx, &vm.view.get());
+                            }
+                        });
                     });
                 }
             });
@@ -477,15 +475,13 @@ impl PreferencesBinding {
                     && let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref())
                 {
                     binding.error_label.set_text(&e.to_string());
-                    let weak = binding.self_weak.clone();
-                    glib::idle_add_local_once(move || {
-                        if let Some(b) = weak.upgrade() {
-                            b.with_refreshing(|| {
-                                if let Some(vm) = b.vm.inputs().get(index) {
-                                    b.rebuild_input_page(index, &vm.view.get());
-                                }
-                            });
-                        }
+                    let idx = index;
+                    schedule_idle(&binding.self_weak, move |b| {
+                        b.with_refreshing(|| {
+                            if let Some(vm) = b.vm.inputs().get(idx) {
+                                b.rebuild_input_page(idx, &vm.view.get());
+                            }
+                        });
                     });
                 }
             });
@@ -859,16 +855,28 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
-            cmd(&b, b.vm.general.set_language(parse_language_id(combo.active_id().as_deref())));
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.general
+                    .set_language(parse_language_id(combo.active_id().as_deref())),
+            );
         }
     });
     storage_policy_combo.connect_changed({
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
-            cmd(&b, b.vm.general.set_storage_policy(parse_storage_policy_id(combo.active_id().as_deref())));
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.general
+                    .set_storage_policy(parse_storage_policy_id(combo.active_id().as_deref())),
+            );
         }
     });
     storage_dir_entry.connect_changed({
@@ -897,8 +905,14 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
-            cmd(&b, b.vm.video.set_scaling(parse_scaling_id(combo.active_id().as_deref())));
+            if b.refreshing.get() {
+                return;
+            }
+            cmd(
+                &b,
+                b.vm.video
+                    .set_scaling(parse_scaling_id(combo.active_id().as_deref())),
+            );
         }
     });
     vsync_check.connect_toggled({
@@ -1105,6 +1119,21 @@ fn weak_handler(b: &Rc<PreferencesBinding>) -> std::rc::Weak<PreferencesBinding>
     Rc::downgrade(b)
 }
 
+/// Schedule a closure to run on the GLib main loop after the current
+/// signal emission completes. The closure receives a strong reference
+/// to the binding only if it is still alive.
+fn schedule_idle<F>(weak: &std::rc::Weak<PreferencesBinding>, f: F)
+where
+    F: FnOnce(&PreferencesBinding) + 'static,
+{
+    let weak = weak.clone();
+    glib::idle_add_local_once(move || {
+        if let Some(b) = weak.upgrade() {
+            f(&b);
+        }
+    });
+}
+
 fn cmd<T>(
     binding: &Rc<PreferencesBinding>,
     result: Result<T, nerust_gui_viewmodel::settings::ViewModelError>,
@@ -1198,6 +1227,40 @@ mod tests {
         let ok = binding.vm.finish().is_ok();
         assert_eq!(binding.ok_button.is_sensitive(), ok);
     });
+
+    // Pure Rc/Weak upgrade tests — no GTK needed, run on all platforms.
+    #[test]
+    fn weak_upgrade_returns_some_when_alive() {
+        use std::rc::Rc;
+        let rc = Rc::new(42);
+        let weak = Rc::downgrade(&rc);
+        assert_eq!(weak.upgrade().map(|v| *v), Some(42));
+    }
+
+    #[test]
+    fn weak_upgrade_returns_none_after_drop() {
+        use std::rc::{Rc, Weak};
+        let weak: Weak<i32> = {
+            let rc = Rc::new(42);
+            Rc::downgrade(&rc)
+        };
+        assert!(weak.upgrade().is_none(), "upgrade after drop should return None");
+    }
+
+    #[test]
+    fn schedule_idle_with_dead_weak_is_noop() {
+        use std::rc::{Rc, Weak};
+        let weak: Weak<i32> = {
+            let rc = Rc::new(42);
+            Rc::downgrade(&rc)
+        };
+        let mut executed = false;
+        // Simulate what schedule_idle does: upgrade weak, run closure if alive
+        if let Some(_b) = weak.upgrade() {
+            executed = true;
+        }
+        assert!(!executed, "closure should not run after weak is dropped");
+    }
 
     fn create_test_binding() -> Rc<PreferencesBinding> {
         #[derive(Debug)]

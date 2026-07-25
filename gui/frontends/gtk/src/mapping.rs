@@ -81,7 +81,11 @@ mod tests {
 
     #[test]
     fn map_language_id_roundtrip() {
-        for lang in [AppLanguage::Japanese, AppLanguage::English, AppLanguage::SystemDefault] {
+        for lang in [
+            AppLanguage::Japanese,
+            AppLanguage::English,
+            AppLanguage::SystemDefault,
+        ] {
             let id = map_language_id(lang);
             let back = parse_language_id(Some(id));
             assert_eq!(back, lang, "roundtrip failed for {lang:?}");
@@ -90,7 +94,11 @@ mod tests {
 
     #[test]
     fn map_storage_policy_id_roundtrip() {
-        for policy in [StoragePolicy::AppSharedData, StoragePolicy::CustomDirectory, StoragePolicy::Sidecar] {
+        for policy in [
+            StoragePolicy::AppSharedData,
+            StoragePolicy::CustomDirectory,
+            StoragePolicy::Sidecar,
+        ] {
             let id = map_storage_policy_id(policy);
             let back = parse_storage_policy_id(Some(id));
             assert_eq!(back, policy, "roundtrip failed for {policy:?}");
@@ -99,7 +107,14 @@ mod tests {
 
     #[test]
     fn map_scaling_id_roundtrip() {
-        for scaling in [ScalingMode::FitToWindow, ScalingMode::X1, ScalingMode::X2, ScalingMode::X3, ScalingMode::X4, ScalingMode::X5] {
+        for scaling in [
+            ScalingMode::FitToWindow,
+            ScalingMode::X1,
+            ScalingMode::X2,
+            ScalingMode::X3,
+            ScalingMode::X4,
+            ScalingMode::X5,
+        ] {
             let id = map_scaling_id(scaling);
             let back = parse_scaling_id(Some(id));
             assert_eq!(back, scaling, "roundtrip failed for {scaling:?}");
@@ -108,13 +123,19 @@ mod tests {
 
     #[test]
     fn parse_language_id_unknown_falls_back() {
-        assert_eq!(parse_language_id(Some("unknown")), AppLanguage::SystemDefault);
+        assert_eq!(
+            parse_language_id(Some("unknown")),
+            AppLanguage::SystemDefault
+        );
         assert_eq!(parse_language_id(None), AppLanguage::SystemDefault);
     }
 
     #[test]
     fn parse_storage_policy_id_unknown_falls_back() {
-        assert_eq!(parse_storage_policy_id(Some("unknown")), StoragePolicy::Sidecar);
+        assert_eq!(
+            parse_storage_policy_id(Some("unknown")),
+            StoragePolicy::Sidecar
+        );
         assert_eq!(parse_storage_policy_id(None), StoragePolicy::Sidecar);
     }
 
