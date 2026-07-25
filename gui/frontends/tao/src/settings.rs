@@ -34,7 +34,6 @@ use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
 
-
 // ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
@@ -813,10 +812,7 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
 #[cfg(test)]
 mod tests {
     use iced::keyboard::key::{Code, Physical};
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::descriptor::SystemSettingsChoiceId,
-};
+    use nerust_core_traits::audio::AudioBackendRegistry;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState,
