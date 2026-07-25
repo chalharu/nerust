@@ -79,3 +79,51 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
             .unwrap_or_default(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use nerust_gui_settings::input::ShortcutAction;
+    use nerust_keyboard::Key;
+
+    use crate::settings::test_support::test_vm;
+    use super::CaptureTarget;
+
+    #[test]
+    fn start_capture_sets_target() {
+        let vm = test_vm();
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        vm.capture.start_capture(target.clone()).unwrap();
+        let view = vm.capture.view.get();
+        assert_eq!(view.target, Some(target));
+    }
+
+    #[test]
+    fn apply_captured_key_clears_target() {
+        let vm = test_vm();
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        vm.capture.start_capture(target).unwrap();
+        vm.capture.apply_captured_key(Key::Space);
+        let view = vm.capture.view.get();
+        assert!(view.target.is_none());
+    }
+
+    #[test]
+    fn cancel_capture_clears_target() {
+        let vm = test_vm();
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        vm.capture.start_capture(target).unwrap();
+        vm.capture.cancel_capture();
+        let view = vm.capture.view.get();
+        assert!(view.target.is_none());
+    }
+
+    #[test]
+    fn clear_binding_clears_target() {
+        let vm = test_vm();
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        vm.capture.start_capture(target.clone()).unwrap();
+        vm.capture.clear_binding(&target).unwrap();
+        let view = vm.capture.view.get();
+        assert!(view.target.is_none());
+    }
+}

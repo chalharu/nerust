@@ -21,6 +21,17 @@ impl<T: Clone + Eq> fmt::Display for ChoiceView<T> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn choice_view_display_shows_label() {
+        let c = ChoiceView { value: 42usize, label: "Answer".into() };
+        assert_eq!(c.to_string(), "Answer");
+    }
+}
+
 // ── General ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]

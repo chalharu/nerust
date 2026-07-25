@@ -83,3 +83,48 @@ fn project_view(state: &super::EditorState) -> VideoView {
         vsync: state.draft.local.video.presentation.vsync,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::settings::test_support::test_vm;
+    use nerust_gui_settings::local::ScalingMode;
+
+    #[test]
+    fn set_fullscreen_default_updates_projection() {
+        let vm = test_vm();
+        vm.video.set_fullscreen_default(true).unwrap();
+        let view = vm.video.view.get();
+        assert!(view.fullscreen_default);
+    }
+
+    #[test]
+    fn set_scaling_updates_projection() {
+        let vm = test_vm();
+        vm.video.set_scaling(ScalingMode::X3).unwrap();
+        let view = vm.video.view.get();
+        assert_eq!(view.scaling, ScalingMode::X3);
+    }
+
+    #[test]
+    fn set_vsync_updates_projection() {
+        let vm = test_vm();
+        vm.video.set_vsync(true).unwrap();
+        let view = vm.video.view.get();
+        assert!(view.vsync);
+    }
+
+    #[test]
+    fn scaling_choices_include_all_modes() {
+        let vm = test_vm();
+        let view = vm.video.view.get();
+        assert_eq!(view.scaling_choices.len(), 6);
+    }
+
+    #[test]
+    fn set_same_scaling_is_noop() {
+        let vm = test_vm();
+        let rev_before = vm.revision.get();
+        vm.video.set_scaling(ScalingMode::FitToWindow).unwrap();
+        assert_eq!(vm.revision.get(), rev_before, "revision should not advance");
+    }
+}
