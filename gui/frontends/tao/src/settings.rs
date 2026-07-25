@@ -26,10 +26,10 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
 };
 
-use nerust_gui_shell::settings::bindings::descriptors::shortcut_descriptors;
-use nerust_gui_viewmodel::settings::{SettingsViewModel, dto::ChoiceView};
+use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathValidator, dto::ChoiceView};
 use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
+use nerust_settings_core::bindings::descriptors::shortcut_descriptors;
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -189,9 +189,22 @@ impl SettingsAppState {
                 rates.iter().copied().collect()
             }
         };
+        #[derive(Debug)]
+        struct FsStoragePathValidator;
+        impl StoragePathValidator for FsStoragePathValidator {
+            fn validate(&self, path: &std::path::Path) -> Result<(), String> {
+                match std::fs::metadata(path) {
+                    Ok(meta) if meta.is_dir() => Ok(()),
+                    Ok(_) => Err(format!("not a directory: {}", path.display())),
+                    Err(e) => Err(format!("cannot access {}: {e}", path.display())),
+                }
+            }
+        }
+
         let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
             registry.all().iter().map(Arc::clone).collect();
         let vm = SettingsViewModel::new(snapshot.clone(), factories, supported_sample_rates);
+        vm.set_storage_validator(Box::new(FsStoragePathValidator));
         let invalidated = Rc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
             invalidated.set(true);

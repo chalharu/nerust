@@ -2,6 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    path::Path,
     rc::Rc,
     sync::Arc,
 };
@@ -10,6 +11,15 @@ use nerust_gui_settings::snapshot::SettingsSnapshot;
 use nerust_settings_core::editor::CaptureTarget;
 
 use super::catalog::FactoryCatalog;
+
+/// Storage path validation port.
+///
+/// Injected by the frontend (composition root) to perform
+/// filesystem-level validation. The view model calls this
+/// during validation but does not depend on `std::fs`.
+pub trait StoragePathValidator: std::fmt::Debug {
+    fn validate(&self, path: &Path) -> Result<(), String>;
+}
 
 use super::{
     ValidationState,
@@ -44,6 +54,7 @@ pub struct EditorState {
     pub revision: u64,
     pub(crate) catalog: FactoryCatalog,
     pub supported_sample_rates: Arc<[u32]>,
+    pub storage_validator: Option<Rc<dyn StoragePathValidator>>,
 }
 
 /// Lightweight handle to the shared editor state and projection hub.
@@ -73,6 +84,7 @@ impl SettingsEditor {
             revision: 0,
             catalog,
             supported_sample_rates,
+            storage_validator: None,
         }));
 
         let revision_inner = Rc::new(ObservablePropertyInner::new(0u64));
@@ -84,6 +96,10 @@ impl SettingsEditor {
             notifying: Rc::new(Cell::new(false)),
             revision_inner,
         }
+    }
+
+    pub fn set_storage_validator(&self, validator: Box<dyn StoragePathValidator>) {
+        self.current.borrow_mut().storage_validator = Some(Rc::from(validator));
     }
 
     pub fn revision_prop(&self) -> ReadOnlyObservableProperty<u64> {
