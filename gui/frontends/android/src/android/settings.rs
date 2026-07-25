@@ -55,7 +55,7 @@ pub(crate) struct AndroidSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AndroidSystemChoice {
-    system_id: SystemId,
+    system_id: Box<dyn SystemId>,
     field_id: SystemSettingsFieldId,
     label: String,
     selected: SystemSettingsChoiceId,
@@ -71,7 +71,7 @@ impl AndroidSettings {
             .iter()
             .flat_map(|factory| {
                 let system_id = factory.system_id();
-                let view = settings_view(snapshot, &system_id);
+                let view = settings_view(snapshot, system_id.as_ref());
                 factory
                     .settings_page(&view)
                     .fields
@@ -79,7 +79,7 @@ impl AndroidSettings {
                     .map(|field| {
                         let SystemSettingsFieldKind::Choice { selected, options } = &field.kind;
                         AndroidSystemChoice {
-                            system_id,
+                            system_id: system_id.clone(),
                             field_id: field.id.clone(),
                             label: resolve_label(field.label_id, language, factory.as_ref()),
                             selected: selected.clone(),
@@ -124,7 +124,7 @@ impl AndroidSettings {
 
         for choice in &self.system_choices {
             let factory = registry
-                .find_by_id(&choice.system_id)
+                .find_by_id(choice.system_id.as_ref())
                 .ok_or(FactoryError::InvalidSettings)?;
             apply_settings_choice(
                 factory.as_ref(),
@@ -556,7 +556,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 mod tests {
     use std::sync::Arc;
 
-    use nerust_core_traits::identity::SystemId;
+    use nerust_core_traits::factory::CoreFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
@@ -569,7 +569,7 @@ mod tests {
     fn default_snapshot() -> SettingsSnapshot {
         let mut shared = DesktopSharedSettings::default();
         shared.systems.insert(
-            SystemId::new("nes"),
+            NesFactory.system_id(),
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
         SettingsSnapshot {
@@ -626,7 +626,7 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get_mut(&SystemId::new("nes"))
+            .get_mut(NesFactory.system_id().as_ref())
             .map(|s| s.downcast_mut::<NesSettings>().unwrap())
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscSVideo;
@@ -662,7 +662,7 @@ mod tests {
         let nes = snapshot
             .shared
             .systems
-            .get(&SystemId::new("nes"))
+            .get(NesFactory.system_id().as_ref())
             .map(|s| s.downcast_ref::<NesSettings>().unwrap())
             .unwrap();
         assert_eq!(nes.video.filter, NesVideoFilter::NtscRgb);

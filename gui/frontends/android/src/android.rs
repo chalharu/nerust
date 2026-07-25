@@ -294,8 +294,11 @@ impl AndroidFrontend {
             (f.clone(), id)
         };
 
-        nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
-            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(
+            &mut self.session,
+            system_id.as_ref(),
+        )
+        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
 
         let options = self
             .session
@@ -303,7 +306,7 @@ impl AndroidFrontend {
             .ok_or_else(|| "no active system".to_string())?;
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
-            &system_id,
+            system_id.as_ref(),
         );
         let resolved = factory
             .resolve_load_request(&view, options)
@@ -380,8 +383,11 @@ impl AndroidFrontend {
             (f.clone(), id)
         };
 
-        nerust_gui_shell::load::RomLoadTarget::set_active_system(&mut self.session, system_id)
-            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
+        nerust_gui_shell::load::RomLoadTarget::set_active_system(
+            &mut self.session,
+            system_id.as_ref(),
+        )
+        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
 
         let options = self
             .session
@@ -389,7 +395,7 @@ impl AndroidFrontend {
             .ok_or_else(|| "no active system".to_string())?;
         let view = nerust_gui_shell::settings::factory::settings_view(
             self.session.settings_snapshot(),
-            &system_id,
+            system_id.as_ref(),
         );
         let resolved = factory.resolve_load_request(&view, options).map_err(|e| {
             format!(
