@@ -12,13 +12,30 @@ use nerust_settings_core::editor::CaptureTarget;
 
 use super::catalog::FactoryCatalog;
 
+/// Storage path validation error, keeping the port independent of
+/// concrete `std::io::Error` or `std::fmt::Display` decisions.
+#[derive(Debug, Clone)]
+pub enum StoragePathError {
+    NotDirectory,
+    Inaccessible(String),
+}
+
+impl std::fmt::Display for StoragePathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoragePathError::NotDirectory => write!(f, "not a directory"),
+            StoragePathError::Inaccessible(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
 /// Storage path validation port.
 ///
 /// Injected by the frontend (composition root) to perform
 /// filesystem-level validation. The view model calls this
 /// during validation but does not depend on `std::fs`.
 pub trait StoragePathValidator: std::fmt::Debug {
-    fn validate(&self, path: &Path) -> Result<(), String>;
+    fn validate(&self, path: &Path) -> Result<(), StoragePathError>;
 }
 
 use super::{

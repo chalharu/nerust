@@ -104,7 +104,7 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
                 if let Err(e) = validator.validate(path) {
                     issues.push(super::ValidationIssue {
                         scope: super::ValidationScope::Persistence,
-                        message: e,
+                        message: e.to_string(),
                     });
                 }
             } else {

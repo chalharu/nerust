@@ -91,7 +91,7 @@ pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<()
     Ok(())
 }
 
-fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
+pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
     let mut current = Some(path);
     while let Some(candidate) = current {
         match std::fs::metadata(candidate) {

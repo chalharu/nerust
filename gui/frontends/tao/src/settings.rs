@@ -192,25 +192,17 @@ impl SettingsAppState {
         #[derive(Debug)]
         struct FsStoragePathValidator;
         impl StoragePathValidator for FsStoragePathValidator {
-            fn validate(&self, path: &std::path::Path) -> Result<(), String> {
-                // Match runtime behavior: allow non-existent paths whose
-                // first existing ancestor is a directory (creatable paths).
-                let mut current = Some(path);
-                while let Some(candidate) = current {
-                    match std::fs::metadata(candidate) {
-                        Ok(meta) => {
-                            if meta.is_dir() {
-                                return Ok(());
-                            }
-                            return Err(format!("not a directory: {}", candidate.display()));
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            current = candidate.parent();
-                        }
-                        Err(e) => return Err(format!("cannot access {}: {e}", candidate.display())),
+            fn validate(&self, path: &std::path::Path) -> Result<(), StoragePathError> {
+                let result = nerust_gui_runtime::settings::apply::validate_directory_path(path);
+                match result {
+                    Ok(()) => Ok(()),
+                    Err(nerust_gui_runtime::settings::SettingsError::Io(e))
+                        if e.to_string().contains("not a directory") =>
+                    {
+                        Err(StoragePathError::NotDirectory)
                     }
+                    Err(e) => Err(StoragePathError::Inaccessible(e.to_string())),
                 }
-                Ok(())
             }
         }
 

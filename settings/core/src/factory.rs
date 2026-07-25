@@ -59,3 +59,31 @@ pub fn resolve_label(label_id: &str, language: AppLanguage, factory: &dyn CoreFa
         })
         .unwrap_or_else(|| label_id.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use nerust_core_traits::{declare_system_id, factory::settings::Language};
+    use nerust_gui_settings::{snapshot::SettingsSnapshot, shared::DesktopSharedSettings,
+        app_state::DesktopAppState, local::HostBackendLocalSettings, language::AppLanguage};
+    use super::{settings_view, language_to_factory_lang};
+
+    declare_system_id!(pub TestSysId, "test");
+
+    #[test]
+    fn language_to_factory_lang_mapping() {
+        assert_eq!(language_to_factory_lang(AppLanguage::Japanese), Language::Japanese);
+        assert_eq!(language_to_factory_lang(AppLanguage::English), Language::English);
+        assert_eq!(language_to_factory_lang(AppLanguage::SystemDefault), Language::SystemDefault);
+    }
+
+    #[test]
+    fn settings_view_empty_snapshot() {
+        let snapshot = SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        let view = settings_view(&snapshot, &TestSysId);
+        assert!(view.system_config.is_none());
+    }
+}
