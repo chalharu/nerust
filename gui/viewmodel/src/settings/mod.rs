@@ -8,6 +8,8 @@ mod projection;
 pub mod property;
 mod settings_viewmodel;
 mod system;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod validation;
 mod video;
 

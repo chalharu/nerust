@@ -305,3 +305,112 @@ fn project_view(
         conflicts,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use nerust_core_traits::factory::CoreFactory;
+    use nerust_input_traits::AttachmentId;
+
+    use super::resolve_assignments;
+    use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestInputFactory, test_vm};
+
+    #[test]
+    fn resolve_assignments_preserves_all_profiles() {
+        let factory = TestInputFactory::new();
+        let pairs = vec![
+            (P1_SLOT.to_string(), Some("test.ctrl.p1".to_string())),
+            (P2_SLOT.to_string(), Some("test.ctrl.p2".to_string())),
+        ];
+        let result = resolve_assignments(&pairs, &factory);
+        assert_eq!(result.len(), 2);
+        assert!(result[0].1.is_some());
+        assert!(result[1].1.is_some());
+    }
+
+    #[test]
+    fn resolve_assignments_ignores_unknown_slot() {
+        let factory = TestInputFactory::new();
+        let pairs = vec![
+            (P1_SLOT.to_string(), Some("test.ctrl.p1".to_string())),
+            ("unknown.slot".to_string(), Some("test.ctrl.p2".to_string())),
+        ];
+        let result = resolve_assignments(&pairs, &factory);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn resolve_assignments_unknown_profile_becomes_none() {
+        let factory = TestInputFactory::new();
+        let pairs = vec![(P1_SLOT.to_string(), Some("nonexistent.profile".to_string()))];
+        let result = resolve_assignments(&pairs, &factory);
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].1.is_none(),
+            "unknown profile should resolve to None"
+        );
+    }
+
+    #[test]
+    fn change_one_slot_preserves_other() {
+        use crate::settings::test_support::{P1_SLOT, P2_SLOT, TestCoreFactory, TestInputFactory};
+        use nerust_gui_runtime::settings::SettingsSnapshot;
+        use nerust_gui_settings::{
+            app_state::DesktopAppState, local::HostBackendLocalSettings,
+            shared::DesktopSharedSettings,
+        };
+        use nerust_gui_shell::registry::SystemRegistry;
+        use std::sync::Arc;
+
+        // Create a snapshot with both P1 and P2 assigned
+        let test_factory = TestCoreFactory(TestInputFactory::new());
+        let sid = CoreFactory::system_id(&test_factory);
+        let mut snapshot = SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        snapshot.app_state.controller_assignments.insert(
+            sid,
+            vec![
+                (P1_SLOT.to_string(), Some("test.ctrl.p1".to_string())),
+                (P2_SLOT.to_string(), Some("test.ctrl.p2".to_string())),
+            ],
+        );
+
+        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let vm = super::super::SettingsViewModel::new(snapshot, registry, Arc::new([]));
+        let input_vm = &vm.inputs()[0];
+
+        // Both P1 and P2 have controllers initially
+        let view0 = input_vm.view.get();
+        assert_eq!(view0.slots.len(), 2);
+        assert!(
+            view0.slots[0].selected_profile_id.is_some(),
+            "P1 should have controller initially"
+        );
+
+        // Change P2 to None
+        input_vm.set_controller_slot(P2_SLOT, None).unwrap();
+
+        // P1 should still have its controller
+        let view1 = input_vm.view.get();
+        assert!(
+            view1.slots[0].selected_profile_id.is_some(),
+            "P1 should still have controller after P2 change"
+        );
+        assert!(
+            view1.slots[1].selected_profile_id.is_none(),
+            "P2 should be None"
+        );
+    }
+
+    #[test]
+    fn change_unknown_slot_returns_error() {
+        let vm = test_vm();
+        let input_vm = &vm.inputs()[0];
+        let unknown_slot = AttachmentId::new("nonexistent.slot");
+        let result = input_vm.set_controller_slot(unknown_slot, None);
+        assert!(result.is_err(), "changing unknown slot should return error");
+    }
+}

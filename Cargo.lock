@@ -2970,7 +2970,9 @@ dependencies = [
  "nerust_gui_shell",
  "nerust_input_traits",
  "nerust_keyboard",
+ "serde",
  "thiserror 2.0.19",
+ "typetag",
 ]
 
 [[package]]
