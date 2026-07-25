@@ -15,5 +15,7 @@ nerust_gui_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard.workspace = true
 nerust_settings_traits.workspace = true
+
+[dev-dependencies]
 serde.workspace = true
 typetag.workspace = true
