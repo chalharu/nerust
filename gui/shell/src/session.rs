@@ -39,13 +39,27 @@ use crate::{
     settings::{self, factory::settings_view},
 };
 
-type CoreParts = (
-    EmuCore,
-    GuiInput,
-    HashMap<(AttachmentId, DigitalControlId), usize>,
-);
+struct CoreRuntime {
+    emu_core: EmuCore,
+    gui_input: GuiInput,
+    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+}
 
-type CoreCreation = (CoreParts, InputAssignments);
+impl CoreRuntime {
+    fn from_factory_parts(parts: nerust_core_traits::factory::CoreParts) -> Self {
+        let (emu_core, gui_input, field_map) = EmuCore::from_parts(parts);
+        Self {
+            emu_core,
+            gui_input,
+            field_map,
+        }
+    }
+}
+
+struct CoreCreation {
+    runtime: CoreRuntime,
+    applied_assignments: InputAssignments,
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
@@ -154,7 +168,10 @@ impl SessionHandle {
                     (parts, fallback_assignments)
                 }
             };
-        Ok((EmuCore::from_parts(parts), applied_assignments))
+        Ok(CoreCreation {
+            runtime: CoreRuntime::from_factory_parts(parts),
+            applied_assignments,
+        })
     }
 
     fn init_settings_manager(
@@ -231,13 +248,18 @@ impl SessionHandle {
         let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
             let sid = f.system_id();
             let requested_assignments = Self::load_assignments(f, &settings_snapshot, sid.as_ref());
-            let ((ec, gi, fm), applied_assignments) = Self::create_core_with_assignments(
+            let created = Self::create_core_with_assignments(
                 f,
                 &audio_registry,
                 &settings_snapshot,
                 &requested_assignments,
             )?;
-            (Some(ec), Some(gi), fm, applied_assignments)
+            (
+                Some(created.runtime.emu_core),
+                Some(created.runtime.gui_input),
+                created.runtime.field_map,
+                created.applied_assignments,
+            )
         } else {
             (
                 None,
@@ -429,14 +451,13 @@ impl RomLoadTarget for SessionHandle {
             .ok_or(SystemActivationError::NotRegistered(system_id.clone_box()))?;
         let requested_assignments =
             Self::load_assignments(&factory, &self.settings_snapshot, system_id);
-        let ((emu_core, gui_input, field_map), applied_assignments) =
-            Self::create_core_with_assignments(
-                &factory,
-                &self.audio_registry,
-                &self.settings_snapshot,
-                &requested_assignments,
-            )
-            .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
+        let created = Self::create_core_with_assignments(
+            &factory,
+            &self.audio_registry,
+            &self.settings_snapshot,
+            &requested_assignments,
+        )
+        .map_err(|e| SystemActivationError::Activation(e.to_string()))?;
 
         if let Some(ref core) = self.emu_core {
             self.persistence
@@ -445,10 +466,10 @@ impl RomLoadTarget for SessionHandle {
         }
 
         self.active_system_id = Some(system_id.clone_box());
-        self.current_assignments = applied_assignments;
-        self.emu_core = Some(emu_core);
-        self.gui_input = Some(gui_input);
-        self.field_map = field_map;
+        self.current_assignments = created.applied_assignments;
+        self.emu_core = Some(created.runtime.emu_core);
+        self.gui_input = Some(created.runtime.gui_input);
+        self.field_map = created.runtime.field_map;
         self.loaded_media = None;
         self.persistence.reset();
         self.pressed_keys.clear();
