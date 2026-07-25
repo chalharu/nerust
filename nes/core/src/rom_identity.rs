@@ -44,6 +44,7 @@ impl Hash for NesSystemId {
     }
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for NesSystemId {
     fn to_string(&self) -> String {
         "nes".to_string()

@@ -9,7 +9,6 @@ pub mod title;
 
 use std::{
     collections::{BTreeSet, HashMap},
-    ops::Deref,
     sync::Arc,
 };
 
@@ -363,7 +362,7 @@ impl SessionHandle {
     }
 
     pub fn active_system_id(&self) -> Option<&dyn SystemId> {
-        self.active_system_id.as_ref().map(|x| x.deref())
+        self.active_system_id.as_deref()
     }
 
     pub fn current_assignments_pairs(&self) -> Vec<(String, Option<String>)> {
