@@ -26,7 +26,9 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
 };
 
-use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathValidator, dto::ChoiceView};
+use nerust_gui_viewmodel::settings::{
+    dto::ChoiceView, SettingsViewModel, StoragePathError, StoragePathValidator,
+};
 use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
 use nerust_settings_core::bindings::descriptors::shortcut_descriptors;
