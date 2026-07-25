@@ -470,7 +470,7 @@ mod tests {
         assert!(saved.contains("preserved:"));
         assert!(saved.contains("sid: future::ControllerSystemId"));
         assert!(saved.contains("preserved_controller: true"));
-        assert!(!saved.contains("sid: nerust_gui_runtime::dummy"));
+        assert!(!saved.contains("sid: dummy"));
 
         let reloaded = manager.reload().unwrap();
         assert_eq!(reloaded.shared.general.language, AppLanguage::Japanese);
