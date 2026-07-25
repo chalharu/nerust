@@ -347,8 +347,8 @@ impl SessionHandle {
         let restored_runtime_state = exported_core_bytes.is_some();
 
         let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
-        let (rebuilt_core, gui_input, field_map) =
-            self.build_core_for_settings(next_settings, &factory)?;
+        let rebuilt = self.build_core_for_settings(next_settings, &factory)?;
+        let rebuilt_core = rebuilt.emu_core;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
             rebuilt_core.load(&loaded_media.media, None)?;
@@ -361,8 +361,8 @@ impl SessionHandle {
         }
 
         self.emu_core = Some(rebuilt_core);
-        self.gui_input = Some(gui_input);
-        self.field_map = field_map;
+        self.gui_input = Some(rebuilt.gui_input);
+        self.field_map = rebuilt.field_map;
         if was_loaded {
             let rom_path = self
                 .loaded_media
@@ -381,7 +381,7 @@ impl SessionHandle {
         &self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
         factory: &Arc<dyn CoreFactory>,
-    ) -> Result<super::CoreParts, SessionError> {
+    ) -> Result<super::CoreRuntime, SessionError> {
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = factory.system_id();
         let view = settings_view(next_settings, system_id.as_ref());
@@ -390,7 +390,7 @@ impl SessionHandle {
             speaker,
             &self.current_assignments,
         )?;
-        Ok(crate::emu_core::EmuCore::from_parts(parts))
+        Ok(super::CoreRuntime::from_factory_parts(parts))
     }
 
     fn resolve_persistence_paths(
