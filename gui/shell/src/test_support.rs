@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use nerust_core_traits::declare_system_id;
 use nerust_gui_settings::{
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},

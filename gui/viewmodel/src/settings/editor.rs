@@ -100,6 +100,9 @@ impl SettingsEditor {
 
     pub fn set_storage_validator(&self, validator: Box<dyn StoragePathValidator>) {
         self.current.borrow_mut().storage_validator = Some(Rc::from(validator));
+        // Re-validate current state with the new validator
+        let validation = (self.validator)(&self.current.borrow());
+        self.current.borrow_mut().validation = validation;
     }
 
     pub fn revision_prop(&self) -> ReadOnlyObservableProperty<u64> {

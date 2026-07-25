@@ -193,11 +193,24 @@ impl SettingsAppState {
         struct FsStoragePathValidator;
         impl StoragePathValidator for FsStoragePathValidator {
             fn validate(&self, path: &std::path::Path) -> Result<(), String> {
-                match std::fs::metadata(path) {
-                    Ok(meta) if meta.is_dir() => Ok(()),
-                    Ok(_) => Err(format!("not a directory: {}", path.display())),
-                    Err(e) => Err(format!("cannot access {}: {e}", path.display())),
+                // Match runtime behavior: allow non-existent paths whose
+                // first existing ancestor is a directory (creatable paths).
+                let mut current = Some(path);
+                while let Some(candidate) = current {
+                    match std::fs::metadata(candidate) {
+                        Ok(meta) => {
+                            if meta.is_dir() {
+                                return Ok(());
+                            }
+                            return Err(format!("not a directory: {}", candidate.display()));
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            current = candidate.parent();
+                        }
+                        Err(e) => return Err(format!("cannot access {}: {e}", candidate.display())),
+                    }
                 }
+                Ok(())
             }
         }
 
