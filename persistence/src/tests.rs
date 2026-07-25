@@ -16,6 +16,7 @@ use crate::{
 };
 
 declare_system_id!(DummySystemId, "dummy");
+declare_system_id!(TestNesSystemId, "nes");
 
 fn prepare_test_dir(name: &str) -> PathBuf {
     let dir = test_dir(name);
@@ -30,6 +31,10 @@ fn test_identity() -> SystemIdentity {
 
 fn test_identity_with_bytes(bytes: Vec<u8>) -> SystemIdentity {
     SystemIdentity::new(Box::new(DummySystemId), bytes)
+}
+
+fn test_nes_identity() -> SystemIdentity {
+    SystemIdentity::new(Box::new(TestNesSystemId), vec![1, 2, 3, 4])
 }
 
 fn test_metadata(slot_id: u64, has_thumbnail: bool) -> StateArchiveMetadata {

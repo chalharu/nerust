@@ -1,3 +1,5 @@
+mod legacy_nes;
+
 use std::{
     io::{Read, Seek},
     time::SystemTime,
@@ -27,8 +29,13 @@ pub(crate) struct StateArchiveMetadata {
     pub(crate) emulator_version: String,
 }
 
+#[derive(serde::Deserialize)]
+struct SchemaVersion {
+    schema_version: u32,
+}
+
 // ---------------------------------------------------------------------------
-// v2 read/write
+// Current read/write
 // ---------------------------------------------------------------------------
 
 pub(crate) fn read_metadata<R: Read + Seek>(
@@ -40,20 +47,17 @@ pub(crate) fn read_metadata<R: Read + Seek>(
     let metadata_bytes =
         crate::fs_ops::read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
 
-    // Try v2.1
-    if let Ok(meta) = rmp_serde::from_slice::<StateArchiveMetadata>(metadata_bytes.as_slice()) {
-        if meta.schema_version == STATE_ARCHIVE_SCHEMA_VERSION {
-            return Ok(meta);
-        }
-        return Err(PersistenceError::Validation(format!(
-            "unsupported state archive schema version: {}",
-            meta.schema_version
-        )));
+    let version = rmp_serde::from_slice::<SchemaVersion>(&metadata_bytes).map_err(|_| {
+        PersistenceError::Validation("unrecognized state archive metadata format".into())
+    })?;
+    match version.schema_version {
+        STATE_ARCHIVE_SCHEMA_VERSION => rmp_serde::from_slice(&metadata_bytes).map_err(Into::into),
+        2 => legacy_nes::decode_v2(&metadata_bytes),
+        1 => legacy_nes::decode_v1(&metadata_bytes),
+        version => Err(PersistenceError::Validation(format!(
+            "unsupported state archive schema version: {version}"
+        ))),
     }
-
-    Err(PersistenceError::Validation(
-        "unrecognized state archive metadata format".into(),
-    ))
 }
 
 pub(crate) fn encode_slot_metadata(
@@ -78,5 +82,7 @@ pub(crate) fn slot_matches_identity(
     metadata: &StateArchiveMetadata,
     identity: &SystemIdentity,
 ) -> bool {
-    metadata.system_id == identity.system_id && metadata.identity_bytes == identity.identity_bytes
+    (metadata.system_id == identity.system_id
+        || legacy_nes::matches_system_id(metadata.system_id.as_ref(), identity.system_id.as_ref()))
+        && metadata.identity_bytes == identity.identity_bytes
 }
