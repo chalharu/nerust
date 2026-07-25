@@ -47,16 +47,15 @@ impl SettingsViewModel {
 
         let revision = editor.revision_prop();
 
+        // Create sub-view models (register projectors with the hub)
         let general = GeneralSettingsViewModel::new(&editor);
         let video = VideoSettingsViewModel::new(&editor);
         let audio = AudioSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
-
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
             .map(|f| SystemSettingsViewModel::new(&editor, f))
             .collect();
-
         let inputs: Vec<InputSettingsViewModel> = factories
             .iter()
             .map(|f| InputSettingsViewModel::new(&editor, f))
@@ -64,8 +63,7 @@ impl SettingsViewModel {
 
         editor.projections().seal();
 
-        Self {
-            editor,
+        let self_ = Self {
             revision,
             general,
             video,
@@ -73,7 +71,9 @@ impl SettingsViewModel {
             capture,
             systems,
             inputs,
-        }
+            editor,
+        };
+        self_
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
