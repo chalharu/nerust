@@ -1178,6 +1178,5 @@ mod tests {
                 page_ids: vec![],
             },
         )
->>>>>>> 342fab6c (test(gtk): add PreferencesBinding regression tests (5 tests))
     }
 }
