@@ -1,7 +1,12 @@
+#![allow(dead_code)]
+
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
+
+type ObserverList<T> = Vec<(u64, Rc<dyn Fn(&T)>)>;
+type CallbackSnapshot<T> = Vec<Rc<dyn Fn(&T)>>;
 
 /// A read-only handle to an observable property.
 ///
@@ -45,7 +50,7 @@ impl<T: Clone + PartialEq + 'static> ReadOnlyObservableProperty<T> {
 pub(crate) struct ObservablePropertyInner<T> {
     value: RefCell<T>,
     next_observer_id: Cell<u64>,
-    observers: RefCell<Vec<(u64, Rc<dyn Fn(&T)>)>>,
+    observers: RefCell<ObserverList<T>>,
 }
 
 impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {
@@ -59,7 +64,7 @@ impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {
 
     /// Set the value and return callbacks to invoke if changed.
     /// Returns `None` if the value is unchanged.
-    pub(crate) fn set(&self, value: T) -> Option<Vec<Rc<dyn Fn(&T)>>> {
+    pub(crate) fn set(&self, value: T) -> Option<CallbackSnapshot<T>> {
         if *self.value.borrow() == value {
             return None;
         }
@@ -122,7 +127,9 @@ mod tests {
         assert_eq!(observed.get(), 42);
         drop(sub);
         // After subscription drop, no callbacks remain
-        let callbacks = inner.set(100).expect("value changed, should have callbacks vec");
+        let callbacks = inner
+            .set(100)
+            .expect("value changed, should have callbacks vec");
         // The callbacks vec should be empty
         assert!(callbacks.is_empty());
         // And observed should still be 42 (no callback was called)

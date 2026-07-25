@@ -87,15 +87,13 @@ impl SessionHandle {
             self.active_system_id(),
         );
 
-        let assignments_changed = next_assignments.as_ref().map_or(false, |a| {
-            a.to_string_pairs() != previous_assignments.to_string_pairs()
-        });
+        let assignments_changed = next_assignments
+            .as_ref()
+            .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
         let needs_rebuild = plan.session_rebuild_required || assignments_changed;
 
         if needs_rebuild {
-            let assignments = next_assignments
-                .as_ref()
-                .unwrap_or(&previous_assignments);
+            let assignments = next_assignments.as_ref().unwrap_or(&previous_assignments);
             self.rebuild_for_settings(&next_settings, assignments)?;
         } else if plan.audio_volume_changed {
             let volume =
@@ -121,10 +119,8 @@ impl SessionHandle {
             return Err(SessionError::Settings(error));
         }
 
-        if assignments_changed {
-            if let Some(a) = next_assignments {
-                self.current_assignments = a;
-            }
+        if assignments_changed && let Some(a) = next_assignments {
+            self.current_assignments = a;
         }
 
         self.settings_snapshot = next_settings;
@@ -410,11 +406,8 @@ impl SessionHandle {
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = factory.system_id();
         let view = settings_view(next_settings, system_id.as_ref());
-        let parts = factory.create_core_and_adapter_with_assignments(
-            &view,
-            speaker,
-            assignments,
-        )?;
+        let parts =
+            factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
         Ok(super::CoreRuntime::from_factory_parts(parts))
     }
 

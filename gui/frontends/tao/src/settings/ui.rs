@@ -40,9 +40,7 @@ use nerust_gui_shell::{
         i18n::{UiText, text as ui_text},
     },
 };
-use nerust_input_traits::{
-    AttachmentId, ControllerProfile, InputTopologyDescriptor,
-};
+use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
 use nerust_keyboard::Key;
 use rfd::FileDialog;
 

@@ -1,9 +1,6 @@
 #![allow(dead_code)]
 
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use super::{
     EditorState,
@@ -17,9 +14,11 @@ pub(crate) trait ProjectionNode {
     fn is_synced(&self, current: &EditorState) -> bool;
 }
 
+type ApplyResult = Option<Vec<Rc<dyn Fn(&Box<dyn std::any::Any>)>>>;
+
 /// A prepared value ready to be silently applied to its property cache.
 pub(crate) trait PreparedProjection {
-    fn apply(self: Box<Self>) -> Option<Vec<Rc<dyn Fn(&Box<dyn std::any::Any>)>>>;
+    fn apply(self: Box<Self>) -> ApplyResult;
 }
 
 /// Registry of all projection nodes, evaluated on every transaction.

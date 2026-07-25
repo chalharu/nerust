@@ -10,7 +10,9 @@ impl ValidationState {
     }
 
     pub fn for_scope(&self, scope: &ValidationScope) -> impl Iterator<Item = &ValidationIssue> {
-        self.issues.iter().filter(move |issue| issue.scope == *scope)
+        self.issues
+            .iter()
+            .filter(move |issue| issue.scope == *scope)
     }
 }
 
@@ -63,9 +65,7 @@ mod tests {
                 },
             ],
         };
-        let persistence: Vec<_> = state
-            .for_scope(&ValidationScope::Persistence)
-            .collect();
+        let persistence: Vec<_> = state.for_scope(&ValidationScope::Persistence).collect();
         assert_eq!(persistence.len(), 1);
         assert_eq!(persistence[0].message, "persistence error");
     }
