@@ -53,8 +53,8 @@ impl GeneralSettingsViewModel {
 
 #[cfg(test)]
 mod tests {
-    use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
     use crate::settings::test_support::test_vm;
+    use nerust_gui_settings::{language::AppLanguage, shared::StoragePolicy};
 
     #[test]
     fn set_language_updates_projection() {
@@ -67,7 +67,9 @@ mod tests {
     #[test]
     fn set_storage_policy_updates_projection() {
         let vm = test_vm();
-        vm.general.set_storage_policy(StoragePolicy::CustomDirectory).unwrap();
+        vm.general
+            .set_storage_policy(StoragePolicy::CustomDirectory)
+            .unwrap();
         let view = vm.general.view.get();
         assert_eq!(view.storage_policy, StoragePolicy::CustomDirectory);
         assert!(view.show_storage_directory);

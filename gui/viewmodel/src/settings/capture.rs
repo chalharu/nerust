@@ -85,8 +85,8 @@ mod tests {
     use nerust_gui_settings::input::ShortcutAction;
     use nerust_keyboard::Key;
 
-    use crate::settings::test_support::test_vm;
     use super::CaptureTarget;
+    use crate::settings::test_support::test_vm;
 
     #[test]
     fn start_capture_sets_target() {

@@ -175,12 +175,14 @@ mod tests {
 
     use super::*;
     use crate::settings::{
-        ValidationState, catalog::FactoryCatalog,
+        ValidationState,
+        catalog::FactoryCatalog,
         editor::{NoopStoragePathValidator, SettingsEditor, StoragePathValidator},
     };
     use nerust_gui_settings::snapshot::SettingsSnapshot;
-    use nerust_gui_settings::{app_state::DesktopAppState, local::HostBackendLocalSettings,
-        shared::DesktopSharedSettings};
+    use nerust_gui_settings::{
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+    };
 
     fn test_editor() -> SettingsEditor {
         let snapshot = SettingsSnapshot {
@@ -216,7 +218,12 @@ mod tests {
         drop(candidate);
 
         // Use transact to change revision
-        editor.transact(|state| { state.revision = 5; Ok(()) }).unwrap();
+        editor
+            .transact(|state| {
+                state.revision = 5;
+                Ok(())
+            })
+            .unwrap();
         let updated = editor.current();
         let prepared2 = hub.prepare_all(&updated);
         // revision changed → projection should produce a prepared update

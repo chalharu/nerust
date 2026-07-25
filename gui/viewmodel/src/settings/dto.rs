@@ -27,7 +27,10 @@ mod tests {
 
     #[test]
     fn choice_view_display_shows_label() {
-        let c = ChoiceView { value: 42usize, label: "Answer".into() };
+        let c = ChoiceView {
+            value: 42usize,
+            label: "Answer".into(),
+        };
         assert_eq!(c.to_string(), "Answer");
     }
 }
