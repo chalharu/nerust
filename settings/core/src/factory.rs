@@ -8,7 +8,9 @@ use nerust_core_traits::{
 };
 // SystemDefaults is needed in scope for the return type of
 // CoreFactory::as_system_defaults() → Option<&dyn SystemDefaults>.
-#[cfg_attr(not(test), allow(unused_imports))]
+// `#[allow]` suppresses clippy FP when the trait is only used
+// through a method return type from another trait.
+#[allow(unused_imports)]
 use nerust_core_traits::factory::SystemDefaults;
 use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
 
