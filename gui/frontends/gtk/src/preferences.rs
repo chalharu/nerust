@@ -919,37 +919,40 @@ pub(crate) fn present_preferences_dialog(
             return;
         }
         match _binding_owned.vm.finish() {
-            Ok(snapshot) => match state_clone.borrow_mut().apply_settings(snapshot) {
-                Ok(result) => {
-                    if result.fullscreen_default_changed {
-                        parent_clone.set_fullscreened(
-                            _binding_owned
-                                .vm
-                                .snapshot()
-                                .local
-                                .video
-                                .window
-                                .fullscreen_default,
-                        );
+            Ok(snapshot) => {
+                let apply_result = with_mut(&state_clone, |state| state.apply_settings(snapshot));
+                match apply_result {
+                    Ok(result) => {
+                        if result.fullscreen_default_changed {
+                            parent_clone.set_fullscreened(
+                                _binding_owned
+                                    .vm
+                                    .snapshot()
+                                    .local
+                                    .video
+                                    .window
+                                    .fullscreen_default,
+                            );
+                        }
+                        if result.scaling_changed
+                            && let Some(profile) = state_clone.borrow().render_profile()
+                        {
+                            apply_scaling_to_window(
+                                &parent_clone,
+                                _binding_owned.vm.snapshot().local.video.window.scaling,
+                                profile,
+                            );
+                        }
+                        dialog.close();
+                        if let Some(cb) = finish_cb.borrow_mut().take() {
+                            cb();
+                        }
                     }
-                    if result.scaling_changed
-                        && let Some(profile) = state_clone.borrow().render_profile()
-                    {
-                        apply_scaling_to_window(
-                            &parent_clone,
-                            _binding_owned.vm.snapshot().local.video.window.scaling,
-                            profile,
-                        );
-                    }
-                    dialog.close();
-                    if let Some(cb) = finish_cb.borrow_mut().take() {
-                        cb();
+                    Err(e) => {
+                        _binding_owned.error_label.set_text(&e.to_string());
                     }
                 }
-                Err(e) => {
-                    _binding_owned.error_label.set_text(&e.to_string());
-                }
-            },
+            }
             Err(_) => {
                 // validation errors already shown via revision callback
             }
@@ -977,6 +980,11 @@ fn clear_box(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
     }
+}
+
+fn with_mut<T, R>(value: &RefCell<T>, f: impl FnOnce(&mut T) -> R) -> R {
+    let mut value = value.borrow_mut();
+    f(&mut value)
 }
 
 fn input_section_page() -> gtk::Box {
@@ -1029,4 +1037,21 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
         combo.append(Some(id), label);
     }
     combo
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::with_mut;
+
+    #[test]
+    fn with_mut_releases_borrow_before_follow_up_work() {
+        let value = RefCell::new(0);
+
+        with_mut(&value, |current| *current = 1);
+        *value.borrow_mut() = 2;
+
+        assert_eq!(*value.borrow(), 2);
+    }
 }
