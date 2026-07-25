@@ -56,3 +56,111 @@ pub fn conflicting_keys(
     by_key.retain(|_, labels| labels.len() > 1);
     by_key
 }
+
+#[cfg(test)]
+mod tests {
+    use nerust_gui_settings::{
+        input::{KeyboardBinding, PersistedControlId, SystemInputSettings},
+        shared::DesktopSharedSettings,
+    };
+    use nerust_input_traits::{
+        AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
+        DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor, PortId,
+    };
+    use nerust_keyboard::Key;
+    use nerust_core_traits::declare_system_id;
+
+    use super::conflicting_keys;
+
+    declare_system_id!(pub TestSysId, "test");
+
+    const TEST_DEV: DeviceKindId = DeviceKindId::new("test.dev");
+    const TEST_ATT: AttachmentId = AttachmentId::new("test.att");
+
+    fn single_port_topology() -> InputTopologyDescriptor {
+        InputTopologyDescriptor {
+            ports: vec![PortDescriptor {
+                id: PortId::new("p1"),
+                label: "P1",
+                attachments: vec![AttachmentSlotDescriptor {
+                    id: TEST_ATT,
+                    label: "P1",
+                    device: TEST_DEV,
+                    supported_devices: vec![TEST_DEV],
+                }],
+            }],
+            devices: vec![DeviceDescriptor {
+                kind: TEST_DEV,
+                label: "Test Device",
+                controls: vec![
+                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                        id: DigitalControlId::new("test.ctrl.a"),
+                        label: "A",
+                        description: "A button",
+                    }),
+                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                        id: DigitalControlId::new("test.ctrl.b"),
+                        label: "B",
+                        description: "B button",
+                    }),
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn no_conflicts_with_empty_settings() {
+        let settings = DesktopSharedSettings::default();
+        let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn same_key_different_control_detected() {
+        let mut settings = DesktopSharedSettings::default();
+        let mut sys = SystemInputSettings::default();
+        let profile = sys.implicit_keyboard_profile_mut();
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.a".to_string()),
+            Key::KeyZ,
+        ));
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.b".to_string()),
+            Key::KeyZ,
+        ));
+        settings.input.systems.insert(
+            Box::new(TestSysId),
+            sys,
+        );
+
+        let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
+        assert!(conflicts.contains_key(&Key::KeyZ));
+    }
+
+    #[test]
+    fn different_keys_not_conflicting() {
+        let mut settings = DesktopSharedSettings::default();
+        let mut sys = SystemInputSettings::default();
+        let profile = sys.implicit_keyboard_profile_mut();
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.a".to_string()),
+            Key::KeyZ,
+        ));
+        profile.bindings.push(KeyboardBinding::new(
+            TEST_ATT.to_string(),
+            PersistedControlId::digital("test.ctrl.b".to_string()),
+            Key::KeyX,
+        ));
+        settings.input.systems.insert(
+            Box::new(TestSysId),
+            sys,
+        );
+
+        let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
+        assert!(!conflicts.contains_key(&Key::KeyZ));
+        assert!(!conflicts.contains_key(&Key::KeyX));
+    }
+}
