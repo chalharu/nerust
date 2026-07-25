@@ -9,6 +9,12 @@ use super::{
     SettingsSnapshot,
 };
 
+#[derive(Debug)]
+pub enum DirectoryValidationError {
+    NotDirectory,
+    Inaccessible(std::io::Error),
+}
+
 pub fn derive_apply_plan(
     capabilities: &HostBackendCapabilities,
     before: &SettingsSnapshot,
@@ -91,7 +97,9 @@ pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<()
     Ok(())
 }
 
-pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
+/// Typed version of directory validation — used by both the runtime
+/// (via `validate_directory_path`) and the frontend storage validator.
+pub fn validate_directory_path_typed(path: &Path) -> Result<(), DirectoryValidationError> {
     let mut current = Some(path);
     while let Some(candidate) = current {
         match std::fs::metadata(candidate) {
@@ -99,17 +107,25 @@ pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
                 if metadata.is_dir() {
                     return Ok(());
                 }
-                return Err(SettingsError::Io(std::io::Error::other(
-                    "custom storage path is not a directory",
-                )));
+                return Err(DirectoryValidationError::NotDirectory);
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 current = candidate.parent();
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(DirectoryValidationError::Inaccessible(error)),
         }
     }
     Ok(())
+}
+
+/// Wrapper for backward-compatible usage inside `validate_shared_settings`.
+pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
+    validate_directory_path_typed(path).map_err(|e| match e {
+        DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
+            "custom storage path is not a directory",
+        )),
+        DirectoryValidationError::Inaccessible(err) => err.into(),
+    })
 }
 
 fn live_system_settings_changed(

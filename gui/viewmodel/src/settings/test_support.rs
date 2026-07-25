@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::{
     factory::{
@@ -167,5 +167,10 @@ pub fn test_vm() -> SettingsViewModel {
         app_state: DesktopAppState::default(),
     };
     let factory: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
-    SettingsViewModel::new(snapshot, vec![factory], Arc::new([]))
+    SettingsViewModel::new(
+        snapshot,
+        vec![factory],
+        Arc::new([]),
+        Rc::new(super::editor::NoopStoragePathValidator) as Rc<dyn super::editor::StoragePathValidator>,
+    )
 }
