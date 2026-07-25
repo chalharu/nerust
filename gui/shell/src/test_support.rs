@@ -1,4 +1,4 @@
-use nerust_core_traits::{declare_system_id, identity::SystemId};
+use nerust_core_traits::declare_system_id;
 use nerust_gui_settings::{
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     shared::DesktopSharedSettings,

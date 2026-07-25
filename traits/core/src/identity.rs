@@ -68,7 +68,7 @@ macro_rules! declare_system_id {
             use $crate::identity::__private::typetag;
 
             #[$crate::identity::__private::typetag::serde(name = $system_id)]
-            impl SystemId for $name {}
+            impl $crate::identity::SystemId for $name {}
         };
 
         #[allow(clippy::to_string_trait_impl)]

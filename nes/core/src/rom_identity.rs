@@ -1,4 +1,4 @@
-use nerust_core_traits::identity::{SystemId, SystemIdentity};
+use nerust_core_traits::identity::SystemIdentity;
 
 use crate::{mirror::MirrorMode, rom_format::RomFormat};
 
