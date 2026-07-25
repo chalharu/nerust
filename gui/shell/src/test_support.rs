@@ -5,7 +5,7 @@ use nerust_gui_settings::{
     input::{IMPLICIT_PROFILE_ID, ShortcutAction, ShortcutBinding},
     shared::DesktopSharedSettings,
 };
-use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent, DigitalInputState};
+
 use nerust_keyboard::Key;
 
 declare_system_id!(pub(crate) DummySystemId, "dummy");
@@ -62,29 +62,4 @@ pub fn test_nes_defaults() -> DesktopSharedSettings {
     settings
 }
 
-// Shared test constants for input topology construction.
-pub const TEST_ATT_P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
-pub const TEST_ATT_P2: AttachmentId = AttachmentId::new("nes.attachment.player2");
-pub const TEST_CTRL_A: DigitalControlId = DigitalControlId::new("nes.control.a");
-pub const TEST_CTRL_MIC: DigitalControlId = DigitalControlId::new("nes.control.microphone");
 
-/// Test resolver for keyboard bindings.
-/// Maps known attachment/control strings to static IDs.
-pub fn test_resolve(attachment: &str, control: &str, pressed: bool) -> Option<DigitalInputEvent> {
-    let state = if pressed {
-        DigitalInputState::Pressed
-    } else {
-        DigitalInputState::Released
-    };
-    let att = match attachment {
-        "nes.attachment.player1" => TEST_ATT_P1,
-        "nes.attachment.player2" => TEST_ATT_P2,
-        _ => return None,
-    };
-    let ctrl = match control {
-        "nes.control.a" => TEST_CTRL_A,
-        "nes.control.microphone" => TEST_CTRL_MIC,
-        _ => return None,
-    };
-    Some(DigitalInputEvent::new(att, ctrl, state))
-}
