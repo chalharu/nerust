@@ -63,7 +63,8 @@ impl SettingsViewModel {
 
         editor.projections().seal();
 
-        let self_ = Self {
+        
+        Self {
             revision,
             general,
             video,
@@ -72,8 +73,7 @@ impl SettingsViewModel {
             systems,
             inputs,
             editor,
-        };
-        self_
+        }
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
