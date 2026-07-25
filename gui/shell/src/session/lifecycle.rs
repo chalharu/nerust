@@ -5,6 +5,7 @@ use nerust_core_traits::factory::{
     load::{MediaObject, ResolvedLoadRequest},
 };
 use nerust_emu_thread::ConsoleMetrics;
+use nerust_input_traits::InputAssignments;
 
 use crate::{
     emu_core::EmuCore,
@@ -71,6 +72,14 @@ impl SessionHandle {
         next_settings: nerust_gui_runtime::settings::SettingsSnapshot,
     ) -> Result<nerust_gui_runtime::settings::SettingsApplyPlan, SessionError> {
         let previous = self.settings_snapshot.clone();
+        let previous_assignments = self.current_assignments.clone();
+        let factory = self.active_factory().cloned();
+
+        let next_assignments = factory.as_ref().map(|f| {
+            let sid = f.system_id();
+            Self::load_assignments(f, &next_settings, sid.as_ref())
+        });
+
         let plan = nerust_gui_runtime::settings::apply::derive_apply_plan(
             &self.capabilities,
             &previous,
@@ -78,8 +87,16 @@ impl SessionHandle {
             self.active_system_id(),
         );
 
-        if plan.session_rebuild_required {
-            self.rebuild_for_settings(&next_settings)?;
+        let assignments_changed = next_assignments.as_ref().map_or(false, |a| {
+            a.to_string_pairs() != previous_assignments.to_string_pairs()
+        });
+        let needs_rebuild = plan.session_rebuild_required || assignments_changed;
+
+        if needs_rebuild {
+            let assignments = next_assignments
+                .as_ref()
+                .unwrap_or(&previous_assignments);
+            self.rebuild_for_settings(&next_settings, assignments)?;
         } else if plan.audio_volume_changed {
             let volume =
                 f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
@@ -96,12 +113,18 @@ impl SessionHandle {
         }
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
-            if plan.session_rebuild_required
-                && let Err(e) = self.rebuild_for_settings(&previous)
+            if needs_rebuild
+                && let Err(e) = self.rebuild_for_settings(&previous, &previous_assignments)
             {
                 log::warn!("failed to rollback settings rebuild: {e}");
             }
             return Err(SessionError::Settings(error));
+        }
+
+        if assignments_changed {
+            if let Some(a) = next_assignments {
+                self.current_assignments = a;
+            }
         }
 
         self.settings_snapshot = next_settings;
@@ -331,6 +354,7 @@ impl SessionHandle {
     pub(super) fn rebuild_for_settings(
         &mut self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        assignments: &InputAssignments,
     ) -> Result<(), SessionError> {
         let was_loaded = self.loaded();
         let was_paused = self.paused();
@@ -347,7 +371,7 @@ impl SessionHandle {
         let restored_runtime_state = exported_core_bytes.is_some();
 
         let factory = self.active_factory().ok_or(SessionError::NoCore)?.clone();
-        let rebuilt = self.build_core_for_settings(next_settings, &factory)?;
+        let rebuilt = self.build_core_for_settings(next_settings, &factory, assignments)?;
         let rebuilt_core = rebuilt.emu_core;
 
         if let Some(loaded_media) = self.loaded_media.clone() {
@@ -381,6 +405,7 @@ impl SessionHandle {
         &self,
         next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
         factory: &Arc<dyn CoreFactory>,
+        assignments: &InputAssignments,
     ) -> Result<super::CoreRuntime, SessionError> {
         let speaker = crate::settings::build_speaker(&self.audio_registry, &next_settings.local);
         let system_id = factory.system_id();
@@ -388,7 +413,7 @@ impl SessionHandle {
         let parts = factory.create_core_and_adapter_with_assignments(
             &view,
             speaker,
-            &self.current_assignments,
+            assignments,
         )?;
         Ok(super::CoreRuntime::from_factory_parts(parts))
     }
