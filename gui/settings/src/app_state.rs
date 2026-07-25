@@ -7,6 +7,8 @@ use nerust_core_traits::identity::SystemId;
 
 pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 2;
 
+pub type ControllerAssignmentsBySystem = HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct RememberedWindowSize {
@@ -21,7 +23,7 @@ pub struct DesktopAppState {
     pub last_successful_rom_directory: Option<PathBuf>,
     pub window_sizes: BTreeMap<String, RememberedWindowSize>,
     /// Per-system controller assignments: system_id → [(slot_id, controller_id or None)]
-    pub controller_assignments: HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>,
+    pub controller_assignments: ControllerAssignmentsBySystem,
 }
 
 impl DesktopAppState {

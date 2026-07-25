@@ -30,7 +30,8 @@ impl SystemIdentity {
 
 impl Display for dyn SystemId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.to_string())
+        let value: &dyn ToString = self;
+        f.write_str(&value.to_string())
     }
 }
 
@@ -68,6 +69,7 @@ macro_rules! declare_system_id {
             impl SystemId for $name {}
         };
 
+        #[allow(clippy::to_string_trait_impl)]
         impl ToString for $name {
             fn to_string(&self) -> String {
                 $value.to_string()
