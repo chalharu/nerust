@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![cfg(test)]
 
 use nerust_core_traits::declare_system_id;
 use nerust_gui_settings::{
