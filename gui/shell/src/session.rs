@@ -755,7 +755,8 @@ mod tests {
 
         // Snapshot should be updated
         assert_eq!(
-            session.settings_snapshot().local.audio.latency_ms, 90,
+            session.settings_snapshot().local.audio.latency_ms,
+            90,
             "snapshot should reflect the applied change"
         );
     }
@@ -786,7 +787,9 @@ mod tests {
             "assignments should be updated after apply"
         );
         assert!(
-            new_pairs.iter().any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
+            new_pairs
+                .iter()
+                .any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
             "new assignments should include the test slot"
         );
     }

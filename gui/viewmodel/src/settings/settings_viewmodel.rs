@@ -63,7 +63,6 @@ impl SettingsViewModel {
 
         editor.projections().seal();
 
-        
         Self {
             revision,
             general,

@@ -5,9 +5,9 @@ pub mod load;
 pub mod registry;
 pub mod session;
 pub mod settings;
+pub mod state;
 #[cfg(test)]
 pub(crate) mod test_helpers;
-pub mod state;
 
 #[cfg(test)]
 pub(crate) mod test_support;
