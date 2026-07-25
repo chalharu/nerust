@@ -4,20 +4,29 @@
 //! widget state without initializing GTK. They run on all platforms
 //! including macOS (no display needed).
 
-use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gtk::mapping::*;
+use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 
 #[test]
 fn map_language_id_all_variants() {
     assert_eq!(map_language_id(AppLanguage::Japanese), "japanese");
     assert_eq!(map_language_id(AppLanguage::English), "english");
-    assert_eq!(map_language_id(AppLanguage::SystemDefault), "system_default");
+    assert_eq!(
+        map_language_id(AppLanguage::SystemDefault),
+        "system_default"
+    );
 }
 
 #[test]
 fn map_storage_policy_id_all_variants() {
-    assert_eq!(map_storage_policy_id(StoragePolicy::AppSharedData), "app_shared_data");
-    assert_eq!(map_storage_policy_id(StoragePolicy::CustomDirectory), "custom_directory");
+    assert_eq!(
+        map_storage_policy_id(StoragePolicy::AppSharedData),
+        "app_shared_data"
+    );
+    assert_eq!(
+        map_storage_policy_id(StoragePolicy::CustomDirectory),
+        "custom_directory"
+    );
     assert_eq!(map_storage_policy_id(StoragePolicy::Sidecar), "sidecar");
 }
 

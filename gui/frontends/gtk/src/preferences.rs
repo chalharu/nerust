@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use gio::glib::{self, object::{Cast as _, IsA}};
+use gio::glib::{
+    self,
+    object::{Cast as _, IsA},
+};
 use gtk::prelude::{
     BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
@@ -19,7 +22,10 @@ use nerust_gui_viewmodel::settings::{
         VideoView,
     },
 };
-use nerust_settings_core::{editor::CaptureTarget, i18n::{UiText, text as ui_text}};
+use nerust_settings_core::{
+    editor::CaptureTarget,
+    i18n::{UiText, text as ui_text},
+};
 
 use crate::State;
 
@@ -217,7 +223,8 @@ impl PreferencesBinding {
     fn refresh_general(&self, view: &GeneralView) {
         // Update localized labels
         let lang = view.language;
-        self.dialog.set_title(Some(ui_text(lang, UiText::Preferences)));
+        self.dialog
+            .set_title(Some(ui_text(lang, UiText::Preferences)));
         for page_id in self.page_ids.iter() {
             if let Some(child) = self.stack.child_by_name(page_id) {
                 let label = match *page_id {
@@ -241,16 +248,36 @@ impl PreferencesBinding {
         }
 
         // Update row labels stored in widget groups
-        self.general.language_label.set_text(ui_text(lang, UiText::Language));
-        self.general.storage_policy_label.set_text(ui_text(lang, UiText::SaveStoragePolicy));
-        self.general.storage_dir_label.set_text(ui_text(lang, UiText::SaveStorageDirectory));
-        self.video.fullscreen_check.set_label(Some(ui_text(lang, UiText::FullscreenDefault)));
-        self.video.scaling_label.set_text(ui_text(lang, UiText::Scaling));
-        self.video.vsync_check.set_label(Some(ui_text(lang, UiText::Vsync)));
-        self.audio.mute_check.set_label(Some(ui_text(lang, UiText::Mute)));
-        self.audio.volume_label.set_text(ui_text(lang, UiText::MasterVolume));
-        self.audio.sample_rate_label.set_text(ui_text(lang, UiText::SampleRate));
-        self.audio.latency_label.set_text(ui_text(lang, UiText::AudioLatency));
+        self.general
+            .language_label
+            .set_text(ui_text(lang, UiText::Language));
+        self.general
+            .storage_policy_label
+            .set_text(ui_text(lang, UiText::SaveStoragePolicy));
+        self.general
+            .storage_dir_label
+            .set_text(ui_text(lang, UiText::SaveStorageDirectory));
+        self.video
+            .fullscreen_check
+            .set_label(Some(ui_text(lang, UiText::FullscreenDefault)));
+        self.video
+            .scaling_label
+            .set_text(ui_text(lang, UiText::Scaling));
+        self.video
+            .vsync_check
+            .set_label(Some(ui_text(lang, UiText::Vsync)));
+        self.audio
+            .mute_check
+            .set_label(Some(ui_text(lang, UiText::Mute)));
+        self.audio
+            .volume_label
+            .set_text(ui_text(lang, UiText::MasterVolume));
+        self.audio
+            .sample_rate_label
+            .set_text(ui_text(lang, UiText::SampleRate));
+        self.audio
+            .latency_label
+            .set_text(ui_text(lang, UiText::AudioLatency));
 
         self.general.language_combo.remove_all();
         for choice in &view.language_choices {
@@ -864,7 +891,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             let lang = match combo.active_id().as_deref() {
                 Some("japanese") => AppLanguage::Japanese,
                 Some("english") => AppLanguage::English,
@@ -877,7 +906,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             let policy = match combo.active_id().as_deref() {
                 Some("app_shared_data") => StoragePolicy::AppSharedData,
                 Some("custom_directory") => StoragePolicy::CustomDirectory,
@@ -890,7 +921,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |entry| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             let text = entry.text();
             let path = (!text.is_empty()).then(|| std::path::PathBuf::from(text.as_str()));
             cmd(&b, b.vm.general.set_storage_directory(path));
@@ -900,7 +933,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             cmd(&b, b.vm.video.set_fullscreen_default(button.is_active()));
         }
     });
@@ -908,7 +943,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             let scaling = match combo.active_id().as_deref() {
                 Some("1") => ScalingMode::X1,
                 Some("2") => ScalingMode::X2,
@@ -924,7 +961,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             cmd(&b, b.vm.video.set_vsync(button.is_active()));
         }
     });
@@ -932,7 +971,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |button| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             cmd(&b, b.vm.audio.set_mute(button.is_active()));
         }
     });
@@ -940,7 +981,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |spin| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             cmd(&b, b.vm.audio.set_volume(spin.value() as u8));
         }
     });
@@ -948,7 +991,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |combo| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             let rate = combo
                 .active_id()
                 .and_then(|v| v.parse::<u32>().ok())
@@ -960,7 +1005,9 @@ pub(crate) fn present_preferences_dialog(
         let w = weak_handler(&_binding);
         move |spin| {
             let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() { return; }
+            if b.refreshing.get() {
+                return;
+            }
             cmd(&b, b.vm.audio.set_latency(spin.value() as u16));
         }
     });
@@ -1177,14 +1224,20 @@ mod tests {
             let prev = binding.refreshing.get();
             assert!(prev, "refreshing should be true during guard");
         });
-        assert!(!binding.refreshing.get(), "refreshing should be false after guard");
+        assert!(
+            !binding.refreshing.get(),
+            "refreshing should be false after guard"
+        );
     });
 
     gtk_test!(cmd_helper_shows_error_on_error_label, || {
         let binding = create_test_binding();
         let err = nerust_gui_viewmodel::settings::ViewModelError::UnknownSystem("test".into());
         cmd(&binding, Err::<(), _>(err));
-        assert!(!binding.error_label.text().is_empty(), "error_label should show the error");
+        assert!(
+            !binding.error_label.text().is_empty(),
+            "error_label should show the error"
+        );
     });
 
     gtk_test!(general_widgets_initial_values_match_viewmodel, || {
@@ -1210,7 +1263,9 @@ mod tests {
         #[derive(Debug)]
         struct TestNoopValidator;
         impl StoragePathValidator for TestNoopValidator {
-            fn validate(&self, _: &std::path::Path) -> Result<(), StoragePathError> { Ok(()) }
+            fn validate(&self, _: &std::path::Path) -> Result<(), StoragePathError> {
+                Ok(())
+            }
         }
         use std::sync::Arc;
 
@@ -1222,7 +1277,11 @@ mod tests {
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let supported_sample_rates: Arc<[u32]> = {
             let rates = audio_registry.supported_rates();
-            if rates.is_empty() { Arc::new([44_100, 48_000]) } else { rates.iter().copied().collect() }
+            if rates.is_empty() {
+                Arc::new([44_100, 48_000])
+            } else {
+                rates.iter().copied().collect()
+            }
         };
 
         let vm = SettingsViewModel::new(
