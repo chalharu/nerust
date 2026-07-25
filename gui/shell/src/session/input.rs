@@ -252,7 +252,11 @@ impl SessionHandle {
 mod tests {
     use std::rc::Rc;
 
-    use nerust_input_traits::{AttachmentId, ControlInfo, ControllerProfile, PortSet, ProfileId};
+    use nerust_gui_settings::input::PersistedControlId;
+    use nerust_input_traits::{
+        AbstractKey, AttachmentId, ControlInfo, ControlKind, ControllerProfile, PortSet, ProfileId,
+        SlotInfo,
+    };
 
     use super::*;
 
@@ -297,6 +301,40 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct MockTopologyProfile;
+
+    impl ControllerProfile for MockTopologyProfile {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.topology")
+        }
+
+        fn label(&self) -> &'static str {
+            "Topology Pad"
+        }
+
+        fn port_sets(&self) -> &[PortSet] {
+            static PORTS: &[AttachmentId] = &[AttachmentId::new("test.topology.slot")];
+            static SETS: &[PortSet] = &[PortSet { ports: PORTS }];
+            SETS
+        }
+
+        fn port_groups(&self) -> &[&[ControlInfo]] {
+            static CONTROLS: &[ControlInfo] = &[ControlInfo {
+                id: DigitalControlId::new("test.topology.a"),
+                label: "A",
+                kind: ControlKind::Digital,
+                abstract_key: Some(AbstractKey::Button1),
+            }];
+            static GROUPS: &[&[ControlInfo]] = &[CONTROLS];
+            GROUPS
+        }
+
+        fn device_kind_for_group(&self, _group_index: usize) -> &'static str {
+            "test.topology.pad"
+        }
+    }
+
     #[test]
     fn clear_multi_port_does_nothing_for_single_port() {
         let profile = MockSinglePort;
@@ -336,6 +374,50 @@ mod tests {
         assert!(assignments[0].1.is_some(), "Unrelated port unchanged");
         assert!(assignments[1].1.is_some(), "P1 stays");
         assert!(assignments[2].1.is_none(), "P2 cleared");
+    }
+
+    #[test]
+    fn build_topology_returns_empty_model_without_controllers() {
+        let topology = build_topology(&[], &[]);
+
+        assert!(topology.ports.is_empty());
+        assert!(topology.devices.is_empty());
+    }
+
+    #[test]
+    fn build_topology_describes_assigned_controller() {
+        let slot = AttachmentId::new("test.topology.slot");
+        let profile: Rc<dyn ControllerProfile> = Rc::new(MockTopologyProfile);
+        let topology = build_topology(
+            &[(slot, Some(profile))],
+            &[SlotInfo {
+                id: slot,
+                label: "Topology Port",
+            }],
+        );
+
+        assert_eq!(topology.ports.len(), 1);
+        assert_eq!(topology.ports[0].label, "Topology Port");
+        assert_eq!(topology.devices.len(), 1);
+        assert_eq!(topology.devices[0].kind.as_str(), "test.topology.pad");
+        assert_eq!(topology.devices[0].controls.len(), 1);
+    }
+
+    #[test]
+    fn rebuild_input_map_maps_matching_keyboard_binding() {
+        let attachment = AttachmentId::new("test.topology.slot");
+        let control = DigitalControlId::new("test.topology.a");
+        let field_map = HashMap::from([((attachment, control), 7)]);
+        let bindings = [KeyboardBinding::new(
+            attachment.as_str(),
+            PersistedControlId::digital(control.as_str()),
+            Key::KeyA,
+        )];
+        let mut key_map = HashMap::from([(Key::KeyB, 2)]);
+
+        rebuild_input_map(&field_map, &bindings, &mut key_map);
+
+        assert_eq!(key_map, HashMap::from([(Key::KeyA, 7)]));
     }
 
     #[test]

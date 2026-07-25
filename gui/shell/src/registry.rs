@@ -156,7 +156,7 @@ impl RomLoader for RegistryRomLoader {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{fs, path::PathBuf, sync::Arc};
 
     use nerust_core_traits::{
         declare_system_id,
@@ -170,6 +170,10 @@ mod tests {
             settings::FactorySettingsView,
         },
         identity::SystemId,
+    };
+    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::{
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
@@ -300,6 +304,63 @@ mod tests {
         Arc::new(StubFactory)
     }
 
+    struct RecordingTarget {
+        snapshot: SettingsSnapshot,
+        active_system: Option<Box<dyn SystemId>>,
+        loaded_media: Option<MediaObject>,
+        resumed: bool,
+    }
+
+    impl RecordingTarget {
+        fn new() -> Self {
+            Self {
+                snapshot: SettingsSnapshot {
+                    shared: DesktopSharedSettings::default(),
+                    local: HostBackendLocalSettings::default(),
+                    app_state: DesktopAppState::default(),
+                },
+                active_system: None,
+                loaded_media: None,
+                resumed: false,
+            }
+        }
+    }
+
+    impl RomLoadTarget for RecordingTarget {
+        fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+            Some(NoopSystemLoadOptions.into())
+        }
+
+        fn settings_snapshot(&self) -> &SettingsSnapshot {
+            &self.snapshot
+        }
+
+        fn load_resolved(
+            &mut self,
+            media: MediaObject,
+            _resolved: ResolvedLoadRequest,
+        ) -> Result<(), RomLoaderError> {
+            self.loaded_media = Some(media);
+            Ok(())
+        }
+
+        fn resume(&mut self) {
+            self.resumed = true;
+        }
+
+        fn set_active_system(
+            &mut self,
+            system_id: &dyn SystemId,
+        ) -> Result<(), crate::load::SystemActivationError> {
+            self.active_system = Some(system_id.clone_box());
+            Ok(())
+        }
+    }
+
+    fn temp_rom_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("nerust-registry-{}-{name}", std::process::id()))
+    }
+
     #[test]
     fn empty_registry_all_returns_empty_slice() {
         let registry = SystemRegistry::new(vec![]);
@@ -385,5 +446,60 @@ mod tests {
             registry.create_loader(HashMap::from([(Box::new(DummyOtherSystemId) as Box<_>, options)])),
             Err(RegistryError::UnregisteredOptions(id)) if id.as_ref() == &DummyOtherSystemId as &dyn SystemId
         ));
+    }
+
+    #[test]
+    fn loader_detects_loads_and_resumes_target() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummySystemId)));
+        let registry = Arc::new(SystemRegistry::new(vec![factory]));
+        let mut loader = registry.create_loader(HashMap::new()).unwrap();
+        let path = temp_rom_path("success.nes");
+        fs::write(&path, [0x4e, 0x45, 0x53, 0x1a]).unwrap();
+        let mut target = RecordingTarget::new();
+
+        loader.load_rom(&path, &mut target).unwrap();
+
+        assert!(
+            target
+                .active_system
+                .as_deref()
+                .is_some_and(|system_id| system_id == &DummySystemId as &dyn SystemId)
+        );
+        assert_eq!(
+            target.loaded_media.as_ref().unwrap().bytes.as_ref(),
+            [0x4e, 0x45, 0x53, 0x1a]
+        );
+        assert!(target.resumed);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn loader_rejects_unsupported_media_without_resuming() {
+        let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
+        let mut loader = registry.create_loader(HashMap::new()).unwrap();
+        let path = temp_rom_path("unsupported.rom");
+        fs::write(&path, [1, 2, 3]).unwrap();
+        let mut target = RecordingTarget::new();
+
+        let error = loader.load_rom(&path, &mut target).unwrap_err();
+
+        assert!(
+            matches!(error, RomLoaderError::Detect(message) if message == "unsupported ROM format")
+        );
+        assert!(!target.resumed);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn loader_reports_missing_rom_as_io_error() {
+        let registry = Arc::new(SystemRegistry::new(vec![stub_factory()]));
+        let mut loader = registry.create_loader(HashMap::new()).unwrap();
+        let path = temp_rom_path("missing.nes");
+        let _ = fs::remove_file(&path);
+        let mut target = RecordingTarget::new();
+
+        let error = loader.load_rom(&path, &mut target).unwrap_err();
+
+        assert!(matches!(error, RomLoaderError::Io(_)));
     }
 }

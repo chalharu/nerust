@@ -501,7 +501,10 @@ mod tests {
     use crate::{
         load::{RomLoadTarget, SystemActivationError},
         registry::SystemRegistry,
-        session::{KeyboardShortcut, SessionHandle},
+        session::{
+            KeyboardShortcut, SessionError, SessionHandle,
+            commands::{SessionCommand, SessionCommandOutcome},
+        },
         settings::factory::settings_view,
     };
 
@@ -617,6 +620,70 @@ mod tests {
                 .load_resolved(MediaObject::new(None, test_rom()), resolved)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn session_commands_drive_pause_resume_toggle_and_reset() {
+        let mut session = test_session();
+        let resolved = session
+            .factory()
+            .unwrap()
+            .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+            .unwrap();
+        session
+            .load_resolved(MediaObject::new(None, test_rom()), resolved)
+            .unwrap();
+
+        assert!(session.can_resume());
+        assert_eq!(
+            session.run_command(SessionCommand::Resume).unwrap(),
+            SessionCommandOutcome {
+                executed: true,
+                needs_redraw: true,
+            }
+        );
+        assert!(session.can_pause());
+        assert_eq!(
+            session.run_command(SessionCommand::Pause).unwrap(),
+            SessionCommandOutcome {
+                executed: true,
+                needs_redraw: false,
+            }
+        );
+        assert_eq!(
+            session.run_command(SessionCommand::Pause).unwrap(),
+            SessionCommandOutcome::default()
+        );
+        assert!(
+            session
+                .run_command(SessionCommand::TogglePause)
+                .unwrap()
+                .executed
+        );
+        assert!(session.run_command(SessionCommand::Reset).unwrap().executed);
+    }
+
+    #[test]
+    fn session_commands_report_missing_core_and_empty_slots() {
+        let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+        let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let mut session =
+            SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+
+        assert!(matches!(
+            session.run_command(SessionCommand::Reset),
+            Err(SessionError::NoCore)
+        ));
+        assert_eq!(
+            session.run_command(SessionCommand::LoadActiveSlot).unwrap(),
+            SessionCommandOutcome::default()
+        );
+        assert_eq!(
+            session.run_command(SessionCommand::SelectNextSlot).unwrap(),
+            SessionCommandOutcome::default()
+        );
+        assert!(!session.save_hidden_lifecycle_state());
+        assert!(!session.load_hidden_lifecycle_state());
     }
 
     #[test]
