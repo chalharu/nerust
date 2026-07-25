@@ -18,9 +18,9 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
 use nerust_input_traits::{
-    BufferError, ControllerCollection, ControllerProfile, CreateSplitError, GuiInput,
-    InputAssignments, InputPorts, InputResources, InputSplit, InputStateBuffer, InputSystemFactory,
-    InputValue, SlotInfo,
+    AttachmentId, BufferError, ControlInfo, ControllerCollection, ControllerProfile,
+    CreateSplitError, GuiInput, InputAssignments, InputPorts, InputResources, InputSplit,
+    InputStateBuffer, InputSystemFactory, InputValue, PortSet, ProfileId, SlotInfo,
 };
 use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
@@ -167,18 +167,49 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
 }
 
 #[derive(Debug)]
+pub(crate) struct MockSlotProfile;
+
+impl ControllerProfile for MockSlotProfile {
+    fn profile_id(&self) -> ProfileId {
+        ProfileId::new("test.profile.p1")
+    }
+    fn label(&self) -> &'static str {
+        "Test P1"
+    }
+    fn port_sets(&self) -> &[PortSet] {
+        static PORTS: [PortSet; 1] = [PortSet {
+            ports: &[TEST_SLOT_P1],
+        }];
+        &PORTS
+    }
+    fn port_groups(&self) -> &[&[ControlInfo]] {
+        static EMPTY: [ControlInfo; 0] = [];
+        static GROUPS: [&[ControlInfo]; 1] = [&EMPTY];
+        &GROUPS
+    }
+}
+
+pub(crate) const TEST_SLOT_P1: AttachmentId = AttachmentId::new("test.slot.p1");
+
+#[derive(Debug)]
 pub(crate) struct MockInputFactory;
 impl InputPorts for MockInputFactory {
     fn slots(&self) -> &[SlotInfo] {
-        &[]
+        static SLOTS: [SlotInfo; 1] = [SlotInfo {
+            id: TEST_SLOT_P1,
+            label: "P1",
+        }];
+        &SLOTS
     }
     fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
-        vec![]
+        vec![Rc::new(MockSlotProfile)]
     }
 }
 impl InputSystemFactory for MockInputFactory {
     fn default_assignments(&self) -> InputAssignments {
-        InputAssignments { slots: vec![] }
+        InputAssignments {
+            slots: vec![(TEST_SLOT_P1, None)],
+        }
     }
     fn create_split(&self, _: &ControllerCollection) -> Result<InputResources, CreateSplitError> {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
