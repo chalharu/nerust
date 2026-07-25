@@ -1,11 +1,15 @@
 use nerust_core_traits::{
     factory::{
-        CoreFactory, FactoryError, SystemDefaults,
+        CoreFactory, FactoryError,
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
         settings::{FactorySettingsView, Language},
     },
     identity::SystemId,
 };
+// SystemDefaults is needed in scope for the return type of
+// CoreFactory::as_system_defaults() → Option<&dyn SystemDefaults>.
+#[cfg_attr(not(test), allow(unused_imports))]
+use nerust_core_traits::factory::SystemDefaults;
 use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
 
 fn language_to_factory_lang(lang: AppLanguage) -> Language {
