@@ -1,12 +1,15 @@
-#![allow(dead_code)]
-
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 use gio::glib::object::{Cast as _, IsA};
 use gtk::prelude::{
     BoxExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _, EditableExt as _,
     GtkWindowExt as _, WidgetExt as _,
 };
+use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::StoragePolicy};
 use nerust_gui_viewmodel::settings::{
     SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
@@ -39,20 +42,31 @@ struct AudioWidgets {
     latency_spin: gtk::SpinButton,
 }
 
+struct InputTabWidgets {
+    _notebook: gtk::Notebook,
+    _pages: Vec<gtk::Box>,
+}
+
+struct SystemTabWidgets {
+    _notebook: gtk::Notebook,
+    _pages: Vec<gtk::Box>,
+}
+
 // ---------------------------------------------------------------------------
-// PreferencesBinding — ViewModel + widget subscriptions
+// PreferencesBinding
 // ---------------------------------------------------------------------------
 
 pub(crate) struct PreferencesBinding {
-    vm: SettingsViewModel,
-    _subscriptions: Vec<Subscription>,
-    general: GeneralWidgets,
-    video: VideoWidgets,
-    audio: AudioWidgets,
-    ok_button: gtk::Widget,
-    error_label: gtk::Label,
-    storage_directory_input: String,
-    refreshing: Cell<bool>,
+    pub vm: SettingsViewModel,
+    pub subscriptions: RefCell<Vec<Subscription>>,
+    pub general: GeneralWidgets,
+    pub video: VideoWidgets,
+    pub audio: AudioWidgets,
+    pub input: InputTabWidgets,
+    pub system: SystemTabWidgets,
+    pub ok_button: gtk::Widget,
+    pub error_label: gtk::Label,
+    pub refreshing: Cell<bool>,
 }
 
 impl PreferencesBinding {
@@ -61,24 +75,25 @@ impl PreferencesBinding {
         general: GeneralWidgets,
         video: VideoWidgets,
         audio: AudioWidgets,
+        input: InputTabWidgets,
+        system: SystemTabWidgets,
         ok_button: gtk::Widget,
         error_label: gtk::Label,
     ) -> Rc<Self> {
-        // Read initial values before vm is moved into new_cyclic
         let gv = vm.general.view.get();
-        let ok_sensitive = vm.finish().is_ok();
+        let vv = vm.video.view.get();
+        let av = vm.audio.view.get();
+        let ok = vm.finish().is_ok();
 
         let binding: Rc<Self> = Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
             let mut subs = Vec::new();
 
+            // --- general.view ---
             subs.push(vm.general.view.observe({
                 let weak = weak.clone();
                 move |v| {
                     let Some(b) = weak.upgrade() else { return };
-                    if b.refreshing.get() {
-                        return;
-                    }
-                    b.refreshing.set(true);
+                    if b.refreshing.get() { return; }
                     b.general.language_combo.set_active_id(Some(match v.language {
                         AppLanguage::Japanese => "japanese",
                         AppLanguage::English => "english",
@@ -91,54 +106,120 @@ impl PreferencesBinding {
                     }));
                     let show_dir = matches!(v.storage_policy, StoragePolicy::CustomDirectory);
                     b.general.storage_dir_row.set_visible(show_dir);
-                    b.refreshing.set(false);
+                    if !v.storage_directory.is_empty() {
+                        b.general.storage_dir_entry.set_text(&v.storage_directory);
+                    }
+                }
+            }));
+
+            // --- video.view ---
+            subs.push(vm.video.view.observe({
+                let weak = weak.clone();
+                move |v| {
+                    let Some(b) = weak.upgrade() else { return };
+                    if b.refreshing.get() { return; }
+                    b.video.fullscreen_check.set_active(v.fullscreen_default);
+                    b.video.scaling_combo.set_active_id(Some(match v.scaling {
+                        ScalingMode::FitToWindow => "fit",
+                        ScalingMode::X1 => "1",
+                        ScalingMode::X2 => "2",
+                        ScalingMode::X3 => "3",
+                        ScalingMode::X4 => "4",
+                        ScalingMode::X5 => "5",
+                    }));
+                    b.video.vsync_check.set_active(v.vsync);
+                }
+            }));
+
+            // --- audio.view ---
+            subs.push(vm.audio.view.observe({
+                let weak = weak.clone();
+                move |v| {
+                    let Some(b) = weak.upgrade() else { return };
+                    if b.refreshing.get() { return; }
+                    b.audio.mute_check.set_active(v.muted);
+                    b.audio.volume_spin.set_value(f64::from(v.volume_percent));
+                    let active = format!("{}", v.sample_rate);
+                    b.audio.sample_rate_combo.set_active_id(Some(&active));
+                    b.audio.latency_spin.set_value(f64::from(v.latency_ms));
+                }
+            }));
+
+            // --- revision → validation ---
+            subs.push(vm.revision.observe({
+                let weak = weak.clone();
+                move |_| {
+                    let Some(b) = weak.upgrade() else { return };
+                    match b.vm.finish() {
+                        Ok(_) => b.ok_button.set_sensitive(true),
+                        Err(validation) => {
+                            b.ok_button.set_sensitive(false);
+                            if let Some(first) = validation.issues.first() {
+                                b.error_label.set_text(&first.message);
+                            }
+                        }
+                    }
                 }
             }));
 
             Self {
                 vm,
-                _subscriptions: subs,
+                subscriptions: RefCell::new(subs),
                 general,
                 video,
                 audio,
+                input,
+                system,
                 ok_button,
                 error_label,
-                storage_directory_input: String::new(),
                 refreshing: Cell::new(false),
             }
         });
 
-        // Initial widget population from current ViewModel state
+        // --- Initial widget population ---
         binding.general.language_combo.set_active_id(Some(match gv.language {
             AppLanguage::Japanese => "japanese",
             AppLanguage::English => "english",
             AppLanguage::SystemDefault => "system_default",
         }));
-        binding
-            .general
-            .storage_policy_combo
-            .set_active_id(Some(match gv.storage_policy {
-                StoragePolicy::AppSharedData => "app_shared_data",
-                StoragePolicy::CustomDirectory => "custom_directory",
-                StoragePolicy::Sidecar => "sidecar",
-            }));
+        binding.general.storage_policy_combo.set_active_id(Some(match gv.storage_policy {
+            StoragePolicy::AppSharedData => "app_shared_data",
+            StoragePolicy::CustomDirectory => "custom_directory",
+            StoragePolicy::Sidecar => "sidecar",
+        }));
         let show_dir = matches!(gv.storage_policy, StoragePolicy::CustomDirectory);
         binding.general.storage_dir_row.set_visible(show_dir);
+        if !gv.storage_directory.is_empty() {
+            binding.general.storage_dir_entry.set_text(&gv.storage_directory);
+        }
 
-        binding.ok_button.set_sensitive(ok_sensitive);
+        // Video initial values
+        binding.video.fullscreen_check.set_active(vv.fullscreen_default);
+        binding.video.scaling_combo.set_active_id(Some(match vv.scaling {
+            ScalingMode::FitToWindow => "fit",
+            ScalingMode::X1 => "1",
+            ScalingMode::X2 => "2",
+            ScalingMode::X3 => "3",
+            ScalingMode::X4 => "4",
+            ScalingMode::X5 => "5",
+        }));
+        binding.video.vsync_check.set_active(vv.vsync);
+
+        // Audio initial values
+        binding.audio.mute_check.set_active(av.muted);
+        binding.audio.volume_spin.set_value(f64::from(av.volume_percent));
+        let active = format!("{}", av.sample_rate);
+        binding.audio.sample_rate_combo.set_active_id(Some(&active));
+        binding.audio.latency_spin.set_value(f64::from(av.latency_ms));
+
+        binding.ok_button.set_sensitive(ok);
 
         binding
-    }
-
-    fn with_refreshing<F: FnOnce()>(&self, f: F) {
-        self.refreshing.set(true);
-        f();
-        self.refreshing.set(false);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Main dialog entry point
+// GtkStoragePathValidator
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
@@ -158,9 +239,13 @@ impl StoragePathValidator for GtkStoragePathValidator {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Main dialog entry point
+// ---------------------------------------------------------------------------
+
 pub(crate) fn present_preferences_dialog(
     parent: &gtk::ApplicationWindow,
-    state: Rc<std::cell::RefCell<State>>,
+    state: Rc<RefCell<State>>,
     on_close: impl FnOnce() + 'static,
 ) {
     let (snapshot, registry, audio_registry) = {
@@ -168,7 +253,7 @@ pub(crate) fn present_preferences_dialog(
         (s.settings_snapshot().clone(), s.ctx.registry.clone(), s.ctx.audio_registry.clone())
     };
 
-    let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
+    let factories: Vec<Arc<dyn CoreFactory>> =
         registry.all().iter().map(Arc::clone).collect();
 
     let supported_sample_rates: Arc<[u32]> = {
@@ -186,7 +271,6 @@ pub(crate) fn present_preferences_dialog(
         supported_sample_rates,
         Rc::new(GtkStoragePathValidator) as Rc<dyn StoragePathValidator>,
     );
-
 
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
@@ -272,8 +356,7 @@ pub(crate) fn present_preferences_dialog(
     general_page.append(&storage_error_label);
 
     // ---- Video page ----
-    let fullscreen_check =
-        gtk::CheckButton::with_label("Fullscreen Default");
+    let fullscreen_check = gtk::CheckButton::with_label("Fullscreen Default");
     video_page.append(&fullscreen_check);
     let scaling_combo = combo_box(&[
         ("fit", "Fit to Window"),
@@ -309,12 +392,12 @@ pub(crate) fn present_preferences_dialog(
     let latency_spin = gtk::SpinButton::with_range(10.0, 200.0, 1.0);
     audio_page.append(&labeled_row("Audio Latency", &latency_spin));
 
-    // ---- Input page (basic) ----
+    // ---- Input page (tabs) ----
     let input_notebook = gtk::Notebook::new();
     input_notebook.set_scrollable(true);
     input_notebook.set_tab_pos(gtk::PositionType::Top);
     input_page.append(&input_notebook);
-
+    let mut input_pages = Vec::new();
     for factory in registry.all() {
         let tab_label = gtk::Label::new(Some(factory.display_name()));
         let tab_page = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -323,14 +406,15 @@ pub(crate) fn present_preferences_dialog(
         tab_page.set_margin_top(6);
         tab_page.set_margin_bottom(6);
         input_notebook.append_page(&tab_page, Some(&tab_label));
+        input_pages.push(tab_page);
     }
 
-    // ---- System page (basic) ----
+    // ---- System page (tabs) ----
     let system_notebook = gtk::Notebook::new();
     system_notebook.set_scrollable(true);
     system_notebook.set_tab_pos(gtk::PositionType::Top);
     system_page.append(&system_notebook);
-
+    let mut system_pages = Vec::new();
     for factory in registry.all() {
         let tab_label = gtk::Label::new(Some(factory.display_name()));
         let tab_page = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -339,6 +423,7 @@ pub(crate) fn present_preferences_dialog(
         tab_page.set_margin_top(6);
         tab_page.set_margin_bottom(6);
         system_notebook.append_page(&tab_page, Some(&tab_label));
+        system_pages.push(tab_page);
     }
 
     // Build binding
@@ -360,13 +445,28 @@ pub(crate) fn present_preferences_dialog(
         sample_rate_combo: sample_rate_combo.clone(),
         latency_spin: latency_spin.clone(),
     };
-    let _binding = PreferencesBinding::new(vm, general_w, video_w, audio_w, ok_button, error_label);
+    let input_w = InputTabWidgets {
+        _notebook: input_notebook,
+        _pages: input_pages,
+    };
+    let system_w = SystemTabWidgets {
+        _notebook: system_notebook,
+        _pages: system_pages,
+    };
 
-    // ---- Signal handlers (delegate to ViewModel) ----
-    {
-        let weak = Rc::downgrade(&_binding);
-        language_combo.connect_changed(move |combo| {
-            let Some(b) = weak.upgrade() else { return };
+    let _binding = PreferencesBinding::new(
+        vm, general_w, video_w, audio_w, input_w, system_w, ok_button, error_label,
+    );
+
+    // ---- Signal handlers ----
+    fn weak_handler(b: &Rc<PreferencesBinding>) -> std::rc::Weak<PreferencesBinding> {
+        Rc::downgrade(b)
+    }
+
+    language_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let lang = match combo.active_id().as_deref() {
                 Some("japanese") => AppLanguage::Japanese,
@@ -374,12 +474,12 @@ pub(crate) fn present_preferences_dialog(
                 _ => AppLanguage::SystemDefault,
             };
             let _ = b.vm.general.set_language(lang);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        storage_policy_combo.connect_changed(move |combo| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    storage_policy_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let policy = match combo.active_id().as_deref() {
                 Some("app_shared_data") => StoragePolicy::AppSharedData,
@@ -387,30 +487,30 @@ pub(crate) fn present_preferences_dialog(
                 _ => StoragePolicy::Sidecar,
             };
             let _ = b.vm.general.set_storage_policy(policy);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        storage_dir_entry.connect_changed(move |entry| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    storage_dir_entry.connect_changed({
+        let w = weak_handler(&_binding);
+        move |entry| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let text = entry.text();
             let path = (!text.is_empty()).then(|| std::path::PathBuf::from(text.as_str()));
             let _ = b.vm.general.set_storage_directory(path);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        fullscreen_check.connect_toggled(move |button| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    fullscreen_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let _ = b.vm.video.set_fullscreen_default(button.is_active());
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        scaling_combo.connect_changed(move |combo| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    scaling_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let scaling = match combo.active_id().as_deref() {
                 Some("1") => ScalingMode::X1,
@@ -421,58 +521,57 @@ pub(crate) fn present_preferences_dialog(
                 _ => ScalingMode::FitToWindow,
             };
             let _ = b.vm.video.set_scaling(scaling);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        vsync_check.connect_toggled(move |button| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    vsync_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let _ = b.vm.video.set_vsync(button.is_active());
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        mute_check.connect_toggled(move |button| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    mute_check.connect_toggled({
+        let w = weak_handler(&_binding);
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let _ = b.vm.audio.set_mute(button.is_active());
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        volume_spin.connect_value_changed(move |spin| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    volume_spin.connect_value_changed({
+        let w = weak_handler(&_binding);
+        move |spin| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let _ = b.vm.audio.set_volume(spin.value() as u8);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        sample_rate_combo.connect_changed(move |combo| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    sample_rate_combo.connect_changed({
+        let w = weak_handler(&_binding);
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let rate = combo
                 .active_id()
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(48_000);
             let _ = b.vm.audio.set_sample_rate(rate);
-        });
-    }
-    {
-        let weak = Rc::downgrade(&_binding);
-        latency_spin.connect_value_changed(move |spin| {
-            let Some(b) = weak.upgrade() else { return };
+        }
+    });
+    latency_spin.connect_value_changed({
+        let w = weak_handler(&_binding);
+        move |spin| {
+            let Some(b) = w.upgrade() else { return };
             if b.refreshing.get() { return; }
             let _ = b.vm.audio.set_latency(spin.value() as u16);
-        });
-    }
+        }
+    });
 
-    // Submit — _binding is cloned into the closure to keep it alive
-    // as long as the dialog is open.
+    // Submit
     let parent_clone = parent.clone();
     let state_clone = state.clone();
-    let finish_cb = Rc::new(std::cell::RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
+    let finish_cb = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
     let _binding_owned = Rc::clone(&_binding);
     dialog.connect_response(move |dialog, response| {
         if response != gtk::ResponseType::Ok {
@@ -483,26 +582,25 @@ pub(crate) fn present_preferences_dialog(
             return;
         }
         match _binding_owned.vm.finish() {
-            Ok(snapshot) => {
-                let plan = state_clone.borrow_mut().session.apply_settings(snapshot);
-                match plan {
-                    Ok(result) => {
-                        if result.fullscreen_default_changed {
-                            parent_clone.set_fullscreened(
-                                _binding_owned.vm.snapshot().local.video.window.fullscreen_default,
-                            );
-                        }
-                        dialog.close();
-                        if let Some(cb) = finish_cb.borrow_mut().take() {
-                            cb();
-                        }
+            Ok(snapshot) => match state_clone.borrow_mut().session.apply_settings(snapshot) {
+                Ok(result) => {
+                    if result.fullscreen_default_changed {
+                        parent_clone.set_fullscreened(
+                            _binding_owned.vm.snapshot().local.video.window.fullscreen_default,
+                        );
                     }
-                    Err(e) => {
-                        _binding_owned.error_label.set_text(&e.to_string());
+                    dialog.close();
+                    if let Some(cb) = finish_cb.borrow_mut().take() {
+                        cb();
                     }
                 }
+                Err(e) => {
+                    _binding_owned.error_label.set_text(&e.to_string());
+                }
+            },
+            Err(_) => {
+                // validation errors already shown via revision callback
             }
-            Err(_) => {}
         }
     });
 
