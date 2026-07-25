@@ -763,6 +763,37 @@ mod tests {
     }
 
     #[test]
+    fn apply_settings_rebuilds_when_assignments_change() {
+        use crate::session::test_helpers::TEST_SLOT_P1;
+        let mut session = test_session();
+        let prev_pairs = session.current_assignments.to_string_pairs();
+
+        // Create a snapshot with an assignment that MockInputFactory can resolve
+        let sid = session.factory().unwrap().system_id();
+        let mut next = session.settings_snapshot().clone();
+        next.app_state.controller_assignments.insert(
+            sid,
+            vec![(
+                TEST_SLOT_P1.to_string(),
+                Some("test.profile.p1".to_string()),
+            )],
+        );
+
+        let _ = session.apply_settings(next).unwrap();
+
+        // Verify that current_assignments reflects the new value
+        let new_pairs = session.current_assignments.to_string_pairs();
+        assert_ne!(
+            new_pairs, prev_pairs,
+            "assignments should be updated after apply"
+        );
+        assert!(
+            new_pairs.iter().any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
+            "new assignments should include the test slot"
+        );
+    }
+
+    #[test]
     fn set_fullscreen_default_updates_snapshot_and_plan() {
         let mut session = test_session();
         session.handle_keyboard_key(nerust_keyboard::Key::KeyZ, true);
