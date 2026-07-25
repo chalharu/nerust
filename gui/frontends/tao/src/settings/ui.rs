@@ -1146,9 +1146,38 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
 #[cfg(test)]
 mod tests {
     use iced::keyboard::key::{Code, Physical};
+    use nerust_core_traits::audio::AudioBackendRegistry;
+    use nerust_gui_runtime::settings::SettingsSnapshot;
+    use nerust_gui_settings::{
+        app_state::DesktopAppState,
+        local::{HostBackendLocalSettings, ScalingMode},
+        shared::{DesktopSharedSettings, StoragePolicy},
+    };
+    use nerust_gui_shell::registry::SystemRegistry;
     use nerust_keyboard::Key;
+    use std::sync::{Arc, atomic::Ordering};
 
-    use super::keyboard_key_from_physical;
+    use super::*;
+
+    fn empty_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            shared: DesktopSharedSettings::default(),
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        }
+    }
+
+    fn empty_state() -> SettingsAppState {
+        SettingsAppState::new(
+            &empty_snapshot(),
+            Arc::new(SystemRegistry::new(Vec::new())),
+            Arc::new(AudioBackendRegistry::new()),
+        )
+    }
+
+    fn dispatch(state: &mut SettingsAppState, message: Message) {
+        drop(state.update(message));
+    }
 
     #[test]
     fn physical_key_mapping_matches_tao_bindings() {
@@ -1164,5 +1193,185 @@ mod tests {
             keyboard_key_from_physical(Physical::Code(Code::F11)),
             Some(Key::F11)
         );
+    }
+
+    #[test]
+    fn settings_choices_include_all_supported_values() {
+        let languages = language_options(AppLanguage::English);
+        let storage = storage_policy_options(AppLanguage::English);
+        let scaling = scaling_options(AppLanguage::English);
+        let sample_rates = sample_rate_options(&AudioBackendRegistry::new());
+
+        assert_eq!(languages.len(), 3);
+        assert!(
+            languages
+                .iter()
+                .any(|choice| choice.value == AppLanguage::Japanese)
+        );
+        assert_eq!(storage.len(), 3);
+        assert!(
+            storage
+                .iter()
+                .any(|choice| choice.value == StoragePolicy::CustomDirectory)
+        );
+        assert_eq!(scaling.len(), 6);
+        assert!(scaling.iter().any(|choice| choice.value == ScalingMode::X5));
+        assert_eq!(
+            sample_rates
+                .iter()
+                .map(|choice| choice.value)
+                .collect::<Vec<_>>(),
+            FALLBACK_SAMPLE_RATES
+        );
+
+        let fallback = selected_choice(
+            99_u8,
+            vec![Choice {
+                value: 1,
+                label: "one".into(),
+            }],
+        );
+        assert_eq!(fallback.value, 99);
+        assert_eq!(fallback.label, "99");
+    }
+
+    #[test]
+    fn update_applies_general_video_and_audio_messages() {
+        let mut state = empty_state();
+
+        dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
+        dispatch(
+            &mut state,
+            Message::SelectInputSection(InputPageSection::Shortcuts),
+        );
+        dispatch(&mut state, Message::SelectSystemTab(2));
+        dispatch(&mut state, Message::SelectInputTab(3));
+        dispatch(
+            &mut state,
+            Message::SetLanguage(Choice {
+                value: AppLanguage::Japanese,
+                label: "Japanese".into(),
+            }),
+        );
+        dispatch(
+            &mut state,
+            Message::SetStoragePolicy(Choice {
+                value: StoragePolicy::CustomDirectory,
+                label: "Custom".into(),
+            }),
+        );
+        dispatch(
+            &mut state,
+            Message::SetStorageDirectory("/tmp/states".into()),
+        );
+        dispatch(&mut state, Message::ToggleFullscreenDefault(true));
+        dispatch(
+            &mut state,
+            Message::SetScaling(Choice {
+                value: ScalingMode::X3,
+                label: "3x".into(),
+            }),
+        );
+        dispatch(&mut state, Message::ToggleVsync(false));
+        dispatch(&mut state, Message::ToggleMute(true));
+        dispatch(&mut state, Message::SetVolume(42));
+        dispatch(
+            &mut state,
+            Message::SetSampleRate(Choice {
+                value: 44_100,
+                label: "44100".into(),
+            }),
+        );
+        dispatch(&mut state, Message::SetLatency(75));
+
+        assert_eq!(state.page, SettingsPage::Audio);
+        assert_eq!(state.input_section, InputPageSection::Attachment(0));
+        assert_eq!(state.system_tab_index, Some(2));
+        assert_eq!(state.input_tab_index, Some(3));
+        assert_eq!(state.language(), AppLanguage::Japanese);
+        assert_eq!(
+            state.draft.shared.persistence.storage_policy,
+            StoragePolicy::CustomDirectory
+        );
+        assert_eq!(
+            state.draft.shared.persistence.storage_directory.as_deref(),
+            Some(std::path::Path::new("/tmp/states"))
+        );
+        assert!(state.draft.local.video.window.fullscreen_default);
+        assert_eq!(state.draft.local.video.window.scaling, ScalingMode::X3);
+        assert!(!state.draft.local.video.presentation.vsync);
+        assert!(state.draft.local.audio.muted);
+        assert_eq!(state.draft.local.audio.master_volume_percent, 42);
+        assert_eq!(state.draft.local.audio.sample_rate, 44_100);
+        assert_eq!(state.draft.local.audio.latency_ms, 75);
+
+        dispatch(&mut state, Message::SetStorageDirectory(String::new()));
+        assert!(state.draft.shared.persistence.storage_directory.is_none());
+    }
+
+    #[test]
+    fn submit_and_cancel_publish_close_state() {
+        let mut submitted = empty_state();
+        dispatch(&mut submitted, Message::Submit);
+
+        assert!(submitted.should_close.load(Ordering::Acquire));
+        assert!(submitted.pending_apply.lock().unwrap().is_some());
+        assert!(submitted.pending_assignments.lock().unwrap().is_none());
+
+        let mut cancelled = empty_state();
+        dispatch(&mut cancelled, Message::Cancel);
+        assert!(cancelled.should_close.load(Ordering::Acquire));
+        assert!(cancelled.pending_apply.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn empty_registry_paths_are_safe_and_validation_blocks_submit() {
+        let mut state = empty_state();
+        state.draft.shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+
+        assert!(state.storage_error().is_some());
+        assert!(!state.validation_errors().is_empty());
+        assert!(state.input_conflict().is_none());
+        assert!(input_topology(&state).ports.is_empty());
+        assert!(assignment_pairs(&[]).is_empty());
+
+        dispatch(
+            &mut state,
+            Message::SetSystemChoice(
+                "video.filter".into(),
+                Choice {
+                    value: "ntsc_rgb".into(),
+                    label: "NTSC RGB".into(),
+                },
+            ),
+        );
+        dispatch(
+            &mut state,
+            Message::SetControllerSlot {
+                slot: AttachmentId::new("missing.slot"),
+                controller_id: None,
+            },
+        );
+        dispatch(&mut state, Message::Submit);
+
+        assert!(!state.should_close.load(Ordering::Acquire));
+        assert!(state.pending_apply.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn capture_messages_update_shared_capture_state() {
+        let mut state = empty_state();
+        let target =
+            CaptureTarget::Shortcut(nerust_gui_settings::input::ShortcutAction::TogglePause);
+
+        dispatch(&mut state, Message::StartCapture(target.clone()));
+        assert_eq!(*state.capture_target.lock().unwrap(), Some(target.clone()));
+
+        dispatch(&mut state, Message::CaptureKey(Key::Space));
+        assert!(state.capture_target.lock().unwrap().is_none());
+
+        dispatch(&mut state, Message::StartCapture(target.clone()));
+        dispatch(&mut state, Message::ClearCapture(target));
+        assert!(state.capture_target.lock().unwrap().is_none());
     }
 }
