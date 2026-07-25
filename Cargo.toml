@@ -124,6 +124,7 @@ iced = { default-features = false, features = [
 iced_tiny_skia = { version = "=0.14.0" }
 iced_winit = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
+inventory = { version = "=0.3.24" }
 log = { default-features = false, version = "=0.4.33" }
 muda = { default-features = false, features = ["gtk"], version = "=0.19.3" }
 nerust_android = { path = "gui/frontends/android" }

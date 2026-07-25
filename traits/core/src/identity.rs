@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display},
+};
 
 use dyn_clone::DynClone;
 use dyn_eq::DynEq;
@@ -41,7 +44,73 @@ impl dyn SystemId {
     }
 }
 
+#[doc(hidden)]
+pub struct SystemIdRegistration {
+    pub id: &'static str,
+    pub rust_type_name: fn() -> &'static str,
+}
+
+inventory::collect!(SystemIdRegistration);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemIdConflict {
+    pub id: &'static str,
+    pub rust_types: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateSystemIdError {
+    pub conflicts: Vec<SystemIdConflict>,
+}
+
+impl Display for DuplicateSystemIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("duplicate system IDs: ")?;
+        for (index, conflict) in self.conflicts.iter().enumerate() {
+            if index > 0 {
+                f.write_str("; ")?;
+            }
+            write!(f, "{} ({})", conflict.id, conflict.rust_types.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for DuplicateSystemIdError {}
+
+pub fn validate_system_id_registrations() -> Result<(), DuplicateSystemIdError> {
+    validate_registrations(inventory::iter::<SystemIdRegistration>)
+}
+
+fn validate_registrations<'a>(
+    registrations: impl IntoIterator<Item = &'a SystemIdRegistration>,
+) -> Result<(), DuplicateSystemIdError> {
+    let mut by_id = BTreeMap::<&'static str, Vec<&'static str>>::new();
+    for registration in registrations {
+        by_id
+            .entry(registration.id)
+            .or_default()
+            .push((registration.rust_type_name)());
+    }
+    let conflicts = by_id
+        .into_iter()
+        .filter_map(|(id, mut rust_types)| {
+            if rust_types.len() < 2 {
+                return None;
+            }
+            rust_types.sort_unstable();
+            Some(SystemIdConflict { id, rust_types })
+        })
+        .collect::<Vec<_>>();
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(DuplicateSystemIdError { conflicts })
+    }
+}
+
 pub mod __private {
+    pub use inventory;
     pub use serde::Deserialize as _serde_deserialize;
     pub use serde::Serialize as _serde_serialize;
     pub use typetag;
@@ -69,6 +138,17 @@ macro_rules! declare_system_id {
 
             #[$crate::identity::__private::typetag::serde(name = $system_id)]
             impl $crate::identity::SystemId for $name {}
+
+            fn rust_type_name() -> &'static str {
+                core::any::type_name::<$name>()
+            }
+
+            $crate::identity::__private::inventory::submit! {
+                $crate::identity::SystemIdRegistration {
+                    id: $system_id,
+                    rust_type_name,
+                }
+            }
         };
 
         #[allow(clippy::to_string_trait_impl)]
@@ -98,7 +178,9 @@ macro_rules! declare_system_id {
 mod tests {
     use serde_json::Value;
 
-    use super::SystemId;
+    use super::{
+        SystemId, SystemIdRegistration, validate_registrations, validate_system_id_registrations,
+    };
 
     crate::declare_system_id!(FirstSystemId, "first");
     crate::declare_system_id!(RenamableRustType, "second");
@@ -123,5 +205,49 @@ mod tests {
         let decoded: Box<dyn SystemId> = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded.as_ref(), &FirstSystemId as &dyn SystemId);
+    }
+
+    #[test]
+    fn duplicate_system_id_validation_reports_registered_types() {
+        fn first_type() -> &'static str {
+            "crate_a::First"
+        }
+        fn second_type() -> &'static str {
+            "crate_b::Second"
+        }
+        let registrations = [
+            SystemIdRegistration {
+                id: "duplicate",
+                rust_type_name: first_type,
+            },
+            SystemIdRegistration {
+                id: "duplicate",
+                rust_type_name: second_type,
+            },
+        ];
+
+        let error = validate_registrations(&registrations).unwrap_err();
+
+        assert_eq!(error.conflicts.len(), 1);
+        assert_eq!(error.conflicts[0].id, "duplicate");
+        assert_eq!(
+            error.conflicts[0].rust_types,
+            ["crate_a::First", "crate_b::Second"]
+        );
+        assert_eq!(
+            error.to_string(),
+            "duplicate system IDs: duplicate (crate_a::First, crate_b::Second)"
+        );
+    }
+
+    #[test]
+    fn linked_system_id_registrations_are_unique() {
+        validate_system_id_registrations().unwrap();
+        let ids = inventory::iter::<SystemIdRegistration>
+            .into_iter()
+            .map(|registration| registration.id)
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"first"));
+        assert!(ids.contains(&"second"));
     }
 }

@@ -34,6 +34,9 @@ pub struct SystemRegistry {
 
 impl SystemRegistry {
     pub fn new(factories: Vec<Arc<dyn CoreFactory>>) -> Self {
+        if let Err(error) = nerust_core_traits::identity::validate_system_id_registrations() {
+            panic!("invalid system ID registry: {error}");
+        }
         let mut by_id = HashMap::with_capacity(factories.len());
         for f in &factories {
             let system_id = f.system_id();
