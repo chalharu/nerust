@@ -1,12 +1,10 @@
-#![allow(dead_code, clippy::collapsible_if)]
-
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
     sync::Arc,
 };
 
-use gio::glib::object::{Cast as _, IsA};
+use gio::glib::{self, object::{Cast as _, IsA}};
 use gtk::prelude::{
     BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
     EditableExt as _, GtkWindowExt as _, WidgetExt as _,
@@ -413,13 +411,20 @@ impl PreferencesBinding {
                 else {
                     return;
                 };
-                if let Some(vm) = binding.vm.systems().get(index) {
-                    if let Err(e) = vm.set_choice(&field_id, &choice.value) {
-                        binding.error_label.set_text(&e.to_string());
-                        binding.with_refreshing(|| {
-                            binding.rebuild_system_page(index, &vm.view.get());
-                        });
-                    }
+                if let Some(vm) = binding.vm.systems().get(index)
+                    && let Err(e) = vm.set_choice(&field_id, &choice.value)
+                {
+                    binding.error_label.set_text(&e.to_string());
+                    let weak = binding.self_weak.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(b) = weak.upgrade() {
+                            b.with_refreshing(|| {
+                                if let Some(vm) = b.vm.systems().get(index) {
+                                    b.rebuild_system_page(index, &vm.view.get());
+                                }
+                            });
+                        }
+                    });
                 }
             });
             page.append(&labeled_row(&field.label, &combo));
@@ -473,13 +478,20 @@ impl PreferencesBinding {
                 let profile = combo
                     .active_id()
                     .and_then(|id| (id.as_str() != "__none__").then(|| id.to_string()));
-                if let Some(vm) = binding.vm.inputs().get(index) {
-                    if let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref()) {
-                        binding.error_label.set_text(&e.to_string());
-                        binding.with_refreshing(|| {
-                            binding.rebuild_input_page(index, &vm.view.get());
-                        });
-                    }
+                if let Some(vm) = binding.vm.inputs().get(index)
+                    && let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref())
+                {
+                    binding.error_label.set_text(&e.to_string());
+                    let weak = binding.self_weak.clone();
+                    glib::idle_add_local_once(move || {
+                        if let Some(b) = weak.upgrade() {
+                            b.with_refreshing(|| {
+                                if let Some(vm) = b.vm.inputs().get(index) {
+                                    b.rebuild_input_page(index, &vm.view.get());
+                                }
+                            });
+                        }
+                    });
                 }
             });
             page.append(&labeled_row(&slot.label, &combo));
@@ -533,18 +545,18 @@ impl PreferencesBinding {
         let weak_c = self.self_weak.clone();
         let change_target_c = target.clone();
         change.connect_clicked(move |_| {
-            if let Some(binding) = weak_c.upgrade() {
-                if let Err(e) = binding.vm.capture.start_capture(change_target_c.clone()) {
-                    binding.error_label.set_text(&e.to_string());
-                }
+            if let Some(binding) = weak_c.upgrade()
+                && let Err(e) = binding.vm.capture.start_capture(change_target_c.clone())
+            {
+                binding.error_label.set_text(&e.to_string());
             }
         });
         let weak_cl = self.self_weak.clone();
         clear.connect_clicked(move |_| {
-            if let Some(binding) = weak_cl.upgrade() {
-                if let Err(e) = binding.vm.capture.clear_binding(&target) {
-                    binding.error_label.set_text(&e.to_string());
-                }
+            if let Some(binding) = weak_cl.upgrade()
+                && let Err(e) = binding.vm.capture.clear_binding(&target)
+            {
+                binding.error_label.set_text(&e.to_string());
             }
         });
         row.append(&name);
