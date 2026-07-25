@@ -375,7 +375,13 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let vm = super::super::SettingsViewModel::new(snapshot, vec![factory], Arc::new([]));
+        let vm = super::super::SettingsViewModel::new(
+            snapshot,
+            vec![factory],
+            Arc::new([]),
+            std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
+                as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+        );
         let input_vm = &vm.inputs()[0];
 
         // Both P1 and P2 have controllers initially
@@ -435,7 +441,13 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let vm = super::super::SettingsViewModel::new(snapshot, vec![factory], Arc::new([]));
+        let vm = super::super::SettingsViewModel::new(
+            snapshot,
+            vec![factory],
+            Arc::new([]),
+            std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
+                as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+        );
         let input_vm = &vm.inputs()[0];
 
         // P2 is absent from the projection initially

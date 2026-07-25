@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 
 use super::{
     ValidationState, audio::AudioSettingsViewModel, capture::CaptureViewModel,
-    editor::SettingsEditor, general::GeneralSettingsViewModel, input::InputSettingsViewModel,
+    editor::{SettingsEditor, StoragePathValidator},
+    general::GeneralSettingsViewModel, input::InputSettingsViewModel,
     property::ReadOnlyObservableProperty, system::SystemSettingsViewModel,
     video::VideoSettingsViewModel,
 };
@@ -28,10 +29,16 @@ impl SettingsViewModel {
         snapshot: SettingsSnapshot,
         factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>>,
         supported_sample_rates: Arc<[u32]>,
+        storage_validator: Rc<dyn StoragePathValidator>,
     ) -> Self {
         let catalog = FactoryCatalog::new(factories.clone());
 
-        let mut editor = SettingsEditor::new(snapshot, catalog, supported_sample_rates);
+        let mut editor = SettingsEditor::new(
+            snapshot,
+            catalog,
+            supported_sample_rates,
+            storage_validator,
+        );
 
         editor.set_validator(validator);
 
@@ -74,10 +81,6 @@ impl SettingsViewModel {
         self.editor.finish()
     }
 
-    pub fn set_storage_validator(&self, validator: Box<dyn super::editor::StoragePathValidator>) {
-        self.editor.set_storage_validator(validator);
-    }
-
     pub fn systems(&self) -> &[SystemSettingsViewModel] {
         &self.systems
     }
@@ -99,16 +102,11 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
         StoragePolicy::CustomDirectory
     ) {
         if let Some(ref path) = state.draft.shared.persistence.storage_directory {
-            // Filesystem validation via injected port
-            if let Some(ref validator) = state.storage_validator {
-                if let Err(e) = validator.validate(path) {
-                    issues.push(super::ValidationIssue {
-                        scope: super::ValidationScope::Persistence,
-                        message: e.to_string(),
-                    });
-                }
-            } else {
-                // No port injected (e.g. tests): structural check only
+            if let Err(e) = state.storage_validator.validate(path) {
+                issues.push(super::ValidationIssue {
+                    scope: super::ValidationScope::Persistence,
+                    message: e.to_string(),
+                });
             }
         } else {
             issues.push(super::ValidationIssue {
@@ -263,7 +261,12 @@ mod tests {
         let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]);
         let supported_sample_rates: Arc<[u32]> = Arc::new([]);
 
-        let mut editor = SettingsEditor::new(snapshot, catalog, supported_sample_rates);
+        let mut editor = SettingsEditor::new(
+            snapshot,
+            catalog,
+            supported_sample_rates,
+            Rc::new(crate::settings::NoopStoragePathValidator) as Rc<dyn crate::settings::StoragePathValidator>,
+        );
         editor.set_validator(validator);
 
         // finish() should reject because of the unknown profile

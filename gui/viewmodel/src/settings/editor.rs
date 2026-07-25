@@ -10,10 +10,14 @@ use std::{
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 use nerust_settings_core::editor::CaptureTarget;
 
-use super::catalog::FactoryCatalog;
+use super::{
+    catalog::FactoryCatalog,
+    projection::ProjectionHub,
+    property::{ObservablePropertyInner, ReadOnlyObservableProperty},
+    ValidationState,
+};
 
-/// Storage path validation error, keeping the port independent of
-/// concrete `std::io::Error` or `std::fmt::Display` decisions.
+/// Storage path validation error.
 #[derive(Debug, Clone)]
 pub enum StoragePathError {
     NotDirectory,
@@ -29,20 +33,10 @@ impl std::fmt::Display for StoragePathError {
     }
 }
 
-/// Storage path validation port.
-///
-/// Injected by the frontend (composition root) to perform
-/// filesystem-level validation. The view model calls this
-/// during validation but does not depend on `std::fs`.
+/// Storage path validation port — injected by the composition root.
 pub trait StoragePathValidator: std::fmt::Debug {
     fn validate(&self, path: &Path) -> Result<(), StoragePathError>;
 }
-
-use super::{
-    ValidationState,
-    projection::ProjectionHub,
-    property::{ObservablePropertyInner, ReadOnlyObservableProperty},
-};
 
 /// Error type for view model operations.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +55,15 @@ pub enum ViewModelError {
     InvalidCaptureTarget,
 }
 
+/// No-op validator for use in tests / ephemeral contexts.
+#[derive(Debug)]
+pub struct NoopStoragePathValidator;
+impl StoragePathValidator for NoopStoragePathValidator {
+    fn validate(&self, _path: &Path) -> Result<(), StoragePathError> {
+        Ok(())
+    }
+}
+
 /// Mutable state for the settings editor.
 #[derive(Clone)]
 pub struct EditorState {
@@ -71,12 +74,10 @@ pub struct EditorState {
     pub revision: u64,
     pub(crate) catalog: FactoryCatalog,
     pub supported_sample_rates: Arc<[u32]>,
-    pub storage_validator: Option<Rc<dyn StoragePathValidator>>,
+    pub storage_validator: Rc<dyn StoragePathValidator>,
 }
 
 /// Lightweight handle to the shared editor state and projection hub.
-///
-/// All mutations go through [`SettingsEditor::transact()`].
 #[derive(Clone)]
 pub struct SettingsEditor {
     current: Rc<RefCell<EditorState>>,
@@ -92,6 +93,7 @@ impl SettingsEditor {
         snapshot: SettingsSnapshot,
         catalog: FactoryCatalog,
         supported_sample_rates: Arc<[u32]>,
+        storage_validator: Rc<dyn StoragePathValidator>,
     ) -> Self {
         let current = Rc::new(RefCell::new(EditorState {
             initial: snapshot.clone(),
@@ -101,7 +103,7 @@ impl SettingsEditor {
             revision: 0,
             catalog,
             supported_sample_rates,
-            storage_validator: None,
+            storage_validator,
         }));
 
         let revision_inner = Rc::new(ObservablePropertyInner::new(0u64));
@@ -115,11 +117,10 @@ impl SettingsEditor {
         }
     }
 
-    pub fn set_storage_validator(&self, validator: Box<dyn StoragePathValidator>) {
-        self.current.borrow_mut().storage_validator = Some(Rc::from(validator));
-        // Re-validate current state with the new validator
-        let validation = (self.validator)(&self.current.borrow());
-        self.current.borrow_mut().validation = validation;
+    pub fn set_validator(&mut self, validator: impl Fn(&EditorState) -> ValidationState + 'static) {
+        let result = validator(&self.current.borrow());
+        self.validator = Rc::new(validator);
+        self.current.borrow_mut().validation = result;
     }
 
     pub fn revision_prop(&self) -> ReadOnlyObservableProperty<u64> {
@@ -138,28 +139,10 @@ impl SettingsEditor {
         self.current.borrow().draft.clone()
     }
 
-    pub(crate) fn registry(&self) -> std::cell::Ref<'_, EditorState> {
-        self.current.borrow()
-    }
-
-    pub fn set_validator(&mut self, validator: impl Fn(&EditorState) -> ValidationState + 'static) {
-        let result = validator(&self.current.borrow());
-        self.validator = Rc::new(validator);
-        self.current.borrow_mut().validation = result;
-    }
-
     pub(crate) fn projections(&self) -> &ProjectionHub {
         &self.projections
     }
 
-    /// Execute a domain mutation within a clone-on-write transaction.
-    ///
-    /// 1. Clones current state to `candidate`
-    /// 2. Applies `mutate` to `candidate`
-    /// 3. Re-validates and advances revision
-    /// 4. Prepares all projections from `candidate`
-    /// 5. Silent-applies prepared projections
-    /// 6. Notifies callbacks
     pub fn transact<R>(
         &self,
         mutate: impl FnOnce(&mut EditorState) -> Result<R, ViewModelError>,
@@ -184,8 +167,6 @@ impl SettingsEditor {
 
         *self.current.borrow_mut() = candidate;
 
-        // Apply prepared projections silently; collect notification
-        // closures to invoke after all values are in place.
         let mut notifications: Vec<Box<dyn FnOnce()>> = Vec::new();
         for projection in prepared {
             if let Some(notify) = projection.apply() {
@@ -196,10 +177,8 @@ impl SettingsEditor {
         #[cfg(debug_assertions)]
         self.projections.assert_all_synced(&self.current.borrow());
 
-        // Collect revision observer callbacks
         let rev_callbacks = self.revision_inner.set(rev_value);
 
-        // Fire all notifications: first projection observers, then revision
         let _guard = NotificationGuard::enter(&self.notifying);
         for notify in notifications {
             notify();
@@ -255,7 +234,8 @@ mod tests {
 
     fn test_editor() -> SettingsEditor {
         let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
-        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]))
+        let noop = Rc::new(NoopStoragePathValidator);
+        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop)
     }
 
     #[test]
@@ -270,7 +250,6 @@ mod tests {
     #[test]
     fn transact_mutation_advances_revision() {
         let editor = test_editor();
-
         let result: Result<(), ViewModelError> = editor.transact(|state| {
             state.draft.local.audio.muted = true;
             Ok(())
@@ -282,7 +261,6 @@ mod tests {
     #[test]
     fn transact_error_does_not_change_state() {
         let editor = test_editor();
-
         let result: Result<(), ViewModelError> = editor.transact(|state| {
             state.draft.local.audio.muted = true;
             Err(ViewModelError::UnknownSystem("test".into()))
@@ -300,7 +278,6 @@ mod tests {
     #[test]
     fn finish_rejects_invalid_state() {
         let editor = test_editor();
-        // Manually set validation to invalid
         editor.current.borrow_mut().validation = ValidationState {
             issues: vec![super::super::ValidationIssue {
                 scope: super::super::ValidationScope::Persistence,
@@ -311,46 +288,23 @@ mod tests {
     }
 
     #[test]
-    fn projection_observer_fires_after_transaction() {
-        use super::super::property::ReadOnlyObservableProperty;
-        use std::rc::Rc;
-
+    fn noop_mutation_skips_validation() {
         let editor = test_editor();
-
-        // Register a projection via the hub
-        let prop: ReadOnlyObservableProperty<bool> =
-            editor
-                .projections()
-                .register("test_proj", false, |state| state.draft.local.audio.muted);
-
-        // Observe the projection
-        let observed = Rc::new(Cell::new(false));
-        let observed_cb = Rc::clone(&observed);
-        let _sub = prop.observe(move |v| {
-            observed_cb.set(*v);
-        });
-
-        // Mutate via transact — projection observer should fire
-        editor
-            .transact(|state| {
-                state.draft.local.audio.muted = true;
-                Ok(())
-            })
-            .unwrap();
-
-        assert!(
-            observed.get(),
-            "projection observer should have fired after transact"
-        );
+        editor.current.borrow_mut().validation = ValidationState {
+            issues: vec![super::super::ValidationIssue {
+                scope: super::super::ValidationScope::Persistence,
+                message: "test".into(),
+            }],
+        };
+        let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
+        assert!(result.is_ok());
+        assert!(!editor.current().validation.can_submit());
     }
 
     #[test]
     fn set_validator_runs_initial_validation() {
         let mut editor = test_editor();
-        // Initial validation should be empty (default snapshot is valid)
         assert!(editor.current().validation.can_submit());
-
-        // Set a validator that flags persistence issues
         editor.set_validator(|state| {
             if state.draft.shared.persistence.storage_directory.is_none() {
                 ValidationState {
@@ -363,25 +317,32 @@ mod tests {
                 ValidationState { issues: vec![] }
             }
         });
-
-        // set_validator should run validation immediately
         assert!(!editor.current().validation.can_submit());
     }
 
     #[test]
-    fn noop_mutation_skips_validation() {
+    fn projection_observer_fires_after_transaction() {
+        use std::rc::Rc;
+
         let editor = test_editor();
-        // Set up an invalid state directly
-        editor.current.borrow_mut().validation = ValidationState {
-            issues: vec![super::super::ValidationIssue {
-                scope: super::super::ValidationScope::Persistence,
-                message: "test".into(),
-            }],
-        };
-        // A no-op transact should short-circuit without re-validating
-        // But since validation happens inside transact(), the error persists
-        let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
-        assert!(result.is_ok());
-        assert!(!editor.current().validation.can_submit());
+
+        let prop: ReadOnlyObservableProperty<bool> = editor
+            .projections()
+            .register("test_proj", false, |state| state.draft.local.audio.muted);
+
+        let observed = Rc::new(Cell::new(false));
+        let observed_cb = Rc::clone(&observed);
+        let _sub = prop.observe(move |v| {
+            observed_cb.set(*v);
+        });
+
+        editor
+            .transact(|state| {
+                state.draft.local.audio.muted = true;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(observed.get(), "projection observer should have fired after transact");
     }
 }

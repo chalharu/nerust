@@ -191,27 +191,34 @@ impl SettingsAppState {
                 rates.iter().copied().collect()
             }
         };
+        use nerust_gui_runtime::settings::apply::{
+            DirectoryValidationError, validate_directory_path_typed,
+        };
+
         #[derive(Debug)]
         struct FsStoragePathValidator;
         impl StoragePathValidator for FsStoragePathValidator {
             fn validate(&self, path: &std::path::Path) -> Result<(), StoragePathError> {
-                let result = nerust_gui_runtime::settings::apply::validate_directory_path(path);
-                match result {
+                match validate_directory_path_typed(path) {
                     Ok(()) => Ok(()),
-                    Err(nerust_gui_runtime::settings::SettingsError::Io(e))
-                        if e.to_string().contains("not a directory") =>
-                    {
+                    Err(DirectoryValidationError::NotDirectory) => {
                         Err(StoragePathError::NotDirectory)
                     }
-                    Err(e) => Err(StoragePathError::Inaccessible(e.to_string())),
+                    Err(DirectoryValidationError::Inaccessible(e)) => {
+                        Err(StoragePathError::Inaccessible(e.to_string()))
+                    }
                 }
             }
         }
 
         let factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> =
             registry.all().iter().map(Arc::clone).collect();
-        let vm = SettingsViewModel::new(snapshot.clone(), factories, supported_sample_rates);
-        vm.set_storage_validator(Box::new(FsStoragePathValidator));
+        let vm = SettingsViewModel::new(
+            snapshot.clone(),
+            factories,
+            supported_sample_rates,
+            Rc::new(FsStoragePathValidator) as Rc<dyn StoragePathValidator>,
+        );
         let invalidated = Rc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
             invalidated.set(true);
