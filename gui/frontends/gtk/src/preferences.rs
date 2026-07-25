@@ -55,6 +55,7 @@ struct AudioWidgets {
 struct InputTabWidgets {
     _notebook: gtk::Notebook,
     pages: Vec<gtk::Box>,
+    section_notebooks: RefCell<Vec<Option<gtk::Notebook>>>,
 }
 
 struct SystemTabWidgets {
@@ -372,6 +373,13 @@ impl PreferencesBinding {
         let Some(page) = self.input.pages.get(index) else {
             return;
         };
+        let selected_section = self
+            .input
+            .section_notebooks
+            .borrow()
+            .get(index)
+            .and_then(|notebook| notebook.as_ref())
+            .and_then(gtk::Notebook::current_page);
         clear_box(page);
         for conflict in &view.conflicts {
             let label = gtk::Label::new(Some(&conflict.message));
@@ -408,17 +416,22 @@ impl PreferencesBinding {
             });
             page.append(&labeled_row(&slot.label, &combo));
         }
+
+        let sections_notebook = gtk::Notebook::new();
+        sections_notebook.set_scrollable(true);
+        sections_notebook.set_tab_pos(gtk::PositionType::Top);
+        sections_notebook.set_hexpand(true);
+        sections_notebook.set_vexpand(true);
         for section in &view.sections {
-            let title = gtk::Label::new(Some(&section.label));
-            title.set_xalign(0.0);
-            page.append(&title);
+            let section_page = input_section_page();
             for row in &section.rows {
-                self.append_binding_row(page, row);
+                self.append_binding_row(&section_page, row);
             }
+            sections_notebook
+                .append_page(&section_page, Some(&gtk::Label::new(Some(&section.label))));
         }
-        let title = gtk::Label::new(Some(ui_text(self.language(), UiText::Shortcuts)));
-        title.set_xalign(0.0);
-        page.append(&title);
+
+        let shortcuts_page = input_section_page();
         let snapshot = self.vm.snapshot();
         let capture = self.vm.capture.view.get();
         for descriptor in shortcut_descriptors() {
@@ -430,7 +443,23 @@ impl PreferencesBinding {
                     .unwrap_or(ui_text(self.language(), UiText::Unbound))
                     .to_string()
             };
-            self.append_capture_row(page, descriptor.label, &value, target);
+            self.append_capture_row(&shortcuts_page, descriptor.label, &value, target);
+        }
+        sections_notebook.append_page(
+            &shortcuts_page,
+            Some(&gtk::Label::new(Some(ui_text(
+                self.language(),
+                UiText::Shortcuts,
+            )))),
+        );
+        if let Some(selected) = selected_section
+            && selected < sections_notebook.n_pages()
+        {
+            sections_notebook.set_current_page(Some(selected));
+        }
+        page.append(&sections_notebook);
+        if let Some(notebook) = self.input.section_notebooks.borrow_mut().get_mut(index) {
+            *notebook = Some(sections_notebook);
         }
     }
 
@@ -710,6 +739,7 @@ pub(crate) fn present_preferences_dialog(
     };
     let input_w = InputTabWidgets {
         _notebook: input_notebook,
+        section_notebooks: RefCell::new(vec![None; input_pages.len()]),
         pages: input_pages,
     };
     let system_w = SystemTabWidgets {
@@ -951,6 +981,15 @@ fn clear_box(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
     }
+}
+
+fn input_section_page() -> gtk::Box {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    page.set_margin_start(6);
+    page.set_margin_end(6);
+    page.set_margin_top(6);
+    page.set_margin_bottom(6);
+    page
 }
 
 fn apply_scaling_to_window(
