@@ -11,70 +11,42 @@ pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> &'sta
     profile.device_kind_for_group(group_index)
 }
 
-/// Build an InputTopologyDescriptor from slot→controller assignments.
-pub fn build_topology(
-    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
-    slots: &[SlotInfo],
-) -> InputTopologyDescriptor {
-    let slot_label = |att: AttachmentId| -> &'static str {
-        slots
-            .iter()
-            .find(|s| s.id == att)
-            .map(|s| s.label)
-            .unwrap_or("")
-    };
-    let mut ports = Vec::new();
-    let mut seen_devices = HashSet::<(ProfileId, usize)>::new();
-    let mut devices = Vec::new();
-
-    for (slot_att, ctrl_opt) in assignments {
-        let profile = match ctrl_opt {
-            Some(p) => p.as_ref(),
-            None => continue,
-        };
-        let ctrl_id = profile.profile_id();
-        for ps in profile.port_sets() {
-            if !ps.ports.contains(slot_att) {
-                continue;
-            }
-            for (gi, &port) in ps.ports.iter().enumerate() {
-                build_port_and_device(
-                    profile,
-                    ctrl_id,
-                    gi,
-                    port,
-                    &slot_label,
-                    &mut ports,
-                    &mut seen_devices,
-                    &mut devices,
-                );
-            }
-        }
-    }
-    if ports.is_empty() {
-        InputTopologyDescriptor {
-            ports: Vec::new(),
-            devices: Vec::new(),
-        }
-    } else {
-        InputTopologyDescriptor { ports, devices }
-    }
+struct TopologyContext {
+    ports: Vec<PortDescriptor>,
+    seen_devices: HashSet<(ProfileId, usize)>,
+    devices: Vec<DeviceDescriptor>,
 }
 
-fn build_port_and_device(
-    profile: &dyn ControllerProfile,
-    ctrl_id: ProfileId,
-    gi: usize,
-    port: AttachmentId,
-    slot_label: &impl Fn(AttachmentId) -> &'static str,
-    ports: &mut Vec<PortDescriptor>,
-    seen_devices: &mut HashSet<(ProfileId, usize)>,
-    devices: &mut Vec<DeviceDescriptor>,
-) {
-    let dk = device_kind(profile, gi);
-    if seen_devices.insert((ctrl_id, gi)) {
+impl TopologyContext {
+    fn new() -> Self {
+        Self {
+            ports: Vec::new(),
+            seen_devices: HashSet::new(),
+            devices: Vec::new(),
+        }
+    }
+
+    fn into_descriptor(self) -> InputTopologyDescriptor {
+        if self.ports.is_empty() {
+            InputTopologyDescriptor {
+                ports: Vec::new(),
+                devices: Vec::new(),
+            }
+        } else {
+            InputTopologyDescriptor {
+                ports: self.ports,
+                devices: self.devices,
+            }
+        }
+    }
+
+    fn register_device(&mut self, profile: &dyn ControllerProfile, ctrl_id: ProfileId, gi: usize) {
+        if !self.seen_devices.insert((ctrl_id, gi)) {
+            return;
+        }
+        let dk = device_kind(profile, gi);
         let controls = profile.port_groups()[gi];
-        devices.push(DeviceDescriptor {
+        self.devices.push(DeviceDescriptor {
             kind: DeviceKindId::new(dk),
             label: profile.label(),
             controls: controls
@@ -89,9 +61,20 @@ fn build_port_and_device(
                 .collect(),
         });
     }
-    if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
+
+    fn register_port(
+        &mut self,
+        port: AttachmentId,
+        profile: &dyn ControllerProfile,
+        gi: usize,
+        slot_label: &impl Fn(AttachmentId) -> &'static str,
+    ) {
+        let dk = device_kind(profile, gi);
+        if self.ports.iter().any(|p: &PortDescriptor| p.id == port) {
+            return;
+        }
         let label = slot_label(port);
-        ports.push(PortDescriptor {
+        self.ports.push(PortDescriptor {
             id: PortId::new(port.as_str()),
             label,
             attachments: vec![AttachmentSlotDescriptor {
@@ -102,6 +85,38 @@ fn build_port_and_device(
             }],
         });
     }
+}
+
+/// Build an InputTopologyDescriptor from slot→controller assignments.
+pub fn build_topology(
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    slots: &[SlotInfo],
+) -> InputTopologyDescriptor {
+    let slot_label = |att: AttachmentId| -> &'static str {
+        slots
+            .iter()
+            .find(|s| s.id == att)
+            .map(|s| s.label)
+            .unwrap_or("")
+    };
+    let mut ctx = TopologyContext::new();
+
+    for (slot_att, ctrl_opt) in assignments {
+        let profile = match ctrl_opt {
+            Some(p) => p.as_ref(),
+            None => continue,
+        };
+        for ps in profile.port_sets() {
+            if !ps.ports.contains(slot_att) {
+                continue;
+            }
+            for (gi, &port) in ps.ports.iter().enumerate() {
+                ctx.register_device(profile, profile.profile_id(), gi);
+                ctx.register_port(port, profile, gi, &slot_label);
+            }
+        }
+    }
+    ctx.into_descriptor()
 }
 
 /// Clear other occupied slots in the same multi-port set.

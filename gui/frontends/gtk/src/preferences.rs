@@ -17,8 +17,8 @@ use nerust_gui_shell::session::access::FrontendSession as _;
 use nerust_gui_viewmodel::settings::{
     SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
     dto::{
-        AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView,
-        InputTabView, SystemTabView, VideoView,
+        AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView, InputTabView,
+        SystemTabView, VideoView,
     },
 };
 use nerust_settings_core::{
