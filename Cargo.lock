@@ -2836,6 +2836,7 @@ dependencies = [
  "nerust_nes_settings",
  "nerust_render_traits",
  "nerust_render_wgpu",
+ "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
  "winit",
