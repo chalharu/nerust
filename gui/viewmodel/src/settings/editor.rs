@@ -37,7 +37,7 @@ impl SettingsEditor {
         validator: impl Fn(&EditorState) -> ValidationState + 'static,
     ) -> Self {
         let editor_state = EditorState {
-            cached_snapshot: snapshot.clone(),
+            cached_snapshot: Arc::new(snapshot.clone()),
             draft: snapshot,
             capture_target: None,
             validation: ValidationState { issues: vec![] },
@@ -76,7 +76,7 @@ impl SettingsEditor {
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
-        self.current.borrow().cached_snapshot.clone()
+        self.current.borrow().cached_snapshot.as_ref().clone()
     }
 
     pub(crate) fn projections(&self) -> &ProjectionHub {
@@ -105,7 +105,7 @@ impl SettingsEditor {
 
         candidate.validation = (self.validator)(&candidate);
         candidate.revision = prev_revision + 1;
-        candidate.cached_snapshot = candidate.draft.clone();
+        candidate.cached_snapshot = Arc::new(candidate.draft.clone());
         let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
 
@@ -177,7 +177,7 @@ mod tests {
     }
 
     fn test_editor() -> SettingsEditor {
-        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
+        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new()).unwrap();
         let noop = Rc::new(NoopStoragePathValidator);
         let always_valid = |_: &EditorState| ValidationState { issues: vec![] };
         SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, always_valid)
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn validator_checks_storage_directory() {
-        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new());
+        let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new()).unwrap();
         let noop = Rc::new(NoopStoragePathValidator);
         let check_storage = |state: &EditorState| {
             if state.draft.shared.persistence.storage_directory.is_none() {

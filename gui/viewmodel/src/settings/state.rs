@@ -65,5 +65,6 @@ pub struct EditorState {
     pub(crate) supported_sample_rates: Arc<[u32]>,
     pub(crate) storage_validator: Rc<dyn StoragePathValidator>,
     /// Cached snapshot, invalidated when revision advances.
-    pub(crate) cached_snapshot: SettingsSnapshot,
+    /// Stored as Arc to document intent for future copy-on-write optimization.
+    pub(crate) cached_snapshot: Arc<SettingsSnapshot>,
 }

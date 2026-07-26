@@ -174,4 +174,5 @@ pub fn test_vm() -> SettingsViewModel {
         Rc::new(super::editor::NoopStoragePathValidator)
             as Rc<dyn super::editor::StoragePathValidator>,
     )
+    .unwrap()
 }
