@@ -290,10 +290,14 @@ impl SettingsAppState {
             Message::SelectSystemTab(index) => self.select_system_tab(index),
             Message::SelectInputTab(index) => self.select_input_tab(index),
             Message::SetLanguage(choice) => self.err(self.vm.general.set_language(choice.value)),
-            Message::SetStoragePolicy(choice) => self.err(self.vm.general.set_storage_policy(choice.value)),
+            Message::SetStoragePolicy(choice) => {
+                self.err(self.vm.general.set_storage_policy(choice.value))
+            }
             Message::SetStorageDirectory(value) => self.set_storage_directory(value),
             Message::BrowseStorageDirectory => self.browse_storage_directory(),
-            Message::ToggleFullscreenDefault(value) => self.err(self.vm.video.set_fullscreen_default(value)),
+            Message::ToggleFullscreenDefault(value) => {
+                self.err(self.vm.video.set_fullscreen_default(value))
+            }
             Message::SetScaling(choice) => self.err(self.vm.video.set_scaling(choice.value)),
             Message::ToggleVsync(value) => self.err(self.vm.video.set_vsync(value)),
             Message::ToggleMute(value) => self.err(self.vm.audio.set_mute(value)),
@@ -301,7 +305,10 @@ impl SettingsAppState {
             Message::SetSampleRate(choice) => self.err(self.vm.audio.set_sample_rate(choice.value)),
             Message::SetLatency(value) => self.err(self.vm.audio.set_latency(value)),
             Message::SetSystemChoice(field, choice) => self.set_system_choice(field, choice),
-            Message::SetControllerSlot { slot, controller_id } => self.set_controller_slot(slot, controller_id),
+            Message::SetControllerSlot {
+                slot,
+                controller_id,
+            } => self.set_controller_slot(slot, controller_id),
             Message::StartCapture(target) => self.err(self.vm.capture.start_capture(target)),
             Message::ClearCapture(target) => self.err(self.vm.capture.clear_binding(&target)),
             Message::CaptureKey(key) => self.vm.capture.apply_captured_key(key),
@@ -340,7 +347,11 @@ impl SettingsAppState {
 
     fn set_storage_directory(&mut self, value: String) {
         self.storage_directory_input = value.clone();
-        self.err(self.vm.general.set_storage_directory((!value.is_empty()).then(|| value.into())));
+        self.err(
+            self.vm
+                .general
+                .set_storage_directory((!value.is_empty()).then(|| value.into())),
+        );
     }
 
     fn browse_storage_directory(&mut self) {
