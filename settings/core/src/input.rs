@@ -3,7 +3,7 @@ use std::{collections::HashSet, rc::Rc};
 use nerust_input_traits::{
     AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, ControllerProfile, DeviceDescriptor,
     DeviceKindId, DigitalControlDescriptor, InputTopologyDescriptor, PortDescriptor, PortId,
-    SlotInfo,
+    ProfileId, SlotInfo,
 };
 
 /// Map a controller profile + port group index to a device kind string.
@@ -24,7 +24,7 @@ pub fn build_topology(
             .unwrap_or("")
     };
     let mut ports = Vec::new();
-    let mut seen_devices = HashSet::<(&str, usize)>::new();
+    let mut seen_devices = HashSet::<(ProfileId, usize)>::new();
     let mut devices = Vec::new();
 
     for (slot_att, ctrl_opt) in assignments {
@@ -32,42 +32,13 @@ pub fn build_topology(
             Some(p) => p.as_ref(),
             None => continue,
         };
-        let ctrl_id = profile.profile_id().as_str();
+        let ctrl_id = profile.profile_id();
         for ps in profile.port_sets() {
-            if ps.ports.contains(slot_att) {
-                for (gi, &port) in ps.ports.iter().enumerate() {
-                    let dk = device_kind(profile, gi);
-                    if seen_devices.insert((ctrl_id, gi)) {
-                        let controls = profile.port_groups()[gi];
-                        devices.push(DeviceDescriptor {
-                            kind: DeviceKindId::new(dk),
-                            label: profile.label(),
-                            controls: controls
-                                .iter()
-                                .map(|ci| {
-                                    ControlDescriptor::Digital(DigitalControlDescriptor {
-                                        id: ci.id,
-                                        label: ci.label,
-                                        description: ci.label,
-                                    })
-                                })
-                                .collect(),
-                        });
-                    }
-                    if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
-                        let label = slot_label(port);
-                        ports.push(PortDescriptor {
-                            id: PortId::new(port.as_str()),
-                            label,
-                            attachments: vec![AttachmentSlotDescriptor {
-                                id: port,
-                                label,
-                                device: DeviceKindId::new(dk),
-                                supported_devices: vec![DeviceKindId::new(dk)],
-                            }],
-                        });
-                    }
-                }
+            if !ps.ports.contains(slot_att) {
+                continue;
+            }
+            for (gi, &port) in ps.ports.iter().enumerate() {
+                build_port_and_device(profile, ctrl_id, gi, port, &slot_label, &mut ports, &mut seen_devices, &mut devices);
             }
         }
     }
@@ -78,6 +49,49 @@ pub fn build_topology(
         }
     } else {
         InputTopologyDescriptor { ports, devices }
+    }
+}
+
+fn build_port_and_device(
+    profile: &dyn ControllerProfile,
+    ctrl_id: ProfileId,
+    gi: usize,
+    port: AttachmentId,
+    slot_label: &impl Fn(AttachmentId) -> &'static str,
+    ports: &mut Vec<PortDescriptor>,
+    seen_devices: &mut HashSet<(ProfileId, usize)>,
+    devices: &mut Vec<DeviceDescriptor>,
+) {
+    let dk = device_kind(profile, gi);
+    if seen_devices.insert((ctrl_id, gi)) {
+        let controls = profile.port_groups()[gi];
+        devices.push(DeviceDescriptor {
+            kind: DeviceKindId::new(dk),
+            label: profile.label(),
+            controls: controls
+                .iter()
+                .map(|ci| {
+                    ControlDescriptor::Digital(DigitalControlDescriptor {
+                        id: ci.id,
+                        label: ci.label,
+                        description: ci.label,
+                    })
+                })
+                .collect(),
+        });
+    }
+    if !ports.iter().any(|p: &PortDescriptor| p.id == port) {
+        let label = slot_label(port);
+        ports.push(PortDescriptor {
+            id: PortId::new(port.as_str()),
+            label,
+            attachments: vec![AttachmentSlotDescriptor {
+                id: port,
+                label,
+                device: DeviceKindId::new(dk),
+                supported_devices: vec![DeviceKindId::new(dk)],
+            }],
+        });
     }
 }
 

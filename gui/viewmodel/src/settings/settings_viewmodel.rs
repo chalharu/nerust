@@ -1,7 +1,10 @@
 use std::{rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
+use nerust_core_traits::factory::CoreFactory;
+use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_settings_core::{bindings::conflicting_keys, input::build_topology};
 
 use super::{
     ValidationState,
@@ -92,13 +95,10 @@ impl SettingsViewModel {
     }
 }
 
-fn validator(state: &super::EditorState) -> super::ValidationState {
-    use nerust_gui_settings::shared::StoragePolicy;
-    use nerust_settings_core::{bindings::conflicting_keys, input::build_topology};
-
-    let mut issues = Vec::new();
-
-    // Storage policy validation
+fn validate_storage_policy(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
     if matches!(
         state.draft.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
@@ -117,8 +117,12 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
             });
         }
     }
+}
 
-    // Audio range validation
+fn validate_audio_settings(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
     if !(0..=100).contains(&state.draft.local.audio.master_volume_percent) {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Audio,
@@ -137,96 +141,107 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
             message: "Audio latency must be between 10 and 200 ms".into(),
         });
     }
+}
 
-    // Per-system validation: controller assignment + key conflicts
-    for factory in state.catalog.all() {
-        let sid = factory.system_id();
-        let input_factory = factory.input_system_factory();
-        let pairs: Vec<(String, Option<String>)> = state
-            .draft
-            .app_state
-            .controller_assignments
-            .get(&sid)
-            .cloned()
-            .unwrap_or_else(|| {
-                input_factory
-                    .default_assignments()
-                    .slots
-                    .iter()
-                    .map(|(slot_id, ctrl)| {
-                        (
-                            slot_id.to_string(),
-                            ctrl.as_ref().map(|p| p.profile_id().to_string()),
-                        )
-                    })
-                    .collect()
-            });
-        let mut unknown_slots = 0u32;
-        let mut unknown_profiles = 0u32;
-        let assignments: Vec<_> = pairs
-            .iter()
-            .filter_map(|(slot_id, ctrl_opt)| {
-                let att = match input_factory.resolve_slot(slot_id) {
-                    Some(a) => a,
+fn validate_factory_settings(
+    state: &super::EditorState,
+    factory: &Arc<dyn CoreFactory>,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
+    let sid = factory.system_id();
+    let input_factory = factory.input_system_factory();
+    let pairs: Vec<(String, Option<String>)> = state
+        .draft
+        .app_state
+        .controller_assignments
+        .get(&sid)
+        .cloned()
+        .unwrap_or_else(|| {
+            input_factory
+                .default_assignments()
+                .slots
+                .iter()
+                .map(|(slot_id, ctrl)| {
+                    (
+                        slot_id.to_string(),
+                        ctrl.as_ref().map(|p| p.profile_id().to_string()),
+                    )
+                })
+                .collect()
+        });
+    let mut unknown_slots = 0u32;
+    let mut unknown_profiles = 0u32;
+    let assignments: Vec<_> = pairs
+        .iter()
+        .filter_map(|(slot_id, ctrl_opt)| {
+            let att = match input_factory.resolve_slot(slot_id) {
+                Some(a) => a,
+                None => {
+                    unknown_slots += 1;
+                    return None;
+                }
+            };
+            let profile = match ctrl_opt.as_ref() {
+                Some(id) => match input_factory.resolve_controller(id) {
+                    Some(p) => Some(p),
                     None => {
-                        unknown_slots += 1;
-                        return None;
+                        unknown_profiles += 1;
+                        None
                     }
-                };
-                let profile = match ctrl_opt.as_ref() {
-                    Some(id) => match input_factory.resolve_controller(id) {
-                        Some(p) => Some(p),
-                        None => {
-                            unknown_profiles += 1;
-                            None
-                        }
-                    },
-                    None => None,
-                };
-                Some((att, profile))
-            })
-            .collect();
-        if unknown_slots > 0 {
-            issues.push(super::ValidationIssue {
-                scope: super::ValidationScope::Input(sid.clone_box()),
-                message: format!(
-                    "{}: {} unknown slot ID(s)",
-                    factory.display_name(),
-                    unknown_slots
-                ),
-            });
-        }
-        if unknown_profiles > 0 {
-            issues.push(super::ValidationIssue {
-                scope: super::ValidationScope::Input(sid.clone_box()),
-                message: format!(
-                    "{}: {} unknown controller profile ID(s)",
-                    factory.display_name(),
-                    unknown_profiles
-                ),
-            });
-        }
-        let has_controller = assignments.iter().any(|(_, c)| c.is_some());
-        if !has_controller {
-            issues.push(super::ValidationIssue {
-                scope: super::ValidationScope::Input(sid.clone_box()),
-                message: format!(
-                    "{}: At least one controller must be assigned",
-                    factory.display_name()
-                ),
-            });
-        }
-        let topology = build_topology(&assignments, input_factory.slots());
-        for (key, labels) in
-            conflicting_keys(&state.draft.shared, &topology, factory.system_id().as_ref())
-        {
-            issues.push(super::ValidationIssue {
-                scope: super::ValidationScope::Input(sid.clone_box()),
-                message: format!("{}: {}", key.label(), labels.join(", ")),
-            });
-        }
+                },
+                None => None,
+            };
+            Some((att, profile))
+        })
+        .collect();
+    if unknown_slots > 0 {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            message: format!(
+                "{}: {} unknown slot ID(s)",
+                factory.display_name(),
+                unknown_slots
+            ),
+        });
     }
+    if unknown_profiles > 0 {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            message: format!(
+                "{}: {} unknown controller profile ID(s)",
+                factory.display_name(),
+                unknown_profiles
+            ),
+        });
+    }
+    let has_controller = assignments.iter().any(|(_, c)| c.is_some());
+    if !has_controller {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            message: format!(
+                "{}: At least one controller must be assigned",
+                factory.display_name()
+            ),
+        });
+    }
+    let topology = build_topology(&assignments, input_factory.slots());
+    for (key, labels) in
+        conflicting_keys(&state.draft.shared, &topology, factory.system_id().as_ref())
+    {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            message: format!("{}: {}", key.label(), labels.join(", ")),
+        });
+    }
+}
 
+fn validator(state: &super::EditorState) -> super::ValidationState {
+    let mut issues = Vec::new();
+    validate_storage_policy(state, &mut issues);
+    validate_audio_settings(state, &mut issues);
+    for factory in state.catalog.all() {
+        validate_factory_settings(state, factory, &mut issues);
+    }
     super::ValidationState { issues }
 }
 
