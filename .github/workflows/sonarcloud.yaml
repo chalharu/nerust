@@ -52,18 +52,20 @@ jobs:
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version =0.8.7
+      - name: Initialize coverage environment
+        run: cargo llvm-cov clean --workspace
       - name: Collect coverage (tao + wgpu)
         continue-on-error: true
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report --no-clean
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report --output-dir coverage
       - name: Collect coverage (gtk + opengl)
         continue-on-error: true
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-report --no-clean
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-report --output-dir coverage
       - name: Merge and export coverage
         run: |
           mkdir -p coverage
