@@ -16,11 +16,9 @@ use nerust_gui_shell::{
         commands::SessionCommand,
         lifecycle::WindowSize,
     },
-    settings::{
-        i18n::{UiText, text},
-        scaling_factor,
-    },
+    settings::scaling_factor,
 };
+use nerust_settings_core::i18n::{UiText, text};
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
