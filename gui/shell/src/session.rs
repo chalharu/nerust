@@ -3,6 +3,8 @@ pub mod commands;
 pub mod input;
 pub mod lifecycle;
 pub mod persistence;
+#[cfg(test)]
+mod persistence_test;
 pub mod title;
 
 use std::{
