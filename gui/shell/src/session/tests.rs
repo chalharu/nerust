@@ -1,4 +1,3 @@
-
 use std::sync::{Arc, atomic::Ordering::AcqRel};
 
 use nerust_core_traits::{
@@ -278,19 +277,19 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     let mut session = test_session();
     let original = session.settings_snapshot().clone();
-    let original_assignments = session.current_assignments.clone();
+    let original_assignments = session.current_assignments().clone();
     let mut modified = original.clone();
     modified.local.audio.latency_ms = 90;
 
     // Replace settings manager with one using a FailingStore
     let registry = crate::registry::SystemRegistry::new(vec![]);
     let shared = default_shared_settings(registry.all());
-    session.settings = SettingsManager::with_store(
+    session.set_settings(SettingsManager::with_store(
         shared,
         default_local_settings(),
         default_app_state(),
         Box::new(FailingStore),
-    );
+    ));
 
     // Save fails → rollback should restore core state
     let err = session.apply_settings(modified).unwrap_err();
@@ -308,7 +307,7 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     // Assignments should be rolled back
     assert_eq!(
-        session.current_assignments.to_string_pairs(),
+        session.current_assignments().to_string_pairs(),
         original_assignments.to_string_pairs(),
         "assignments should be rolled back on save failure"
     );
@@ -326,7 +325,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
     let mut session = test_session();
     let creations_before =
         crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-    let prev_pairs = session.current_assignments.to_string_pairs();
+    let prev_pairs = session.current_assignments().to_string_pairs();
 
     let sid = session.factory().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
@@ -340,7 +339,7 @@ fn apply_settings_rebuilds_when_assignments_change() {
 
     let _ = session.apply_settings(next).unwrap();
 
-    let new_pairs = session.current_assignments.to_string_pairs();
+    let new_pairs = session.current_assignments().to_string_pairs();
     assert_ne!(
         new_pairs, prev_pairs,
         "assignments should be updated after apply"
@@ -405,21 +404,19 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
     };
     let mut session = SessionHandle::new(capabilities, registry, audio_registry)
         .expect("session creation should succeed even with failing factory");
-    session
-        .settings_snapshot
-        .app_state
-        .controller_assignments
-        .insert(
-            system_id.clone(),
-            vec![
-                ("nes.attachment.player1".to_string(), None),
-                ("nes.attachment.player2".to_string(), None),
-            ],
-        );
+    let mut snapshot = session.settings_snapshot().clone();
+    snapshot.app_state.controller_assignments.insert(
+        system_id.clone(),
+        vec![
+            ("nes.attachment.player1".to_string(), None),
+            ("nes.attachment.player2".to_string(), None),
+        ],
+    );
+    session.set_settings_snapshot(snapshot);
     RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
         .expect("fallback core creation should succeed");
     assert_eq!(
-        session.current_assignments.to_string_pairs(),
+        session.current_assignments().to_string_pairs(),
         expected_assignments.to_string_pairs()
     );
 }
@@ -474,7 +471,7 @@ fn switching_system_discards_previous_loaded_runtime_state() {
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
     assert!(!session.loaded());
-    assert!(session.loaded_media.is_none());
+    assert!(session.loaded_media().is_none());
     assert!(session.slots().is_empty());
 }
 
