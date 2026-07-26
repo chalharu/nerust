@@ -65,7 +65,7 @@ jobs:
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-clean
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-default-features --no-clean
       - name: Generate coverage report
         run: |
           mkdir -p coverage
