@@ -26,6 +26,8 @@ use nerust_render_traits::{
 };
 
 pub(crate) use crate::test_support::{DummyOtherSystemId, DummySystemId};
+pub(crate) static CORE_CREATION_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// Placeholder load options with no CLI arguments. Used by mock factories in tests.
 #[derive(
@@ -134,6 +136,7 @@ pub(crate) fn test_input_resources() -> (GuiInput, InputSplit) {
 }
 
 pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
+    CORE_CREATION_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     use nerust_core_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
     let render_profile = VideoRenderProfile {

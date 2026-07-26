@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicBool;
 use std::{
     path::Path,
     sync::{Arc, RwLock},
@@ -21,6 +22,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct SettingsManager {
     inner: Arc<RwLock<SettingsState>>,
+    save_fail: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -60,6 +62,7 @@ impl SettingsManager {
                 document,
                 store: SettingsStore::FileBacked(paths),
             })),
+            save_fail: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -113,6 +116,7 @@ impl SettingsManager {
                 document,
                 store: SettingsStore::FileBacked(paths),
             })),
+            save_fail: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -134,6 +138,7 @@ impl SettingsManager {
                 defaults,
                 store: SettingsStore::Ephemeral,
             })),
+            save_fail: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -166,7 +171,18 @@ impl SettingsManager {
         })
     }
 
+    pub fn set_save_fails(&self, fails: bool) {
+        self.save_fail
+            .store(fails, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub fn save_snapshot(&self, snapshot: SettingsSnapshot) -> Result<(), SettingsError> {
+        if self.save_fail.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SettingsError::Io(std::io::Error::other(
+                "simulated save failure",
+            )));
+        }
+
         validate_shared_settings(&snapshot.shared)?;
         validate_local_settings(&snapshot.local)?;
 

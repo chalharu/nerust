@@ -45,7 +45,6 @@ impl SettingsEditor {
             catalog,
             supported_sample_rates,
             storage_validator,
-            dirty_scopes: None,
         };
         let initial_validation = validator(&editor_state);
         let current = Rc::new(RefCell::new(EditorState {
@@ -61,17 +60,6 @@ impl SettingsEditor {
             validator: Rc::new(validator),
             notifying: Rc::new(Cell::new(false)),
             revision_inner,
-        }
-    }
-
-    /// Mark the given scopes as needing revalidation.
-    /// Passing `None` forces full revalidation.
-    pub fn mark_dirty(&self, scopes: Option<Vec<super::ValidationScope>>) {
-        let mut state = self.current.borrow_mut();
-        match (&mut state.dirty_scopes, scopes) {
-            (_, None) => state.dirty_scopes = None,
-            (None, Some(_)) => {} // already full
-            (Some(existing), Some(new)) => existing.extend(new),
         }
     }
 
@@ -104,29 +92,18 @@ impl SettingsEditor {
         }
 
         // Single clone — capture pre-mutation state for no-op detection
-        let (prev_draft, prev_capture, prev_scopes, prev_revision) = {
+        let (prev_draft, prev_capture, prev_revision) = {
             let s = self.current.borrow();
-            (
-                s.draft.clone(),
-                s.capture_target.clone(),
-                s.dirty_scopes.clone(),
-                s.revision,
-            )
+            (s.draft.clone(), s.capture_target.clone(), s.revision)
         };
         let mut candidate = self.current.borrow().clone();
         let result = mutate(&mut candidate)?;
 
-        if candidate.draft == prev_draft
-            && candidate.capture_target == prev_capture
-            && candidate.dirty_scopes == prev_scopes
-        {
+        if candidate.draft == prev_draft && candidate.capture_target == prev_capture {
             return Ok(result);
         }
 
-        // Re-validate: currently full revalidation. When dirty_scopes is Some
-        // and narrowed, this can be changed to scoped validation.
         candidate.validation = (self.validator)(&candidate);
-        candidate.dirty_scopes = None;
         candidate.revision = prev_revision + 1;
         candidate.cached_snapshot = candidate.draft.clone();
         let rev_value = candidate.revision;
