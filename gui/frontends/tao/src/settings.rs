@@ -285,140 +285,111 @@ impl SettingsAppState {
     fn update(&mut self, message: Message) -> Task<Message> {
         self.error_message = None;
         match message {
-            Message::SelectPage(page) => {
-                self.page = page;
-                self.view_invalidated.set(true);
-            }
-            Message::SelectInputSection(section) => {
-                self.input_section = section;
-                self.view_invalidated.set(true);
-            }
-            Message::SelectSystemTab(index) => {
-                self.system_tab_index = Some(index);
-                self.view_invalidated.set(true);
-            }
-            Message::SelectInputTab(index) => {
-                self.input_tab_index = Some(index);
-                self.input_section = InputPageSection::Attachment(0);
-                self.view_invalidated.set(true);
-            }
-            Message::SetLanguage(choice) => {
-                if let Err(e) = self.vm.general.set_language(choice.value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetStoragePolicy(choice) => {
-                if let Err(e) = self.vm.general.set_storage_policy(choice.value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetStorageDirectory(value) => {
-                self.storage_directory_input = value.clone();
-                if let Err(e) = self
-                    .vm
-                    .general
-                    .set_storage_directory((!value.is_empty()).then(|| value.into()))
-                {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::BrowseStorageDirectory => {
-                if let Some(path) = FileDialog::new()
-                    .set_title(ui_text(self.language(), UiText::SaveStorageDirectory))
-                    .pick_folder()
-                {
-                    let path = path.to_string_lossy().to_string();
-                    self.storage_directory_input = path.clone();
-                    if let Err(e) = self.vm.general.set_storage_directory(Some(path.into())) {
-                        self.error_message = Some(e.to_string());
-                    }
-                }
-            }
-            Message::ToggleFullscreenDefault(value) => {
-                if let Err(e) = self.vm.video.set_fullscreen_default(value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetScaling(choice) => {
-                if let Err(e) = self.vm.video.set_scaling(choice.value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::ToggleVsync(value) => {
-                if let Err(e) = self.vm.video.set_vsync(value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::ToggleMute(value) => {
-                if let Err(e) = self.vm.audio.set_mute(value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetVolume(value) => {
-                if let Err(e) = self.vm.audio.set_volume(value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetSampleRate(choice) => {
-                if let Err(e) = self.vm.audio.set_sample_rate(choice.value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetLatency(value) => {
-                if let Err(e) = self.vm.audio.set_latency(value) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetSystemChoice(field, choice) => {
-                let system_tab_index = self.system_tab_index;
-                if let Some(idx) = system_tab_index
-                    && let Some(system_vm) = self.vm.systems().get(idx)
-                    && let Err(e) = system_vm.set_choice(
-                        &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(
-                            field.into(),
-                        ),
-                        &choice.value,
-                    )
-                {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::SetControllerSlot {
-                slot,
-                controller_id,
-            } => {
-                let input_tab_index = self.input_tab_index;
-                if let Some(idx) = input_tab_index
-                    && let Some(input_vm) = self.vm.inputs().get(idx)
-                    && let Err(e) = input_vm.set_controller_slot(slot, controller_id.as_deref())
-                {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::StartCapture(target) => {
-                if let Err(e) = self.vm.capture.start_capture(target) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::ClearCapture(target) => {
-                if let Err(e) = self.vm.capture.clear_binding(&target) {
-                    self.error_message = Some(e.to_string());
-                }
-            }
-            Message::CaptureKey(key) => {
-                self.vm.capture.apply_captured_key(key);
-            }
-            Message::Submit => {
-                if let Ok(snapshot) = self.vm.finish() {
-                    *self.pending_apply.lock().expect("pending apply mutex") = Some(snapshot);
-                    self.should_close.store(true, Ordering::Release);
-                }
-            }
-            Message::Cancel => {
-                self.should_close.store(true, Ordering::Release);
-            }
+            Message::SelectPage(page) => self.select_page(page),
+            Message::SelectInputSection(section) => self.select_input_section(section),
+            Message::SelectSystemTab(index) => self.select_system_tab(index),
+            Message::SelectInputTab(index) => self.select_input_tab(index),
+            Message::SetLanguage(choice) => self.err(self.vm.general.set_language(choice.value)),
+            Message::SetStoragePolicy(choice) => self.err(self.vm.general.set_storage_policy(choice.value)),
+            Message::SetStorageDirectory(value) => self.set_storage_directory(value),
+            Message::BrowseStorageDirectory => self.browse_storage_directory(),
+            Message::ToggleFullscreenDefault(value) => self.err(self.vm.video.set_fullscreen_default(value)),
+            Message::SetScaling(choice) => self.err(self.vm.video.set_scaling(choice.value)),
+            Message::ToggleVsync(value) => self.err(self.vm.video.set_vsync(value)),
+            Message::ToggleMute(value) => self.err(self.vm.audio.set_mute(value)),
+            Message::SetVolume(value) => self.err(self.vm.audio.set_volume(value)),
+            Message::SetSampleRate(choice) => self.err(self.vm.audio.set_sample_rate(choice.value)),
+            Message::SetLatency(value) => self.err(self.vm.audio.set_latency(value)),
+            Message::SetSystemChoice(field, choice) => self.set_system_choice(field, choice),
+            Message::SetControllerSlot { slot, controller_id } => self.set_controller_slot(slot, controller_id),
+            Message::StartCapture(target) => self.err(self.vm.capture.start_capture(target)),
+            Message::ClearCapture(target) => self.err(self.vm.capture.clear_binding(&target)),
+            Message::CaptureKey(key) => self.vm.capture.apply_captured_key(key),
+            Message::Submit => self.submit(),
+            Message::Cancel => self.cancel(),
         }
         Task::none()
+    }
+
+    fn err(&mut self, result: Result<(), nerust_gui_viewmodel::settings::ViewModelError>) {
+        if let Err(e) = result {
+            self.error_message = Some(e.to_string());
+        }
+    }
+
+    fn select_page(&mut self, page: SettingsPage) {
+        self.page = page;
+        self.view_invalidated.set(true);
+    }
+
+    fn select_input_section(&mut self, section: InputPageSection) {
+        self.input_section = section;
+        self.view_invalidated.set(true);
+    }
+
+    fn select_system_tab(&mut self, index: usize) {
+        self.system_tab_index = Some(index);
+        self.view_invalidated.set(true);
+    }
+
+    fn select_input_tab(&mut self, index: usize) {
+        self.input_tab_index = Some(index);
+        self.input_section = InputPageSection::Attachment(0);
+        self.view_invalidated.set(true);
+    }
+
+    fn set_storage_directory(&mut self, value: String) {
+        self.storage_directory_input = value.clone();
+        self.err(self.vm.general.set_storage_directory((!value.is_empty()).then(|| value.into())));
+    }
+
+    fn browse_storage_directory(&mut self) {
+        if let Some(path) = FileDialog::new()
+            .set_title(ui_text(self.language(), UiText::SaveStorageDirectory))
+            .pick_folder()
+        {
+            let path = path.to_string_lossy().to_string();
+            self.storage_directory_input = path.clone();
+            self.err(self.vm.general.set_storage_directory(Some(path.into())));
+        }
+    }
+
+    fn set_system_choice(
+        &mut self,
+        field: String,
+        choice: ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
+    ) {
+        let system_tab_index = self.system_tab_index;
+        if let Some(idx) = system_tab_index
+            && let Some(system_vm) = self.vm.systems().get(idx)
+            && let Err(e) = system_vm.set_choice(
+                &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
+                &choice.value,
+            )
+        {
+            self.error_message = Some(e.to_string());
+        }
+    }
+
+    fn set_controller_slot(&mut self, slot: AttachmentId, controller_id: Option<String>) {
+        let input_tab_index = self.input_tab_index;
+        if let Some(idx) = input_tab_index
+            && let Some(input_vm) = self.vm.inputs().get(idx)
+            && let Err(e) = input_vm.set_controller_slot(slot, controller_id.as_deref())
+        {
+            self.error_message = Some(e.to_string());
+        }
+    }
+
+    fn submit(&mut self) {
+        if let Ok(snapshot) = self.vm.finish() {
+            *self.pending_apply.lock().expect("pending apply mutex") = Some(snapshot);
+            self.should_close.store(true, Ordering::Release);
+        }
+    }
+
+    fn cancel(&mut self) {
+        self.should_close.store(true, Ordering::Release);
     }
 
     fn view(&self) -> El<'_> {

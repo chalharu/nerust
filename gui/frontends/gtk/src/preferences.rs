@@ -17,8 +17,8 @@ use nerust_gui_shell::session::access::FrontendSession as _;
 use nerust_gui_viewmodel::settings::{
     SettingsViewModel, StoragePathError, StoragePathValidator, Subscription,
     dto::{
-        AudioView, BindingRowView, BindingValueView, GeneralView, InputTabView, SystemTabView,
-        VideoView,
+        AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView,
+        InputTabView, SystemTabView, VideoView,
     },
 };
 use nerust_settings_core::{
@@ -430,64 +430,7 @@ impl PreferencesBinding {
         }
     }
 
-    fn rebuild_input_page(&self, index: usize, view: &InputTabView) {
-        let Some(page) = self.input.pages.get(index) else {
-            return;
-        };
-        let selected_section = self
-            .input
-            .section_notebooks
-            .borrow()
-            .get(index)
-            .and_then(|notebook| notebook.as_ref())
-            .and_then(gtk::Notebook::current_page);
-        clear_box(page);
-        for conflict in &view.conflicts {
-            let label = gtk::Label::new(Some(&conflict.message));
-            label.set_xalign(0.0);
-            page.append(&label);
-        }
-        for slot in &view.slots {
-            let combo = gtk::ComboBoxText::new();
-            combo.append(Some("__none__"), ui_text(self.language(), UiText::None));
-            for choice in &slot.choices {
-                if let Some(id) = &choice.value {
-                    combo.append(Some(id), &choice.label);
-                }
-            }
-            combo.set_active_id(Some(
-                slot.selected_profile_id.as_deref().unwrap_or("__none__"),
-            ));
-            combo.set_sensitive(!slot.occupied_by_other_slot);
-            let slot_id = slot.slot_id;
-            let weak = self.self_weak.clone();
-            combo.connect_changed(move |combo| {
-                let Some(binding) = weak.upgrade() else {
-                    return;
-                };
-                if binding.refreshing.get() {
-                    return;
-                }
-                let profile = combo
-                    .active_id()
-                    .and_then(|id| (id.as_str() != "__none__").then(|| id.to_string()));
-                if let Some(vm) = binding.vm.inputs().get(index)
-                    && let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref())
-                {
-                    binding.error_label.set_text(&e.to_string());
-                    let idx = index;
-                    schedule_idle(&binding.self_weak, move |b| {
-                        b.with_refreshing(|| {
-                            if let Some(vm) = b.vm.inputs().get(idx) {
-                                b.rebuild_input_page(idx, &vm.view.get());
-                            }
-                        });
-                    });
-                }
-            });
-            page.append(&labeled_row(&slot.label, &combo));
-        }
-
+    fn build_section_notebook(&self, view: &InputTabView) -> gtk::Notebook {
         let sections_notebook = gtk::Notebook::new();
         sections_notebook.set_scrollable(true);
         sections_notebook.set_tab_pos(gtk::PositionType::Top);
@@ -501,8 +444,28 @@ impl PreferencesBinding {
             sections_notebook
                 .append_page(&section_page, Some(&gtk::Label::new(Some(&section.label))));
         }
+        sections_notebook
+    }
 
-        // Shortcuts are included as the last section in the projection
+    fn rebuild_input_page(&self, index: usize, view: &InputTabView) {
+        let Some(page) = self.input.pages.get(index) else {
+            return;
+        };
+        let selected_section = self
+            .input
+            .section_notebooks
+            .borrow()
+            .get(index)
+            .and_then(|notebook| notebook.as_ref())
+            .and_then(gtk::Notebook::current_page);
+        clear_box(page);
+        add_conflict_labels(view, page);
+        for slot in &view.slots {
+            let combo = connect_slot_combo(slot, self.language(), index, &self.self_weak);
+            page.append(&labeled_row(&slot.label, &combo));
+        }
+
+        let sections_notebook = self.build_section_notebook(view);
         if let Some(selected) = selected_section
             && selected < sections_notebook.n_pages()
         {
@@ -1161,6 +1124,60 @@ fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
     for (id, label) in entries {
         combo.append(Some(id), label);
     }
+    combo
+}
+
+fn add_conflict_labels(view: &InputTabView, page: &gtk::Box) {
+    for conflict in &view.conflicts {
+        let label = gtk::Label::new(Some(&conflict.message));
+        label.set_xalign(0.0);
+        page.append(&label);
+    }
+}
+
+fn connect_slot_combo(
+    slot: &ControllerSlotView,
+    language: AppLanguage,
+    index: usize,
+    self_weak: &std::rc::Weak<PreferencesBinding>,
+) -> gtk::ComboBoxText {
+    let combo = gtk::ComboBoxText::new();
+    combo.append(Some("__none__"), &ui_text(language, UiText::None));
+    for choice in &slot.choices {
+        if let Some(id) = &choice.value {
+            combo.append(Some(id), &choice.label);
+        }
+    }
+    combo.set_active_id(Some(
+        slot.selected_profile_id.as_deref().unwrap_or("__none__"),
+    ));
+    combo.set_sensitive(!slot.occupied_by_other_slot);
+    let slot_id = slot.slot_id;
+    let weak = self_weak.clone();
+    combo.connect_changed(move |combo| {
+        let Some(binding) = weak.upgrade() else {
+            return;
+        };
+        if binding.refreshing.get() {
+            return;
+        }
+        let profile = combo
+            .active_id()
+            .and_then(|id| (id.as_str() != "__none__").then(|| id.to_string()));
+        if let Some(vm) = binding.vm.inputs().get(index)
+            && let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref())
+        {
+            binding.error_label.set_text(&e.to_string());
+            let idx = index;
+            schedule_idle(&binding.self_weak, move |b| {
+                b.with_refreshing(|| {
+                    if let Some(vm) = b.vm.inputs().get(idx) {
+                        b.rebuild_input_page(idx, &vm.view.get());
+                    }
+                });
+            });
+        }
+    });
     combo
 }
 

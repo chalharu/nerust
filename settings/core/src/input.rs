@@ -38,7 +38,16 @@ pub fn build_topology(
                 continue;
             }
             for (gi, &port) in ps.ports.iter().enumerate() {
-                build_port_and_device(profile, ctrl_id, gi, port, &slot_label, &mut ports, &mut seen_devices, &mut devices);
+                build_port_and_device(
+                    profile,
+                    ctrl_id,
+                    gi,
+                    port,
+                    &slot_label,
+                    &mut ports,
+                    &mut seen_devices,
+                    &mut devices,
+                );
             }
         }
     }

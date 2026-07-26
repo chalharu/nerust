@@ -1,8 +1,8 @@
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{
-    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
-    DigitalControlId, InputTopologyDescriptor, PortDescriptor,
+    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DigitalControlId,
+    InputTopologyDescriptor, PortDescriptor,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

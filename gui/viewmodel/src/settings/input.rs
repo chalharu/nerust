@@ -4,7 +4,7 @@ use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
 use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
 use nerust_settings_core::{
-    bindings::descriptors::{shortcut_descriptors, KeyboardBindingDescriptor, ShortcutDescriptor},
+    bindings::descriptors::{KeyboardBindingDescriptor, ShortcutDescriptor, shortcut_descriptors},
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
     i18n::{UiText, text as ui_text},
@@ -353,7 +353,11 @@ fn project_view(
 
     let topology = build_topology(&assignments, slots_descs);
     let sections = project_binding_sections(
-        state, system_id.as_ref(), &assignments, slots_descs, capture_target,
+        state,
+        system_id.as_ref(),
+        &assignments,
+        slots_descs,
+        capture_target,
     );
 
     // Build conflict messages
