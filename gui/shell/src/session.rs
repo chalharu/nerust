@@ -544,7 +544,7 @@ mod tests {
         identity::SystemId,
     };
     use nerust_gui_runtime::settings::{
-        HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot,
+        HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
@@ -804,14 +804,26 @@ mod tests {
 
     #[test]
     fn apply_settings_rolls_back_on_save_failure() {
+        use crate::settings::defaults::seed::{
+            default_app_state, default_local_settings, default_shared_settings,
+        };
+        use nerust_gui_runtime::settings::repository::FailingStore;
+
         let mut session = test_session();
         let original = session.settings_snapshot().clone();
         let original_assignments = session.current_assignments.clone();
         let mut modified = original.clone();
         modified.local.audio.latency_ms = 90;
 
-        // Simulate save failure
-        session.settings.set_save_fails(true);
+        // Replace settings manager with one using a FailingStore
+        let registry = crate::registry::SystemRegistry::new(vec![]);
+        let shared = default_shared_settings(registry.all());
+        session.settings = SettingsManager::with_store(
+            shared,
+            default_local_settings(),
+            default_app_state(),
+            Box::new(FailingStore),
+        );
 
         // Save fails → rollback should restore core state
         let err = session.apply_settings(modified).unwrap_err();
@@ -839,9 +851,6 @@ mod tests {
             session.emu_core.is_some(),
             "core should be restored after rollback"
         );
-
-        // Reset and clean up
-        session.settings.set_save_fails(false);
     }
 
     #[test]
