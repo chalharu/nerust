@@ -617,7 +617,8 @@ pub(crate) fn present_preferences_dialog(
         factories,
         supported_sample_rates,
         Rc::new(GtkStoragePathValidator) as Rc<dyn StoragePathValidator>,
-    );
+    )
+    .expect("duplicate SystemId in factory catalog");
 
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
@@ -1326,7 +1327,8 @@ mod tests {
             vec![],
             supported_sample_rates,
             Rc::new(TestNoopValidator) as Rc<dyn StoragePathValidator>,
-        );
+        )
+        .unwrap();
 
         let dialog = gtk::Dialog::builder().title("test").build();
         let stack = gtk::Stack::new();

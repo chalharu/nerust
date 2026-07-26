@@ -21,7 +21,7 @@ fn test_editor() -> SettingsEditor {
     };
     SettingsEditor::new(
         snapshot,
-        FactoryCatalog::new(vec![]),
+        FactoryCatalog::new(vec![]).unwrap(),
         Arc::new([]),
         Rc::new(NoopStoragePathValidator) as Rc<dyn StoragePathValidator>,
         |_| ValidationState { issues: vec![] },

@@ -146,7 +146,7 @@ impl SlotBackend for FsSlotBackend {
     }
 }
 
-pub(crate) struct PersistenceManager {
+pub struct PersistenceManager {
     backend: Box<dyn SlotBackend>,
     states_dir: Option<PathBuf>,
     mapper_save_path: Option<PathBuf>,
@@ -158,8 +158,12 @@ pub(crate) struct PersistenceManager {
 
 impl PersistenceManager {
     pub(super) fn new() -> Self {
+        Self::with_backend(Box::new(FsSlotBackend))
+    }
+
+    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
         Self {
-            backend: Box::new(FsSlotBackend),
+            backend,
             states_dir: None,
             mapper_save_path: None,
             mapper_save_flush_allowed: true,

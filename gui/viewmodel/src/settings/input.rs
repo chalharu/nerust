@@ -413,7 +413,8 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
-        );
+        )
+        .unwrap();
         let input_vm = &vm.inputs()[0];
 
         // Both P1 and P2 have controllers initially
@@ -479,7 +480,8 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
-        );
+        )
+        .unwrap();
         let input_vm = &vm.inputs()[0];
 
         // P2 is absent from the projection initially

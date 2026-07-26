@@ -34,8 +34,8 @@ impl SettingsViewModel {
         factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>>,
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
-    ) -> Self {
-        let catalog = FactoryCatalog::new(factories.clone());
+    ) -> Result<Self, super::catalog::CatalogError> {
+        let catalog = FactoryCatalog::new(factories.clone())?;
 
         let editor = SettingsEditor::new(
             snapshot,
@@ -63,7 +63,7 @@ impl SettingsViewModel {
 
         editor.projections().seal();
 
-        Self {
+        Ok(Self {
             revision,
             general,
             video,
@@ -72,7 +72,7 @@ impl SettingsViewModel {
             systems,
             inputs,
             editor,
-        }
+        })
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
@@ -260,7 +260,7 @@ mod tests {
         );
 
         let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
-        let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]);
+        let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]).unwrap();
         let supported_sample_rates: Arc<[u32]> = Arc::new([]);
 
         let editor = SettingsEditor::new(

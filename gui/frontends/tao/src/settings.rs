@@ -218,7 +218,8 @@ impl SettingsAppState {
             factories,
             supported_sample_rates,
             Rc::new(FsStoragePathValidator) as Rc<dyn StoragePathValidator>,
-        );
+        )
+        .expect("duplicate SystemId in factory catalog");
         let invalidated = Rc::clone(&view_invalidated);
         let _revision_subscription = vm.revision.observe(move |_| {
             invalidated.set(true);
