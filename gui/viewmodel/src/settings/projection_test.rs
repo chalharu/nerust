@@ -39,7 +39,7 @@ fn register_adds_node() {
 #[test]
 fn prepare_all_returns_prepared_projections_for_changed_values() {
     let hub = ProjectionHub::new();
-    let _prop = hub.register("counter", 0usize, |state| state.revision as usize);
+    let _prop = hub.register("muted", false, |state| state.draft.local.audio.muted);
 
     let editor = test_editor();
     let candidate = editor.current();
@@ -48,13 +48,13 @@ fn prepare_all_returns_prepared_projections_for_changed_values() {
 
     editor
         .transact(|state| {
-            state.revision = 5;
+            state.draft.local.audio.muted = true;
             Ok(())
         })
         .unwrap();
     let updated = editor.current();
     let prepared2 = hub.prepare_all(&updated);
-    assert!(prepared2.len() < 100);
+    assert_eq!(prepared2.len(), 1);
 }
 
 #[test]

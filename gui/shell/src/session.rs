@@ -766,22 +766,26 @@ mod tests {
     #[test]
     fn apply_settings_skips_rebuild_when_assignments_unchanged() {
         let mut session = test_session();
-        // Track whether emu_core is None before and after — a rebuild would
-        // set it to Some; unchanged means the same instance is preserved.
-        assert!(session.emu_core.is_some());
+        let creations_before =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
 
-        // Apply with no settings change (assignments are also unchanged)
         let snapshot = session.settings_snapshot().clone();
         let plan = session.apply_settings(snapshot).unwrap();
 
         assert!(!plan.session_rebuild_required);
-        // emu_core should still be present (no crash, no drop)
-        assert!(session.emu_core.is_some());
+        let creations_after =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            creations_after, creations_before,
+            "no core creation should occur when no rebuild needed"
+        );
     }
 
     #[test]
     fn apply_settings_rebuilds_when_latency_changes() {
         let mut session = test_session();
+        let creations_before =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
         let mut next = session.settings_snapshot().clone();
         next.local.audio.latency_ms = 90;
 
@@ -790,38 +794,64 @@ mod tests {
             plan.session_rebuild_required,
             "latency change should require rebuild"
         );
+        let creations_after =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            creations_after > creations_before,
+            "core should have been rebuilt"
+        );
     }
 
     #[test]
     fn apply_settings_rolls_back_on_save_failure() {
-        // MockInputFactory has no slots, so we test the save-failure rollback
-        // path by triggering a settings rebuild and causing the save to fail.
-        // We use an ephemeral manager which never fails; instead, we verify
-        // the rebuild + commit logic by checking that the snapshot is updated
-        // on success and that a failure returns an error.
         let mut session = test_session();
         let original = session.settings_snapshot().clone();
+        let original_assignments = session.current_assignments.clone();
         let mut modified = original.clone();
         modified.local.audio.latency_ms = 90;
 
-        // apply_settings should succeed (ephemeral manager never fails save)
-        let _ = session.apply_settings(modified).unwrap();
+        // Simulate save failure
+        session.settings.set_save_fails(true);
 
-        // Snapshot should be updated
+        // Save fails → rollback should restore core state
+        let err = session.apply_settings(modified).unwrap_err();
+        assert!(
+            matches!(err, SessionError::Settings(_)),
+            "expected Settings error, got {err:?}"
+        );
+
+        // Snapshot should be rolled back to original
         assert_eq!(
             session.settings_snapshot().local.audio.latency_ms,
-            90,
-            "snapshot should reflect the applied change"
+            original.local.audio.latency_ms,
+            "snapshot should be rolled back on save failure"
         );
+
+        // Assignments should be rolled back
+        assert_eq!(
+            session.current_assignments.to_string_pairs(),
+            original_assignments.to_string_pairs(),
+            "assignments should be rolled back on save failure"
+        );
+
+        // Core should still be present (rollback rebuild succeeded)
+        assert!(
+            session.emu_core.is_some(),
+            "core should be restored after rollback"
+        );
+
+        // Reset and clean up
+        session.settings.set_save_fails(false);
     }
 
     #[test]
     fn apply_settings_rebuilds_when_assignments_change() {
         use crate::test_helpers::TEST_SLOT_P1;
         let mut session = test_session();
+        let creations_before =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
         let prev_pairs = session.current_assignments.to_string_pairs();
 
-        // Create a snapshot with an assignment that MockInputFactory can resolve
         let sid = session.factory().unwrap().system_id();
         let mut next = session.settings_snapshot().clone();
         next.app_state.controller_assignments.insert(
@@ -834,7 +864,6 @@ mod tests {
 
         let _ = session.apply_settings(next).unwrap();
 
-        // Verify that current_assignments reflects the new value
         let new_pairs = session.current_assignments.to_string_pairs();
         assert_ne!(
             new_pairs, prev_pairs,
@@ -845,6 +874,12 @@ mod tests {
                 .iter()
                 .any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
             "new assignments should include the test slot"
+        );
+        let creations_after =
+            crate::test_helpers::CORE_CREATION_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            creations_after > creations_before,
+            "core should have been rebuilt with new assignments"
         );
     }
 

@@ -3,7 +3,7 @@ use std::{path::Path, rc::Rc, sync::Arc};
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 use nerust_settings_core::editor::CaptureTarget;
 
-use super::{ValidationScope, ValidationState, catalog::FactoryCatalog};
+use super::{ValidationState, catalog::FactoryCatalog};
 
 /// Storage path validation error.
 #[derive(Debug, Clone)]
@@ -64,9 +64,6 @@ pub struct EditorState {
     pub(crate) catalog: FactoryCatalog,
     pub(crate) supported_sample_rates: Arc<[u32]>,
     pub(crate) storage_validator: Rc<dyn StoragePathValidator>,
-    /// Tracks which validation scopes have changed since last revalidation.
-    /// When `None`, all scopes need revalidation (initial state or forced).
-    pub(crate) dirty_scopes: Option<Vec<ValidationScope>>,
     /// Cached snapshot, invalidated when revision advances.
     pub(crate) cached_snapshot: SettingsSnapshot,
 }

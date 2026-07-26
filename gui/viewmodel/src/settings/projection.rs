@@ -64,9 +64,6 @@ struct FuncProjectionNode<T: Clone + PartialEq + 'static> {
     name: &'static str,
     inner: Rc<ObservablePropertyInner<T>>,
     project: Box<dyn Fn(&EditorState) -> T>,
-    /// Revision when this projection was last computed.
-    /// Initialized to `u64::MAX` so the first prepare always computes.
-    computed_at: Cell<u64>,
 }
 
 impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
@@ -75,12 +72,7 @@ impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
     }
 
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>> {
-        // Skip if already computed at this revision (no relevant state change)
-        if candidate.revision == self.computed_at.get() {
-            return None;
-        }
         let new_value = (self.project)(candidate);
-        self.computed_at.set(candidate.revision);
         if self.inner.get() == new_value {
             return None;
         }
@@ -130,7 +122,6 @@ impl ProjectionHub {
             name,
             inner: Rc::clone(&inner),
             project: Box::new(project),
-            computed_at: Cell::new(u64::MAX),
         };
         self.nodes.borrow_mut().push(Rc::new(node));
         ReadOnlyObservableProperty::new(inner)
