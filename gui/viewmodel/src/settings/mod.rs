@@ -7,20 +7,20 @@ mod general;
 mod input;
 mod projection;
 pub mod property;
-pub(crate) mod state;
 mod settings_viewmodel;
+pub(crate) mod state;
 mod system;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod validation;
 mod video;
 
-#[cfg(test)]
-pub use state::NoopStoragePathValidator;
 pub use editor::SettingsEditor;
-pub use state::{EditorState, StoragePathError, StoragePathValidator, ViewModelError};
 pub use property::{ReadOnlyObservableProperty, Subscription};
 pub use settings_viewmodel::SettingsViewModel;
+#[cfg(test)]
+pub use state::NoopStoragePathValidator;
+pub use state::{EditorState, StoragePathError, StoragePathValidator, ViewModelError};
 pub use validation::{ValidationIssue, ValidationScope, ValidationState};
 
 pub use audio::AudioSettingsViewModel;

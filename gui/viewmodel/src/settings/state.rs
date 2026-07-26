@@ -3,7 +3,7 @@ use std::{path::Path, rc::Rc, sync::Arc};
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 use nerust_settings_core::editor::CaptureTarget;
 
-use super::{ValidationState, ValidationScope, catalog::FactoryCatalog};
+use super::{ValidationScope, ValidationState, catalog::FactoryCatalog};
 
 /// Storage path validation error.
 #[derive(Debug, Clone)]
