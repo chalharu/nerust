@@ -52,55 +52,24 @@ jobs:
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version =0.8.7
-      - name: Generate coverage report (tao + wgpu)
+      - name: Collect coverage (tao + wgpu)
         continue-on-error: true
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/tao.lcov
-          workspace_root="${PWD%/}/"
-          sed -i "s#^SF:${workspace_root}#SF:#" coverage/tao.lcov
-      - name: Generate coverage report (gtk + opengl)
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report
+      - name: Collect coverage (gtk + opengl)
         continue-on-error: true
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --lcov --output-path coverage/gtk.lcov
-          workspace_root="${PWD%/}/"
-          sed -i "s#^SF:${workspace_root}#SF:#" coverage/gtk.lcov
-      - name: Merge coverage reports
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-report
+      - name: Merge and export coverage
         run: |
-          pip install lcov-cobertura 2>/dev/null || true
-          # Merge by summing DA line hits across both runs
-          python3 -c "
-import re, collections, sys
-
-files = collections.defaultdict(lambda: collections.defaultdict(int))
-for path in ['coverage/tao.lcov', 'coverage/gtk.lcov']:
-    try:
-        with open(path) as f:
-            current_sf = None
-            for line in f:
-                line = line.rstrip()
-                if line.startswith('SF:'):
-                    current_sf = line[3:]
-                elif line.startswith('DA:'):
-                    m = re.match(r'DA:(\d+),(\d+)', line)
-                    if m:
-                        line_no = int(m.group(1))
-                        hits = int(m.group(2))
-                        files[current_sf][line_no] += hits
-            except FileNotFoundError:
-                pass
-
-with open('coverage/lcov.info', 'w') as out:
-    for sf, lines in sorted(files.items()):
-        out.write(f'SF:{sf}\n')
-        for line_no in sorted(lines):
-            out.write(f'DA:{line_no},{lines[line_no]}\n')
-        out.write('end_of_record\n')
-print('Merged coverage written to coverage/lcov.info')
-"
+          mkdir -p coverage
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
+          workspace_root="${PWD%/}/"
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
