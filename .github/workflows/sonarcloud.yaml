@@ -67,16 +67,8 @@ jobs:
       - name: Merge and export coverage
         run: |
           mkdir -p coverage
-          cargo llvm-cov report --lcov --output-path coverage/lcov_raw.info
-          python3 -c "
-import os, re
-root = os.getcwd() + '/'
-with open('coverage/lcov_raw.info') as f:
-    data = f.read()
-data = re.sub(r'^SF:' + re.escape(root), 'SF:', data, flags=re.MULTILINE)
-with open('coverage/lcov.info', 'w') as out:
-    out.write(data)
-"
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
+          root="${PWD%/}/"; sed -i "s#^SF:${root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
