@@ -471,7 +471,7 @@ fn switching_system_discards_previous_loaded_runtime_state() {
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
     assert!(!session.loaded());
-    assert!(session.loaded_media().is_none());
+    assert!(session.loaded_media_ref().is_none());
     assert!(session.slots().is_empty());
 }
 

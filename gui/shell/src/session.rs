@@ -80,21 +80,21 @@ pub enum KeyboardShortcut {
 }
 
 pub struct SessionHandle {
-    pub(super) registry: Arc<SystemRegistry>,
-    pub(super) active_system_id: Option<Box<dyn SystemId>>,
-    pub(super) emu_core: Option<EmuCore>,
-    pub(super) gui_input: Option<GuiInput>,
-    pub(super) current_assignments: InputAssignments,
-    pub(super) field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    registry: Arc<SystemRegistry>,
+    active_system_id: Option<Box<dyn SystemId>>,
+    emu_core: Option<EmuCore>,
+    gui_input: Option<GuiInput>,
+    current_assignments: InputAssignments,
+    field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    pub(super) key_field_map: HashMap<nerust_keyboard::Key, usize>,
-    pub(super) capabilities: HostBackendCapabilities,
-    pub(super) settings: SettingsManager,
-    pub(super) settings_snapshot: SettingsSnapshot,
-    pub(super) pressed_keys: BTreeSet<Key>,
-    pub(super) loaded_media: Option<LoadedMedia>,
-    pub(super) persistence: PersistenceManager,
-    pub(super) audio_registry: Arc<AudioBackendRegistry>,
+    key_field_map: HashMap<nerust_keyboard::Key, usize>,
+    capabilities: HostBackendCapabilities,
+    settings: SettingsManager,
+    settings_snapshot: SettingsSnapshot,
+    pressed_keys: BTreeSet<Key>,
+    loaded_media: Option<LoadedMedia>,
+    persistence: PersistenceManager,
+    audio_registry: Arc<AudioBackendRegistry>,
 }
 
 impl SessionHandle {
@@ -370,8 +370,8 @@ impl SessionHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn loaded_media(&self) -> Option<&LoadedMedia> {
-        self.loaded_media.as_ref()
+    pub(crate) fn loaded_media_ref(&self) -> &Option<LoadedMedia> {
+        &self.loaded_media
     }
 
     pub fn settings_manager(&self) -> &SettingsManager {
