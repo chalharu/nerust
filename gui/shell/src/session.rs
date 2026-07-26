@@ -365,8 +365,27 @@ impl SessionHandle {
         &self.settings_snapshot
     }
 
+    pub fn current_assignments(&self) -> &InputAssignments {
+        &self.current_assignments
+    }
+
+    #[cfg(test)]
+    pub(crate) fn loaded_media(&self) -> Option<&LoadedMedia> {
+        self.loaded_media.as_ref()
+    }
+
     pub fn settings_manager(&self) -> &SettingsManager {
         &self.settings
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_settings(&mut self, settings: SettingsManager) {
+        self.settings = settings;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_settings_snapshot(&mut self, snapshot: SettingsSnapshot) {
+        self.settings_snapshot = snapshot;
     }
 
     pub fn active_factory(&self) -> Option<&Arc<dyn CoreFactory>> {
