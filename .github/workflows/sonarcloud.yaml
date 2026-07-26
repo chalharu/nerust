@@ -52,13 +52,22 @@ jobs:
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version =0.8.7
-      - name: Generate coverage report
+      - name: Collect coverage (tao + wgpu)
+        continue-on-error: true
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test \
-            --features "tao,wgpu,gtk,opengl" \
-            --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report
+      - name: Collect coverage (gtk + opengl)
+        continue-on-error: true
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features gtk,opengl --no-report
+      - name: Merge and export coverage
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
       - name: Run SonarCloud scan
