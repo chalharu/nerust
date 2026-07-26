@@ -95,10 +95,7 @@ impl SettingsViewModel {
     }
 }
 
-fn validate_storage_policy(
-    state: &super::EditorState,
-    issues: &mut Vec<super::ValidationIssue>,
-) {
+fn validate_storage_policy(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
     if matches!(
         state.draft.shared.persistence.storage_policy,
         StoragePolicy::CustomDirectory
@@ -119,10 +116,7 @@ fn validate_storage_policy(
     }
 }
 
-fn validate_audio_settings(
-    state: &super::EditorState,
-    issues: &mut Vec<super::ValidationIssue>,
-) {
+fn validate_audio_settings(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
     if !(0..=100).contains(&state.draft.local.audio.master_volume_percent) {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Audio,
