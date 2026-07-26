@@ -1142,7 +1142,7 @@ fn connect_slot_combo(
     self_weak: &std::rc::Weak<PreferencesBinding>,
 ) -> gtk::ComboBoxText {
     let combo = gtk::ComboBoxText::new();
-    combo.append(Some("__none__"), &ui_text(language, UiText::None));
+    combo.append(Some("__none__"), ui_text(language, UiText::None));
     for choice in &slot.choices {
         if let Some(id) = &choice.value {
             combo.append(Some(id), &choice.label);
