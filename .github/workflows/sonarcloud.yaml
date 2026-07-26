@@ -59,7 +59,7 @@ jobs:
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --no-report --no-clean
       - name: Collect coverage (gtk + opengl)
         continue-on-error: true
         run: |
