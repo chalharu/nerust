@@ -66,7 +66,7 @@ pub trait SlotBackend: Send {
     ) -> Result<PathBuf, PersistenceError>;
 }
 
-pub(super) struct FsSlotBackend;
+pub struct FsSlotBackend;
 
 impl SlotBackend for FsSlotBackend {
     fn scan(
