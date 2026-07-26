@@ -18,11 +18,11 @@ use nerust_gui_shell::{
     },
     settings::scaling_factor,
 };
-use nerust_settings_core::i18n::{UiText, text};
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
 };
+use nerust_settings_core::i18n::{UiText, text};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
