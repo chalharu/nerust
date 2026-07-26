@@ -1174,7 +1174,30 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     fn gtk_available() -> bool {
-        gtk::init().is_ok()
+        static GTK_INIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *GTK_INIT.get_or_init(|| {
+            if has_legacy_gtk() {
+                return false;
+            }
+            gtk::init().is_ok() && gdk::Display::default().is_some()
+        })
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+    fn has_legacy_gtk() -> bool {
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    fn has_legacy_gtk() -> bool {
+        // On Linux, check /proc/self/maps for GTK 2/3 libraries that would
+        // cause GTK4's gtk_init() to abort with SIGTRAP.
+        std::fs::read_to_string("/proc/self/maps")
+            .map(|maps| {
+                maps.lines()
+                    .any(|line| line.contains("libgtk-3.so") || line.contains("libgtk-2"))
+            })
+            .unwrap_or(false)
     }
 
     #[cfg(target_os = "macos")]
