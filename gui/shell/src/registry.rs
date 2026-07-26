@@ -9,10 +9,8 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::rom::load_rom_path;
 
-use crate::{
-    load::{RomLoadTarget, RomLoader, RomLoaderError},
-    settings::factory::settings_view,
-};
+use crate::load::{RomLoadTarget, RomLoader, RomLoaderError};
+use nerust_settings_core::factory::settings_view;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RegistryError {

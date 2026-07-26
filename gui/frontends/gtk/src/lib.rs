@@ -25,12 +25,12 @@ use nerust_gui_shell::{
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
     },
-    settings::i18n::{UiText, text},
 };
 use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
+use nerust_settings_core::i18n::{UiText, text};
 
 use self::window::{StateMenus, Window, WindowExtend};
 
