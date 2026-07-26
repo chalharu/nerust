@@ -1,9 +1,10 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
-use nerust_input_traits::{AttachmentId, ControllerProfile, InputTopologyDescriptor};
+use nerust_gui_settings::{language::AppLanguage, snapshot::SettingsSnapshot};
+use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
 use nerust_settings_core::{
-    bindings::descriptors::shortcut_descriptors,
+    bindings::descriptors::{shortcut_descriptors, KeyboardBindingDescriptor, ShortcutDescriptor},
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
     i18n::{UiText, text as ui_text},
@@ -177,6 +178,151 @@ impl InputSettingsViewModel {
     }
 }
 
+fn occupied_slots(
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+) -> std::collections::HashSet<AttachmentId> {
+    let mut occupied = std::collections::HashSet::new();
+    for (s, c_opt) in assignments {
+        let Some(profile) = c_opt else { continue };
+        for ps in profile.port_sets() {
+            if ps.ports.contains(s) {
+                occupied.extend(ps.ports.iter().copied());
+            }
+        }
+    }
+    occupied
+}
+
+fn binding_value(
+    draft: &SettingsSnapshot,
+    target: &CaptureTarget,
+    capture_target: &Option<CaptureTarget>,
+    language: AppLanguage,
+) -> BindingValueView {
+    if capture_target.as_ref() == Some(target) {
+        BindingValueView::Capturing(ui_text(language, UiText::CapturePrompt).to_string())
+    } else {
+        match current_binding_label(draft, target) {
+            Some(label) => BindingValueView::Bound(label.to_string()),
+            None => BindingValueView::Unbound(ui_text(language, UiText::Unbound).to_string()),
+        }
+    }
+}
+
+fn project_slot_view(
+    slot_desc: &SlotInfo,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    controllers: &[Rc<dyn ControllerProfile>],
+    occupied: &std::collections::HashSet<AttachmentId>,
+    language: AppLanguage,
+) -> ControllerSlotView {
+    let profile_id = assignments
+        .iter()
+        .find(|(s, _)| *s == slot_desc.id)
+        .and_then(|(_, c)| c.as_ref().map(|p| p.profile_id().to_string()));
+
+    let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
+        value: None,
+        label: ui_text(language, UiText::None).to_string(),
+    }];
+
+    choices.extend(
+        controllers
+            .iter()
+            .filter(|c| {
+                c.port_sets()
+                    .iter()
+                    .any(|ps| ps.ports.first() == Some(&slot_desc.id))
+            })
+            .map(|c| ChoiceView {
+                value: Some(c.profile_id().to_string()),
+                label: c.label().to_string(),
+            }),
+    );
+
+    let occupied_by_other = occupied.contains(&slot_desc.id)
+        && !assignments
+            .iter()
+            .any(|(s, c)| *s == slot_desc.id && c.is_some());
+
+    ControllerSlotView {
+        slot_id: slot_desc.id,
+        label: slot_desc.label.to_string(),
+        selected_profile_id: profile_id,
+        choices,
+        occupied_by_other_slot: occupied_by_other,
+    }
+}
+
+fn project_binding_row(
+    state: &EditorState,
+    descriptor: &KeyboardBindingDescriptor,
+    language: AppLanguage,
+    capture_target: &Option<CaptureTarget>,
+) -> BindingRowView {
+    let target = CaptureTarget::Binding {
+        system: descriptor.system.clone_box(),
+        attachment: descriptor.attachment.as_str().to_string(),
+        control: descriptor.control.as_str().to_string(),
+    };
+    let value = binding_value(&state.draft, &target, capture_target, language);
+    BindingRowView {
+        target,
+        label: descriptor.control_label.to_string(),
+        value,
+    }
+}
+
+fn project_shortcut_row(
+    draft: &SettingsSnapshot,
+    desc: &ShortcutDescriptor,
+    language: AppLanguage,
+    capture_target: &Option<CaptureTarget>,
+) -> BindingRowView {
+    let target = CaptureTarget::Shortcut(desc.action);
+    let value = binding_value(draft, &target, capture_target, language);
+    BindingRowView {
+        target,
+        label: desc.label.to_string(),
+        value,
+    }
+}
+
+fn project_binding_sections(
+    state: &EditorState,
+    system_id: &dyn SystemId,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    slots_descs: &[SlotInfo],
+    capture_target: &Option<CaptureTarget>,
+) -> Vec<BindingSectionView> {
+    let language = state.draft.shared.general.language;
+    let topo = build_topology(assignments, slots_descs);
+    let mut sections: Vec<BindingSectionView> = keyboard_binding_sections(&topo, system_id)
+        .into_iter()
+        .map(|section| {
+            let rows: Vec<BindingRowView> = section
+                .bindings
+                .iter()
+                .map(|descriptor| project_binding_row(state, descriptor, language, capture_target))
+                .collect();
+            BindingSectionView {
+                label: section.attachment_label.to_string(),
+                rows,
+            }
+        })
+        .collect();
+
+    let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
+        .iter()
+        .map(|desc| project_shortcut_row(&state.draft, desc, language, capture_target))
+        .collect();
+    sections.push(BindingSectionView {
+        label: ui_text(language, UiText::Shortcuts).to_string(),
+        rows: shortcut_rows,
+    });
+    sections
+}
+
 fn project_view(
     state: &EditorState,
     factory: &dyn CoreFactory,
@@ -186,137 +332,29 @@ fn project_view(
     let input_factory = factory.input_system_factory();
     let slots_descs = input_factory.slots();
     let controllers = input_factory.controllers();
-    let language = state.draft.shared.general.language;
 
     let assignments = resolve_assignments(&persisted_pairs(state, factory), input_factory);
 
     // Build set of occupied slots (from multi-port controllers)
-    let mut occupied = std::collections::HashSet::new();
-    for (s, c_opt) in &assignments {
-        let Some(profile) = c_opt else { continue };
-        for ps in profile.port_sets() {
-            if ps.ports.contains(s) {
-                for &port in ps.ports.iter() {
-                    occupied.insert(port);
-                }
-            }
-        }
-    }
+    let occupied = occupied_slots(&assignments);
 
-    // Build slot views
     let slots: Vec<ControllerSlotView> = slots_descs
         .iter()
         .map(|slot_desc| {
-            let profile_id = assignments
-                .iter()
-                .find(|(s, _)| *s == slot_desc.id)
-                .and_then(|(_, c)| c.as_ref().map(|p| p.profile_id().to_string()));
-
-            let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
-                value: None,
-                label: ui_text(language, UiText::None).to_string(),
-            }];
-
-            choices.extend(
-                controllers
-                    .iter()
-                    .filter(|c| {
-                        c.port_sets()
-                            .iter()
-                            .any(|ps| ps.ports.first() == Some(&slot_desc.id))
-                    })
-                    .map(|c| ChoiceView {
-                        value: Some(c.profile_id().to_string()),
-                        label: c.label().to_string(),
-                    }),
-            );
-
-            let occupied_by_other = occupied.contains(&slot_desc.id)
-                && !assignments
-                    .iter()
-                    .any(|(s, c)| *s == slot_desc.id && c.is_some());
-
-            ControllerSlotView {
-                slot_id: slot_desc.id,
-                label: slot_desc.label.to_string(),
-                selected_profile_id: profile_id,
-                choices,
-                occupied_by_other_slot: occupied_by_other,
-            }
+            project_slot_view(
+                slot_desc,
+                &assignments,
+                &controllers,
+                &occupied,
+                state.draft.shared.general.language,
+            )
         })
         .collect();
 
-    // Build topology and key binding sections
-    let topology: InputTopologyDescriptor = build_topology(&assignments, slots_descs);
-    let sections: Vec<BindingSectionView> = {
-        let mut s: Vec<BindingSectionView> =
-            keyboard_binding_sections(&topology, system_id.as_ref())
-                .into_iter()
-                .map(|section| {
-                    let rows: Vec<BindingRowView> = section
-                        .bindings
-                        .iter()
-                        .map(|descriptor| {
-                            let target = CaptureTarget::Binding {
-                                system: descriptor.system.clone_box(),
-                                attachment: descriptor.attachment.as_str().to_string(),
-                                control: descriptor.control.as_str().to_string(),
-                            };
-                            let value = if capture_target.as_ref() == Some(&target) {
-                                BindingValueView::Capturing(
-                                    ui_text(language, UiText::CapturePrompt).to_string(),
-                                )
-                            } else {
-                                match current_binding_label(&state.draft, &target) {
-                                    Some(label) => BindingValueView::Bound(label.to_string()),
-                                    None => BindingValueView::Unbound(
-                                        ui_text(language, UiText::Unbound).to_string(),
-                                    ),
-                                }
-                            };
-                            BindingRowView {
-                                target,
-                                label: descriptor.control_label.to_string(),
-                                value,
-                            }
-                        })
-                        .collect();
-                    BindingSectionView {
-                        label: section.attachment_label.to_string(),
-                        rows,
-                    }
-                })
-                .collect();
-        // Add shortcuts section from descriptors
-        let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
-            .iter()
-            .map(|desc| {
-                let target = CaptureTarget::Shortcut(desc.action);
-                let value = if capture_target.as_ref() == Some(&target) {
-                    BindingValueView::Capturing(
-                        ui_text(language, UiText::CapturePrompt).to_string(),
-                    )
-                } else {
-                    match current_binding_label(&state.draft, &target) {
-                        Some(label) => BindingValueView::Bound(label.to_string()),
-                        None => BindingValueView::Unbound(
-                            ui_text(language, UiText::Unbound).to_string(),
-                        ),
-                    }
-                };
-                BindingRowView {
-                    target,
-                    label: desc.label.to_string(),
-                    value,
-                }
-            })
-            .collect();
-        s.push(BindingSectionView {
-            label: ui_text(language, UiText::Shortcuts).to_string(),
-            rows: shortcut_rows,
-        });
-        s
-    };
+    let topology = build_topology(&assignments, slots_descs);
+    let sections = project_binding_sections(
+        state, system_id.as_ref(), &assignments, slots_descs, capture_target,
+    );
 
     // Build conflict messages
     let conflicts: Vec<InputConflictView> =

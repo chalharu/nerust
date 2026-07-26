@@ -1,7 +1,8 @@
 use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::input::ShortcutAction;
 use nerust_input_traits::{
-    AttachmentId, ControlDescriptor, DigitalControlId, InputTopologyDescriptor,
+    AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
+    DigitalControlId, InputTopologyDescriptor, PortDescriptor,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,21 +70,29 @@ pub fn keyboard_binding_descriptors(
                 if att.device != device.kind {
                     continue;
                 }
-                for control in &device.controls {
-                    match control {
-                        ControlDescriptor::Digital(dc) => {
-                            descriptors.push(KeyboardBindingDescriptor {
-                                system: system.clone_box(),
-                                attachment: att.id,
-                                attachment_label: port.label,
-                                control: dc.id,
-                                control_label: dc.label,
-                            });
-                        }
-                        ControlDescriptor::Analog(_) => {} // keyboard bindings are digital only
-                    }
-                }
+                descriptors.extend(collect_device_bindings(device, port, att, system));
             }
+        }
+    }
+    descriptors
+}
+
+fn collect_device_bindings(
+    device: &DeviceDescriptor,
+    port: &PortDescriptor,
+    att: &AttachmentSlotDescriptor,
+    system: &dyn SystemId,
+) -> Vec<KeyboardBindingDescriptor> {
+    let mut descriptors = Vec::new();
+    for control in &device.controls {
+        if let ControlDescriptor::Digital(dc) = control {
+            descriptors.push(KeyboardBindingDescriptor {
+                system: system.clone_box(),
+                attachment: att.id,
+                attachment_label: port.label,
+                control: dc.id,
+                control_label: dc.label,
+            });
         }
     }
     descriptors
