@@ -6,6 +6,8 @@ mod editor;
 mod general;
 mod input;
 mod projection;
+#[cfg(test)]
+mod projection_test;
 pub mod property;
 mod settings_viewmodel;
 pub(crate) mod state;

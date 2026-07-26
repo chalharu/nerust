@@ -477,6 +477,57 @@ impl RomLoadTarget for SessionHandle {
 }
 
 #[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::Arc;
+
+    use nerust_core_traits::{
+        audio::AudioBackendRegistry,
+        factory::{CoreFactory, settings::FactorySettingsView},
+    };
+    use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
+
+    use crate::test_helpers::MockFactory;
+    use crate::{load::RomLoadTarget, registry::SystemRegistry, session::SessionHandle};
+
+    pub(crate) fn test_session() -> SessionHandle {
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+        let audio_registry = Arc::new(AudioBackendRegistry::new());
+        let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
+        let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
+        session
+            .set_active_system(factory.system_id().as_ref())
+            .expect("test setup failed");
+        session
+    }
+
+    pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
+        let system_id = session.factory().expect("no active system").system_id();
+        let snapshot = session.settings_snapshot();
+        let language = match snapshot.shared.general.language {
+            nerust_gui_settings::language::AppLanguage::Japanese => {
+                nerust_core_traits::factory::settings::Language::Japanese
+            }
+            nerust_gui_settings::language::AppLanguage::English => {
+                nerust_core_traits::factory::settings::Language::English
+            }
+            _ => nerust_core_traits::factory::settings::Language::SystemDefault,
+        };
+        FactorySettingsView {
+            language,
+            system_config: snapshot.shared.systems.get(system_id.as_ref()).cloned(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::{Arc, atomic::Ordering::AcqRel};
 
@@ -495,6 +546,7 @@ mod tests {
     };
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
 
+    use super::test_util::*;
     use crate::test_helpers::*;
     use crate::{
         load::{RomLoadTarget, SystemActivationError},
