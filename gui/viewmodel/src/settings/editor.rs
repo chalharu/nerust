@@ -7,15 +7,15 @@ use std::{
 use nerust_gui_settings::snapshot::SettingsSnapshot;
 
 use super::{
-    ValidationState, catalog::FactoryCatalog, projection::ProjectionHub,
+    ValidationState,
+    catalog::FactoryCatalog,
+    projection::ProjectionHub,
     property::{ObservablePropertyInner, ReadOnlyObservableProperty},
 };
 
 #[cfg(test)]
 pub use super::state::NoopStoragePathValidator;
-pub use super::state::{
-    EditorState, StoragePathValidator, ViewModelError,
-};
+pub use super::state::{EditorState, StoragePathValidator, ViewModelError};
 
 /// Lightweight handle to the shared editor state and projection hub.
 #[derive(Clone)]
