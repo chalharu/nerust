@@ -5,10 +5,11 @@ use nerust_input_traits::{
     AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
 use nerust_keyboard::Key;
+use nerust_settings_core::factory::settings_view;
 
 use crate::{
     session::{KeyboardShortcut, SessionError, SessionHandle},
-    settings::{bindings::events::shortcut::shortcut_action_for_key, factory::settings_view},
+    settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
 pub use nerust_settings_core::input::{build_topology, clear_multi_port_conflicts, device_kind};

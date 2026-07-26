@@ -18,10 +18,8 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{
-    registry::SystemRegistry,
-    settings::factory::{apply_settings_choice, resolve_label, settings_view},
-};
+use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------

@@ -30,13 +30,11 @@ use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput, InputAssignm
 use nerust_keyboard::Key;
 use nerust_persistence::{error::PersistenceError, model::StateSlotSummary};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
+use nerust_settings_core::factory::settings_view;
 use thiserror::Error;
 
 use crate::{
-    emu_core::EmuCore,
-    registry::SystemRegistry,
-    session::persistence::PersistenceManager,
-    settings::{self, factory::settings_view},
+    emu_core::EmuCore, registry::SystemRegistry, session::persistence::PersistenceManager, settings,
 };
 
 struct CoreRuntime {

@@ -14,6 +14,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
 };
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
+use nerust_settings_core::factory::settings_view;
 
 use super::test_util::*;
 use crate::test_helpers::*;
@@ -24,7 +25,6 @@ use crate::{
         KeyboardShortcut, SessionError, SessionHandle,
         commands::{SessionCommand, SessionCommandOutcome},
     },
-    settings::factory::settings_view,
 };
 
 /// Factory that fails on first `create_core_and_adapter_with_assignments`

@@ -6,6 +6,7 @@ use nerust_core_traits::factory::{
 };
 use nerust_emu_thread::ConsoleMetrics;
 use nerust_input_traits::InputAssignments;
+use nerust_settings_core::factory::settings_view;
 
 use crate::{
     emu_core::EmuCore,
@@ -15,7 +16,6 @@ use crate::{
         persistence::PersistenceManager,
         title::window_title,
     },
-    settings::factory::settings_view,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
