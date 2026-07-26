@@ -8,7 +8,7 @@ use std::{
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreOptions,
-    audio::{AudioBackend, AudioBackendRegistry},
+    audio::AudioBackend,
     factory::{
         CoreFactory, FactoryError,
         load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest, SystemLoadOptions},
@@ -16,7 +16,6 @@ use nerust_core_traits::{
     },
     identity::{SystemId, SystemIdentity},
 };
-use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
 use nerust_input_traits::{
     AttachmentId, BufferError, ControlInfo, ControllerCollection, ControllerProfile,
     CreateSplitError, GuiInput, InputAssignments, InputPorts, InputResources, InputSplit,
@@ -25,9 +24,6 @@ use nerust_input_traits::{
 use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
-
-use crate::session::SessionHandle;
-use crate::{load::RomLoadTarget, registry::SystemRegistry};
 
 pub(crate) use crate::test_support::{DummyOtherSystemId, DummySystemId};
 
@@ -350,25 +346,6 @@ impl CoreFactory for AlternateMockFactory {
     }
 }
 
-pub(crate) fn test_session() -> SessionHandle {
-    let capabilities = HostBackendCapabilities {
-        window: HostWindowCapabilities {
-            remembers_window_size: false,
-            supports_fullscreen_default: true,
-            supports_scaling: true,
-        },
-        presentation: None,
-    };
-    let factory: Arc<dyn CoreFactory> = Arc::new(MockFactory);
-    let audio_registry = Arc::new(AudioBackendRegistry::new());
-    let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
-    let mut session = SessionHandle::new_ephemeral(capabilities, registry, audio_registry);
-    session
-        .set_active_system(factory.system_id().as_ref())
-        .expect("test setup failed");
-    session
-}
-
 pub(crate) fn test_rom() -> Vec<u8> {
     let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0, 0];
     data.resize(16 + 0x8000 + 0x2000, 0);
@@ -379,24 +356,6 @@ pub(crate) fn test_rom_with_mapper4() -> Vec<u8> {
     let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0x40, 0];
     data.resize(16 + 0x8000 + 0x2000, 0);
     data
-}
-
-pub(crate) fn test_view(session: &SessionHandle) -> FactorySettingsView {
-    let system_id = session.factory().expect("no active system").system_id();
-    let snapshot = session.settings_snapshot();
-    let language = match snapshot.shared.general.language {
-        nerust_gui_settings::language::AppLanguage::Japanese => {
-            nerust_core_traits::factory::settings::Language::Japanese
-        }
-        nerust_gui_settings::language::AppLanguage::English => {
-            nerust_core_traits::factory::settings::Language::English
-        }
-        _ => nerust_core_traits::factory::settings::Language::SystemDefault,
-    };
-    FactorySettingsView {
-        language,
-        system_config: snapshot.shared.systems.get(system_id.as_ref()).cloned(),
-    }
 }
 
 pub(crate) fn unique_temp_dir(label: &str) -> PathBuf {

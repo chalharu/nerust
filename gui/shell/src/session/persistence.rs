@@ -567,6 +567,7 @@ mod tests {
     use nerust_core_traits::factory::load::MediaObject;
     use nerust_persistence::slots::autosave_state_slot_path;
 
+    use crate::session::test_util::*;
     use crate::test_helpers::*;
 
     #[test]
