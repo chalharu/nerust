@@ -93,7 +93,13 @@ impl Mbc1 {
 
     fn rom_bank_effective(&self) -> usize {
         let bank = if self.rom_bank == 0 { 1 } else { self.rom_bank };
-        (bank as usize & self.rom_bank_mask as usize) % (self.rom.len() / 0x4000)
+        let bank_count = self.rom.len() / 0x4000;
+        let upper = if bank_count > 32 {
+            (self.ram_bank as usize) << 5
+        } else {
+            0
+        };
+        (upper | (bank as usize)) & self.rom_bank_mask as usize
     }
 }
 
@@ -269,5 +275,18 @@ mod tests {
         let mut mbc = Mbc1::new(rom, vec![], false);
         mbc.write_rom(0x2000, 0x00); // select bank 0 → treated as 1
         assert_eq!(mbc.read_rom_n(0x4000), 0x11);
+    }
+
+    #[test]
+    fn mbc1_large_rom_uses_secondary_bank_register() {
+        // 2 MiB ROM: 128 banks, uses 2-bit secondary register for bits 5-6
+        let mut rom = vec![0u8; 0x200000]; // 128 banks = 2 MiB
+        let target_bank = 33; // bank 33 = 32 + 1 → secondary=1, primary=1
+        rom[target_bank * 0x4000] = 0xCC;
+        let mut mbc = Mbc1::new(rom, vec![], false);
+        mbc.write_rom(0x4000, 0x01); // secondary bank = 1
+        mbc.write_rom(0x2000, 0x01); // primary bank = 1
+        // Effective = (1 << 5) | 1 = 33
+        assert_eq!(mbc.read_rom_n(0x4000), 0xCC);
     }
 }
