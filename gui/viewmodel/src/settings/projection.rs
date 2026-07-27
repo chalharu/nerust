@@ -129,7 +129,7 @@ impl ProjectionHub {
     ///
     /// Enables external code to define projection strategies beyond the
     /// default closure-based [`register`](Self::register) approach.
-    #[cfg_attr(not(test), expect(dead_code))]
+    #[cfg(test)]
     pub fn register_node(&self, node: Rc<dyn ProjectionNode>) {
         assert!(
             !self.sealed.get(),
