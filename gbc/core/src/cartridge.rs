@@ -1,7 +1,4 @@
-pub mod header;
-pub mod mbc;
-
-use crate::cartridge::mbc::Mbc;
+use crate::cartridge_mbc::Mbc;
 
 /// Top-level cartridge struct wrapping the ROM data and MBC.
 ///
@@ -59,7 +56,7 @@ impl Cartridge {
 
 impl Default for Cartridge {
     fn default() -> Self {
-        Self::new(Box::new(mbc::RomOnly::new(vec![0; 0x8000])))
+        Self::new(Box::new(crate::cartridge_mbc::RomOnly::new(vec![0; 0x8000])))
     }
 }
 
@@ -77,7 +74,7 @@ mod tests {
     fn cartridge_delegates_to_mbc() {
         let mut rom = vec![0u8; 0x8000];
         rom[0x42] = 0xAB;
-        let cart = Cartridge::new(Box::new(mbc::RomOnly::new(rom)));
+        let cart = Cartridge::new(Box::new(crate::cartridge_mbc::RomOnly::new(rom)));
         assert_eq!(cart.read_rom(0x0042), 0xAB);
     }
 
@@ -85,7 +82,7 @@ mod tests {
     fn mbc1_write_rom_delegates() {
         let mut rom = vec![0u8; 0x20000];
         rom[0x8000] = 0xCC;
-        let mut cart = Cartridge::new(Box::new(mbc::Mbc1::new(rom, vec![], false)));
+        let mut cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc1::new(rom, vec![], false)));
         cart.write_rom(0x2000, 0x02);
         assert_eq!(cart.read_rom(0x4000), 0xCC);
     }
@@ -94,7 +91,7 @@ mod tests {
     fn mbc1_write_ram_enable_delegates() {
         let mut ram = vec![0u8; 0x2000];
         ram[0] = 0x55;
-        let mut cart = Cartridge::new(Box::new(mbc::Mbc1::new(vec![0; 0x8000], ram, false)));
+        let mut cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc1::new(vec![0; 0x8000], ram, false)));
         assert_eq!(cart.read_ram(0xA000), 0xFF); // disabled
         cart.write_rom(0x0000, 0x0A); // enable
         assert_eq!(cart.read_ram(0xA000), 0x55);
