@@ -2804,6 +2804,7 @@ dependencies = [
  "clap",
  "log",
  "nerust_core_traits",
+ "nerust_gbc_factory",
  "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
@@ -2870,6 +2871,56 @@ dependencies = [
  "nerust_render_traits",
  "nerust_timer",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "nerust_gbc_core"
+version = "0.1.0-dev"
+dependencies = [
+ "bitflags 2.13.1",
+ "crc",
+ "log",
+ "nerust_core_traits",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_serialize",
+ "nerust_sound_filter",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "thiserror 2.0.19",
+ "typetag",
+]
+
+[[package]]
+name = "nerust_gbc_device"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_input_traits",
+]
+
+[[package]]
+name = "nerust_gbc_factory"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_gbc_core",
+ "nerust_gbc_device",
+ "nerust_gbc_settings",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_settings_traits",
+]
+
+[[package]]
+name = "nerust_gbc_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "dyn-clone",
+ "dyn-eq",
+ "nerust_settings_traits",
+ "serde",
+ "typetag",
 ]
 
 [[package]]

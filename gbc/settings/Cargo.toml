@@ -1,0 +1,16 @@
+[package]
+authors.workspace = true
+description = "GBC-specific settings types (domain layer)"
+edition.workspace = true
+license.workspace = true
+name = "nerust_gbc_settings"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+dyn-clone.workspace = true
+dyn-eq.workspace = true
+nerust_settings_traits.workspace = true
+serde = { features = ["derive"], workspace = true }
+typetag.workspace = true

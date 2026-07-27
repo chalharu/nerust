@@ -1,0 +1,16 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_gbc_factory"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+nerust_core_traits.workspace = true
+nerust_gbc_core.workspace = true
+nerust_gbc_device.workspace = true
+nerust_gbc_settings.workspace = true
+nerust_input_traits.workspace = true
+nerust_render_traits.workspace = true
+nerust_settings_traits.workspace = true
