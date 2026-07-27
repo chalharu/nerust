@@ -1127,7 +1127,9 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
             }
             12
         }
-        0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => 4, // undefined/unused opcodes
+        0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD => {
+            unreachable!("invalid opcode {opcode:#04X}: hard-locks CPU on hardware")
+        }
         0xD4 => {
             // CALL NC, a16
             let lo = bus.read(reg.pc) as u16;
