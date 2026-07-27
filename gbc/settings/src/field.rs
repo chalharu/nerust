@@ -225,4 +225,54 @@ mod tests {
             assert!(!opts.is_empty(), "field {field} has no options");
         }
     }
+
+    #[test]
+    fn current_choice_matches_rtc_system_time() {
+        let mut s = GbcSettings::default();
+        s.set_rtc_sync(RtcSyncMode::SystemTime);
+        let c = GbcSettingField::SystemRtcSync.current_choice(&s);
+        assert_eq!(c.as_str(), "system_time");
+    }
+
+    #[test]
+    fn from_bool_true_is_on() {
+        assert_eq!(
+            GbcSettingChoice::from_bool(true).to_string(),
+            "on"
+        );
+    }
+
+    #[test]
+    fn from_bool_false_is_off() {
+        assert_eq!(
+            GbcSettingChoice::from_bool(false).to_string(),
+            "off"
+        );
+    }
+
+    #[test]
+    fn from_dmg_palette_maps_all_variants() {
+        let pairs = [
+            (DmgPalette::Greyscale, "greyscale"),
+            (DmgPalette::GreenTint, "green_tint"),
+            (DmgPalette::BrownTint, "brown_tint"),
+            (DmgPalette::PastelMix, "pastel_mix"),
+            (DmgPalette::Inverted, "inverted"),
+        ];
+        for (palette, expected) in pairs {
+            assert_eq!(GbcSettingChoice::from(palette).to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn from_rtc_sync_mode_maps_all_variants() {
+        assert_eq!(
+            GbcSettingChoice::from(RtcSyncMode::Off).to_string(),
+            "off"
+        );
+        assert_eq!(
+            GbcSettingChoice::from(RtcSyncMode::SystemTime).to_string(),
+            "system_time"
+        );
+    }
 }
