@@ -10,7 +10,7 @@ use super::{
 
 /// A node responsible for computing one projection from [`EditorState`].
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
-pub(crate) trait ProjectionNode {
+pub trait ProjectionNode {
     fn name(&self) -> &'static str;
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>>;
     fn is_synced(&self, current: &EditorState) -> bool;
@@ -21,7 +21,7 @@ type ApplyNotification = Option<Box<dyn FnOnce()>>;
 /// A prepared value ready to be silently applied to its property cache.
 /// Returns an optional notification closure to be invoked after all
 /// projections have been applied.
-pub(crate) trait PreparedProjection {
+pub trait PreparedProjection {
     fn apply(self: Box<Self>) -> ApplyNotification;
 }
 
@@ -125,6 +125,20 @@ impl ProjectionHub {
         };
         self.nodes.borrow_mut().push(Rc::new(node));
         ReadOnlyObservableProperty::new(inner)
+    }
+
+    /// Register a custom [`ProjectionNode`] implementation.
+    ///
+    /// Enables external code to define projection strategies beyond the
+    /// default closure-based [`register`](Self::register) approach.
+    #[allow(dead_code)]
+    pub fn register_node(&self, node: Rc<dyn ProjectionNode>) {
+        assert!(
+            !self.sealed.get(),
+            "cannot register projection '{}' after hub is sealed",
+            node.name()
+        );
+        self.nodes.borrow_mut().push(node);
     }
 
     pub fn prepare_all(&self, candidate: &EditorState) -> Vec<Box<dyn PreparedProjection>> {

@@ -228,8 +228,14 @@ pub struct PersistenceManager {
     active_slot_id: Option<u64>,
 }
 
+impl Default for PersistenceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PersistenceManager {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self::with_backend(Box::new(FsSlotBackend))
     }
 
@@ -245,30 +251,25 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn slots(&self) -> &[StateSlotSummary] {
+    pub fn slots(&self) -> &[StateSlotSummary] {
         &self.slots
     }
 
-    pub(super) fn active_slot_id(&self) -> Option<u64> {
+    pub fn active_slot_id(&self) -> Option<u64> {
         self.active_slot_id
     }
 
     #[cfg(test)]
-    pub(super) fn states_dir(&self) -> Option<&PathBuf> {
+    pub fn states_dir(&self) -> Option<&PathBuf> {
         self.states_dir.as_ref()
     }
 
     #[cfg(test)]
-    pub(super) fn mapper_save_path(&self) -> Option<&PathBuf> {
+    pub fn mapper_save_path(&self) -> Option<&PathBuf> {
         self.mapper_save_path.as_ref()
     }
 
-    pub(super) fn save_slot(
-        &mut self,
-        slot_id: u64,
-        emu: &impl CorePersistence,
-        make_active: bool,
-    ) {
+    pub fn save_slot(&mut self, slot_id: u64, emu: &impl CorePersistence, make_active: bool) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
             return;
@@ -310,7 +311,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
+    pub fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
             return;
@@ -335,7 +336,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn create_slot(&mut self, emu: &impl CorePersistence) {
+    pub fn create_slot(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("create_slot: no states_dir configured; cannot create slot");
             return;
@@ -346,7 +347,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
+    pub fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return false;
@@ -371,12 +372,12 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn load_active_slot(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn load_active_slot(&mut self, emu: &impl CorePersistence) -> bool {
         self.active_slot_id
             .is_some_and(|slot_id| self.load_slot(slot_id, emu))
     }
 
-    pub(super) fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
+    pub fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
             return;
@@ -393,17 +394,17 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn select_active_slot(&mut self, slot_id: u64) {
+    pub fn select_active_slot(&mut self, slot_id: u64) {
         self.active_slot_id = Some(slot_id);
     }
 
-    pub(super) fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
+    pub fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
         let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, forward)?;
         self.active_slot_id = Some(next_slot_id);
         Some(next_slot_id)
     }
 
-    pub(super) fn refresh_slots(&mut self, emu: &impl CorePersistence) {
+    pub fn refresh_slots(&mut self, emu: &impl CorePersistence) {
         let identity = emu.canonical_media_identity();
         self.refresh_slots_inner(identity.as_ref());
     }
@@ -432,7 +433,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
+    pub fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
         self.states_dir = Some(states_dir);
         self.mapper_save_path = Some(mapper_save_path);
         self.mapper_save_flush_allowed = true;
@@ -440,7 +441,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.states_dir = None;
         self.mapper_save_path = None;
         self.mapper_save_flush_allowed = true;
@@ -449,7 +450,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn flush_mapper_save(
+    pub fn flush_mapper_save(
         &mut self,
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
@@ -487,7 +488,7 @@ impl PersistenceManager {
         Ok(())
     }
 
-    pub(super) fn load_mapper_save_if_needed(
+    pub fn load_mapper_save_if_needed(
         &mut self,
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
@@ -511,7 +512,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
@@ -537,7 +538,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
@@ -577,7 +578,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn clear_hidden(&mut self) {
+    pub fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!(
                 "clear_hidden: no states_dir configured; cannot clear hidden lifecycle state"
