@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn boot_rom_unmapped_reads_cartridge() {
         let bus = GbcMemoryBus::new([0xFF; 0x100], false);
-        assert_eq!(bus.read(0x0000), 0xFF); // cartridge stub returns 0xFF
+        assert_eq!(bus.read(0x0000), 0x00); // default cartridge ROM is zeroed
     }
 
     // ── facade method delegation ──────────────────────────
