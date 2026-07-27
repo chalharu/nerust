@@ -77,5 +77,3 @@ fn prepare_all_skips_unchanged_projections() {
     let prepared = hub.prepare_all(&candidate);
     assert!(prepared.is_empty());
 }
-
-
