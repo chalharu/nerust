@@ -38,7 +38,7 @@ pub(crate) mod imp {
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
     use nerust_gui_settings::language::AppLanguage;
-    use nerust_gui_shell::settings::i18n::{UiText, text};
+    use nerust_settings_core::i18n::{UiText, text};
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;

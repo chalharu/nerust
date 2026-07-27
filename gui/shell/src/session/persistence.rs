@@ -3,6 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use std::io::Error as IoError;
+
+use crate::state::resolve_state_format;
 use nerust_core_traits::{identity::SystemIdentity, save_state::save_state_with_header};
 use nerust_persistence::{
     error::PersistenceError,
@@ -16,32 +19,10 @@ use nerust_persistence::{
     thumbnail::ThumbnailSource,
     time::latest_saved_slot_id,
 };
-use thiserror::Error;
 
-use crate::state::resolve_state_format;
+use crate::emu_core::CorePersistence;
 
-/// Errors from core operations invoked by the persistence layer.
-#[derive(Debug, Error)]
-pub(crate) enum CorePersistenceError {
-    #[error("emu thread channel unavailable")]
-    WorkerUnavailable,
-    #[error("emu thread reply channel closed")]
-    NoReply,
-    #[error("{0}")]
-    Core(String),
-}
-
-/// The persistence-relevant subset of EmuCore's interface.
-pub(crate) trait CorePersistence {
-    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
-    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
-    fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
-    fn canonical_media_identity(&self) -> Option<SystemIdentity>;
-    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
-    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
-}
-
-/// Platform abstraction for all file I/O (Desktop fs / Android SAF).
+/// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
 pub trait SlotBackend: Send {
     fn scan(
         &self,
@@ -49,7 +30,6 @@ pub trait SlotBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError>;
     fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError>;
-
     fn write_slot(
         &self,
         dir: &Path,
@@ -64,7 +44,10 @@ pub trait SlotBackend: Send {
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError>;
+}
 
+/// Platform abstraction for autosave I/O.
+pub trait AutoSaveBackend: Send {
     fn write_autosave(
         &self,
         dir: &Path,
@@ -77,7 +60,10 @@ pub trait SlotBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
+}
 
+/// Platform abstraction for mapper save I/O.
+pub trait MapperSaveBackend: Send {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError>;
     fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError>;
     fn write_recovery_mapper_save(
@@ -87,7 +73,81 @@ pub trait SlotBackend: Send {
     ) -> Result<PathBuf, PersistenceError>;
 }
 
-pub(super) struct FsSlotBackend;
+pub struct FsSlotBackend;
+
+/// A failing backend for testing error paths in persistence.
+///
+/// Always returns `Err` for all operations.
+#[derive(Debug)]
+pub struct FailingSlotBackend;
+
+impl SlotBackend for FailingSlotBackend {
+    fn scan(
+        &self,
+        _dir: &Path,
+        _identity: &SystemIdentity,
+    ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn allocate_next_id(&self, _dir: &Path) -> Result<u64, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_slot(
+        &self,
+        _dir: &Path,
+        _slot_id: u64,
+        _data: &[u8],
+        _identity: &SystemIdentity,
+        _thumbnail: Option<&ThumbnailSource>,
+    ) -> Result<StateSlotSummary, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn read_slot(
+        &self,
+        _dir: &Path,
+        _slot_id: u64,
+    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn delete_slot(&self, _dir: &Path, _slot_id: u64) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+}
+impl AutoSaveBackend for FailingSlotBackend {
+    fn write_autosave(
+        &self,
+        _dir: &Path,
+        _data: &[u8],
+        _identity: &SystemIdentity,
+    ) -> Result<StateSlotSummary, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn read_autosave(
+        &self,
+        _dir: &Path,
+        _identity: &SystemIdentity,
+    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn delete_autosave(&self, _dir: &Path) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+}
+impl MapperSaveBackend for FailingSlotBackend {
+    fn read_mapper_save(&self, _path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_mapper_save(&self, _path: &Path, _data: &[u8]) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_recovery_mapper_save(
+        &self,
+        _path: &Path,
+        _data: &[u8],
+    ) -> Result<PathBuf, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+}
 
 impl SlotBackend for FsSlotBackend {
     fn scan(
@@ -97,11 +157,9 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
         scan_state_slots_for_identity(dir, identity)
     }
-
     fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
         allocate_next_slot_id(dir)
     }
-
     fn write_slot(
         &self,
         dir: &Path,
@@ -112,7 +170,6 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<StateSlotSummary, PersistenceError> {
         write_state_slot(dir, slot_id, data, identity, thumbnail)
     }
-
     fn read_slot(
         &self,
         dir: &Path,
@@ -124,11 +181,11 @@ impl SlotBackend for FsSlotBackend {
             Err(e) => Err(e),
         }
     }
-
     fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
         delete_state_slot(&state_slot_path(dir, slot_id))
     }
-
+}
+impl AutoSaveBackend for FsSlotBackend {
     fn write_autosave(
         &self,
         dir: &Path,
@@ -137,7 +194,6 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<StateSlotSummary, PersistenceError> {
         write_autosave_state_slot(dir, data, identity, None)
     }
-
     fn read_autosave(
         &self,
         dir: &Path,
@@ -145,19 +201,17 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         load_state_slot_for_identity(&autosave_state_slot_path(dir), identity)
     }
-
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
         delete_state_slot(&autosave_state_slot_path(dir))
     }
-
+}
+impl MapperSaveBackend for FsSlotBackend {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
         load_mapper_save(path)
     }
-
     fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
         write_mapper_save(path, data)
     }
-
     fn write_recovery_mapper_save(
         &self,
         path: &Path,
@@ -167,8 +221,10 @@ impl SlotBackend for FsSlotBackend {
     }
 }
 
-pub(crate) struct PersistenceManager {
-    backend: Box<dyn SlotBackend>,
+pub struct PersistenceManager {
+    slot_backend: Box<dyn SlotBackend>,
+    autosave_backend: Box<dyn AutoSaveBackend>,
+    mapper_backend: Box<dyn MapperSaveBackend>,
     states_dir: Option<PathBuf>,
     mapper_save_path: Option<PathBuf>,
     mapper_save_flush_allowed: bool,
@@ -177,10 +233,22 @@ pub(crate) struct PersistenceManager {
     active_slot_id: Option<u64>,
 }
 
+impl Default for PersistenceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PersistenceManager {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
+        Self::with_backend(Box::new(FsSlotBackend))
+    }
+
+    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
         Self {
-            backend: Box::new(FsSlotBackend),
+            slot_backend: backend,
+            autosave_backend: Box::new(FsSlotBackend),
+            mapper_backend: Box::new(FsSlotBackend),
             states_dir: None,
             mapper_save_path: None,
             mapper_save_flush_allowed: true,
@@ -190,30 +258,51 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn slots(&self) -> &[StateSlotSummary] {
+    pub fn with_all_backends(
+        slot_backend: Box<dyn SlotBackend>,
+        autosave_backend: Box<dyn AutoSaveBackend>,
+        mapper_backend: Box<dyn MapperSaveBackend>,
+    ) -> Self {
+        Self {
+            slot_backend,
+            autosave_backend,
+            mapper_backend,
+            states_dir: None,
+            mapper_save_path: None,
+            mapper_save_flush_allowed: true,
+            mapper_save_recovery_written: false,
+            slots: Vec::new(),
+            active_slot_id: None,
+        }
+    }
+
+    pub fn with_autosave_backend(&mut self, backend: Box<dyn AutoSaveBackend>) {
+        self.autosave_backend = backend;
+    }
+
+    pub fn with_mapper_backend(&mut self, backend: Box<dyn MapperSaveBackend>) {
+        self.mapper_backend = backend;
+    }
+
+    pub fn slots(&self) -> &[StateSlotSummary] {
         &self.slots
     }
 
-    pub(super) fn active_slot_id(&self) -> Option<u64> {
+    pub fn active_slot_id(&self) -> Option<u64> {
         self.active_slot_id
     }
 
     #[cfg(test)]
-    fn states_dir(&self) -> Option<&PathBuf> {
+    pub fn states_dir(&self) -> Option<&PathBuf> {
         self.states_dir.as_ref()
     }
 
     #[cfg(test)]
-    fn mapper_save_path(&self) -> Option<&PathBuf> {
+    pub fn mapper_save_path(&self) -> Option<&PathBuf> {
         self.mapper_save_path.as_ref()
     }
 
-    pub(super) fn save_slot(
-        &mut self,
-        slot_id: u64,
-        emu: &impl CorePersistence,
-        make_active: bool,
-    ) {
+    pub fn save_slot(&mut self, slot_id: u64, emu: &impl CorePersistence, make_active: bool) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
             return;
@@ -234,7 +323,7 @@ impl PersistenceManager {
                     height: p.height,
                     rgba: p.rgba,
                 });
-                match self.backend.write_slot(
+                match self.slot_backend.write_slot(
                     dir,
                     slot_id,
                     &state_blob,
@@ -255,13 +344,13 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
+    pub fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
             return;
         };
         let slot_id = self.active_slot_id.or_else(|| {
-            self.backend
+            self.slot_backend
                 .allocate_next_id(dir)
                 .map_err(|error| {
                     log::warn!("allocating state slot failed: {error}");
@@ -280,23 +369,23 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn create_slot(&mut self, emu: &impl CorePersistence) {
+    pub fn create_slot(&mut self, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("create_slot: no states_dir configured; cannot create slot");
             return;
         };
-        match self.backend.allocate_next_id(dir) {
+        match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, true),
             Err(error) => log::warn!("allocating state slot failed: {error}"),
         }
     }
 
-    pub(super) fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
+    pub fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return false;
         };
-        match self.backend.read_slot(dir, slot_id) {
+        match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("state import failed: {error}");
@@ -316,17 +405,17 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn load_active_slot(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn load_active_slot(&mut self, emu: &impl CorePersistence) -> bool {
         self.active_slot_id
             .is_some_and(|slot_id| self.load_slot(slot_id, emu))
     }
 
-    pub(super) fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
+    pub fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
             return;
         };
-        match self.backend.delete_slot(dir, slot_id) {
+        match self.slot_backend.delete_slot(dir, slot_id) {
             Ok(()) => {
                 if self.active_slot_id == Some(slot_id) {
                     self.active_slot_id = None;
@@ -338,24 +427,24 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn select_active_slot(&mut self, slot_id: u64) {
+    pub fn select_active_slot(&mut self, slot_id: u64) {
         self.active_slot_id = Some(slot_id);
     }
 
-    pub(super) fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
+    pub fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
         let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, forward)?;
         self.active_slot_id = Some(next_slot_id);
         Some(next_slot_id)
     }
 
-    pub(super) fn refresh_slots(&mut self, emu: &impl CorePersistence) {
+    pub fn refresh_slots(&mut self, emu: &impl CorePersistence) {
         let identity = emu.canonical_media_identity();
         self.refresh_slots_inner(identity.as_ref());
     }
 
     fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
         self.slots = if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            match self.backend.scan(dir, identity) {
+            match self.slot_backend.scan(dir, identity) {
                 Ok(slots) => slots,
                 Err(error) => {
                     log::warn!("slot scan failed: {error}");
@@ -377,7 +466,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
+    pub fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
         self.states_dir = Some(states_dir);
         self.mapper_save_path = Some(mapper_save_path);
         self.mapper_save_flush_allowed = true;
@@ -385,7 +474,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.states_dir = None;
         self.mapper_save_path = None;
         self.mapper_save_flush_allowed = true;
@@ -394,7 +483,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    pub(super) fn flush_mapper_save(
+    pub fn flush_mapper_save(
         &mut self,
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
@@ -415,7 +504,9 @@ impl PersistenceManager {
                 .ok()
                 .flatten()
             {
-                let recovery_path = self.backend.write_recovery_mapper_save(path, &bytes)?;
+                let recovery_path = self
+                    .mapper_backend
+                    .write_recovery_mapper_save(path, &bytes)?;
                 self.mapper_save_recovery_written = true;
                 log::warn!(
                     "mapper save auto-load failed earlier; wrote recovery save to {}",
@@ -425,14 +516,14 @@ impl PersistenceManager {
             return Ok(());
         }
         match emu.save_mapper_raw() {
-            Ok(Some(bytes)) => self.backend.write_mapper_save(path, &bytes)?,
+            Ok(Some(bytes)) => self.mapper_backend.write_mapper_save(path, &bytes)?,
             Ok(None) => {}
             Err(e) => log::warn!("mapper save failed: {e}"),
         }
         Ok(())
     }
 
-    pub(super) fn load_mapper_save_if_needed(
+    pub fn load_mapper_save_if_needed(
         &mut self,
         emu: &impl CorePersistence,
     ) -> Result<(), PersistenceError> {
@@ -440,7 +531,7 @@ impl PersistenceManager {
             log::warn!("mapper_save_path not set, mapper save load skipped");
             return Ok(());
         };
-        match self.backend.read_mapper_save(path) {
+        match self.mapper_backend.read_mapper_save(path) {
             Ok(Some(bytes)) => {
                 if let Err(e) = emu.load_mapper_raw(bytes) {
                     log::warn!("mapper save load failed: {e}");
@@ -456,7 +547,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
@@ -467,7 +558,10 @@ impl PersistenceManager {
         match emu.save_state_raw() {
             Ok(core_bytes) => {
                 let state_blob = save_state_with_header(core_bytes);
-                match self.backend.write_autosave(dir, &state_blob, &identity) {
+                match self
+                    .autosave_backend
+                    .write_autosave(dir, &state_blob, &identity)
+                {
                     Ok(_) => true,
                     Err(error) => {
                         log::warn!("saving hidden lifecycle state failed: {error}");
@@ -482,7 +576,7 @@ impl PersistenceManager {
         }
     }
 
-    pub(super) fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
@@ -490,7 +584,7 @@ impl PersistenceManager {
         let Some(identity) = emu.canonical_media_identity() else {
             return false;
         };
-        match self.backend.read_autosave(dir, &identity) {
+        match self.autosave_backend.read_autosave(dir, &identity) {
             Ok(Some(slot)) => {
                 if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
                     log::warn!(
@@ -498,38 +592,38 @@ impl PersistenceManager {
                         slot.summary.emulator_version,
                         env!("CARGO_PKG_VERSION")
                     );
-                    let _ = self.backend.delete_autosave(dir);
+                    let _ = self.autosave_backend.delete_autosave(dir);
                     return false;
                 }
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("hidden lifecycle state import failed: {error}");
-                    let _ = self.backend.delete_autosave(dir);
+                    let _ = self.autosave_backend.delete_autosave(dir);
                     false
                 } else {
                     true
                 }
             }
             Ok(None) => {
-                let _ = self.backend.delete_autosave(dir);
+                let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
             Err(error) => {
                 eprintln!("loading hidden lifecycle state failed: {error}");
-                let _ = self.backend.delete_autosave(dir);
+                let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
         }
     }
 
-    pub(super) fn clear_hidden(&mut self) {
+    pub fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!(
                 "clear_hidden: no states_dir configured; cannot clear hidden lifecycle state"
             );
             return;
         };
-        let _ = self.backend.delete_autosave(dir);
+        let _ = self.autosave_backend.delete_autosave(dir);
     }
 }
 
@@ -558,177 +652,4 @@ pub fn adjacent_slot_id(
         current_index - 1
     };
     Some(slots[next_index].slot_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use nerust_core_traits::factory::load::MediaObject;
-    use nerust_persistence::slots::autosave_state_slot_path;
-
-    use super::super::test_helpers::*;
-
-    #[test]
-    fn rebuild_preserves_restored_runtime_state_without_reloading_mapper_save() {
-        let temp_dir = unique_temp_dir("rebuild");
-        let rom_path = temp_dir.join("test.nes");
-
-        let mut session = test_session();
-        let options = session
-            .factory()
-            .expect("no active system")
-            .default_load_options();
-        let resolved = session
-            .factory()
-            .expect("no active system")
-            .resolve_load_request(&test_view(&session), options)
-            .unwrap();
-        session
-            .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
-            .unwrap();
-
-        let mapper_save_path = session
-            .persistence
-            .mapper_save_path()
-            .expect("load should configure mapper_save_path")
-            .clone();
-        fs::write(&mapper_save_path, [9, 8, 7, 6]).expect("mapper save should write");
-
-        let mut next = session.settings_snapshot().clone();
-        next.local.audio.latency_ms = 90;
-        let plan = session.apply_settings(next).unwrap();
-
-        assert!(plan.session_rebuild_required);
-        assert!(mapper_save_path.exists());
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn hidden_lifecycle_state_round_trips_without_visible_slot() {
-        let temp_dir = unique_temp_dir("hidden-lifecycle-state");
-        let rom_path = temp_dir.join("test.nes");
-
-        let mut session = test_session();
-        let options = session
-            .factory()
-            .expect("no active system")
-            .default_load_options();
-        let resolved = session
-            .factory()
-            .expect("no active system")
-            .resolve_load_request(&test_view(&session), options)
-            .unwrap();
-        session
-            .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
-            .unwrap();
-
-        assert!(session.save_hidden_lifecycle_state());
-        let autosave_path = autosave_state_slot_path(
-            session
-                .persistence
-                .states_dir()
-                .expect("load should configure states_dir"),
-        );
-        assert!(autosave_path.is_file());
-        assert!(session.slots().is_empty());
-        assert_eq!(session.active_slot_id(), None);
-
-        assert!(session.load_hidden_lifecycle_state());
-        assert_eq!(session.slots().len(), 0);
-        assert_eq!(session.active_slot_id(), None);
-
-        drop(session);
-        assert!(autosave_path.exists());
-        fs::remove_file(&autosave_path).ok();
-        assert!(!autosave_path.exists());
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn hidden_lifecycle_state_is_deleted_after_import_failure() {
-        let temp_dir = unique_temp_dir("hidden-lifecycle-import");
-        let rom_path = temp_dir.join("test.nes");
-
-        let mut session = test_session();
-        let options = session
-            .factory()
-            .expect("no active system")
-            .default_load_options();
-        let resolved = session
-            .factory()
-            .expect("no active system")
-            .resolve_load_request(&test_view(&session), options)
-            .unwrap();
-        session
-            .load_resolved(MediaObject::new(Some(rom_path), test_rom()), resolved)
-            .unwrap();
-
-        assert!(session.save_hidden_lifecycle_state());
-        let autosave_path = autosave_state_slot_path(
-            session
-                .persistence
-                .states_dir()
-                .expect("load should configure states_dir"),
-        );
-        assert!(autosave_path.is_file());
-
-        fs::write(&autosave_path, [0xFF, 0xFF, 0xFF]).expect("corrupt state");
-        assert!(!session.load_hidden_lifecycle_state());
-        assert!(!autosave_path.exists());
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
-        let temp_dir = unique_temp_dir("hidden-lifecycle-identity");
-        let rom_path = temp_dir.join("test.nes");
-
-        let mut session = test_session();
-        let options = session
-            .factory()
-            .expect("no active system")
-            .default_load_options();
-        let resolved = session
-            .factory()
-            .expect("no active system")
-            .resolve_load_request(&test_view(&session), options)
-            .unwrap();
-        session
-            .load_resolved(
-                MediaObject::new(Some(rom_path.clone()), test_rom()),
-                resolved,
-            )
-            .unwrap();
-        assert!(session.save_hidden_lifecycle_state());
-
-        let autosave_path = autosave_state_slot_path(
-            session
-                .persistence
-                .states_dir()
-                .expect("load should configure states_dir"),
-        );
-        assert!(autosave_path.is_file());
-        drop(session);
-
-        let mut session2 = test_session();
-        let options = session2
-            .factory()
-            .expect("no active system")
-            .default_load_options();
-        let resolved = session2
-            .factory()
-            .expect("no active system")
-            .resolve_load_request(&test_view(&session2), options)
-            .unwrap();
-        session2
-            .load_resolved(
-                MediaObject::new(Some(rom_path), test_rom_with_mapper4()),
-                resolved,
-            )
-            .unwrap();
-        assert!(!session2.load_hidden_lifecycle_state());
-        assert!(!autosave_path.exists());
-        let _ = fs::remove_dir_all(temp_dir);
-    }
 }

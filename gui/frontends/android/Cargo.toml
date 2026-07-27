@@ -27,6 +27,7 @@ nerust_nes_factory.workspace = true
 nerust_nes_settings.workspace = true
 nerust_render_traits.workspace = true
 nerust_render_wgpu.workspace = true
+nerust_settings_core.workspace = true
 nerust_settings_traits.workspace = true
 nerust_sound_cpal.workspace = true
 winit = { features = ["android-native-activity"], workspace = true }

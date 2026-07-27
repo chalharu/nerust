@@ -8,6 +8,7 @@ members = [
   "gui/runtime",
   "gui/settings",
   "gui/shell",
+  "gui/viewmodel",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -23,6 +24,7 @@ members = [
   "render/traits",
   "render/wgpu",
   "rom_test",
+  "settings/core",
   "serialize",
   "sound/cpal",
   "sound/cubeb",
@@ -135,6 +137,7 @@ nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_settings = { path = "gui/settings" }
 nerust_gui_shell = { path = "gui/shell" }
+nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_keyboard = { default-features = false, path = "keyboard" }
 nerust_nes_controller = { path = "nes/controller" }
@@ -152,6 +155,7 @@ nerust_render_wgpu = { path = "render/wgpu" }
 nerust_rom_test = { path = "rom_test" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_serialize = { path = "serialize" }
+nerust_settings_core = { path = "settings/core" }
 nerust_settings_traits = { path = "traits/settings" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }

@@ -1,8 +1,5 @@
 pub mod bindings;
 pub mod defaults;
-pub mod editor;
-pub mod factory;
-pub mod i18n;
 
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_gui_settings::local::{HostBackendLocalSettings, ScalingMode};

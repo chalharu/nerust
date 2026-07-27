@@ -6,7 +6,7 @@ use std::{
 use directories::ProjectDirs;
 use serde_value::Value;
 
-use super::{SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore};
+use super::{SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot};
 
 const SETTINGS_FILE_NAME: &str = "settings.yaml";
 const CENTRAL_STORAGE_DIR_NAME: &str = "persistence";
@@ -214,23 +214,4 @@ fn value_at_path_mut<'a>(value: &'a mut Value, path: &[&str]) -> Option<&'a mut 
         map.get_mut(&Value::String((*segment).to_string()))?,
         remaining,
     )
-}
-
-pub(super) fn save_snapshot_store(
-    store: &SettingsStore,
-    document: &SettingsDocument,
-) -> Result<(), SettingsError> {
-    match store {
-        SettingsStore::FileBacked(paths) => {
-            if let Some(parent) = paths.settings_file.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(
-                &paths.settings_file,
-                serde_saphyr::to_string(document.value())?,
-            )?;
-            Ok(())
-        }
-        SettingsStore::Ephemeral => Ok(()),
-    }
 }

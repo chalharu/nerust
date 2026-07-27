@@ -304,7 +304,7 @@ impl AndroidFrontend {
             .session
             .default_load_options()
             .ok_or_else(|| "no active system".to_string())?;
-        let view = nerust_gui_shell::settings::factory::settings_view(
+        let view = nerust_settings_core::factory::settings_view(
             self.session.settings_snapshot(),
             system_id.as_ref(),
         );
@@ -393,7 +393,7 @@ impl AndroidFrontend {
             .session
             .default_load_options()
             .ok_or_else(|| "no active system".to_string())?;
-        let view = nerust_gui_shell::settings::factory::settings_view(
+        let view = nerust_settings_core::factory::settings_view(
             self.session.settings_snapshot(),
             system_id.as_ref(),
         );

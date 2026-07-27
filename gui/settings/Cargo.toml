@@ -10,7 +10,6 @@ version.workspace = true
 nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard = { default-features = false, workspace = true }
-nerust_nes_settings.workspace = true
 nerust_settings_traits.workspace = true
 serde = { features = ["std"], workspace = true }
 

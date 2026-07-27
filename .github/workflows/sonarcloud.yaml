@@ -37,7 +37,8 @@ jobs:
             libxdo-dev \
             libasound2-dev \
             libcubeb-dev \
-            libudev-dev
+            libudev-dev \
+            xvfb
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -52,14 +53,22 @@ jobs:
           components: llvm-tools-preview, clippy
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version =0.8.7
-      - name: Generate coverage report
+      - name: Initialize coverage environment
+        run: mkdir -p coverage
+      - name: Generate coverage report (wgpu, tao)
         run: |
-          mkdir -p coverage
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov-tao.info
           workspace_root="${PWD%/}/"
-          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov.info
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-tao.info
+      - name: Generate coverage report (opengl, gtk)
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          xvfb-run cargo llvm-cov --workspace --exclude nerust_rom_test --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
+          workspace_root="${PWD%/}/"
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-gtk.info
       - name: Run SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
