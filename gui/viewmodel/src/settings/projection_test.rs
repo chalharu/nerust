@@ -7,10 +7,10 @@ use nerust_gui_settings::{
 };
 
 use crate::settings::{
-    EditorState, ValidationState,
+    ValidationState,
     catalog::FactoryCatalog,
     editor::{NoopStoragePathValidator, SettingsEditor, StoragePathValidator},
-    projection::{PreparedProjection, ProjectionHub, ProjectionNode},
+    projection::ProjectionHub,
 };
 
 fn test_editor() -> SettingsEditor {
@@ -78,68 +78,4 @@ fn prepare_all_skips_unchanged_projections() {
     assert!(prepared.is_empty());
 }
 
-// --- register_node tests: verify custom ProjectionNode impls ---
 
-struct CountingProjection {
-    name: &'static str,
-    prepare_count: std::cell::Cell<usize>,
-}
-
-impl CountingProjection {
-    fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            prepare_count: std::cell::Cell::new(0),
-        }
-    }
-}
-
-impl ProjectionNode for CountingProjection {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
-    fn prepare(&self, _candidate: &EditorState) -> Option<Box<dyn PreparedProjection>> {
-        self.prepare_count.set(self.prepare_count.get() + 1);
-        None
-    }
-
-    fn is_synced(&self, _current: &EditorState) -> bool {
-        true
-    }
-}
-
-#[test]
-fn register_node_adds_custom_projector() {
-    let hub = ProjectionHub::new();
-    let node = Rc::new(CountingProjection::new("custom"));
-    hub.register_node(Rc::clone(&node) as Rc<dyn ProjectionNode>);
-    assert_eq!(hub.node_count(), 1);
-
-    let editor = test_editor();
-    let _prepared = hub.prepare_all(&editor.current());
-    assert_eq!(node.prepare_count.get(), 1, "prepare should be called");
-}
-
-#[test]
-fn register_node_is_invoked_after_seal() {
-    let hub = ProjectionHub::new();
-    let node = Rc::new(CountingProjection::new("sealed-test"));
-    hub.register_node(Rc::clone(&node) as Rc<dyn ProjectionNode>);
-    hub.seal();
-
-    let editor = test_editor();
-    let _prepared = hub.prepare_all(&editor.current());
-    assert_eq!(node.prepare_count.get(), 1);
-}
-
-#[test]
-fn register_node_panics_on_sealed_hub() {
-    let hub = ProjectionHub::new();
-    hub.seal();
-    let node = Rc::new(CountingProjection::new("post-seal"));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        hub.register_node(node as Rc<dyn ProjectionNode>);
-    }));
-    assert!(result.is_err(), "register_node after seal should panic");
-}

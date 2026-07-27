@@ -125,20 +125,6 @@ impl ProjectionHub {
         ReadOnlyObservableProperty::new(inner)
     }
 
-    /// Register a custom [`ProjectionNode`] implementation.
-    ///
-    /// Enables external code to define projection strategies beyond the
-    /// default closure-based [`register`](Self::register) approach.
-    #[cfg(test)]
-    pub fn register_node(&self, node: Rc<dyn ProjectionNode>) {
-        assert!(
-            !self.sealed.get(),
-            "cannot register projection '{}' after hub is sealed",
-            node.name()
-        );
-        self.nodes.borrow_mut().push(node);
-    }
-
     pub fn prepare_all(&self, candidate: &EditorState) -> Vec<Box<dyn PreparedProjection>> {
         let nodes = self.nodes.borrow();
         nodes
