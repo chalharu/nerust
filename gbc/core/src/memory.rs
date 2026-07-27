@@ -211,6 +211,14 @@ impl GbcMemoryBus {
         self.interrupt.stop();
     }
 
+    pub fn halt_cpu(&mut self) {
+        self.interrupt.halt();
+    }
+
+    pub fn set_ime(&mut self, v: bool) {
+        self.interrupt.set_ime(v);
+    }
+
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {

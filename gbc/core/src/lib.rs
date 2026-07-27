@@ -8,6 +8,8 @@ pub(crate) mod cartridge_header;
 #[allow(dead_code)]
 pub(crate) mod cartridge_mbc;
 #[allow(dead_code)]
+pub(crate) mod cpu;
+#[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod interrupt;
