@@ -1,7 +1,8 @@
 /// Serial (Link Cable) stub.
 ///
 /// v1: no link cable emulation. External device is always disconnected,
-/// so reads return 0xFF and transfer completions clear the SC master flag.
+/// so reads return 0xFF. Master transfers complete immediately and
+/// request the Serial interrupt to unblock games polling for completion.
 pub struct Serial {
     sb: u8,
     sc: u8,
@@ -24,11 +25,14 @@ impl Serial {
         self.sc | 0x7E
     }
 
-    pub fn write_sc(&mut self, v: u8) {
+    /// Returns true if a master transfer just completed (interrupt requested).
+    pub fn write_sc(&mut self, v: u8) -> bool {
         self.sc = v & 0x81;
         if self.sc & 0x81 == 0x81 {
             self.sc &= !0x80;
+            return true;
         }
+        false
     }
 }
 
@@ -55,16 +59,18 @@ mod tests {
     }
 
     #[test]
-    fn write_sc_master_internal_clears_bit7() {
+    fn write_sc_master_internal_clears_bit7_and_returns_true() {
         let mut s = Serial::new();
-        s.write_sc(0x81); // master mode + transfer start
+        let completed = s.write_sc(0x81); // master mode + transfer start
+        assert!(completed);
         assert_eq!(s.read_sc() & 0x80, 0x00);
     }
 
     #[test]
-    fn write_sc_external_clock_does_not_clear_bit7() {
+    fn write_sc_external_clock_returns_false() {
         let mut s = Serial::new();
-        s.write_sc(0x80); // transfer start only, not master
+        let completed = s.write_sc(0x80); // transfer start only, not master
+        assert!(!completed);
         assert_eq!(s.read_sc() & 0x80, 0x80);
     }
 }
