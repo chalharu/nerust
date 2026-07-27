@@ -2,13 +2,11 @@ use crate::{
     apu::GbcApu,
     cartridge::Cartridge,
     dma::DmaController,
-    memory::interrupt::{InterruptController, InterruptKind},
+    interrupt::{InterruptController, InterruptKind},
     ppu::GbcPpu,
     serial::Serial,
     timer::Timer,
 };
-
-pub mod interrupt;
 
 const WRAM_SIZE: usize = 0x8000;
 const HRAM_SIZE: usize = 0x7F;
