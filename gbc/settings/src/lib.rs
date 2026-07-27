@@ -22,6 +22,9 @@ pub struct GbcSettings {
     pub system: GbcSystemSettingsSection,
 }
 
+/// DMG (original Game Boy) color palette presets.
+///
+/// Used when running a monochrome Game Boy ROM in GBC mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DmgPalette {
@@ -33,12 +36,13 @@ pub enum DmgPalette {
     Inverted,
 }
 
+/// RTC (Real-Time Clock) synchronization mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RtcSyncMode {
     #[default]
     Off,
-    SyncSystemTime,
+    SystemTime,
 }
 
 impl GbcSettings {
@@ -85,7 +89,7 @@ mod tests {
             },
             system: GbcSystemSettingsSection {
                 boot_rom_enabled: true,
-                rtc_sync: RtcSyncMode::SyncSystemTime,
+                rtc_sync: RtcSyncMode::SystemTime,
             },
         }
     }
@@ -100,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn dyne_clone_preserves_values() {
+    fn dyn_clone_preserves_values() {
         let settings: Box<dyn SystemSettings> = Box::new(test_settings());
         let cloned = settings.clone();
         let cloned_gbc = cloned
@@ -110,6 +114,34 @@ mod tests {
         assert_eq!(cloned_gbc.video.dmg_palette, DmgPalette::PastelMix);
         assert!(cloned_gbc.video.interframe_blending);
         assert!(cloned_gbc.system.boot_rom_enabled);
+    }
+
+    #[test]
+    fn set_dmg_palette_updates_field() {
+        let mut s = GbcSettings::default();
+        s.set_dmg_palette(DmgPalette::Inverted);
+        assert_eq!(s.video.dmg_palette, DmgPalette::Inverted);
+    }
+
+    #[test]
+    fn set_interframe_blending_updates_field() {
+        let mut s = GbcSettings::default();
+        s.set_interframe_blending(true);
+        assert!(s.video.interframe_blending);
+    }
+
+    #[test]
+    fn set_boot_rom_enabled_updates_field() {
+        let mut s = GbcSettings::default();
+        s.set_boot_rom_enabled(true);
+        assert!(s.system.boot_rom_enabled);
+    }
+
+    #[test]
+    fn set_rtc_sync_updates_field() {
+        let mut s = GbcSettings::default();
+        s.set_rtc_sync(RtcSyncMode::SystemTime);
+        assert_eq!(s.system.rtc_sync, RtcSyncMode::SystemTime);
     }
 
     #[test]
