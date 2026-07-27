@@ -285,4 +285,32 @@ mod tests {
         compute_and_set_checksum(&mut rom);
         assert!(CartridgeHeader::parse(&rom).is_none());
     }
+
+    #[test]
+    fn cartridge_type_has_ram() {
+        assert!(CartridgeType::Mbc1Ram.has_ram());
+        assert!(!CartridgeType::RomOnly.has_ram());
+        assert!(!CartridgeType::Mbc1.has_ram());
+    }
+
+    #[test]
+    fn cartridge_type_has_battery() {
+        assert!(CartridgeType::Mbc1RamBattery.has_battery());
+        assert!(!CartridgeType::Mbc1Ram.has_battery());
+    }
+
+    #[test]
+    fn rom_size_max_banks() {
+        let size = RomSize::from_byte(0x08).expect("512 banks");
+        assert_eq!(size.banks, 512);
+        assert_eq!(size.bytes, 512 * 0x4000);
+        assert!(RomSize::from_byte(0x09).is_none());
+    }
+
+    #[test]
+    fn ram_size_0x05_is_64kib() {
+        let size = RamSize::from_byte(0x05).expect("8 banks");
+        assert_eq!(size.banks, 8);
+        assert_eq!(size.bytes, 0x10000);
+    }
 }
