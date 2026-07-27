@@ -7,17 +7,7 @@ use strum::{Display, EnumIter, EnumString};
 
 use crate::{DmgPalette, GbcSettings, RtcSyncMode};
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    EnumString,
-    Display,
-    EnumIter,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
 pub enum GbcSettingField {
     #[strum(serialize = "video.dmg_palette")]
     VideoDmgPalette,
@@ -33,8 +23,12 @@ impl GbcSettingField {
     pub fn current_choice(&self, s: &GbcSettings) -> SystemSettingsChoiceId {
         let id = match self {
             Self::VideoDmgPalette => GbcSettingChoice::from(s.video.dmg_palette).to_string(),
-            Self::VideoInterframeBlending => GbcSettingChoice::from_bool(s.video.interframe_blending).to_string(),
-            Self::SystemBootRomEnabled => GbcSettingChoice::from_bool(s.system.boot_rom_enabled).to_string(),
+            Self::VideoInterframeBlending => {
+                GbcSettingChoice::from_bool(s.video.interframe_blending).to_string()
+            }
+            Self::SystemBootRomEnabled => {
+                GbcSettingChoice::from_bool(s.system.boot_rom_enabled).to_string()
+            }
             Self::SystemRtcSync => GbcSettingChoice::from(s.system.rtc_sync).to_string(),
         };
         SystemSettingsChoiceId(std::borrow::Cow::Owned(id))
@@ -99,11 +93,7 @@ impl GbcSettingChoice {
     }
 
     fn from_bool(v: bool) -> Self {
-        if v {
-            Self::On
-        } else {
-            Self::Off
-        }
+        if v { Self::On } else { Self::Off }
     }
 }
 
