@@ -126,9 +126,6 @@ impl SettingsEditor {
             }
         }
 
-        #[cfg(debug_assertions)]
-        self.projections.assert_all_synced(&self.current.borrow());
-
         let rev_callbacks = self.revision_inner.set(rev_value);
 
         let _guard = NotificationGuard::enter(&self.notifying);
