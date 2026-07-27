@@ -1,7 +1,7 @@
 //! INC/DEC instructions. Register indices follow Pan Docs: B=0,C=1,D=2,E=3,H=4,L=5,(HL)=6,A=7.
 
-use crate::cpu::opcodes::CpuStepState;
 use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
 fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {

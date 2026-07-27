@@ -1,7 +1,7 @@
 //! Stack instructions: PUSH, POP.
 
-use crate::cpu::opcodes::CpuStepState;
 use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
 pub(crate) struct Push<const R: u8>;
