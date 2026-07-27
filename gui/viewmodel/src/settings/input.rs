@@ -360,14 +360,18 @@ fn project_view(
         capture_target,
     );
 
-    // Build conflict messages
-    let conflicts: Vec<InputConflictView> =
-        conflicting_keys(&state.draft.shared, &topology, system_id.as_ref())
-            .into_iter()
-            .map(|(key, labels)| InputConflictView {
-                message: format!("{}: {}", key.label(), labels.join(", ")),
-            })
-            .collect();
+    // Build conflict messages — prefer cached result from validator
+    let conflicts: Vec<InputConflictView> = state
+        .conflicts_cache
+        .borrow()
+        .as_ref()
+        .and_then(|c| c.get(system_id.as_ref()).cloned())
+        .unwrap_or_else(|| conflicting_keys(&state.draft.shared, &topology, system_id.as_ref()))
+        .into_iter()
+        .map(|(key, labels)| InputConflictView {
+            message: format!("{}: {}", key.label(), labels.join(", ")),
+        })
+        .collect();
 
     InputTabView {
         system_id: system_id.clone_box(),

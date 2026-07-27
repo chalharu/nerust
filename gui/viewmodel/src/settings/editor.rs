@@ -45,6 +45,7 @@ impl SettingsEditor {
             catalog,
             supported_sample_rates,
             storage_validator,
+            conflicts_cache: RefCell::new(None),
         };
         let initial_validation = validator(&editor_state);
         let current = Rc::new(RefCell::new(EditorState {

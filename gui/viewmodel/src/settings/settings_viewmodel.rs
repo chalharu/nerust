@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use nerust_core_traits::factory::CoreFactory;
@@ -219,9 +219,13 @@ fn validate_factory_settings(
         });
     }
     let topology = build_topology(&assignments, input_factory.slots());
-    for (key, labels) in
-        conflicting_keys(&state.draft.shared, &topology, factory.system_id().as_ref())
+    let conflicts = conflicting_keys(&state.draft.shared, &topology, factory.system_id().as_ref());
     {
+        let mut cache = state.conflicts_cache.borrow_mut();
+        let cache = cache.get_or_insert_with(HashMap::new);
+        cache.insert(factory.system_id(), conflicts.clone());
+    }
+    for (key, labels) in &conflicts {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Input(sid.clone_box()),
             message: format!("{}: {}", key.label(), labels.join(", ")),

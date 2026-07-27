@@ -1,9 +1,22 @@
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    rc::Rc,
+    sync::Arc,
+};
 
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_settings::snapshot::SettingsSnapshot;
+use nerust_keyboard::Key;
 use nerust_settings_core::editor::CaptureTarget;
 
 use super::{ValidationState, catalog::FactoryCatalog};
+
+/// Cached result of [`conflicting_keys`](nerust_settings_core::bindings::conflicting_keys),
+/// keyed by `SystemId`.
+pub(crate) type ConflictsCache =
+    RefCell<Option<HashMap<Box<dyn SystemId>, BTreeMap<Key, Vec<String>>>>>;
 
 /// Storage path validation error.
 #[derive(Debug, Clone)]
@@ -67,4 +80,7 @@ pub struct EditorState {
     /// Cached snapshot, invalidated when revision advances.
     /// Stored as Arc to document intent for future copy-on-write optimization.
     pub(crate) cached_snapshot: Arc<SettingsSnapshot>,
+    /// Cache of [`conflicting_keys`] results, populated by the validator
+    /// and reused by input projections to avoid double computation.
+    pub(crate) conflicts_cache: ConflictsCache,
 }
