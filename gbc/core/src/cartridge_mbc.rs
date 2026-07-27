@@ -289,4 +289,81 @@ mod tests {
         // Effective = (1 << 5) | 1 = 33
         assert_eq!(mbc.read_rom_n(0x4000), 0xCC);
     }
+
+    #[test]
+    fn mbc1_mode_1_maps_rom0_to_other_bank() {
+        let mut rom = vec![0u8; 0x200000]; // 128 banks (2 MiB)
+        let bank32 = 32 * 0x4000;
+        rom[bank32] = 0xDD;
+        let mut mbc = Mbc1::new(rom, vec![], false);
+        mbc.write_rom(0x4000, 0x01); // secondary = 1
+        mbc.write_rom(0x6000, 0x01); // mode 1
+        assert_eq!(mbc.read_rom0(0x0000), 0xDD); // 0000 reads from bank $20
+    }
+
+    #[test]
+    fn mbc1_mode_1_allows_ram_banking() {
+        let mut ram = vec![0u8; 0x8000]; // 32 KiB (4 banks)
+        ram[0] = 0x11;
+        ram[0x2000] = 0x22;
+        let mut mbc = Mbc1::new(vec![0; 0x8000], ram, false);
+        mbc.write_rom(0x0000, 0x0A); // enable
+        mbc.write_rom(0x4000, 0x01); // ram_bank = 1
+        mbc.write_rom(0x6000, 0x01); // mode 1
+        assert_eq!(mbc.read_ram(0xA000), 0x22); // reads bank 1
+    }
+
+    #[test]
+    fn mbc1_mode_0_locks_ram_to_bank_0() {
+        let mut ram = vec![0u8; 0x8000];
+        ram[0] = 0x11;
+        ram[0x2000] = 0x22;
+        let mut mbc = Mbc1::new(vec![0; 0x8000], ram, false);
+        mbc.write_rom(0x0000, 0x0A); // enable
+        mbc.write_rom(0x4000, 0x01); // ram_bank = 1
+        mbc.write_rom(0x6000, 0x00); // mode 0
+        assert_eq!(mbc.read_ram(0xA000), 0x11); // locked to bank 0
+    }
+
+    #[test]
+    fn mbc1_deserialize_state_restores_registers() {
+        let mut mbc = Mbc1::new(vec![0; 0x20000], vec![0; 0x2000], true);
+        mbc.write_rom(0x0000, 0x0A); // enable
+        mbc.write_rom(0x2000, 0x03); // rom_bank = 3
+        mbc.write_rom(0x4000, 0x02); // ram_bank = 2
+        mbc.write_rom(0x6000, 0x01); // mode 1
+
+        let state = mbc.serialize_state();
+        let mut restored = Mbc1::new(vec![0; 0x20000], vec![0; 0x2000], true);
+        restored.deserialize_state(&state).expect("deserialize");
+
+        let rom = vec![0u8; 0x20000];
+        // bank 3 = offset 3 * 0x4000 (but bank 0 → 1, so effective 3 & mask)
+        // With 8 banks: bank_mask = 7, effective = (2<<5 | 3) & 7 = 3? No wait...
+        // 0x20000 = 8 banks, mask=7. In mode 1, bank_effective: upper=2<<5=64, bank=3, combined=67, mask=7 → 3
+        // Actually with 8 banks, bank_count=8<=32, so upper=0 (≤512 KiB). Combined=3&7=3. bank 3 => read offset 3*0x4000
+        let mut rom_set = vec![0u8; 0x20000];
+        rom_set[3 * 0x4000] = 0xFF;
+        let mut mbc2 = Mbc1::new(rom_set, vec![], false);
+        mbc2.deserialize_state(&state).expect("deserialize 2");
+        assert_eq!(mbc2.read_rom_n(0x4000), 0xFF);
+    }
+
+    #[test]
+    fn serialize_state_round_trip() {
+        let mut mbc = Mbc1::new(vec![0; 0x8000], vec![0x42; 0x2000], false);
+        mbc.write_rom(0x2000, 0x05);
+        let state = mbc.serialize_state();
+
+        let mut restored = Mbc1::new(vec![0; 0x8000], vec![0; 0x2000], false);
+        restored.deserialize_state(&state).expect("ok");
+        assert_eq!(state, restored.serialize_state());
+    }
+
+    #[test]
+    fn bank_mask_edge_cases() {
+        assert_eq!(Mbc1::bank_mask(1), 0);
+        assert_eq!(Mbc1::bank_mask(2), 1);
+        assert_eq!(Mbc1::bank_mask(128), 127);
+    }
 }

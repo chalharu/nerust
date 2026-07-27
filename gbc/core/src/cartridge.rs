@@ -107,4 +107,45 @@ mod tests {
         cart.write_rom(0x0000, 0x0A); // enable
         assert_eq!(cart.read_ram(0xA000), 0x55);
     }
+
+    #[test]
+    fn has_battery_delegates_to_mbc() {
+        let cart = Cartridge::default();
+        assert!(!cart.has_battery());
+    }
+
+    #[test]
+    fn ram_data_delegates_to_mbc() {
+        let cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc1::new(
+            vec![0; 0x8000],
+            vec![0x42; 8],
+            true,
+        )));
+        assert!(cart.ram_data().is_some());
+    }
+
+    #[test]
+    fn serialize_mbc_state_delegates() {
+        let cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc1::new(
+            vec![0; 0x20000],
+            vec![0; 0x2000],
+            false,
+        )));
+        let state = cart.serialize_mbc_state();
+        assert_eq!(state.len(), 6);
+    }
+
+    #[test]
+    fn ram_restore_delegates() {
+        let mut cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc1::new(
+            vec![0; 0x8000],
+            vec![0; 0x2000],
+            false,
+        )));
+        let data = vec![0xAA; 0x2000];
+        cart.ram_restore(&data);
+        // Enable RAM to verify data was restored
+        cart.write_rom(0x0000, 0x0A);
+        assert_eq!(cart.read_ram(0xA000), 0xAA);
+    }
 }
