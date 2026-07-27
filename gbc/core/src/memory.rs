@@ -58,6 +58,10 @@ impl GbcMemoryBus {
         }
     }
 
+    pub(crate) fn set_cartridge(&mut self, cartridge: Cartridge) {
+        self.cartridge = cartridge;
+    }
+
     // ── read / write ──────────────────────────────────────────
 
     pub fn read(&self, addr: u16) -> u8 {
@@ -181,6 +185,10 @@ impl GbcMemoryBus {
     }
 
     // ── facade methods ───────────────────────────────────────
+
+    pub fn serial_output(&self) -> &[u8] {
+        self.serial.output()
+    }
 
     pub fn set_joypad(&mut self, state: u8) {
         self.joypad = state;
