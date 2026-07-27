@@ -1,7 +1,14 @@
 use crate::cpu::registers::CpuRegisters;
 use crate::memory::GbcMemoryBus;
 
-pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u32 {
+/// Execute an opcode. `operands` contains up to 2 pre-fetched operand bytes
+/// (for 2-3 byte instructions). Set to [0, 0] for single-byte instructions.
+pub fn execute(
+    opcode: u8,
+    reg: &mut CpuRegisters,
+    bus: &mut GbcMemoryBus,
+    operands: [u8; 2],
+) -> u32 {
     match opcode {
         // ── 0x00-0x0F ──────────────────────────────────────────
         0x00 => 4, // NOP
@@ -42,8 +49,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x06 => {
             // LD B, d8
-            reg.b = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.b = operands[0];
             8
         }
         0x07 => {
@@ -99,8 +105,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x0E => {
             // LD C, d8
-            reg.c = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.c = operands[0];
             8
         }
         0x0F => {
@@ -156,8 +161,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x16 => {
             // LD D, d8
-            reg.d = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.d = operands[0];
             8
         }
         0x17 => {
@@ -209,8 +213,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x1E => {
             // LD E, d8
-            reg.e = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.e = operands[0];
             8
         }
         0x1F => {
@@ -267,8 +270,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x26 => {
             // LD H, d8
-            reg.h = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.h = operands[0];
             8
         }
         0x27 => {
@@ -340,8 +342,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x2E => {
             // LD L, d8
-            reg.l = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.l = operands[0];
             8
         }
         0x2F => {
@@ -454,8 +455,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x3E => {
             // LD A, d8
-            reg.a = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            reg.a = operands[0];
             8
         }
         0x3F => {
@@ -506,8 +506,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0x4B => {
             // CB prefix
-            let cb = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let cb = operands[0];
             execute_cb(cb, reg, bus)
         }
         0x4C => {
@@ -1029,8 +1028,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xC6 => {
             // ADD A, d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             add(reg, v);
             8
         }
@@ -1088,8 +1086,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xCE => {
             // ADC A, d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             adc(reg, v);
             8
         }
@@ -1152,8 +1149,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xD6 => {
             // SUB d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             sub(reg, v);
             8
         }
@@ -1202,8 +1198,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xDE => {
             // SBC A, d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             sbc(reg, v);
             8
         }
@@ -1243,8 +1238,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xE6 => {
             // AND d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             and(reg, v);
             8
         }
@@ -1281,8 +1275,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xEE => {
             // XOR d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             xor(reg, v);
             8
         }
@@ -1327,8 +1320,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xF6 => {
             // OR d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             or(reg, v);
             8
         }
@@ -1371,8 +1363,7 @@ pub fn execute(opcode: u8, reg: &mut CpuRegisters, bus: &mut GbcMemoryBus) -> u3
         }
         0xFE => {
             // CP d8
-            let v = bus.read(reg.pc);
-            reg.pc = reg.pc.wrapping_add(1);
+            let v = operands[0];
             cp(reg, v);
             8
         }
