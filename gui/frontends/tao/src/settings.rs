@@ -163,7 +163,7 @@ pub(crate) struct SettingsAppState {
 }
 
 impl SettingsAppState {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn new(
         snapshot: &SettingsSnapshot,
         registry: Arc<SystemRegistry>,

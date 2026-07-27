@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -80,11 +78,6 @@ impl<T: Clone + PartialEq + 'static> ObservablePropertyInner<T> {
             .map(|(_, cb)| Rc::clone(cb))
             .collect();
         Some(snapshot)
-    }
-
-    /// Replace the value without notifying observers.
-    pub(crate) fn replace(&self, value: T) {
-        *self.value.borrow_mut() = value;
     }
 }
 
