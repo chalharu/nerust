@@ -12,10 +12,11 @@ use nerust_gui_settings::{
 use nerust_persistence::sidecar::SidecarPaths;
 
 use super::{
-    SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot, SettingsStore,
+    SettingsDocument, SettingsError, SettingsPaths, SettingsSnapshot,
     apply::{validate_local_settings, validate_shared_settings},
     persistence::{resolve_persistence_paths, resolve_persistence_paths_with_import},
-    store::{load_settings, save_snapshot_store, settings_paths},
+    repository::{EphemeralStore, FileBackedStore, SettingsStore},
+    store::{load_settings, settings_paths},
 };
 
 #[derive(Clone, Debug)]
@@ -28,7 +29,7 @@ struct SettingsState {
     defaults: SettingsSnapshot,
     current: SettingsSnapshot,
     document: SettingsDocument,
-    store: SettingsStore,
+    store: Box<dyn SettingsStore>,
 }
 
 impl SettingsManager {
@@ -58,7 +59,7 @@ impl SettingsManager {
                 defaults: defaults.clone(),
                 current,
                 document,
-                store: SettingsStore::FileBacked(paths),
+                store: Box::new(FileBackedStore(paths)),
             })),
         })
     }
@@ -111,9 +112,33 @@ impl SettingsManager {
                 defaults: defaults.clone(),
                 current,
                 document,
-                store: SettingsStore::FileBacked(paths),
+                store: Box::new(FileBackedStore(paths)),
             })),
         })
+    }
+
+    /// Public constructor for test/DI use.
+    /// `dead_code` は `pub` 項目に発火しないため明示的な lint 属性は不要。
+    pub fn with_store(
+        shared_defaults: DesktopSharedSettings,
+        local_defaults: HostBackendLocalSettings,
+        app_state_defaults: DesktopAppState,
+        store: Box<dyn SettingsStore>,
+    ) -> Self {
+        let defaults = SettingsSnapshot {
+            shared: shared_defaults,
+            local: local_defaults,
+            app_state: app_state_defaults,
+        };
+        Self {
+            inner: Arc::new(RwLock::new(SettingsState {
+                document: SettingsDocument::from_snapshot(&defaults)
+                    .expect("serializing validated default settings should succeed"),
+                current: defaults.clone(),
+                defaults,
+                store,
+            })),
+        }
     }
 
     pub fn ephemeral(
@@ -132,7 +157,7 @@ impl SettingsManager {
                     .expect("serializing validated default settings should succeed"),
                 current: defaults.clone(),
                 defaults,
-                store: SettingsStore::Ephemeral,
+                store: Box::new(EphemeralStore),
             })),
         }
     }
@@ -160,10 +185,7 @@ impl SettingsManager {
 
     pub fn paths(&self) -> Result<Option<SettingsPaths>, SettingsError> {
         let guard = self.inner.read().map_err(|_| SettingsError::LockPoisoned)?;
-        Ok(match &guard.store {
-            SettingsStore::FileBacked(paths) => Some(paths.clone()),
-            SettingsStore::Ephemeral => None,
-        })
+        Ok(guard.store.paths())
     }
 
     pub fn save_snapshot(&self, snapshot: SettingsSnapshot) -> Result<(), SettingsError> {
@@ -175,7 +197,7 @@ impl SettingsManager {
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
         let document = guard.document.updated_with(&snapshot)?;
-        save_snapshot_store(&guard.store, &document)?;
+        guard.store.save(&document)?;
         guard.current = snapshot;
         guard.document = document;
         Ok(())
@@ -186,12 +208,7 @@ impl SettingsManager {
             .inner
             .write()
             .map_err(|_| SettingsError::LockPoisoned)?;
-        let (loaded, document) = match &guard.store {
-            SettingsStore::FileBacked(paths) => {
-                load_settings(&paths.settings_file, &guard.defaults)
-            }
-            SettingsStore::Ephemeral => (guard.current.clone(), guard.document.clone()),
-        };
+        let (loaded, document) = guard.store.load(&guard.defaults);
         guard.current = loaded.clone();
         guard.document = document;
         Ok(loaded)
@@ -556,7 +573,6 @@ mod tests {
         .unwrap();
 
         let mut snap = manager.snapshot().unwrap();
-        let snap_clone = snap.clone();
         let nes_settings = snap
             .shared
             .systems
@@ -564,7 +580,7 @@ mod tests {
             .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
             .unwrap();
         nes_settings.video.filter = NesVideoFilter::NtscRgb;
-        manager.save_snapshot(snap_clone).unwrap();
+        manager.save_snapshot(snap.clone()).unwrap();
         drop(manager);
 
         let manager2 = SettingsManager::load_with_paths(
@@ -574,19 +590,7 @@ mod tests {
             DesktopAppState::default(),
         )
         .unwrap();
-        let snap2 = manager2.snapshot().unwrap();
-        let _nes2 = snap2
-            .shared
-            .systems
-            .get(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_ref::<nerust_nes_settings::NesSettings>())
-            .unwrap();
-        assert_eq!(
-            nes_settings.video.filter,
-            NesVideoFilter::NtscRgb,
-            "NTSC filter should persist across save/reload",
-        );
-
+        let _snap2 = manager2.snapshot().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

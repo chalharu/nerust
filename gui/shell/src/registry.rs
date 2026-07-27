@@ -9,10 +9,8 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::rom::load_rom_path;
 
-use crate::{
-    load::{RomLoadTarget, RomLoader, RomLoaderError},
-    settings::factory::settings_view,
-};
+use crate::load::{RomLoadTarget, RomLoader, RomLoaderError};
+use nerust_settings_core::factory::settings_view;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RegistryError {
@@ -186,61 +184,7 @@ mod tests {
     declare_system_id!(DummyOtherSystemId, "registry-other");
 
     #[derive(Debug, Clone)]
-    struct StubFactory;
-
-    impl CoreFactory for StubFactory {
-        fn system_id(&self) -> Box<dyn SystemId> {
-            Box::new(DummySystemId)
-        }
-        fn display_name(&self) -> &'static str {
-            "Stub"
-        }
-        fn probe_media(&self, _media: &MediaObject) -> bool {
-            false
-        }
-        fn settings_page(&self, _view: &FactorySettingsView) -> SystemSettingsPageModel {
-            SystemSettingsPageModel {
-                fields: Arc::new([]),
-            }
-        }
-        fn apply_settings_choice(
-            &self,
-            _view: &mut FactorySettingsView,
-            _field: &SystemSettingsFieldId,
-            _choice: &SystemSettingsChoiceId,
-        ) -> Result<(), FactoryError> {
-            Ok(())
-        }
-        fn resolve_load_request(
-            &self,
-            _view: &FactorySettingsView,
-            _options: Box<dyn DynSystemLoadOptions>,
-        ) -> Result<ResolvedLoadRequest, FactoryError> {
-            Ok(ResolvedLoadRequest {
-                options: Box::<NoopCoreOptions>::default(),
-            })
-        }
-        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-            NoopSystemLoadOptions.into()
-        }
-        fn create_core_and_adapter_with_assignments(
-            &self,
-            _view: &FactorySettingsView,
-            _speaker: Box<dyn nerust_core_traits::audio::AudioBackend>,
-            _assignments: &InputAssignments,
-        ) -> Result<CoreParts, FactoryError> {
-            unreachable!()
-        }
-        fn input_system_factory(&self) -> &dyn InputSystemFactory {
-            unreachable!()
-        }
-        fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
-            unreachable!()
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct MatchingStubFactory(Box<dyn SystemId>);
+    struct MatchingStubFactory(Box<dyn SystemId>, bool);
 
     impl CoreFactory for MatchingStubFactory {
         fn system_id(&self) -> Box<dyn SystemId> {
@@ -250,7 +194,7 @@ mod tests {
             "Matched"
         }
         fn probe_media(&self, _media: &MediaObject) -> bool {
-            true
+            self.1
         }
         fn settings_page(&self, _view: &FactorySettingsView) -> SystemSettingsPageModel {
             SystemSettingsPageModel {
@@ -304,7 +248,7 @@ mod tests {
     impl SystemLoadOptions for NoopSystemLoadOptions {}
 
     fn stub_factory() -> Arc<dyn CoreFactory> {
-        Arc::new(StubFactory)
+        Arc::new(MatchingStubFactory(Box::new(DummySystemId), false))
     }
 
     struct RecordingTarget {
@@ -373,7 +317,8 @@ mod tests {
     #[test]
     fn all_preserves_registration_order() {
         let a = stub_factory();
-        let b: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
+        let b: Arc<dyn CoreFactory> =
+            Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId), true));
         let registry = SystemRegistry::new(vec![a.clone(), b.clone()]);
         assert_eq!(registry.all().len(), 2);
         assert_eq!(registry.all()[0].system_id(), a.system_id());
@@ -405,7 +350,7 @@ mod tests {
     #[test]
     fn detect_returns_matching_factory() {
         let fallback = stub_factory();
-        let matched = Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
+        let matched = Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId), true));
         let matched_id = matched.system_id();
         let registry = SystemRegistry::new(vec![fallback, matched]);
         let media = MediaObject::new(Some("game.nes".into()), vec![]);
@@ -417,9 +362,10 @@ mod tests {
 
     #[test]
     fn detect_rejects_ambiguous_media() {
-        let first: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummySystemId)));
+        let first: Arc<dyn CoreFactory> =
+            Arc::new(MatchingStubFactory(Box::new(DummySystemId), true));
         let second: Arc<dyn CoreFactory> =
-            Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId)));
+            Arc::new(MatchingStubFactory(Box::new(DummyOtherSystemId), true));
         let registry = SystemRegistry::new(vec![first, second]);
         let media = MediaObject::new(Some("game.rom".into()), vec![]);
 
@@ -453,7 +399,8 @@ mod tests {
 
     #[test]
     fn loader_detects_loads_and_resumes_target() {
-        let factory: Arc<dyn CoreFactory> = Arc::new(MatchingStubFactory(Box::new(DummySystemId)));
+        let factory: Arc<dyn CoreFactory> =
+            Arc::new(MatchingStubFactory(Box::new(DummySystemId), true));
         let registry = Arc::new(SystemRegistry::new(vec![factory]));
         let mut loader = registry.create_loader(HashMap::new()).unwrap();
         let path = temp_rom_path("success.nes");

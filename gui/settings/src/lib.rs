@@ -3,6 +3,7 @@ pub mod input;
 pub mod language;
 pub mod local;
 pub mod shared;
+pub mod snapshot;
 
 #[cfg(test)]
 mod tests {

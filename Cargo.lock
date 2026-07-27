@@ -2836,6 +2836,7 @@ dependencies = [
  "nerust_nes_settings",
  "nerust_render_traits",
  "nerust_render_wgpu",
+ "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
  "winit",
@@ -2896,11 +2897,13 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
  "nerust_render_traits",
  "nerust_run_options",
+ "nerust_settings_core",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-quartz-core 0.3.2",
@@ -2933,7 +2936,6 @@ dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
  "nerust_keyboard",
- "nerust_nes_settings",
  "nerust_settings_traits",
  "serde",
  "serde-saphyr",
@@ -2954,10 +2956,25 @@ dependencies = [
  "nerust_nes_settings",
  "nerust_persistence",
  "nerust_render_traits",
+ "nerust_settings_core",
  "nerust_settings_traits",
  "rmp-serde",
  "serde",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "nerust_gui_viewmodel"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_gui_settings",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_settings_core",
+ "serde",
+ "thiserror 2.0.19",
+ "typetag",
 ]
 
 [[package]]
@@ -3153,6 +3170,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_settings_core"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_gui_settings",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_settings_traits",
+ "serde",
+ "typetag",
+]
+
+[[package]]
 name = "nerust_settings_traits"
 version = "0.1.0-dev"
 dependencies = [
@@ -3200,11 +3230,13 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
+ "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_persistence",
  "nerust_render_traits",
  "nerust_run_options",
+ "nerust_settings_core",
  "raw-window-handle",
  "rfd",
  "tao",

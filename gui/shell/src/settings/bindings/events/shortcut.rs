@@ -1,8 +1,10 @@
 use nerust_gui_settings::{input::ShortcutAction, shared::DesktopSharedSettings};
 use nerust_keyboard::Key;
 
+#[cfg(test)]
 use crate::session::commands::SessionCommand;
 
+#[cfg(test)]
 pub fn shortcut_command_for_key(
     settings: &DesktopSharedSettings,
     key: Key,
@@ -23,6 +25,7 @@ pub fn shortcut_action_for_key(
         .map(|binding| binding.action)
 }
 
+#[cfg(test)]
 fn shortcut_action_to_command(action: ShortcutAction) -> Option<SessionCommand> {
     Some(match action {
         ShortcutAction::TogglePause => SessionCommand::TogglePause,

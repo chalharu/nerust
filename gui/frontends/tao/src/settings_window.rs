@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
@@ -17,13 +18,9 @@ use iced_winit::{
     runtime::user_interface::{Cache, UserInterface},
 };
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
-use nerust_gui_shell::settings::editor::CaptureTarget;
-use nerust_input_traits::InputAssignments;
 
-use crate::settings::ui::PendingAssignments;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 use tao::{
@@ -33,7 +30,7 @@ use tao::{
 };
 
 use crate::{
-    settings::ui::{Message, SettingsAppProgram},
+    settings::{Message, SettingsAppProgram},
     tao_conversions::*,
 };
 
@@ -45,6 +42,7 @@ pub(crate) struct UiState {
         UserInterface<'static, Message, iced::Theme, iced_tiny_skia::Renderer>,
     >,
     instance: program::Instance<SettingsAppProgram>,
+    view_invalidated: Rc<Cell<bool>>,
 }
 
 impl UiState {
@@ -76,11 +74,13 @@ impl UiState {
         window_id: iced::window::Id,
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
+        view_invalidated: Rc<Cell<bool>>,
     ) -> Self {
         let ui = Self::build_ui(&instance, window_id, bounds, Cache::default(), renderer);
         Self {
             ui: std::mem::ManuallyDrop::new(ui),
             instance,
+            view_invalidated,
         }
     }
 
@@ -90,7 +90,11 @@ impl UiState {
         &mut self.ui
     }
 
-    /// Process messages, then rebuild UI with updated instance + old cache.
+    /// Process messages, then conditionally rebuild UI.
+    ///
+    /// Rebuilds only when `view_invalidated` is set or when the message
+    /// list is non-empty (initial render). Navigation-only messages and
+    /// domain changes both set the flag via `SettingsAppState::update()`.
     fn process_messages(
         &mut self,
         messages: Vec<Message>,
@@ -98,9 +102,10 @@ impl UiState {
         bounds: Size,
         renderer: &mut iced_tiny_skia::Renderer,
     ) {
-        if messages.is_empty() {
+        if messages.is_empty() && !self.view_invalidated.get() {
             return;
         }
+
         // Step 1: Replace UI with a placeholder, extract old cache.
         let placeholder = std::mem::replace(
             &mut *self.ui,
@@ -128,6 +133,8 @@ impl UiState {
             Self::build_ui(&self.instance, window_id, bounds, cache, renderer),
         );
         let _ = stale.into_cache(); // discard placeholder
+
+        self.view_invalidated.set(false);
     }
 }
 
@@ -149,9 +156,7 @@ pub(crate) struct SettingsWindowHandle {
     pub(crate) scale_factor: f32,
     pub(crate) modifiers: keyboard::Modifiers,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) pending_assignments: PendingAssignments,
     pub(crate) should_close: Arc<AtomicBool>,
-    pub(crate) capture_target: Arc<Mutex<Option<CaptureTarget>>>,
     cursor: mouse::Cursor,
     clipboard: Clipboard,
 }
@@ -192,8 +197,7 @@ impl SettingsWindowHandle {
     ) -> Option<Self> {
         let should_close = Arc::new(AtomicBool::new(false));
         let pending_apply = Arc::new(Mutex::new(None));
-        let pending_assignments = Rc::new(Mutex::new(None));
-        let capture_target = Arc::new(Mutex::new(None));
+        let view_invalidated = Rc::new(Cell::new(false));
 
         #[cfg_attr(not(target_os = "macos"), expect(unused_mut))]
         let mut wb = WindowBuilder::new()
@@ -218,8 +222,7 @@ impl SettingsWindowHandle {
             audio_registry,
             should_close: should_close.clone(),
             pending_apply: pending_apply.clone(),
-            pending_assignments: pending_assignments.clone(),
-            capture_target: capture_target.clone(),
+            view_invalidated: Rc::clone(&view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
         let scale_factor = window.scale_factor() as f32;
@@ -245,7 +248,13 @@ impl SettingsWindowHandle {
             scale_factor,
         )
         .logical_size();
-        let ui_state = UiState::new(instance, window_id, bounds, &mut renderer);
+        let ui_state = UiState::new(
+            instance,
+            window_id,
+            bounds,
+            &mut renderer,
+            Rc::clone(&view_invalidated),
+        );
 
         window.request_redraw();
 
@@ -263,9 +272,7 @@ impl SettingsWindowHandle {
             scale_factor,
             modifiers: keyboard::Modifiers::default(),
             pending_apply,
-            pending_assignments,
             should_close,
-            capture_target,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
         })
@@ -274,19 +281,14 @@ impl SettingsWindowHandle {
     pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
         let mut messages = Vec::new();
 
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+            && let Some(key) = crate::settings::keyboard_key_from_physical(*physical_key)
         {
-            let capture_guard = self.capture_target.lock().unwrap();
-            if capture_guard.is_some()
-                && let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    physical_key,
-                    repeat: false,
-                    ..
-                }) = &mapped
-                && let Some(key) = crate::settings::ui::keyboard_key_from_physical(*physical_key)
-            {
-                drop(capture_guard);
-                messages.push(Message::CaptureKey(key));
-            }
+            messages.push(Message::CaptureKey(key));
         }
 
         self.ui_state.ui_mut().update(
@@ -349,12 +351,6 @@ impl SettingsWindowHandle {
 
     pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
         self.pending_apply.lock().unwrap().take()
-    }
-
-    pub(crate) fn take_pending_assignments(
-        &mut self,
-    ) -> Option<Vec<(Box<dyn SystemId>, InputAssignments)>> {
-        self.pending_assignments.lock().unwrap().take()
     }
 
     pub(crate) fn set_scale_factor(&mut self, sf: f32) {

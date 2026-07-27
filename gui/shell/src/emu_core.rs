@@ -16,7 +16,26 @@ use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
-use crate::session::persistence::{CorePersistence, CorePersistenceError};
+/// Errors from core operations invoked by the persistence layer.
+#[derive(Debug, thiserror::Error)]
+pub enum CorePersistenceError {
+    #[error("emu thread channel unavailable")]
+    WorkerUnavailable,
+    #[error("emu thread reply channel closed")]
+    NoReply,
+    #[error("{0}")]
+    Core(String),
+}
+
+/// The persistence-relevant subset of EmuCore's interface.
+pub trait CorePersistence {
+    fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
+    fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
+    fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
+    fn canonical_media_identity(&self) -> Option<SystemIdentity>;
+    fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError>;
+    fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError>;
+}
 
 pub struct EmuCore {
     emu: EmuThread,

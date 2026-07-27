@@ -1,7 +1,4 @@
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Mutex;
 
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
@@ -18,10 +15,8 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{
-    registry::SystemRegistry,
-    settings::factory::{apply_settings_choice, resolve_label, settings_view},
-};
+use nerust_gui_shell::registry::SystemRegistry;
+use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 // ---------------------------------------------------------------------------
@@ -292,12 +287,26 @@ pub(crate) enum SettingsDialogResult {
     Applied(String),
 }
 
-static SETTINGS_RESULT: Mutex<Option<SettingsDialogResult>> = Mutex::new(None);
-static SETTINGS_WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
-static SETTINGS_REQUEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+/// JNI bridge state: bundled into one struct to avoid multiple statics.
+struct SettingsBridge {
+    result: Option<SettingsDialogResult>,
+    waker: Option<AndroidAppWaker>,
+    in_flight: bool,
+    cached: CachedSettingsData,
+}
 
-/// Pre-marshalled settings data for synchronous dialog display from JNI callbacks.
-static CACHED_SETTINGS: Mutex<CachedSettingsData> = Mutex::new(CachedSettingsData::empty());
+impl SettingsBridge {
+    const fn empty() -> Self {
+        Self {
+            result: None,
+            waker: None,
+            in_flight: false,
+            cached: CachedSettingsData::empty(),
+        }
+    }
+}
+
+static SETTINGS: Mutex<SettingsBridge> = Mutex::new(SettingsBridge::empty());
 
 struct CachedSettingsData {
     keys: Vec<String>,
@@ -323,9 +332,7 @@ pub(crate) fn update_cached_settings(current: &AndroidSettings) {
     let labels = current.dialog_labels();
     let choices = current.dialog_choices();
     let current_indices = current.current_indices();
-    *CACHED_SETTINGS
-        .lock()
-        .expect("cached settings mutex poisoned") = CachedSettingsData {
+    SETTINGS.lock().expect("settings mutex poisoned").cached = CachedSettingsData {
         keys,
         labels,
         choices,
@@ -339,48 +346,44 @@ pub(crate) fn show_settings_dialog_sync(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
 ) -> Result<bool, String> {
-    if SETTINGS_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    if guard.in_flight {
         return Ok(false);
     }
-    let cached = CACHED_SETTINGS
-        .lock()
-        .expect("cached settings mutex poisoned");
-    let keys = cached.keys.clone();
-    let labels = cached.labels.clone();
-    let choices = cached.choices.clone();
-    let current_indices = cached.current_indices.clone();
-    drop(cached);
+    guard.in_flight = true;
+    let keys = guard.cached.keys.clone();
+    let labels = guard.cached.labels.clone();
+    let choices = guard.cached.choices.clone();
+    let current_indices = guard.cached.current_indices.clone();
+    drop(guard);
 
     if let Err(error) =
         show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices)
     {
-        SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+        SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
         return Err(error);
     }
     Ok(true)
 }
 
 pub(crate) fn bind_app(app: &AndroidApp) {
-    *SETTINGS_WAKER
-        .lock()
-        .expect("settings waker mutex poisoned") = Some(app.create_waker());
-    *SETTINGS_RESULT
-        .lock()
-        .expect("settings result mutex poisoned") = None;
-    SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    guard.waker = Some(app.create_waker());
+    guard.result = None;
+    guard.in_flight = false;
 }
 
 pub(crate) fn reset() {
-    *SETTINGS_RESULT
-        .lock()
-        .expect("settings result mutex poisoned") = None;
-    SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    guard.result = None;
+    guard.in_flight = false;
 }
 
 pub(crate) fn take_result() -> Option<SettingsDialogResult> {
-    SETTINGS_RESULT
+    SETTINGS
         .lock()
-        .expect("settings result mutex poisoned")
+        .expect("settings mutex poisoned")
+        .result
         .take()
 }
 
@@ -391,8 +394,12 @@ pub(crate) fn request_show_settings_dialog(
     app: &AndroidApp,
     current: &AndroidSettings,
 ) -> Result<bool, String> {
-    if SETTINGS_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
-        return Ok(false);
+    {
+        let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+        if guard.in_flight {
+            return Ok(false);
+        }
+        guard.in_flight = true;
     }
 
     let keys = current.dialog_keys();
@@ -411,7 +418,7 @@ pub(crate) fn request_show_settings_dialog(
             &current_indices,
         ) {
             log::error!("{error}");
-            SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+            SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
             wake_main_thread();
         }
     }));
@@ -495,17 +502,18 @@ fn show_settings_with_env_inner(
 }
 
 fn publish_result(result: SettingsDialogResult) {
-    *SETTINGS_RESULT
-        .lock()
-        .expect("settings result mutex poisoned") = Some(result);
-    SETTINGS_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    guard.result = Some(result);
+    guard.in_flight = false;
+    drop(guard);
     wake_main_thread();
 }
 
 fn wake_main_thread() {
-    if let Some(waker) = SETTINGS_WAKER
+    if let Some(waker) = SETTINGS
         .lock()
-        .expect("settings waker mutex poisoned")
+        .expect("settings mutex poisoned")
+        .waker
         .clone()
     {
         waker.wake();

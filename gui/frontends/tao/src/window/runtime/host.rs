@@ -16,15 +16,13 @@ use nerust_gui_shell::{
         commands::SessionCommand,
         lifecycle::WindowSize,
     },
-    settings::{
-        i18n::{UiText, text},
-        scaling_factor,
-    },
+    settings::scaling_factor,
 };
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, RenderResult},
 };
+use nerust_settings_core::i18n::{UiText, text};
 use rfd::FileDialog;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
@@ -471,23 +469,9 @@ impl HostState {
         mut handle: crate::settings_window::SettingsWindowHandle,
     ) -> Option<SettingsResult> {
         let pending = handle.take_pending_apply();
-        let pending_assignments = handle.take_pending_assignments();
         drop(handle);
         self.on_settings_closed();
-        if let Some(mut snapshot) = pending {
-            if let Some(per_system) = pending_assignments {
-                for (sid, assignments) in per_system {
-                    snapshot
-                        .app_state
-                        .controller_assignments
-                        .insert(sid.clone(), assignments.to_string_pairs());
-                    if self.session.active_system_id() == Some(sid.as_ref())
-                        && let Err(error) = self.session.reassign_controllers(&assignments)
-                    {
-                        log::warn!("controller reassign failed: {error}");
-                    }
-                }
-            }
+        if let Some(snapshot) = pending {
             match self.apply_settings(snapshot) {
                 Ok(plan) => return Some(plan),
                 Err(error) => {

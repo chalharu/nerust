@@ -1,10 +1,11 @@
 mod gdk_raw;
+pub mod mapping;
 mod preferences;
 mod renderer;
 mod surface;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
 use gtk::{
     gio, glib,
@@ -13,7 +14,6 @@ use gtk::{
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
     },
 };
-use nerust_core_traits::factory::{CoreFactory, descriptor::SystemSettingsPageModel};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -25,15 +25,12 @@ use nerust_gui_shell::{
         access::{FrontendSession, SettingsResult},
         commands::SessionCommand,
     },
-    settings::{
-        factory::settings_view,
-        i18n::{UiText, text},
-    },
 };
 use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
 use nerust_run_options::RunOptions;
+use nerust_settings_core::i18n::{UiText, text};
 
 use self::window::{StateMenus, Window, WindowExtend};
 
@@ -78,24 +75,6 @@ impl State {
 
     pub(crate) fn frame_buffer(&self) -> Option<&FrameBuffer> {
         self.session.frame_buffer()
-    }
-
-    pub(crate) fn active_factory(&self) -> Option<Arc<dyn CoreFactory>> {
-        self.session.active_factory().cloned()
-    }
-
-    pub(crate) fn settings_pages(&self) -> Vec<(&'static str, SystemSettingsPageModel)> {
-        let snapshot = self.session.settings_snapshot();
-        self.ctx
-            .registry
-            .all()
-            .iter()
-            .map(|factory| {
-                let system_id = factory.system_id();
-                let view = settings_view(snapshot, system_id.as_ref());
-                (factory.display_name(), factory.settings_page(&view))
-            })
-            .collect()
     }
 
     pub(crate) fn render_profile(&self) -> Option<&VideoRenderProfile> {
