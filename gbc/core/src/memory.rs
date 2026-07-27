@@ -206,6 +206,11 @@ impl GbcMemoryBus {
         self.dma.active()
     }
 
+    pub fn stop(&mut self) {
+        self.timer.reset_div();
+        self.interrupt.stop();
+    }
+
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {
@@ -490,6 +495,19 @@ mod tests {
         // Complete the full 160 transfers
         bus.step_devices(4 * 159);
         assert!(!bus.is_dma_active());
+    }
+
+    // ── Stop ───────────────────────────────────────────────
+
+    #[test]
+    fn stop_resets_div_and_sets_halted() {
+        let mut bus = bus();
+        bus.write(0xFF04, 0x00); // reset div first
+        bus.step_devices(1000); // advance div
+        assert!(bus.read(0xFF04) > 0);
+        bus.stop();
+        assert_eq!(bus.read(0xFF04), 0);
+        assert!(bus.is_halted_or_stopped());
     }
 
     // ── Default impl ──────────────────────────────────────

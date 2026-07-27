@@ -27,6 +27,12 @@ impl Timer {
         }
     }
 
+    /// Reset the divider (DIV) to 0. Called on STOP instruction per Pan Docs.
+    pub fn reset_div(&mut self) {
+        self.div = 0;
+        self.counter = 0;
+    }
+
     pub fn step(&mut self, cycles: u32) -> TimerStepResult {
         let mut overflow = false;
 
@@ -174,5 +180,15 @@ mod tests {
         timer.write(0xFF04, 0x00);
         let upper = timer.read(0xFF04);
         assert!(upper < 2);
+    }
+
+    #[test]
+    fn reset_div_clears_div_and_counter() {
+        let mut timer = Timer::new();
+        timer.write(0xFF07, 0x04);
+        timer.step(500);
+        assert!(timer.read(0xFF04) > 0);
+        timer.reset_div();
+        assert_eq!(timer.read(0xFF04), 0);
     }
 }
