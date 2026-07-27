@@ -1,7 +1,7 @@
 //! Control flow instructions: JP, JR, CALL, RET, RST.
 
 use crate::cpu_core::Lr35902Cpu;
-use crate::cpu_opcodes::StepResult;
+use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 

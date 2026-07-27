@@ -1,8 +1,16 @@
 //! LR35902 CPU core types shared between cpu and cpu_opcodes.
 
-use crate::cpu_opcodes::HandlerFn;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbcMemoryBus;
+
+/// Returned by each M-cycle step of an instruction.
+pub(crate) enum StepResult {
+    Continue,
+    Exit,
+}
+
+/// Handler function pointer type.
+pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepResult;
 
 /// Phases of the CPU state machine.
 pub(crate) enum Phase {
