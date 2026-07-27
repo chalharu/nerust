@@ -29,21 +29,21 @@ impl VideoSettingsViewModel {
 
     pub fn set_fullscreen_default(&self, value: bool) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.video.window.fullscreen_default = value;
+            state.draft_mut().local.video.window.fullscreen_default = value;
             Ok(())
         })
     }
 
     pub fn set_scaling(&self, value: ScalingMode) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.video.window.scaling = value;
+            state.draft_mut().local.video.window.scaling = value;
             Ok(())
         })
     }
 
     pub fn set_vsync(&self, value: bool) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.video.presentation.vsync = value;
+            state.draft_mut().local.video.presentation.vsync = value;
             Ok(())
         })
     }

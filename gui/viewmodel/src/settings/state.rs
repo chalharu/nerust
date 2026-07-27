@@ -18,6 +18,13 @@ use super::{ValidationState, catalog::FactoryCatalog};
 pub(crate) type ConflictsCache =
     RefCell<Option<HashMap<Box<dyn SystemId>, BTreeMap<Key, Vec<String>>>>>;
 
+impl EditorState {
+    /// Obtain a mutable reference to the draft, cloning-on-write if shared.
+    pub(crate) fn draft_mut(&mut self) -> &mut SettingsSnapshot {
+        Arc::make_mut(&mut self.draft)
+    }
+}
+
 /// Storage path validation error.
 #[derive(Debug, Clone)]
 pub enum StoragePathError {
@@ -70,7 +77,7 @@ impl StoragePathValidator for NoopStoragePathValidator {
 /// Mutable state for the settings editor.
 #[derive(Clone)]
 pub struct EditorState {
-    pub(crate) draft: SettingsSnapshot,
+    pub(crate) draft: Arc<SettingsSnapshot>,
     pub(crate) capture_target: Option<CaptureTarget>,
     pub validation: ValidationState,
     pub revision: u64,

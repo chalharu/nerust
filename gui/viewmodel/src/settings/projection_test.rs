@@ -48,7 +48,7 @@ fn prepare_all_returns_prepared_projections_for_changed_values() {
 
     editor
         .transact(|state| {
-            state.draft.local.audio.muted = true;
+            state.draft_mut().local.audio.muted = true;
             Ok(())
         })
         .unwrap();

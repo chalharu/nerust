@@ -69,7 +69,7 @@ impl SystemSettingsViewModel {
                 .find_by_id(factory_id.as_ref())
                 .cloned()
                 .ok_or(ViewModelError::UnknownSystem(factory_id.to_string()))?;
-            apply_settings_choice(factory.as_ref(), &mut state.draft, &field, &choice)
+            apply_settings_choice(factory.as_ref(), state.draft_mut(), &field, &choice)
                 .map_err(|_| ViewModelError::InvalidSystemChoice)
         })
     }
