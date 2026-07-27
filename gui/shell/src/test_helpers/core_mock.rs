@@ -5,7 +5,7 @@ use nerust_render_traits::{
     FrameBuffer, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
 
-use crate::test_helpers::{CORE_CREATION_COUNT, DummySystemId, test_input_resources};
+use crate::test_helpers::{DummySystemId, test_input_resources};
 
 pub(crate) struct MockConsoleCore {
     loaded: bool,
@@ -64,7 +64,6 @@ impl ConsoleCore for MockConsoleCore {
 }
 
 pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
-    CORE_CREATION_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     use nerust_core_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
     let render_profile = VideoRenderProfile {
