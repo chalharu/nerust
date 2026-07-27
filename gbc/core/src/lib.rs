@@ -26,3 +26,6 @@ pub mod rom_identity;
 pub(crate) mod serial;
 #[allow(dead_code)]
 pub(crate) mod timer;
+
+#[cfg(test)]
+mod rom_tests;

@@ -129,6 +129,7 @@ impl CpuStepState for Daa {
         let c = core.registers.c_flag();
         let mut a = core.registers.a;
         let mut carry = c;
+
         if n {
             if h {
                 a = a.wrapping_sub(0x06);
@@ -137,12 +138,12 @@ impl CpuStepState for Daa {
                 a = a.wrapping_sub(0x60);
             }
         } else {
-            if h || (a & 0x0F) > 0x09 {
-                a = a.wrapping_add(0x06);
-            }
             if c || a > 0x99 {
                 a = a.wrapping_add(0x60);
                 carry = true;
+            }
+            if h || (a & 0x0F) > 0x09 {
+                a = a.wrapping_add(0x06);
             }
         }
         core.registers.a = a;
