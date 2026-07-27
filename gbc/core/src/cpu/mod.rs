@@ -22,15 +22,15 @@ pub(crate) enum StepResult {
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| opcodes::handler_table());
 
 /// Phases of the CPU state machine.
-enum Phase {
+pub(crate) enum Phase {
     FetchOpcode,
     ExecuteOpcode { handler: HandlerFn, step: u8 },
 }
 
 pub struct Lr35902Cpu {
     pub registers: CpuRegisters,
-    phase: Phase,
-    ime_delayed: bool,
+    pub(crate) phase: Phase,
+    pub(crate) ime_delayed: bool,
     /// Fetched opcode byte.
     opcode: u8,
     /// Operand bytes fetched during M2-Mn cycles.
@@ -132,3 +132,6 @@ impl Default for Lr35902Cpu {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;
