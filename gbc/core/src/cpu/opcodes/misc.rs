@@ -18,6 +18,23 @@ impl CpuStepState for Invalid {
     }
 }
 
+/// Invalid opcode that reads operand bytes and consumes cycles.
+/// B = total byte count (1-3), C = total M-cycle count (0-6)
+pub(crate) struct InvalidOp<const B: u8, const M: u8>;
+impl<const B: u8, const M: u8> CpuStepState for InvalidOp<B, M> {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step < B {
+            // Read and discard operand byte
+            core.pc_read(bus);
+        }
+        if step < M {
+            StepResult::Continue
+        } else {
+            StepResult::Exit
+        }
+    }
+}
+
 pub(crate) struct Halt;
 impl CpuStepState for Halt {
     fn exec(_: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _: u8) -> StepResult {
