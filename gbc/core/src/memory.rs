@@ -219,6 +219,10 @@ impl GbcMemoryBus {
         self.interrupt.set_ime(v);
     }
 
+    pub fn ime_enabled(&self) -> bool {
+        self.interrupt.get_ime()
+    }
+
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {

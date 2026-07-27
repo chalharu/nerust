@@ -12,18 +12,14 @@ use crate::memory::GbcMemoryBus;
 /// handled here.
 pub struct Lr35902Cpu {
     pub registers: CpuRegisters,
-    ime: bool,
     ime_delayed: bool,
-    halted: bool,
 }
 
 impl Lr35902Cpu {
     pub fn new() -> Self {
         Self {
             registers: CpuRegisters::new(),
-            ime: false,
             ime_delayed: false,
-            halted: false,
         }
     }
 
@@ -31,7 +27,7 @@ impl Lr35902Cpu {
     pub fn step(&mut self, bus: &mut GbcMemoryBus) -> u32 {
         // Handle IME delay (EI sets IME after next instruction)
         if self.ime_delayed {
-            self.ime = true;
+            bus.set_ime(true);
             self.ime_delayed = false;
         }
 
@@ -40,7 +36,7 @@ impl Lr35902Cpu {
         }
 
         // Check for interrupt dispatch
-        if self.ime
+        if bus.ime_enabled()
             && let Some(kind) = bus.acknowledge_interrupt()
         {
             self.dispatch_interrupt(kind, bus);
