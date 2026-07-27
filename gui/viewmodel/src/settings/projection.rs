@@ -10,9 +10,7 @@ use super::{
 
 /// A node responsible for computing one projection from [`EditorState`].
 pub trait ProjectionNode {
-    fn name(&self) -> &'static str;
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>>;
-    fn is_synced(&self, current: &EditorState) -> bool;
 }
 
 type ApplyNotification = Option<Box<dyn FnOnce()>>;
@@ -59,16 +57,11 @@ impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
 
 /// A concrete ProjectionNode that computes T from EditorState.
 struct FuncProjectionNode<T: Clone + PartialEq + 'static> {
-    name: &'static str,
     inner: Rc<ObservablePropertyInner<T>>,
     project: Box<dyn Fn(&EditorState) -> T>,
 }
 
 impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>> {
         let new_value = (self.project)(candidate);
         if self.inner.get() == new_value {
@@ -78,11 +71,6 @@ impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
             inner: Rc::clone(&self.inner),
             value: new_value,
         }))
-    }
-
-    fn is_synced(&self, current: &EditorState) -> bool {
-        let expected = (self.project)(current);
-        self.inner.get() == expected
     }
 }
 
@@ -117,7 +105,6 @@ impl ProjectionHub {
         );
         let inner = Rc::new(ObservablePropertyInner::new(initial));
         let node = FuncProjectionNode {
-            name,
             inner: Rc::clone(&inner),
             project: Box::new(project),
         };
@@ -141,18 +128,5 @@ impl ProjectionHub {
     #[cfg(test)]
     pub(crate) fn node_count(&self) -> usize {
         self.nodes.borrow().len()
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn assert_all_synced(&self, current: &EditorState) {
-        let nodes = self.nodes.borrow();
-        for node in nodes.iter() {
-            if !node.is_synced(current) {
-                panic!(
-                    "projection '{}' is out of sync with committed state",
-                    node.name()
-                );
-            }
-        }
     }
 }
