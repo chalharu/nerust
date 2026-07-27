@@ -131,7 +131,9 @@ impl ProjectionHub {
     ///
     /// Enables external code to define projection strategies beyond the
     /// default closure-based [`register`](Self::register) approach.
-    #[allow(dead_code)]
+    /// Used by external crates and tests; `#[cfg_attr(not(test), ...)]` is
+    /// intentional — the method is tested but not called from production code.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn register_node(&self, node: Rc<dyn ProjectionNode>) {
         assert!(
             !self.sealed.get(),
