@@ -22,7 +22,7 @@ use nerust_gui_settings::{language::AppLanguage, local::ScalingMode, shared::Sto
 use nerust_gui_shell::registry::SystemRegistry;
 
 use nerust_settings_core::{
-    editor::{CaptureTarget, current_binding_label},
+    editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
 };
 
@@ -31,7 +31,7 @@ use nerust_gui_viewmodel::settings::{
 };
 use nerust_input_traits::AttachmentId;
 use nerust_keyboard::Key;
-use nerust_settings_core::bindings::descriptors::shortcut_descriptors;
+
 use rfd::FileDialog;
 
 type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
@@ -52,7 +52,6 @@ pub(crate) enum SettingsPage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InputPageSection {
     Attachment(usize),
-    Shortcuts,
 }
 
 #[derive(Debug, Clone)]
@@ -505,7 +504,6 @@ impl SettingsAppState {
     }
 
     fn input_page(&self) -> El<'_> {
-        let language = self.language();
         let Some(input_tab_index) = self.input_tab_index else {
             return column![text("No systems available").size(14)].into();
         };
@@ -573,13 +571,6 @@ impl SettingsAppState {
                 Message::SelectInputSection,
             ));
         }
-        navigation = navigation.push(radio(
-            ui_text(language, UiText::Shortcuts),
-            InputPageSection::Shortcuts,
-            Some(self.input_section),
-            Message::SelectInputSection,
-        ));
-
         // Content section: clone all data upfront to avoid lifetime issues
         let input_section_content = match self.input_section {
             InputPageSection::Attachment(index) => {
@@ -592,7 +583,6 @@ impl SettingsAppState {
                     column![text("")].into()
                 }
             }
-            InputPageSection::Shortcuts => self.shortcuts_section(),
         };
 
         content
@@ -619,38 +609,6 @@ impl SettingsAppState {
             content = content.push(
                 row![
                     text(row.label.clone()).width(Length::Fixed(180.0)),
-                    text(binding_label).width(Length::Fill),
-                    button(ui_text(language, UiText::Change))
-                        .on_press(Message::StartCapture(target.clone())),
-                    button(ui_text(language, UiText::Clear))
-                        .on_press(Message::ClearCapture(target)),
-                ]
-                .spacing(12)
-                .width(Length::Fill)
-                .align_y(Alignment::Center),
-            );
-        }
-        content.spacing(8).into()
-    }
-
-    fn shortcuts_section(&self) -> El<'static> {
-        let language = self.language();
-        let capture = self.vm.capture.view.get();
-        let snapshot = self.vm.snapshot();
-        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> =
-            column![text(ui_text(language, UiText::Shortcuts).to_string())];
-        for desc in shortcut_descriptors() {
-            let target = CaptureTarget::Shortcut(desc.action);
-            let binding_label = if capture.target.as_ref() == Some(&target) {
-                ui_text(language, UiText::CapturePrompt).to_string()
-            } else {
-                current_binding_label(&snapshot, &target)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| ui_text(language, UiText::Unbound).to_string())
-            };
-            content = content.push(
-                row![
-                    text(desc.label).width(Length::Fixed(180.0)),
                     text(binding_label).width(Length::Fill),
                     button(ui_text(language, UiText::Change))
                         .on_press(Message::StartCapture(target.clone())),
