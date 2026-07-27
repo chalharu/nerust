@@ -88,16 +88,7 @@ impl Mbc1 {
     }
 
     fn bank_mask(bank_count: usize) -> u8 {
-        let mut mask = 0;
-        let mut count = bank_count;
-        while count > 0 {
-            mask = (mask << 1) | 1;
-            count >>= 1;
-        }
-        if mask == 0 {
-            mask = 1;
-        }
-        mask
+        bank_count.saturating_sub(1) as u8
     }
 
     fn rom_bank_effective(&self) -> usize {
