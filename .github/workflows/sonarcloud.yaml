@@ -37,7 +37,8 @@ jobs:
             libxdo-dev \
             libasound2-dev \
             libcubeb-dev \
-            libudev-dev
+            libudev-dev \
+            xvfb
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -65,7 +66,7 @@ jobs:
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
+          xvfb-run cargo llvm-cov --workspace --exclude nerust_rom_test --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-gtk.info
       - name: Run SonarCloud scan
