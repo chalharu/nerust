@@ -131,4 +131,4 @@ impl Default for Lr35902Cpu {
 }
 
 #[cfg(test)]
-mod tests;
+mod opcode_tests;
