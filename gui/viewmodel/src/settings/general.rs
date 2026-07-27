@@ -31,21 +31,21 @@ impl GeneralSettingsViewModel {
 
     pub fn set_language(&self, value: AppLanguage) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
-            state.draft.shared.general.language = value;
+            state.draft_mut().shared.general.language = value;
             Ok(())
         })
     }
 
     pub fn set_storage_policy(&self, value: StoragePolicy) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
-            state.draft.shared.persistence.storage_policy = value;
+            state.draft_mut().shared.persistence.storage_policy = value;
             Ok(())
         })
     }
 
     pub fn set_storage_directory(&self, value: Option<PathBuf>) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
-            state.draft.shared.persistence.storage_directory = value;
+            state.draft_mut().shared.persistence.storage_directory = value;
             Ok(())
         })
     }

@@ -169,7 +169,7 @@ impl InputSettingsViewModel {
                 })
                 .collect();
             state
-                .draft
+                .draft_mut()
                 .app_state
                 .controller_assignments
                 .insert(factory.system_id(), pairs);

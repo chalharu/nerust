@@ -26,28 +26,28 @@ impl AudioSettingsViewModel {
 
     pub fn set_mute(&self, value: bool) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.audio.muted = value;
+            state.draft_mut().local.audio.muted = value;
             Ok(())
         })
     }
 
     pub fn set_volume(&self, value: u8) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.audio.master_volume_percent = value;
+            state.draft_mut().local.audio.master_volume_percent = value;
             Ok(())
         })
     }
 
     pub fn set_sample_rate(&self, value: u32) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.audio.sample_rate = value;
+            state.draft_mut().local.audio.sample_rate = value;
             Ok(())
         })
     }
 
     pub fn set_latency(&self, value: u16) -> Result<(), ViewModelError> {
         self._editor.transact(|state| {
-            state.draft.local.audio.latency_ms = value;
+            state.draft_mut().local.audio.latency_ms = value;
             Ok(())
         })
     }

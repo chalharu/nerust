@@ -38,7 +38,7 @@ impl SettingsEditor {
     ) -> Self {
         let editor_state = EditorState {
             cached_snapshot: Arc::new(snapshot.clone()),
-            draft: snapshot,
+            draft: Arc::new(snapshot),
             capture_target: None,
             validation: ValidationState { issues: vec![] },
             revision: 0,
@@ -92,21 +92,28 @@ impl SettingsEditor {
             return Err(ViewModelError::ReentrantMutation);
         }
 
-        // Single clone — capture pre-mutation state for no-op detection
+        // Capture pre-mutation state for no-op detection
         let (prev_draft, prev_capture, prev_revision) = {
             let s = self.current.borrow();
-            (s.draft.clone(), s.capture_target.clone(), s.revision)
+            (Arc::clone(&s.draft), s.capture_target.clone(), s.revision)
         };
         let mut candidate = self.current.borrow().clone();
         let result = mutate(&mut candidate)?;
 
-        if candidate.draft == prev_draft && candidate.capture_target == prev_capture {
+        if candidate.capture_target != prev_capture {
+            // capture_target changed — cannot skip
+        } else if Arc::ptr_eq(&candidate.draft, &prev_draft) {
+            // draft not touched by mutate — true no-op
+            return Ok(result);
+        } else if *candidate.draft == *prev_draft {
+            // draft_mut() was called but values are identical — restore Arc
+            candidate.draft = prev_draft;
             return Ok(result);
         }
 
         candidate.validation = (self.validator)(&candidate);
         candidate.revision = prev_revision + 1;
-        candidate.cached_snapshot = Arc::new(candidate.draft.clone());
+        candidate.cached_snapshot = Arc::new((*candidate.draft).clone());
         let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
 
@@ -140,7 +147,7 @@ impl SettingsEditor {
     pub fn finish(&self) -> Result<SettingsSnapshot, ValidationState> {
         let state = self.current.borrow();
         if state.validation.can_submit() {
-            Ok(state.draft.clone())
+            Ok((*state.draft).clone())
         } else {
             Err(state.validation.clone())
         }
@@ -197,7 +204,7 @@ mod tests {
     fn transact_mutation_advances_revision() {
         let editor = test_editor();
         let result: Result<(), ViewModelError> = editor.transact(|state| {
-            state.draft.local.audio.muted = true;
+            state.draft_mut().local.audio.muted = true;
             Ok(())
         });
         assert!(result.is_ok());
@@ -208,7 +215,7 @@ mod tests {
     fn transact_error_does_not_change_state() {
         let editor = test_editor();
         let result: Result<(), ViewModelError> = editor.transact(|state| {
-            state.draft.local.audio.muted = true;
+            state.draft_mut().local.audio.muted = true;
             Err(ViewModelError::UnknownSystem("test".into()))
         });
         assert!(result.is_err());
@@ -287,7 +294,7 @@ mod tests {
 
         editor
             .transact(|state| {
-                state.draft.local.audio.muted = true;
+                state.draft_mut().local.audio.muted = true;
                 Ok(())
             })
             .unwrap();

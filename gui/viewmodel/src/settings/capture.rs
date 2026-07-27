@@ -39,7 +39,7 @@ impl CaptureViewModel {
 
     pub fn clear_binding(&self, target: &CaptureTarget) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
-            nerust_settings_core::editor::apply_capture_target(&mut state.draft, target, None);
+            nerust_settings_core::editor::apply_capture_target(state.draft_mut(), target, None);
             state.capture_target = None;
             Ok(())
         })
@@ -50,7 +50,7 @@ impl CaptureViewModel {
         let Some(target) = target else { return };
         let _ = self.editor.transact(|state| {
             nerust_settings_core::editor::apply_capture_target(
-                &mut state.draft,
+                state.draft_mut(),
                 &target,
                 Some(key),
             );
