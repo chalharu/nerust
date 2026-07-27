@@ -1,4 +1,4 @@
-use crate::cartridge::header::CartridgeHeader;
+use crate::cartridge_header::CartridgeHeader;
 
 /// Memory Bank Controller trait.
 ///
@@ -209,10 +209,10 @@ impl Mbc for Mbc1 {
 /// Factory function to create the appropriate MBC from header + ROM data.
 pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
     match header.cartridge_type {
-        crate::cartridge::header::CartridgeType::RomOnly => Box::new(RomOnly::new(rom)),
-        crate::cartridge::header::CartridgeType::Mbc1
-        | crate::cartridge::header::CartridgeType::Mbc1Ram
-        | crate::cartridge::header::CartridgeType::Mbc1RamBattery => {
+        crate::cartridge_header::CartridgeType::RomOnly => Box::new(RomOnly::new(rom)),
+        crate::cartridge_header::CartridgeType::Mbc1
+        | crate::cartridge_header::CartridgeType::Mbc1Ram
+        | crate::cartridge_header::CartridgeType::Mbc1RamBattery => {
             let ram = ram.unwrap_or_else(|| vec![0; header.ram_size.bytes]);
             Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
         }
