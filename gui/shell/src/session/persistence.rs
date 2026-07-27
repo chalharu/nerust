@@ -22,7 +22,7 @@ use nerust_persistence::{
 
 use crate::emu_core::CorePersistence;
 
-/// Platform abstraction for all file I/O (Desktop fs / Android SAF).
+/// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
 pub trait SlotBackend: Send {
     fn scan(
         &self,
@@ -30,7 +30,6 @@ pub trait SlotBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError>;
     fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError>;
-
     fn write_slot(
         &self,
         dir: &Path,
@@ -45,7 +44,10 @@ pub trait SlotBackend: Send {
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError>;
+}
 
+/// Platform abstraction for autosave I/O.
+pub trait AutoSaveBackend: Send {
     fn write_autosave(
         &self,
         dir: &Path,
@@ -58,7 +60,10 @@ pub trait SlotBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
+}
 
+/// Platform abstraction for mapper save I/O.
+pub trait MapperSaveBackend: Send {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError>;
     fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError>;
     fn write_recovery_mapper_save(
@@ -107,6 +112,8 @@ impl SlotBackend for FailingSlotBackend {
     fn delete_slot(&self, _dir: &Path, _slot_id: u64) -> Result<(), PersistenceError> {
         Err(PersistenceError::Io(IoError::other("simulated failure")))
     }
+}
+impl AutoSaveBackend for FailingSlotBackend {
     fn write_autosave(
         &self,
         _dir: &Path,
@@ -125,6 +132,8 @@ impl SlotBackend for FailingSlotBackend {
     fn delete_autosave(&self, _dir: &Path) -> Result<(), PersistenceError> {
         Err(PersistenceError::Io(IoError::other("simulated failure")))
     }
+}
+impl MapperSaveBackend for FailingSlotBackend {
     fn read_mapper_save(&self, _path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
         Err(PersistenceError::Io(IoError::other("simulated failure")))
     }
@@ -148,11 +157,9 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
         scan_state_slots_for_identity(dir, identity)
     }
-
     fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
         allocate_next_slot_id(dir)
     }
-
     fn write_slot(
         &self,
         dir: &Path,
@@ -163,7 +170,6 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<StateSlotSummary, PersistenceError> {
         write_state_slot(dir, slot_id, data, identity, thumbnail)
     }
-
     fn read_slot(
         &self,
         dir: &Path,
@@ -175,11 +181,11 @@ impl SlotBackend for FsSlotBackend {
             Err(e) => Err(e),
         }
     }
-
     fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
         delete_state_slot(&state_slot_path(dir, slot_id))
     }
-
+}
+impl AutoSaveBackend for FsSlotBackend {
     fn write_autosave(
         &self,
         dir: &Path,
@@ -188,7 +194,6 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<StateSlotSummary, PersistenceError> {
         write_autosave_state_slot(dir, data, identity, None)
     }
-
     fn read_autosave(
         &self,
         dir: &Path,
@@ -196,19 +201,17 @@ impl SlotBackend for FsSlotBackend {
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         load_state_slot_for_identity(&autosave_state_slot_path(dir), identity)
     }
-
     fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
         delete_state_slot(&autosave_state_slot_path(dir))
     }
-
+}
+impl MapperSaveBackend for FsSlotBackend {
     fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
         load_mapper_save(path)
     }
-
     fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
         write_mapper_save(path, data)
     }
-
     fn write_recovery_mapper_save(
         &self,
         path: &Path,
@@ -219,7 +222,9 @@ impl SlotBackend for FsSlotBackend {
 }
 
 pub struct PersistenceManager {
-    backend: Box<dyn SlotBackend>,
+    slot_backend: Box<dyn SlotBackend>,
+    autosave_backend: Box<dyn AutoSaveBackend>,
+    mapper_backend: Box<dyn MapperSaveBackend>,
     states_dir: Option<PathBuf>,
     mapper_save_path: Option<PathBuf>,
     mapper_save_flush_allowed: bool,
@@ -241,7 +246,9 @@ impl PersistenceManager {
 
     pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
         Self {
-            backend,
+            slot_backend: backend,
+            autosave_backend: Box::new(FsSlotBackend),
+            mapper_backend: Box::new(FsSlotBackend),
             states_dir: None,
             mapper_save_path: None,
             mapper_save_flush_allowed: true,
@@ -249,6 +256,32 @@ impl PersistenceManager {
             slots: Vec::new(),
             active_slot_id: None,
         }
+    }
+
+    pub fn with_all_backends(
+        slot_backend: Box<dyn SlotBackend>,
+        autosave_backend: Box<dyn AutoSaveBackend>,
+        mapper_backend: Box<dyn MapperSaveBackend>,
+    ) -> Self {
+        Self {
+            slot_backend,
+            autosave_backend,
+            mapper_backend,
+            states_dir: None,
+            mapper_save_path: None,
+            mapper_save_flush_allowed: true,
+            mapper_save_recovery_written: false,
+            slots: Vec::new(),
+            active_slot_id: None,
+        }
+    }
+
+    pub fn with_autosave_backend(&mut self, backend: Box<dyn AutoSaveBackend>) {
+        self.autosave_backend = backend;
+    }
+
+    pub fn with_mapper_backend(&mut self, backend: Box<dyn MapperSaveBackend>) {
+        self.mapper_backend = backend;
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
@@ -290,7 +323,7 @@ impl PersistenceManager {
                     height: p.height,
                     rgba: p.rgba,
                 });
-                match self.backend.write_slot(
+                match self.slot_backend.write_slot(
                     dir,
                     slot_id,
                     &state_blob,
@@ -317,7 +350,7 @@ impl PersistenceManager {
             return;
         };
         let slot_id = self.active_slot_id.or_else(|| {
-            self.backend
+            self.slot_backend
                 .allocate_next_id(dir)
                 .map_err(|error| {
                     log::warn!("allocating state slot failed: {error}");
@@ -341,7 +374,7 @@ impl PersistenceManager {
             log::warn!("create_slot: no states_dir configured; cannot create slot");
             return;
         };
-        match self.backend.allocate_next_id(dir) {
+        match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, true),
             Err(error) => log::warn!("allocating state slot failed: {error}"),
         }
@@ -352,7 +385,7 @@ impl PersistenceManager {
             log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return false;
         };
-        match self.backend.read_slot(dir, slot_id) {
+        match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("state import failed: {error}");
@@ -382,7 +415,7 @@ impl PersistenceManager {
             log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
             return;
         };
-        match self.backend.delete_slot(dir, slot_id) {
+        match self.slot_backend.delete_slot(dir, slot_id) {
             Ok(()) => {
                 if self.active_slot_id == Some(slot_id) {
                     self.active_slot_id = None;
@@ -411,7 +444,7 @@ impl PersistenceManager {
 
     fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
         self.slots = if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            match self.backend.scan(dir, identity) {
+            match self.slot_backend.scan(dir, identity) {
                 Ok(slots) => slots,
                 Err(error) => {
                     log::warn!("slot scan failed: {error}");
@@ -471,7 +504,9 @@ impl PersistenceManager {
                 .ok()
                 .flatten()
             {
-                let recovery_path = self.backend.write_recovery_mapper_save(path, &bytes)?;
+                let recovery_path = self
+                    .mapper_backend
+                    .write_recovery_mapper_save(path, &bytes)?;
                 self.mapper_save_recovery_written = true;
                 log::warn!(
                     "mapper save auto-load failed earlier; wrote recovery save to {}",
@@ -481,7 +516,7 @@ impl PersistenceManager {
             return Ok(());
         }
         match emu.save_mapper_raw() {
-            Ok(Some(bytes)) => self.backend.write_mapper_save(path, &bytes)?,
+            Ok(Some(bytes)) => self.mapper_backend.write_mapper_save(path, &bytes)?,
             Ok(None) => {}
             Err(e) => log::warn!("mapper save failed: {e}"),
         }
@@ -496,7 +531,7 @@ impl PersistenceManager {
             log::warn!("mapper_save_path not set, mapper save load skipped");
             return Ok(());
         };
-        match self.backend.read_mapper_save(path) {
+        match self.mapper_backend.read_mapper_save(path) {
             Ok(Some(bytes)) => {
                 if let Err(e) = emu.load_mapper_raw(bytes) {
                     log::warn!("mapper save load failed: {e}");
@@ -523,7 +558,10 @@ impl PersistenceManager {
         match emu.save_state_raw() {
             Ok(core_bytes) => {
                 let state_blob = save_state_with_header(core_bytes);
-                match self.backend.write_autosave(dir, &state_blob, &identity) {
+                match self
+                    .autosave_backend
+                    .write_autosave(dir, &state_blob, &identity)
+                {
                     Ok(_) => true,
                     Err(error) => {
                         log::warn!("saving hidden lifecycle state failed: {error}");
@@ -546,7 +584,7 @@ impl PersistenceManager {
         let Some(identity) = emu.canonical_media_identity() else {
             return false;
         };
-        match self.backend.read_autosave(dir, &identity) {
+        match self.autosave_backend.read_autosave(dir, &identity) {
             Ok(Some(slot)) => {
                 if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
                     log::warn!(
@@ -554,25 +592,25 @@ impl PersistenceManager {
                         slot.summary.emulator_version,
                         env!("CARGO_PKG_VERSION")
                     );
-                    let _ = self.backend.delete_autosave(dir);
+                    let _ = self.autosave_backend.delete_autosave(dir);
                     return false;
                 }
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("hidden lifecycle state import failed: {error}");
-                    let _ = self.backend.delete_autosave(dir);
+                    let _ = self.autosave_backend.delete_autosave(dir);
                     false
                 } else {
                     true
                 }
             }
             Ok(None) => {
-                let _ = self.backend.delete_autosave(dir);
+                let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
             Err(error) => {
                 eprintln!("loading hidden lifecycle state failed: {error}");
-                let _ = self.backend.delete_autosave(dir);
+                let _ = self.autosave_backend.delete_autosave(dir);
                 false
             }
         }
@@ -585,7 +623,7 @@ impl PersistenceManager {
             );
             return;
         };
-        let _ = self.backend.delete_autosave(dir);
+        let _ = self.autosave_backend.delete_autosave(dir);
     }
 }
 
