@@ -1,6 +1,7 @@
 //! ALU instructions: ADD/ADC/SUB/SBC/AND/XOR/OR/CP A,r8 and A,d8.
 
-use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_core::Lr35902Cpu;
+use crate::cpu_opcodes::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 

@@ -1,5 +1,5 @@
-use crate::cpu::Lr35902Cpu;
-use crate::cpu::Phase;
+use crate::cpu_core::Lr35902Cpu;
+use crate::cpu_core::Phase;
 use crate::memory::GbcMemoryBus;
 
 const BASE: u16 = 0xC000;
