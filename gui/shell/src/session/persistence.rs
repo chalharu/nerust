@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use std::io::Error as IoError;
+
 use crate::state::resolve_state_format;
 use nerust_core_traits::{identity::SystemIdentity, save_state::save_state_with_header};
 use nerust_persistence::{
@@ -67,6 +69,76 @@ pub trait SlotBackend: Send {
 }
 
 pub struct FsSlotBackend;
+
+/// A failing backend for testing error paths in persistence.
+///
+/// Always returns `Err` for all operations.
+#[derive(Debug)]
+pub struct FailingSlotBackend;
+
+impl SlotBackend for FailingSlotBackend {
+    fn scan(
+        &self,
+        _dir: &Path,
+        _identity: &SystemIdentity,
+    ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn allocate_next_id(&self, _dir: &Path) -> Result<u64, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_slot(
+        &self,
+        _dir: &Path,
+        _slot_id: u64,
+        _data: &[u8],
+        _identity: &SystemIdentity,
+        _thumbnail: Option<&ThumbnailSource>,
+    ) -> Result<StateSlotSummary, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn read_slot(
+        &self,
+        _dir: &Path,
+        _slot_id: u64,
+    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn delete_slot(&self, _dir: &Path, _slot_id: u64) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_autosave(
+        &self,
+        _dir: &Path,
+        _data: &[u8],
+        _identity: &SystemIdentity,
+    ) -> Result<StateSlotSummary, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn read_autosave(
+        &self,
+        _dir: &Path,
+        _identity: &SystemIdentity,
+    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn delete_autosave(&self, _dir: &Path) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn read_mapper_save(&self, _path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_mapper_save(&self, _path: &Path, _data: &[u8]) -> Result<(), PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+    fn write_recovery_mapper_save(
+        &self,
+        _path: &Path,
+        _data: &[u8],
+    ) -> Result<PathBuf, PersistenceError> {
+        Err(PersistenceError::Io(IoError::other("simulated failure")))
+    }
+}
 
 impl SlotBackend for FsSlotBackend {
     fn scan(
