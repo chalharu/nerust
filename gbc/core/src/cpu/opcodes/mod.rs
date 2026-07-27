@@ -188,5 +188,18 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0xFE] = alu::AluAD8::<7>::exec;
     t[0xFF] = control::Rst::<7>::exec;
 
+    // Invalid opcodes with per-opcode byte + M-cycle counts
+    t[0xD3] = misc::InvalidOp::<1, 0>::exec;
+    t[0xDB] = misc::InvalidOp::<1, 0>::exec;
+    t[0xDD] = misc::InvalidOp::<1, 0>::exec;
+    t[0xE3] = misc::InvalidOp::<2, 2>::exec;
+    t[0xE4] = misc::InvalidOp::<2, 2>::exec;
+    t[0xEB] = misc::InvalidOp::<3, 3>::exec;
+    t[0xEC] = misc::InvalidOp::<3, 3>::exec;
+    t[0xED] = misc::InvalidOp::<2, 2>::exec;
+    t[0xF4] = misc::InvalidOp::<3, 3>::exec;
+    t[0xFC] = misc::InvalidOp::<3, 3>::exec;
+    t[0xFD] = misc::InvalidOp::<3, 3>::exec;
+
     t
 }
