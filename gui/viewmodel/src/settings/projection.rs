@@ -9,7 +9,6 @@ use super::{
 };
 
 /// A node responsible for computing one projection from [`EditorState`].
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub trait ProjectionNode {
     fn name(&self) -> &'static str;
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>>;
@@ -60,7 +59,6 @@ impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
 
 /// A concrete ProjectionNode that computes T from EditorState.
 struct FuncProjectionNode<T: Clone + PartialEq + 'static> {
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     name: &'static str,
     inner: Rc<ObservablePropertyInner<T>>,
     project: Box<dyn Fn(&EditorState) -> T>,
@@ -131,9 +129,7 @@ impl ProjectionHub {
     ///
     /// Enables external code to define projection strategies beyond the
     /// default closure-based [`register`](Self::register) approach.
-    /// Used by external crates and tests; `#[cfg_attr(not(test), ...)]` is
-    /// intentional — the method is tested but not called from production code.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn register_node(&self, node: Rc<dyn ProjectionNode>) {
         assert!(
             !self.sealed.get(),
