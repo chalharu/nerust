@@ -2918,8 +2918,10 @@ version = "0.1.0-dev"
 dependencies = [
  "dyn-clone",
  "dyn-eq",
+ "nerust_core_traits",
  "nerust_settings_traits",
  "serde",
+ "strum",
  "typetag",
 ]
 

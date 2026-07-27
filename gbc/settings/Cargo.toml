@@ -11,6 +11,8 @@ version.workspace = true
 [dependencies]
 dyn-clone.workspace = true
 dyn-eq.workspace = true
+nerust_core_traits.workspace = true
 nerust_settings_traits.workspace = true
 serde = { features = ["derive"], workspace = true }
+strum.workspace = true
 typetag.workspace = true
