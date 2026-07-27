@@ -18,7 +18,7 @@ use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum CorePersistenceError {
+pub enum CorePersistenceError {
     #[error("emu thread channel unavailable")]
     WorkerUnavailable,
     #[error("emu thread reply channel closed")]
@@ -28,7 +28,7 @@ pub(crate) enum CorePersistenceError {
 }
 
 /// The persistence-relevant subset of EmuCore's interface.
-pub(crate) trait CorePersistence {
+pub trait CorePersistence {
     fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError>;
     fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError>;
     fn generate_preview(&self) -> Option<crate::state::PreviewFrame>;
