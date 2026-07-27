@@ -119,7 +119,11 @@ impl GbcMemoryBus {
             0xFE00..=0xFE9F => self.ppu.write_oam((addr & 0xFF) as u8, value),
             0xFF00 => self.joypad = (self.joypad & 0x30) | (value & 0x30),
             0xFF01 => self.serial.write_sb(value),
-            0xFF02 => self.serial.write_sc(value),
+            0xFF02 => {
+                if self.serial.write_sc(value) {
+                    self.interrupt.request(InterruptKind::Serial);
+                }
+            }
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
