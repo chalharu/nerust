@@ -40,9 +40,9 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x01] = load::LdR16D16::<0>::exec; // BC
     t[0x02] = load::LdR16memA::<0>::exec;
     t[0x03] = inc_dec::IncR16::<0>::exec;
-    t[0x04] = inc_dec::IncR8::<3>::exec; // B → bit pattern 000
-    t[0x05] = inc_dec::DecR8::<3>::exec;
-    t[0x06] = load::LdR8D8::<3>::exec;
+    t[0x04] = inc_dec::IncR8::<0>::exec; // B (bits 3-5 = 000)
+    t[0x05] = inc_dec::DecR8::<0>::exec;
+    t[0x06] = load::LdR8D8::<0>::exec;
     t[0x07] = misc::Rlca::exec;
     t[0x08] = load::LdA16Sp::exec;
     t[0x09] = alu::AddHlR16::<0>::exec;
@@ -57,17 +57,17 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x11] = load::LdR16D16::<2>::exec; // DE
     t[0x12] = load::LdR16memA::<2>::exec;
     t[0x13] = inc_dec::IncR16::<2>::exec;
-    t[0x14] = inc_dec::IncR8::<5>::exec;
-    t[0x15] = inc_dec::DecR8::<5>::exec;
-    t[0x16] = load::LdR8D8::<5>::exec;
+    t[0x14] = inc_dec::IncR8::<2>::exec;
+    t[0x15] = inc_dec::DecR8::<2>::exec;
+    t[0x16] = load::LdR8D8::<2>::exec;
     t[0x17] = misc::Rla::exec;
     t[0x18] = control::Jr::exec;
     t[0x19] = alu::AddHlR16::<2>::exec;
     t[0x1A] = load::LdAR16mem::<2>::exec;
     t[0x1B] = inc_dec::DecR16::<2>::exec;
-    t[0x1C] = inc_dec::IncR8::<4>::exec;
-    t[0x1D] = inc_dec::DecR8::<4>::exec;
-    t[0x1E] = load::LdR8D8::<4>::exec;
+    t[0x1C] = inc_dec::IncR8::<3>::exec;
+    t[0x1D] = inc_dec::DecR8::<3>::exec;
+    t[0x1E] = load::LdR8D8::<3>::exec;
     t[0x1F] = misc::Rra::exec;
 
     for (op, h) in [
@@ -81,17 +81,17 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x21] = load::LdR16D16::<6>::exec;
     t[0x22] = load::LdHliA::exec;
     t[0x23] = inc_dec::IncR16::<6>::exec;
-    t[0x24] = inc_dec::IncR8::<7>::exec;
-    t[0x25] = inc_dec::DecR8::<7>::exec;
-    t[0x26] = load::LdR8D8::<7>::exec;
+    t[0x24] = inc_dec::IncR8::<4>::exec;
+    t[0x25] = inc_dec::DecR8::<4>::exec;
+    t[0x26] = load::LdR8D8::<4>::exec;
     t[0x27] = misc::Daa::exec;
     t[0x28] = control::JrCond::<1>::exec; // Z
     t[0x29] = alu::AddHlR16::<6>::exec;
     t[0x2A] = load::LdAHli::exec;
     t[0x2B] = inc_dec::DecR16::<6>::exec;
-    t[0x2C] = inc_dec::IncR8::<6>::exec;
-    t[0x2D] = inc_dec::DecR8::<6>::exec;
-    t[0x2E] = load::LdR8D8::<6>::exec;
+    t[0x2C] = inc_dec::IncR8::<5>::exec;
+    t[0x2D] = inc_dec::DecR8::<5>::exec;
+    t[0x2E] = load::LdR8D8::<5>::exec;
     t[0x2F] = misc::Cpl::exec;
     t[0x30] = control::JrCond::<2>::exec;
     t[0x31] = load::LdR16D16::<8>::exec;
@@ -105,9 +105,9 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x39] = alu::AddHlSp::exec;
     t[0x3A] = load::LdAHld::exec;
     t[0x3B] = inc_dec::DecSp::exec;
-    t[0x3C] = inc_dec::IncR8::<0>::exec;
-    t[0x3D] = inc_dec::DecR8::<0>::exec;
-    t[0x3E] = load::LdR8D8::<0>::exec;
+    t[0x3C] = inc_dec::IncR8::<7>::exec;
+    t[0x3D] = inc_dec::DecR8::<7>::exec;
+    t[0x3E] = load::LdR8D8::<7>::exec;
     t[0x3F] = misc::Ccf::exec;
 
     // Block 1 (0x40-0x7F): LD r8, r8

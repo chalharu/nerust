@@ -1,4 +1,4 @@
-//! INC/DEC instructions.
+//! INC/DEC instructions. Register indices follow Pan Docs: B=0,C=1,D=2,E=3,H=4,L=5,(HL)=6,A=7.
 
 use crate::cpu::opcodes::CpuStepState;
 use crate::cpu::{Lr35902Cpu, StepResult};
@@ -6,25 +6,25 @@ use crate::memory::GbcMemoryBus;
 
 fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {
     match idx {
-        3 => core.registers.b,
+        0 => core.registers.b,
         1 => core.registers.c,
-        5 => core.registers.d,
-        4 => core.registers.e,
-        7 => core.registers.h,
-        6 => core.registers.l,
-        0 => core.registers.a,
+        2 => core.registers.d,
+        3 => core.registers.e,
+        4 => core.registers.h,
+        5 => core.registers.l,
+        7 => core.registers.a,
         _ => 0,
     }
 }
 fn write_r8(core: &mut Lr35902Cpu, idx: u8, v: u8) {
     match idx {
-        3 => core.registers.b = v,
+        0 => core.registers.b = v,
         1 => core.registers.c = v,
-        5 => core.registers.d = v,
-        4 => core.registers.e = v,
-        7 => core.registers.h = v,
-        6 => core.registers.l = v,
-        0 => core.registers.a = v,
+        2 => core.registers.d = v,
+        3 => core.registers.e = v,
+        4 => core.registers.h = v,
+        5 => core.registers.l = v,
+        7 => core.registers.a = v,
         _ => {}
     }
 }
@@ -69,7 +69,7 @@ impl<const R: u8> CpuStepState for IncR16<R> {
             1 => core.registers.set_de(v.wrapping_add(1)),
             2 => core.registers.set_hl(v.wrapping_add(1)),
             _ => core.registers.sp = v.wrapping_add(1),
-        };
+        }
         StepResult::Exit
     }
 }
@@ -87,7 +87,7 @@ impl<const R: u8> CpuStepState for DecR16<R> {
             1 => core.registers.set_de(v.wrapping_sub(1)),
             2 => core.registers.set_hl(v.wrapping_sub(1)),
             _ => core.registers.sp = v.wrapping_sub(1),
-        };
+        }
         StepResult::Exit
     }
 }
