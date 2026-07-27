@@ -111,14 +111,14 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x3F] = misc::Ccf::exec;
 
     // Block 1 (0x40-0x7F): LD r8, r8
-    for op in 0x40..=0x7F {
-        t[op] = load::LdR8R8::exec;
+    for entry in t[0x40..=0x7F].iter_mut() {
+        *entry = load::LdR8R8::exec;
     }
     t[0x76] = misc::Halt::exec;
 
     // Block 2 (0x80-0xBF): ALU A, r8
-    for op in 0x80..=0xBF {
-        t[op] = alu::AluAR8::exec;
+    for entry in t[0x80..=0xBF].iter_mut() {
+        *entry = alu::AluAR8::exec;
     }
 
     // Block 3 (0xC0-0xFF)
