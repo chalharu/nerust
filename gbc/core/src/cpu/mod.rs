@@ -5,8 +5,7 @@
 
 use std::sync::LazyLock;
 
-use crate::cpu_core::{Lr35902Cpu, Phase};
-use crate::cpu_opcodes::{HandlerFn, StepResult};
+use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult};
 use crate::interrupt::InterruptKind;
 use crate::memory::GbcMemoryBus;
 

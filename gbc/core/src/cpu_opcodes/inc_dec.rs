@@ -1,7 +1,7 @@
 //! INC/DEC instructions. Register indices follow Pan Docs: B=0,C=1,D=2,E=3,H=4,L=5,(HL)=6,A=7.
 
 use crate::cpu_core::Lr35902Cpu;
-use crate::cpu_opcodes::StepResult;
+use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 

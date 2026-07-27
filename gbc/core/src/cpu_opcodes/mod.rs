@@ -5,17 +5,8 @@
 //! number (1-based). It returns `Continue` to stay in the same state
 //! for the next M-cycle, or `Exit` when the instruction completes.
 
-use crate::cpu_core::Lr35902Cpu;
+use crate::cpu_core::{HandlerFn, Lr35902Cpu, StepResult};
 use crate::memory::GbcMemoryBus;
-
-/// Returned by each M-cycle step of an instruction.
-pub(crate) enum StepResult {
-    Continue,
-    Exit,
-}
-
-/// Handler function pointer type.
-pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepResult;
 
 mod alu;
 mod cb;
