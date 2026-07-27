@@ -118,9 +118,7 @@ impl From<RtcSyncMode> for GbcSettingChoice {
     }
 }
 
-fn dmg_palette_options() -> Vec<SystemSettingsChoiceOption> {
-    use GbcSettingChoice::*;
-    let choices = [Greyscale, GreenTint, BrownTint, PastelMix, Inverted];
+fn build_choice_options(choices: &[GbcSettingChoice]) -> Vec<SystemSettingsChoiceOption> {
     choices
         .iter()
         .map(|c| SystemSettingsChoiceOption {
@@ -130,27 +128,18 @@ fn dmg_palette_options() -> Vec<SystemSettingsChoiceOption> {
         .collect()
 }
 
+fn dmg_palette_options() -> Vec<SystemSettingsChoiceOption> {
+    use GbcSettingChoice::*;
+    build_choice_options(&[Greyscale, GreenTint, BrownTint, PastelMix, Inverted])
+}
+
 fn bool_options() -> Vec<SystemSettingsChoiceOption> {
-    let choices = [GbcSettingChoice::On, GbcSettingChoice::Off];
-    choices
-        .iter()
-        .map(|c| SystemSettingsChoiceOption {
-            id: SystemSettingsChoiceId(std::borrow::Cow::Owned(c.to_string())),
-            label_id: c.label_id(),
-        })
-        .collect()
+    build_choice_options(&[GbcSettingChoice::On, GbcSettingChoice::Off])
 }
 
 fn rtc_sync_options() -> Vec<SystemSettingsChoiceOption> {
     use GbcSettingChoice::*;
-    let choices = [Off, SystemTime];
-    choices
-        .iter()
-        .map(|c| SystemSettingsChoiceOption {
-            id: SystemSettingsChoiceId(std::borrow::Cow::Owned(c.to_string())),
-            label_id: c.label_id(),
-        })
-        .collect()
+    build_choice_options(&[Off, SystemTime])
 }
 
 #[cfg(test)]
@@ -236,18 +225,12 @@ mod tests {
 
     #[test]
     fn from_bool_true_is_on() {
-        assert_eq!(
-            GbcSettingChoice::from_bool(true).to_string(),
-            "on"
-        );
+        assert_eq!(GbcSettingChoice::from_bool(true).to_string(), "on");
     }
 
     #[test]
     fn from_bool_false_is_off() {
-        assert_eq!(
-            GbcSettingChoice::from_bool(false).to_string(),
-            "off"
-        );
+        assert_eq!(GbcSettingChoice::from_bool(false).to_string(), "off");
     }
 
     #[test]
@@ -266,10 +249,7 @@ mod tests {
 
     #[test]
     fn from_rtc_sync_mode_maps_all_variants() {
-        assert_eq!(
-            GbcSettingChoice::from(RtcSyncMode::Off).to_string(),
-            "off"
-        );
+        assert_eq!(GbcSettingChoice::from(RtcSyncMode::Off).to_string(), "off");
         assert_eq!(
             GbcSettingChoice::from(RtcSyncMode::SystemTime).to_string(),
             "system_time"

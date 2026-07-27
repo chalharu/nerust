@@ -50,14 +50,18 @@ mod tests {
     #[test]
     fn default_input_attachment_id_matches_device_profile() {
         let factory = GbcFactory;
-        let attachment = factory.default_input_attachment_id().expect("attachment id");
+        let attachment = factory
+            .default_input_attachment_id()
+            .expect("attachment id");
         assert_eq!(attachment, "gbc.attachment.player1");
     }
 
     #[test]
     fn default_input_control_prefix_matches_control_ids() {
         let factory = GbcFactory;
-        let prefix = factory.default_input_control_prefix().expect("control prefix");
+        let prefix = factory
+            .default_input_control_prefix()
+            .expect("control prefix");
         assert_eq!(prefix, "gbc.control");
     }
 }
