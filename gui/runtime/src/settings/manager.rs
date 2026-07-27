@@ -117,7 +117,9 @@ impl SettingsManager {
         })
     }
 
-    #[allow(dead_code)]
+    /// Public constructor for test/DI use; gated in non-test builds because
+    /// it is not called from production code paths in this crate.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_store(
         shared_defaults: DesktopSharedSettings,
         local_defaults: HostBackendLocalSettings,
