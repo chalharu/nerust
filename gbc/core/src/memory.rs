@@ -365,4 +365,134 @@ mod tests {
         let bus = GbcMemoryBus::new([0xFF; 0x100], false);
         assert_eq!(bus.read(0x0000), 0xFF); // cartridge stub returns 0xFF
     }
+
+    // ── facade method delegation ──────────────────────────
+
+    #[test]
+    fn set_joypad_changes_read_value() {
+        let mut bus = bus();
+        bus.set_joypad(0x00);
+        assert_eq!(bus.read(0xFF00), 0xC0);
+    }
+
+    #[test]
+    fn flush_audio_returns_empty_from_stub() {
+        let mut bus = bus();
+        assert!(bus.flush_audio().is_empty());
+    }
+
+    #[test]
+    fn acknowledge_interrupt_delegates() {
+        let mut bus = bus();
+        assert!(bus.acknowledge_interrupt().is_none());
+    }
+
+    #[test]
+    fn is_halted_or_stopped_returns_false_by_default() {
+        assert!(!bus().is_halted_or_stopped());
+    }
+
+    #[test]
+    fn is_dma_active_returns_false_by_default() {
+        assert!(!bus().is_dma_active());
+    }
+
+    // ── DMA constrained access ────────────────────────────
+
+    #[test]
+    fn read_dma_returns_some_for_hram() {
+        let mut bus = bus();
+        bus.write(0xFF80, 0x42);
+        assert_eq!(bus.read_dma(0xFF80), Some(0x42));
+    }
+
+    #[test]
+    fn read_dma_returns_none_below_hram() {
+        assert_eq!(bus().read_dma(0xC000), None);
+    }
+
+    #[test]
+    fn write_dma_returns_true_for_hram() {
+        let mut bus = bus();
+        assert!(bus.write_dma(0xFF80, 0x42));
+        assert_eq!(bus.read_dma(0xFF80), Some(0x42));
+    }
+
+    #[test]
+    fn write_dma_returns_false_below_hram() {
+        assert!(!bus().write_dma(0xC000, 0x42));
+    }
+
+    // ── CGB double-speed (KEY1) ───────────────────────────
+
+    #[test]
+    fn read_key1_default_is_7e() {
+        assert_eq!(bus().read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn write_key1_sets_pending_flag() {
+        let mut bus = bus();
+        bus.write(0xFF4D, 0x01);
+        assert_eq!(bus.read(0xFF4D), 0x7F);
+    }
+
+    // ── WRAM bank select ──────────────────────────────────
+
+    #[test]
+    fn wram_bank_default_is_1() {
+        assert_eq!(bus().read(0xFF70), 1);
+    }
+
+    #[test]
+    fn write_wram_bank_select_updates_value() {
+        let mut bus = bus();
+        bus.write(0xFF70, 0x03);
+        assert_eq!(bus.read(0xFF70), 0x03);
+    }
+
+    #[test]
+    fn write_wram_bank_0_clamps_to_1() {
+        let mut bus = bus();
+        bus.write(0xFF70, 0x00);
+        assert_eq!(bus.read(0xFF70), 1);
+    }
+
+    // ── FF50 boot ROM disable ─────────────────────────────
+
+    #[test]
+    fn read_ff50_boot_rom_mapped_returns_fe() {
+        let bus = GbcMemoryBus::new([0; 0x100], true);
+        assert_eq!(bus.read(0xFF50), 0xFE);
+    }
+
+    #[test]
+    fn read_ff50_boot_rom_unmapped_returns_ff() {
+        assert_eq!(bus().read(0xFF50), 0xFF);
+    }
+
+    // ── step_devices DMA path ─────────────────────────────
+
+    #[test]
+    fn step_devices_runs_dma_transfer() {
+        let mut bus = bus();
+        // Start DMA from 0xC000 (WRAM area) to OAM
+        bus.write(0xFF46, 0xC0);
+        assert!(bus.is_dma_active());
+        // Step enough cycles for a few DMA transfers
+        bus.step_devices(4 * 4); // 4 M-cycles → 1 byte transfer
+        assert!(bus.is_dma_active()); // still active after 1 transfer
+
+        // Complete the full 160 transfers
+        bus.step_devices(4 * 159);
+        assert!(!bus.is_dma_active());
+    }
+
+    // ── Default impl ──────────────────────────────────────
+
+    #[test]
+    fn default_bus_creates_with_zero_bootrom() {
+        let bus = GbcMemoryBus::default();
+        assert!(!bus.is_halted_or_stopped());
+    }
 }
