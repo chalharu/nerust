@@ -48,6 +48,10 @@ impl InterruptController {
     }
 
     pub fn acknowledge(&mut self) -> Option<InterruptKind> {
+        if !self.ime {
+            return None;
+        }
+
         let fired = self.ie & self.if_ & 0x1F;
         if fired == 0 {
             return None;
@@ -136,5 +140,115 @@ impl InterruptController {
 impl Default for InterruptController {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_sets_if_bit() {
+        let mut ic = InterruptController::new();
+        ic.request(InterruptKind::VBlank);
+        assert_eq!(ic.if_ & 0x01, 0x01);
+        ic.request(InterruptKind::Timer);
+        assert_eq!(ic.if_ & 0x04, 0x04);
+    }
+
+    #[test]
+    fn acknowledge_returns_none_when_no_interrupt_enabled() {
+        let mut ic = InterruptController::new();
+        ic.set_ime(true);
+        ic.request(InterruptKind::VBlank);
+        assert!(ic.acknowledge().is_none());
+    }
+
+    #[test]
+    fn acknowledge_returns_none_when_ime_disabled() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        assert!(ic.acknowledge().is_none());
+    }
+
+    #[test]
+    fn acknowledge_clears_ime_and_if_bit() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        ic.set_ime(true);
+        let kind = ic.acknowledge().expect("should ack");
+        assert_eq!(kind, InterruptKind::VBlank);
+        assert!(!ic.get_ime());
+        assert_eq!(ic.if_ & 0x01, 0x00);
+    }
+
+    #[test]
+    fn acknowledge_respects_priority_order() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x1F); // all enabled
+        ic.request(InterruptKind::Timer);
+        ic.request(InterruptKind::VBlank);
+        ic.set_ime(true);
+
+        let kind = ic.acknowledge().expect("should ack");
+        assert_eq!(kind, InterruptKind::VBlank);
+        assert_eq!(ic.if_, 0xE0 | 0x04); // Timer still pending
+    }
+
+    #[test]
+    fn halt_sets_halt_state() {
+        let mut ic = InterruptController::new();
+        assert!(!ic.is_halted());
+        ic.halt();
+        assert!(ic.is_halted());
+    }
+
+    #[test]
+    fn halt_bug_detected_when_ime_disabled_and_irq_pending() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        ic.halt();
+        assert!(ic.is_halt_bug_active());
+    }
+
+    #[test]
+    fn stop_then_wake_by_joypad() {
+        let mut ic = InterruptController::new();
+        ic.stop();
+        assert!(ic.is_halted());
+
+        // All buttons released → no wake
+        assert!(!ic.wake_by_joypad(0xFF));
+
+        // Any button pressed → wake
+        assert!(ic.wake_by_joypad(0xFE));
+        assert!(!ic.is_halted());
+    }
+
+    #[test]
+    fn read_if_has_upper_bits_set() {
+        let mut ic = InterruptController::new();
+        ic.write_if(0x00);
+        assert_eq!(ic.read_if(), 0xE0);
+    }
+
+    #[test]
+    fn interrupt_pending_with_ime_and_enabled_irq() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        ic.set_ime(true);
+        assert!(ic.interrupt_pending());
+    }
+
+    #[test]
+    fn no_interrupt_pending_when_ime_disabled() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        assert!(!ic.interrupt_pending());
     }
 }

@@ -68,12 +68,6 @@ impl GbcMemoryBus {
         }
 
         match addr {
-            0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
-            0x0000..=0x7FFF => self.cartridge.read_rom(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cartridge.read_ram(addr),
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
-            0xE000..=0xFDFF => self.read(addr - 0x2000),
             0xFE00..=0xFE9F => self.ppu.read_oam((addr & 0xFF) as u8),
             0xFEA0..=0xFEFF => 0x00,
             0xFF00 => self.joypad | 0xC0,
@@ -95,6 +89,20 @@ impl GbcMemoryBus {
             0xFF70 => self.wram_bank,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
+            _ => self.read_storage(addr),
+        }
+    }
+
+    /// Cartridge, VRAM, WRAM, HRAM, and boot ROM — shared between
+    /// `read()` (CPU access) and `read_raw()` (DMA access).
+    fn read_storage(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
+            0x0000..=0x7FFF => self.cartridge.read_rom(addr),
+            0x8000..=0x9FFF => self.ppu.read_vram(addr),
+            0xA000..=0xBFFF => self.cartridge.read_ram(addr),
+            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
+            0xE000..=0xFDFF => self.read_storage(addr - 0x2000),
             _ => 0xFF,
         }
     }
@@ -199,16 +207,7 @@ impl GbcMemoryBus {
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {
-        match addr {
-            0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
-            0x0000..=0x7FFF => self.cartridge.read_rom(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cartridge.read_ram(addr),
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
-            0xE000..=0xFDFF => self.read_raw(addr - 0x2000),
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            _ => 0xFF,
-        }
+        self.read_storage(addr)
     }
 
     pub fn read_dma(&self, addr: u16) -> Option<u8> {
@@ -251,5 +250,70 @@ impl GbcMemoryBus {
 impl Default for GbcMemoryBus {
     fn default() -> Self {
         Self::new([0; 0x100], false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bus() -> GbcMemoryBus {
+        GbcMemoryBus::new([0; 0x100], false)
+    }
+
+    #[test]
+    fn read_joypad_has_upper_bits_set() {
+        let bus = bus();
+        assert_eq!(bus.read(0xFF00) & 0xC0, 0xC0);
+    }
+
+    #[test]
+    fn read_timer_div_returns_upper_byte() {
+        let bus = bus();
+        let v = bus.read(0xFF04);
+        assert!(v > 0);
+    }
+
+    #[test]
+    fn read_interrupt_if_has_upper_bits_set() {
+        let bus = bus();
+        assert_eq!(bus.read(0xFF0F) & 0xE0, 0xE0);
+    }
+
+    #[test]
+    fn write_dma_triggers_transfer() {
+        let mut bus = bus();
+        bus.write(0xFF46, 0xC0);
+        assert!(bus.dma.active());
+    }
+
+    #[test]
+    fn write_boot_rom_disable_unmaps() {
+        let mut bus = GbcMemoryBus::new([0x00; 0x100], true);
+        assert!(bus.boot_rom_mapped);
+        bus.write(0xFF50, 0x01);
+        assert!(!bus.boot_rom_mapped);
+    }
+
+    #[test]
+    fn boot_rom_mapped_reads_from_rom_area() {
+        let mut rom = [0u8; 0x100];
+        rom[0x42] = 0xAB;
+        let bus = GbcMemoryBus::new(rom, true);
+        assert_eq!(bus.read(0x0042), 0xAB);
+    }
+
+    #[test]
+    fn wram_read_write_roundtrip() {
+        let mut bus = bus();
+        bus.write(0xC000, 0x42);
+        assert_eq!(bus.read(0xC000), 0x42);
+    }
+
+    #[test]
+    fn echo_ram_mirrors_wram() {
+        let mut bus = bus();
+        bus.write(0xC000, 0x77);
+        assert_eq!(bus.read(0xE000), 0x77);
     }
 }
