@@ -72,7 +72,7 @@ nerust_tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [features]
-default = ["nes"]
+default = ["nes", "gbc", "wgpu"]
 gbc = ["nerust_gbc_factory"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
 nes = ["nerust_nes_factory"]
