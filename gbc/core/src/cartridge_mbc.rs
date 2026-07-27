@@ -337,11 +337,6 @@ mod tests {
         let mut restored = Mbc1::new(vec![0; 0x20000], vec![0; 0x2000], true);
         restored.deserialize_state(&state).expect("deserialize");
 
-        let rom = vec![0u8; 0x20000];
-        // bank 3 = offset 3 * 0x4000 (but bank 0 → 1, so effective 3 & mask)
-        // With 8 banks: bank_mask = 7, effective = (2<<5 | 3) & 7 = 3? No wait...
-        // 0x20000 = 8 banks, mask=7. In mode 1, bank_effective: upper=2<<5=64, bank=3, combined=67, mask=7 → 3
-        // Actually with 8 banks, bank_count=8<=32, so upper=0 (≤512 KiB). Combined=3&7=3. bank 3 => read offset 3*0x4000
         let mut rom_set = vec![0u8; 0x20000];
         rom_set[3 * 0x4000] = 0xFF;
         let mut mbc2 = Mbc1::new(rom_set, vec![], false);
