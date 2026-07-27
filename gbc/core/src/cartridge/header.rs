@@ -115,10 +115,22 @@ impl RamSize {
     pub fn from_byte(v: u8) -> Option<Self> {
         match v {
             0x00 => Some(Self { bytes: 0, banks: 0 }),
-            0x02 => Some(Self { bytes: 0x2000, banks: 1 }),
-            0x03 => Some(Self { bytes: 0x8000, banks: 4 }),
-            0x04 => Some(Self { bytes: 0x20000, banks: 16 }),
-            0x05 => Some(Self { bytes: 0x10000, banks: 8 }),
+            0x02 => Some(Self {
+                bytes: 0x2000,
+                banks: 1,
+            }),
+            0x03 => Some(Self {
+                bytes: 0x8000,
+                banks: 4,
+            }),
+            0x04 => Some(Self {
+                bytes: 0x20000,
+                banks: 16,
+            }),
+            0x05 => Some(Self {
+                bytes: 0x10000,
+                banks: 8,
+            }),
             _ => None,
         }
     }

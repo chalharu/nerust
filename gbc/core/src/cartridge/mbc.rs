@@ -135,7 +135,11 @@ impl Mbc for Mbc1 {
         if !self.ram_enabled || self.ram.is_empty() {
             return 0xFF;
         }
-        let bank = if self.banking_mode { self.ram_bank as usize } else { 0 };
+        let bank = if self.banking_mode {
+            self.ram_bank as usize
+        } else {
+            0
+        };
         let offset = bank * 0x2000 + (addr as usize - 0xA000);
         self.ram.get(offset).copied().unwrap_or(0xFF)
     }
@@ -144,7 +148,11 @@ impl Mbc for Mbc1 {
         if !self.ram_enabled || self.ram.is_empty() {
             return;
         }
-        let bank = if self.banking_mode { self.ram_bank as usize } else { 0 };
+        let bank = if self.banking_mode {
+            self.ram_bank as usize
+        } else {
+            0
+        };
         let offset = bank * 0x2000 + (addr as usize - 0xA000);
         if let Some(cell) = self.ram.get_mut(offset) {
             *cell = value;
@@ -156,7 +164,11 @@ impl Mbc for Mbc1 {
     }
 
     fn ram_data(&self) -> Option<&[u8]> {
-        if self.ram.is_empty() { None } else { Some(&self.ram) }
+        if self.ram.is_empty() {
+            None
+        } else {
+            Some(&self.ram)
+        }
     }
 
     fn ram_restore(&mut self, data: &[u8]) {
