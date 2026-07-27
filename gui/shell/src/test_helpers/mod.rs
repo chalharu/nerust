@@ -17,9 +17,6 @@ pub(crate) use core_mock::*;
 pub(crate) use factory_mock::*;
 pub(crate) use input_mock::*;
 
-pub(crate) static CORE_CREATION_COUNT: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
 pub(crate) const TEST_SLOT_P1: AttachmentId = AttachmentId::new("test.slot.p1");
 
 #[derive(
