@@ -52,10 +52,10 @@ impl GbcSettingField {
 
     pub fn label_id(&self) -> &'static str {
         match self {
-            Self::VideoDmgPalette => "gbo.video.dmg_palette",
-            Self::VideoInterframeBlending => "gbo.video.interframe_blending",
-            Self::SystemBootRomEnabled => "gbo.system.boot_rom_enabled",
-            Self::SystemRtcSync => "gbo.system.rtc_sync",
+            Self::VideoDmgPalette => "gbc.video.dmg_palette",
+            Self::VideoInterframeBlending => "gbc.video.interframe_blending",
+            Self::SystemBootRomEnabled => "gbc.system.boot_rom_enabled",
+            Self::SystemRtcSync => "gbc.system.rtc_sync",
         }
     }
 
@@ -87,14 +87,14 @@ pub enum GbcSettingChoice {
 impl GbcSettingChoice {
     pub fn label_id(&self) -> &'static str {
         match self {
-            Self::Greyscale => "gbo.palette.greyscale",
-            Self::GreenTint => "gbo.palette.green_tint",
-            Self::BrownTint => "gbo.palette.brown_tint",
-            Self::PastelMix => "gbo.palette.pastel_mix",
-            Self::Inverted => "gbo.palette.inverted",
-            Self::On => "gbo.boolean.on",
-            Self::Off => "gbo.boolean.off",
-            Self::SystemTime => "gbo.rtc_sync.system_time",
+            Self::Greyscale => "gbc.palette.greyscale",
+            Self::GreenTint => "gbc.palette.green_tint",
+            Self::BrownTint => "gbc.palette.brown_tint",
+            Self::PastelMix => "gbc.palette.pastel_mix",
+            Self::Inverted => "gbc.palette.inverted",
+            Self::On => "gbc.boolean.on",
+            Self::Off => "gbc.boolean.off",
+            Self::SystemTime => "gbc.rtc_sync.system_time",
         }
     }
 
