@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn write_timer_div_resets_counter() {
         let mut bus = bus();
-        let before = bus.read(0xFF04);
+        let _before = bus.read(0xFF04);
         bus.write(0xFF04, 0x00);
         assert_eq!(bus.read(0xFF04), 0x00);
     }
