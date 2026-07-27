@@ -195,10 +195,8 @@ mod tests {
         // Nintendo logo (first 2 bytes for CGB check)
         rom[0x0104] = 0xCE;
         rom[0x0105] = 0xED;
-        // Title
-        for i in 0x0134..0x0143 {
-            rom[i] = 0x00;
-        }
+        // Title (zero-filled)
+        rom[0x0134..0x0143].fill(0);
         // CGB flag
         rom[0x0143] = 0x80;
         // New licensee
@@ -225,8 +223,8 @@ mod tests {
 
     fn compute_and_set_checksum(rom: &mut [u8]) {
         let mut checksum: u8 = 0;
-        for addr in 0x0134..=0x014C {
-            checksum = checksum.wrapping_sub(rom[addr]).wrapping_sub(1);
+        for b in &rom[0x0134..=0x014C] {
+            checksum = checksum.wrapping_sub(*b).wrapping_sub(1);
         }
         rom[0x014D] = checksum;
     }
