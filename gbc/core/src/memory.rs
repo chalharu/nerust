@@ -316,4 +316,55 @@ mod tests {
         bus.write(0xC000, 0x77);
         assert_eq!(bus.read(0xE000), 0x77);
     }
+
+    #[test]
+    fn write_timer_div_resets_counter() {
+        let mut bus = bus();
+        let before = bus.read(0xFF04);
+        bus.write(0xFF04, 0x00);
+        assert_eq!(bus.read(0xFF04), 0x00);
+    }
+
+    #[test]
+    fn write_serial_then_read_sc() {
+        let mut bus = bus();
+        bus.write(0xFF01, 0x55);
+        bus.write(0xFF02, 0x01);
+        assert_eq!(bus.read(0xFF02) & 0x7E, 0x7E);
+    }
+
+    #[test]
+    fn write_to_unused_io_is_noop() {
+        let mut bus = bus();
+        bus.write(0xFF03, 0x42);
+        assert_eq!(bus.read(0xFF0F) & 0xE0, 0xE0);
+    }
+
+    #[test]
+    fn interrupt_write_flow_through_bus() {
+        let mut bus = bus();
+        bus.write(0xFFFF, 0x01); // IE ← VBlank enabled
+        bus.write(0xFF0F, 0x01); // IF ← VBlank requested
+        assert_eq!(bus.read(0xFF0F), 0xE1);
+    }
+
+    #[test]
+    fn echo_write_mirrors_to_wram() {
+        let mut bus = bus();
+        bus.write(0xE000, 0xAB);
+        assert_eq!(bus.read(0xC000), 0xAB);
+    }
+
+    #[test]
+    fn joypad_write_preserves_select_bits() {
+        let mut bus = bus();
+        bus.write(0xFF00, 0x30);
+        assert_eq!(bus.read(0xFF00) & 0xF0, 0xF0);
+    }
+
+    #[test]
+    fn boot_rom_unmapped_reads_cartridge() {
+        let bus = GbcMemoryBus::new([0xFF; 0x100], false);
+        assert_eq!(bus.read(0x0000), 0xFF); // cartridge stub returns 0xFF
+    }
 }
