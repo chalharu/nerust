@@ -5,8 +5,17 @@
 //! number (1-based). It returns `Continue` to stay in the same state
 //! for the next M-cycle, or `Exit` when the instruction completes.
 
-use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_core::Lr35902Cpu;
 use crate::memory::GbcMemoryBus;
+
+/// Returned by each M-cycle step of an instruction.
+pub(crate) enum StepResult {
+    Continue,
+    Exit,
+}
+
+/// Handler function pointer type.
+pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepResult;
 
 mod alu;
 mod cb;
@@ -28,8 +37,6 @@ pub(crate) trait CpuStepState {
 }
 
 // ── Handler table ──────────────────────────────────────────
-
-pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepResult;
 
 /// Returns the function pointer table mapping opcode → handler.
 pub(crate) fn handler_table() -> [HandlerFn; 256] {

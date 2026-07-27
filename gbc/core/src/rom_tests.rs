@@ -7,7 +7,7 @@ mod tests {
     use std::path::Path;
 
     use crate::cartridge::Cartridge;
-    use crate::cpu::Lr35902Cpu;
+    use crate::cpu_core::Lr35902Cpu;
     use crate::memory::GbcMemoryBus;
 
     fn load_rom(subpath: &str) -> Cartridge {
