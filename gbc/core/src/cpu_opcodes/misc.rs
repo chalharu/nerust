@@ -1,7 +1,7 @@
 //! Miscellaneous instructions: NOP, STOP, HALT, DAA, rotates, DI, EI, LDH.
 
-use crate::cpu::opcodes::CpuStepState;
 use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
 pub(crate) struct Nop;

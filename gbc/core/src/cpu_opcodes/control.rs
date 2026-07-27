@@ -1,7 +1,7 @@
 //! Control flow instructions: JP, JR, CALL, RET, RST.
 
-use crate::cpu::opcodes::CpuStepState;
 use crate::cpu::{Lr35902Cpu, StepResult};
+use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
 fn cond(c: u8, core: &Lr35902Cpu) -> bool {

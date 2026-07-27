@@ -3,13 +3,10 @@
 //! Each `step()` call executes exactly **one M-cycle** (= 4 T-cycles).
 //! Multi-M-cycle instructions are decomposed via `CpuStepState::exec()`.
 
-pub mod opcodes;
-pub mod registers;
-
 use std::sync::LazyLock;
 
-use crate::cpu::opcodes::HandlerFn;
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_opcodes::HandlerFn;
+use crate::cpu_registers::CpuRegisters;
 use crate::interrupt::InterruptKind;
 use crate::memory::GbcMemoryBus;
 
@@ -19,7 +16,7 @@ pub(crate) enum StepResult {
     Exit,
 }
 
-static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| opcodes::handler_table());
+static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
 
 /// Phases of the CPU state machine.
 pub(crate) enum Phase {
@@ -32,10 +29,10 @@ pub struct Lr35902Cpu {
     pub(crate) phase: Phase,
     pub(crate) ime_delayed: bool,
     /// Fetched opcode byte.
-    opcode: u8,
+    pub(crate) opcode: u8,
     /// Operand bytes fetched during M2-Mn cycles.
-    operands: [u8; 2],
-    operand_count: u8,
+    pub(crate) operands: [u8; 2],
+    pub(crate) operand_count: u8,
 }
 
 impl Lr35902Cpu {

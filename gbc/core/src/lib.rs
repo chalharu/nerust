@@ -10,6 +10,10 @@ pub(crate) mod cartridge_mbc;
 #[allow(dead_code)]
 pub(crate) mod cpu;
 #[allow(dead_code)]
+pub(crate) mod cpu_opcodes;
+#[allow(dead_code)]
+pub(crate) mod cpu_registers;
+#[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod interrupt;
