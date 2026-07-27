@@ -75,7 +75,6 @@ impl StoragePathValidator for NoopStoragePathValidator {
 }
 
 /// Mutable state for the settings editor.
-#[derive(Clone)]
 pub struct EditorState {
     pub(crate) draft: Arc<SettingsSnapshot>,
     pub(crate) capture_target: Option<CaptureTarget>,
@@ -90,4 +89,21 @@ pub struct EditorState {
     /// Cache of [`conflicting_keys`] results, populated by the validator
     /// and reused by input projections to avoid double computation.
     pub(crate) conflicts_cache: ConflictsCache,
+}
+
+// Manual Clone: conflicts_cache is reset to None to avoid RefCell::clone panic.
+impl Clone for EditorState {
+    fn clone(&self) -> Self {
+        Self {
+            draft: Arc::clone(&self.draft),
+            capture_target: self.capture_target.clone(),
+            validation: self.validation.clone(),
+            revision: self.revision,
+            catalog: self.catalog.clone(),
+            supported_sample_rates: Arc::clone(&self.supported_sample_rates),
+            storage_validator: Rc::clone(&self.storage_validator),
+            cached_snapshot: Arc::clone(&self.cached_snapshot),
+            conflicts_cache: RefCell::new(None),
+        }
+    }
 }
