@@ -1016,4 +1016,56 @@ mod tests {
         );
         assert!(state.vm.revision.get() > rev_before);
     }
+
+    #[test]
+    fn select_input_section_round_trips() {
+        let mut state = empty_state();
+        dispatch(
+            &mut state,
+            Message::SelectInputSection(InputPageSection::Attachment(2)),
+        );
+        assert_eq!(state.input_section, InputPageSection::Attachment(2));
+    }
+
+    #[test]
+    fn set_system_choice_with_empty_registry_does_not_panic() {
+        use std::borrow::Cow;
+        let mut state = empty_state();
+        dispatch(
+            &mut state,
+            Message::SetSystemChoice(
+                "unknown".into(),
+                ChoiceView {
+                    value: nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                        Cow::Borrowed("none"),
+                    ),
+                    label: "none".into(),
+                },
+            ),
+        );
+        // No panic = success
+    }
+
+    #[test]
+    fn set_controller_slot_with_empty_registry_does_not_panic() {
+        let mut state = empty_state();
+        dispatch(
+            &mut state,
+            Message::SetControllerSlot {
+                slot: AttachmentId::new("nonexistent.slot"),
+                controller_id: None,
+            },
+        );
+        // No panic = success
+    }
+
+    #[test]
+    fn validation_errors_empty_with_default_settings() {
+        let state = empty_state();
+        let errors = state.validation_errors();
+        assert!(
+            errors.is_empty(),
+            "default settings should have no validation errors"
+        );
+    }
 }
