@@ -58,12 +58,36 @@ impl Controller for StandardPad {
         vec![
             (attachment, DigitalControlId::new("gbc.control.a"), FIELD_A),
             (attachment, DigitalControlId::new("gbc.control.b"), FIELD_B),
-            (attachment, DigitalControlId::new("gbc.control.select"), FIELD_SELECT),
-            (attachment, DigitalControlId::new("gbc.control.start"), FIELD_START),
-            (attachment, DigitalControlId::new("gbc.control.right"), FIELD_RIGHT),
-            (attachment, DigitalControlId::new("gbc.control.left"), FIELD_LEFT),
-            (attachment, DigitalControlId::new("gbc.control.up"), FIELD_UP),
-            (attachment, DigitalControlId::new("gbc.control.down"), FIELD_DOWN),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.select"),
+                FIELD_SELECT,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.start"),
+                FIELD_START,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.right"),
+                FIELD_RIGHT,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.left"),
+                FIELD_LEFT,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.up"),
+                FIELD_UP,
+            ),
+            (
+                attachment,
+                DigitalControlId::new("gbc.control.down"),
+                FIELD_DOWN,
+            ),
         ]
     }
 }
