@@ -251,4 +251,51 @@ mod tests {
         ic.request(InterruptKind::VBlank);
         assert!(!ic.interrupt_pending());
     }
+
+    #[test]
+    fn if_write_masks_upper_bits() {
+        let mut ic = InterruptController::new();
+        ic.write_if(0xFF);
+        assert_eq!(ic.read_if() & 0x1F, 0x1F);
+    }
+
+    #[test]
+    fn ie_write_preserves_full_byte() {
+        let mut ic = InterruptController::new();
+        ic.write_ie(0xFF);
+        assert_eq!(ic.read_ie(), 0xFF);
+    }
+
+    #[test]
+    fn wake_by_joypad_no_effect_on_halted_not_stopped() {
+        let mut ic = InterruptController::new();
+        ic.halt();
+        assert!(!ic.wake_by_joypad(0x00));
+        assert!(ic.is_halted()); // still halted
+    }
+
+    #[test]
+    fn halt_bug_not_triggered_when_ime_is_set() {
+        let mut ic = InterruptController::new();
+        ic.set_ime(true);
+        ic.write_ie(0x01);
+        ic.request(InterruptKind::VBlank);
+        ic.halt();
+        assert!(!ic.is_halt_bug_active());
+    }
+
+    #[test]
+    fn stop_then_wake_by_any_button_press() {
+        let mut ic = InterruptController::new();
+        ic.stop();
+        assert!(ic.wake_by_joypad(0x00));
+        assert!(!ic.is_halted());
+    }
+
+    #[test]
+    fn stop_no_wake_when_all_released() {
+        let mut ic = InterruptController::new();
+        ic.stop();
+        assert!(!ic.wake_by_joypad(0x0F));
+    }
 }

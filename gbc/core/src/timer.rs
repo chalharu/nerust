@@ -138,4 +138,41 @@ mod tests {
         timer.step(10_000);
         assert_eq!(timer.tima, 0);
     }
+
+    #[test]
+    fn tac_read_masks_upper_bits() {
+        let timer = Timer::new();
+        assert_eq!(timer.read(0xFF07) & 0xF8, 0xF8);
+    }
+
+    #[test]
+    fn enabling_timer_resets_counter() {
+        let mut timer = Timer::new();
+        timer.write(0xFF07, 0x04); // enable freq 00
+        timer.step(512); // advance counter halfway
+        timer.write(0xFF07, 0x00); // disable
+        timer.write(0xFF07, 0x04); // re-enable → counter reset
+        timer.step(1024);
+        assert_eq!(timer.tima, 1);
+    }
+
+    #[test]
+    fn step_returns_overflow_flag_once() {
+        let mut timer = Timer::new();
+        timer.write(0xFF05, 0xFF);
+        timer.write(0xFF07, 0x04);
+        let result = timer.step(1024);
+        assert!(result.overflow);
+        let result2 = timer.step(1024);
+        assert!(!result2.overflow);
+    }
+
+    #[test]
+    fn div_write_during_step_resets_properly() {
+        let mut timer = Timer::new();
+        timer.step(100);
+        timer.write(0xFF04, 0x00);
+        let upper = timer.read(0xFF04);
+        assert!(upper < 2);
+    }
 }
