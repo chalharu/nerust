@@ -2,7 +2,11 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use nerust_gbc_rom_test::{manifest::RomManifest, runner::run_case};
+use nerust_gbc_rom_test::{
+    manifest::RomManifest,
+    report::{write_html_report, CaseResult},
+    runner::run_case,
+};
 
 #[derive(Parser)]
 #[command(name = "gbc-rom-test", about = "GBC ROM test runner")]
@@ -17,6 +21,10 @@ struct Cli {
     /// Performance test mode
     #[arg(short, long)]
     perf: bool,
+
+    /// Write HTML report to $CARGO_TARGET_DIR/rom_tests/
+    #[arg(short, long)]
+    report: bool,
 }
 
 fn manifest_path(cli: &Cli) -> PathBuf {
@@ -46,30 +54,61 @@ fn main() {
         std::process::exit(1);
     }
 
+    let mut results: Vec<CaseResult> = Vec::new();
     let mut passed = 0u32;
     let mut failed = 0u32;
 
     for case in selected {
         print!("{} ... ", case.id);
-        match run_case(case, &rom_root) {
+        let result = match run_case(case, &rom_root) {
             Ok(output) => {
-                let ok = output.contains("Passed") || output.contains("PASS");
-                if ok {
+                let passed = output.contains("Passed") || output.contains("PASS");
+                if passed {
                     println!("ok");
-                    passed += 1;
                 } else {
                     println!("FAILED (output len={})", output.len());
-                    failed += 1;
+                }
+                CaseResult {
+                    id: case.id.clone(),
+                    category: case.category.clone(),
+                    description: case.description.clone(),
+                    passed,
+                    output: if passed { String::new() } else { output },
+                    error: None,
+                    screenshots: Vec::new(),
                 }
             }
             Err(e) => {
                 println!("ERROR: {}", e);
-                failed += 1;
+                CaseResult {
+                    id: case.id.clone(),
+                    category: case.category.clone(),
+                    description: case.description.clone(),
+                    passed: false,
+                    output: String::new(),
+                    error: Some(e.to_string()),
+                    screenshots: Vec::new(),
+                }
             }
+        };
+        if result.passed {
+            passed += 1;
+        } else {
+            failed += 1;
         }
+        results.push(result);
     }
 
     println!("\n{} passed, {} failed", passed, failed);
+
+    if cli.report {
+        let manifest_name = manifest_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("rom_tests");
+        write_html_report(None, manifest_name, &results).ok();
+    }
+
     if failed > 0 {
         std::process::exit(1);
     }
