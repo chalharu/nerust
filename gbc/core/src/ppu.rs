@@ -209,6 +209,7 @@ impl GbcPpu {
             let tile_index = self.vram[tile_map_addr as usize & 0x1FFF] as u16;
 
             let tile_pixel_x = (scroll_x % 8) as u16;
+            let tile_row_in_tile = (scroll_y % 8) as u16;
 
             let tile_addr = if signed_tiles {
                 let signed_idx = tile_index as i16;
@@ -217,10 +218,9 @@ impl GbcPpu {
                 tile_data_base + tile_index * 16
             };
 
-            let low =
-                self.vram[tile_addr as usize & 0x1FFF | if self.vbk != 0 { 0x2000 } else { 0 }];
-            let high = self.vram
-                [(tile_addr + 1) as usize & 0x1FFF | if self.vbk != 0 { 0x2000 } else { 0 }];
+            let row_addr = tile_addr + tile_row_in_tile * 2;
+            let low = self.vram[row_addr as usize & 0x1FFF];
+            let high = self.vram[(row_addr + 1) as usize & 0x1FFF];
             let color_bit = 7 - tile_pixel_x;
             let color = ((low >> color_bit) & 1) | (((high >> color_bit) & 1) << 1);
 
