@@ -128,13 +128,11 @@ fn main() {
         report_summary = write_html_report(None, manifest_name, &results).ok();
     }
 
-    if cli.open {
-        if let Some(ref summary) = report_summary {
+    if cli.open && let Some(ref summary) = report_summary {
             let path = &summary.report_path;
             if open::that(path).is_ok() {
                 eprintln!("Opened report: {}", path.display());
             }
-        }
     }
 
     if failed > 0 {
