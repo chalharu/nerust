@@ -3,13 +3,18 @@
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbcMemoryBus;
 
-/// Returned by each M-cycle step of an instruction.
+/// Returned by each handler invocation.
 pub(crate) enum StepResult {
     Continue,
     Exit,
 }
 
 /// Handler function pointer type.
+/// Called at T3 (bus phase) and T4 (internal phase) of each M-cycle.
+/// The handler checks `core.t_cycle` to distinguish phases:
+///   t_cycle == 2 (T3): perform bus access, return Continue
+///   t_cycle == 3 (T4): perform internal ops, return Continue or Exit
+///   step == 1, T4: decode fetch, return Exit (1-cycle) or Continue (multi-cycle)
 pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepResult;
 
 /// Phases of the CPU state machine.
@@ -21,6 +26,7 @@ pub(crate) enum Phase {
 pub struct Lr35902Cpu {
     pub registers: CpuRegisters,
     pub(crate) phase: Phase,
+    pub(crate) t_cycle: u8, // 0-3, current T-cycle within M-cycle
     pub(crate) ime_delayed: bool,
     pub(crate) opcode: u8,
     pub(crate) operands: [u8; 2],
@@ -32,6 +38,7 @@ impl Lr35902Cpu {
         Self {
             registers: CpuRegisters::new(),
             phase: Phase::FetchOpcode,
+            t_cycle: 0,
             ime_delayed: false,
             opcode: 0,
             operands: [0; 2],
