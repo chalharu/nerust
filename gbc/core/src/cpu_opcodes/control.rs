@@ -13,7 +13,8 @@ fn cond(c: u8, core: &Lr35902Cpu) -> bool {
 }
 
 fn jump16(core: &mut Lr35902Cpu) {
-    core.registers.pc = ((core.operands[1] as u16) << 8) | core.operands[0] as u16;
+    core.registers
+        .set_pc(((core.operands[1] as u16) << 8) | core.operands[0] as u16);
 }
 
 // ── JP a16 (4 M-cycles) ────────────────────────────────────
@@ -64,7 +65,7 @@ impl<const C: u8> CpuStepState for JpCond<C> {
 pub(crate) struct JpHl;
 impl CpuStepState for JpHl {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
-        core.registers.pc = core.registers.hl();
+        core.registers.set_pc(core.registers.hl());
         StepResult::Exit
     }
 }
@@ -81,10 +82,11 @@ impl CpuStepState for Jr {
             core.operands[0] = core.pc_read(bus);
             return StepResult::Continue;
         }
-        core.registers.pc = core
-            .registers
-            .pc
-            .wrapping_add_signed(core.operands[0] as i8 as i16);
+        core.registers.set_pc(
+            core.registers
+                .pc()
+                .wrapping_add_signed(core.operands[0] as i8 as i16),
+        );
         StepResult::Exit
     }
 }
@@ -104,10 +106,11 @@ impl<const C: u8> CpuStepState for JrCond<C> {
             return StepResult::Continue;
         }
         debug_assert!(step == 2, "JR step > 2");
-        core.registers.pc = core
-            .registers
-            .pc
-            .wrapping_add_signed(core.operands[0] as i8 as i16);
+        core.registers.set_pc(
+            core.registers
+                .pc()
+                .wrapping_add_signed(core.operands[0] as i8 as i16),
+        );
         StepResult::Exit
     }
 }
@@ -132,12 +135,12 @@ impl CpuStepState for Call {
             return StepResult::Continue;
         }
         if step == 4 {
-            core.registers.sp = core.registers.sp.wrapping_sub(1);
-            bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+            core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+            bus.write(core.registers.sp(), (core.registers.pc() >> 8) as u8);
             return StepResult::Continue;
         }
-        core.registers.sp = core.registers.sp.wrapping_sub(1);
-        bus.write(core.registers.sp, core.registers.pc as u8);
+        core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+        bus.write(core.registers.sp(), core.registers.pc() as u8);
         jump16(core);
         StepResult::Exit
     }
@@ -165,12 +168,12 @@ impl<const C: u8> CpuStepState for CallCond<C> {
             return StepResult::Continue;
         }
         if step == 4 {
-            core.registers.sp = core.registers.sp.wrapping_sub(1);
-            bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+            core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+            bus.write(core.registers.sp(), (core.registers.pc() >> 8) as u8);
             return StepResult::Continue;
         }
-        core.registers.sp = core.registers.sp.wrapping_sub(1);
-        bus.write(core.registers.sp, core.registers.pc as u8);
+        core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+        bus.write(core.registers.sp(), core.registers.pc() as u8);
         jump16(core);
         StepResult::Exit
     }
@@ -182,8 +185,8 @@ fn ret_finish(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, set_ime: bool) -> S
     if set_ime {
         bus.set_ime(true);
     }
-    core.operands[1] = bus.read(core.registers.sp);
-    core.registers.sp = core.registers.sp.wrapping_add(1);
+    core.operands[1] = bus.read(core.registers.sp());
+    core.registers.set_sp(core.registers.sp().wrapping_add(1));
     jump16(core);
     StepResult::Exit
 }
@@ -196,9 +199,9 @@ fn ret_common(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepRe
         return StepResult::Continue;
     }
     debug_assert!(step == 2, "RET step > 2");
-    core.operands[0] = bus.read(core.registers.sp);
-    core.registers.sp = core.registers.sp.wrapping_add(1);
-    return StepResult::Continue;
+    core.operands[0] = bus.read(core.registers.sp());
+    core.registers.set_sp(core.registers.sp().wrapping_add(1));
+    StepResult::Continue
 }
 
 pub(crate) struct Ret;
@@ -226,8 +229,8 @@ impl<const C: u8> CpuStepState for RetCond<C> {
             };
         }
         if step == 2 {
-            core.operands[0] = bus.read(core.registers.sp);
-            core.registers.sp = core.registers.sp.wrapping_add(1);
+            core.operands[0] = bus.read(core.registers.sp());
+            core.registers.set_sp(core.registers.sp().wrapping_add(1));
             return StepResult::Continue;
         }
         if step == 3 {
@@ -259,13 +262,13 @@ impl<const V: u8> CpuStepState for Rst<V> {
             return StepResult::Continue;
         }
         if step == 2 {
-            core.registers.sp = core.registers.sp.wrapping_sub(1);
-            bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+            core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+            bus.write(core.registers.sp(), (core.registers.pc() >> 8) as u8);
             return StepResult::Continue;
         }
-        core.registers.sp = core.registers.sp.wrapping_sub(1);
-        bus.write(core.registers.sp, core.registers.pc as u8);
-        core.registers.pc = V as u16 * 8;
+        core.registers.set_sp(core.registers.sp().wrapping_sub(1));
+        bus.write(core.registers.sp(), core.registers.pc() as u8);
+        core.registers.set_pc(V as u16 * 8);
         StepResult::Exit
     }
 }

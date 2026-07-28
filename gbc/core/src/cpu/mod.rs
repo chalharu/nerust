@@ -21,11 +21,11 @@ impl Lr35902Cpu {
             Phase::FetchOpcode => {
                 self.check_interrupts(bus);
                 let op = if bus.is_dma_active() {
-                    bus.read_dma(self.registers.pc).unwrap_or(0xFF)
+                    bus.read_dma(self.registers.pc()).unwrap_or(0xFF)
                 } else {
-                    bus.read(self.registers.pc)
+                    bus.read(self.registers.pc())
                 };
-                self.registers.pc = self.registers.pc.wrapping_add(1);
+                self.registers.set_pc(self.registers.pc().wrapping_add(1));
                 self.opcode = op;
                 self.operands = [0; 2];
                 self.operand_count = 0;
@@ -63,11 +63,11 @@ impl Lr35902Cpu {
     }
 
     fn dispatch_interrupt(&mut self, kind: InterruptKind, bus: &mut GbcMemoryBus) {
-        self.registers.sp = self.registers.sp.wrapping_sub(1);
-        bus.write(self.registers.sp, (self.registers.pc >> 8) as u8);
-        self.registers.sp = self.registers.sp.wrapping_sub(1);
-        bus.write(self.registers.sp, self.registers.pc as u8);
-        self.registers.pc = kind.vector();
+        self.registers.set_sp(self.registers.sp().wrapping_sub(1));
+        bus.write(self.registers.sp(), (self.registers.pc() >> 8) as u8);
+        self.registers.set_sp(self.registers.sp().wrapping_sub(1));
+        bus.write(self.registers.sp(), self.registers.pc() as u8);
+        self.registers.set_pc(kind.vector());
     }
 }
 

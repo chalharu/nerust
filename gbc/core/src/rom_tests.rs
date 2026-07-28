@@ -25,7 +25,7 @@ fn run_rom(subpath: &str, cycles: usize) -> String {
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(load_rom(subpath));
     let mut cpu = Lr35902Cpu::new();
-    cpu.registers.pc = 0x0100;
+    cpu.registers.set_pc(0x0100);
     for _ in 0..cycles {
         cpu.step(&mut bus);
         bus.step_devices(4);
@@ -38,7 +38,7 @@ fn run_rom_mem(subpath: &str, cycles: usize) -> String {
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(load_rom(subpath));
     let mut cpu = Lr35902Cpu::new();
-    cpu.registers.pc = 0x0100;
+    cpu.registers.set_pc(0x0100);
     for _ in 0..cycles {
         cpu.step(&mut bus);
         bus.step_devices(4);

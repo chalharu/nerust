@@ -11,7 +11,7 @@ impl<const R: u8> CpuStepState for IncR8<R> {
         let v = read_r8(core, R);
         let r = v.wrapping_add(1);
         write_r8(core, R, r);
-        core.registers.set_h((v & 0x0F) == 0x0F);
+        core.registers.set_h_flag((v & 0x0F) == 0x0F);
         core.registers.set_z(r == 0);
         core.registers.set_n(false);
         StepResult::Exit
@@ -24,7 +24,7 @@ impl<const R: u8> CpuStepState for DecR8<R> {
         let v = read_r8(core, R);
         let r = v.wrapping_sub(1);
         write_r8(core, R, r);
-        core.registers.set_h((v & 0x0F) == 0);
+        core.registers.set_h_flag((v & 0x0F) == 0);
         core.registers.set_z(r == 0);
         core.registers.set_n(true);
         StepResult::Exit
@@ -42,14 +42,14 @@ impl<const R: u8> CpuStepState for IncR16<R> {
             reg::BC => core.registers.bc(),
             reg::DE => core.registers.de(),
             reg::R16_HL => core.registers.hl(),
-            _ => core.registers.sp,
+            _ => core.registers.sp(),
         };
         let r = v.wrapping_add(1);
         match R {
             reg::BC => core.registers.set_bc(r),
             reg::DE => core.registers.set_de(r),
             reg::R16_HL => core.registers.set_hl(r),
-            _ => core.registers.sp = r,
+            _ => core.registers.set_sp(r),
         }
         StepResult::Exit
     }
@@ -66,14 +66,14 @@ impl<const R: u8> CpuStepState for DecR16<R> {
             reg::BC => core.registers.bc(),
             reg::DE => core.registers.de(),
             reg::R16_HL => core.registers.hl(),
-            _ => core.registers.sp,
+            _ => core.registers.sp(),
         };
         let r = v.wrapping_sub(1);
         match R {
             reg::BC => core.registers.set_bc(r),
             reg::DE => core.registers.set_de(r),
             reg::R16_HL => core.registers.set_hl(r),
-            _ => core.registers.sp = r,
+            _ => core.registers.set_sp(r),
         }
         StepResult::Exit
     }
@@ -86,7 +86,7 @@ impl CpuStepState for IncSp {
             return StepResult::Continue;
         }
         // step == 1
-        core.registers.sp = core.registers.sp.wrapping_add(1);
+        core.registers.set_sp(core.registers.sp().wrapping_add(1));
         StepResult::Exit
     }
 }
@@ -97,7 +97,7 @@ impl CpuStepState for DecSp {
             return StepResult::Continue;
         }
         // step == 1
-        core.registers.sp = core.registers.sp.wrapping_sub(1);
+        core.registers.set_sp(core.registers.sp().wrapping_sub(1));
         StepResult::Exit
     }
 }
@@ -116,7 +116,7 @@ impl CpuStepState for IncHlIndirect {
         let v = core.operands[0];
         let r = v.wrapping_add(1);
         bus.write(core.registers.hl(), r);
-        core.registers.set_h((v & 0x0F) == 0x0F);
+        core.registers.set_h_flag((v & 0x0F) == 0x0F);
         core.registers.set_z(r == 0);
         core.registers.set_n(false);
         StepResult::Exit
@@ -137,7 +137,7 @@ impl CpuStepState for DecHlIndirect {
         let v = core.operands[0];
         let r = v.wrapping_sub(1);
         bus.write(core.registers.hl(), r);
-        core.registers.set_h((v & 0x0F) == 0);
+        core.registers.set_h_flag((v & 0x0F) == 0);
         core.registers.set_z(r == 0);
         core.registers.set_n(true);
         StepResult::Exit

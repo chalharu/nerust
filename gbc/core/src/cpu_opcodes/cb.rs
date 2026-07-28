@@ -30,7 +30,7 @@ impl CpuStepState for CbPrefix {
                 let bit = (op >> 3) & 0x07;
                 core.registers.set_z(val & (1 << bit) == 0);
                 core.registers.set_n(false);
-                core.registers.set_h(true);
+                core.registers.set_h_flag(true);
                 return StepResult::Exit;
             }
             // rotate/res/set: compute, need step 3 for write
@@ -45,26 +45,26 @@ impl CpuStepState for CbPrefix {
 
 fn read_reg(core: &Lr35902Cpu, idx: u8) -> u8 {
     match idx {
-        0 => core.registers.b,
-        1 => core.registers.c,
-        2 => core.registers.d,
-        3 => core.registers.e,
-        4 => core.registers.h,
-        5 => core.registers.l,
-        7 => core.registers.a,
+        0 => core.registers.b(),
+        1 => core.registers.c(),
+        2 => core.registers.d(),
+        3 => core.registers.e(),
+        4 => core.registers.h(),
+        5 => core.registers.l(),
+        7 => core.registers.a(),
         _ => 0,
     }
 }
 
 fn write_reg(core: &mut Lr35902Cpu, idx: u8, v: u8) {
     match idx {
-        0 => core.registers.b = v,
-        1 => core.registers.c = v,
-        2 => core.registers.d = v,
-        3 => core.registers.e = v,
-        4 => core.registers.h = v,
-        5 => core.registers.l = v,
-        7 => core.registers.a = v,
+        0 => core.registers.set_b(v),
+        1 => core.registers.set_c(v),
+        2 => core.registers.set_d(v),
+        3 => core.registers.set_e(v),
+        4 => core.registers.set_h(v),
+        5 => core.registers.set_l(v),
+        7 => core.registers.set_a(v),
         _ => {}
     }
 }
@@ -110,8 +110,8 @@ fn cb_rotate(val: u8, op: u8, core: &Lr35902Cpu) -> (u8, bool) {
 fn set_rotate_flags(core: &mut Lr35902Cpu, r: u8, c: bool) {
     core.registers.set_z(r == 0);
     core.registers.set_n(false);
-    core.registers.set_h(false);
-    core.registers.set_c(c);
+    core.registers.set_h_flag(false);
+    core.registers.set_c_flag(c);
 }
 
 fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
@@ -129,7 +129,7 @@ fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
             let bit = (op >> 3) & 0x07;
             core.registers.set_z(val & (1 << bit) == 0);
             core.registers.set_n(false);
-            core.registers.set_h(true);
+            core.registers.set_h_flag(true);
         }
         2 => {
             let bit = (op >> 3) & 0x07;
@@ -153,7 +153,7 @@ fn cb_compute(val: u8, op: u8, core: &mut Lr35902Cpu) -> u8 {
             let bit = (op >> 3) & 0x07;
             core.registers.set_z(val & (1 << bit) == 0);
             core.registers.set_n(false);
-            core.registers.set_h(true);
+            core.registers.set_h_flag(true);
             val
         }
         2 => {

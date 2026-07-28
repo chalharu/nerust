@@ -4,16 +4,16 @@
 /// Bits 3-0 are always 0 on read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuRegisters {
-    pub a: u8,
-    pub f: u8,
-    pub b: u8,
-    pub c: u8,
-    pub d: u8,
-    pub e: u8,
-    pub h: u8,
-    pub l: u8,
-    pub sp: u16,
-    pub pc: u16,
+    a: u8,
+    f: u8,
+    b: u8,
+    c: u8,
+    d: u8,
+    e: u8,
+    h: u8,
+    l: u8,
+    sp: u16,
+    pc: u16,
 }
 
 impl CpuRegisters {
@@ -30,6 +30,69 @@ impl CpuRegisters {
             sp: 0xFFFE,
             pc: 0x0100,
         }
+    }
+
+    // --- individual register accessors ---
+
+    pub fn a(&self) -> u8 {
+        self.a
+    }
+    pub fn set_a(&mut self, v: u8) {
+        self.a = v;
+    }
+    pub fn f(&self) -> u8 {
+        self.f & 0xF0
+    }
+    pub fn set_f(&mut self, v: u8) {
+        self.f = v & 0xF0;
+    }
+    pub fn b(&self) -> u8 {
+        self.b
+    }
+    pub fn set_b(&mut self, v: u8) {
+        self.b = v;
+    }
+    pub fn c(&self) -> u8 {
+        self.c
+    }
+    pub fn set_c(&mut self, v: u8) {
+        self.c = v;
+    }
+    pub fn d(&self) -> u8 {
+        self.d
+    }
+    pub fn set_d(&mut self, v: u8) {
+        self.d = v;
+    }
+    pub fn e(&self) -> u8 {
+        self.e
+    }
+    pub fn set_e(&mut self, v: u8) {
+        self.e = v;
+    }
+    pub fn h(&self) -> u8 {
+        self.h
+    }
+    pub fn set_h(&mut self, v: u8) {
+        self.h = v;
+    }
+    pub fn l(&self) -> u8 {
+        self.l
+    }
+    pub fn set_l(&mut self, v: u8) {
+        self.l = v;
+    }
+    pub fn sp(&self) -> u16 {
+        self.sp
+    }
+    pub fn set_sp(&mut self, v: u16) {
+        self.sp = v;
+    }
+    pub fn pc(&self) -> u16 {
+        self.pc
+    }
+    pub fn set_pc(&mut self, v: u16) {
+        self.pc = v;
     }
 
     // --- 16-bit register pairs ---
@@ -87,13 +150,13 @@ impl CpuRegisters {
     pub fn h_flag(&self) -> bool {
         self.f & 0x20 != 0
     }
-    pub fn set_h(&mut self, v: bool) {
+    pub fn set_h_flag(&mut self, v: bool) {
         self.f = (self.f & !0x20) | if v { 0x20 } else { 0 };
     }
     pub fn c_flag(&self) -> bool {
         self.f & 0x10 != 0
     }
-    pub fn set_c(&mut self, v: bool) {
+    pub fn set_c_flag(&mut self, v: bool) {
         self.f = (self.f & !0x10) | if v { 0x10 } else { 0 };
     }
 }
@@ -133,8 +196,8 @@ mod tests {
         let mut r = CpuRegisters::new();
         r.set_z(true);
         r.set_n(true);
-        r.set_h(false);
-        r.set_c(true);
+        r.set_h_flag(false);
+        r.set_c_flag(true);
         assert!(r.z_flag());
         assert!(r.n_flag());
         assert!(!r.h_flag());
