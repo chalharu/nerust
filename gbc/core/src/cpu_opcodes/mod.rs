@@ -31,16 +31,12 @@ pub(crate) trait CpuStepState {
 
 // ── Handler table ──────────────────────────────────────────
 
-/// Returns the function pointer table mapping opcode → handler.
-pub(crate) fn handler_table() -> [HandlerFn; 256] {
-    let mut t: [HandlerFn; 256] = [misc::Invalid::exec; 256];
-
-    // Block 0 (0x00-0x3F)
+fn fill_block0(t: &mut [HandlerFn; 256]) {
     t[0x00] = misc::Nop::exec;
-    t[0x01] = load::LdR16D16::<{ reg::BC }>::exec; // BC
+    t[0x01] = load::LdR16D16::<{ reg::BC }>::exec;
     t[0x02] = load::LdR16memA::<{ reg::BC }>::exec;
     t[0x03] = inc_dec::IncR16::<{ reg::BC }>::exec;
-    t[0x04] = inc_dec::IncR8::<{ reg::B }>::exec; // B (bits 3-5 = 000)
+    t[0x04] = inc_dec::IncR8::<{ reg::B }>::exec;
     t[0x05] = inc_dec::DecR8::<{ reg::B }>::exec;
     t[0x06] = load::LdR8D8::<{ reg::B }>::exec;
     t[0x07] = misc::Rlca::exec;
@@ -52,9 +48,8 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x0D] = inc_dec::DecR8::<{ reg::C }>::exec;
     t[0x0E] = load::LdR8D8::<{ reg::C }>::exec;
     t[0x0F] = misc::Rrca::exec;
-
     t[0x10] = misc::Stop::exec;
-    t[0x11] = load::LdR16D16::<{ reg::DE }>::exec; // DE
+    t[0x11] = load::LdR16D16::<{ reg::DE }>::exec;
     t[0x12] = load::LdR16memA::<{ reg::DE }>::exec;
     t[0x13] = inc_dec::IncR16::<{ reg::DE }>::exec;
     t[0x14] = inc_dec::IncR8::<{ reg::D }>::exec;
@@ -69,7 +64,6 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x1D] = inc_dec::DecR8::<{ reg::E }>::exec;
     t[0x1E] = load::LdR8D8::<{ reg::E }>::exec;
     t[0x1F] = misc::Rra::exec;
-
     for (op, h) in [
         (0x20, control::JrCond::<0>::exec as HandlerFn),
         (0x28, control::JrCond::<1>::exec as HandlerFn),
@@ -85,7 +79,7 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x25] = inc_dec::DecR8::<{ reg::H }>::exec;
     t[0x26] = load::LdR8D8::<{ reg::H }>::exec;
     t[0x27] = misc::Daa::exec;
-    t[0x28] = control::JrCond::<1>::exec; // Z
+    t[0x28] = control::JrCond::<1>::exec;
     t[0x29] = alu::AddHlR16::<{ reg::R16_HL }>::exec;
     t[0x2A] = load::LdAHli::exec;
     t[0x2B] = inc_dec::DecR16::<{ reg::R16_HL }>::exec;
@@ -109,19 +103,22 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0x3D] = inc_dec::DecR8::<{ reg::A }>::exec;
     t[0x3E] = load::LdR8D8::<{ reg::A }>::exec;
     t[0x3F] = misc::Ccf::exec;
+}
 
-    // Block 1 (0x40-0x7F): LD r8, r8
+fn fill_block1(t: &mut [HandlerFn; 256]) {
     for entry in t[0x40..=0x7F].iter_mut() {
         *entry = load::LdR8R8::exec;
     }
     t[0x76] = misc::Halt::exec;
+}
 
-    // Block 2 (0x80-0xBF): ALU A, r8
+fn fill_block2(t: &mut [HandlerFn; 256]) {
     for entry in t[0x80..=0xBF].iter_mut() {
         *entry = alu::AluAR8::exec;
     }
+}
 
-    // Block 3 (0xC0-0xFF)
+fn fill_block3(t: &mut [HandlerFn; 256]) {
     for (op, h) in [
         (0xC0, control::RetCond::<0>::exec as HandlerFn),
         (0xC8, control::RetCond::<1>::exec as HandlerFn),
@@ -187,8 +184,6 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0xFB] = misc::Ei::exec;
     t[0xFE] = alu::AluAD8::<7>::exec;
     t[0xFF] = control::Rst::<7>::exec;
-
-    // Invalid opcodes with per-opcode byte + M-cycle counts
     t[0xD3] = misc::InvalidOp::<1, 0>::exec;
     t[0xDB] = misc::InvalidOp::<1, 0>::exec;
     t[0xDD] = misc::InvalidOp::<1, 0>::exec;
@@ -200,6 +195,14 @@ pub(crate) fn handler_table() -> [HandlerFn; 256] {
     t[0xF4] = misc::InvalidOp::<3, 3>::exec;
     t[0xFC] = misc::InvalidOp::<3, 3>::exec;
     t[0xFD] = misc::InvalidOp::<3, 3>::exec;
+}
 
+/// Returns the function pointer table mapping opcode → handler.
+pub(crate) fn handler_table() -> [HandlerFn; 256] {
+    let mut t: [HandlerFn; 256] = [misc::Invalid::exec; 256];
+    fill_block0(&mut t);
+    fill_block1(&mut t);
+    fill_block2(&mut t);
+    fill_block3(&mut t);
     t
 }

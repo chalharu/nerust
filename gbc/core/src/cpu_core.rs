@@ -16,7 +16,7 @@ pub(crate) enum Phase {
 }
 
 pub struct Lr35902Cpu {
-    pub registers: CpuRegisters,
+    pub(crate) registers: CpuRegisters,
     pub(crate) phase: Phase,
     pub(crate) ime_delayed: bool,
     pub(crate) opcode: u8,
@@ -37,11 +37,7 @@ impl Lr35902Cpu {
     }
 
     pub(crate) fn pc_read(&mut self, bus: &mut GbcMemoryBus) -> u8 {
-        let b = if bus.is_dma_active() {
-            bus.read_dma(self.registers.pc()).unwrap_or(0xFF)
-        } else {
-            bus.read(self.registers.pc())
-        };
+        let b = bus.read(self.registers.pc());
         self.registers.set_pc(self.registers.pc().wrapping_add(1));
         b
     }

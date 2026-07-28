@@ -20,11 +20,7 @@ impl Lr35902Cpu {
         match self.phase {
             Phase::FetchOpcode => {
                 self.check_interrupts(bus);
-                let op = if bus.is_dma_active() {
-                    bus.read_dma(self.registers.pc()).unwrap_or(0xFF)
-                } else {
-                    bus.read(self.registers.pc())
-                };
+                let op = bus.read(self.registers.pc());
                 self.registers.set_pc(self.registers.pc().wrapping_add(1));
                 self.opcode = op;
                 self.operands = [0; 2];
