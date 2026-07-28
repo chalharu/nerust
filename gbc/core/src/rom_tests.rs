@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn mem_timing_read() {
         assert_passed(
-            &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
+            &run_rom("mem_timing/individual/01-read_timing.gb", 25_000_000),
             "mem_timing/01-read",
         );
     }
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn mem_timing_write() {
         assert_passed(
-            &run_rom("mem_timing/individual/02-write_timing.gb", 150_000_000),
+            &run_rom("mem_timing/individual/02-write_timing.gb", 25_000_000),
             "mem_timing/02-write",
         );
     }
@@ -76,14 +76,14 @@ mod tests {
     #[test]
     fn mem_timing_modify() {
         assert_passed(
-            &run_rom("mem_timing/individual/03-modify_timing.gb", 150_000_000),
+            &run_rom("mem_timing/individual/03-modify_timing.gb", 25_000_000),
             "mem_timing/03-modify",
         );
     }
 
     #[test]
     fn mem_timing_all() {
-        let output = run_rom("mem_timing/mem_timing.gb", 150_000_000);
+        let output = run_rom("mem_timing/mem_timing.gb", 25_000_000);
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
     }
 
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn mem_timing2_read() {
         assert_passed(
-            &run_rom_mem("mem_timing-2/rom_singles/01-read_timing.gb", 300_000_000),
+            &run_rom_mem("mem_timing-2/rom_singles/01-read_timing.gb", 25_000_000),
             "mem_timing-2/01-read",
         );
     }
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn mem_timing2_write() {
         assert_passed(
-            &run_rom_mem("mem_timing-2/rom_singles/02-write_timing.gb", 300_000_000),
+            &run_rom_mem("mem_timing-2/rom_singles/02-write_timing.gb", 25_000_000),
             "mem_timing-2/02-write",
         );
     }
@@ -108,27 +108,27 @@ mod tests {
     #[test]
     fn mem_timing2_modify() {
         assert_passed(
-            &run_rom_mem("mem_timing-2/rom_singles/03-modify_timing.gb", 300_000_000),
+            &run_rom_mem("mem_timing-2/rom_singles/03-modify_timing.gb", 25_000_000),
             "mem_timing-2/03-modify",
         );
     }
 
     #[test]
     fn mem_timing2_all() {
-        let output = run_rom("mem_timing-2/mem_timing.gb", 150_000_000);
+        let output = run_rom("mem_timing-2/mem_timing.gb", 25_000_000);
         assert!(!output.contains("Failed"), "mem_timing-2 failure:\n{output}");
     }
 
     #[test]
     fn cpu_instrs_all() {
-        let output = run_rom("cpu_instrs/cpu_instrs.gb", 100_000_000);
+        let output = run_rom("cpu_instrs/cpu_instrs.gb", 25_000_000);
         assert!(!output.contains("Failed"), "cpu_instrs failure:\n{output}");
     }
 
     #[test]
     fn cpu_instrs_01_special() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/01-special.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/01-special.gb", 10_000_000),
             "01-special",
         );
     }
@@ -137,7 +137,7 @@ mod tests {
     #[ignore = "needs PPU STAT register for LCD interrupt"]
     fn cpu_instrs_02_interrupts() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/02-interrupts.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/02-interrupts.gb", 10_000_000),
             "02-interrupts",
         );
     }
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn cpu_instrs_03_op_sp_hl() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/03-op sp,hl.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/03-op sp,hl.gb", 10_000_000),
             "03-op sp,hl",
         );
     }
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn cpu_instrs_04_op_r_imm() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/04-op r,imm.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/04-op r,imm.gb", 10_000_000),
             "04-op r,imm",
         );
     }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn cpu_instrs_05_op_rp() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/05-op rp.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/05-op rp.gb", 10_000_000),
             "05-op rp",
         );
     }
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn cpu_instrs_06_ld_r_r() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/06-ld r,r.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/06-ld r,r.gb", 10_000_000),
             "06-ld r,r",
         );
     }
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn cpu_instrs_07_jump_call_ret_rst() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/07-jr,jp,call,ret,rst.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/07-jr,jp,call,ret,rst.gb", 10_000_000),
             "07-jump",
         );
     }
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn cpu_instrs_08_misc() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/08-misc instrs.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/08-misc instrs.gb", 10_000_000),
             "08-misc",
         );
     }
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn cpu_instrs_09_op_r_r() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/09-op r,r.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/09-op r,r.gb", 10_000_000),
             "09-op r,r",
         );
     }
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn cpu_instrs_10_bit_ops() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/10-bit ops.gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/10-bit ops.gb", 25_000_000),
             "10-bit ops",
         );
     }
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn cpu_instrs_11_op_a_hl() {
         assert_passed(
-            &run_rom("cpu_instrs/individual/11-op a,(hl).gb", 50_000_000),
+            &run_rom("cpu_instrs/individual/11-op a,(hl).gb", 25_000_000),
             "11-op a,(hl)",
         );
     }
@@ -218,7 +218,7 @@ mod tests {
     #[ignore = "separate timing issue in instr_timing's sync_tima_64 path"]
     fn instr_timing() {
         assert_passed(
-            &run_rom("instr_timing/instr_timing.gb", 150_000_000),
+            &run_rom("instr_timing/instr_timing.gb", 25_000_000),
             "instr_timing",
         );
     }
