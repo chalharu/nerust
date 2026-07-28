@@ -190,65 +190,99 @@ impl GbcPpu {
         if self.ly >= VBLANK_START || self.lcdc & 0x80 == 0 {
             return;
         }
-        if self.lcdc & 0x01 == 0 {
-            // BG display off: white background
-            let y = self.ly as usize;
-            let base = y * 160;
+
+        let ly = self.ly as usize;
+        let bg_enabled = self.lcdc & 0x01 != 0;
+        let window_enabled = self.lcdc & 0x20 != 0;
+
+        // Default: white background
+        let base = ly * 160;
+        if !bg_enabled && !window_enabled {
             for x in 0..160 {
                 self.frame_buffer[base + x] = 0xFF_FF_FF_FF;
             }
             return;
         }
 
-        let y = self.ly as usize;
-        let scroll_y = self
-            .scy
-            .wrapping_add(self.ly)
-            .wrapping_add(if y >= self.wy as usize { self.wy } else { 0 });
+        // Compute pixel for each x position
+        for x in 0..160 {
+            let mut pixel = 0xFF_FF_FF_FF; // default white
+
+            // BG layer
+            if bg_enabled {
+                let scroll_y = self.scy.wrapping_add(self.ly as u8);
+                let scroll_x = self.scx.wrapping_add(x as u8);
+                pixel = self.read_bg_pixel(scroll_x, scroll_y);
+            }
+
+            // Window layer (overlays BG when enabled and within window area)
+            if window_enabled {
+                let wx = self.wx.wrapping_sub(7) as i16;
+                let wy = self.wy as i16;
+                if x as i16 >= wx && (ly as i16) >= wy {
+                    let win_x = (x as i16 - wx) as u8;
+                    let win_y = (ly as i16 - wy) as u8;
+                    pixel = self.read_window_pixel(win_x, win_y);
+                }
+            }
+
+            self.frame_buffer[base + x] = pixel;
+        }
+    }
+
+    fn read_tile_pixel(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool) -> u8 {
+        let tile_addr = if signed_tiles {
+            let signed_idx = tile_index as i8 as i16;
+            (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
+        } else {
+            0x8000u16 + tile_index as u16 * 16
+        };
+        let row_addr = tile_addr + (tile_y as u16) * 2;
+        let low = self.vram[row_addr as usize & 0x1FFF];
+        let high = self.vram[(row_addr + 1) as usize & 0x1FFF];
+        let bit = 7 - tile_x;
+        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
+    }
+
+    fn shade_to_pixel(shade: u8) -> u32 {
+        match shade {
+            0 => 0xFF_FF_FF_FF,
+            1 => 0xC0_C0_C0_FF,
+            2 => 0x60_60_60_FF,
+            _ => 0x00_00_00_FF,
+        }
+    }
+
+    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> u32 {
         let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
             0x9C00
         } else {
             0x9800
         };
-        let tile_data_base: u16 = if self.lcdc & 0x10 != 0 {
-            0x8000
+        let signed_tiles = self.lcdc & 0x10 == 0;
+        let tile_col = (scroll_x / 8) as u16;
+        let tile_row = (scroll_y / 8) as u16;
+        let map_addr = tile_map_base + tile_row * 32 + tile_col;
+        let tile_index = self.vram[map_addr as usize & 0x1FFF];
+        let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
+        let shade = (self.bgp >> (color * 2)) & 0x03;
+        Self::shade_to_pixel(shade)
+    }
+
+    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> u32 {
+        let tile_map_base: u16 = if self.lcdc & 0x40 != 0 {
+            0x9C00
         } else {
-            0x8800
+            0x9800
         };
         let signed_tiles = self.lcdc & 0x10 == 0;
-
-        for x in 0..160 {
-            let scroll_x = self.scx.wrapping_add(x as u8);
-            let tile_col = (scroll_x / 8) as u16;
-            let tile_row = (scroll_y / 8) as u16;
-            let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
-            let tile_index = self.vram[tile_map_addr as usize & 0x1FFF] as u16;
-
-            let tile_pixel_x = (scroll_x % 8) as u16;
-            let tile_row_in_tile = (scroll_y % 8) as u16;
-
-            let tile_addr = if signed_tiles {
-                let signed_idx = tile_index as i16;
-                (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
-            } else {
-                tile_data_base + tile_index * 16
-            };
-
-            let row_addr = tile_addr + tile_row_in_tile * 2;
-            let low = self.vram[row_addr as usize & 0x1FFF];
-            let high = self.vram[(row_addr + 1) as usize & 0x1FFF];
-            let color_bit = 7 - tile_pixel_x;
-            let color = ((low >> color_bit) & 1) | (((high >> color_bit) & 1) << 1);
-
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            let pixel = match shade {
-                0 => 0xFF_FF_FF_FF, // white
-                1 => 0xC0_C0_C0_FF, // light gray
-                2 => 0x60_60_60_FF, // dark gray
-                _ => 0x00_00_00_FF, // black
-            };
-            self.frame_buffer[y * 160 + x] = pixel;
-        }
+        let tile_col = (win_x / 8) as u16;
+        let tile_row = (win_y / 8) as u16;
+        let map_addr = tile_map_base + tile_row * 32 + tile_col;
+        let tile_index = self.vram[map_addr as usize & 0x1FFF];
+        let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
+        let shade = (self.bgp >> (color * 2)) & 0x03;
+        Self::shade_to_pixel(shade)
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
@@ -378,6 +412,15 @@ impl GbcPpu {
             0xFF68 | 0xFF69 => self.read_register(addr),
             0xFF6A | 0xFF6B => self.read_register(addr),
             _ => 0xFF,
+        }
+    }
+
+    /// Debug: read a pixel from the frame buffer (for testing).
+    pub fn debug_pixel(&self, x: usize, y: usize) -> u32 {
+        if x < 160 && y < 144 {
+            self.frame_buffer[y * 160 + x]
+        } else {
+            0
         }
     }
 
@@ -591,5 +634,62 @@ mod tests {
         }
         p.step(1);
         assert_eq!(p.read_register(0xFF41) & 0x03, 1);
+    }
+
+    #[test]
+    fn frame_buffer_starts_white() {
+        let p = ppu();
+        assert_eq!(p.debug_pixel(0, 0), 0xFF_FF_FF_FF);
+        assert_eq!(p.debug_pixel(159, 143), 0xFF_FF_FF_FF);
+    }
+
+    #[test]
+    fn render_scanline_writes_pixels() {
+        let mut p = ppu();
+        p.write_register(0xFF47, 0xE4);
+        p.write_vram(0x8000, 0xFF);
+        p.write_vram(0x8001, 0xFF);
+        for _ in 0..6 {
+            p.step(4);
+        }
+        let pixel = p.debug_pixel(0, 0);
+        assert!(
+            pixel != 0xFF_FF_FF_FF,
+            "pixel should be non-white after render, got {:08X}",
+            pixel
+        );
+    }
+
+    #[test]
+    fn render_full_scanline_default_vram() {
+        let mut p = ppu();
+        // Step through a full scanline (114 T-cycles at 4 T/step)
+        for _ in 0..29 {
+            p.step(4);
+        }
+        // After 116 T-cycles (29*4=116), ly=1, first scanline (ly=0) was rendered
+        // Since VRAM is all zeros, all pixels should be white (color 0, shade 0)
+        let pixel = p.debug_pixel(0, 0);
+        eprintln!(
+            "render_full_scanline: pixel(0,0) = {:08X}, ly={}",
+            pixel, p.ly
+        );
+        assert_eq!(pixel, 0xFF_FF_FF_FF, "default vram should render white");
+    }
+
+    #[test]
+    fn render_full_frame_scanlines() {
+        let mut p = ppu();
+        // Step through a full frame (154 scanlines * 114 T-cycles / 4 T/step ≈ 4389 steps)
+        for _ in 0..5000 {
+            p.step(4);
+        }
+        // Check pixels at various positions
+        let mid = p.debug_pixel(80, 72);
+        let bottom = p.debug_pixel(0, 143);
+        eprintln!("frame: mid={:08X}, bottom={:08X}, ly={}", mid, bottom, p.ly);
+        // With default VRAM, all should be white
+        assert_eq!(mid, 0xFF_FF_FF_FF, "mid pixel should be white");
+        assert_eq!(bottom, 0xFF_FF_FF_FF, "bottom pixel should be white");
     }
 } // <-- close tests module
