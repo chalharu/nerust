@@ -34,10 +34,7 @@ mod tests {
     }
 
     fn assert_passed(output: &str, name: &str) {
-        assert!(
-            output.contains("Passed"),
-            "{name} failed:\n{output}"
-        );
+        assert!(output.contains("Passed"), "{name} failed:\n{output}");
     }
 
     #[test]
@@ -132,6 +129,15 @@ mod tests {
         assert_passed(
             &run_rom("cpu_instrs/individual/11-op a,(hl).gb", 50_000_000),
             "11-op a,(hl)",
+        );
+    }
+
+    #[test]
+    #[ignore = "timer init check timing doesn't match hardware; needs timer divider refinement"]
+    fn instr_timing() {
+        assert_passed(
+            &run_rom("instr_timing/instr_timing.gb", 150_000_000),
+            "instr_timing",
         );
     }
 }
