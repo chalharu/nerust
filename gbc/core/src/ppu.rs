@@ -168,7 +168,23 @@ impl GbcPpu {
         }
     }
 
-    pub fn render(&self, _fb: &mut FrameBuffer) {}
+    pub fn render(&self, fb: &mut FrameBuffer) {
+        let stride = fb.stride();
+        let dst = fb.as_mut();
+        for y in 0..144 {
+            let src_row = &self.frame_buffer[y * 160..(y + 1) * 160];
+            let dst_base = y * stride;
+            for (x, &pixel) in src_row.iter().enumerate() {
+                let offset = dst_base + x * 4;
+                if offset + 3 < dst.len() {
+                    dst[offset]     = (pixel >> 24) as u8; // R
+                    dst[offset + 1] = (pixel >> 16) as u8; // G
+                    dst[offset + 2] = (pixel >> 8) as u8;  // B
+                    dst[offset + 3] = pixel as u8;         // A
+                }
+            }
+        }
+    }
 
     fn render_scanline(&mut self) {
         if self.ly >= VBLANK_START || self.lcdc & 0x80 == 0 {
