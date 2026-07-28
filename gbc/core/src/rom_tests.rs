@@ -2,8 +2,8 @@
 ///
 /// Each test loads a ROM, runs it for a fixed number of M-cycles,
 /// and checks serial output for "Passed".
+#[cfg(test)]
 mod tests {
-    #![allow(clippy::tests_outside_test_module)]
     use std::path::Path;
 
     use crate::cartridge::Cartridge;
@@ -47,7 +47,9 @@ mod tests {
             let mut out = Vec::new();
             for addr in 0xA004..0xA800 {
                 let c = bus.read(addr);
-                if c == 0 { break; }
+                if c == 0 {
+                    break;
+                }
                 out.push(c);
             }
             return String::from_utf8_lossy(&out).into_owned();
@@ -118,7 +120,10 @@ mod tests {
     #[test]
     fn mem_timing2_all() {
         let output = run_rom("mem_timing-2/mem_timing.gb", 25_000_000);
-        assert!(!output.contains("Failed"), "mem_timing-2 failure:\n{output}");
+        assert!(
+            !output.contains("Failed"),
+            "mem_timing-2 failure:\n{output}"
+        );
     }
 
     #[test]
