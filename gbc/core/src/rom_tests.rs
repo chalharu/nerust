@@ -66,31 +66,31 @@ mod tests {
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
     }
 
-    // ── mem_timing-2 (separate timing calibration needed) ──
+    // ── mem_timing-2 (individual ROMs hang — separate init path) ──
 
     #[test]
-    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_read() {
         assert_passed(
-            &run_rom("mem_timing-2/rom_singles/01-read_timing.gb", 150_000_000),
+            &run_rom("mem_timing-2/rom_singles/01-read_timing.gb", 300_000_000),
             "mem_timing-2/01-read",
         );
     }
 
     #[test]
-    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_write() {
         assert_passed(
-            &run_rom("mem_timing-2/rom_singles/02-write_timing.gb", 150_000_000),
+            &run_rom("mem_timing-2/rom_singles/02-write_timing.gb", 300_000_000),
             "mem_timing-2/02-write",
         );
     }
 
     #[test]
-    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_modify() {
         assert_passed(
-            &run_rom("mem_timing-2/rom_singles/03-modify_timing.gb", 150_000_000),
+            &run_rom("mem_timing-2/rom_singles/03-modify_timing.gb", 300_000_000),
             "mem_timing-2/03-modify",
         );
     }
