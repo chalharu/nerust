@@ -33,20 +33,96 @@ mod tests {
         String::from_utf8_lossy(bus.serial_output()).into_owned()
     }
 
-    #[test]
-    fn cpu_instrs_all() {
-        let output = run_rom("cpu_instrs/cpu_instrs.gb", 100_000_000);
-        // Test 02 (interrupts) needs PPU VBlank — known limitation
+    fn assert_passed(output: &str, name: &str) {
         assert!(
-            !output.contains("Failed"),
-            "cpu_instrs failure:\n{}",
-            output
+            output.contains("Passed"),
+            "{name} failed:\n{output}"
         );
     }
 
     #[test]
+    fn cpu_instrs_all() {
+        let output = run_rom("cpu_instrs/cpu_instrs.gb", 100_000_000);
+        assert!(!output.contains("Failed"), "cpu_instrs failure:\n{output}");
+    }
+
+    #[test]
     fn cpu_instrs_01_special() {
-        let output = run_rom("cpu_instrs/individual/01-special.gb", 50_000_000);
-        assert!(output.contains("Passed"), "01-special failed:\n{}", output);
+        assert_passed(
+            &run_rom("cpu_instrs/individual/01-special.gb", 50_000_000),
+            "01-special",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_03_op_sp_hl() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/03-op sp,hl.gb", 50_000_000),
+            "03-op sp,hl",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_04_op_r_imm() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/04-op r,imm.gb", 50_000_000),
+            "04-op r,imm",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_05_op_rp() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/05-op rp.gb", 50_000_000),
+            "05-op rp",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_06_ld_r_r() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/06-ld r,r.gb", 50_000_000),
+            "06-ld r,r",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_07_jump_call_ret_rst() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/07-jr,jp,call,ret,rst.gb", 50_000_000),
+            "07-jump",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_08_misc() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/08-misc instrs.gb", 50_000_000),
+            "08-misc",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_09_op_r_r() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/09-op r,r.gb", 50_000_000),
+            "09-op r,r",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_10_bit_ops() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/10-bit ops.gb", 50_000_000),
+            "10-bit ops",
+        );
+    }
+
+    #[test]
+    fn cpu_instrs_11_op_a_hl() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/11-op a,(hl).gb", 50_000_000),
+            "11-op a,(hl)",
+        );
     }
 }
