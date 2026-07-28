@@ -100,7 +100,7 @@ impl CpuStepState for LdR8R8 {
         let dst = (op >> 3) & 0x07;
 
         if src == R8_HL {
-            // LD r8, (HL) — 2 M-cycles
+            // LD r8, (HL) — 2 M-cycles: M1=fetch, M2=read (HL) + write r8
             match step {
                 1 => {
                     core.operands[0] = bus.read(core.registers.hl());
@@ -113,7 +113,7 @@ impl CpuStepState for LdR8R8 {
                 _ => unreachable!(),
             }
         } else if dst == R8_HL {
-            // LD (HL), r8 — 2 M-cycles
+            // LD (HL), r8 — 2 M-cycles: M1=fetch, M2=write r8 to (HL)
             match step {
                 1 => {
                     core.operands[0] = read_r8(core, src);
