@@ -227,3 +227,18 @@ fn instr_timing() {
         "instr_timing",
     );
 }
+
+#[test]
+#[ignore = "halt bug not implemented"]
+fn halt_bug() {
+    assert_passed(&run_rom_mem("halt_bug.gb", 10_000_000), "halt_bug");
+}
+
+#[test]
+#[ignore = "OAM DMA bug not implemented"]
+fn oam_bug_1_lcd_sync() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/1-lcd_sync.gb", 10_000_000),
+        "oam_bug/1-lcd_sync",
+    );
+}

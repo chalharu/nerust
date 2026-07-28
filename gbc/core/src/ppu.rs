@@ -177,10 +177,10 @@ impl GbcPpu {
             for (x, &pixel) in src_row.iter().enumerate() {
                 let offset = dst_base + x * 4;
                 if offset + 3 < dst.len() {
-                    dst[offset]     = (pixel >> 24) as u8; // R
+                    dst[offset] = (pixel >> 24) as u8; // R
                     dst[offset + 1] = (pixel >> 16) as u8; // G
-                    dst[offset + 2] = (pixel >> 8) as u8;  // B
-                    dst[offset + 3] = pixel as u8;         // A
+                    dst[offset + 2] = (pixel >> 8) as u8; // B
+                    dst[offset + 3] = pixel as u8; // A
                 }
             }
         }
