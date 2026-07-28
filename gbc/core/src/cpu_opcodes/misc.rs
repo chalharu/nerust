@@ -14,8 +14,8 @@ pub(crate) struct Rlca;
 impl CpuStepState for Rlca {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
         let c = core.registers().a() & 0x80 != 0;
-        let _a = core.registers().a();
-        core.registers_mut().set_a((_a << 1) | c as u8);
+        let a_val = core.registers().a();
+        core.registers_mut().set_a((a_val << 1) | c as u8);
         core.registers_mut().set_z(false);
         core.registers_mut().set_n(false);
         core.registers_mut().set_h_flag(false);
@@ -27,9 +27,9 @@ pub(crate) struct Rla;
 impl CpuStepState for Rla {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
         let c = core.registers().a() & 0x80 != 0;
-        let _a = core.registers().a();
-        let _cf = core.registers().c_flag() as u8;
-        core.registers_mut().set_a((_a << 1) | _cf);
+        let a_val = core.registers().a();
+        let cf = core.registers().c_flag() as u8;
+        core.registers_mut().set_a((a_val << 1) | cf);
         core.registers_mut().set_z(false);
         core.registers_mut().set_n(false);
         core.registers_mut().set_h_flag(false);
@@ -41,9 +41,9 @@ pub(crate) struct Rrca;
 impl CpuStepState for Rrca {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
         let c = core.registers().a() & 0x01 != 0;
-        let _a = core.registers().a();
+        let a_val = core.registers().a();
         core.registers_mut()
-            .set_a((_a >> 1) | (if c { 0x80 } else { 0 }));
+            .set_a((a_val >> 1) | (if c { 0x80 } else { 0 }));
         core.registers_mut().set_z(false);
         core.registers_mut().set_n(false);
         core.registers_mut().set_h_flag(false);
@@ -55,10 +55,10 @@ pub(crate) struct Rra;
 impl CpuStepState for Rra {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
         let c = core.registers().a() & 0x01 != 0;
-        let _a = core.registers().a();
-        let _cf = core.registers().c_flag();
+        let a_val = core.registers().a();
+        let cf = core.registers().c_flag();
         core.registers_mut()
-            .set_a((_a >> 1) | (if _cf { 0x80 } else { 0 }));
+            .set_a((a_val >> 1) | (if cf { 0x80 } else { 0 }));
         core.registers_mut().set_z(false);
         core.registers_mut().set_n(false);
         core.registers_mut().set_h_flag(false);
@@ -199,8 +199,8 @@ impl CpuStepState for LdhAA8 {
             core.set_operand(0, v);
             return StepResult::Continue;
         }
-        let _op0 = core.operand(0) as u16;
-        core.registers_mut().set_a(bus.read(0xFF00 | _op0));
+        let op0 = core.operand(0) as u16;
+        core.registers_mut().set_a(bus.read(0xFF00 | op0));
         StepResult::Exit
     }
 }
@@ -220,8 +220,8 @@ impl CpuStepState for LdAC {
         if step == 0 {
             return StepResult::Continue;
         }
-        let _c = core.registers().c() as u16;
-        core.registers_mut().set_a(bus.read(0xFF00 | _c));
+        let c_val = core.registers().c() as u16;
+        core.registers_mut().set_a(bus.read(0xFF00 | c_val));
         StepResult::Exit
     }
 }
@@ -232,8 +232,8 @@ impl CpuStepState for LdSpHl {
             return StepResult::Continue;
         }
         {
-            let _hl = core.registers().hl();
-            core.registers_mut().set_sp(_hl)
+            let hl = core.registers().hl();
+            core.registers_mut().set_sp(hl)
         };
         StepResult::Exit
     }

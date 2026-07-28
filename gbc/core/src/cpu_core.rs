@@ -75,8 +75,8 @@ impl Lr35902Cpu {
 
     pub(crate) fn pc_read(&mut self, bus: &mut GbcMemoryBus) -> u8 {
         let b = bus.read(self.registers().pc());
-        let _pc = self.registers().pc();
-        self.registers_mut().set_pc(_pc.wrapping_add(1));
+        let pc = self.registers().pc();
+        self.registers_mut().set_pc(pc.wrapping_add(1));
         b
     }
 }
