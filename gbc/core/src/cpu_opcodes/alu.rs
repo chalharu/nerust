@@ -15,17 +15,17 @@ impl CpuStepState for AluAR8 {
             if step == 0 {
                 return StepResult::Continue;
             }
-            alu_exec(core, alu_op, bus.read(core.registers.hl()));
+            alu_exec(core, alu_op, bus.read(core.registers().hl()));
             StepResult::Exit
         } else {
             let v = match src {
-                0 => core.registers.b(),
-                1 => core.registers.c(),
-                2 => core.registers.d(),
-                3 => core.registers.e(),
-                4 => core.registers.h(),
-                5 => core.registers.l(),
-                7 => core.registers.a(),
+                0 => core.registers().b(),
+                1 => core.registers().c(),
+                2 => core.registers().d(),
+                3 => core.registers().e(),
+                4 => core.registers().h(),
+                5 => core.registers().l(),
+                7 => core.registers().a(),
                 _ => 0,
             };
             alu_exec(core, alu_op, v);
@@ -49,72 +49,83 @@ impl<const OP: u8> CpuStepState for AluAD8<OP> {
 }
 
 fn alu_exec(core: &mut Lr35902Cpu, op: u8, v: u8) {
-    let a = core.registers.a();
+    let a = core.registers().a();
     match op {
         0 => {
             let r = a.wrapping_add(v);
-            core.registers.set_h_flag((a & 0x0F) + (v & 0x0F) > 0x0F);
-            core.registers.set_c_flag((a as u16) + (v as u16) > 0xFF);
-            core.registers.set_z(r == 0);
-            core.registers.set_n(false);
-            core.registers.set_a(r);
+            core.registers_mut()
+                .set_h_flag((a & 0x0F) + (v & 0x0F) > 0x0F);
+            core.registers_mut()
+                .set_c_flag((a as u16) + (v as u16) > 0xFF);
+            core.registers_mut().set_z(r == 0);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_a(r);
         }
         1 => {
-            let c = core.registers.c_flag() as u8;
+            let c = core.registers().c_flag() as u8;
             let r = a.wrapping_add(v).wrapping_add(c);
-            core.registers
+            core.registers_mut()
                 .set_h_flag((a & 0x0F) + (v & 0x0F) + c > 0x0F);
-            core.registers
+            core.registers_mut()
                 .set_c_flag((a as u16) + (v as u16) + (c as u16) > 0xFF);
-            core.registers.set_z(r == 0);
-            core.registers.set_n(false);
-            core.registers.set_a(r);
+            core.registers_mut().set_z(r == 0);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_a(r);
         }
         2 => {
-            core.registers.set_h_flag((a & 0x0F) < (v & 0x0F));
-            core.registers.set_c_flag(a < v);
-            core.registers.set_a(a.wrapping_sub(v));
-            core.registers.set_z(core.registers.a() == 0);
-            core.registers.set_n(true);
+            core.registers_mut().set_h_flag((a & 0x0F) < (v & 0x0F));
+            core.registers_mut().set_c_flag(a < v);
+            core.registers_mut().set_a(a.wrapping_sub(v));
+            let _t = core.registers().a() == 0;
+            core.registers_mut().set_z(_t);
+            core.registers_mut().set_n(true);
         }
         3 => {
-            let c_flag = core.registers.c_flag();
+            let c_flag = core.registers().c_flag();
             let c = c_flag as u16;
             let lower_sum = (v & 0x0F) as u16 + c;
             let total = (v as u16) + c;
-            core.registers.set_h_flag(((a & 0x0F) as u16) < lower_sum);
-            core.registers.set_c_flag((a as u16) < total);
-            core.registers
+            core.registers_mut()
+                .set_h_flag(((a & 0x0F) as u16) < lower_sum);
+            core.registers_mut().set_c_flag((a as u16) < total);
+            core.registers_mut()
                 .set_a(a.wrapping_sub(v).wrapping_sub(c_flag as u8));
-            core.registers.set_z(core.registers.a() == 0);
-            core.registers.set_n(true);
+            let _t = core.registers().a() == 0;
+            core.registers_mut().set_z(_t);
+            core.registers_mut().set_n(true);
         }
         4 => {
-            core.registers.set_a(core.registers.a() & v);
-            core.registers.set_z(core.registers.a() == 0);
-            core.registers.set_n(false);
-            core.registers.set_h_flag(true);
-            core.registers.set_c_flag(false);
+            let _t = core.registers().a() & v;
+            core.registers_mut().set_a(_t);
+            let _t = core.registers().a() == 0;
+            core.registers_mut().set_z(_t);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_h_flag(true);
+            core.registers_mut().set_c_flag(false);
         }
         5 => {
-            core.registers.set_a(core.registers.a() ^ v);
-            core.registers.set_z(core.registers.a() == 0);
-            core.registers.set_n(false);
-            core.registers.set_h_flag(false);
-            core.registers.set_c_flag(false);
+            let _t = core.registers().a() ^ v;
+            core.registers_mut().set_a(_t);
+            let _t = core.registers().a() == 0;
+            core.registers_mut().set_z(_t);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_h_flag(false);
+            core.registers_mut().set_c_flag(false);
         }
         6 => {
-            core.registers.set_a(core.registers.a() | v);
-            core.registers.set_z(core.registers.a() == 0);
-            core.registers.set_n(false);
-            core.registers.set_h_flag(false);
-            core.registers.set_c_flag(false);
+            let _t = core.registers().a() | v;
+            core.registers_mut().set_a(_t);
+            let _t = core.registers().a() == 0;
+            core.registers_mut().set_z(_t);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_h_flag(false);
+            core.registers_mut().set_c_flag(false);
         }
         7 => {
-            core.registers.set_h_flag((a & 0x0F) < (v & 0x0F));
-            core.registers.set_c_flag(a < v);
-            core.registers.set_z(a.wrapping_sub(v) == 0);
-            core.registers.set_n(true);
+            core.registers_mut().set_h_flag((a & 0x0F) < (v & 0x0F));
+            core.registers_mut().set_c_flag(a < v);
+            core.registers_mut().set_z(a.wrapping_sub(v) == 0);
+            core.registers_mut().set_n(true);
         }
         _ => {}
     }
@@ -128,18 +139,19 @@ impl<const R: u8> CpuStepState for AddHlR16<R> {
         if step == 0 {
             return StepResult::Continue;
         }
-        let hl = core.registers.hl();
+        let hl = core.registers().hl();
         let v = match R {
-            reg::BC => core.registers.bc(),
-            reg::DE => core.registers.de(),
-            reg::R16_HL => core.registers.hl(),
-            _ => core.registers.sp(),
+            reg::BC => core.registers().bc(),
+            reg::DE => core.registers().de(),
+            reg::R16_HL => core.registers().hl(),
+            _ => core.registers().sp(),
         };
-        core.registers
+        core.registers_mut()
             .set_h_flag((hl & 0x0FFF) + (v & 0x0FFF) > 0x0FFF);
-        core.registers.set_c_flag((hl as u32) + (v as u32) > 0xFFFF);
-        core.registers.set_n(false);
-        core.registers.set_hl(hl.wrapping_add(v));
+        core.registers_mut()
+            .set_c_flag((hl as u32) + (v as u32) > 0xFFFF);
+        core.registers_mut().set_n(false);
+        core.registers_mut().set_hl(hl.wrapping_add(v));
         StepResult::Exit
     }
 }
@@ -150,14 +162,14 @@ impl CpuStepState for AddHlSp {
         if step == 0 {
             return StepResult::Continue;
         }
-        let hl = core.registers.hl();
-        let sp = core.registers.sp();
-        core.registers
+        let hl = core.registers().hl();
+        let sp = core.registers().sp();
+        core.registers_mut()
             .set_h_flag((hl & 0x0FFF) + (sp & 0x0FFF) > 0x0FFF);
-        core.registers
+        core.registers_mut()
             .set_c_flag((hl as u32) + (sp as u32) > 0xFFFF);
-        core.registers.set_n(false);
-        core.registers.set_hl(hl.wrapping_add(sp));
+        core.registers_mut().set_n(false);
+        core.registers_mut().set_hl(hl.wrapping_add(sp));
         StepResult::Exit
     }
 }
@@ -180,15 +192,15 @@ impl CpuStepState for AddSpE {
         }
         if step == 3 {
             let offset = core.operand(0) as i8;
-            let sp = core.registers.sp();
+            let sp = core.registers().sp();
             let r = sp.wrapping_add_signed(offset as i16);
-            core.registers
+            core.registers_mut()
                 .set_h_flag((sp & 0x000F) + (offset as u8 as u16 & 0x000F) > 0x000F);
-            core.registers
+            core.registers_mut()
                 .set_c_flag((sp & 0x00FF) + (offset as u8 as u16 & 0x00FF) > 0x00FF);
-            core.registers.set_z(false);
-            core.registers.set_n(false);
-            core.registers.set_sp(r);
+            core.registers_mut().set_z(false);
+            core.registers_mut().set_n(false);
+            core.registers_mut().set_sp(r);
             return StepResult::Exit;
         }
         unreachable!()
