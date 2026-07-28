@@ -217,7 +217,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "separate timing issue in instr_timing's sync_tima_64 path"]
     fn instr_timing() {
         assert_passed(
             &run_rom("instr_timing/instr_timing.gb", 25_000_000),

@@ -7,6 +7,7 @@ use crate::memory::GbcMemoryBus;
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
 
 impl Lr35902Cpu {
+    /// Step one M-cycle (no device advancement — caller must call step_devices).
     pub fn step(&mut self, bus: &mut GbcMemoryBus) {
         if self.ime_delayed {
             bus.set_ime(true);
