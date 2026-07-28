@@ -13,7 +13,10 @@ impl Lr35902Cpu {
             self.set_ime_delayed(false);
         }
         if bus.is_halted_or_stopped() {
-            return;
+            self.check_interrupts(bus);
+            if bus.is_halted_or_stopped() {
+                return;
+            }
         }
 
         match self.phase() {

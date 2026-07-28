@@ -20,7 +20,7 @@ impl Serial {
     }
 
     pub fn read_sb(&self) -> u8 {
-        0xFF
+        self.sb
     }
 
     pub fn write_sb(&mut self, v: u8) {
@@ -59,9 +59,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_sb_returns_0xff() {
+    fn read_sb_returns_sb_value() {
         let s = Serial::new();
-        assert_eq!(s.read_sb(), 0xFF);
+        assert_eq!(s.read_sb(), 0x00);
     }
 
     #[test]
