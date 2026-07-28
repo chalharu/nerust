@@ -75,7 +75,10 @@ impl Timer {
                 self.div = 0;
                 self.counter = 0;
             }
-            0xFF05 => self.tima = value,
+            0xFF05 => {
+                self.tima = value;
+                self.counter = 0; // reset counter so next increment takes full threshold
+            }
             0xFF06 => self.tma = value,
             0xFF07 => {
                 let old_enabled = (self.tac & 0x04) != 0;
