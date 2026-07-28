@@ -54,6 +54,68 @@ fn exec_n(rom: &[u8], n: usize) -> Lr35902Cpu {
     cpu
 }
 
+// ── Timing verification (M-cycle counts vs spec) ─────────
+
+fn count_tcycles(rom: &[u8]) -> usize {
+    let (mut cpu, mut bus) = setup(rom);
+    let start_t = cpu.t_cycle;
+    let mut n = 0;
+    loop {
+        cpu.step_t_cycle(&mut bus);
+        n += 1;
+        if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) { break; }
+        if n > 48 { panic!("did not complete at PC={:04X}", cpu.registers.pc); }
+    }
+    eprintln!("count_tcycles({:02X?}) = {} T-cycles", rom, n);
+    n
+}
+
+#[test]
+fn timing_nop() { assert_eq!(count_tcycles(&[0x00]), 4, "NOP 1M"); }
+#[test]
+fn timing_xor_a() { assert_eq!(count_tcycles(&[0xAF]), 4, "XOR A 1M"); }
+#[test]
+fn timing_ld_hl_a() { assert_eq!(count_tcycles(&[0x77]), 8, "LD (HL),A 2M"); }
+#[test]
+fn timing_or_hl() { assert_eq!(count_tcycles(&[0xB6]), 8, "OR (HL) 2M"); }
+#[test]
+fn timing_push_af() { assert_eq!(count_tcycles(&[0xF5]), 16, "PUSH AF 4M"); }
+#[test]
+fn timing_pop_af() { assert_eq!(count_tcycles(&[0xF1]), 12, "POP AF 3M"); }
+#[test]
+fn timing_ld_a_d8() { assert_eq!(count_tcycles(&[0x3E, 0x42]), 8, "LD A,d8 2M"); }
+#[test]
+fn timing_ld_hl_d16() { assert_eq!(count_tcycles(&[0x21, 0x05, 0xFF]), 12, "LD HL,d16 3M"); }
+#[test]
+fn timing_call() { assert_eq!(count_tcycles(&[0xCD, 0x00, 0xC0]), 24, "CALL 6M"); }
+#[test]
+fn timing_ret() { assert_eq!(count_tcycles(&[0xC9]), 16, "RET 4M"); }
+#[test]
+fn timing_jr() { assert_eq!(count_tcycles(&[0x18, 0x00]), 12, "JR e 3M"); }
+#[test]
+fn timing_jr_nz_taken() { 
+    let c = count_tcycles(&[0x18, 0x02, 0x00, 0x00]);
+    assert_eq!(c, 12, "JR e taken 3M");
+}
+#[test]
+fn timing_ret_nc_taken() {
+    // RET NC with carry=0 (taken) = 5M. Ensure carry is 0.
+    let (mut cpu, mut bus) = setup(&[0x37, 0x3F, 0xD0]); // SCF, CCF, RET NC
+    // After SCF: C=1. After CCF: C=0. RET NC: taken.
+    let start_t = cpu.t_cycle;
+    let mut n = 0;
+    for _ in 0..3 {
+        loop {
+            cpu.step_t_cycle(&mut bus);
+            n += 1;
+            if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) { break; }
+            if n > 48 { panic!("did not complete"); }
+        }
+    }
+    // All 3 instructions: SCF(1M) + CCF(1M) + RET NC taken(5M) = 7M = 28T
+    assert_eq!(n, 28, "SCF+CCF+RET NC taken = 7M=28T");
+}
+
 // ── NOP ──────────────────────────────────────────────────
 
 #[test]
