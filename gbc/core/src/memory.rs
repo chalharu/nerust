@@ -154,7 +154,12 @@ impl GbcMemoryBus {
     // ── step_devices ─────────────────────────────────────────
 
     pub fn step_devices(&mut self, cycles: u32) -> bool {
-        let ppu_res = self.ppu.step(cycles);
+        // PPU and APU run at absolute speed (4.19MHz base), unaffected by
+        // double-speed mode. In double-speed, CPU is 2x faster so these
+        // devices see half the T-cycles per step_devices call.
+        let video_cycles = if self.double_speed { cycles / 2 } else { cycles };
+
+        let ppu_res = self.ppu.step(video_cycles);
         if ppu_res.lcd_stat {
             self.interrupt.request(InterruptKind::LcdStat);
         }
@@ -162,8 +167,9 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
 
-        self.apu.step(cycles);
+        self.apu.step(video_cycles);
 
+        // Timer, DMA, and Serial run at CPU speed (speed up in double mode)
         let timer_res = self.timer.step(cycles);
         if timer_res.overflow {
             self.interrupt.request(InterruptKind::Timer);
@@ -216,6 +222,10 @@ impl GbcMemoryBus {
 
     pub fn stop(&mut self) {
         self.timer.reset_div();
+        if self.speed_switch_pending {
+            self.speed_switch_pending = false;
+            self.double_speed = !self.double_speed;
+        }
         self.interrupt.stop();
     }
 
