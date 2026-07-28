@@ -7,63 +7,11 @@ use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
-// ── Helpers ───────────────────────────────────────────────
+// ── Helpers (shared in cpu_opcodes/helpers.rs) ───────────────
+use crate::cpu_opcodes::helpers::{read_r16, read_r8, write_r16, write_r8};
 
-const R8_B: u8 = 0;
-const R8_C: u8 = 1;
-const R8_D: u8 = 2;
-const R8_E: u8 = 3;
-const R8_H: u8 = 4;
-const R8_L: u8 = 5;
+fn r8(opcode: u8) -> u8 { opcode & 0x07 }
 const R8_HL: u8 = 6;
-const R8_A: u8 = 7;
-
-fn r8(opcode: u8) -> u8 {
-    opcode & 0x07
-}
-
-fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {
-    match idx {
-        R8_B => core.registers.b,
-        R8_C => core.registers.c,
-        R8_D => core.registers.d,
-        R8_E => core.registers.e,
-        R8_H => core.registers.h,
-        R8_L => core.registers.l,
-        R8_A => core.registers.a,
-        _ => 0,
-    }
-}
-fn write_r8(core: &mut Lr35902Cpu, idx: u8, v: u8) {
-    match idx {
-        R8_B => core.registers.b = v,
-        R8_C => core.registers.c = v,
-        R8_D => core.registers.d = v,
-        R8_E => core.registers.e = v,
-        R8_H => core.registers.h = v,
-        R8_L => core.registers.l = v,
-        R8_A => core.registers.a = v,
-        _ => {}
-    }
-}
-fn r16_val(core: &Lr35902Cpu, idx: u8) -> u16 {
-    match idx {
-        0 => core.registers.bc(),
-        1 => core.registers.de(),
-        2 => core.registers.hl(),
-        3 => core.registers.sp,
-        _ => 0,
-    }
-}
-fn set_r16(core: &mut Lr35902Cpu, idx: u8, v: u16) {
-    match idx {
-        0 => core.registers.set_bc(v),
-        1 => core.registers.set_de(v),
-        2 => core.registers.set_hl(v),
-        3 => core.registers.sp = v,
-        _ => {}
-    }
-}
 
 // ── LD r16, d16 (3 M-cycles) ──────────────────────────────
 // M1: opcode fetch (in Fetch state)
@@ -86,7 +34,7 @@ impl<const R: u8> CpuStepState for LdR16D16<R> {
             }
             3 => {
                 let v = ((core.operands[1] as u16) << 8) | core.operands[0] as u16;
-                set_r16(core, R, v);
+                write_r16(core, R, v);
                 StepResult::Exit
             }
             _ => unreachable!(),
@@ -101,7 +49,7 @@ impl<const R: u8> CpuStepState for LdR16D16<R> {
 pub(crate) struct LdR16memA<const R: u8>;
 impl<const R: u8> CpuStepState for LdR16memA<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
-        bus.write(r16_val(core, R), core.registers.a);
+        bus.write(read_r16(core, R), core.registers.a);
         StepResult::Exit
     }
 }
@@ -111,7 +59,7 @@ impl<const R: u8> CpuStepState for LdR16memA<R> {
 pub(crate) struct LdAR16mem<const R: u8>;
 impl<const R: u8> CpuStepState for LdAR16mem<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
-        core.registers.a = bus.read(r16_val(core, R));
+        core.registers.a = bus.read(read_r16(core, R));
         StepResult::Exit
     }
 }

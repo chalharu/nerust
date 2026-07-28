@@ -9,6 +9,7 @@ use crate::cpu_core::{HandlerFn, Lr35902Cpu, StepResult};
 use crate::memory::GbcMemoryBus;
 
 mod alu;
+mod helpers;
 mod cb;
 mod control;
 mod inc_dec;
