@@ -115,7 +115,7 @@ pub fn write_html_report(
             for (i, shot) in case.screenshots.iter().enumerate() {
                 write!(
                     html,
-                    "<details><summary>Event {} screenshot</summary><img class=\"screenshot\" src=\"{}\" alt=\"event {}\"></details>",
+                    "<details><summary>Event {} screenshot</summary><img class=\"screenshot\" src=\"screenshots/{}\" alt=\"event {}\"></details>",
                     i, shot, i
                 )
                 .ok();
