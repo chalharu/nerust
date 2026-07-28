@@ -19,15 +19,23 @@ struct Cli {
     perf: bool,
 }
 
+fn manifest_path(cli: &Cli) -> PathBuf {
+    if cli.manifest.is_absolute() {
+        return cli.manifest.clone();
+    }
+    // Search relative to current directory first, then fall back to CARGO_MANIFEST_DIR
+    let cwd = std::env::current_dir().unwrap();
+    let cwd_path = cwd.join(&cli.manifest);
+    if cwd_path.exists() {
+        return cwd_path;
+    }
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    crate_dir.join(&cli.manifest)
+}
+
 fn main() {
     let cli = Cli::parse();
-    let manifest_path = if cli.manifest.is_absolute() {
-        cli.manifest
-    } else {
-        let mut p = std::env::current_dir().unwrap();
-        p.push(&cli.manifest);
-        p
-    };
+    let manifest_path = manifest_path(&cli);
 
     let manifest = RomManifest::load(&manifest_path).expect("failed to load manifest");
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
