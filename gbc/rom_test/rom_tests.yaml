@@ -4,6 +4,7 @@ cases:
     category: "cpu_instrs"
     description: "CPU special instructions"
     rom: "cpu_instrs/individual/01-special.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 10_000_000
@@ -20,6 +21,7 @@ cases:
     category: "cpu_instrs"
     description: "CPU interrupt handling"
     rom: "cpu_instrs/individual/02-interrupts.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -36,6 +38,7 @@ cases:
     category: "cpu_instrs"
     description: "CPU op SP, HL"
     rom: "cpu_instrs/individual/03-op sp,hl.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 10_000_000
@@ -52,6 +55,7 @@ cases:
     category: "cpu_instrs"
     description: "CPU op r, imm"
     rom: "cpu_instrs/individual/04-op r,imm.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 10_000_000
@@ -68,6 +72,7 @@ cases:
     category: "cpu_instrs"
     description: "CPU op a,(hl)"
     rom: "cpu_instrs/individual/11-op a,(hl).gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -84,6 +89,7 @@ cases:
     category: "timing"
     description: "Instruction timing verification"
     rom: "instr_timing/instr_timing.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -100,6 +106,7 @@ cases:
     category: "mem_timing"
     description: "Memory read timing"
     rom: "mem_timing/individual/01-read_timing.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -116,6 +123,7 @@ cases:
     category: "mem_timing"
     description: "Memory write timing"
     rom: "mem_timing/individual/02-write_timing.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -132,6 +140,7 @@ cases:
     category: "mem_timing"
     description: "Memory modify timing"
     rom: "mem_timing/individual/03-modify_timing.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000
@@ -148,6 +157,7 @@ cases:
     category: "mem_timing"
     description: "Memory timing combined"
     rom: "mem_timing/mem_timing.gb"
+    model: dmg
     perf: false
     events:
       - cycles: 25_000_000

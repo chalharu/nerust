@@ -61,6 +61,21 @@ impl RomManifest {
     }
 }
 
+/// GBC hardware model targeted by the test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GbcModel {
+    Dmg,
+    Cgb,
+    Agb,
+}
+
+impl Default for GbcModel {
+    fn default() -> Self {
+        Self::Cgb
+    }
+}
+
 /// A single ROM test case.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RomCase {
@@ -68,6 +83,8 @@ pub struct RomCase {
     pub category: String,
     pub description: String,
     pub rom: String,
+    #[serde(default)]
+    pub model: GbcModel,
     #[serde(default)]
     pub perf: bool,
     pub events: Vec<RomEvent>,
