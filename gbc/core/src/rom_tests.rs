@@ -37,7 +37,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
     fn mem_timing_read() {
         assert_passed(
             &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
@@ -46,7 +45,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
     fn mem_timing_write() {
         assert_passed(
             &run_rom("mem_timing/individual/02-write_timing.gb", 150_000_000),
@@ -55,7 +53,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
     fn mem_timing_modify() {
         assert_passed(
             &run_rom("mem_timing/individual/03-modify_timing.gb", 150_000_000),
@@ -64,7 +61,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
     fn mem_timing_all() {
         let output = run_rom("mem_timing/mem_timing.gb", 150_000_000);
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
@@ -166,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
+    #[ignore = "separate timing issue in instr_timing's sync_tima_64 path"]
     fn instr_timing() {
         assert_passed(
             &run_rom("instr_timing/instr_timing.gb", 150_000_000),
