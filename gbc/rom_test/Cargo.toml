@@ -15,4 +15,5 @@ nerust_render_traits.workspace = true
 png.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
