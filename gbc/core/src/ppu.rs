@@ -210,7 +210,7 @@ impl GbcPpu {
 
             // BG layer
             if bg_enabled {
-                let scroll_y = self.scy.wrapping_add(self.ly as u8);
+                let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
                 pixel = self.read_bg_pixel(scroll_x, scroll_y);
             }
