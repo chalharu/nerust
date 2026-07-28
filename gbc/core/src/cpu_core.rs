@@ -54,11 +54,11 @@ impl Lr35902Cpu {
         self.ime_delayed = v;
     }
     #[inline]
-    pub(crate) fn registers(&self) -> &CpuRegisters {
+    pub fn registers(&self) -> &CpuRegisters {
         &self.registers
     }
     #[inline]
-    pub(crate) fn registers_mut(&mut self) -> &mut CpuRegisters {
+    pub fn registers_mut(&mut self) -> &mut CpuRegisters {
         &mut self.registers
     }
     #[inline]

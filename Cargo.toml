@@ -13,6 +13,7 @@ members = [
   "gbc/device",
   "gbc/factory",
   "gbc/settings",
+  "gbc/rom_test",
   "keyboard",
   "nes/controller",
   "nes/core",

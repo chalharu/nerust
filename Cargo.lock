@@ -2913,6 +2913,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_gbc_rom_test"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "crc",
+ "nerust_gbc_core",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "png",
+ "serde",
+ "serde-saphyr",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "nerust_gbc_settings"
 version = "0.1.0-dev"
 dependencies = [
