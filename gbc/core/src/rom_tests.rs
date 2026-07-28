@@ -141,7 +141,7 @@ fn cpu_instrs_01_special() {
 }
 
 #[test]
-#[ignore = "timer interrupt halt wake-up timing needs refinement"]
+#[ignore = "test 5 HALT+Timer wake-up: timer overflow detected but tests_passed serial output not captured; potential issue in exit path STD_print routine"]
 fn cpu_instrs_02_interrupts() {
     assert_passed(
         &run_rom("cpu_instrs/individual/02-interrupts.gb", 25_000_000),
