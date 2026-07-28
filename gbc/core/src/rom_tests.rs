@@ -234,7 +234,10 @@ fn dmg_acid2() {
     let output = run_rom("mattcurrie_dmg-acid2/dmg-acid2.gb", 10_000_000);
     // dmg-acid2 does not output via serial; verification requires frame buffer hash
     // Currently just verify the ROM runs without panicking
-    assert!(output.is_empty() || output.contains("Passed"), "dmg-acid2 should not produce serial output");
+    assert!(
+        output.is_empty() || output.contains("Passed"),
+        "dmg-acid2 should not produce serial output"
+    );
 }
 
 #[test]
