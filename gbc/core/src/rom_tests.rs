@@ -29,7 +29,23 @@ mod tests {
         for _ in 0..cycles * 4 {
             cpu.step_t_cycle(&mut bus);
         }
-        String::from_utf8_lossy(bus.serial_output()).into_owned()
+        // Check serial output first
+        let serial = String::from_utf8_lossy(bus.serial_output());
+        if !serial.is_empty() {
+            return serial.into_owned();
+        }
+        // Fallback: check memory-mapped output ($A000 signature method)
+        // Test ROMs write text output to $A004+ with signature at $A001-$A003
+        if bus.read(0xA001) == 0xDE && bus.read(0xA002) == 0xB0 && bus.read(0xA003) == 0x61 {
+            let mut mem_out = Vec::new();
+            for addr in 0xA004..0xA800 {
+                let c = bus.read(addr);
+                if c == 0 { break; }
+                mem_out.push(c);
+            }
+            return String::from_utf8_lossy(&mem_out).into_owned();
+        }
+        serial.into_owned()
     }
 
     fn assert_passed(output: &str, name: &str) {
@@ -66,10 +82,9 @@ mod tests {
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
     }
 
-    // ── mem_timing-2 (individual ROMs hang — separate init path) ──
+    // ── mem_timing-2 ─────────────────────────────────────
 
     #[test]
-    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_read() {
         assert_passed(
             &run_rom("mem_timing-2/rom_singles/01-read_timing.gb", 300_000_000),
@@ -78,7 +93,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_write() {
         assert_passed(
             &run_rom("mem_timing-2/rom_singles/02-write_timing.gb", 300_000_000),
@@ -87,7 +101,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "individual ROM hangs in init; combined ROM passes"]
     fn mem_timing2_modify() {
         assert_passed(
             &run_rom("mem_timing-2/rom_singles/03-modify_timing.gb", 300_000_000),
