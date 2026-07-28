@@ -404,4 +404,106 @@ mod tests {
         let r = p.step(T_CYCLES_PER_SCANLINE);
         assert!(r.lcd_stat);
     }
-}
+
+    #[test]
+    fn read_lcdc_returns_written_value() {
+        let mut p = ppu();
+        p.write_register(0xFF40, 0x91);
+        assert_eq!(p.read_register(0xFF40), 0x91);
+    }
+
+    #[test]
+    fn read_scx_scy_returns_values() {
+        let mut p = ppu();
+        p.write_register(0xFF42, 0xAB);
+        p.write_register(0xFF43, 0xCD);
+        assert_eq!(p.read_register(0xFF42), 0xAB);
+        assert_eq!(p.read_register(0xFF43), 0xCD);
+    }
+
+    #[test]
+    fn read_wx_wy_returns_values() {
+        let mut p = ppu();
+        p.write_register(0xFF4A, 0x10);
+        p.write_register(0xFF4B, 0x20);
+        assert_eq!(p.read_register(0xFF4A), 0x10);
+        assert_eq!(p.read_register(0xFF4B), 0x20);
+    }
+
+    #[test]
+    fn frame_completes_at_ly_0_after_154() {
+        let mut p = ppu();
+        for _ in 0..200 {
+            let r = p.step(T_CYCLES_PER_SCANLINE);
+            if r.frame_done {
+                assert_eq!(p.ly, 0);
+                return;
+            }
+        }
+        panic!("frame never completed");
+    }
+
+    #[test]
+    fn vram_read_write_works() {
+        let mut p = ppu();
+        p.write_vram(0x8000, 0x42);
+        assert_eq!(p.read_vram(0x8000), 0x42);
+    }
+
+    #[test]
+    fn vram_bank_1_read_write() {
+        let mut p = ppu();
+        p.write_register(0xFF4F, 0x01);
+        p.write_vram(0x8000, 0x73);
+        assert_eq!(p.read_vram(0x8000), 0x73);
+        p.write_register(0xFF4F, 0x00);
+        assert_eq!(p.read_vram(0x8000), 0x00);
+    }
+
+    #[test]
+    fn bgp_read_write() {
+        let mut p = ppu();
+        p.write_register(0xFF47, 0xE4);
+        assert_eq!(p.read_register(0xFF47), 0xE4);
+    }
+
+    #[test]
+    fn obp0_obp1_read_write() {
+        let mut p = ppu();
+        p.write_register(0xFF48, 0xDB);
+        p.write_register(0xFF49, 0xE7);
+        assert_eq!(p.read_register(0xFF48), 0xDB);
+        assert_eq!(p.read_register(0xFF49), 0xE7);
+    }
+
+    #[test]
+    fn lyc_stat_returns_value() {
+        let mut p = ppu();
+        p.write_register(0xFF45, 0x7F);
+        assert_eq!(p.read_register(0xFF45), 0x7F);
+    }
+
+    #[test]
+    fn stat_mode_is_2_at_scanline_start() {
+        let mut p = ppu();
+        let _ = p.step(5);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 2);
+    }
+
+    #[test]
+    fn stat_mode_is_0_during_hblank() {
+        let mut p = ppu();
+        let _ = p.step(70);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+    }
+
+    #[test]
+    fn stat_mode_is_1_during_vblank() {
+        let mut p = ppu();
+        for _ in 0..144 {
+            p.step(T_CYCLES_PER_SCANLINE);
+        }
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 1);
+    }
+} // <-- close tests module
