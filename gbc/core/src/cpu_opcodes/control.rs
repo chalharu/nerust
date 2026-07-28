@@ -282,7 +282,12 @@ pub(crate) struct RetCond<const C: u8>;
 impl<const C: u8> CpuStepState for RetCond<C> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let taken = cond(C, core);
+        // step=0 is the fetch decode. For not-taken, the instruction
+        // completes in 1 M-cycle (fetch + condition check + immediate exit).
         if step == 0 {
+            if !taken {
+                return StepResult::Exit;
+            }
             return StepResult::Continue;
         }
         if t3(core) {
@@ -299,12 +304,7 @@ impl<const C: u8> CpuStepState for RetCond<C> {
             }
         } else if t4(core) {
             match step {
-                1 => {
-                    if !taken {
-                        return StepResult::Exit;
-                    }
-                    return StepResult::Continue;
-                }
+                1 => return StepResult::Continue,
                 2 => return StepResult::Continue,
                 3 => return StepResult::Continue,
                 4 => {
