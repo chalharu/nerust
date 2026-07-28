@@ -24,26 +24,26 @@ pub(crate) mod reg {
 
 pub(crate) fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {
     match idx {
-        reg::B => core.registers.b,
-        reg::C => core.registers.c,
-        reg::D => core.registers.d,
-        reg::E => core.registers.e,
-        reg::H => core.registers.h,
-        reg::L => core.registers.l,
-        reg::A => core.registers.a,
+        reg::B => core.registers.b(),
+        reg::C => core.registers.c(),
+        reg::D => core.registers.d(),
+        reg::E => core.registers.e(),
+        reg::H => core.registers.h(),
+        reg::L => core.registers.l(),
+        reg::A => core.registers.a(),
         _ => 0,
     }
 }
 
 pub(crate) fn write_r8(core: &mut Lr35902Cpu, idx: u8, v: u8) {
     match idx {
-        reg::B => core.registers.b = v,
-        reg::C => core.registers.c = v,
-        reg::D => core.registers.d = v,
-        reg::E => core.registers.e = v,
-        reg::H => core.registers.h = v,
-        reg::L => core.registers.l = v,
-        reg::A => core.registers.a = v,
+        reg::B => core.registers.set_b(v),
+        reg::C => core.registers.set_c(v),
+        reg::D => core.registers.set_d(v),
+        reg::E => core.registers.set_e(v),
+        reg::H => core.registers.set_h(v),
+        reg::L => core.registers.set_l(v),
+        reg::A => core.registers.set_a(v),
         _ => {}
     }
 }
@@ -61,7 +61,7 @@ pub(crate) fn read_r16(core: &Lr35902Cpu, idx: u8) -> u16 {
         reg::BC => core.registers.bc(),
         reg::DE => core.registers.de(),
         reg::R16_HL => core.registers.hl(),
-        _ => core.registers.sp,
+        _ => core.registers.sp(),
     }
 }
 
@@ -70,6 +70,6 @@ pub(crate) fn write_r16(core: &mut Lr35902Cpu, idx: u8, v: u16) {
         reg::BC => core.registers.set_bc(v),
         reg::DE => core.registers.set_de(v),
         reg::R16_HL => core.registers.set_hl(v),
-        _ => core.registers.sp = v,
+        _ => core.registers.set_sp(v),
     }
 }

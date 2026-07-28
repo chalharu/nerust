@@ -5,18 +5,18 @@ use crate::memory::GbcMemoryBus;
 const BASE: u16 = 0xC000;
 
 fn step_until_done(cpu: &mut Lr35902Cpu, bus: &mut GbcMemoryBus) {
-    let start_pc = cpu.registers.pc;
+    let start_pc = cpu.registers.pc();
     for _ in 0..24 {
         let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
         cpu.step(bus);
         bus.step_devices(4);
         if matches!(cpu.phase, Phase::FetchOpcode)
-            && (was_executing || cpu.registers.pc != start_pc)
+            && (was_executing || cpu.registers.pc() != start_pc)
         {
             return;
         }
     }
-    panic!("instruction at {:04X} did not complete", cpu.registers.pc);
+    panic!("instruction at {:04X} did not complete", cpu.registers.pc());
 }
 
 fn setup(rom: &[u8]) -> (Lr35902Cpu, GbcMemoryBus) {
@@ -25,7 +25,7 @@ fn setup(rom: &[u8]) -> (Lr35902Cpu, GbcMemoryBus) {
         bus.write(BASE + i as u16, b);
     }
     let mut cpu = Lr35902Cpu::new();
-    cpu.registers.pc = BASE;
+    cpu.registers.set_pc(BASE);
     (cpu, bus)
 }
 
@@ -35,7 +35,7 @@ fn exec_one(opcode: u8, operands: &[u8]) -> Lr35902Cpu {
     for (i, &b) in operands.iter().enumerate() {
         bus.write(BASE + 1 + i as u16, b);
     }
-    cpu.registers.pc = BASE;
+    cpu.registers.set_pc(BASE);
     step_until_done(&mut cpu, &mut bus);
     cpu
 }
@@ -56,19 +56,19 @@ fn measure_mcycles(opcode: u8, operands: &[u8]) -> usize {
     for (i, &b) in operands.iter().enumerate() {
         bus.write(BASE + 1 + i as u16, b);
     }
-    cpu.registers.pc = BASE;
-    let start_pc = cpu.registers.pc;
+    cpu.registers.set_pc(BASE);
+    let start_pc = cpu.registers.pc();
     for count in 1..48 {
         let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
         if matches!(cpu.phase, Phase::FetchOpcode)
-            && (was_executing || cpu.registers.pc != start_pc)
+            && (was_executing || cpu.registers.pc() != start_pc)
         {
             return count;
         }
     }
-    panic!("opcode {:02X} at PC={:04X}", opcode, cpu.registers.pc);
+    panic!("opcode {:02X} at PC={:04X}", opcode, cpu.registers.pc());
 }
 
 fn mc(opcode: u8) -> usize {
@@ -166,13 +166,13 @@ fn timing_all_opcodes() {
 #[test]
 fn nop() {
     let cpu = exec_one(0x00, &[]);
-    assert_eq!(cpu.registers.pc, BASE + 1);
+    assert_eq!(cpu.registers.pc(), BASE + 1);
 }
 
 #[test]
 fn ld_a_d8() {
     let cpu = exec_one(0x3E, &[0x42]);
-    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.a(), 0x42);
 }
 
 #[test]
@@ -184,69 +184,69 @@ fn ld_bc_d16() {
 #[test]
 fn ld_hl_a_and_readback() {
     let cpu = exec_n(&[0x3E, 0x55, 0x21, 0x00, 0xC0, 0x77, 0x7E], 4);
-    assert_eq!(cpu.registers.a, 0x55);
+    assert_eq!(cpu.registers.a(), 0x55);
 }
 
 #[test]
 fn inc_a() {
     let cpu = exec_n(&[0x3E, 0x05, 0x3C], 2);
-    assert_eq!(cpu.registers.a, 6);
+    assert_eq!(cpu.registers.a(), 6);
     assert!(!cpu.registers.z_flag());
 }
 
 #[test]
 fn inc_a_to_zero() {
     let cpu = exec_n(&[0x3E, 0xFF, 0x3C], 2);
-    assert_eq!(cpu.registers.a, 0);
+    assert_eq!(cpu.registers.a(), 0);
     assert!(cpu.registers.z_flag());
 }
 
 #[test]
 fn dec_a() {
     let cpu = exec_n(&[0x3E, 0x05, 0x3D], 2);
-    assert_eq!(cpu.registers.a, 4);
+    assert_eq!(cpu.registers.a(), 4);
     assert!(cpu.registers.n_flag());
 }
 
 #[test]
 fn add_a_b() {
     let cpu = exec_n(&[0x3E, 0x10, 0x06, 0x08, 0x80], 3);
-    assert_eq!(cpu.registers.a, 0x18);
+    assert_eq!(cpu.registers.a(), 0x18);
     assert!(!cpu.registers.c_flag());
 }
 
 #[test]
 fn add_with_half_carry() {
     let cpu = exec_n(&[0x3E, 0x0F, 0x06, 0x01, 0x80], 3);
-    assert_eq!(cpu.registers.a, 0x10);
+    assert_eq!(cpu.registers.a(), 0x10);
     assert!(cpu.registers.h_flag());
 }
 
 #[test]
 fn add_with_carry() {
     let cpu = exec_n(&[0x3E, 0xF0, 0x06, 0x20, 0x80], 3);
-    assert_eq!(cpu.registers.a, 0x10);
+    assert_eq!(cpu.registers.a(), 0x10);
     assert!(cpu.registers.c_flag());
 }
 
 #[test]
 fn sub_a_b() {
     let cpu = exec_n(&[0x3E, 0x20, 0x06, 0x05, 0x90], 3);
-    assert_eq!(cpu.registers.a, 0x1B);
+    assert_eq!(cpu.registers.a(), 0x1B);
     assert!(cpu.registers.n_flag());
 }
 
 #[test]
 fn sub_with_borrow() {
     let cpu = exec_n(&[0x3E, 0x05, 0x06, 0x10, 0x90], 3);
-    assert_eq!(cpu.registers.a, 0xF5);
+    assert_eq!(cpu.registers.a(), 0xF5);
     assert!(cpu.registers.c_flag());
 }
 
 #[test]
 fn and_a_b() {
     let cpu = exec_n(&[0x3E, 0xF0, 0x06, 0x0F, 0xA0], 3);
-    assert_eq!(cpu.registers.a, 0x00);
+    assert_eq!(cpu.registers.a(), 0x00);
     assert!(cpu.registers.z_flag());
     assert!(cpu.registers.h_flag());
 }
@@ -254,32 +254,32 @@ fn and_a_b() {
 #[test]
 fn xor_a_b() {
     let cpu = exec_n(&[0x3E, 0xFF, 0x06, 0x0F, 0xA8], 3);
-    assert_eq!(cpu.registers.a, 0xF0);
+    assert_eq!(cpu.registers.a(), 0xF0);
 }
 
 #[test]
 fn or_a_b() {
     let cpu = exec_n(&[0x3E, 0xF0, 0x06, 0x0F, 0xB0], 3);
-    assert_eq!(cpu.registers.a, 0xFF);
+    assert_eq!(cpu.registers.a(), 0xFF);
 }
 
 #[test]
 fn cp_a_b_preserves_a() {
     let cpu = exec_n(&[0x3E, 0x42, 0x06, 0x42, 0xB8], 3);
-    assert_eq!(cpu.registers.a, 0x42);
+    assert_eq!(cpu.registers.a(), 0x42);
     assert!(cpu.registers.z_flag());
 }
 
 #[test]
 fn adc_with_carry() {
     let cpu = exec_n(&[0x3E, 0x10, 0x37, 0x06, 0x10, 0x88], 4);
-    assert_eq!(cpu.registers.a, 0x21);
+    assert_eq!(cpu.registers.a(), 0x21);
 }
 
 #[test]
 fn sbc_with_carry() {
     let cpu = exec_n(&[0x3E, 0x20, 0x37, 0x06, 0x10, 0x98], 4);
-    assert_eq!(cpu.registers.a, 0x0F);
+    assert_eq!(cpu.registers.a(), 0x0F);
 }
 
 #[test]
@@ -311,19 +311,19 @@ fn add_hl_bc_overflow() {
 #[test]
 fn jr_forward() {
     let cpu = exec_one(0x18, &[0x02]);
-    assert_eq!(cpu.registers.pc, BASE + 4);
+    assert_eq!(cpu.registers.pc(), BASE + 4);
 }
 
 #[test]
 fn jp_a16() {
     let cpu = exec_one(0xC3, &[0x00, 0xC0]);
-    assert_eq!(cpu.registers.pc, 0xC000);
+    assert_eq!(cpu.registers.pc(), 0xC000);
 }
 
 #[test]
 fn call_pushes_return_address() {
     let cpu = exec_one(0xCD, &[0x10, 0xC0]);
-    assert_eq!(cpu.registers.pc, 0xC010);
+    assert_eq!(cpu.registers.pc(), 0xC010);
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn rst_vectors() {
     let expected = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
     for (&op, &exp) in vectors.iter().zip(expected.iter()) {
         let cpu = exec_one(op, &[]);
-        assert_eq!(cpu.registers.pc, exp, "RST {:02X}", op);
+        assert_eq!(cpu.registers.pc(), exp, "RST {:02X}", op);
     }
 }
 
@@ -340,7 +340,7 @@ fn rst_vectors() {
 fn push_pop_hl() {
     let cpu = exec_n(&[0x21, 0xEF, 0xBE, 0xE5, 0xE1], 3);
     assert_eq!(cpu.registers.hl(), 0xBEEF);
-    assert_eq!(cpu.registers.sp, 0xFFFE);
+    assert_eq!(cpu.registers.sp(), 0xFFFE);
 }
 
 #[test]
@@ -359,26 +359,26 @@ fn cb_bit_test() {
 #[test]
 fn cb_res_clears_bit() {
     let cpu = exec_n(&[0x3E, 0x80, 0xCB, 0xBF], 2);
-    assert_eq!(cpu.registers.a, 0x00);
+    assert_eq!(cpu.registers.a(), 0x00);
 }
 
 #[test]
 fn cb_set_sets_bit() {
     let cpu = exec_n(&[0x3E, 0x00, 0xCB, 0xC7], 2);
-    assert_eq!(cpu.registers.a, 0x01);
+    assert_eq!(cpu.registers.a(), 0x01);
 }
 
 #[test]
 fn cb_rlc_through_carry() {
     let cpu = exec_n(&[0x3E, 0x80, 0xCB, 0x07], 2);
-    assert_eq!(cpu.registers.a, 0x01);
+    assert_eq!(cpu.registers.a(), 0x01);
     assert!(cpu.registers.c_flag());
 }
 
 #[test]
 fn daa_adjusts_after_addition() {
     let cpu = exec_n(&[0x3E, 0x09, 0xC6, 0x08, 0x27], 3);
-    assert_eq!(cpu.registers.a, 0x17);
+    assert_eq!(cpu.registers.a(), 0x17);
 }
 
 #[test]
@@ -390,7 +390,7 @@ fn scf_sets_carry() {
 #[test]
 fn cpl_flips_a() {
     let cpu = exec_n(&[0x3E, 0x55, 0x2F], 2);
-    assert_eq!(cpu.registers.a, 0xAA);
+    assert_eq!(cpu.registers.a(), 0xAA);
 }
 
 #[test]
@@ -410,7 +410,7 @@ fn ld_hld_a() {
 #[test]
 fn ldh_a_a8_takes_12_t_cycles() {
     let (mut cpu, mut bus) = setup(&[0xF0, 0x05]);
-    let start_pc = cpu.registers.pc;
+    let start_pc = cpu.registers.pc();
     let mut n = 0;
     loop {
         let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
@@ -418,7 +418,7 @@ fn ldh_a_a8_takes_12_t_cycles() {
         bus.step_devices(4);
         n += 4;
         if matches!(cpu.phase, Phase::FetchOpcode)
-            && (was_executing || cpu.registers.pc != start_pc)
+            && (was_executing || cpu.registers.pc() != start_pc)
         {
             break;
         }
@@ -432,7 +432,7 @@ fn ldh_a_a8_takes_12_t_cycles() {
 #[test]
 fn ld_a_a16_takes_16_t_cycles() {
     let (mut cpu, mut bus) = setup(&[0xFA, 0x00, 0xC0]);
-    let start_pc = cpu.registers.pc;
+    let start_pc = cpu.registers.pc();
     let mut n = 0;
     loop {
         let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
@@ -440,7 +440,7 @@ fn ld_a_a16_takes_16_t_cycles() {
         bus.step_devices(4);
         n += 4;
         if matches!(cpu.phase, Phase::FetchOpcode)
-            && (was_executing || cpu.registers.pc != start_pc)
+            && (was_executing || cpu.registers.pc() != start_pc)
         {
             break;
         }

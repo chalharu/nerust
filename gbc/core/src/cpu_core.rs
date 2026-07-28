@@ -38,11 +38,11 @@ impl Lr35902Cpu {
 
     pub(crate) fn pc_read(&mut self, bus: &mut GbcMemoryBus) -> u8 {
         let b = if bus.is_dma_active() {
-            bus.read_dma(self.registers.pc).unwrap_or(0xFF)
+            bus.read_dma(self.registers.pc()).unwrap_or(0xFF)
         } else {
-            bus.read(self.registers.pc)
+            bus.read(self.registers.pc())
         };
-        self.registers.pc = self.registers.pc.wrapping_add(1);
+        self.registers.set_pc(self.registers.pc().wrapping_add(1));
         b
     }
 }
