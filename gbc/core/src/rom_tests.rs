@@ -37,7 +37,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     #[ignore = "T-cycle model needs sync_tima_64 recalibration"]
     fn mem_timing_read() {
         assert_passed(
