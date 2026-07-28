@@ -49,6 +49,11 @@ impl InterruptController {
 
     pub fn acknowledge(&mut self) -> Option<InterruptKind> {
         if !self.ime {
+            // IME=0: still wake from halt if an interrupt is pending
+            let pending = self.ie & self.if_ & 0x1F;
+            if pending != 0 && matches!(self.halted, HaltState::Halted { .. }) {
+                self.halted = HaltState::Running;
+            }
             return None;
         }
 
@@ -58,6 +63,7 @@ impl InterruptController {
         }
 
         self.ime = false;
+        self.halted = HaltState::Running;
 
         let n = fired.trailing_zeros();
         let kind = match n {

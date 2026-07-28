@@ -141,10 +141,10 @@ fn cpu_instrs_01_special() {
 }
 
 #[test]
-#[ignore = "needs PPU STAT register for LCD interrupt"]
+#[ignore = "timer interrupt halt wake-up timing needs refinement"]
 fn cpu_instrs_02_interrupts() {
     assert_passed(
-        &run_rom("cpu_instrs/individual/02-interrupts.gb", 10_000_000),
+        &run_rom("cpu_instrs/individual/02-interrupts.gb", 25_000_000),
         "02-interrupts",
     );
 }
