@@ -1,0 +1,18 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_gbc_rom_test"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+clap.workspace = true
+crc.workspace = true
+nerust_gbc_core = { path = "../core" }
+nerust_input_traits.workspace = true
+nerust_render_traits.workspace = true
+png.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+thiserror.workspace = true

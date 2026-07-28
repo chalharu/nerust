@@ -71,7 +71,7 @@ impl GbcMemoryBus {
         }
     }
 
-    pub(crate) fn set_cartridge(&mut self, cartridge: Cartridge) {
+    pub fn set_cartridge(&mut self, cartridge: Cartridge) {
         self.cartridge = cartridge;
     }
 

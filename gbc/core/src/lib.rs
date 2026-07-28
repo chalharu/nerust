@@ -2,15 +2,15 @@
 pub(crate) mod apu;
 pub mod bootrom;
 #[allow(dead_code)]
-pub(crate) mod cartridge;
+pub mod cartridge;
 #[allow(dead_code)]
-pub(crate) mod cartridge_header;
+pub mod cartridge_header;
 #[allow(dead_code)]
-pub(crate) mod cartridge_mbc;
+pub mod cartridge_mbc;
 #[allow(dead_code)]
 pub(crate) mod cpu;
 #[allow(dead_code)]
-pub(crate) mod cpu_core;
+pub mod cpu_core;
 #[allow(dead_code)]
 pub(crate) mod cpu_opcodes;
 #[allow(dead_code)]
@@ -20,7 +20,7 @@ pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod interrupt;
 #[allow(dead_code)]
-pub(crate) mod memory;
+pub mod memory;
 #[allow(dead_code)]
 pub(crate) mod ppu;
 pub mod rom_identity;
