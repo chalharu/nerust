@@ -131,14 +131,9 @@ fn main() {
     if cli.open {
         if let Some(ref summary) = report_summary {
             let path = &summary.report_path;
-            let path_str = path.to_string_lossy();
-            #[cfg(target_os = "macos")]
-            let _ = std::process::Command::new("open").arg(path_str.as_ref()).status();
-            #[cfg(target_os = "linux")]
-            let _ = std::process::Command::new("xdg-open").arg(path_str.as_ref()).status();
-            #[cfg(target_os = "windows")]
-            let _ = std::process::Command::new("cmd").args(["/c", "start", path_str.as_ref()]).status();
-            eprintln!("Opened report: {}", path.display());
+            if open::that(path).is_ok() {
+                eprintln!("Opened report: {}", path.display());
+            }
         }
     }
 
