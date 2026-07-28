@@ -105,7 +105,12 @@ pub fn write_html_report(
                     .replace('&', "&amp;")
                     .replace('<', "&lt;")
                     .replace('>', "&gt;");
-                write!(html, "<details><summary>Serial output</summary><pre>{}</pre></details>", sanitized).ok();
+                write!(
+                    html,
+                    "<details><summary>Serial output</summary><pre>{}</pre></details>",
+                    sanitized
+                )
+                .ok();
             }
             for (i, shot) in case.screenshots.iter().enumerate() {
                 write!(
@@ -128,9 +133,8 @@ pub fn write_html_report(
         .as_secs();
     let file_name = format!("{}-{}.html", title, timestamp);
     let report_path = dir.join(&file_name);
-    fs::write(&report_path, &html).map_err(|e| {
-        RomTestError::InvalidManifest(format!("failed to write report: {}", e))
-    })?;
+    fs::write(&report_path, &html)
+        .map_err(|e| RomTestError::InvalidManifest(format!("failed to write report: {}", e)))?;
 
     // Also write as latest.html
     let latest_path = dir.join("latest.html");

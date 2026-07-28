@@ -22,4 +22,7 @@ pub enum RomTestError {
 
     #[error("YAML parse error: {0}")]
     YamlParse(#[from] serde_saphyr::Error),
+
+    #[error("PNG encoding error: {0}")]
+    PngEncoding(#[from] png::EncodingError),
 }
