@@ -405,12 +405,14 @@ fn ld_hld_a() {
 #[test]
 fn ldh_a_a8_takes_12_t_cycles() {
     let (mut cpu, mut bus) = setup(&[0xF0, 0x05]);
+    let start_pc = cpu.registers.pc;
     let mut n = 0;
     loop {
+        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
         n += 4;
-        if matches!(cpu.phase, Phase::FetchOpcode) && matches!(cpu.phase, Phase::FetchOpcode) { break; }
+        if matches!(cpu.phase, Phase::FetchOpcode) && (was_executing || cpu.registers.pc != start_pc) { break; }
         if n > 48 { panic!("did not complete"); }
     }
     assert_eq!(n, 12, "LDH A,(a8) should take 12 T-cycles (3 M-cycles)");
@@ -419,12 +421,14 @@ fn ldh_a_a8_takes_12_t_cycles() {
 #[test]
 fn ld_a_a16_takes_16_t_cycles() {
     let (mut cpu, mut bus) = setup(&[0xFA, 0x00, 0xC0]);
+    let start_pc = cpu.registers.pc;
     let mut n = 0;
     loop {
+        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
         n += 4;
-        if matches!(cpu.phase, Phase::FetchOpcode) && n > 0 { break; }
+        if matches!(cpu.phase, Phase::FetchOpcode) && (was_executing || cpu.registers.pc != start_pc) { break; }
         if n > 48 { panic!("did not complete"); }
     }
     assert_eq!(n, 16, "LD A,(a16) should take 16 T-cycles (4 M-cycles)");
