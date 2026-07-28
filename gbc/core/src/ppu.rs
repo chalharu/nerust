@@ -47,6 +47,7 @@ pub struct GbcPpu {
 
     mode_clock: u32,
     frame_complete: bool,
+    frame_buffer: [u32; 160 * 144],
 }
 
 impl Default for GbcPpu {
@@ -75,6 +76,7 @@ impl Default for GbcPpu {
             obj_palette: [0; 32],
             mode_clock: 0,
             frame_complete: false,
+            frame_buffer: [0xFF_FF_FF_FF; 160 * 144], // white
         }
     }
 }
@@ -103,6 +105,9 @@ impl GbcPpu {
             PpuMode::VBlank
         } else {
             let t = self.mode_clock;
+            if t > T_CYCLES_OAM_SEARCH && t - cycles <= T_CYCLES_OAM_SEARCH {
+                self.render_scanline();
+            }
             if t <= T_CYCLES_OAM_SEARCH {
                 PpuMode::OamSearch
             } else if t <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
@@ -164,6 +169,71 @@ impl GbcPpu {
     }
 
     pub fn render(&self, _fb: &mut FrameBuffer) {}
+
+    fn render_scanline(&mut self) {
+        if self.ly >= VBLANK_START || self.lcdc & 0x80 == 0 {
+            return;
+        }
+        if self.lcdc & 0x01 == 0 {
+            // BG display off: white background
+            let y = self.ly as usize;
+            let base = y * 160;
+            for x in 0..160 {
+                self.frame_buffer[base + x] = 0xFF_FF_FF_FF;
+            }
+            return;
+        }
+
+        let y = self.ly as usize;
+        let scroll_y = self
+            .scy
+            .wrapping_add(self.ly)
+            .wrapping_add(if y >= self.wy as usize { self.wy } else { 0 });
+        let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
+            0x9C00
+        } else {
+            0x9800
+        };
+        let tile_data_base: u16 = if self.lcdc & 0x10 != 0 {
+            0x8000
+        } else {
+            0x8800
+        };
+        let signed_tiles = self.lcdc & 0x10 == 0;
+
+        for x in 0..160 {
+            let scroll_x = self.scx.wrapping_add(x as u8);
+            let tile_col = (scroll_x / 8) as u16;
+            let tile_row = (scroll_y / 8) as u16;
+            let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
+            let tile_index = self.vram[tile_map_addr as usize & 0x1FFF] as u16;
+
+            let tile_pixel_x = (scroll_x % 8) as u16;
+
+            let tile_addr = if signed_tiles {
+                let signed_idx = tile_index as i16;
+                (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
+            } else {
+                tile_data_base + tile_index * 16
+            };
+
+            let low =
+                self.vram[tile_addr as usize & 0x1FFF | if self.vbk != 0 { 0x2000 } else { 0 }];
+            let high = self.vram
+                [(tile_addr + 1) as usize & 0x1FFF | if self.vbk != 0 { 0x2000 } else { 0 }];
+            let color_bit = 7 - tile_pixel_x;
+            let color = ((low >> color_bit) & 1) | (((high >> color_bit) & 1) << 1);
+
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            let pixel = match shade {
+                0 => 0xFF_FF_FF_FF, // white
+                1 => 0xC0_C0_C0_FF, // light gray
+                2 => 0x60_60_60_FF, // dark gray
+                _ => 0x00_00_00_FF, // black
+            };
+            self.frame_buffer[y * 160 + x] = pixel;
+        }
+    }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         let idx = if self.vbk == 0 {
