@@ -44,7 +44,7 @@ impl<const R: u8> CpuStepState for LdR16memA<R> {
         if step == 0 {
             return StepResult::Continue;
         }
-        bus.write(read_r16(core, R), core.registers.a());
+        bus.write(read_r16(core, R), core.registers().a());
         StepResult::Exit
     }
 }
@@ -57,7 +57,8 @@ impl<const R: u8> CpuStepState for LdAR16mem<R> {
         if step == 0 {
             return StepResult::Continue;
         }
-        core.registers.set_a(bus.read(read_r16(core, R)));
+        let _addr = read_r16(core, R);
+        core.registers_mut().set_a(bus.read(_addr));
         StepResult::Exit
     }
 }
@@ -88,14 +89,14 @@ impl CpuStepState for LdR8R8 {
             if step == 0 {
                 return StepResult::Continue;
             }
-            let v = bus.read(core.registers.hl());
+            let v = bus.read(core.registers().hl());
             write_r8(core, dst, v);
             StepResult::Exit
         } else if dst == R8_HL {
             if step == 0 {
                 return StepResult::Continue;
             }
-            bus.write(core.registers.hl(), read_r8(core, src));
+            bus.write(core.registers().hl(), read_r8(core, src));
             StepResult::Exit
         } else {
             write_r8(core, dst, read_r8(core, src));
@@ -112,8 +113,9 @@ impl CpuStepState for LdHliA {
         if step == 0 {
             return StepResult::Continue;
         }
-        bus.write(core.registers.hl(), core.registers.a());
-        core.registers.set_hl(core.registers.hl().wrapping_add(1));
+        bus.write(core.registers().hl(), core.registers().a());
+        let _t = core.registers().hl().wrapping_add(1);
+        core.registers_mut().set_hl(_t);
         StepResult::Exit
     }
 }
@@ -123,9 +125,9 @@ impl CpuStepState for LdAHli {
         if step == 0 {
             return StepResult::Continue;
         }
-        let a = core.registers.hl();
-        core.registers.set_a(bus.read(a));
-        core.registers.set_hl(a.wrapping_add(1));
+        let a = core.registers().hl();
+        core.registers_mut().set_a(bus.read(a));
+        core.registers_mut().set_hl(a.wrapping_add(1));
         StepResult::Exit
     }
 }
@@ -138,8 +140,9 @@ impl CpuStepState for LdHldA {
         if step == 0 {
             return StepResult::Continue;
         }
-        bus.write(core.registers.hl(), core.registers.a());
-        core.registers.set_hl(core.registers.hl().wrapping_sub(1));
+        bus.write(core.registers().hl(), core.registers().a());
+        let _t = core.registers().hl().wrapping_sub(1);
+        core.registers_mut().set_hl(_t);
         StepResult::Exit
     }
 }
@@ -149,9 +152,9 @@ impl CpuStepState for LdAHld {
         if step == 0 {
             return StepResult::Continue;
         }
-        let a = core.registers.hl();
-        core.registers.set_a(bus.read(a));
-        core.registers.set_hl(a.wrapping_sub(1));
+        let a = core.registers().hl();
+        core.registers_mut().set_a(bus.read(a));
+        core.registers_mut().set_hl(a.wrapping_sub(1));
         StepResult::Exit
     }
 }
@@ -169,7 +172,7 @@ impl CpuStepState for LdHlD8 {
             core.set_operand(0, v);
             return StepResult::Continue;
         }
-        bus.write(core.registers.hl(), core.operand(0));
+        bus.write(core.registers().hl(), core.operand(0));
         StepResult::Exit
     }
 }
@@ -194,13 +197,13 @@ impl CpuStepState for LdA16Sp {
         }
         if step == 3 {
             let addr = addr16(core);
-            bus.write(addr, core.registers.sp() as u8);
+            bus.write(addr, core.registers().sp() as u8);
             core.set_operand(0, addr as u8);
             core.set_operand(1, (addr >> 8) as u8);
             return StepResult::Continue;
         }
         let addr = (core.operand(1) as u16) << 8 | core.operand(0) as u16;
-        bus.write(addr.wrapping_add(1), (core.registers.sp() >> 8) as u8);
+        bus.write(addr.wrapping_add(1), (core.registers().sp() >> 8) as u8);
         StepResult::Exit
     }
 }
@@ -223,7 +226,7 @@ impl CpuStepState for LdA16A {
             core.set_operand(1, v);
             return StepResult::Continue;
         }
-        bus.write(addr16(core), core.registers.a());
+        bus.write(addr16(core), core.registers().a());
         StepResult::Exit
     }
 }
@@ -246,7 +249,8 @@ impl CpuStepState for LdAA16 {
             core.set_operand(1, v);
             return StepResult::Continue;
         }
-        core.registers.set_a(bus.read(addr16(core)));
+        let _addr = addr16(core);
+        core.registers_mut().set_a(bus.read(_addr));
         StepResult::Exit
     }
 }
@@ -265,15 +269,15 @@ impl CpuStepState for LdHlSpE {
             return StepResult::Continue;
         }
         let offset = core.operand(0) as i8;
-        let sp = core.registers.sp();
+        let sp = core.registers().sp();
         let r = sp.wrapping_add_signed(offset as i16);
-        core.registers
+        core.registers_mut()
             .set_h_flag((sp & 0x000F) + (offset as u8 as u16 & 0x000F) > 0x000F);
-        core.registers
+        core.registers_mut()
             .set_c_flag((sp & 0x00FF) + (offset as u8 as u16 & 0x00FF) > 0x00FF);
-        core.registers.set_z(false);
-        core.registers.set_n(false);
-        core.registers.set_hl(r);
+        core.registers_mut().set_z(false);
+        core.registers_mut().set_n(false);
+        core.registers_mut().set_hl(r);
         StepResult::Exit
     }
 }

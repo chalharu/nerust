@@ -14,12 +14,12 @@ impl<const R: u8> CpuStepState for Push<R> {
         }
         if step == 1 {
             let v = if R == 3 {
-                core.registers.af()
+                core.registers().af()
             } else {
                 match R {
-                    reg::BC => core.registers.bc(),
-                    reg::DE => core.registers.de(),
-                    reg::R16_HL => core.registers.hl(),
+                    reg::BC => core.registers().bc(),
+                    reg::DE => core.registers().de(),
+                    reg::R16_HL => core.registers().hl(),
                     _ => 0,
                 }
             };
@@ -28,12 +28,14 @@ impl<const R: u8> CpuStepState for Push<R> {
             return StepResult::Continue;
         }
         if step == 2 {
-            core.registers.set_sp(core.registers.sp().wrapping_sub(1));
-            bus.write(core.registers.sp(), core.operand(0));
+            let _t = core.registers().sp().wrapping_sub(1);
+            core.registers_mut().set_sp(_t);
+            bus.write(core.registers().sp(), core.operand(0));
             return StepResult::Continue;
         }
-        core.registers.set_sp(core.registers.sp().wrapping_sub(1));
-        bus.write(core.registers.sp(), core.operand(1));
+        let _t = core.registers().sp().wrapping_sub(1);
+        core.registers_mut().set_sp(_t);
+        bus.write(core.registers().sp(), core.operand(1));
         StepResult::Exit
     }
 }
@@ -47,22 +49,24 @@ impl<const R: u8> CpuStepState for Pop<R> {
             return StepResult::Continue;
         }
         if step == 1 {
-            let v = bus.read(core.registers.sp());
+            let v = bus.read(core.registers().sp());
             core.set_operand(0, v);
-            core.registers.set_sp(core.registers.sp().wrapping_add(1));
+            let _t = core.registers().sp().wrapping_add(1);
+            core.registers_mut().set_sp(_t);
             return StepResult::Continue;
         }
         let lo = core.operand(0);
-        let hi = bus.read(core.registers.sp());
-        core.registers.set_sp(core.registers.sp().wrapping_add(1));
+        let hi = bus.read(core.registers().sp());
+        let _t = core.registers().sp().wrapping_add(1);
+        core.registers_mut().set_sp(_t);
         let v = ((hi as u16) << 8) | lo as u16;
         if R == 3 {
-            core.registers.set_af(v)
+            core.registers_mut().set_af(v)
         } else {
             match R {
-                reg::BC => core.registers.set_bc(v),
-                reg::DE => core.registers.set_de(v),
-                reg::R16_HL => core.registers.set_hl(v),
+                reg::BC => core.registers_mut().set_bc(v),
+                reg::DE => core.registers_mut().set_de(v),
+                reg::R16_HL => core.registers_mut().set_hl(v),
                 _ => {}
             }
         }
