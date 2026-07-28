@@ -60,9 +60,15 @@ impl<const R: u8> CpuStepState for LdR16D16<R> {
 
 pub(crate) struct LdR16memA<const R: u8>;
 impl<const R: u8> CpuStepState for LdR16memA<R> {
-    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
-        bus.write(read_r16(core, R), core.registers.a);
-        StepResult::Exit
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+        match step {
+            1 => StepResult::Continue,
+            2 => {
+                bus.write(read_r16(core, R), core.registers.a);
+                StepResult::Exit
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -70,9 +76,15 @@ impl<const R: u8> CpuStepState for LdR16memA<R> {
 
 pub(crate) struct LdAR16mem<const R: u8>;
 impl<const R: u8> CpuStepState for LdAR16mem<R> {
-    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
-        core.registers.a = bus.read(read_r16(core, R));
-        StepResult::Exit
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+        match step {
+            1 => StepResult::Continue,
+            2 => {
+                core.registers.a = bus.read(read_r16(core, R));
+                StepResult::Exit
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -147,7 +159,12 @@ impl CpuStepState for LdHliA {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 => StepResult::Continue,
-            2 => { let a = core.registers.hl(); bus.write(a, core.registers.a); core.registers.set_hl(a.wrapping_add(1)); StepResult::Exit }
+            2 => {
+                let a = core.registers.hl();
+                bus.write(a, core.registers.a);
+                core.registers.set_hl(a.wrapping_add(1));
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }
@@ -157,7 +174,12 @@ impl CpuStepState for LdAHli {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 => StepResult::Continue,
-            2 => { let a = core.registers.hl(); core.registers.a = bus.read(a); core.registers.set_hl(a.wrapping_add(1)); StepResult::Exit }
+            2 => {
+                let a = core.registers.hl();
+                core.registers.a = bus.read(a);
+                core.registers.set_hl(a.wrapping_add(1));
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }
@@ -170,7 +192,12 @@ impl CpuStepState for LdHldA {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 => StepResult::Continue,
-            2 => { let a = core.registers.hl(); bus.write(a, core.registers.a); core.registers.set_hl(a.wrapping_sub(1)); StepResult::Exit }
+            2 => {
+                let a = core.registers.hl();
+                bus.write(a, core.registers.a);
+                core.registers.set_hl(a.wrapping_sub(1));
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }
@@ -180,7 +207,12 @@ impl CpuStepState for LdAHld {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 => StepResult::Continue,
-            2 => { let a = core.registers.hl(); core.registers.a = bus.read(a); core.registers.set_hl(a.wrapping_sub(1)); StepResult::Exit }
+            2 => {
+                let a = core.registers.hl();
+                core.registers.a = bus.read(a);
+                core.registers.set_hl(a.wrapping_sub(1));
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }
@@ -237,7 +269,10 @@ impl CpuStepState for LdA16A {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 | 2 => read16_load(core, bus, step),
-            3 => { bus.write(addr16(core), core.registers.a); StepResult::Exit }
+            3 => {
+                bus.write(addr16(core), core.registers.a);
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }
@@ -250,7 +285,10 @@ impl CpuStepState for LdAA16 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
             1 | 2 => read16_load(core, bus, step),
-            3 => { core.registers.a = bus.read(addr16(core)); StepResult::Exit }
+            3 => {
+                core.registers.a = bus.read(addr16(core));
+                StepResult::Exit
+            }
             _ => unreachable!(),
         }
     }

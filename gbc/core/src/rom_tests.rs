@@ -38,7 +38,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "F0/FA/CB (HL) timing off by ±1; (HL) ALU/LD fixed. Needs per-M-cycle model."]
+    #[ignore = "F0/CB timing ±1; mem_timing timer alignment differs from real hardware"]
     fn mem_timing_read() {
         assert_passed(
             &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
@@ -47,7 +47,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "same CPU model limitation as mem_timing_read"]
+    #[ignore = "same timer alignment issue as mem_timing_read"]
     fn mem_timing_write() {
         assert_passed(
             &run_rom("mem_timing/individual/02-write_timing.gb", 150_000_000),
@@ -56,7 +56,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "same CPU model limitation as mem_timing_read"]
+    #[ignore = "same timer alignment issue as mem_timing_read"]
     fn mem_timing_modify() {
         assert_passed(
             &run_rom("mem_timing/individual/03-modify_timing.gb", 150_000_000),
@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "same CPU model limitation as mem_timing_read"]
+    #[ignore = "same timer alignment issue as mem_timing_read"]
     fn mem_timing_all() {
         let output = run_rom("mem_timing/mem_timing.gb", 150_000_000);
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
@@ -86,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs PPU for VBlank interrupts"]
+    #[ignore = "needs PPU STAT register for LCD interrupt"]
     fn cpu_instrs_02_interrupts() {
         assert_passed(
             &run_rom("cpu_instrs/individual/02-interrupts.gb", 50_000_000),
@@ -167,10 +167,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "timer init check timing needs edge-detection refinement"]
+    #[ignore = "timer init check needs delay 70 adjustment (+~8 T-cycles)"]
     fn instr_timing() {
         assert_passed(
-            &run_rom("instr_timing/instr_timing.gb", 150_000_000),
+            &run_rom("instr_timing/instr_timing.gb", 200_000_000),
             "instr_timing",
         );
     }
