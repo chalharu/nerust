@@ -32,11 +32,9 @@ impl CpuStepState for JpA16 {
             core.operands[1] = core.pc_read(bus);
             return StepResult::Continue;
         }
-        if step == 3 {
-            jump16(core);
-            return StepResult::Exit;
-        }
-        unreachable!()
+        debug_assert!(step == 3, "JP step > 3");
+        jump16(core);
+        StepResult::Exit
     }
 }
 
@@ -57,11 +55,9 @@ impl<const C: u8> CpuStepState for JpCond<C> {
             }
             return StepResult::Continue;
         }
-        if step == 3 {
-            jump16(core);
-            return StepResult::Exit;
-        }
-        unreachable!()
+        debug_assert!(step == 3, "JP step > 3");
+        jump16(core);
+        StepResult::Exit
     }
 }
 
@@ -107,14 +103,12 @@ impl<const C: u8> CpuStepState for JrCond<C> {
             }
             return StepResult::Continue;
         }
-        if step == 2 {
-            core.registers.pc = core
-                .registers
-                .pc
-                .wrapping_add_signed(core.operands[0] as i8 as i16);
-            return StepResult::Exit;
-        }
-        unreachable!()
+        debug_assert!(step == 2, "JR step > 2");
+        core.registers.pc = core
+            .registers
+            .pc
+            .wrapping_add_signed(core.operands[0] as i8 as i16);
+        StepResult::Exit
     }
 }
 
@@ -201,12 +195,10 @@ fn ret_common(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepRe
     if step == 1 {
         return StepResult::Continue;
     }
-    if step == 2 {
-        core.operands[0] = bus.read(core.registers.sp);
-        core.registers.sp = core.registers.sp.wrapping_add(1);
-        return StepResult::Continue;
-    }
-    unreachable!()
+    debug_assert!(step == 2, "RET step > 2");
+    core.operands[0] = bus.read(core.registers.sp);
+    core.registers.sp = core.registers.sp.wrapping_add(1);
+    return StepResult::Continue;
 }
 
 pub(crate) struct Ret;

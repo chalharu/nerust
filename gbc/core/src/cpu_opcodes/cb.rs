@@ -22,28 +22,24 @@ impl CpuStepState for CbPrefix {
         if step == 2 {
             let op = core.operands[0];
             let idx = op & 0x07;
-            if idx == 6 {
-                let val = bus.read(core.registers.hl());
-                let cat = op >> 6;
-                if cat == 1 {
-                    // BIT n,(HL)
-                    let bit = (op >> 3) & 0x07;
-                    core.registers.set_z(val & (1 << bit) == 0);
-                    core.registers.set_n(false);
-                    core.registers.set_h(true);
-                    return StepResult::Exit;
-                }
-                // rotate/res/set: compute, need step 3 for write
-                core.operands[1] = cb_compute(val, op, core);
-                return StepResult::Continue;
+            debug_assert!(idx == 6, "CB prefix step 2 with idx != 6");
+            let val = bus.read(core.registers.hl());
+            let cat = op >> 6;
+            if cat == 1 {
+                // BIT n,(HL)
+                let bit = (op >> 3) & 0x07;
+                core.registers.set_z(val & (1 << bit) == 0);
+                core.registers.set_n(false);
+                core.registers.set_h(true);
+                return StepResult::Exit;
             }
-            unreachable!();
+            // rotate/res/set: compute, need step 3 for write
+            core.operands[1] = cb_compute(val, op, core);
+            return StepResult::Continue;
         }
-        if step == 3 {
-            bus.write(core.registers.hl(), core.operands[1]);
-            return StepResult::Exit;
-        }
-        unreachable!()
+        debug_assert!(step == 3, "CB prefix step > 3");
+        bus.write(core.registers.hl(), core.operands[1]);
+        StepResult::Exit
     }
 }
 
