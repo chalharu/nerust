@@ -19,12 +19,10 @@ impl CpuStepState for AluAR8 {
         if src == 6 {
             // (HL) operand — 2 M-cycles
             match step {
-                1 => {
-                    core.operands[0] = bus.read(core.registers.hl());
-                    StepResult::Continue
-                }
+                1 => StepResult::Continue,
                 2 => {
-                    alu_exec(core, alu_op, core.operands[0]);
+                    let v = bus.read(core.registers.hl());
+                    alu_exec(core, alu_op, v);
                     StepResult::Exit
                 }
                 _ => unreachable!(),
