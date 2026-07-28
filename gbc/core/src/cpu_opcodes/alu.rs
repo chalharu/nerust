@@ -3,8 +3,8 @@
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
-use crate::memory::GbcMemoryBus;
 use crate::cpu_opcodes::helpers::reg;
+use crate::memory::GbcMemoryBus;
 
 // ── ALU A, r8 (1-2 M-cycles) ───────────────────────────────
 // reg: M1 (included in fetch): execute

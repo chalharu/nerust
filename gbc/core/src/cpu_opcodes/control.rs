@@ -129,10 +129,10 @@ impl CpuStepState for Jr {
             }
             2 => StepResult::Continue,
             3 => {
-                core.registers.pc =
-                    core.registers
-                        .pc
-                        .wrapping_add_signed(core.operands[0] as i8 as i16);
+                core.registers.pc = core
+                    .registers
+                    .pc
+                    .wrapping_add_signed(core.operands[0] as i8 as i16);
                 StepResult::Exit
             }
             _ => unreachable!(),
@@ -157,10 +157,10 @@ impl<const C: u8> CpuStepState for JrCond<C> {
                 }
             }
             3 => {
-                core.registers.pc =
-                    core.registers
-                        .pc
-                        .wrapping_add_signed(core.operands[0] as i8 as i16);
+                core.registers.pc = core
+                    .registers
+                    .pc
+                    .wrapping_add_signed(core.operands[0] as i8 as i16);
                 StepResult::Exit
             }
             _ => unreachable!(),

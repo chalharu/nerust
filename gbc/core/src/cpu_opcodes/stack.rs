@@ -3,8 +3,8 @@
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
-use crate::memory::GbcMemoryBus;
 use crate::cpu_opcodes::helpers::reg;
+use crate::memory::GbcMemoryBus;
 
 pub(crate) struct Push<const R: u8>;
 impl<const R: u8> CpuStepState for Push<R> {
