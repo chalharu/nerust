@@ -59,6 +59,11 @@ impl Lr35902Cpu {
             && let Some(kind) = bus.acknowledge_interrupt()
         {
             dispatch_interrupt(self.registers_mut(), kind, bus);
+        } else {
+            // Even with IME=0, acknowledge_interrupt may clear HALT state
+            // when an interrupt is pending (test ROMs expect HALT wake
+            // with IME=0 when timer overflow sets IF).
+            bus.acknowledge_interrupt();
         }
     }
 }
