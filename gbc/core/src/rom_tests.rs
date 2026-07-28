@@ -242,3 +242,66 @@ fn oam_bug_1_lcd_sync() {
         "oam_bug/1-lcd_sync",
     );
 }
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_2_causes() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/2-causes.gb", 10_000_000),
+        "oam_bug_2",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_3_non_causes() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/3-non_causes.gb", 10_000_000),
+        "oam_bug_3",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_4_scanline_timing() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/4-scanline_timing.gb", 10_000_000),
+        "oam_bug_4",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_5_timing_bug() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/5-timing_bug.gb", 10_000_000),
+        "oam_bug_5",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_6_timing_no_bug() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/6-timing_no_bug.gb", 10_000_000),
+        "oam_bug_6",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_7_timing_effect() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/7-timing_effect.gb", 10_000_000),
+        "oam_bug_7",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_8_instr_effect() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/8-instr_effect.gb", 10_000_000),
+        "oam_bug_8",
+    );
+}
