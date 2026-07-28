@@ -25,6 +25,10 @@ struct Cli {
     /// Write HTML report to $CARGO_TARGET_DIR/rom_tests/
     #[arg(short, long)]
     report: bool,
+
+    /// Open the HTML report in the default browser after tests complete
+    #[arg(short = 'O', long)]
+    open: bool,
 }
 
 fn manifest_path(cli: &Cli) -> PathBuf {
@@ -59,7 +63,9 @@ fn main() {
     let mut failed = 0u32;
 
     // Determine screenshots directory if --report is enabled
-    let screenshots_dir = if cli.report {
+    // If --open is specified without --report, enable report implicitly
+    let do_report = cli.report || cli.open;
+    let screenshots_dir = if do_report {
         let target_dir = std::env::var("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("target"));
@@ -113,12 +119,27 @@ fn main() {
 
     println!("\n{} passed, {} failed", passed, failed);
 
-    if cli.report {
+    let mut report_summary = None;
+    if do_report {
         let manifest_name = manifest_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("rom_tests");
-        write_html_report(None, manifest_name, &results).ok();
+        report_summary = write_html_report(None, manifest_name, &results).ok();
+    }
+
+    if cli.open {
+        if let Some(ref summary) = report_summary {
+            let path = &summary.report_path;
+            let path_str = path.to_string_lossy();
+            #[cfg(target_os = "macos")]
+            let _ = std::process::Command::new("open").arg(path_str.as_ref()).status();
+            #[cfg(target_os = "linux")]
+            let _ = std::process::Command::new("xdg-open").arg(path_str.as_ref()).status();
+            #[cfg(target_os = "windows")]
+            let _ = std::process::Command::new("cmd").args(["/c", "start", path_str.as_ref()]).status();
+            eprintln!("Opened report: {}", path.display());
+        }
     }
 
     if failed > 0 {
