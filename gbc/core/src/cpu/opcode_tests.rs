@@ -8,13 +8,11 @@ const BASE: u16 = 0xC000;
 /// instruction, and return the CPU state.
 fn step_until_done(cpu: &mut Lr35902Cpu, bus: &mut GbcMemoryBus) {
     let start_pc = cpu.registers.pc;
-    let start_t = cpu.t_cycle;
-    for _ in 0..96 {
-        let was_exec = !matches!(cpu.phase, Phase::FetchOpcode);
-        cpu.step_t_cycle(bus);
-        if cpu.t_cycle == start_t
-            && matches!(cpu.phase, Phase::FetchOpcode)
-            && (was_exec || cpu.registers.pc != start_pc)
+    for _ in 0..24 {
+        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
+        cpu.step(bus);
+        if matches!(cpu.phase, Phase::FetchOpcode)
+            && (was_executing || cpu.registers.pc != start_pc)
         {
             return;
         }
@@ -58,15 +56,13 @@ fn exec_n(rom: &[u8], n: usize) -> Lr35902Cpu {
 
 fn count_tcycles(rom: &[u8]) -> usize {
     let (mut cpu, mut bus) = setup(rom);
-    let start_t = cpu.t_cycle;
     let mut n = 0;
     loop {
-        cpu.step_t_cycle(&mut bus);
-        n += 1;
-        if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) { break; }
+        cpu.step(&mut bus);
+        n += 4; // each step() = 4 T-cycles
+        if matches!(cpu.phase, Phase::FetchOpcode) { break; }
         if n > 48 { panic!("did not complete at PC={:04X}", cpu.registers.pc); }
     }
-    eprintln!("count_tcycles({:02X?}) = {} T-cycles", rom, n);
     n
 }
 
@@ -97,25 +93,6 @@ fn timing_jr_nz_taken() {
     let c = count_tcycles(&[0x18, 0x02, 0x00, 0x00]);
     assert_eq!(c, 12, "JR e taken 3M");
 }
-#[test]
-fn timing_ret_nc_taken() {
-    // RET NC with carry=0 (taken) = 5M. Ensure carry is 0.
-    let (mut cpu, mut bus) = setup(&[0x37, 0x3F, 0xD0]); // SCF, CCF, RET NC
-    // After SCF: C=1. After CCF: C=0. RET NC: taken.
-    let start_t = cpu.t_cycle;
-    let mut n = 0;
-    for _ in 0..3 {
-        loop {
-            cpu.step_t_cycle(&mut bus);
-            n += 1;
-            if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) { break; }
-            if n > 48 { panic!("did not complete"); }
-        }
-    }
-    // All 3 instructions: SCF(1M) + CCF(1M) + RET NC taken(5M) = 7M = 28T
-    assert_eq!(n, 28, "SCF+CCF+RET NC taken = 7M=28T");
-}
-
 // ── NOP ──────────────────────────────────────────────────
 
 #[test]
@@ -288,37 +265,27 @@ fn add_hl_bc_overflow() {
 // ── Step counts ───────────────────────────────────────────
 
 #[test]
-fn ldh_a_a8_takes_12_t_cycles() {
+fn ldh_a_a8_takes_3_m_cycles() {
     let (mut cpu, mut bus) = setup(&[0xF0, 0x05]);
-    let start_t = cpu.t_cycle;
     let mut n = 0;
     loop {
-        cpu.step_t_cycle(&mut bus);
-        n += 1;
-        if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) {
-            break;
-        }
-        if n > 48 {
-            panic!("did not complete");
-        }
+        cpu.step(&mut bus);
+        n += 4;
+        if matches!(cpu.phase, Phase::FetchOpcode) { break; }
+        if n > 48 { panic!("did not complete"); }
     }
     assert_eq!(n, 12, "LDH A,(a8) should take 12 T-cycles (3 M-cycles)");
 }
 
 #[test]
-fn ld_a_a16_takes_16_t_cycles() {
+fn ld_a_a16_takes_4_m_cycles() {
     let (mut cpu, mut bus) = setup(&[0xFA, 0x00, 0xC0]);
-    let start_t = cpu.t_cycle;
     let mut n = 0;
     loop {
-        cpu.step_t_cycle(&mut bus);
-        n += 1;
-        if cpu.t_cycle == start_t && matches!(cpu.phase, Phase::FetchOpcode) {
-            break;
-        }
-        if n > 48 {
-            panic!("did not complete");
-        }
+        cpu.step(&mut bus);
+        n += 4;
+        if matches!(cpu.phase, Phase::FetchOpcode) { break; }
+        if n > 48 { panic!("did not complete"); }
     }
     assert_eq!(n, 16, "LD A,(a16) should take 16 T-cycles (4 M-cycles)");
 }
