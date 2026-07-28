@@ -239,62 +239,47 @@ mod tests {
         );
     }
 
-    /// Simulate sync_tima_64 exact behavior
+    /// Simulate sync_tima_64 exact behavior with pre-warmed timer
     #[test]
     fn sync_tima_64_simulation() {
-        let mut t = Timer::new();
-        // init_tima_64: wreg TMA,0; wreg TAC,$07
-        t.write(0xFF06, 0); // TMA = 0
-        t.write(0xFF07, 0x07); // TAC = enable, 256 divider
+        // Pre-warm the timer to simulate the boot ROM running
+        for warmup in [0, 1000, 10000, 100000] {
+            let mut t = Timer::new();
+            for _ in 0..warmup { t.step(1); }
 
-        // sync_tima_64:
-        // ld a,0; ld hl,TIMA; ld (hl),a — TIMA = 0
-        t.write(0xFF05, 0);
+            // init_tima_64: wreg TMA,0; wreg TAC,$07
+            t.write(0xFF06, 0);
+            t.write(0xFF07, 0x07);
 
-        // Spin loop: or (hl) / jr z,- until TIMA != 0
-        let mut spin_iterations = 0;
-        while t.tima == 0 {
-            // Each iteration: or (hl) + jr z,- = 5 M-cycles = 20 step(1) calls
-            for _ in 0..20 {
-                t.step(1);
+            // sync_tima_64: write TIMA=0; spin until non-zero
+            t.write(0xFF05, 0);
+
+            let mut spin = 0;
+            while t.tima == 0 {
+                for _ in 0..20 { t.step(1); }
+                spin += 1;
+                if spin > 100 { panic!("warmup={}: spin did not exit (div={}, prev_bit={})", warmup, t.div, t.prev_bit); }
             }
-            spin_iterations += 1;
-            if spin_iterations > 100 {
-                panic!(
-                    "sync_tima_64 spin loop did not exit after 100 iterations (tac={:02X}, div={}, prev_bit={})",
-                    t.tac, t.div, t.prev_bit
-                );
+
+            // delay 53 + or + delay 4
+            for _ in 0..(53 * 4) { t.step(1); }   // 53 M-cycles
+            t.write(0xFF05, 0);                    // TIMA=0
+            for _ in 0..8 { t.step(1); }           // or (hl): 2 M-cycles
+            for _ in 0..16 { t.step(1); }          // delay 4: 16 T-cycles
+
+            if t.tima != 0 {
+                // Would need to re-sync — check if re-sync eventually succeeds
+                eprintln!("warmup={}: TIMA={} at re-sync check, would need ~{} extra T",
+                    warmup, t.tima, (if t.tima == 0 { 0 } else { 256 - (t.div & 0xFF) as u32 }));
+                // Simulate the re-sync: write TIMA=0 and check again
+                for _ in 0..10 { // up to 10 retries
+                    t.write(0xFF05, 0);
+                    for _ in 0..8 { t.step(1); }
+                    for _ in 0..16 { t.step(1); }
+                    if t.tima == 0 { break; }
+                }
+                assert_eq!(t.tima, 0, "warmup={}: re-sync never succeeded", warmup);
             }
-        }
-        eprintln!(
-            "Spin loop exited after {} iterations (TIMA={}, div={})",
-            spin_iterations, t.tima, t.div
-        );
-
-        // delay 65-12 = 53 M-cycles = 212 T-cycles
-        for _ in 0..212 {
-            t.step(1);
-        }
-
-        // xor a; ld (hl),a — TIMA = 0
-        t.write(0xFF05, 0);
-
-        // or (hl) — read TIMA (should be 0)
-        assert_eq!(t.tima, 0, "TIMA should be 0 after write");
-
-        // delay 4 M-cycles = 16 T-cycles
-        for _ in 0..16 {
-            t.step(1);
-        }
-
-        // jr z,- (check if TIMA still 0)
-        // If TIMA != 0, need to retry sync
-        if t.tima != 0 {
-            eprintln!(
-                "TIMA incremented during 4-cycle delay (tima={}, div={})",
-                t.tima, t.div
-            );
-            eprintln!("This would cause sync_tima_64 to re-sync");
         }
     }
 }
