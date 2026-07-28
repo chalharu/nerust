@@ -1,24 +1,3 @@
-use crate::cpu_registers::CpuRegisters;
-use crate::memory::GbcMemoryBus;
-
-/// Push PC to stack and jump to interrupt vector.
-///
-/// Extracted from `Lr35902Cpu` to separate interrupt dispatch
-/// from CPU state management (SRP).
-pub(crate) fn dispatch_interrupt(
-    regs: &mut CpuRegisters,
-    kind: InterruptKind,
-    bus: &mut GbcMemoryBus,
-) {
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), (regs.pc() >> 8) as u8);
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), regs.pc() as u8);
-    regs.set_pc(kind.vector());
-}
-
 /// Five interrupt sources available on DMG/CGB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
