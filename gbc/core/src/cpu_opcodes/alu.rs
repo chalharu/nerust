@@ -4,6 +4,7 @@ use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
+use crate::cpu_opcodes::helpers::reg;
 
 // ── ALU A, r8 (1-2 M-cycles) ───────────────────────────────
 // reg: M1 (included in fetch): execute
@@ -142,9 +143,9 @@ impl<const R: u8> CpuStepState for AddHlR16<R> {
             2 => {
                 let hl = core.registers.hl();
                 let v = match R {
-                    0 => core.registers.bc(),
-                    1 => core.registers.de(),
-                    2 => core.registers.hl(),
+                    reg::BC => core.registers.bc(),
+                    reg::DE => core.registers.de(),
+                    reg::R16_HL => core.registers.hl(),
                     _ => core.registers.sp,
                 };
                 core.registers.set_h((hl & 0x0FFF) + (v & 0x0FFF) > 0x0FFF);

@@ -4,6 +4,7 @@ use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
+use crate::cpu_opcodes::helpers::reg;
 
 pub(crate) struct Push<const R: u8>;
 impl<const R: u8> CpuStepState for Push<R> {
@@ -12,9 +13,9 @@ impl<const R: u8> CpuStepState for Push<R> {
             core.registers.af()
         } else {
             match R {
-                0 => core.registers.bc(),
-                1 => core.registers.de(),
-                2 => core.registers.hl(),
+                reg::BC => core.registers.bc(),
+                reg::DE => core.registers.de(),
+                reg::R16_HL => core.registers.hl(),
                 _ => 0,
             }
         };
@@ -55,9 +56,9 @@ impl<const R: u8> CpuStepState for Pop<R> {
                     core.registers.set_af(v)
                 } else {
                     match R {
-                        0 => core.registers.set_bc(v),
-                        1 => core.registers.set_de(v),
-                        2 => core.registers.set_hl(v),
+                        reg::BC => core.registers.set_bc(v),
+                        reg::DE => core.registers.set_de(v),
+                        reg::R16_HL => core.registers.set_hl(v),
                         _ => {}
                     }
                 }

@@ -24,26 +24,26 @@ pub(crate) mod reg {
 
 pub(crate) fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {
     match idx {
-        0 => core.registers.b,
-        1 => core.registers.c,
-        2 => core.registers.d,
-        3 => core.registers.e,
-        4 => core.registers.h,
-        5 => core.registers.l,
-        7 => core.registers.a,
+        reg::B => core.registers.b,
+        reg::C => core.registers.c,
+        reg::D => core.registers.d,
+        reg::E => core.registers.e,
+        reg::H => core.registers.h,
+        reg::L => core.registers.l,
+        reg::A => core.registers.a,
         _ => 0,
     }
 }
 
 pub(crate) fn write_r8(core: &mut Lr35902Cpu, idx: u8, v: u8) {
     match idx {
-        0 => core.registers.b = v,
-        1 => core.registers.c = v,
-        2 => core.registers.d = v,
-        3 => core.registers.e = v,
-        4 => core.registers.h = v,
-        5 => core.registers.l = v,
-        7 => core.registers.a = v,
+        reg::B => core.registers.b = v,
+        reg::C => core.registers.c = v,
+        reg::D => core.registers.d = v,
+        reg::E => core.registers.e = v,
+        reg::H => core.registers.h = v,
+        reg::L => core.registers.l = v,
+        reg::A => core.registers.a = v,
         _ => {}
     }
 }
@@ -58,18 +58,18 @@ pub(crate) fn r16_from_opcode(opcode: u8) -> u8 {
 
 pub(crate) fn read_r16(core: &Lr35902Cpu, idx: u8) -> u16 {
     match idx {
-        0 => core.registers.bc(),
-        1 => core.registers.de(),
-        2 => core.registers.hl(),
+        reg::BC => core.registers.bc(),
+        reg::DE => core.registers.de(),
+        reg::R16_HL => core.registers.hl(),
         _ => core.registers.sp,
     }
 }
 
 pub(crate) fn write_r16(core: &mut Lr35902Cpu, idx: u8, v: u16) {
     match idx {
-        0 => core.registers.set_bc(v),
-        1 => core.registers.set_de(v),
-        2 => core.registers.set_hl(v),
+        reg::BC => core.registers.set_bc(v),
+        reg::DE => core.registers.set_de(v),
+        reg::R16_HL => core.registers.set_hl(v),
         _ => core.registers.sp = v,
     }
 }
