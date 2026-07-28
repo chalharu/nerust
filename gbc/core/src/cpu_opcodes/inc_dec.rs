@@ -7,33 +7,27 @@ use crate::memory::GbcMemoryBus;
 
 pub(crate) struct IncR8<const R: u8>;
 impl<const R: u8> CpuStepState for IncR8<R> {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            let v = read_r8(core, R);
-            let r = v.wrapping_add(1);
-            write_r8(core, R, r);
-            core.registers.set_h((v & 0x0F) == 0x0F);
-            core.registers.set_z(r == 0);
-            core.registers.set_n(false);
-            return StepResult::Exit;
-        }
-        StepResult::Continue
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        let v = read_r8(core, R);
+        let r = v.wrapping_add(1);
+        write_r8(core, R, r);
+        core.registers.set_h((v & 0x0F) == 0x0F);
+        core.registers.set_z(r == 0);
+        core.registers.set_n(false);
+        StepResult::Exit
     }
 }
 
 pub(crate) struct DecR8<const R: u8>;
 impl<const R: u8> CpuStepState for DecR8<R> {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            let v = read_r8(core, R);
-            let r = v.wrapping_sub(1);
-            write_r8(core, R, r);
-            core.registers.set_h((v & 0x0F) == 0);
-            core.registers.set_z(r == 0);
-            core.registers.set_n(true);
-            return StepResult::Exit;
-        }
-        StepResult::Continue
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        let v = read_r8(core, R);
+        let r = v.wrapping_sub(1);
+        write_r8(core, R, r);
+        core.registers.set_h((v & 0x0F) == 0);
+        core.registers.set_z(r == 0);
+        core.registers.set_n(true);
+        StepResult::Exit
     }
 }
 
