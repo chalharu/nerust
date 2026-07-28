@@ -55,6 +55,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs PPU for VBlank interrupts"]
+    fn cpu_instrs_02_interrupts() {
+        assert_passed(
+            &run_rom("cpu_instrs/individual/02-interrupts.gb", 50_000_000),
+            "02-interrupts",
+        );
+    }
+
+    #[test]
     fn cpu_instrs_03_op_sp_hl() {
         assert_passed(
             &run_rom("cpu_instrs/individual/03-op sp,hl.gb", 50_000_000),
