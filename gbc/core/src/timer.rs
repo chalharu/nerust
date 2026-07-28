@@ -198,44 +198,7 @@ mod tests {
         assert_eq!(t.read(0xFF04), 0xAB);
     }
 
-    /// Replicate the init_timer timer check (wreg TIMA,-20; delay 70; check IF)
-    /// to see if the edge-detection timer passes the hardware test.
-    #[test]
-    fn init_timer_check_timing() {
-        // Same sequence as init_timer in the test ROM
-        let mut t = Timer::new();
-
-        // wreg TMA,0
-        t.write(0xFF06, 0x00);
-
-        // wreg TAC,$05: enable, freq 01 (bit 3). Takes ~5 M-cycles = 20 T
-        // Between TAC write completing and TIMA write: IF=0 + TIMA=-20 takes ~10 M-cycles = 40 T
-        // TAC write enables the timer. This test starts with pre-TAC state.
-        t.write(0xFF07, 0x05); // TAC = $05
-        t.write(0xFF05, 236); // TIMA = -20
-
-        // Simulate delay 70 (~68 M-cycles = 272 T-cycles)
-        t.step(272);
-
-        // Check 1: should NOT have overflowed yet
-        // To overflow: TIMA needs to go from 236 to 256 (20 increments).
-        // Each increment = 16 T-cycles. Need 320 T-cycles = 80 M-cycles from TAC.
-        // We stepped 272 T-cycles. From TAC to step: ~20 T before write + 272 after = 292 total.
-        // 292/16 = 18.25 → 18 increments. TIMA = 236+18 = 254. Not overflow.
-        /// Replicate the init_timer timer check for diagnostics
-        #[test]
-        fn init_timer_check_timing() {
-            let mut t = Timer::new();
-            t.write(0xFF06, 0x00);
-            t.write(0xFF07, 0x05);
-            t.write(0xFF05, 236);
-            t.step(272);
-            eprintln!("After delay: TIMA={}", t.tima);
-            t.step(28);
-            eprintln!("After gap: TIMA={}", t.tima);
-        }
-
-        /// Simulate the EXACT start_timer loop (11 M-cycles per iteration)
+    /// Simulate the EXACT start_timer loop (11 M-cycles per iteration)
         /// and verify it exits within a reasonable number of iterations.
         #[test]
         fn start_timer_loop_exits() {
@@ -276,4 +239,3 @@ mod tests {
             panic!("start_timer loop did not exit within 20 iterations");
         }
     }
-}

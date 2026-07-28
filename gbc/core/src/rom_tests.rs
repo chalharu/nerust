@@ -3,6 +3,7 @@
 /// Each test loads a ROM, runs it for a fixed number of M-cycles,
 /// and checks serial output for "Passed".
 mod tests {
+    #![allow(clippy::tests_outside_test_module)]
     use std::path::Path;
 
     use crate::cartridge::Cartridge;
