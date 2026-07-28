@@ -73,9 +73,9 @@ impl Lr35902Cpu {
                 cpu.registers.set_l(0x00);
             }
             GbcModel::Agb => {
-                // AGB (GBA GBC mode): A=0x11, B=0x01, L=0x0D, Z=1
+                // AGB (GBA GBC mode): A=0x11, F=0x00, B=0x01, L=0x0D
                 cpu.registers.set_a(0x11);
-                cpu.registers.set_f(0xB0);
+                cpu.registers.set_f(0x00);
                 cpu.registers.set_b(0x01);
                 cpu.registers.set_c(0x00);
                 cpu.registers.set_d(0xFF);
