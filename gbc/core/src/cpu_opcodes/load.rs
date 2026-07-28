@@ -10,7 +10,7 @@ fn r8(opcode: u8) -> u8 {
 const R8_HL: u8 = 6;
 
 fn addr16(core: &Lr35902Cpu) -> u16 {
-    ((core.operands[1] as u16) << 8) | core.operands[0] as u16
+    ((core.operand(1) as u16) << 8) | core.operand(0) as u16
 }
 
 // ── LD r16, d16 (3 M-cycles) ──────────────────────────────
@@ -22,11 +22,13 @@ impl<const R: u8> CpuStepState for LdR16D16<R> {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         if step == 2 {
-            core.operands[1] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(1, v);
             write_r16(core, R, addr16(core));
             return StepResult::Exit;
         }
@@ -79,7 +81,7 @@ impl<const R: u8> CpuStepState for LdR8D8<R> {
 pub(crate) struct LdR8R8;
 impl CpuStepState for LdR8R8 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        let op = core.opcode;
+        let op = core.opcode();
         let src = r8(op);
         let dst = (op >> 3) & 0x07;
         if src == R8_HL {
@@ -163,10 +165,11 @@ impl CpuStepState for LdHlD8 {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
-        bus.write(core.registers.hl(), core.operands[0]);
+        bus.write(core.registers.hl(), core.operand(0));
         StepResult::Exit
     }
 }
@@ -180,21 +183,23 @@ impl CpuStepState for LdA16Sp {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         if step == 2 {
-            core.operands[1] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(1, v);
             return StepResult::Continue;
         }
         if step == 3 {
             let addr = addr16(core);
             bus.write(addr, core.registers.sp() as u8);
-            core.operands[0] = addr as u8;
-            core.operands[1] = (addr >> 8) as u8;
+            core.set_operand(0, addr as u8);
+            core.set_operand(1, (addr >> 8) as u8);
             return StepResult::Continue;
         }
-        let addr = (core.operands[1] as u16) << 8 | core.operands[0] as u16;
+        let addr = (core.operand(1) as u16) << 8 | core.operand(0) as u16;
         bus.write(addr.wrapping_add(1), (core.registers.sp() >> 8) as u8);
         StepResult::Exit
     }
@@ -209,11 +214,13 @@ impl CpuStepState for LdA16A {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         if step == 2 {
-            core.operands[1] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(1, v);
             return StepResult::Continue;
         }
         bus.write(addr16(core), core.registers.a());
@@ -230,11 +237,13 @@ impl CpuStepState for LdAA16 {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         if step == 2 {
-            core.operands[1] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(1, v);
             return StepResult::Continue;
         }
         core.registers.set_a(bus.read(addr16(core)));
@@ -251,10 +260,11 @@ impl CpuStepState for LdHlSpE {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
-        let offset = core.operands[0] as i8;
+        let offset = core.operand(0) as i8;
         let sp = core.registers.sp();
         let r = sp.wrapping_add_signed(offset as i16);
         core.registers

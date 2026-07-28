@@ -22,9 +22,10 @@ impl Lr35902Cpu {
                 self.check_interrupts(bus);
                 let op = bus.read(self.registers.pc());
                 self.registers.set_pc(self.registers.pc().wrapping_add(1));
-                self.opcode = op;
-                self.operands = [0; 2];
-                self.operand_count = 0;
+                self.set_opcode(op);
+                self.set_operand(0, 0);
+                self.set_operand(1, 0);
+                self.set_operand_count(0);
 
                 let h = TABLE[op as usize];
                 // step=0 signals "fetch decode" to the handler
