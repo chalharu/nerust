@@ -38,7 +38,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "CPU model compresses fetch+step1 into one M-cycle; memory access timing is 1 cycle early. Needs per-M-cycle state machine."]
+    #[ignore = "F0/FA/CB (HL) timing off by ±1; (HL) ALU/LD fixed. Needs per-M-cycle model."]
     fn mem_timing_read() {
         assert_passed(
             &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
