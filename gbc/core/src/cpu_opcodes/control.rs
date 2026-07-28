@@ -67,12 +67,9 @@ impl<const C: u8> CpuStepState for JpCond<C> {
 
 pub(crate) struct JpHl;
 impl CpuStepState for JpHl {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            core.registers.pc = core.registers.hl();
-            return StepResult::Exit;
-        }
-        StepResult::Continue
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        core.registers.pc = core.registers.hl();
+        StepResult::Exit
     }
 }
 
