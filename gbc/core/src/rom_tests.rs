@@ -229,6 +229,15 @@ fn instr_timing() {
 }
 
 #[test]
+#[ignore = "frame buffer hash verification not yet implemented; renders reference image via PPU"]
+fn dmg_acid2() {
+    let output = run_rom("mattcurrie_dmg-acid2/dmg-acid2.gb", 10_000_000);
+    // dmg-acid2 does not output via serial; verification requires frame buffer hash
+    // Currently just verify the ROM runs without panicking
+    assert!(output.is_empty() || output.contains("Passed"), "dmg-acid2 should not produce serial output");
+}
+
+#[test]
 #[ignore = "halt bug not implemented"]
 fn halt_bug() {
     assert_passed(&run_rom_mem("halt_bug.gb", 10_000_000), "halt_bug");

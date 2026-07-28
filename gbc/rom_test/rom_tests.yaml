@@ -160,3 +160,20 @@ cases:
           hash: ""
         memory: []
         pad: []
+
+  - id: "dmg_acid2"
+    category: "ppu"
+    description: "DMG acid2 PPU test — reference image rendering"
+    rom: "mattcurrie_dmg-acid2/dmg-acid2.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 15_000_000
+        serial:
+          hash: ""
+        frame:
+          hash: ""
+        audio:
+          hash: ""
+        memory: []
+        pad: []
