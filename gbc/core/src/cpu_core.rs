@@ -19,11 +19,9 @@ pub struct Lr35902Cpu {
     pub(crate) registers: CpuRegisters,
     pub(crate) phase: Phase,
     pub(crate) ime_delayed: bool,
-    pub(crate) opcode: u8,
-    /// pub(crate) due to borrow-checker: `core.operands[0] = core.pc_read(bus)`
-    /// requires place-expression on LHS, which method calls don't allow.
-    pub(crate) operands: [u8; 2],
-    pub(crate) operand_count: u8,
+    opcode: u8,
+    operands: [u8; 2],
+    operand_count: u8,
 }
 
 impl Lr35902Cpu {
