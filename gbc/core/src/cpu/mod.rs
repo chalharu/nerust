@@ -9,15 +9,15 @@ static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::
 impl Lr35902Cpu {
     /// Step one M-cycle (no device advancement — caller must call step_devices).
     pub fn step(&mut self, bus: &mut GbcMemoryBus) {
-        if self.ime_delayed {
+        if self.ime_delayed() {
             bus.set_ime(true);
-            self.ime_delayed = false;
+            self.set_ime_delayed(false);
         }
         if bus.is_halted_or_stopped() {
             return;
         }
 
-        match self.phase {
+        match self.phase() {
             Phase::FetchOpcode => {
                 self.check_interrupts(bus);
                 let op = bus.read(self.registers.pc());
@@ -32,20 +32,20 @@ impl Lr35902Cpu {
                 match h(self, bus, 0) {
                     StepResult::Exit => {}
                     StepResult::Continue => {
-                        self.phase = Phase::ExecuteOpcode {
+                        self.set_phase(Phase::ExecuteOpcode {
                             handler: h,
                             step: 1,
-                        }
+                        });
                     }
                 }
             }
             Phase::ExecuteOpcode { handler, step } => match handler(self, bus, step) {
-                StepResult::Exit => self.phase = Phase::FetchOpcode,
+                StepResult::Exit => self.set_phase(Phase::FetchOpcode),
                 StepResult::Continue => {
-                    self.phase = Phase::ExecuteOpcode {
+                    self.set_phase(Phase::ExecuteOpcode {
                         handler,
                         step: step + 1,
-                    }
+                    });
                 }
             },
         }

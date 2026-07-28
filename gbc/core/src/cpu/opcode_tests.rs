@@ -7,10 +7,10 @@ const BASE: u16 = 0xC000;
 fn step_until_done(cpu: &mut Lr35902Cpu, bus: &mut GbcMemoryBus) {
     let start_pc = cpu.registers.pc();
     for _ in 0..24 {
-        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
+        let was_executing = !matches!(cpu.phase(), Phase::FetchOpcode);
         cpu.step(bus);
         bus.step_devices(4);
-        if matches!(cpu.phase, Phase::FetchOpcode)
+        if matches!(cpu.phase(), Phase::FetchOpcode)
             && (was_executing || cpu.registers.pc() != start_pc)
         {
             return;
@@ -59,10 +59,10 @@ fn measure_mcycles(opcode: u8, operands: &[u8]) -> usize {
     cpu.registers.set_pc(BASE);
     let start_pc = cpu.registers.pc();
     for count in 1..48 {
-        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
+        let was_executing = !matches!(cpu.phase(), Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
-        if matches!(cpu.phase, Phase::FetchOpcode)
+        if matches!(cpu.phase(), Phase::FetchOpcode)
             && (was_executing || cpu.registers.pc() != start_pc)
         {
             return count;
@@ -413,11 +413,11 @@ fn ldh_a_a8_takes_12_t_cycles() {
     let start_pc = cpu.registers.pc();
     let mut n = 0;
     loop {
-        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
+        let was_executing = !matches!(cpu.phase(), Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
         n += 4;
-        if matches!(cpu.phase, Phase::FetchOpcode)
+        if matches!(cpu.phase(), Phase::FetchOpcode)
             && (was_executing || cpu.registers.pc() != start_pc)
         {
             break;
@@ -435,11 +435,11 @@ fn ld_a_a16_takes_16_t_cycles() {
     let start_pc = cpu.registers.pc();
     let mut n = 0;
     loop {
-        let was_executing = !matches!(cpu.phase, Phase::FetchOpcode);
+        let was_executing = !matches!(cpu.phase(), Phase::FetchOpcode);
         cpu.step(&mut bus);
         bus.step_devices(4);
         n += 4;
-        if matches!(cpu.phase, Phase::FetchOpcode)
+        if matches!(cpu.phase(), Phase::FetchOpcode)
             && (was_executing || cpu.registers.pc() != start_pc)
         {
             break;
