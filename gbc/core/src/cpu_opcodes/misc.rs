@@ -174,10 +174,11 @@ impl CpuStepState for LdhA8A {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
-        bus.write(0xFF00 | core.operands[0] as u16, core.registers.a());
+        bus.write(0xFF00 | core.operand(0) as u16, core.registers.a());
         StepResult::Exit
     }
 }
@@ -188,11 +189,12 @@ impl CpuStepState for LdhAA8 {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         core.registers
-            .set_a(bus.read(0xFF00 | core.operands[0] as u16));
+            .set_a(bus.read(0xFF00 | core.operand(0) as u16));
         StepResult::Exit
     }
 }

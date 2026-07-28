@@ -10,8 +10,9 @@ impl CpuStepState for CbPrefix {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
-            let idx = core.operands[0] & 0x07;
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
+            let idx = core.operand(0) & 0x07;
             if idx != 6 {
                 cb_exec_reg(core, bus);
                 return StepResult::Exit;
@@ -20,7 +21,7 @@ impl CpuStepState for CbPrefix {
             return StepResult::Continue;
         }
         if step == 2 {
-            let op = core.operands[0];
+            let op = core.operand(0);
             let idx = op & 0x07;
             debug_assert!(idx == 6, "CB prefix step 2 with idx != 6");
             let val = bus.read(core.registers.hl());
@@ -34,11 +35,12 @@ impl CpuStepState for CbPrefix {
                 return StepResult::Exit;
             }
             // rotate/res/set: compute, need step 3 for write
-            core.operands[1] = cb_compute(val, op, core);
+            let v = cb_compute(val, op, core);
+            core.set_operand(1, v);
             return StepResult::Continue;
         }
         debug_assert!(step == 3, "CB prefix step > 3");
-        bus.write(core.registers.hl(), core.operands[1]);
+        bus.write(core.registers.hl(), core.operand(1));
         StepResult::Exit
     }
 }
@@ -115,7 +117,7 @@ fn set_rotate_flags(core: &mut Lr35902Cpu, r: u8, c: bool) {
 }
 
 fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
-    let op = core.operands[0];
+    let op = core.operand(0);
     let idx = op & 0x07;
     let val = read_reg(core, idx);
     let cat = op >> 6;

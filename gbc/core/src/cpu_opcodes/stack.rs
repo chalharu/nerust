@@ -23,17 +23,17 @@ impl<const R: u8> CpuStepState for Push<R> {
                     _ => 0,
                 }
             };
-            core.operands[0] = (v >> 8) as u8;
-            core.operands[1] = v as u8;
+            core.set_operand(0, (v >> 8) as u8);
+            core.set_operand(1, v as u8);
             return StepResult::Continue;
         }
         if step == 2 {
             core.registers.set_sp(core.registers.sp().wrapping_sub(1));
-            bus.write(core.registers.sp(), core.operands[0]);
+            bus.write(core.registers.sp(), core.operand(0));
             return StepResult::Continue;
         }
         core.registers.set_sp(core.registers.sp().wrapping_sub(1));
-        bus.write(core.registers.sp(), core.operands[1]);
+        bus.write(core.registers.sp(), core.operand(1));
         StepResult::Exit
     }
 }
@@ -47,11 +47,12 @@ impl<const R: u8> CpuStepState for Pop<R> {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = bus.read(core.registers.sp());
+            let v = bus.read(core.registers.sp());
+            core.set_operand(0, v);
             core.registers.set_sp(core.registers.sp().wrapping_add(1));
             return StepResult::Continue;
         }
-        let lo = core.operands[0];
+        let lo = core.operand(0);
         let hi = bus.read(core.registers.sp());
         core.registers.set_sp(core.registers.sp().wrapping_add(1));
         let v = ((hi as u16) << 8) | lo as u16;

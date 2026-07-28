@@ -109,11 +109,12 @@ impl CpuStepState for IncHlIndirect {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = bus.read(core.registers.hl());
+            let v = bus.read(core.registers.hl());
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         // step == 2
-        let v = core.operands[0];
+        let v = core.operand(0);
         let r = v.wrapping_add(1);
         bus.write(core.registers.hl(), r);
         core.registers.set_h_flag((v & 0x0F) == 0x0F);
@@ -130,11 +131,12 @@ impl CpuStepState for DecHlIndirect {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = bus.read(core.registers.hl());
+            let v = bus.read(core.registers.hl());
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         // step == 2
-        let v = core.operands[0];
+        let v = core.operand(0);
         let r = v.wrapping_sub(1);
         bus.write(core.registers.hl(), r);
         core.registers.set_h_flag((v & 0x0F) == 0);

@@ -9,8 +9,8 @@ use crate::memory::GbcMemoryBus;
 pub(crate) struct AluAR8;
 impl CpuStepState for AluAR8 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        let src = core.opcode & 0x07;
-        let alu_op = (core.opcode >> 3) & 0x07;
+        let src = core.opcode() & 0x07;
+        let alu_op = (core.opcode() >> 3) & 0x07;
         if src == 6 {
             if step == 0 {
                 return StepResult::Continue;
@@ -171,14 +171,15 @@ impl CpuStepState for AddSpE {
             return StepResult::Continue;
         }
         if step == 1 {
-            core.operands[0] = core.pc_read(bus);
+            let v = core.pc_read(bus);
+            core.set_operand(0, v);
             return StepResult::Continue;
         }
         if step == 2 {
             return StepResult::Continue;
         }
         if step == 3 {
-            let offset = core.operands[0] as i8;
+            let offset = core.operand(0) as i8;
             let sp = core.registers.sp();
             let r = sp.wrapping_add_signed(offset as i16);
             core.registers
