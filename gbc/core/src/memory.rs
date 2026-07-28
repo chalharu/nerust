@@ -181,7 +181,11 @@ impl GbcMemoryBus {
         // PPU and APU run at absolute speed (4.19MHz base), unaffected by
         // double-speed mode. In double-speed, CPU is 2x faster so these
         // devices see half the T-cycles per step_devices call.
-        let video_cycles = if self.double_speed { cycles / 2 } else { cycles };
+        let video_cycles = if self.double_speed {
+            cycles / 2
+        } else {
+            cycles
+        };
 
         let ppu_res = self.ppu.step(video_cycles);
         if ppu_res.lcd_stat {

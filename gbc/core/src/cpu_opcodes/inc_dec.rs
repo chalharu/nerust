@@ -3,9 +3,9 @@
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
+use crate::cpu_opcodes::helpers::reg;
 use crate::cpu_opcodes::helpers::{read_r8, write_r8};
 use crate::memory::GbcMemoryBus;
-use crate::cpu_opcodes::helpers::reg;
 
 pub(crate) struct IncR8<const R: u8>;
 impl<const R: u8> CpuStepState for IncR8<R> {
