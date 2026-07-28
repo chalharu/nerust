@@ -47,10 +47,8 @@ impl CpuStepState for CbPrefix {
     }
 }
 
-fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
-    let op = core.operands[0];
-    let idx = op & 0x07;
-    let val = match idx {
+fn read_reg(core: &Lr35902Cpu, idx: u8) -> u8 {
+    match idx {
         0 => core.registers.b,
         1 => core.registers.c,
         2 => core.registers.d,
@@ -59,59 +57,77 @@ fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
         5 => core.registers.l,
         7 => core.registers.a,
         _ => 0,
-    };
+    }
+}
+
+fn write_reg(core: &mut Lr35902Cpu, idx: u8, v: u8) {
+    match idx {
+        0 => core.registers.b = v,
+        1 => core.registers.c = v,
+        2 => core.registers.d = v,
+        3 => core.registers.e = v,
+        4 => core.registers.h = v,
+        5 => core.registers.l = v,
+        7 => core.registers.a = v,
+        _ => {}
+    }
+}
+
+fn cb_rotate(val: u8, op: u8, core: &Lr35902Cpu) -> (u8, bool) {
+    let op3 = (op >> 3) & 0x07;
+    match op3 {
+        0 => {
+            let c = val & 0x80 != 0;
+            ((val << 1) | c as u8, c)
+        }
+        1 => {
+            let c = val & 0x01 != 0;
+            ((val >> 1) | if c { 0x80 } else { 0 }, c)
+        }
+        2 => {
+            let c = val & 0x80 != 0;
+            ((val << 1) | core.registers.c_flag() as u8, c)
+        }
+        3 => {
+            let c = val & 0x01 != 0;
+            (
+                (val >> 1) | if core.registers.c_flag() { 0x80 } else { 0 },
+                c,
+            )
+        }
+        4 => {
+            let c = val & 0x80 != 0;
+            (val << 1, c)
+        }
+        5 => {
+            let c = val & 0x01 != 0;
+            ((val >> 1) | (val & 0x80), c)
+        }
+        6 => (val.rotate_right(4), false),
+        _ => {
+            let c = val & 0x01 != 0;
+            (val >> 1, c)
+        }
+    }
+}
+
+fn set_rotate_flags(core: &mut Lr35902Cpu, r: u8, c: bool) {
+    core.registers.set_z(r == 0);
+    core.registers.set_n(false);
+    core.registers.set_h(false);
+    core.registers.set_c(c);
+}
+
+fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
+    let op = core.operands[0];
+    let idx = op & 0x07;
+    let val = read_reg(core, idx);
     let cat = op >> 6;
     match cat {
         0 => {
-            let op3 = (op >> 3) & 0x07;
-            let (r, c) = match op3 {
-                0 => {
-                    let c = val & 0x80 != 0;
-                    ((val << 1) | c as u8, c)
-                }
-                1 => {
-                    let c = val & 0x01 != 0;
-                    ((val >> 1) | if c { 0x80 } else { 0 }, c)
-                }
-                2 => {
-                    let c = val & 0x80 != 0;
-                    ((val << 1) | core.registers.c_flag() as u8, c)
-                }
-                3 => {
-                    let c = val & 0x01 != 0;
-                    (
-                        (val >> 1) | if core.registers.c_flag() { 0x80 } else { 0 },
-                        c,
-                    )
-                }
-                4 => {
-                    let c = val & 0x80 != 0;
-                    (val << 1, c)
-                }
-                5 => {
-                    let c = val & 0x01 != 0;
-                    ((val >> 1) | (val & 0x80), c)
-                }
-                6 => (val.rotate_right(4), false),
-                _ => {
-                    let c = val & 0x01 != 0;
-                    (val >> 1, c)
-                }
-            };
-            core.registers.set_z(r == 0);
-            core.registers.set_n(false);
-            core.registers.set_h(false);
-            core.registers.set_c(c);
-            match idx {
-                0 => core.registers.b = r,
-                1 => core.registers.c = r,
-                2 => core.registers.d = r,
-                3 => core.registers.e = r,
-                4 => core.registers.h = r,
-                5 => core.registers.l = r,
-                7 => core.registers.a = r,
-                _ => {}
-            }
+            let (r, c) = cb_rotate(val, op, core);
+            set_rotate_flags(core, r, c);
+            write_reg(core, idx, r);
         }
         1 => {
             let bit = (op >> 3) & 0x07;
@@ -121,31 +137,11 @@ fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
         }
         2 => {
             let bit = (op >> 3) & 0x07;
-            let v = val & !(1 << bit);
-            match idx {
-                0 => core.registers.b = v,
-                1 => core.registers.c = v,
-                2 => core.registers.d = v,
-                3 => core.registers.e = v,
-                4 => core.registers.h = v,
-                5 => core.registers.l = v,
-                7 => core.registers.a = v,
-                _ => {}
-            }
+            write_reg(core, idx, val & !(1 << bit));
         }
         _ => {
             let bit = (op >> 3) & 0x07;
-            let v = val | (1 << bit);
-            match idx {
-                0 => core.registers.b = v,
-                1 => core.registers.c = v,
-                2 => core.registers.d = v,
-                3 => core.registers.e = v,
-                4 => core.registers.h = v,
-                5 => core.registers.l = v,
-                7 => core.registers.a = v,
-                _ => {}
-            }
+            write_reg(core, idx, val | (1 << bit));
         }
     }
 }
@@ -153,45 +149,8 @@ fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
 fn cb_compute(val: u8, op: u8, core: &mut Lr35902Cpu) -> u8 {
     match op >> 6 {
         0 => {
-            let op3 = (op >> 3) & 0x07;
-            let (r, c) = match op3 {
-                0 => {
-                    let c = val & 0x80 != 0;
-                    ((val << 1) | c as u8, c)
-                }
-                1 => {
-                    let c = val & 0x01 != 0;
-                    ((val >> 1) | if c { 0x80 } else { 0 }, c)
-                }
-                2 => {
-                    let c = val & 0x80 != 0;
-                    ((val << 1) | core.registers.c_flag() as u8, c)
-                }
-                3 => {
-                    let c = val & 0x01 != 0;
-                    (
-                        (val >> 1) | if core.registers.c_flag() { 0x80 } else { 0 },
-                        c,
-                    )
-                }
-                4 => {
-                    let c = val & 0x80 != 0;
-                    (val << 1, c)
-                }
-                5 => {
-                    let c = val & 0x01 != 0;
-                    ((val >> 1) | (val & 0x80), c)
-                }
-                6 => (val.rotate_right(4), false),
-                _ => {
-                    let c = val & 0x01 != 0;
-                    (val >> 1, c)
-                }
-            };
-            core.registers.set_z(r == 0);
-            core.registers.set_n(false);
-            core.registers.set_h(false);
-            core.registers.set_c(c);
+            let (r, c) = cb_rotate(val, op, core);
+            set_rotate_flags(core, r, c);
             r
         }
         1 => {

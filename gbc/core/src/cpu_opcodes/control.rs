@@ -187,24 +187,38 @@ impl<const C: u8> CpuStepState for CallCond<C> {
 
 // ── RET (4 M-cycles) ───────────────────────────────────────
 
+fn ret_finish(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, set_ime: bool) -> StepResult {
+    if set_ime {
+        bus.set_ime(true);
+    }
+    core.operands[1] = bus.read(core.registers.sp);
+    core.registers.sp = core.registers.sp.wrapping_add(1);
+    jump16(core);
+    StepResult::Exit
+}
+
+fn ret_common(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+    if step == 0 {
+        return StepResult::Continue;
+    }
+    if step == 1 {
+        return StepResult::Continue;
+    }
+    if step == 2 {
+        core.operands[0] = bus.read(core.registers.sp);
+        core.registers.sp = core.registers.sp.wrapping_add(1);
+        return StepResult::Continue;
+    }
+    unreachable!()
+}
+
 pub(crate) struct Ret;
 impl CpuStepState for Ret {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            return StepResult::Continue;
+        if step < 3 {
+            return ret_common(core, bus, step);
         }
-        if step == 1 {
-            return StepResult::Continue;
-        }
-        if step == 2 {
-            core.operands[0] = bus.read(core.registers.sp);
-            core.registers.sp = core.registers.sp.wrapping_add(1);
-            return StepResult::Continue;
-        }
-        core.operands[1] = bus.read(core.registers.sp);
-        core.registers.sp = core.registers.sp.wrapping_add(1);
-        jump16(core);
-        StepResult::Exit
+        ret_finish(core, bus, false)
     }
 }
 
@@ -216,10 +230,11 @@ impl<const C: u8> CpuStepState for RetCond<C> {
             return StepResult::Continue;
         }
         if step == 1 {
-            if !taken {
-                return StepResult::Exit;
-            }
-            return StepResult::Continue;
+            return if taken {
+                StepResult::Continue
+            } else {
+                StepResult::Exit
+            };
         }
         if step == 2 {
             core.operands[0] = bus.read(core.registers.sp);
@@ -229,32 +244,17 @@ impl<const C: u8> CpuStepState for RetCond<C> {
         if step == 3 {
             return StepResult::Continue;
         }
-        core.operands[1] = bus.read(core.registers.sp);
-        core.registers.sp = core.registers.sp.wrapping_add(1);
-        jump16(core);
-        StepResult::Exit
+        ret_finish(core, bus, false)
     }
 }
 
 pub(crate) struct Reti;
 impl CpuStepState for Reti {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            return StepResult::Continue;
+        if step < 3 {
+            return ret_common(core, bus, step);
         }
-        if step == 1 {
-            return StepResult::Continue;
-        }
-        if step == 2 {
-            core.operands[0] = bus.read(core.registers.sp);
-            core.registers.sp = core.registers.sp.wrapping_add(1);
-            return StepResult::Continue;
-        }
-        bus.set_ime(true);
-        core.operands[1] = bus.read(core.registers.sp);
-        core.registers.sp = core.registers.sp.wrapping_add(1);
-        jump16(core);
-        StepResult::Exit
+        ret_finish(core, bus, true)
     }
 }
 
