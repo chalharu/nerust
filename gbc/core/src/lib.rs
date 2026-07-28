@@ -30,4 +30,5 @@ pub(crate) mod serial;
 pub(crate) mod timer;
 
 #[cfg(test)]
+#[cfg(test)]
 mod rom_tests;

@@ -9,10 +9,19 @@ use crate::memory::GbcMemoryBus;
 pub(crate) struct Push<const R: u8>;
 impl<const R: u8> CpuStepState for Push<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 { return StepResult::Continue; }
+        if step == 0 {
+            return StepResult::Continue;
+        }
         if step == 1 {
-            let v = if R == 3 { core.registers.af() } else {
-                match R { reg::BC => core.registers.bc(), reg::DE => core.registers.de(), reg::R16_HL => core.registers.hl(), _ => 0 }
+            let v = if R == 3 {
+                core.registers.af()
+            } else {
+                match R {
+                    reg::BC => core.registers.bc(),
+                    reg::DE => core.registers.de(),
+                    reg::R16_HL => core.registers.hl(),
+                    _ => 0,
+                }
             };
             core.operands[0] = (v >> 8) as u8;
             core.operands[1] = v as u8;
@@ -34,7 +43,9 @@ impl<const R: u8> CpuStepState for Push<R> {
 pub(crate) struct Pop<const R: u8>;
 impl<const R: u8> CpuStepState for Pop<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 { return StepResult::Continue; }
+        if step == 0 {
+            return StepResult::Continue;
+        }
         if step == 1 {
             core.operands[0] = bus.read(core.registers.sp);
             core.registers.sp = core.registers.sp.wrapping_add(1);
@@ -44,8 +55,15 @@ impl<const R: u8> CpuStepState for Pop<R> {
         let hi = bus.read(core.registers.sp);
         core.registers.sp = core.registers.sp.wrapping_add(1);
         let v = ((hi as u16) << 8) | lo as u16;
-        if R == 3 { core.registers.set_af(v) } else {
-            match R { reg::BC => core.registers.set_bc(v), reg::DE => core.registers.set_de(v), reg::R16_HL => core.registers.set_hl(v), _ => {} }
+        if R == 3 {
+            core.registers.set_af(v)
+        } else {
+            match R {
+                reg::BC => core.registers.set_bc(v),
+                reg::DE => core.registers.set_de(v),
+                reg::R16_HL => core.registers.set_hl(v),
+                _ => {}
+            }
         }
         StepResult::Exit
     }
