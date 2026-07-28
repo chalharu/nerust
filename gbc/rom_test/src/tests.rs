@@ -21,8 +21,8 @@ pub fn run_manifest(manifest_path: &Path) -> Result<(), RomTestError> {
 
     for case in &manifest.cases {
         print!("  {} ... ", case.id);
-        match run_case(case, &rom_root) {
-            Ok(output) => {
+        match run_case(case, &rom_root, None) {
+            Ok((output, _shots)) => {
                 let has_passed = output.contains("Passed") || output.contains("PASS");
                 if has_passed {
                     println!("ok");

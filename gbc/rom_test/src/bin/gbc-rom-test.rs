@@ -4,7 +4,7 @@ use clap::Parser;
 
 use nerust_gbc_rom_test::{
     manifest::RomManifest,
-    report::{write_html_report, CaseResult},
+    report::{CaseResult, write_html_report},
     runner::run_case,
 };
 
@@ -58,10 +58,22 @@ fn main() {
     let mut passed = 0u32;
     let mut failed = 0u32;
 
+    // Determine screenshots directory if --report is enabled
+    let screenshots_dir = if cli.report {
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("target"));
+        let dir = target_dir.join("rom_tests").join("screenshots");
+        std::fs::create_dir_all(&dir).ok();
+        Some(dir)
+    } else {
+        None
+    };
+
     for case in selected {
         print!("{} ... ", case.id);
-        let result = match run_case(case, &rom_root) {
-            Ok(output) => {
+        let result = match run_case(case, &rom_root, screenshots_dir.as_deref()) {
+            Ok((output, shots)) => {
                 let passed = output.contains("Passed") || output.contains("PASS");
                 if passed {
                     println!("ok");
@@ -75,7 +87,7 @@ fn main() {
                     passed,
                     output: if passed { String::new() } else { output },
                     error: None,
-                    screenshots: Vec::new(),
+                    screenshots: shots,
                 }
             }
             Err(e) => {

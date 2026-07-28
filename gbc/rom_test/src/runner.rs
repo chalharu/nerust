@@ -1,12 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nerust_gbc_core::{
     cartridge::Cartridge,
     cpu_core::{GbcModel, Lr35902Cpu},
     memory::GbcMemoryBus,
 };
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use super::{error::RomTestError, manifest::RomCase};
+use super::{error::RomTestError, manifest::RomCase, media};
 
 /// Read ROM bytes and determine effective model based on header CGB flag.
 fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestError> {
@@ -28,8 +29,13 @@ fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestE
     Ok(requested)
 }
 
-/// Run a ROM test case through all its events and return the final serial output.
-pub fn run_case(case: &RomCase, rom_root: &Path) -> Result<String, RomTestError> {
+/// Run a ROM test case through all its events and return the serial output,
+/// plus paths to any captured screenshots.
+pub fn run_case(
+    case: &RomCase,
+    rom_root: &Path,
+    screenshots_dir: Option<&Path>,
+) -> Result<(String, Vec<String>), RomTestError> {
     let rom_path = case.rom_path(rom_root);
     if !rom_path.exists() {
         return Err(RomTestError::InvalidManifest(format!(
@@ -52,10 +58,23 @@ pub fn run_case(case: &RomCase, rom_root: &Path) -> Result<String, RomTestError>
     cpu.registers_mut().set_pc(0x0100);
 
     // Process each event
-    for event in &case.events {
+    let mut screenshots: Vec<String> = Vec::new();
+    for (event_idx, event) in case.events.iter().enumerate() {
         for _ in 0..event.cycles {
             cpu.step(&mut bus);
             bus.step_devices(4);
+        }
+
+        // Capture screenshot if requested
+        if let Some(screenshots_dir) = screenshots_dir {
+            let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+            fb.resize(160, 144);
+            bus.render_frame(&mut fb);
+            let png_data = media::encode_screenshot_png(&fb)?;
+            let shot_name = format!("{}_{}.png", case.id, event_idx);
+            let shot_path = screenshots_dir.join(&shot_name);
+            std::fs::write(&shot_path, &png_data).map_err(RomTestError::Io)?;
+            screenshots.push(shot_name);
         }
 
         // Verify serial output hash
@@ -133,7 +152,10 @@ pub fn run_case(case: &RomCase, rom_root: &Path) -> Result<String, RomTestError>
         }
     }
 
-    Ok(String::from_utf8_lossy(bus.serial_output()).into_owned())
+    Ok((
+        String::from_utf8_lossy(bus.serial_output()).into_owned(),
+        screenshots,
+    ))
 }
 
 fn parse_hex(s: &str) -> Result<u64, RomTestError> {

@@ -14,8 +14,8 @@ fn rom_tests() {
 
     for case in &manifest.cases {
         print!("{} ... ", case.id);
-        match run_case(case, &rom_root) {
-            Ok(output) => {
+        match run_case(case, &rom_root, None) {
+            Ok((output, _shots)) => {
                 let ok = output.contains("Passed");
                 if ok {
                     println!("ok");
