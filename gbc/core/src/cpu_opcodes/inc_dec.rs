@@ -3,32 +3,8 @@
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
+use crate::cpu_opcodes::helpers::{read_r8, write_r8};
 use crate::memory::GbcMemoryBus;
-
-fn read_r8(core: &Lr35902Cpu, idx: u8) -> u8 {
-    match idx {
-        0 => core.registers.b,
-        1 => core.registers.c,
-        2 => core.registers.d,
-        3 => core.registers.e,
-        4 => core.registers.h,
-        5 => core.registers.l,
-        7 => core.registers.a,
-        _ => 0,
-    }
-}
-fn write_r8(core: &mut Lr35902Cpu, idx: u8, v: u8) {
-    match idx {
-        0 => core.registers.b = v,
-        1 => core.registers.c = v,
-        2 => core.registers.d = v,
-        3 => core.registers.e = v,
-        4 => core.registers.h = v,
-        5 => core.registers.l = v,
-        7 => core.registers.a = v,
-        _ => {}
-    }
-}
 
 pub(crate) struct IncR8<const R: u8>;
 impl<const R: u8> CpuStepState for IncR8<R> {
