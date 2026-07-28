@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use nerust_gbc_core::{
     cartridge::Cartridge,
@@ -78,13 +78,11 @@ pub fn run_case(
         }
 
         // Verify serial output hash
-        if let Some(ref serial_hash) = event.serial {
-            if !serial_hash.hash.is_empty() {
-                let actual = crc32(bus.serial_output());
-                let expected = parse_hex(&serial_hash.hash)? as u32;
-                if actual != expected {
-                    return Err(RomTestError::SerialMismatch(case.id.clone()));
-                }
+        if let Some(serial_hash) = event.serial.as_ref().filter(|s| !s.hash.is_empty()) {
+            let actual = crc32(bus.serial_output());
+            let expected = parse_hex(&serial_hash.hash)? as u32;
+            if actual != expected {
+                return Err(RomTestError::SerialMismatch(case.id.clone()));
             }
         }
 
