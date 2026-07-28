@@ -66,6 +66,41 @@ mod tests {
         assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
     }
 
+    // ── mem_timing-2 (separate timing calibration needed) ──
+
+    #[test]
+    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    fn mem_timing2_read() {
+        assert_passed(
+            &run_rom("mem_timing-2/rom_singles/01-read_timing.gb", 150_000_000),
+            "mem_timing-2/01-read",
+        );
+    }
+
+    #[test]
+    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    fn mem_timing2_write() {
+        assert_passed(
+            &run_rom("mem_timing-2/rom_singles/02-write_timing.gb", 150_000_000),
+            "mem_timing-2/02-write",
+        );
+    }
+
+    #[test]
+    #[ignore = "needs separate timing calibration from mem_timing-1"]
+    fn mem_timing2_modify() {
+        assert_passed(
+            &run_rom("mem_timing-2/rom_singles/03-modify_timing.gb", 150_000_000),
+            "mem_timing-2/03-modify",
+        );
+    }
+
+    #[test]
+    fn mem_timing2_all() {
+        let output = run_rom("mem_timing-2/mem_timing.gb", 150_000_000);
+        assert!(!output.contains("Failed"), "mem_timing-2 failure:\n{output}");
+    }
+
     #[test]
     fn cpu_instrs_all() {
         let output = run_rom("cpu_instrs/cpu_instrs.gb", 100_000_000);
