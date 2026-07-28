@@ -8,6 +8,14 @@ pub(crate) mod cartridge_header;
 #[allow(dead_code)]
 pub(crate) mod cartridge_mbc;
 #[allow(dead_code)]
+pub(crate) mod cpu;
+#[allow(dead_code)]
+pub(crate) mod cpu_core;
+#[allow(dead_code)]
+pub(crate) mod cpu_opcodes;
+#[allow(dead_code)]
+pub(crate) mod cpu_registers;
+#[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod interrupt;
@@ -20,3 +28,5 @@ pub mod rom_identity;
 pub(crate) mod serial;
 #[allow(dead_code)]
 pub(crate) mod timer;
+
+mod rom_tests;

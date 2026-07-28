@@ -33,6 +33,13 @@ pub struct GbcMemoryBus {
 
     double_speed: bool,
     speed_switch_pending: bool,
+
+    // CGB HDMA registers (FF51-FF55) — stub for v1
+    hdma1: u8,
+    hdma2: u8,
+    hdma3: u8,
+    hdma4: u8,
+    hdma5: u8,
 }
 
 impl GbcMemoryBus {
@@ -55,7 +62,17 @@ impl GbcMemoryBus {
 
             double_speed: false,
             speed_switch_pending: false,
+
+            hdma1: 0xFF,
+            hdma2: 0xFF,
+            hdma3: 0xFF,
+            hdma4: 0xFF,
+            hdma5: 0xFF,
         }
+    }
+
+    pub(crate) fn set_cartridge(&mut self, cartridge: Cartridge) {
+        self.cartridge = cartridge;
     }
 
     // ── read / write ──────────────────────────────────────────
@@ -84,6 +101,11 @@ impl GbcMemoryBus {
             }
             0xFF68..=0xFF6B => self.ppu.read_palette(addr),
             0xFF4D => self.read_key1(),
+            0xFF51 => self.hdma1,
+            0xFF52 => self.hdma2,
+            0xFF53 => self.hdma3,
+            0xFF54 => self.hdma4,
+            0xFF55 => self.hdma5,
             0xFF70 => self.wram_bank,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
@@ -132,6 +154,12 @@ impl GbcMemoryBus {
             }
             0xFF46 => self.dma.start(value),
             0xFF4D => self.write_key1(value),
+            // HDMA registers (CGB) — stub, filled in Phase 7
+            0xFF51 => self.hdma1 = value,
+            0xFF52 => self.hdma2 = value,
+            0xFF53 => self.hdma3 = value,
+            0xFF54 => self.hdma4 = value,
+            0xFF55 => self.hdma5 = value,
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
@@ -150,7 +178,16 @@ impl GbcMemoryBus {
     // ── step_devices ─────────────────────────────────────────
 
     pub fn step_devices(&mut self, cycles: u32) -> bool {
-        let ppu_res = self.ppu.step(cycles);
+        // PPU and APU run at absolute speed (4.19MHz base), unaffected by
+        // double-speed mode. In double-speed, CPU is 2x faster so these
+        // devices see half the T-cycles per step_devices call.
+        let video_cycles = if self.double_speed {
+            cycles / 2
+        } else {
+            cycles
+        };
+
+        let ppu_res = self.ppu.step(video_cycles);
         if ppu_res.lcd_stat {
             self.interrupt.request(InterruptKind::LcdStat);
         }
@@ -158,8 +195,9 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
 
-        self.apu.step(cycles);
+        self.apu.step(video_cycles);
 
+        // Timer, DMA, and Serial run at CPU speed (speed up in double mode)
         let timer_res = self.timer.step(cycles);
         if timer_res.overflow {
             self.interrupt.request(InterruptKind::Timer);
@@ -181,6 +219,10 @@ impl GbcMemoryBus {
     }
 
     // ── facade methods ───────────────────────────────────────
+
+    pub fn serial_output(&self) -> &[u8] {
+        self.serial.output()
+    }
 
     pub fn set_joypad(&mut self, state: u8) {
         self.joypad = state;
@@ -208,7 +250,23 @@ impl GbcMemoryBus {
 
     pub fn stop(&mut self) {
         self.timer.reset_div();
+        if self.speed_switch_pending {
+            self.speed_switch_pending = false;
+            self.double_speed = !self.double_speed;
+        }
         self.interrupt.stop();
+    }
+
+    pub fn halt_cpu(&mut self) {
+        self.interrupt.halt();
+    }
+
+    pub fn set_ime(&mut self, v: bool) {
+        self.interrupt.set_ime(v);
+    }
+
+    pub fn ime_enabled(&self) -> bool {
+        self.interrupt.get_ime()
     }
 
     // ── DMA access ───────────────────────────────────────────
@@ -278,7 +336,7 @@ mod tests {
     fn read_timer_div_returns_upper_byte() {
         let bus = bus();
         let v = bus.read(0xFF04);
-        assert!(v > 0);
+        assert_eq!(v, 0); // DIV starts at 0 (Timer::new with div=0)
     }
 
     #[test]

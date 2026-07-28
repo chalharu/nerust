@@ -2,15 +2,21 @@
 ///
 /// v1: no link cable emulation. External device is always disconnected,
 /// so reads return 0xFF. Master transfers complete immediately and
-/// request the Serial interrupt to unblock games polling for completion.
+/// request the Serial interrupt. Outgoing characters are buffered.
 pub struct Serial {
     sb: u8,
     sc: u8,
+    /// Characters transmitted via serial (captured for test harness).
+    output: Vec<u8>,
 }
 
 impl Serial {
     pub fn new() -> Self {
-        Self { sb: 0, sc: 0x7E }
+        Self {
+            sb: 0,
+            sc: 0x7E,
+            output: Vec::new(),
+        }
     }
 
     pub fn read_sb(&self) -> u8 {
@@ -30,9 +36,15 @@ impl Serial {
         self.sc = v & 0x81;
         if self.sc & 0x81 == 0x81 {
             self.sc &= !0x80;
+            self.output.push(self.sb);
             return true;
         }
         false
+    }
+
+    /// Characters written to the serial port.
+    pub fn output(&self) -> &[u8] {
+        &self.output
     }
 }
 
