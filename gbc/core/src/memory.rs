@@ -33,6 +33,13 @@ pub struct GbcMemoryBus {
 
     double_speed: bool,
     speed_switch_pending: bool,
+
+    // CGB HDMA registers (FF51-FF55) — stub for v1
+    hdma1: u8,
+    hdma2: u8,
+    hdma3: u8,
+    hdma4: u8,
+    hdma5: u8,
 }
 
 impl GbcMemoryBus {
@@ -55,6 +62,12 @@ impl GbcMemoryBus {
 
             double_speed: false,
             speed_switch_pending: false,
+
+            hdma1: 0xFF,
+            hdma2: 0xFF,
+            hdma3: 0xFF,
+            hdma4: 0xFF,
+            hdma5: 0xFF,
         }
     }
 
@@ -88,6 +101,11 @@ impl GbcMemoryBus {
             }
             0xFF68..=0xFF6B => self.ppu.read_palette(addr),
             0xFF4D => self.read_key1(),
+            0xFF51 => self.hdma1,
+            0xFF52 => self.hdma2,
+            0xFF53 => self.hdma3,
+            0xFF54 => self.hdma4,
+            0xFF55 => self.hdma5,
             0xFF70 => self.wram_bank,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
@@ -136,6 +154,12 @@ impl GbcMemoryBus {
             }
             0xFF46 => self.dma.start(value),
             0xFF4D => self.write_key1(value),
+            // HDMA registers (CGB) — stub, filled in Phase 7
+            0xFF51 => self.hdma1 = value,
+            0xFF52 => self.hdma2 = value,
+            0xFF53 => self.hdma3 = value,
+            0xFF54 => self.hdma4 = value,
+            0xFF55 => self.hdma5 = value,
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
