@@ -90,11 +90,11 @@ impl CpuStepState for IncHlIndirect {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let addr = core.registers.hl();
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = bus.read(addr);
                 StepResult::Continue
             }
-            2 => StepResult::Continue,
             3 => {
                 let v = core.operands[0];
                 let r = v.wrapping_add(1);
@@ -114,11 +114,11 @@ impl CpuStepState for DecHlIndirect {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let addr = core.registers.hl();
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = bus.read(addr);
                 StepResult::Continue
             }
-            2 => StepResult::Continue,
             3 => {
                 let v = core.operands[0];
                 let r = v.wrapping_sub(1);

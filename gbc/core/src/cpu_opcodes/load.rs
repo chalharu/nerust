@@ -15,28 +15,13 @@ fn r8(opcode: u8) -> u8 {
 }
 const R8_HL: u8 = 6;
 
-/// Read 16-bit operand from PC. Use as step 1-2 body.
-fn read16_load(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-    match step {
-        1 => {
-            core.operands[0] = core.pc_read(bus);
-            StepResult::Continue
-        }
-        2 => {
-            core.operands[1] = core.pc_read(bus);
-            StepResult::Continue
-        }
-        _ => unreachable!(),
-    }
-}
-
 /// Build a 16-bit address from operands[0..1].
 fn addr16(core: &Lr35902Cpu) -> u16 {
     ((core.operands[1] as u16) << 8) | core.operands[0] as u16
 }
 
 // ── LD r16, d16 (3 M-cycles) ──────────────────────────────
-// M1: opcode fetch (in Fetch state)
+// M1: opcode fetch
 // M2: read lo byte from PC
 // M3: read hi byte from PC, set r16
 
@@ -44,8 +29,13 @@ pub(crate) struct LdR16D16<const R: u8>;
 impl<const R: u8> CpuStepState for LdR16D16<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 | 2 => read16_load(core, bus, step),
+            1 => StepResult::Continue,
+            2 => {
+                core.operands[0] = core.pc_read(bus);
+                StepResult::Continue
+            }
             3 => {
+                core.operands[1] = core.pc_read(bus);
                 write_r16(core, R, addr16(core));
                 StepResult::Exit
             }
@@ -96,13 +86,10 @@ pub(crate) struct LdR8D8<const R: u8>;
 impl<const R: u8> CpuStepState for LdR8D8<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
-                let v = core.pc_read(bus);
-                core.operands[0] = v;
-                StepResult::Continue
-            }
+            1 => StepResult::Continue,
             2 => {
-                write_r8(core, R, core.operands[0]);
+                let v = core.pc_read(bus);
+                write_r8(core, R, v);
                 StepResult::Exit
             }
             _ => unreachable!(),
@@ -224,11 +211,11 @@ pub(crate) struct LdHlD8;
 impl CpuStepState for LdHlD8 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = core.pc_read(bus);
                 StepResult::Continue
             }
-            2 => StepResult::Continue,
             3 => {
                 bus.write(core.registers.hl(), core.operands[0]);
                 StepResult::Exit
@@ -249,11 +236,24 @@ pub(crate) struct LdA16Sp;
 impl CpuStepState for LdA16Sp {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 | 2 => read16_load(core, bus, step),
-            3 | 4 => StepResult::Continue,
-            5 => {
+            1 => StepResult::Continue,
+            2 => {
+                core.operands[0] = core.pc_read(bus);
+                StepResult::Continue
+            }
+            3 => {
+                core.operands[1] = core.pc_read(bus);
+                StepResult::Continue
+            }
+            4 => {
                 let addr = addr16(core);
                 bus.write(addr, core.registers.sp as u8);
+                core.operands[0] = addr as u8;
+                core.operands[1] = (addr >> 8) as u8;
+                StepResult::Continue
+            }
+            5 => {
+                let addr = (core.operands[1] as u16) << 8 | core.operands[0] as u16;
                 bus.write(addr.wrapping_add(1), (core.registers.sp >> 8) as u8);
                 StepResult::Exit
             }
@@ -268,8 +268,16 @@ pub(crate) struct LdA16A;
 impl CpuStepState for LdA16A {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 | 2 => read16_load(core, bus, step),
+            1 => StepResult::Continue,
+            2 => {
+                core.operands[0] = core.pc_read(bus);
+                StepResult::Continue
+            }
             3 => {
+                core.operands[1] = core.pc_read(bus);
+                StepResult::Continue
+            }
+            4 => {
                 bus.write(addr16(core), core.registers.a);
                 StepResult::Exit
             }
@@ -284,8 +292,16 @@ pub(crate) struct LdAA16;
 impl CpuStepState for LdAA16 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 | 2 => read16_load(core, bus, step),
+            1 => StepResult::Continue,
+            2 => {
+                core.operands[0] = core.pc_read(bus);
+                StepResult::Continue
+            }
             3 => {
+                core.operands[1] = core.pc_read(bus);
+                StepResult::Continue
+            }
+            4 => {
                 core.registers.a = bus.read(addr16(core));
                 StepResult::Exit
             }
@@ -303,11 +319,11 @@ pub(crate) struct LdHlSpE;
 impl CpuStepState for LdHlSpE {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = core.pc_read(bus);
                 StepResult::Continue
             }
-            2 => StepResult::Continue,
             3 => {
                 let offset = core.operands[0] as i8;
                 let sp = core.registers.sp;

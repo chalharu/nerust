@@ -50,12 +50,10 @@ pub(crate) struct AluAD8<const OP: u8>;
 impl<const OP: u8> CpuStepState for AluAD8<OP> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
+            1 => StepResult::Continue,
             2 => {
-                alu_exec(core, OP, core.operands[0]);
+                let v = core.pc_read(bus);
+                alu_exec(core, OP, v);
                 StepResult::Exit
             }
             _ => unreachable!(),
@@ -186,11 +184,12 @@ pub(crate) struct AddSpE;
 impl CpuStepState for AddSpE {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = core.pc_read(bus);
                 StepResult::Continue
             }
-            2 | 3 => StepResult::Continue,
+            3 => StepResult::Continue,
             4 => {
                 let offset = core.operands[0] as i8;
                 let sp = core.registers.sp;

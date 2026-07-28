@@ -189,11 +189,12 @@ pub(crate) struct LdhA8A;
 impl CpuStepState for LdhA8A {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = core.pc_read(bus);
                 StepResult::Continue
             }
-            2 => {
+            3 => {
                 bus.write(0xFF00 | core.operands[0] as u16, core.registers.a);
                 StepResult::Exit
             }
@@ -205,11 +206,12 @@ pub(crate) struct LdhAA8;
 impl CpuStepState for LdhAA8 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = core.pc_read(bus);
                 StepResult::Continue
             }
-            2 => {
+            3 => {
                 core.registers.a = bus.read(0xFF00 | core.operands[0] as u16);
                 StepResult::Exit
             }
