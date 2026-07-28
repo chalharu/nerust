@@ -61,10 +61,22 @@ impl Lr35902Cpu {
                 cpu.registers.set_h(0x01);
                 cpu.registers.set_l(0x4D);
             }
-            GbcModel::Cgb | GbcModel::Agb => {
-                // CGB post-boot register values
+            GbcModel::Cgb => {
+                // CGB post-boot: A=0x11, B=0x00, Z=1
                 cpu.registers.set_a(0x11);
                 cpu.registers.set_f(0xB0);
+                cpu.registers.set_b(0x00);
+                cpu.registers.set_c(0x00);
+                cpu.registers.set_d(0xFF);
+                cpu.registers.set_e(0x56);
+                cpu.registers.set_h(0x00);
+                cpu.registers.set_l(0x00);
+            }
+            GbcModel::Agb => {
+                // AGB (GBA GBC mode): values differ from CGB (B reg, Z flag etc.)
+                // TODO: verify actual AGB post-boot register values
+                cpu.registers.set_a(0x01);
+                cpu.registers.set_f(0x00);
                 cpu.registers.set_b(0x00);
                 cpu.registers.set_c(0x00);
                 cpu.registers.set_d(0xFF);
