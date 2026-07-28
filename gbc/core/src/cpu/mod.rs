@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult};
-use crate::interrupt::dispatch_interrupt;
+use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult, dispatch_interrupt};
 use crate::memory::GbcMemoryBus;
 
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
