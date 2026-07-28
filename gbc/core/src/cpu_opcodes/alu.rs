@@ -94,11 +94,13 @@ fn alu_exec(core: &mut Lr35902Cpu, op: u8, v: u8) {
             core.registers.set_n(true);
         }
         3 => {
-            let c = core.registers.c_flag() as u8;
-            let total = (v as u16) + (c as u16);
-            core.registers.set_h((a & 0x0F) < (total as u8 & 0x0F));
+            let c_flag = core.registers.c_flag();
+            let c = c_flag as u16;
+            let lower_sum = (v & 0x0F) as u16 + c;
+            let total = (v as u16) + c;
+            core.registers.set_h(((a & 0x0F) as u16) < lower_sum);
             core.registers.set_c((a as u16) < total);
-            core.registers.a = a.wrapping_sub(v).wrapping_sub(c);
+            core.registers.a = a.wrapping_sub(v).wrapping_sub(c_flag as u8);
             core.registers.set_z(core.registers.a == 0);
             core.registers.set_n(true);
         }
