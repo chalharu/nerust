@@ -2,6 +2,15 @@ use crate::cpu_registers::CpuRegisters;
 use crate::interrupt::InterruptKind;
 use crate::memory::GbcMemoryBus;
 
+/// Game Boy model variant for post-boot register initialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GbcModel {
+    Dmg,
+    Cgb,
+    Agb,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StepResult {
     Continue,
@@ -35,6 +44,38 @@ impl Lr35902Cpu {
             operands: [0; 2],
             operand_count: 0,
         }
+    }
+
+    /// Create CPU with post-boot register values for a specific model.
+    pub fn with_model(model: GbcModel) -> Self {
+        let mut cpu = Self::new();
+        match model {
+            GbcModel::Dmg => {
+                // DMG post-boot register values
+                cpu.registers.set_a(0x01);
+                cpu.registers.set_f(0xB0);
+                cpu.registers.set_b(0x00);
+                cpu.registers.set_c(0x13);
+                cpu.registers.set_d(0x00);
+                cpu.registers.set_e(0xD8);
+                cpu.registers.set_h(0x01);
+                cpu.registers.set_l(0x4D);
+            }
+            GbcModel::Cgb | GbcModel::Agb => {
+                // CGB post-boot register values
+                cpu.registers.set_a(0x11);
+                cpu.registers.set_f(0xB0);
+                cpu.registers.set_b(0x00);
+                cpu.registers.set_c(0x00);
+                cpu.registers.set_d(0xFF);
+                cpu.registers.set_e(0x56);
+                cpu.registers.set_h(0x00);
+                cpu.registers.set_l(0x00);
+            }
+        }
+        cpu.registers.set_sp(0xFFFE);
+        cpu.registers.set_pc(0x0100);
+        cpu
     }
 
     #[inline]

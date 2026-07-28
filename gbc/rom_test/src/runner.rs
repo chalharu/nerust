@@ -1,6 +1,10 @@
 use std::path::Path;
 
-use nerust_gbc_core::{cartridge::Cartridge, cpu_core::Lr35902Cpu, memory::GbcMemoryBus};
+use nerust_gbc_core::{
+    cartridge::Cartridge,
+    cpu_core::{GbcModel, Lr35902Cpu},
+    memory::GbcMemoryBus,
+};
 
 use super::{error::RomTestError, manifest::RomCase};
 
@@ -27,7 +31,12 @@ pub fn run_case(case: &RomCase, rom_root: &Path) -> Result<String, RomTestError>
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(load_rom(&rom_path)?);
-    let mut cpu = Lr35902Cpu::new();
+    let model = match case.model {
+        super::manifest::GbcModel::Dmg => GbcModel::Dmg,
+        super::manifest::GbcModel::Cgb => GbcModel::Cgb,
+        super::manifest::GbcModel::Agb => GbcModel::Agb,
+    };
+    let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 
     // Process each event
