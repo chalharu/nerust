@@ -8,15 +8,24 @@ use nerust_gbc_core::{
 
 use super::{error::RomTestError, manifest::RomCase};
 
-/// Load a GBC ROM from a file path.
-fn load_rom(path: &Path) -> Result<Cartridge, RomTestError> {
-    let rom_bytes = std::fs::read(path)?;
-    let header =
-        nerust_gbc_core::cartridge_header::CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
-            RomTestError::InvalidManifest(format!("invalid ROM header: {}", path.display()))
-        })?;
-    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(&header, rom_bytes, None);
-    Ok(Cartridge::new(mbc))
+/// Read ROM bytes and determine effective model based on header CGB flag.
+fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestError> {
+    let rom_bytes = std::fs::read(rom_path).map_err(RomTestError::Io)?;
+    let cgb_flag = rom_bytes.get(0x143).copied().unwrap_or(0);
+    let requested = match case.model {
+        super::manifest::GbcModel::Dmg => GbcModel::Dmg,
+        super::manifest::GbcModel::Cgb => GbcModel::Cgb,
+        super::manifest::GbcModel::Agb => GbcModel::Agb,
+    };
+    // Auto-downgrade: DMG-only ROM ($00) on CGB/AGB → DMG mode
+    if cgb_flag == 0x00 && (requested == GbcModel::Cgb || requested == GbcModel::Agb) {
+        return Ok(GbcModel::Dmg);
+    }
+    // Auto-upgrade: CGB-only ROM ($C0) on DMG → CGB mode
+    if cgb_flag == 0xC0 && requested == GbcModel::Dmg {
+        return Ok(GbcModel::Cgb);
+    }
+    Ok(requested)
 }
 
 /// Run a ROM test case through all its events and return the final serial output.
@@ -29,13 +38,16 @@ pub fn run_case(case: &RomCase, rom_root: &Path) -> Result<String, RomTestError>
         )));
     }
 
+    let model = effective_model(case, &rom_path)?;
+    let rom_bytes = std::fs::read(&rom_path)?;
+    let header =
+        nerust_gbc_core::cartridge_header::CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
+        })?;
+    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(&header, rom_bytes, None);
+
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
-    bus.set_cartridge(load_rom(&rom_path)?);
-    let model = match case.model {
-        super::manifest::GbcModel::Dmg => GbcModel::Dmg,
-        super::manifest::GbcModel::Cgb => GbcModel::Cgb,
-        super::manifest::GbcModel::Agb => GbcModel::Agb,
-    };
+    bus.set_cartridge(Cartridge::new(mbc));
     let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 
