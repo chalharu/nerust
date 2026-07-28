@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "timer init check timing doesn't match hardware; needs timer divider refinement"]
+    #[ignore = "timer init check timing needs edge-detection refinement"]
     fn instr_timing() {
         assert_passed(
             &run_rom("instr_timing/instr_timing.gb", 150_000_000),
