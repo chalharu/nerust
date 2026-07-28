@@ -4,8 +4,7 @@ use nerust_render_traits::FrameBuffer;
 ///
 /// Minimal LY counter for VBlank polling support (needed by test ROMs).
 /// Filled in during Phase 6.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GbcPpu {
     ly: u8,
     hblank_counter: u32,
@@ -67,7 +66,6 @@ impl GbcPpu {
     }
     pub fn write_palette(&mut self, _addr: u16, _value: u8) {}
 }
-
 
 #[cfg(test)]
 mod tests {
