@@ -26,8 +26,9 @@ mod tests {
         bus.set_cartridge(load_rom(subpath));
         let mut cpu = Lr35902Cpu::new();
         cpu.registers.pc = 0x0100;
-        for _ in 0..cycles * 4 {
-            cpu.step_t_cycle(&mut bus);
+        for _ in 0..cycles {
+            cpu.step(&mut bus);
+            bus.step_devices(4);
         }
         String::from_utf8_lossy(bus.serial_output()).into_owned()
     }
@@ -38,8 +39,9 @@ mod tests {
         bus.set_cartridge(load_rom(subpath));
         let mut cpu = Lr35902Cpu::new();
         cpu.registers.pc = 0x0100;
-        for _ in 0..cycles * 4 {
-            cpu.step_t_cycle(&mut bus);
+        for _ in 0..cycles {
+            cpu.step(&mut bus);
+            bus.step_devices(4);
         }
         if bus.read(0xA001) == 0xDE && bus.read(0xA002) == 0xB0 && bus.read(0xA003) == 0x61 {
             let mut out = Vec::new();
