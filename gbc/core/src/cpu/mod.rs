@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult};
-use crate::interrupt::InterruptKind;
+use crate::interrupt::dispatch_interrupt;
 use crate::memory::GbcMemoryBus;
 
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
@@ -56,22 +56,8 @@ impl Lr35902Cpu {
         if bus.ime_enabled()
             && let Some(kind) = bus.acknowledge_interrupt()
         {
-            self.dispatch_interrupt(kind, bus);
+            dispatch_interrupt(self.registers_mut(), kind, bus);
         }
-    }
-
-    fn dispatch_interrupt(&mut self, kind: InterruptKind, bus: &mut GbcMemoryBus) {
-        {
-            let sp = self.registers().sp();
-            self.registers_mut().set_sp(sp.wrapping_sub(1))
-        };
-        bus.write(self.registers().sp(), (self.registers().pc() >> 8) as u8);
-        {
-            let sp = self.registers().sp();
-            self.registers_mut().set_sp(sp.wrapping_sub(1))
-        };
-        bus.write(self.registers().sp(), self.registers().pc() as u8);
-        self.registers_mut().set_pc(kind.vector());
     }
 }
 
