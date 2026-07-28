@@ -1,31 +1,32 @@
-//! ALU instructions: ADD/ADC/SUB/SBC/AND/XOR/OR/CP A,r8 and A,d8.
-
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::cpu_opcodes::helpers::reg;
 use crate::memory::GbcMemoryBus;
 
+fn t3(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 2
+}
+fn t4(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 3
+}
+
 // ── ALU A, r8 (1-2 M-cycles) ───────────────────────────────
-// reg: M1 (included in fetch): execute
-// (HL): M1: read from (HL), M2: execute ALU + write result
 
 pub(crate) struct AluAR8;
 impl CpuStepState for AluAR8 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        let op = core.opcode;
-        let src = op & 0x07;
-        let alu_op = (op >> 3) & 0x07;
+        let src = core.opcode & 0x07;
+        let alu_op = (core.opcode >> 3) & 0x07;
         if src == 6 {
-            // (HL) operand — 2 M-cycles
-            match step {
-                1 => StepResult::Continue,
-                2 => {
-                    let v = bus.read(core.registers.hl());
-                    alu_exec(core, alu_op, v);
-                    StepResult::Exit
-                }
-                _ => unreachable!(),
+            if step == 0 {
+                return StepResult::Continue;
+            }
+            if t3(core) {
+                core.operands[0] = bus.read(core.registers.hl());
+            } else if t4(core) {
+                alu_exec(core, alu_op, core.operands[0]);
+                return StepResult::Exit;
             }
         } else {
             let v = match src {
@@ -38,9 +39,12 @@ impl CpuStepState for AluAR8 {
                 7 => core.registers.a,
                 _ => 0,
             };
-            alu_exec(core, alu_op, v);
-            StepResult::Exit
+            if step == 0 {
+                alu_exec(core, alu_op, v);
+                return StepResult::Exit;
+            }
         }
+        StepResult::Continue
     }
 }
 
@@ -49,15 +53,16 @@ impl CpuStepState for AluAR8 {
 pub(crate) struct AluAD8<const OP: u8>;
 impl<const OP: u8> CpuStepState for AluAD8<OP> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                let v = core.pc_read(bus);
-                alu_exec(core, OP, v);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            core.operands[0] = core.pc_read(bus);
+        } else if t4(core) {
+            alu_exec(core, OP, core.operands[0]);
+            return StepResult::Exit;
+        }
+        StepResult::Continue
     }
 }
 
@@ -135,46 +140,44 @@ fn alu_exec(core: &mut Lr35902Cpu, op: u8, v: u8) {
 
 pub(crate) struct AddHlR16<const R: u8>;
 impl<const R: u8> CpuStepState for AddHlR16<R> {
-    fn exec(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                let hl = core.registers.hl();
-                let v = match R {
-                    reg::BC => core.registers.bc(),
-                    reg::DE => core.registers.de(),
-                    reg::R16_HL => core.registers.hl(),
-                    _ => core.registers.sp,
-                };
-                core.registers.set_h((hl & 0x0FFF) + (v & 0x0FFF) > 0x0FFF);
-                core.registers.set_c((hl as u32) + (v as u32) > 0xFFFF);
-                core.registers.set_n(false);
-                core.registers.set_hl(hl.wrapping_add(v));
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t4(core) {
+            let hl = core.registers.hl();
+            let v = match R {
+                reg::BC => core.registers.bc(),
+                reg::DE => core.registers.de(),
+                reg::R16_HL => core.registers.hl(),
+                _ => core.registers.sp,
+            };
+            core.registers.set_h((hl & 0x0FFF) + (v & 0x0FFF) > 0x0FFF);
+            core.registers.set_c((hl as u32) + (v as u32) > 0xFFFF);
+            core.registers.set_n(false);
+            core.registers.set_hl(hl.wrapping_add(v));
+            return StepResult::Exit;
+        }
+        StepResult::Continue
     }
 }
 
-// ── ADD HL, SP (2 M-cycles) ────────────────────────────────
-
 pub(crate) struct AddHlSp;
 impl CpuStepState for AddHlSp {
-    fn exec(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                let hl = core.registers.hl();
-                let sp = core.registers.sp;
-                core.registers.set_h((hl & 0x0FFF) + (sp & 0x0FFF) > 0x0FFF);
-                core.registers.set_c((hl as u32) + (sp as u32) > 0xFFFF);
-                core.registers.set_n(false);
-                core.registers.set_hl(hl.wrapping_add(sp));
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t4(core) {
+            let hl = core.registers.hl();
+            let sp = core.registers.sp;
+            core.registers.set_h((hl & 0x0FFF) + (sp & 0x0FFF) > 0x0FFF);
+            core.registers.set_c((hl as u32) + (sp as u32) > 0xFFFF);
+            core.registers.set_n(false);
+            core.registers.set_hl(hl.wrapping_add(sp));
+            return StepResult::Exit;
+        }
+        StepResult::Continue
     }
 }
 
@@ -183,27 +186,32 @@ impl CpuStepState for AddHlSp {
 pub(crate) struct AddSpE;
 impl CpuStepState for AddSpE {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => StepResult::Continue,
-            4 => {
-                let offset = core.operands[0] as i8;
-                let sp = core.registers.sp;
-                let r = sp.wrapping_add_signed(offset as i16);
-                core.registers
-                    .set_h((sp & 0x000F) + (offset as u8 as u16 & 0x000F) > 0x000F);
-                core.registers
-                    .set_c((sp & 0x00FF) + (offset as u8 as u16 & 0x00FF) > 0x00FF);
-                core.registers.set_z(false);
-                core.registers.set_n(false);
-                core.registers.sp = r;
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            if step == 1 {
+                core.operands[0] = core.pc_read(bus);
+            }
+        } else if t4(core) {
+            match step {
+                1 | 2 => return StepResult::Continue,
+                3 => {
+                    let offset = core.operands[0] as i8;
+                    let sp = core.registers.sp;
+                    let r = sp.wrapping_add_signed(offset as i16);
+                    core.registers
+                        .set_h((sp & 0x000F) + (offset as u8 as u16 & 0x000F) > 0x000F);
+                    core.registers
+                        .set_c((sp & 0x00FF) + (offset as u8 as u16 & 0x00FF) > 0x00FF);
+                    core.registers.set_z(false);
+                    core.registers.set_n(false);
+                    core.registers.sp = r;
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }

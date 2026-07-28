@@ -1,9 +1,14 @@
-//! Control flow instructions: JP, JR, CALL, RET, RST.
-
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
+
+fn t3(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 2
+}
+fn t4(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 3
+}
 
 fn cond(c: u8, core: &Lr35902Cpu) -> bool {
     match c {
@@ -14,46 +19,8 @@ fn cond(c: u8, core: &Lr35902Cpu) -> bool {
     }
 }
 
-// ── Shared helpers ────────────────────────────────────────
-
-/// Jump to the 16-bit address stored in operands[0..1].
 fn jump16(core: &mut Lr35902Cpu) {
     core.registers.pc = ((core.operands[1] as u16) << 8) | core.operands[0] as u16;
-}
-
-/// Push PC to stack. Call on consecutive steps.
-fn push_ret(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step_hi: u8) -> StepResult {
-    match step_hi {
-        3 | 5 => {
-            core.registers.sp = core.registers.sp.wrapping_sub(1);
-            bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
-            StepResult::Continue
-        }
-        4 | 6 => {
-            core.registers.sp = core.registers.sp.wrapping_sub(1);
-            bus.write(core.registers.sp, core.registers.pc as u8);
-            StepResult::Exit
-        }
-        _ => unreachable!(),
-    }
-}
-
-/// Pop PC from stack. Call on consecutive steps.
-fn pop_ret(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-    match step {
-        3 => {
-            core.operands[0] = bus.read(core.registers.sp);
-            core.registers.sp = core.registers.sp.wrapping_add(1);
-            StepResult::Continue
-        }
-        4 => {
-            core.operands[1] = bus.read(core.registers.sp);
-            core.registers.sp = core.registers.sp.wrapping_add(1);
-            jump16(core);
-            StepResult::Exit
-        }
-        _ => unreachable!(),
-    }
 }
 
 // ── JP a16 (4 M-cycles) ────────────────────────────────────
@@ -61,56 +28,77 @@ fn pop_ret(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResul
 pub(crate) struct JpA16;
 impl CpuStepState for JpA16 {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => {
-                core.operands[1] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            4 => {
-                jump16(core);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                1 => {
+                    core.operands[0] = core.pc_read(bus);
+                }
+                2 => {
+                    core.operands[1] = core.pc_read(bus);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 | 2 => return StepResult::Continue,
+                3 => {
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
 pub(crate) struct JpCond<const C: u8>;
 impl<const C: u8> CpuStepState for JpCond<C> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => {
-                core.operands[1] = core.pc_read(bus);
-                if !cond(C, core) {
-                    StepResult::Exit
-                } else {
-                    StepResult::Continue
-                }
-            }
-            4 => {
-                jump16(core);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                1 => {
+                    core.operands[0] = core.pc_read(bus);
+                }
+                2 => {
+                    core.operands[1] = core.pc_read(bus);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 => return StepResult::Continue,
+                2 => {
+                    if !cond(C, core) {
+                        return StepResult::Exit;
+                    }
+                    return StepResult::Continue;
+                }
+                3 => {
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
 pub(crate) struct JpHl;
 impl CpuStepState for JpHl {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _: u8) -> StepResult {
-        core.registers.pc = core.registers.hl();
-        StepResult::Exit
+    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step == 0 {
+            core.registers.pc = core.registers.hl();
+            return StepResult::Exit;
+        }
+        StepResult::Continue
     }
 }
 
@@ -119,21 +107,19 @@ impl CpuStepState for JpHl {
 pub(crate) struct Jr;
 impl CpuStepState for Jr {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => {
-                core.registers.pc = core
-                    .registers
-                    .pc
-                    .wrapping_add_signed(core.operands[0] as i8 as i16);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) && step == 1 {
+            core.operands[0] = core.pc_read(bus);
+        } else if t4(core) && step == 1 {
+            core.registers.pc = core
+                .registers
+                .pc
+                .wrapping_add_signed(core.operands[0] as i8 as i16);
+            return StepResult::Exit;
+        }
+        StepResult::Continue
     }
 }
 
@@ -141,25 +127,32 @@ pub(crate) struct JrCond<const C: u8>;
 impl<const C: u8> CpuStepState for JrCond<C> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let taken = cond(C, core);
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                if !taken {
-                    StepResult::Exit
-                } else {
-                    StepResult::Continue
-                }
-            }
-            3 => {
-                core.registers.pc = core
-                    .registers
-                    .pc
-                    .wrapping_add_signed(core.operands[0] as i8 as i16);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            if step == 1 {
+                core.operands[0] = core.pc_read(bus);
+            }
+        } else if t4(core) {
+            match step {
+                1 => {
+                    if !taken {
+                        return StepResult::Exit;
+                    }
+                    return StepResult::Continue;
+                }
+                2 => {
+                    core.registers.pc = core
+                        .registers
+                        .pc
+                        .wrapping_add_signed(core.operands[0] as i8 as i16);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
@@ -168,30 +161,38 @@ impl<const C: u8> CpuStepState for JrCond<C> {
 pub(crate) struct Call;
 impl CpuStepState for Call {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => {
-                core.operands[1] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            4 => StepResult::Continue,
-            5 => {
-                core.registers.sp = core.registers.sp.wrapping_sub(1);
-                bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
-                StepResult::Continue
-            }
-            6 => {
-                core.registers.sp = core.registers.sp.wrapping_sub(1);
-                bus.write(core.registers.sp, core.registers.pc as u8);
-                jump16(core);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                1 => {
+                    core.operands[0] = core.pc_read(bus);
+                }
+                2 => {
+                    core.operands[1] = core.pc_read(bus);
+                }
+                4 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+                }
+                5 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, core.registers.pc as u8);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1..=4 => return StepResult::Continue,
+                5 => {
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
@@ -199,31 +200,46 @@ pub(crate) struct CallCond<const C: u8>;
 impl<const C: u8> CpuStepState for CallCond<C> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let taken = cond(C, core);
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                StepResult::Continue
-            }
-            3 => {
-                core.operands[1] = core.pc_read(bus);
-                if !taken {
-                    StepResult::Exit
-                } else {
-                    StepResult::Continue
+        if step == 0 {
+            return StepResult::Continue;
+        }
+        if t3(core) {
+            match step {
+                1 => {
+                    core.operands[0] = core.pc_read(bus);
                 }
+                2 => {
+                    core.operands[1] = core.pc_read(bus);
+                }
+                4 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+                }
+                5 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, core.registers.pc as u8);
+                }
+                _ => {}
             }
-            4 => StepResult::Continue,
-            5 | 6 => {
-                let r = push_ret(core, bus, step);
-                if step == 6 {
+        } else if t4(core) {
+            match step {
+                1 => return StepResult::Continue,
+                2 => {
+                    if !taken {
+                        return StepResult::Exit;
+                    }
+                    return StepResult::Continue;
+                }
+                3 => return StepResult::Continue,
+                4 => return StepResult::Continue,
+                5 => {
                     jump16(core);
                     return StepResult::Exit;
                 }
-                r
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
+        StepResult::Continue
     }
 }
 
@@ -232,11 +248,33 @@ impl<const C: u8> CpuStepState for CallCond<C> {
 pub(crate) struct Ret;
 impl CpuStepState for Ret {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 | 2 => StepResult::Continue,
-            3 | 4 => pop_ret(core, bus, step),
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                2 => {
+                    core.operands[0] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                3 => {
+                    core.operands[1] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 => return StepResult::Continue,
+                2 => return StepResult::Continue,
+                3 => {
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
@@ -244,45 +282,73 @@ pub(crate) struct RetCond<const C: u8>;
 impl<const C: u8> CpuStepState for RetCond<C> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let taken = cond(C, core);
-        match step {
-            1 => {
-                if !taken {
-                    StepResult::Exit
-                } else {
-                    StepResult::Continue
-                }
-            }
-            2 => StepResult::Continue,
-            3 => {
-                core.operands[0] = bus.read(core.registers.sp);
-                core.registers.sp = core.registers.sp.wrapping_add(1);
-                StepResult::Continue
-            }
-            4 => StepResult::Continue,
-            5 => {
-                core.operands[1] = bus.read(core.registers.sp);
-                core.registers.sp = core.registers.sp.wrapping_add(1);
-                jump16(core);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                3 => {
+                    core.operands[0] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                4 => {
+                    core.operands[1] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 => {
+                    if !taken {
+                        return StepResult::Exit;
+                    }
+                    return StepResult::Continue;
+                }
+                2 => return StepResult::Continue,
+                3 => return StepResult::Continue,
+                4 => {
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
 pub(crate) struct Reti;
 impl CpuStepState for Reti {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 | 2 => StepResult::Continue,
-            3 | 4 => {
-                if step == 4 {
-                    bus.set_ime(true);
-                }
-                pop_ret(core, bus, step)
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                2 => {
+                    core.operands[0] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                3 => {
+                    core.operands[1] = bus.read(core.registers.sp);
+                    core.registers.sp = core.registers.sp.wrapping_add(1);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 => return StepResult::Continue,
+                2 => return StepResult::Continue,
+                3 => {
+                    bus.set_ime(true);
+                    jump16(core);
+                    return StepResult::Exit;
+                }
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
@@ -291,17 +357,32 @@ impl CpuStepState for Reti {
 pub(crate) struct Rst<const V: u8>;
 impl<const V: u8> CpuStepState for Rst<V> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 | 2 => StepResult::Continue,
-            3 | 4 => {
-                let r = push_ret(core, bus, step);
-                if step == 4 {
+        if step == 0 {
+            return StepResult::Continue;
+        }
+        if t3(core) {
+            match step {
+                2 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, (core.registers.pc >> 8) as u8);
+                }
+                3 => {
+                    core.registers.sp = core.registers.sp.wrapping_sub(1);
+                    bus.write(core.registers.sp, core.registers.pc as u8);
+                }
+                _ => {}
+            }
+        } else if t4(core) {
+            match step {
+                1 => return StepResult::Continue,
+                2 => return StepResult::Continue,
+                3 => {
                     core.registers.pc = V as u16 * 8;
                     return StepResult::Exit;
                 }
-                r
+                _ => unreachable!(),
             }
-            _ => unreachable!(),
         }
+        StepResult::Continue
     }
 }

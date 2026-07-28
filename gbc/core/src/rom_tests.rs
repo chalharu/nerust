@@ -26,9 +26,8 @@ mod tests {
         bus.set_cartridge(load_rom(subpath));
         let mut cpu = Lr35902Cpu::new();
         cpu.registers.pc = 0x0100;
-        for _ in 0..cycles {
-            cpu.step(&mut bus);
-            bus.step_devices(4);
+        for _ in 0..cycles * 4 {
+            cpu.step_t_cycle(&mut bus);
         }
         String::from_utf8_lossy(bus.serial_output()).into_owned()
     }
@@ -38,7 +37,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "F0/CB timing ±1; mem_timing timer alignment differs from real hardware"]
+    
     fn mem_timing_read() {
         assert_passed(
             &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
@@ -170,7 +169,7 @@ mod tests {
     #[ignore = "timer init check needs delay 70 adjustment (+~8 T-cycles)"]
     fn instr_timing() {
         assert_passed(
-            &run_rom("instr_timing/instr_timing.gb", 200_000_000),
+            &run_rom("instr_timing/instr_timing.gb", 150_000_000),
             "instr_timing",
         );
     }

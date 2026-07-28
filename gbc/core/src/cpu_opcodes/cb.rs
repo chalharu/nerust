@@ -1,47 +1,70 @@
-//! CB-prefix instructions: shift/rotate/bit/res/set.
-
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::memory::GbcMemoryBus;
 
+fn t3(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 2
+}
+fn t4(c: &Lr35902Cpu) -> bool {
+    c.t_cycle == 3
+}
+
 pub(crate) struct CbPrefix;
 impl CpuStepState for CbPrefix {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        match step {
-            1 => StepResult::Continue,
-            2 => {
-                core.operands[0] = core.pc_read(bus);
-                let idx = core.operands[0] & 0x07;
-                if idx != 6 {
-                    cb_exec_reg(core, bus);
-                    StepResult::Exit
-                } else {
-                    StepResult::Continue
-                }
-            }
-            3 => {
-                let op = core.operands[0];
-                let val = bus.read(core.registers.hl());
-                let cat = op >> 6;
-                if cat == 1 {
-                    let bit = (op >> 3) & 0x07;
-                    core.registers.set_z(val & (1 << bit) == 0);
-                    core.registers.set_n(false);
-                    core.registers.set_h(true);
-                    StepResult::Exit
-                } else {
-                    core.operands[1] = cb_exec_val(val, op, core);
-                    StepResult::Continue
-                }
-            }
-            4 => {
-                let v = core.operands[1];
-                bus.write(core.registers.hl(), v);
-                StepResult::Exit
-            }
-            _ => unreachable!(),
+        if step == 0 {
+            return StepResult::Continue;
         }
+        if t3(core) {
+            match step {
+                1 => {
+                    core.operands[0] = core.pc_read(bus);
+                }
+                2 => {
+                    let idx = core.operands[0] & 0x07;
+                    if idx == 6 {
+                        core.operands[1] = bus.read(core.registers.hl());
+                    }
+                }
+                3 => {
+                    bus.write(core.registers.hl(), core.operands[1]);
+                }
+                _ => unreachable!(),
+            }
+        } else if t4(core) {
+            match step {
+                1 => {
+                    let idx = core.operands[0] & 0x07;
+                    if idx != 6 {
+                        cb_exec_reg(core, bus);
+                        return StepResult::Exit;
+                    }
+                    return StepResult::Continue;
+                }
+                2 => {
+                    let op = core.operands[0];
+                    let idx = op & 0x07;
+                    if idx == 6 {
+                        let val = core.operands[1];
+                        let cat = op >> 6;
+                        if cat == 1 {
+                            let bit = (op >> 3) & 0x07;
+                            core.registers.set_z(val & (1 << bit) == 0);
+                            core.registers.set_n(false);
+                            core.registers.set_h(true);
+                            return StepResult::Exit;
+                        }
+                        core.operands[1] = cb_compute(val, op, core);
+                        return StepResult::Continue;
+                    }
+                    unreachable!();
+                }
+                3 => return StepResult::Exit,
+                _ => unreachable!(),
+            }
+        }
+        StepResult::Continue
     }
 }
 
@@ -148,7 +171,7 @@ fn cb_exec_reg(core: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus) {
     }
 }
 
-fn cb_exec_val(val: u8, op: u8, core: &mut Lr35902Cpu) -> u8 {
+fn cb_compute(val: u8, op: u8, core: &mut Lr35902Cpu) -> u8 {
     match op >> 6 {
         0 => {
             let op3 = (op >> 3) & 0x07;
