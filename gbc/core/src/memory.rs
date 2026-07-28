@@ -336,7 +336,7 @@ mod tests {
     fn read_timer_div_returns_upper_byte() {
         let bus = bus();
         let v = bus.read(0xFF04);
-        assert!(v > 0);
+        assert_eq!(v, 0); // DIV starts at 0 (Timer::new with div=0)
     }
 
     #[test]

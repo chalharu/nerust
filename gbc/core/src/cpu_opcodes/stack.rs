@@ -40,18 +40,17 @@ pub(crate) struct Pop<const R: u8>;
 impl<const R: u8> CpuStepState for Pop<R> {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         match step {
-            1 => {
+            1 => StepResult::Continue,
+            2 => {
                 core.operands[0] = bus.read(core.registers.sp);
                 core.registers.sp = core.registers.sp.wrapping_add(1);
                 StepResult::Continue
             }
-            2 => {
-                core.operands[1] = bus.read(core.registers.sp);
-                core.registers.sp = core.registers.sp.wrapping_add(1);
-                StepResult::Continue
-            }
             3 => {
-                let v = ((core.operands[1] as u16) << 8) | core.operands[0] as u16;
+                let lo = core.operands[0];
+                let hi = bus.read(core.registers.sp);
+                core.registers.sp = core.registers.sp.wrapping_add(1);
+                let v = ((hi as u16) << 8) | lo as u16;
                 if R == 3 {
                     core.registers.set_af(v)
                 } else {
