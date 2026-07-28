@@ -13,9 +13,9 @@ fn cond(c: u8, core: &Lr35902Cpu) -> bool {
 }
 
 fn jump16(core: &mut Lr35902Cpu) {
-    let _op0 = core.operand(0) as u16;
-    let _op1 = core.operand(1) as u16;
-    core.registers_mut().set_pc((_op1 << 8) | _op0);
+    let op0 = core.operand(0) as u16;
+    let op1 = core.operand(1) as u16;
+    core.registers_mut().set_pc((op1 << 8) | op0);
 }
 
 // ── JP a16 (4 M-cycles) ────────────────────────────────────
@@ -71,8 +71,8 @@ pub(crate) struct JpHl;
 impl CpuStepState for JpHl {
     fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, _step: u8) -> StepResult {
         {
-            let _hl = core.registers().hl();
-            core.registers_mut().set_pc(_hl)
+            let hl = core.registers().hl();
+            core.registers_mut().set_pc(hl)
         };
         StepResult::Exit
     }
@@ -91,9 +91,9 @@ impl CpuStepState for Jr {
             core.set_operand(0, v);
             return StepResult::Continue;
         }
-        let _pc = core.registers().pc();
-        let _op0 = core.operand(0) as i8 as i16;
-        core.registers_mut().set_pc(_pc.wrapping_add_signed(_op0));
+        let pc = core.registers().pc();
+        let op0 = core.operand(0) as i8 as i16;
+        core.registers_mut().set_pc(pc.wrapping_add_signed(op0));
         StepResult::Exit
     }
 }
@@ -114,9 +114,9 @@ impl<const C: u8> CpuStepState for JrCond<C> {
             return StepResult::Continue;
         }
         debug_assert!(step == 2, "JR step > 2");
-        let _pc = core.registers().pc();
-        let _op0 = core.operand(0) as i8 as i16;
-        core.registers_mut().set_pc(_pc.wrapping_add_signed(_op0));
+        let pc = core.registers().pc();
+        let op0 = core.operand(0) as i8 as i16;
+        core.registers_mut().set_pc(pc.wrapping_add_signed(op0));
         StepResult::Exit
     }
 }

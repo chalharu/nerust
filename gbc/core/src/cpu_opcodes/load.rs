@@ -57,8 +57,8 @@ impl<const R: u8> CpuStepState for LdAR16mem<R> {
         if step == 0 {
             return StepResult::Continue;
         }
-        let _addr = read_r16(core, R);
-        core.registers_mut().set_a(bus.read(_addr));
+        let addr = read_r16(core, R);
+        core.registers_mut().set_a(bus.read(addr));
         StepResult::Exit
     }
 }
@@ -249,8 +249,8 @@ impl CpuStepState for LdAA16 {
             core.set_operand(1, v);
             return StepResult::Continue;
         }
-        let _addr = addr16(core);
-        core.registers_mut().set_a(bus.read(_addr));
+        let addr = addr16(core);
+        core.registers_mut().set_a(bus.read(addr));
         StepResult::Exit
     }
 }
