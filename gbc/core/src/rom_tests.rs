@@ -2,7 +2,6 @@
 ///
 /// Each test loads a ROM, runs it for a fixed number of M-cycles,
 /// and checks serial output for "Passed".
-#[cfg(test)]
 mod tests {
     use std::path::Path;
 
@@ -35,6 +34,40 @@ mod tests {
 
     fn assert_passed(output: &str, name: &str) {
         assert!(output.contains("Passed"), "{name} failed:\n{output}");
+    }
+
+    #[test]
+    #[ignore = "CPU model compresses fetch+step1 into one M-cycle; memory access timing is 1 cycle early. Needs per-M-cycle state machine."]
+    fn mem_timing_read() {
+        assert_passed(
+            &run_rom("mem_timing/individual/01-read_timing.gb", 150_000_000),
+            "mem_timing/01-read",
+        );
+    }
+
+    #[test]
+    #[ignore = "same CPU model limitation as mem_timing_read"]
+    fn mem_timing_write() {
+        assert_passed(
+            &run_rom("mem_timing/individual/02-write_timing.gb", 150_000_000),
+            "mem_timing/02-write",
+        );
+    }
+
+    #[test]
+    #[ignore = "same CPU model limitation as mem_timing_read"]
+    fn mem_timing_modify() {
+        assert_passed(
+            &run_rom("mem_timing/individual/03-modify_timing.gb", 150_000_000),
+            "mem_timing/03-modify",
+        );
+    }
+
+    #[test]
+    #[ignore = "same CPU model limitation as mem_timing_read"]
+    fn mem_timing_all() {
+        let output = run_rom("mem_timing/mem_timing.gb", 150_000_000);
+        assert!(!output.contains("Failed"), "mem_timing failure:\n{output}");
     }
 
     #[test]

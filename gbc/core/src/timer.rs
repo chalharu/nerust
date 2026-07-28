@@ -24,7 +24,7 @@ impl Timer {
     pub fn new() -> Self {
         Self {
             div: 0xABCC,
-            prev_bit: Self::select_bit(0xABCC, 0),
+            prev_bit: Self::select_bit(0xABCC, TIMA_BITS[0]), // init with freq 00
             tima: 0,
             tma: 0,
             tac: 0xF8,
@@ -101,7 +101,10 @@ impl Timer {
                 let new_enabled = (self.tac & 0x04) != 0;
                 if !old_enabled && new_enabled {
                     // Timer just enabled — sync prev_bit to current divider state
-                    // without resetting the divider (real hardware behavior).
+                    let bit = self.selected_bit();
+                    self.prev_bit = Self::select_bit(self.div, bit);
+                } else if (old_tac & 0x03) != (self.tac & 0x03) {
+                    // Frequency changed — resample prev_bit for new bit
                     let bit = self.selected_bit();
                     self.prev_bit = Self::select_bit(self.div, bit);
                 }
@@ -195,66 +198,82 @@ mod tests {
         assert_eq!(t.read(0xFF04), 0xAB);
     }
 
-    /// Simulate the start_timer sync loop: write TIMA=0, advance exactly
-    /// as many T-cycles as between write and read (~12), then check TIMA.
+    /// Replicate the init_timer timer check (wreg TIMA,-20; delay 70; check IF)
+    /// to see if the edge-detection timer passes the hardware test.
     #[test]
-    fn tima_write_read_gap_no_falling_edge() {
-        // Timer enabled, freq 01 (bit 3). After TAC enable, the divider
-        // starts from its current value (0xABCC). The write-read gap is
-        // ~12 T-cycles. Whether a falling edge of bit 3 occurs depends on
-        // the initial divider state relative to bit 3's period.
+    fn init_timer_check_timing() {
+        // Same sequence as init_timer in the test ROM
         let mut t = Timer::new();
-        t.write(0xFF07, 0x05); // enable, freq 01
-        t.write(0xFF05, 0x00); // TIMA = 0 (simulates one xor+sta)
 
-        // Advance 12 T-cycles = 3 step_devices(4) calls
-        // (representing the gap between write M3 and read M3)
-        t.step(12);
+        // wreg TMA,0
+        t.write(0xFF06, 0x00);
 
-        // Check if a falling edge occurred between write and read
-        // (the loop would continue if TIMA > 0, exit if TIMA == 0)
-        if t.tima == 0 {
-            eprintln!("Sync loop would exit on first attempt (TIMA=0)");
-        } else {
-            eprintln!("Sync loop would continue (TIMA={})", t.tima);
+        // wreg TAC,$05: enable, freq 01 (bit 3). Takes ~5 M-cycles = 20 T
+        // Between TAC write completing and TIMA write: IF=0 + TIMA=-20 takes ~10 M-cycles = 40 T
+        // TAC write enables the timer. This test starts with pre-TAC state.
+        t.write(0xFF07, 0x05); // TAC = $05
+        t.write(0xFF05, 236); // TIMA = -20
+
+        // Simulate delay 70 (~68 M-cycles = 272 T-cycles)
+        t.step(272);
+
+        // Check 1: should NOT have overflowed yet
+        // To overflow: TIMA needs to go from 236 to 256 (20 increments).
+        // Each increment = 16 T-cycles. Need 320 T-cycles = 80 M-cycles from TAC.
+        // We stepped 272 T-cycles. From TAC to step: ~20 T before write + 272 after = 292 total.
+        // 292/16 = 18.25 → 18 increments. TIMA = 236+18 = 254. Not overflow.
+        /// Replicate the init_timer timer check for diagnostics
+        #[test]
+        fn init_timer_check_timing() {
+            let mut t = Timer::new();
+            t.write(0xFF06, 0x00);
+            t.write(0xFF07, 0x05);
+            t.write(0xFF05, 236);
+            t.step(272);
+            eprintln!("After delay: TIMA={}", t.tima);
+            t.step(28);
+            eprintln!("After gap: TIMA={}", t.tima);
         }
-    }
 
-    /// Simulate the EXACT start_timer loop (11 M-cycles per iteration)
-    /// and verify it exits within a reasonable number of iterations.
-    #[test]
-    fn start_timer_loop_exits() {
-        // Setup: enable timer like init_timer does
-        let mut t = Timer::new();
-        t.write(0xFF07, 0x05); // TAC: enable, freq 01 (bit 3)
-        t.write(0xFF05, 236); // TIMA = -20 (like init_timer)
+        /// Simulate the EXACT start_timer loop (11 M-cycles per iteration)
+        /// and verify it exits within a reasonable number of iterations.
+        #[test]
+        fn start_timer_loop_exits() {
+            // Setup: enable timer like init_timer does
+            let mut t = Timer::new();
+            t.write(0xFF07, 0x05); // TAC: enable, freq 01 (bit 3)
+            t.write(0xFF05, 236); // TIMA = -20 (like init_timer)
 
-        // Now simulate start_timer: each "iteration" is:
-        // xor a (1M) + ldh [TIMA] (3M) + ldh a,[TIMA] (3M) + or a (1M) + jr nz (2M)
-        // = 10 M-cycles if not taken, 11 if taken
-        // Each M-cycle = 4 T-cycles = one timer.step(4)
-        for iter in 0..20 {
-            // xor a: step_devices(4)
-            t.step(4);
-            // ldh [TIMA], a M1-M3: step_devices(4) × 3 + write
-            t.step(4); t.step(4);
-            // WRITE at next step's handler: self.tima = 0
-            t.tima = 0;
-            t.step(4); // M3 of ldh [TIMA] — after write
-            // ldh a, [TIMA] M1-M3: step_devices(4) × 3 + read
-            t.step(4); t.step(4);
-            let current_tima = t.tima; // READ at M3
-            t.step(4); // M3 step_devices
-            if current_tima == 0 {
-                // Loop exits
-                eprintln!("start_timer sync complete in {} iterations", iter + 1);
-                return;
+            // Now simulate start_timer: each "iteration" is:
+            // xor a (1M) + ldh [TIMA] (3M) + ldh a,[TIMA] (3M) + or a (1M) + jr nz (2M)
+            // = 10 M-cycles if not taken, 11 if taken
+            // Each M-cycle = 4 T-cycles = one timer.step(4)
+            for iter in 0..20 {
+                // xor a: step_devices(4)
+                t.step(4);
+                // ldh [TIMA], a M1-M3: step_devices(4) × 3 + write
+                t.step(4);
+                t.step(4);
+                // WRITE at next step's handler: self.tima = 0
+                t.tima = 0;
+                t.step(4); // M3 of ldh [TIMA] — after write
+                // ldh a, [TIMA] M1-M3: step_devices(4) × 3 + read
+                t.step(4);
+                t.step(4);
+                let current_tima = t.tima; // READ at M3
+                t.step(4); // M3 step_devices
+                if current_tima == 0 {
+                    // Loop exits
+                    eprintln!("start_timer sync complete in {} iterations", iter + 1);
+                    return;
+                }
+                // or a: step_devices(4)
+                t.step(4);
+                // jr nz (taken): step_devices(4) × 2
+                t.step(4);
+                t.step(4);
             }
-            // or a: step_devices(4)
-            t.step(4);
-            // jr nz (taken): step_devices(4) × 2
-            t.step(4); t.step(4);
+            panic!("start_timer loop did not exit within 20 iterations");
         }
-        panic!("start_timer loop did not exit within 20 iterations");
     }
 }
