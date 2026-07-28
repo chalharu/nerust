@@ -58,7 +58,6 @@ impl Timer {
 
             if enabled {
                 let cur_bit = Self::select_bit(self.div, bit);
-                // Falling edge: previous bit was 1, current bit is 0
                 if self.prev_bit && !cur_bit {
                     let (new_tima, did_overflow) = self.tima.overflowing_add(1);
                     if did_overflow {
@@ -214,5 +213,88 @@ mod tests {
             }
         }
         panic!("no initial phase allows sync with TIMA=0");
+    }
+
+    /// Debug: check if TIMA ever increments with TAC=0x07 (divide by 256)
+    #[test]
+    fn tima_increments_at_256_cycles() {
+        let mut t = Timer::new();
+        t.write(0xFF05, 0); // TIMA = 0
+        t.write(0xFF07, 0x07); // TAC = enable, 256 divider
+        for i in 0..512 {
+            t.step(1);
+            if t.tima != 0 {
+                eprintln!(
+                    "TIMA incremented to {} at T-cycle {} (div={})",
+                    t.tima,
+                    i + 1,
+                    t.div
+                );
+                return;
+            }
+        }
+        panic!(
+            "TIMA never incremented within 512 T-cycles (tac={:02X}, div={})",
+            t.tac, t.div
+        );
+    }
+
+    /// Simulate sync_tima_64 exact behavior
+    #[test]
+    fn sync_tima_64_simulation() {
+        let mut t = Timer::new();
+        // init_tima_64: wreg TMA,0; wreg TAC,$07
+        t.write(0xFF06, 0); // TMA = 0
+        t.write(0xFF07, 0x07); // TAC = enable, 256 divider
+
+        // sync_tima_64:
+        // ld a,0; ld hl,TIMA; ld (hl),a — TIMA = 0
+        t.write(0xFF05, 0);
+
+        // Spin loop: or (hl) / jr z,- until TIMA != 0
+        let mut spin_iterations = 0;
+        while t.tima == 0 {
+            // Each iteration: or (hl) + jr z,- = 5 M-cycles = 20 step(1) calls
+            for _ in 0..20 {
+                t.step(1);
+            }
+            spin_iterations += 1;
+            if spin_iterations > 100 {
+                panic!(
+                    "sync_tima_64 spin loop did not exit after 100 iterations (tac={:02X}, div={}, prev_bit={})",
+                    t.tac, t.div, t.prev_bit
+                );
+            }
+        }
+        eprintln!(
+            "Spin loop exited after {} iterations (TIMA={}, div={})",
+            spin_iterations, t.tima, t.div
+        );
+
+        // delay 65-12 = 53 M-cycles = 212 T-cycles
+        for _ in 0..212 {
+            t.step(1);
+        }
+
+        // xor a; ld (hl),a — TIMA = 0
+        t.write(0xFF05, 0);
+
+        // or (hl) — read TIMA (should be 0)
+        assert_eq!(t.tima, 0, "TIMA should be 0 after write");
+
+        // delay 4 M-cycles = 16 T-cycles
+        for _ in 0..16 {
+            t.step(1);
+        }
+
+        // jr z,- (check if TIMA still 0)
+        // If TIMA != 0, need to retry sync
+        if t.tima != 0 {
+            eprintln!(
+                "TIMA incremented during 4-cycle delay (tima={}, div={})",
+                t.tima, t.div
+            );
+            eprintln!("This would cause sync_tima_64 to re-sync");
+        }
     }
 }
