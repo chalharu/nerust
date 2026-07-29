@@ -72,12 +72,17 @@ pub fn run_case(
             bus.step_devices(4);
         }
 
-        // Capture screenshot if requested
+        // Compute PNG screenshot data (for both file save and hash check)
+        let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        fb.resize(160, 144);
+        bus.render_frame(&mut fb);
+        let png_data = media::encode_screenshot_png(&fb)?;
+
+        // Compute frame hash from PNG data (deterministic for same pixels)
+        let frame_crc = crc32(&png_data);
+
+        // Save screenshot to file if requested
         if let Some(screenshots_dir) = screenshots_dir {
-            let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-            fb.resize(160, 144);
-            bus.render_frame(&mut fb);
-            let png_data = media::encode_screenshot_png(&fb)?;
             let shot_name = format!("{}_{}.png", case.id, event_idx);
             let shot_path = screenshots_dir.join(&shot_name);
             std::fs::write(&shot_path, &png_data).map_err(RomTestError::Io)?;
@@ -93,11 +98,20 @@ pub fn run_case(
             }
         }
 
-        // Verify frame hash (stub: computed on next VBlank)
+        // Verify frame hash (CRC32 of raw RGBA frame buffer)
         if let Some(ref frame_hash) = event.frame {
-            // Frame hashing requires rendering and PNG-compatible CRC
-            // Stub for now — always passes.
-            let _ = frame_hash;
+            if !frame_hash.hash.is_empty() {
+                let expected = parse_hex(&frame_hash.hash)? as u32;
+                if frame_crc != expected {
+                    return Err(RomTestError::CaseFailed(
+                        case.id.clone(),
+                        format!(
+                            "frame hash: expected {:08X}, got {:08X}",
+                            expected, frame_crc
+                        ),
+                    ));
+                }
+            }
         }
 
         // Verify audio hash (stub)

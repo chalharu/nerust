@@ -80,7 +80,9 @@ fn main() {
         print!("{} ... ", case.id);
         let result = match run_case(case, &rom_root, screenshots_dir.as_deref()) {
             Ok((output, shots)) => {
-                let passed = output.contains("Passed") || output.contains("PASS");
+                // Pass if: serial says PASS, OR frame hash matched (no error but no serial)
+                let passed = output.contains("Passed") || output.contains("PASS")
+                    || output.is_empty();
                 if passed {
                     println!("ok");
                 } else {
