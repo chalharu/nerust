@@ -39,6 +39,7 @@ pub struct GbcPpu {
     obpi: u8,
     obpd: u8,
     opri: u8,
+    pub key0: u8, // full $FF6C value (bits: 7=CGB game, 2=DMG emulation)
 
     vram: [u8; 0x4000],
     oam: [u8; 160],
@@ -80,6 +81,7 @@ impl Default for GbcPpu {
             obpi: 0,
             obpd: 0,
             opri: 1,
+            key0: 0,
             vram: [0; 0x4000],
             oam: [0; 160],
             bg_palette: [0; 32],
@@ -485,6 +487,10 @@ impl GbcPpu {
                 self.obj_palette[dst_base + j] = palettes[src_base + j];
             }
         }
+        eprintln!("PAL_INIT: bg_palette[0..3] after = {:04X} {:04X} {:04X} {:04X}",
+            self.bg_palette[0], self.bg_palette[1], self.bg_palette[2], self.bg_palette[3]);
+        eprintln!("PAL_INIT: obj_palette[0..3] = {:04X} {:04X} {:04X} {:04X}",
+            self.obj_palette[0], self.obj_palette[1], self.obj_palette[2], self.obj_palette[3]);
     }
 
     fn cgb_color_to_pixel(color: u16) -> u32 {
@@ -529,7 +535,7 @@ impl GbcPpu {
         let map_idx = map_addr as usize & 0x1FFF;
         let tile_index = self.vram[map_idx];
 
-        if self.cgb_mode {
+        if self.cgb_game {
             // CGB: read attribute byte from VRAM bank 1 at same map address
             let attr = self.vram[0x2000 + map_idx];
             let pal = (attr & 0x07) as usize; // palette 0-7
@@ -542,7 +548,14 @@ impl GbcPpu {
             let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
             (Self::cgb_color_to_pixel(color15), color, bg_priority)
+        } else if self.cgb_mode {
+            // DMG game on CGB hardware: BGP selects from CGB palette 0
+            let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            let color15 = self.bg_palette[shade as usize];
+            (Self::cgb_color_to_pixel(color15), color, false)
         } else {
+            // Pure DMG hardware: BGP selects grayscale shade
             let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
             let shade = (self.bgp >> (color * 2)) & 0x03;
             (Self::shade_to_pixel(shade), color, false)
@@ -562,7 +575,7 @@ impl GbcPpu {
         let map_idx = map_addr as usize & 0x1FFF;
         let tile_index = self.vram[map_idx];
 
-        if self.cgb_mode {
+        if self.cgb_game {
             let attr = self.vram[0x2000 + map_idx];
             let pal = (attr & 0x07) as usize;
             let bank = ((attr >> 3) & 0x01) as usize;
@@ -574,6 +587,12 @@ impl GbcPpu {
             let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
             (Self::cgb_color_to_pixel(color15), color, bg_priority)
+        } else if self.cgb_mode {
+            // DMG game on CGB: BGP selects from CGB palette 0
+            let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            let color15 = self.bg_palette[shade as usize];
+            (Self::cgb_color_to_pixel(color15), color, false)
         } else {
             let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
             let shade = (self.bgp >> (color * 2)) & 0x03;
@@ -641,7 +660,7 @@ impl GbcPpu {
                     (pal >> 8) as u8
                 }
             }
-            0xFF6C => self.opri | 0xFE,
+             0xFF6C => self.key0 | 0xFE,
             _ => 0xFF,
         }
     }
@@ -659,46 +678,57 @@ impl GbcPpu {
             0xFF4A => self.wy = value,
             0xFF4B => self.wx = value,
             0xFF4F => self.vbk = value & 0x01,
-            0xFF68 => {
-                self.bgpi = value & 0x3F;
-                if value & 0x80 != 0 {
-                    self.bgpi |= 0x80;
-                }
+             0xFF68 => {
+                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
+                     self.bgpi = value & 0x3F;
+                     if value & 0x80 != 0 {
+                         self.bgpi |= 0x80;
+                     }
+                 }
+             }
+             0xFF69 => {
+                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
+                     let idx = (self.bgpi & 0x3F) as usize;
+                     let auto_inc = self.bgpi & 0x80 != 0;
+                     if idx & 1 == 0 {
+                         self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
+                     } else {
+                         self.bg_palette[idx >> 1] =
+                             (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+                     }
+                     if auto_inc {
+                         self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
+                     }
+                 }
+             }
+             0xFF6A => {
+                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
+                     self.obpi = value & 0x3F;
+                     if value & 0x80 != 0 {
+                         self.obpi |= 0x80;
+                     }
+                 }
+             }
+             0xFF6B => {
+                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
+                     let idx = (self.obpi & 0x3F) as usize;
+                     let auto_inc = self.obpi & 0x80 != 0;
+                     if idx & 1 == 0 {
+                         self.obj_palette[idx >> 1] =
+                             (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
+                     } else {
+                         self.obj_palette[idx >> 1] =
+                             (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+                     }
+                     if auto_inc {
+                         self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
+                     }
+                 }
             }
-            0xFF69 => {
-                let idx = (self.bgpi & 0x3F) as usize;
-                let auto_inc = self.bgpi & 0x80 != 0;
-                if idx & 1 == 0 {
-                    self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
-                } else {
-                    self.bg_palette[idx >> 1] =
-                        (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                }
-                if auto_inc {
-                    self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
-                }
-            }
-            0xFF6A => {
-                self.obpi = value & 0x3F;
-                if value & 0x80 != 0 {
-                    self.obpi |= 0x80;
-                }
-            }
-            0xFF6B => {
-                let idx = (self.obpi & 0x3F) as usize;
-                let auto_inc = self.obpi & 0x80 != 0;
-                if idx & 1 == 0 {
-                    self.obj_palette[idx >> 1] =
-                        (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
-                } else {
-                    self.obj_palette[idx >> 1] =
-                        (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                }
-                if auto_inc {
-                    self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
-                }
-            }
-            0xFF6C => self.opri = value & 0x01,
+             0xFF6C => {
+                 self.key0 = value;
+                 self.opri = value & 0x01;
+             }
             _ => {}
         }
     }

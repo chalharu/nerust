@@ -252,6 +252,9 @@ impl GbcMemoryBus {
             // When the boot ROM is skipped, these provide visible colors
             // for DMG compatibility mode instead of all-black.
             self.ppu.init_default_cgb_palettes();
+            self.ppu.key0 = 0x80; // CGB game mode (bit 7 = 1)
+        } else {
+            self.ppu.key0 = 0x00;
         }
     }
 
@@ -259,6 +262,8 @@ impl GbcMemoryBus {
     /// This controls CGB-only rendering behavior independent of hardware mode.
     pub fn set_cgb_game(&mut self, enabled: bool) {
         self.ppu.cgb_game = enabled;
+        // KEY0: bit 2 = DMG emulation mode, blocks CGB palette register writes
+        self.ppu.key0 = if enabled { 0x80 } else { 0x04 };
     }
 
     pub fn is_dma_active(&self) -> bool {

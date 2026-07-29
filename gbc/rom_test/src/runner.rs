@@ -82,8 +82,17 @@ pub fn run_case(
         bus.render_frame(&mut fb);
         let png_data = media::encode_screenshot_png(&fb)?;
 
-        // Compute frame hash from PNG data (deterministic for same pixels)
-        let frame_crc = crc32(&png_data);
+        // Compute frame hash from raw RGBA pixels (stride-aware)
+        let stride = fb.stride();
+        let w = fb.width();
+        let h = fb.height();
+        let src = fb.as_ref();
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            let row_start = y * stride;
+            rgba.extend_from_slice(&src[row_start..row_start + w * 4]);
+        }
+        let frame_crc = crc32(&rgba);
 
         // Save screenshot to file if requested
         if let Some(screenshots_dir) = screenshots_dir {
