@@ -136,6 +136,15 @@ impl GbcPpu {
     /// px = mc - 79 + (event_count % 2).
     /// All mealybug register writes use ld[c],a (step 2, offset=8).
     /// -79 = -(80 + 12 - 4 - 8) = -(OAM + overhead - pending - offset).
+    /// Pixel position in Mode 3 (0-159).
+    /// Derived from hardware timing:
+    ///   eff = mc + 4(pending) + cpu_cycle_offset  (real T-cycle of write)
+    ///   px  = eff - 87 + (event_count % 2)
+    ///   87  = 80(OAM) + 12(tile fetch overhead) - 5(pipeline latency)
+    ///   event_count%2: restore writes (+1) vs set writes (+0) due to
+    ///     internal pipeline value-change timing asymmetry.
+    /// Simplified for ld[c],a (offset=4):
+    ///   px = mc - 79 + (event_count % 2)
     fn mode3_pixel_x(&self) -> u8 {
         if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
