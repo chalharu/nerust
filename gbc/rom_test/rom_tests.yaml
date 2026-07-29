@@ -173,7 +173,20 @@ cases:
           hash: ""
         frame:
           hash: "71288126"
-        audio:
+        memory: []
+        pad: []
+
+  - id: "cgb_acid2"
+    category: "ppu"
+    description: "CGB acid2 PPU test (DMG game on CGB hardware)"
+    rom: "mattcurrie_dmg-acid2/dmg-acid2.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 15_000_000
+        serial:
           hash: ""
+        frame:
+          hash: "7ADD5A3B"
         memory: []
         pad: []
