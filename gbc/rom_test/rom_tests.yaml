@@ -176,9 +176,9 @@ cases:
         memory: []
         pad: []
 
-  - id: "cgb_acid2"
+  - id: "dmg_acid2_cgb"
     category: "ppu"
-    description: "CGB acid2 PPU test (DMG game on CGB hardware)"
+    description: "dmg-acid2 on CGB hardware — verifies DMG game CGB palette behavior"
     rom: "mattcurrie_dmg-acid2/dmg-acid2.gb"
     model: cgb
     perf: false
@@ -188,5 +188,20 @@ cases:
           hash: ""
         frame:
           hash: "7ADD5A3B"
+        memory: []
+        pad: []
+
+  - id: "cgb_acid2"
+    category: "ppu"
+    description: "cgb-acid2 — CGB PPU compliance test"
+    rom: "mattcurrie_cgb-acid2/cgb-acid2.gbc"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 25_000_000
+        serial:
+          hash: ""
+        frame:
+          hash: "1A92EF56"
         memory: []
         pad: []
