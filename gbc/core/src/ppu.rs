@@ -8,9 +8,9 @@ enum PpuMode {
     PixelTransfer = 3,
 }
 
-const T_CYCLES_PER_SCANLINE: u32 = 114;
-const T_CYCLES_OAM_SEARCH: u32 = 20;
-const T_CYCLES_PIXEL_TRANSFER: u32 = 43;
+const T_CYCLES_PER_SCANLINE: u32 = 456;
+const T_CYCLES_OAM_SEARCH: u32 = 80;
+const T_CYCLES_PIXEL_TRANSFER: u32 = 172;
 const SCANLINES_PER_FRAME: u8 = 154;
 const VBLANK_START: u8 = 144;
 
@@ -59,6 +59,11 @@ pub struct GbcPpu {
     /// background map attributes (palette, bank, flip, priority).
     pub cgb_mode: bool,
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
+
+    /// Mid-scanline register changes during Mode 3 (pixel transfer).
+    /// Stored as (pixel_x, reg_addr, value) and applied in render_scanline
+    /// at the correct pixel boundary.
+    mid_events: Vec<(u8, u16, u8)>,
 }
 
 impl Default for GbcPpu {
@@ -93,6 +98,7 @@ impl Default for GbcPpu {
             lyc_matched_ly: 0,
             cgb_mode: false,
             cgb_game: false,
+            mid_events: Vec::new(),
         }
     }
 }
@@ -111,6 +117,25 @@ struct Sprite {
     }
 
 impl GbcPpu {
+    /// Current pixel position being rendered during Mode 3 (0-159).
+    /// Mode 3 starts at T_CYCLES_OAM_SEARCH (80 T-cycles).
+    /// First 12 T-cycles are overhead (first tile fetch).
+    /// Pixel X is rendered at T-cycle 80 + 12 + X.
+    fn mode3_pixel_x(&self) -> u8 {
+        if self.ly >= VBLANK_START || self.mode_clock + 4 <= T_CYCLES_OAM_SEARCH + 12 {
+            return 0;
+        }
+        let px = (self.mode_clock as i32 + 4) - (T_CYCLES_OAM_SEARCH as i32 + 12);
+        px.clamp(0, 159) as u8
+    }
+
+    fn is_mode3(&self) -> bool {
+        let clock = self.mode_clock + 4; // pending step
+        self.ly < VBLANK_START
+            && clock > T_CYCLES_OAM_SEARCH
+            && clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
+    }
+
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
         let frame_done = self.frame_complete;
         self.frame_complete = false;
@@ -246,23 +271,32 @@ impl GbcPpu {
         }
 
         let ly = self.ly as usize;
-        let bg_enabled = self.lcdc & 0x01 != 0;
-        // DMG: LCDC.0=0 disables BG/Window entirely (white).
-        // CGB: LCDC.0=0 only disables BG priority (sprites always on top),
-        //      BG/Window still render.
-        let bg_win_enabled = if self.cgb_game { true } else { bg_enabled };
-        let window_enabled = bg_win_enabled && self.lcdc & 0x20 != 0;
+        // sprite_height and sprite_double used for sprite collection
         let sprite_enabled = self.lcdc & 0x02 != 0;
         let sprite_double = self.lcdc & 0x04 != 0;
         let sprite_height = if sprite_double { 16 } else { 8 };
+        // Derived state (bg_win_enabled, window_enabled) is per-pixel (can change mid-scanline)
+
+        // sprite_height is captured at scanline start for sprite collection
+        // spr_dbl and spr_h are per-pixel for new sprite visibility
+        // But existing sprites in the list use the original sprite_height
+        // for tile Y calculation to avoid overflow when LCDC.2 changes mid-scanline.
 
         let base = ly * 160;
 
-        if window_enabled
-            && ly as u8 >= self.wy
-            && (self.wx.wrapping_sub(7) as i16) < 168
+        // Window line counter: increment once per scanline when window is active.
+        // Check at pixel 0 using the pre-scanline register state.
+        // (window enabled at mode 2 start determines if counter increments)
         {
-            self.window_line = self.window_line.wrapping_add(1);
+            let win_en = self.lcdc & 0x20 != 0;
+            let bg_en = self.lcdc & 0x01 != 0;
+            let bg_win = if self.cgb_game { true } else { bg_en };
+            if win_en && bg_win
+                && ly as u8 >= self.wy
+                && (self.wx.wrapping_sub(7) as i16) < 168
+            {
+                self.window_line = self.window_line.wrapping_add(1);
+            }
         }
 
         // Collect sprites for this scanline
@@ -309,13 +343,41 @@ impl GbcPpu {
             });
         }
 
+        // Sort mid-scanline events by pixel position
+        self.mid_events.sort_by_key(|&(px, _, _)| px);
+        let mut ev_idx = 0usize;
+
         for x in 0..160 {
+            // Apply any pending mid-scanline register changes at this pixel
+            while ev_idx < self.mid_events.len() && self.mid_events[ev_idx].0 <= x as u8 {
+                let (_, reg, value) = self.mid_events[ev_idx];
+                match reg {
+                    0xFF40 => self.lcdc = value,
+                    0xFF42 => self.scy = value,
+                    0xFF43 => self.scx = value,
+                    0xFF47 => self.bgp = value,
+                    0xFF48 => self.obp0 = value,
+                    0xFF49 => self.obp1 = value,
+                    0xFF4A => self.wy = value,
+                    0xFF4B => self.wx = value,
+                    _ => {}
+                }
+                ev_idx += 1;
+            }
+
+            // Recompute derived state per-pixel (may have changed mid-scanline)
+            let bg_en = self.lcdc & 0x01 != 0;
+            let bg_win_en = if self.cgb_game { true } else { bg_en };
+            let win_en = bg_win_en && self.lcdc & 0x20 != 0;
+            let spr_en = self.lcdc & 0x02 != 0;
+            let _spr_dbl = self.lcdc & 0x04 != 0;
+
             let mut pixel = 0xFF_FF_FF_FF;
             let mut bg_color = 0u8;
 
             // BG layer (white when disabled)
             let mut bg_priority = false;
-            if bg_win_enabled {
+            if bg_win_en {
                 let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
                 let (p, c, prio) = self.read_bg_pixel(scroll_x, scroll_y);
@@ -325,7 +387,7 @@ impl GbcPpu {
             }
 
             // Window layer (overlays BG when enabled and within window area)
-            if window_enabled {
+            if win_en {
                 let wx = self.wx.wrapping_sub(7) as i16;
                 let wy = self.wy as i16;
                 if x as i16 >= wx && (ly as i16) >= wy {
@@ -337,8 +399,8 @@ impl GbcPpu {
                 }
             }
 
-            // Sprite layer (visible even when BG/Window are disabled)
-            if sprite_enabled {
+            // Sprite layer
+            if spr_en {
                 // Resolve OBJ pixel (highest priority non-transparent), then
                 // check behind_bg. Per spec: if the winning OBJ pixel has
                 // behind_bg set, the sprite is hidden — do NOT fall through
@@ -349,10 +411,11 @@ impl GbcPpu {
                     let sx = x as i16 - spr.x;
                     if (0..8).contains(&sx) {
                         let tile_x = if spr.x_flip { 7 - sx as u8 } else { sx as u8 };
+                        let rel_y = (ly as i16 - spr.y) as u16;
                         let tile_y = if spr.y_flip {
-                            (sprite_height - 1) - (ly as i16 - spr.y) as u8
+                            (sprite_height as u16 - 1).saturating_sub(rel_y) as u8
                         } else {
-                            (ly as i16 - spr.y) as u8
+                            rel_y as u8
                         };
                         let tile = if sprite_double {
                             spr.tile & 0xFE | if tile_y >= 8 { 1 } else { 0 }
@@ -396,6 +459,7 @@ impl GbcPpu {
 
             self.frame_buffer[base + x] = pixel;
         }
+        self.mid_events.clear();
     }
 
     fn read_tile_pixel(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool) -> u8 {
@@ -681,6 +745,16 @@ impl GbcPpu {
     }
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
+        // Track mid-scanline changes during Mode 3 (pixel transfer)
+        match addr {
+            0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B => {
+                if self.is_mode3() {
+                    let px = self.mode3_pixel_x();
+                    self.mid_events.push((px, addr, value));
+                }
+            }
+            _ => {}
+        }
         match addr {
             0xFF40 => self.lcdc = value,
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
@@ -962,7 +1036,7 @@ mod tests {
     #[test]
     fn stat_mode_is_0_during_hblank() {
         let mut p = ppu();
-        let _ = p.step(70);
+        let _ = p.step(260);
         assert_eq!(p.read_register(0xFF41) & 0x03, 0);
     }
 
@@ -994,7 +1068,7 @@ mod tests {
         p.write_register(0xFF47, 0xE4);
         p.write_vram(0x8000, 0xFF);
         p.write_vram(0x8001, 0xFF);
-        for _ in 0..17 {
+        for _ in 0..65 {
             p.step(4);
         }
         let pixel = p.debug_pixel(0, 0);
@@ -1008,11 +1082,11 @@ mod tests {
     #[test]
     fn render_full_scanline_default_vram() {
         let mut p = ppu();
-        // Step through a full scanline (114 T-cycles at 4 T/step)
-        for _ in 0..29 {
+        // Step through a full scanline (456 T-cycles at 4 T/step = 114 steps)
+        for _ in 0..115 {
             p.step(4);
         }
-        // After 116 T-cycles (29*4=116), ly=1, first scanline (ly=0) was rendered
+        // After 460 T-cycles (115*4=460), ly=1, first scanline (ly=0) was rendered
         // Since VRAM is all zeros, all pixels should be white (color 0, shade 0)
         let pixel = p.debug_pixel(0, 0);
         eprintln!(
@@ -1025,8 +1099,8 @@ mod tests {
     #[test]
     fn render_full_frame_scanlines() {
         let mut p = ppu();
-        // Step through a full frame (154 scanlines * 114 T-cycles / 4 T/step ≈ 4389 steps)
-        for _ in 0..5000 {
+        // Step through a full frame (154 scanlines * 456 T-cycles / 4 T/step ≈ 17556 steps)
+        for _ in 0..18000 {
             p.step(4);
         }
         // Check pixels at various positions
