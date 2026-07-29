@@ -1,6 +1,0 @@
-INCLUDE "src/print/PrintCharacter.asm"
-INCLUDE "src/print/PrintDecimal.asm"
-INCLUDE "src/print/PrintHex.asm"
-INCLUDE "src/print/PrintNewLine.asm"
-INCLUDE "src/print/PrintString.asm"
-INCLUDE "src/print/ResetCursor.asm"
