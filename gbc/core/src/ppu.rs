@@ -377,7 +377,9 @@ impl GbcPpu {
         let r8 = (r << 3) | (r >> 2);
         let g8 = (g << 3) | (g >> 2);
         let b8 = (b << 3) | (b >> 2);
-        (r8 << 16) | (g8 << 8) | (b8 << 0) | 0xFF000000
+        // render() extracts: R=(pixel>>24), G=(pixel>>16), B=(pixel>>8), A=pixel
+        // So pixel format is 0xRRGGBBAA
+        (r8 << 24) | (g8 << 16) | (b8 << 8) | 0x000000FF
     }
 
     /// Read tile pixel with CGB VRAM bank support.
