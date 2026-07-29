@@ -54,8 +54,13 @@ pub fn run_case(
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
-    let is_cgb = model != GbcModel::Dmg;
-    bus.set_cgb_mode(is_cgb);
+    // CGB mode depends on HARDWARE (requested model), not effective model.
+    // A CGB running a DMG-only ROM still applies boot ROM palettes.
+    let hw_is_cgb = match case.model {
+        super::manifest::GbcModel::Cgb | super::manifest::GbcModel::Agb => true,
+        super::manifest::GbcModel::Dmg => false,
+    };
+    bus.set_cgb_mode(hw_is_cgb);
     let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 
