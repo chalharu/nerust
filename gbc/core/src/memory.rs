@@ -45,6 +45,12 @@ pub struct GbcMemoryBus {
     /// before this step. Set by the main loop before each cpu.step() call.
     /// Used by PPU write_register for sub-M-cycle mode3 pixel_x estimation.
     pub(crate) cpu_cycle_offset: u32,
+
+    /// Double-speed PPU toggle: alternates every T-cycle to halve the
+    /// effective PPU rate in double-speed mode.
+    ppu_ds_toggle: bool,
+    /// DMA transfer sub-cycle counter: 1 byte per 4 T-cycles.
+    dma_tcounter: u8,
 }
 
 impl GbcMemoryBus {
@@ -74,6 +80,8 @@ impl GbcMemoryBus {
             hdma4: 0xFF,
             hdma5: 0xFF,
             cpu_cycle_offset: 0,
+            ppu_ds_toggle: false,
+            dma_tcounter: 0,
         }
     }
 
@@ -184,14 +192,30 @@ impl GbcMemoryBus {
 
     // ── step_devices ─────────────────────────────────────────
 
+    /// Advance all devices by 4 T-cycles (1 M-cycle).
     pub fn step_devices(&mut self, cycles: u32) -> bool {
+        let mut frame_done = false;
+        for _ in 0..cycles {
+            let done = self.step_tcycle();
+            if done { frame_done = true; }
+        }
+        frame_done
+    }
+
+    /// Advance all devices by 1 T-cycle.
+    /// Returns true if a PPU frame completed during this cycle.
+    pub fn step_tcycle(&mut self) -> bool {
         // PPU and APU run at absolute speed (4.19MHz base), unaffected by
-        // double-speed mode. In double-speed, CPU is 2x faster so these
-        // devices see half the T-cycles per step_devices call.
+        // double-speed mode. In double-speed, CPU is 2x faster so PPU/APU
+        // advance by 0 on even T-cycles and 1 on odd T-cycles.
+        // We approximate by advancing 1 every other cycle in double speed
+        // using the cycle counter.
         let video_cycles = if self.double_speed {
-            cycles / 2
+            // Track sub-single-speed cycles via a toggle
+            self.ppu_ds_toggle ^= true;
+            if self.ppu_ds_toggle { 1 } else { 0 }
         } else {
-            cycles
+            1
         };
 
         let ppu_res = self.ppu.step(video_cycles);
@@ -204,23 +228,28 @@ impl GbcMemoryBus {
 
         self.apu.step(video_cycles);
 
-        // Timer, DMA, and Serial run at CPU speed (speed up in double mode)
-        let timer_res = self.timer.step(cycles);
+        // Timer advances at CPU speed
+        let timer_res = self.timer.step(1);
         if timer_res.overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
 
+        // DMA: 1 byte transfer every 4 T-cycles
         if self.dma.active() {
-            let transfer_cycles = cycles as usize / 4;
-            for _ in 0..transfer_cycles {
+            self.dma_tcounter += 1;
+            if self.dma_tcounter >= 4 {
+                self.dma_tcounter = 0;
                 let (src, offset) = self.dma.transfer_step();
                 let byte = self.read_raw(src.wrapping_add(offset as u16));
                 self.ppu.write_oam(offset, byte);
                 if !self.dma.active() {
-                    break;
+                    // DMA just completed; serial may start
                 }
             }
         }
+
+        // Serial advances at CPU speed (transfer timing only via SC writes)
+        // No periodic step needed — handled by write_sc above.
 
         ppu_res.frame_done
     }
