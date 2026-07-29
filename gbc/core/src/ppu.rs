@@ -132,8 +132,9 @@ struct Sprite {
     }
 
 impl GbcPpu {
-    /// Current pixel position being rendered during Mode 3 (0-159).
-    /// Empirical: px = mc - 79 places transitions at expected positions.
+    /// Current pixel position during Mode 3 (0-159).
+    /// Empirical: px = mc - 79 (calibrated against mealybug BGP test).
+    /// Works with 4 T-cycle mode_clock + event_count alternation.
     fn mode3_pixel_x(&self) -> u8 {
         if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
@@ -189,25 +190,16 @@ impl GbcPpu {
         while self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.ly = self.ly.wrapping_add(1);
-            // LY changed → allow new LYC=LY match
             self.lyc_matched_ly = 0;
-
-            if self.ly >= VBLANK_START {
-                vblank = true;
-            }
-
+            if self.ly >= VBLANK_START { vblank = true; }
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
                 self.frame_complete = true;
                 self.window_line = 0;
             }
-
             self.check_lyc(&mut lcd_stat);
         }
 
-        // Fire STAT interrupt only when entering a new mode, not repeatedly.
-        // This matches real hardware behavior: STAT interrupt fires once per
-        // mode transition, not continuously during a mode.
         let stat_mode_val = match current_mode {
             PpuMode::HBlank => 0,
             PpuMode::VBlank => 1,
@@ -220,22 +212,12 @@ impl GbcPpu {
         self.check_lyc(&mut lcd_stat);
 
         if mode_changed {
-            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 {
-                lcd_stat = true;
-            }
-            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 {
-                lcd_stat = true;
-            }
-            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 {
-                lcd_stat = true;
-            }
+            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 { lcd_stat = true; }
+            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 { lcd_stat = true; }
+            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 { lcd_stat = true; }
         }
 
-        PpuStepResult {
-            frame_done: self.frame_complete,
-            lcd_stat,
-            vblank,
-        }
+        PpuStepResult { frame_done: self.frame_complete, lcd_stat, vblank }
     }
 
     pub fn key0(&self) -> u8 { self.key0 }
