@@ -142,6 +142,9 @@ impl GbcPpu {
             }
 
             self.check_lyc(&mut lcd_stat);
+            if self.ly < VBLANK_START {
+                self.render_scanline();
+            }
         }
 
         let mode_val = match current_mode {
@@ -210,12 +213,6 @@ impl GbcPpu {
         let sprite_height = if sprite_double { 16 } else { 8 };
 
         let base = ly * 160;
-        if !bg_enabled && !window_enabled {
-            for x in 0..160 {
-                self.frame_buffer[base + x] = 0xFF_FF_FF_FF;
-            }
-            return;
-        }
 
         // Collect sprites for this scanline
         let mut sprites: Vec<Sprite> = Vec::new();
@@ -233,7 +230,11 @@ impl GbcPpu {
                         y: sprite_top,
                         y_flip: flags & 0x40 != 0,
                         x_flip: flags & 0x20 != 0,
-                        palette: if flags & 0x10 != 0 { self.obp1 } else { self.obp0 },
+                        palette: if flags & 0x10 != 0 {
+                            self.obp1
+                        } else {
+                            self.obp0
+                        },
                         behind_bg: flags & 0x80 != 0,
                     });
                     if sprites.len() >= 10 {
@@ -248,6 +249,7 @@ impl GbcPpu {
             let mut pixel = 0xFF_FF_FF_FF;
             let mut bg_color = 0u8;
 
+            // BG layer (white when disabled)
             if bg_enabled {
                 let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
@@ -256,6 +258,7 @@ impl GbcPpu {
                 bg_color = c;
             }
 
+            // Window layer (overlays BG when enabled and within window area)
             if window_enabled {
                 let wx = self.wx.wrapping_sub(7) as i16;
                 let wy = self.wy as i16;
@@ -267,6 +270,7 @@ impl GbcPpu {
                 }
             }
 
+            // Sprite layer (visible even when BG/Window are disabled)
             if sprite_enabled {
                 for spr in sprites.iter().rev() {
                     let sx = x as i16 - spr.x;
