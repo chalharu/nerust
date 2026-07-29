@@ -49,6 +49,11 @@ pub struct GbcPpu {
     frame_complete: bool,
     frame_buffer: [u32; 160 * 144],
     window_line: u8,
+    /// Prevents LYC=LY STAT interrupt double-fire.
+    /// Set to current ly when a LYC=LY match fires and bit 6 is enabled.
+    /// Cleared when ly changes (while loop). This ensures the handler's
+    /// reti won't dispatch to the wrong handler address (HL was updated).
+    lyc_matched_ly: u8,
 }
 
 impl Default for GbcPpu {
@@ -79,6 +84,7 @@ impl Default for GbcPpu {
             frame_complete: false,
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
             window_line: 0,
+            lyc_matched_ly: 0,
         }
     }
 }
@@ -136,6 +142,8 @@ impl GbcPpu {
         while self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.ly = self.ly.wrapping_add(1);
+            // LY changed → allow new LYC=LY match
+            self.lyc_matched_ly = 0;
 
             if self.ly >= VBLANK_START {
                 vblank = true;
@@ -180,7 +188,12 @@ impl GbcPpu {
         let coincide = self.ly == self.lyc;
         let bit2 = if coincide { 0x04 } else { 0x00 };
         self.stat = (self.stat & !0x04) | bit2;
-        if coincide && (self.stat & 0x40) != 0 {
+        // Fire LYC=LY interrupt only once per LY change.
+        // Without this guard, line-159 re-fires the same match before
+        // the handler's ldh [rLYC], a executes, causing a second dispatch
+        // after reti — but HL was already updated to the NEXT handler.
+        if coincide && (self.stat & 0x40) != 0 && self.ly != self.lyc_matched_ly {
+            self.lyc_matched_ly = self.ly;
             *lcd_stat = true;
         }
     }
