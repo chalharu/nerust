@@ -72,8 +72,11 @@ pub fn run_case(
     let mut screenshots: Vec<String> = Vec::new();
     for (event_idx, event) in case.events.iter().enumerate() {
         for _ in 0..event.cycles {
-            cpu.step(&mut bus);
-            bus.step_devices(4);
+            // T-cycle synchronized: CPU + PPU advance at 1 T-cycle per call.
+            // 4 calls = 1 M-cycle for CPU, 4 T-cycles for PPU.
+            for _ in 0..4 {
+                bus.step_tcycle(&mut cpu);
+            }
         }
 
         // Compute PNG screenshot data (for both file save and hash check)

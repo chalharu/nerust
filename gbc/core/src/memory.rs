@@ -1,6 +1,7 @@
 use crate::{
     apu::GbcApu,
     cartridge::Cartridge,
+    cpu_core::{Lr35902Cpu, Phase},
     dma::DmaController,
     interrupt::{InterruptController, InterruptKind},
     ppu::GbcPpu,
@@ -197,49 +198,28 @@ impl GbcMemoryBus {
 
     // ── step_devices ─────────────────────────────────────────
 
-    /// Advance all devices by 4 T-cycles (1 M-cycle).
+    /// Advance all devices by 4 T-cycles (1 M-cycle) — LEGACY interface.
+    /// Does NOT advance the CPU (caller must manage cpu separately).
+    /// Used by test code that creates its own PPU and steps it directly.
     pub fn step_devices(&mut self, cycles: u32) -> bool {
         let mut frame_done = false;
         for _ in 0..cycles {
-            let done = self.step_tcycle();
+            let done = self.step_tcycle_dummy();
             if done { frame_done = true; }
         }
         frame_done
     }
 
-    /// Advance all devices by 1 T-cycle.
-    /// Returns true if a PPU frame completed during this cycle.
-    pub fn step_tcycle(&mut self) -> bool {
-        // PPU and APU run at absolute speed (4.19MHz base), unaffected by
-        // double-speed mode. In double-speed, CPU is 2x faster so PPU/APU
-        // advance by 0 on even T-cycles and 1 on odd T-cycles.
-        // We approximate by advancing 1 every other cycle in double speed
-        // using the cycle counter.
-        let video_cycles = if self.double_speed {
-            // Track sub-single-speed cycles via a toggle
-            self.ppu_ds_toggle ^= true;
-            if self.ppu_ds_toggle { 1 } else { 0 }
-        } else {
-            1
-        };
-
-        let ppu_res = self.ppu.step(video_cycles);
-        if ppu_res.lcd_stat {
-            self.interrupt.request(InterruptKind::LcdStat);
-        }
-        if ppu_res.vblank {
-            self.interrupt.request(InterruptKind::VBlank);
-        }
-
-        self.apu.step(video_cycles);
-
-        // Timer advances at CPU speed
-        let timer_res = self.timer.step(1);
-        if timer_res.overflow {
-            self.interrupt.request(InterruptKind::Timer);
-        }
-
-        // DMA: 1 byte transfer every 4 T-cycles
+    /// Advance PPU + timer + DMA by 1 T-cycle (no CPU advancement).
+    /// Used by legacy callers that manage the CPU separately.
+    fn step_tcycle_dummy(&mut self) -> bool {
+        self.tick = self.tick.wrapping_add(1);
+        let video = 1u32;
+        let ppu_res = self.ppu.step(video);
+        if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
+        if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
+        self.apu.step(video);
+        if self.timer.step(1).overflow { self.interrupt.request(InterruptKind::Timer); }
         if self.dma.active() {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
@@ -247,15 +227,41 @@ impl GbcMemoryBus {
                 let (src, offset) = self.dma.transfer_step();
                 let byte = self.read_raw(src.wrapping_add(offset as u16));
                 self.ppu.write_oam(offset, byte);
-                if !self.dma.active() {
-                    // DMA just completed; serial may start
-                }
             }
         }
+        ppu_res.frame_done
+    }
 
-        // Serial advances at CPU speed (transfer timing only via SC writes)
-        // No periodic step needed — handled by write_sc above.
+    /// Advance ALL devices (including CPU) by 1 T-cycle.
+    /// Call this 4 times per CPU M-cycle for proper T-cycle synchronization.
+    /// Returns true if a PPU frame completed.
+    pub fn step_tcycle(&mut self, cpu: &mut Lr35902Cpu) -> bool {
+        self.tick = self.tick.wrapping_add(1);
+        let t1 = self.tick % 4;
+        self.cpu_cycle_offset = t1 as u32;
 
+        let video = 1u32;
+        let ppu_res = self.ppu.step(video);
+        if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
+        if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
+        self.apu.step(video);
+        if self.timer.step(1).overflow { self.interrupt.request(InterruptKind::Timer); }
+        if self.dma.active() {
+            self.dma_tcounter += 1;
+            if self.dma_tcounter >= 4 {
+                self.dma_tcounter = 0;
+                let (src, offset) = self.dma.transfer_step();
+                let byte = self.read_raw(src.wrapping_add(offset as u16));
+                self.ppu.write_oam(offset, byte);
+            }
+        }
+        // CPU runs every 4th T-cycle (end of M-cycle)
+        if t1 == 3 {
+            // cpu_cycle_offset is already set to 3 (T4 write for DMG).
+            // cpu.step() processes 1 full M-cycle; write timing is
+            // adjusted by mode3_pixel_x via cpu_cycle_offset.
+            cpu.step(self);
+        }
         ppu_res.frame_done
     }
 
