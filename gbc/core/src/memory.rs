@@ -91,7 +91,7 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt.read_if(),
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF4B | 0xFF4F => self.ppu.read_register(addr),
+             0xFF40..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
             0xFF50 => {
                 if self.boot_rom_mapped {
                     0xFE
@@ -149,7 +149,7 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F => {
+             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
                 self.ppu.write_register(addr, value);
             }
             0xFF46 => self.dma.start(value),

@@ -78,7 +78,7 @@ impl Default for GbcPpu {
             bgpd: 0,
             obpi: 0,
             obpd: 0,
-            opri: 0,
+            opri: 1,
             vram: [0; 0x4000],
             oam: [0; 160],
             bg_palette: [0; 32],
@@ -228,8 +228,10 @@ impl GbcPpu {
 
         let ly = self.ly as usize;
         let bg_enabled = self.lcdc & 0x01 != 0;
-        // LCDC.0 controls BOTH BG and Window on DMG; when 0, both are white.
-        let bg_win_enabled = bg_enabled;
+        // DMG: LCDC.0=0 disables BG/Window entirely (white).
+        // CGB: LCDC.0=0 only disables BG priority (sprites always on top),
+        //      BG/Window still render.
+        let bg_win_enabled = if self.cgb_mode { true } else { bg_enabled };
         let window_enabled = bg_win_enabled && self.lcdc & 0x20 != 0;
         let sprite_enabled = self.lcdc & 0x02 != 0;
         let sprite_double = self.lcdc & 0x04 != 0;
@@ -274,9 +276,17 @@ impl GbcPpu {
                     }
                 }
             }
+            // $FF6C: Object Priority Mode
+            // 0: CGB mode (X coordinate priority)
+            // 1: DMG mode (OAM index priority)
+            let dmg_priority = self.cgb_mode && (self.opri & 0x01) != 0;
             sprites.sort_by(|a, b| {
-                a.x.cmp(&b.x)
-                    .then_with(|| a.oam_index.cmp(&b.oam_index))
+                if dmg_priority {
+                    a.oam_index.cmp(&b.oam_index)
+                } else {
+                    a.x.cmp(&b.x)
+                        .then_with(|| a.oam_index.cmp(&b.oam_index))
+                }
             });
         }
 
@@ -285,12 +295,14 @@ impl GbcPpu {
             let mut bg_color = 0u8;
 
             // BG layer (white when disabled)
+            let mut bg_priority = false;
             if bg_win_enabled {
                 let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
-                let (p, c) = self.read_bg_pixel(scroll_x, scroll_y);
+                let (p, c, prio) = self.read_bg_pixel(scroll_x, scroll_y);
                 pixel = p;
                 bg_color = c;
+                bg_priority = prio;
             }
 
             // Window layer (overlays BG when enabled and within window area)
@@ -299,9 +311,10 @@ impl GbcPpu {
                 let wy = self.wy as i16;
                 if x as i16 >= wx && (ly as i16) >= wy {
                     let win_y = self.window_line.wrapping_sub(1);
-                    let (p, c) = self.read_window_pixel((x as i16 - wx) as u8, win_y);
+                    let (p, c, prio) = self.read_window_pixel((x as i16 - wx) as u8, win_y);
                     pixel = p;
                     bg_color = c;
+                    bg_priority = prio;
                 }
             }
 
@@ -327,7 +340,12 @@ impl GbcPpu {
                         } else {
                             spr.tile
                         };
-                        let c = self.read_tile_pixel(tile, tile_x, tile_y % 8, false);
+                        let c = if self.cgb_mode {
+                            let bank = ((spr.oam_flags >> 3) & 0x01) as usize;
+                            self.read_tile_pixel_bank(tile, tile_x, tile_y % 8, false, bank)
+                        } else {
+                            self.read_tile_pixel(tile, tile_x, tile_y % 8, false)
+                        };
                         if c != 0 {
                             let pixel = if self.cgb_mode {
                                 // CGB: use OAM bits 2-0 for OBJ palette (0-7)
@@ -344,7 +362,10 @@ impl GbcPpu {
                     }
                 }
                 if let Some(sp) = obj_pixel {
-                    if !obj_behind_bg || bg_color == 0 {
+                    // CGB master priority: LCDC.0=0 → sprites always on top
+                    if self.cgb_mode && self.lcdc & 0x01 == 0 {
+                        pixel = sp;
+                    } else if (!bg_priority && !obj_behind_bg) || bg_color == 0 {
                         pixel = sp;
                     }
                 }
@@ -493,7 +514,7 @@ impl GbcPpu {
         ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
     }
 
-    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> (u32, u8) {
+    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> (u32, u8, bool) {
         let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
             0x9C00
         } else {
@@ -513,19 +534,20 @@ impl GbcPpu {
             let bank = ((attr >> 3) & 0x01) as usize; // VRAM bank
             let hflip = (attr >> 5) & 0x01 != 0;
             let vflip = (attr >> 6) & 0x01 != 0;
+            let bg_priority = (attr >> 7) & 0x01 != 0; // bit 7: BG-to-OAM priority
             let tile_x_eff = if hflip { 7 - (scroll_x % 8) } else { scroll_x % 8 };
             let tile_y_eff = if vflip { 7 - (scroll_y % 8) } else { scroll_y % 8 };
             let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
-            (Self::cgb_color_to_pixel(color15), color)
+            (Self::cgb_color_to_pixel(color15), color, bg_priority)
         } else {
             let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
             let shade = (self.bgp >> (color * 2)) & 0x03;
-            (Self::shade_to_pixel(shade), color)
+            (Self::shade_to_pixel(shade), color, false)
         }
     }
 
-    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8) {
+    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8, bool) {
         let tile_map_base: u16 = if self.lcdc & 0x40 != 0 {
             0x9C00
         } else {
@@ -544,15 +566,16 @@ impl GbcPpu {
             let bank = ((attr >> 3) & 0x01) as usize;
             let hflip = (attr >> 5) & 0x01 != 0;
             let vflip = (attr >> 6) & 0x01 != 0;
+            let bg_priority = (attr >> 7) & 0x01 != 0;
             let tile_x_eff = if hflip { 7 - (win_x % 8) } else { win_x % 8 };
             let tile_y_eff = if vflip { 7 - (win_y % 8) } else { win_y % 8 };
             let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
-            (Self::cgb_color_to_pixel(color15), color)
+            (Self::cgb_color_to_pixel(color15), color, bg_priority)
         } else {
             let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
             let shade = (self.bgp >> (color * 2)) & 0x03;
-            (Self::shade_to_pixel(shade), color)
+            (Self::shade_to_pixel(shade), color, false)
         }
     }
 
