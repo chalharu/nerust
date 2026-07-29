@@ -138,12 +138,20 @@ impl GbcPpu {
     ///   eff = mc + 1(pending) + cpu_cycle_offset
     ///   px  = eff - 104 + (event_count % 2)
     ///   104 = 80(OAM) + 12(fetch) - 5(pipeline) + 17(dispatch adjustment)
+    /// Pixel position in Mode 3 (0-159).
+    /// Tile-based pipeline: 8 pixels per tile, 12 T-cycles per tile
+    /// (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 92.
+    /// px = ((eff - 92) / 12) * 8 + min((eff - 92) % 12, 8) + (count % 2)
     fn mode3_pixel_x(&self) -> u8 {
         if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
         let eff = self.mode_clock + 1 + self.cpu_cycle_offset;
-        let px = (eff as i32) - 104 + (self.event_count % 2) as i32;
+        let since_first = (eff as i32) - 92;
+        let tile = since_first / 12;
+        let in_tile = (since_first % 12).min(8);
+        let raw = tile * 8 + in_tile;
+        let px = raw.max(0) + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
