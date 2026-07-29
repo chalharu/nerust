@@ -102,11 +102,14 @@ impl GbcPpu {
         // Render scanline that was deferred from the previous step.
         // By now the CPU has processed LYC interrupts from step_devices,
         // so LCDC changes from handlers take effect for this render.
-        if let Some(render_ly) = self.pending_ly.take() {
-            if render_ly < VBLANK_START && self.lcdc & 0x80 != 0 {
-                self.render_scanline_for_ly(render_ly);
-            }
+        if let Some(render_ly) = self
+            .pending_ly
+            .take()
+            .filter(|&ly| ly < VBLANK_START && self.lcdc & 0x80 != 0)
+        {
+            self.render_scanline_for_ly(render_ly);
         }
+
 
         if self.lcdc & 0x80 == 0 {
             self.ly = 0;
