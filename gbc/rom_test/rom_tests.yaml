@@ -172,7 +172,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: "71288126"
+          hash: "C1453957"
         memory: []
         pad: []
 
@@ -187,7 +187,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: "7ADD5A3B"
+          hash: "3CC9206C"
         memory: []
         pad: []
 
@@ -202,6 +202,6 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: "D5DCC1B1"
+          hash: "31BF4BB3"
         memory: []
         pad: []
