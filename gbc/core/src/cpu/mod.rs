@@ -14,13 +14,17 @@ impl Lr35902Cpu {
         bus.cpu_cycle_offset = match self.phase() {
             Phase::FetchOpcode => 0,
             Phase::ExecuteOpcode { step, .. } => (step as u32) * 4,
+            Phase::InterruptDispatch { .. } => 0,
         };
         if self.ime_delayed() {
             bus.set_ime(true);
             self.set_ime_delayed(false);
         }
         if bus.is_halted_or_stopped() {
-            self.check_interrupts(bus);
+            if self.check_interrupts(bus) {
+                // Dispatch started (5 M-cycles), will continue in next steps
+                return;
+            }
             if bus.is_halted_or_stopped() {
                 return;
             }
@@ -28,7 +32,11 @@ impl Lr35902Cpu {
 
         match self.phase() {
             Phase::FetchOpcode => {
-                self.check_interrupts(bus);
+                if self.check_interrupts(bus) {
+                    // Dispatch takes 5 M-cycles. Phase changed to
+                    // InterruptDispatch, return to consume them.
+                    return;
+                }
                 let op = bus.read(self.registers().pc());
                 let pc = self.registers().pc();
                 self.registers_mut().set_pc(pc.wrapping_add(1));
@@ -38,7 +46,6 @@ impl Lr35902Cpu {
                 self.set_operand_count(0);
 
                 let h = TABLE[op as usize];
-                // step=0 signals "fetch decode" to the handler
                 match h(self, bus, 0) {
                     StepResult::Exit => {}
                     StepResult::Continue => {
@@ -58,19 +65,33 @@ impl Lr35902Cpu {
                     });
                 }
             },
+            Phase::InterruptDispatch { remaining } => {
+                if remaining <= 1 {
+                    self.set_phase(Phase::FetchOpcode);
+                } else {
+                    self.set_phase(Phase::InterruptDispatch {
+                        remaining: remaining - 1,
+                    });
+                }
+            }
         }
     }
 
-    fn check_interrupts(&mut self, bus: &mut GbcMemoryBus) {
+    /// Check for pending interrupts. Returns true if dispatch was started
+    /// (5 M-cycle InterruptDispatch phase set up).
+    fn check_interrupts(&mut self, bus: &mut GbcMemoryBus) -> bool {
         if bus.ime_enabled()
             && let Some(kind) = bus.acknowledge_interrupt()
         {
             dispatch_interrupt(self.registers_mut(), kind, bus);
+            self.set_phase(Phase::InterruptDispatch { remaining: 5 });
+            true
         } else {
             // Even with IME=0, acknowledge_interrupt may clear HALT state
             // when an interrupt is pending (test ROMs expect HALT wake
             // with IME=0 when timer overflow sets IF).
             bus.acknowledge_interrupt();
+            false
         }
     }
 }
