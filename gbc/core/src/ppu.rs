@@ -57,6 +57,7 @@ pub struct GbcPpu {
     /// CGB mode: enables VRAM bank 1, 15-bit RGB palettes, and
     /// background map attributes (palette, bank, flip, priority).
     pub cgb_mode: bool,
+    pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
 }
 
 impl Default for GbcPpu {
@@ -89,6 +90,7 @@ impl Default for GbcPpu {
             window_line: 0,
             lyc_matched_ly: 0,
             cgb_mode: false,
+            cgb_game: false,
         }
     }
 }
@@ -231,7 +233,7 @@ impl GbcPpu {
         // DMG: LCDC.0=0 disables BG/Window entirely (white).
         // CGB: LCDC.0=0 only disables BG priority (sprites always on top),
         //      BG/Window still render.
-        let bg_win_enabled = if self.cgb_mode { true } else { bg_enabled };
+        let bg_win_enabled = if self.cgb_game { true } else { bg_enabled };
         let window_enabled = bg_win_enabled && self.lcdc & 0x20 != 0;
         let sprite_enabled = self.lcdc & 0x02 != 0;
         let sprite_double = self.lcdc & 0x04 != 0;
@@ -277,9 +279,9 @@ impl GbcPpu {
                 }
             }
             // $FF6C: Object Priority Mode
-            // 0: CGB mode (X coordinate priority)
-            // 1: DMG mode (OAM index priority)
-            let dmg_priority = self.cgb_mode && (self.opri & 0x01) != 0;
+            // 0 (CGB): sort by X ascending, then OAM index ascending
+            // 1 (DMG): sort by OAM index ascending only
+            let dmg_priority = self.cgb_game && (self.opri & 0x01) != 0;
             sprites.sort_by(|a, b| {
                 if dmg_priority {
                     a.oam_index.cmp(&b.oam_index)
@@ -363,7 +365,7 @@ impl GbcPpu {
                 }
                 if let Some(sp) = obj_pixel {
                     // CGB master priority: LCDC.0=0 → sprites always on top
-                    if self.cgb_mode && self.lcdc & 0x01 == 0 {
+                    if self.cgb_game && self.lcdc & 0x01 == 0 {
                         pixel = sp;
                     } else if (!bg_priority && !obj_behind_bg) || bg_color == 0 {
                         pixel = sp;

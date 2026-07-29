@@ -54,14 +54,17 @@ pub fn run_case(
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
-    // CGB mode requires both CGB HARDWARE and a CGB-aware ROM.
-    // DMG-only games on CGB hardware must render identically to DMG.
+    // CGB mode depends on HARDWARE (requested model), not effective model.
+    // A CGB running a DMG-only ROM still applies boot ROM palettes.
     let hw_is_cgb = match case.model {
         super::manifest::GbcModel::Cgb | super::manifest::GbcModel::Agb => true,
         super::manifest::GbcModel::Dmg => false,
     };
     let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-    bus.set_cgb_mode(hw_is_cgb && rom_is_cgb);
+    bus.set_cgb_mode(hw_is_cgb);
+    // CGB-only rendering features (bg_priority, master priority, etc.)
+    // only activate when the GAME is CGB-native, not just the hardware.
+    bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
     let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 
