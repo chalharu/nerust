@@ -244,6 +244,10 @@ impl GbcMemoryBus {
         self.interrupt.is_halted_or_stopped()
     }
 
+    pub fn set_cgb_mode(&mut self, enabled: bool) {
+        self.ppu.cgb_mode = enabled;
+    }
+
     pub fn is_dma_active(&self) -> bool {
         self.dma.active()
     }

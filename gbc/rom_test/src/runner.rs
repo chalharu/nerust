@@ -54,6 +54,8 @@ pub fn run_case(
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
+    let is_cgb = model != GbcModel::Dmg;
+    bus.set_cgb_mode(is_cgb);
     let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 

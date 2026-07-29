@@ -54,6 +54,9 @@ pub struct GbcPpu {
     /// Cleared when ly changes (while loop). This ensures the handler's
     /// reti won't dispatch to the wrong handler address (HL was updated).
     lyc_matched_ly: u8,
+    /// CGB mode: enables VRAM bank 1, 15-bit RGB palettes, and
+    /// background map attributes (palette, bank, flip, priority).
+    pub cgb_mode: bool,
 }
 
 impl Default for GbcPpu {
@@ -85,6 +88,7 @@ impl Default for GbcPpu {
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
             window_line: 0,
             lyc_matched_ly: 0,
+            cgb_mode: false,
         }
     }
 }
@@ -364,6 +368,34 @@ impl GbcPpu {
         }
     }
 
+    /// Convert 15-bit CGB color (rrrrrgggggbbbbb) to RGBA 32-bit.
+    fn cgb_color_to_pixel(color: u16) -> u32 {
+        let r = ((color >> 0) & 0x1F) as u32;
+        let g = ((color >> 5) & 0x1F) as u32;
+        let b = ((color >> 10) & 0x1F) as u32;
+        // 5-bit to 8-bit: (value << 3) | (value >> 2)
+        let r8 = (r << 3) | (r >> 2);
+        let g8 = (g << 3) | (g >> 2);
+        let b8 = (b << 3) | (b >> 2);
+        (r8 << 16) | (g8 << 8) | (b8 << 0) | 0xFF000000
+    }
+
+    /// Read tile pixel with CGB VRAM bank support.
+    fn read_tile_pixel_bank(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool, bank: usize) -> u8 {
+        let tile_addr = if signed_tiles {
+            let signed_idx = tile_index as i8 as i16;
+            (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
+        } else {
+            0x8000u16 + tile_index as u16 * 16
+        };
+        let row_addr = tile_addr + (tile_y as u16) * 2;
+        let base = bank * 0x2000;
+        let low = self.vram[base + (row_addr as usize & 0x1FFF)];
+        let high = self.vram[base + ((row_addr + 1) as usize & 0x1FFF)];
+        let bit = 7 - tile_x;
+        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
+    }
+
     fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> (u32, u8) {
         let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
             0x9C00
@@ -374,10 +406,26 @@ impl GbcPpu {
         let tile_col = (scroll_x / 8) as u16;
         let tile_row = (scroll_y / 8) as u16;
         let map_addr = tile_map_base + tile_row * 32 + tile_col;
-        let tile_index = self.vram[map_addr as usize & 0x1FFF];
-        let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
-        let shade = (self.bgp >> (color * 2)) & 0x03;
-        (Self::shade_to_pixel(shade), color)
+        let map_idx = map_addr as usize & 0x1FFF;
+        let tile_index = self.vram[map_idx];
+
+        if self.cgb_mode {
+            // CGB: read attribute byte from VRAM bank 1 at same map address
+            let attr = self.vram[0x2000 + map_idx];
+            let pal = (attr & 0x07) as usize; // palette 0-7
+            let bank = ((attr >> 3) & 0x01) as usize; // VRAM bank
+            let hflip = (attr >> 5) & 0x01 != 0;
+            let vflip = (attr >> 6) & 0x01 != 0;
+            let tile_x_eff = if hflip { 7 - (scroll_x % 8) } else { scroll_x % 8 };
+            let tile_y_eff = if vflip { 7 - (scroll_y % 8) } else { scroll_y % 8 };
+            let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
+            let color15 = self.bg_palette[pal * 4 + color as usize];
+            (Self::cgb_color_to_pixel(color15), color)
+        } else {
+            let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            (Self::shade_to_pixel(shade), color)
+        }
     }
 
     fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8) {
@@ -390,10 +438,25 @@ impl GbcPpu {
         let tile_col = (win_x / 8) as u16;
         let tile_row = (win_y / 8) as u16;
         let map_addr = tile_map_base + tile_row * 32 + tile_col;
-        let tile_index = self.vram[map_addr as usize & 0x1FFF];
-        let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
-        let shade = (self.bgp >> (color * 2)) & 0x03;
-        (Self::shade_to_pixel(shade), color)
+        let map_idx = map_addr as usize & 0x1FFF;
+        let tile_index = self.vram[map_idx];
+
+        if self.cgb_mode {
+            let attr = self.vram[0x2000 + map_idx];
+            let pal = (attr & 0x07) as usize;
+            let bank = ((attr >> 3) & 0x01) as usize;
+            let hflip = (attr >> 5) & 0x01 != 0;
+            let vflip = (attr >> 6) & 0x01 != 0;
+            let tile_x_eff = if hflip { 7 - (win_x % 8) } else { win_x % 8 };
+            let tile_y_eff = if vflip { 7 - (win_y % 8) } else { win_y % 8 };
+            let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
+            let color15 = self.bg_palette[pal * 4 + color as usize];
+            (Self::cgb_color_to_pixel(color15), color)
+        } else {
+            let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            (Self::shade_to_pixel(shade), color)
+        }
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
