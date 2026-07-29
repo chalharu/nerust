@@ -48,6 +48,7 @@ pub struct GbcPpu {
     mode_clock: u32,
     frame_complete: bool,
     frame_buffer: [u32; 160 * 144],
+    window_line: u8,
 }
 
 impl Default for GbcPpu {
@@ -76,7 +77,8 @@ impl Default for GbcPpu {
             obj_palette: [0; 32],
             mode_clock: 0,
             frame_complete: false,
-            frame_buffer: [0; 160 * 144], // white
+            frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
+            window_line: 0,
         }
     }
 }
@@ -90,6 +92,7 @@ struct Sprite {
     x_flip: bool,
     palette: u8,
     behind_bg: bool,
+    oam_index: u8,
 }
 
 impl GbcPpu {
@@ -116,7 +119,9 @@ impl GbcPpu {
             PpuMode::VBlank
         } else {
             let t = self.mode_clock;
-            if t > T_CYCLES_OAM_SEARCH && t - cycles <= T_CYCLES_OAM_SEARCH {
+            if t > T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
+                && t - cycles <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
+            {
                 self.render_scanline();
             }
             if t <= T_CYCLES_OAM_SEARCH {
@@ -139,14 +144,10 @@ impl GbcPpu {
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
                 self.frame_complete = true;
-                // Clear frame buffer for new frame
-                self.frame_buffer.fill(0xFF_FF_FF_FF);
+                self.window_line = 0;
             }
 
             self.check_lyc(&mut lcd_stat);
-            if self.ly < VBLANK_START {
-                self.render_scanline();
-            }
         }
 
         let mode_val = match current_mode {
@@ -216,6 +217,13 @@ impl GbcPpu {
 
         let base = ly * 160;
 
+        if window_enabled
+            && ly as u8 >= self.wy
+            && (self.wx.wrapping_sub(7) as i16) < 168
+        {
+            self.window_line = self.window_line.wrapping_add(1);
+        }
+
         // Collect sprites for this scanline
         let mut sprites: Vec<Sprite> = Vec::new();
         if sprite_enabled {
@@ -238,13 +246,17 @@ impl GbcPpu {
                             self.obp0
                         },
                         behind_bg: flags & 0x80 != 0,
+                        oam_index: i as u8,
                     });
                     if sprites.len() >= 10 {
                         break;
                     }
                 }
             }
-            sprites.sort_by_key(|s| s.x);
+            sprites.sort_by(|a, b| {
+                a.x.cmp(&b.x)
+                    .then_with(|| a.oam_index.cmp(&b.oam_index))
+            });
         }
 
         for x in 0..160 {
@@ -265,8 +277,8 @@ impl GbcPpu {
                 let wx = self.wx.wrapping_sub(7) as i16;
                 let wy = self.wy as i16;
                 if x as i16 >= wx && (ly as i16) >= wy {
-                    let (p, c) =
-                        self.read_window_pixel((x as i16 - wx) as u8, (ly as i16 - wy) as u8);
+                    let win_y = self.window_line.wrapping_sub(1);
+                    let (p, c) = self.read_window_pixel((x as i16 - wx) as u8, win_y);
                     pixel = p;
                     bg_color = c;
                 }
@@ -274,7 +286,7 @@ impl GbcPpu {
 
             // Sprite layer (visible even when BG/Window are disabled)
             if sprite_enabled {
-                for spr in sprites.iter().rev() {
+                for spr in sprites.iter() {
                     let sx = x as i16 - spr.x;
                     if (0..8).contains(&sx) {
                         let tile_x = if spr.x_flip { 7 - sx as u8 } else { sx as u8 };
@@ -726,7 +738,7 @@ mod tests {
         p.write_register(0xFF47, 0xE4);
         p.write_vram(0x8000, 0xFF);
         p.write_vram(0x8001, 0xFF);
-        for _ in 0..6 {
+        for _ in 0..17 {
             p.step(4);
         }
         let pixel = p.debug_pixel(0, 0);
