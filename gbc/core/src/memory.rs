@@ -46,6 +46,10 @@ pub struct GbcMemoryBus {
     /// Used by PPU write_register for sub-M-cycle mode3 pixel_x estimation.
     pub(crate) cpu_cycle_offset: u32,
 
+    /// T-cycle accumulator for CPU/PPU synchronization.
+    /// Each step_tcycle() increments this; CPU runs every 4th T-cycle.
+    tick: u32,
+
     /// Double-speed PPU toggle: alternates every T-cycle to halve the
     /// effective PPU rate in double-speed mode.
     ppu_ds_toggle: bool,
@@ -80,6 +84,7 @@ impl GbcMemoryBus {
             hdma4: 0xFF,
             hdma5: 0xFF,
             cpu_cycle_offset: 0,
+            tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
         }

@@ -772,7 +772,14 @@ impl GbcPpu {
                     && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
                 {
                     let px = self.mode3_pixel_x();
-                    let adj_px = px + (self.event_count % 2);
+                    // SCX changes take effect at the next tile boundary
+                    // (8-pixel alignment for tile fetches).
+                    let tile_px = if addr == 0xFF43 {
+                        (px + 7) & !7
+                    } else {
+                        px
+                    };
+                    let adj_px = tile_px + (self.event_count % 2);
                     self.mid_events.push((adj_px.min(159), addr, value));
                     self.event_count = self.event_count.wrapping_add(1);
                 }
