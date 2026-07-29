@@ -125,16 +125,13 @@ struct Sprite {
 impl GbcPpu {
     /// Current pixel position being rendered during Mode 3 (0-159).
     /// Mode 3 starts at T_CYCLES_OAM_SEARCH (80 T-cycles).
-    /// Pixel X is rendered at T-cycle ~80 + 11 + X (11 T-cycles overhead).
-    /// pending_adj estimates the sub-step offset (0-3 T-cycles since last step).
+    /// Pixel X is rendered at approximately T-cycle 79 + X (empirical).
     fn mode3_pixel_x(&self) -> u8 {
-        const OVERHEAD: u32 = 11;
-        const PENDING: u32 = 2;
-        let effective = self.mode_clock + PENDING;
-        if self.ly >= VBLANK_START || effective <= T_CYCLES_OAM_SEARCH + OVERHEAD {
+        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        ((effective - (T_CYCLES_OAM_SEARCH + OVERHEAD)) as i32).clamp(0, 159) as u8
+        let px = self.mode_clock as i32 - 79;
+        px.clamp(0, 159) as u8
     }
 
     fn is_mode3(&self) -> bool {
