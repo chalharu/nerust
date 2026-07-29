@@ -210,7 +210,9 @@ impl GbcPpu {
 
         let ly = self.ly as usize;
         let bg_enabled = self.lcdc & 0x01 != 0;
-        let window_enabled = self.lcdc & 0x20 != 0;
+        // LCDC.0 controls BOTH BG and Window on DMG; when 0, both are white.
+        let bg_win_enabled = bg_enabled;
+        let window_enabled = bg_win_enabled && self.lcdc & 0x20 != 0;
         let sprite_enabled = self.lcdc & 0x02 != 0;
         let sprite_double = self.lcdc & 0x04 != 0;
         let sprite_height = if sprite_double { 16 } else { 8 };
@@ -264,7 +266,7 @@ impl GbcPpu {
             let mut bg_color = 0u8;
 
             // BG layer (white when disabled)
-            if bg_enabled {
+            if bg_win_enabled {
                 let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
                 let (p, c) = self.read_bg_pixel(scroll_x, scroll_y);
@@ -286,6 +288,12 @@ impl GbcPpu {
 
             // Sprite layer (visible even when BG/Window are disabled)
             if sprite_enabled {
+                // Resolve OBJ pixel (highest priority non-transparent), then
+                // check behind_bg. Per spec: if the winning OBJ pixel has
+                // behind_bg set, the sprite is hidden — do NOT fall through
+                // to lower-priority sprites.
+                let mut obj_pixel: Option<u32> = None;
+                let mut obj_behind_bg = false;
                 for spr in sprites.iter() {
                     let sx = x as i16 - spr.x;
                     if (0..8).contains(&sx) {
@@ -301,11 +309,17 @@ impl GbcPpu {
                             spr.tile
                         };
                         let c = self.read_tile_pixel(tile, tile_x, tile_y % 8, false);
-                        if c != 0 && (!spr.behind_bg || bg_color == 0) {
+                        if c != 0 {
                             let shade = (spr.palette >> (c * 2)) & 0x03;
-                            pixel = Self::shade_to_pixel(shade);
+                            obj_pixel = Some(Self::shade_to_pixel(shade));
+                            obj_behind_bg = spr.behind_bg;
                             break;
                         }
+                    }
+                }
+                if let Some(sp) = obj_pixel {
+                    if !obj_behind_bg || bg_color == 0 {
+                        pixel = sp;
                     }
                 }
             }

@@ -52,18 +52,22 @@ impl HdmaController {
     }
 
     /// Read $FF55: returns remaining length | status.
-    /// Bit 7 = 0 if active, 1 if completed.
+    /// Bit 7 = 0 while active, 1 when idle/completed/cancelled.
+    /// Lower 7 bits = remaining - 1 (or $7F when idle).
     pub fn read_status(&self) -> u8 {
         if self.active {
-            self.remaining - 1
+            self.remaining - 1  // bit 7 = 0
+        } else if self.remaining > 0 {
+            // Cancelled: return remaining with bit 7 = 1
+            (self.remaining - 1) | 0x80
         } else {
+            // Completed or never started
             0xFF
         }
     }
 
-    /// Cancel the current transfer (write to $FF55 while active or on mode change).
+    /// Cancel the current transfer. Keeps remaining for status read.
     pub fn cancel(&mut self) {
-        self.remaining = 0;
         self.active = false;
     }
 
