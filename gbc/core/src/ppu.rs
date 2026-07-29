@@ -146,7 +146,11 @@ impl GbcPpu {
         if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        let px = self.mode_clock as i32 - 87 + (self.event_count % 2) as i32;
+        // With PPU pre-advanced: mode_clock is at the correct T-cycle.
+        // Pixel X at T-cycle 92 + X (80 OAM + 12 fetch overhead).
+        // CGB: T3 write (1 T-cycle earlier), offset = -1.
+        let base = if self.cgb_mode { 92 } else { 91 };
+        let px = self.mode_clock as i32 - base + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
@@ -758,15 +762,21 @@ impl GbcPpu {
         // Track mid-scanline changes during Mode 3 (pixel transfer)
         match addr {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B => {
-                if self.is_mode3() {
+                // Advance PPU to the write's exact T-cycle: pending step
+                // (4 T-cycles) + instruction offset (0/4/8 T-cycles).
+                self.mode_clock += 4 + self.cpu_cycle_offset;
+                // Check if we're within mode 3 (80 < mc <= 252)
+                if self.ly < VBLANK_START
+                    && self.mode_clock > T_CYCLES_OAM_SEARCH
+                    && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
+                {
                     let px = self.mode3_pixel_x();
-                    // Empirical: writes alternate between earlier and later
-                    // effective timing. Odd-numbered events (1st, 3rd, 5th)
-                    // use px = mc - 79; even-numbered need +1 = mc - 78.
                     let adj_px = px + (self.event_count % 2);
                     self.mid_events.push((adj_px.min(159), addr, value));
                     self.event_count = self.event_count.wrapping_add(1);
                 }
+                // Revert to original state (step_devices advances mode_clock)
+                self.mode_clock -= 4 + self.cpu_cycle_offset;
             }
             _ => {}
         }
