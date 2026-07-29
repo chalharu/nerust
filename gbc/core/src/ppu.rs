@@ -133,13 +133,18 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position during Mode 3 (0-159).
-    /// Empirical: px = mc - 79 (calibrated against mealybug BGP test).
-    /// Works with 4 T-cycle mode_clock + event_count alternation.
+    /// T-cycle accurate: px = mc + 4 + offset - 91 + (count % 2).
+    /// - mc + 4: pending step adjustment (mode_clock lags by 1 M-cycle)
+    /// - cpu_cycle_offset: sub-M-cycle offset (0/4/8 T from instruction phase)
+    /// - 91 = T_CYCLES_OAM_SEARCH + 11 (overhead is 11 T-cycles)
+    /// - count % 2: pipeline startup (+1 for even-indexed writes)
     fn mode3_pixel_x(&self) -> u8 {
-        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
+        let effective = self.mode_clock + 4 + self.cpu_cycle_offset;
+        if self.ly >= VBLANK_START || effective <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        let px = self.mode_clock as i32 - 79;
+        let raw = (effective as i32) - (T_CYCLES_OAM_SEARCH as i32 + 11);
+        let px = raw.max(0) + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
