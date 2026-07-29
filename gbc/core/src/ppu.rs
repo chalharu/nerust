@@ -146,12 +146,7 @@ impl GbcPpu {
         if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        let eff = self.mode_clock + 1 + self.cpu_cycle_offset;
-        let since_first = (eff as i32) - 92;
-        let tile = since_first / 12;
-        let in_tile = (since_first % 12).min(8);
-        let raw = tile * 8 + in_tile;
-        let px = raw.max(0) + (self.event_count % 2) as i32;
+        let px = self.mode_clock as i32 - 87 + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
