@@ -366,10 +366,14 @@ impl GbcPpu {
                             self.read_tile_pixel(tile, tile_x, tile_y % 8, false)
                         };
                         if c != 0 {
-                            let pixel = if self.cgb_mode {
-                                // CGB: use OAM bits 2-0 for OBJ palette (0-7)
+                            let pixel = if self.cgb_game {
+                                // CGB game: use OAM bits 2-0 for OBJ palette (0-7)
                                 let pal_idx = (spr.oam_flags & 0x07) as usize;
                                 Self::cgb_color_to_pixel(self.obj_palette[pal_idx * 4 + c as usize])
+                            } else if self.cgb_mode {
+                                // DMG game on CGB: OBP0/OBP1 selects from OBJ palette 0
+                                let shade = (spr.palette >> (c * 2)) & 0x03;
+                                Self::cgb_color_to_pixel(self.obj_palette[shade as usize])
                             } else {
                                 let shade = (spr.palette >> (c * 2)) & 0x03;
                                 Self::shade_to_pixel(shade)
@@ -502,10 +506,6 @@ impl GbcPpu {
                 self.obj_palette[dst_base + j] = palettes[src_base + j];
             }
         }
-        eprintln!("PAL_INIT: bg_palette[0..3] after = {:04X} {:04X} {:04X} {:04X}",
-            self.bg_palette[0], self.bg_palette[1], self.bg_palette[2], self.bg_palette[3]);
-        eprintln!("PAL_INIT: obj_palette[0..3] = {:04X} {:04X} {:04X} {:04X}",
-            self.obj_palette[0], self.obj_palette[1], self.obj_palette[2], self.obj_palette[3]);
     }
 
     fn cgb_color_to_pixel(color: u16) -> u32 {
