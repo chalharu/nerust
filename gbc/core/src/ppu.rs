@@ -146,10 +146,11 @@ impl GbcPpu {
         if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        // With PPU pre-advanced: mode_clock is at the correct T-cycle.
-        // Pixel X at T-cycle 92 + X (80 OAM + 12 fetch overhead).
-        // CGB: T3 write (1 T-cycle earlier), offset = -1.
-        let base = if self.cgb_mode { 92 } else { 91 };
+        // mode_clock has been pre-advanced by 4 + cpu_cycle_offset
+        // (in write_register). Compute pixel position directly.
+        // Empirical: px = mc_adv - 87 + (cnt%2).
+        // CGB T3: -1 T-cycle offset → px = mc_adv - 88 + (cnt%2).
+        let base = if self.cgb_mode { 88 } else { 87 };
         let px = self.mode_clock as i32 - base + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }

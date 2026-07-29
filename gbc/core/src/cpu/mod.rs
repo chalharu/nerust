@@ -21,10 +21,7 @@ impl Lr35902Cpu {
             self.set_ime_delayed(false);
         }
         if bus.is_halted_or_stopped() {
-            if self.check_interrupts(bus) {
-                // Dispatch started (5 M-cycles), will continue in next steps
-                return;
-            }
+            self.check_interrupts(bus);
             if bus.is_halted_or_stopped() {
                 return;
             }
@@ -32,11 +29,7 @@ impl Lr35902Cpu {
 
         match self.phase() {
             Phase::FetchOpcode => {
-                if self.check_interrupts(bus) {
-                    // Dispatch takes 5 M-cycles. Phase changed to
-                    // InterruptDispatch, return to consume them.
-                    return;
-                }
+                self.check_interrupts(bus);
                 let op = bus.read(self.registers().pc());
                 let pc = self.registers().pc();
                 self.registers_mut().set_pc(pc.wrapping_add(1));
@@ -77,21 +70,13 @@ impl Lr35902Cpu {
         }
     }
 
-    /// Check for pending interrupts. Returns true if dispatch was started
-    /// (5 M-cycle InterruptDispatch phase set up).
-    fn check_interrupts(&mut self, bus: &mut GbcMemoryBus) -> bool {
+    fn check_interrupts(&mut self, bus: &mut GbcMemoryBus) {
         if bus.ime_enabled()
             && let Some(kind) = bus.acknowledge_interrupt()
         {
             dispatch_interrupt(self.registers_mut(), kind, bus);
-            self.set_phase(Phase::InterruptDispatch { remaining: 5 });
-            true
         } else {
-            // Even with IME=0, acknowledge_interrupt may clear HALT state
-            // when an interrupt is pending (test ROMs expect HALT wake
-            // with IME=0 when timer overflow sets IF).
             bus.acknowledge_interrupt();
-            false
         }
     }
 }
