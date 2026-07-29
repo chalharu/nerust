@@ -133,18 +133,14 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position during Mode 3 (0-159).
-    /// T-cycle accurate: px = mc + 4 + offset - 91 + (count % 2).
-    /// - mc + 4: pending step adjustment (mode_clock lags by 1 M-cycle)
-    /// - cpu_cycle_offset: sub-M-cycle offset (0/4/8 T from instruction phase)
-    /// - 91 = T_CYCLES_OAM_SEARCH + 11 (overhead is 11 T-cycles)
-    /// - count % 2: pipeline startup (+1 for even-indexed writes)
+    /// px = mc - 79 + (event_count % 2).
+    /// All mealybug register writes use ld[c],a (step 2, offset=8).
+    /// -79 = -(80 + 12 - 4 - 8) = -(OAM + overhead - pending - offset).
     fn mode3_pixel_x(&self) -> u8 {
-        let effective = self.mode_clock + 4 + self.cpu_cycle_offset;
-        if self.ly >= VBLANK_START || effective <= T_CYCLES_OAM_SEARCH {
+        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        let raw = (effective as i32) - (T_CYCLES_OAM_SEARCH as i32 + 11);
-        let px = raw.max(0) + (self.event_count % 2) as i32;
+        let px = self.mode_clock as i32 - 79 + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
@@ -263,10 +259,10 @@ impl GbcPpu {
             for (x, &pixel) in src_row.iter().enumerate() {
                 let offset = dst_base + x * 4;
                 if offset + 3 < dst.len() {
-                    dst[offset] = (pixel >> 24) as u8; // R
-                    dst[offset + 1] = (pixel >> 16) as u8; // G
-                    dst[offset + 2] = (pixel >> 8) as u8; // B
-                    dst[offset + 3] = pixel as u8; // A
+                    dst[offset] = (pixel >> 24) as u8;
+                    dst[offset + 1] = (pixel >> 16) as u8;
+                    dst[offset + 2] = (pixel >> 8) as u8;
+                    dst[offset + 3] = pixel as u8;
                 }
             }
         }
