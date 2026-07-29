@@ -81,6 +81,17 @@ impl Default for GbcPpu {
     }
 }
 
+/// Per-scanline sprite info extracted from OAM.
+struct Sprite {
+    x: i16,
+    tile: u8,
+    y: i16,
+    y_flip: bool,
+    x_flip: bool,
+    palette: u8,
+    behind_bg: bool,
+}
+
 impl GbcPpu {
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
         let frame_done = self.frame_complete;
@@ -194,8 +205,10 @@ impl GbcPpu {
         let ly = self.ly as usize;
         let bg_enabled = self.lcdc & 0x01 != 0;
         let window_enabled = self.lcdc & 0x20 != 0;
+        let sprite_enabled = self.lcdc & 0x02 != 0;
+        let sprite_double = self.lcdc & 0x04 != 0;
+        let sprite_height = if sprite_double { 16 } else { 8 };
 
-        // Default: white background
         let base = ly * 160;
         if !bg_enabled && !window_enabled {
             for x in 0..160 {
@@ -204,25 +217,78 @@ impl GbcPpu {
             return;
         }
 
-        // Compute pixel for each x position
-        for x in 0..160 {
-            let mut pixel = 0xFF_FF_FF_FF; // default white
+        // Collect sprites for this scanline
+        let mut sprites: Vec<Sprite> = Vec::new();
+        if sprite_enabled {
+            for i in 0..40 {
+                let y_pos = self.oam[i * 4] as i16;
+                let x_pos = self.oam[i * 4 + 1] as i16;
+                let tile = self.oam[i * 4 + 2];
+                let flags = self.oam[i * 4 + 3];
+                let sprite_top = y_pos - 16;
+                if (ly as i16) >= sprite_top && (ly as i16) < sprite_top + sprite_height as i16 {
+                    sprites.push(Sprite {
+                        x: x_pos - 8,
+                        tile,
+                        y: sprite_top,
+                        y_flip: flags & 0x40 != 0,
+                        x_flip: flags & 0x20 != 0,
+                        palette: if flags & 0x10 != 0 { self.obp1 } else { self.obp0 },
+                        behind_bg: flags & 0x80 != 0,
+                    });
+                    if sprites.len() >= 10 {
+                        break;
+                    }
+                }
+            }
+            sprites.sort_by_key(|s| s.x);
+        }
 
-            // BG layer
+        for x in 0..160 {
+            let mut pixel = 0xFF_FF_FF_FF;
+            let mut bg_color = 0u8;
+
             if bg_enabled {
                 let scroll_y = self.scy.wrapping_add(self.ly);
                 let scroll_x = self.scx.wrapping_add(x as u8);
-                pixel = self.read_bg_pixel(scroll_x, scroll_y);
+                let (p, c) = self.read_bg_pixel(scroll_x, scroll_y);
+                pixel = p;
+                bg_color = c;
             }
 
-            // Window layer (overlays BG when enabled and within window area)
             if window_enabled {
                 let wx = self.wx.wrapping_sub(7) as i16;
                 let wy = self.wy as i16;
                 if x as i16 >= wx && (ly as i16) >= wy {
-                    let win_x = (x as i16 - wx) as u8;
-                    let win_y = (ly as i16 - wy) as u8;
-                    pixel = self.read_window_pixel(win_x, win_y);
+                    let (p, c) =
+                        self.read_window_pixel((x as i16 - wx) as u8, (ly as i16 - wy) as u8);
+                    pixel = p;
+                    bg_color = c;
+                }
+            }
+
+            if sprite_enabled {
+                for spr in sprites.iter().rev() {
+                    let sx = x as i16 - spr.x;
+                    if (0..8).contains(&sx) {
+                        let tile_x = if spr.x_flip { 7 - sx as u8 } else { sx as u8 };
+                        let tile_y = if spr.y_flip {
+                            (sprite_height - 1) - (ly as i16 - spr.y) as u8
+                        } else {
+                            (ly as i16 - spr.y) as u8
+                        };
+                        let tile = if sprite_double {
+                            spr.tile & 0xFE | if tile_y >= 8 { 1 } else { 0 }
+                        } else {
+                            spr.tile
+                        };
+                        let c = self.read_tile_pixel(tile, tile_x, tile_y % 8, false);
+                        if c != 0 && (!spr.behind_bg || bg_color == 0) {
+                            let shade = (spr.palette >> (c * 2)) & 0x03;
+                            pixel = Self::shade_to_pixel(shade);
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -253,7 +319,7 @@ impl GbcPpu {
         }
     }
 
-    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> u32 {
+    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> (u32, u8) {
         let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
             0x9C00
         } else {
@@ -266,10 +332,10 @@ impl GbcPpu {
         let tile_index = self.vram[map_addr as usize & 0x1FFF];
         let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
         let shade = (self.bgp >> (color * 2)) & 0x03;
-        Self::shade_to_pixel(shade)
+        (Self::shade_to_pixel(shade), color)
     }
 
-    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> u32 {
+    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8) {
         let tile_map_base: u16 = if self.lcdc & 0x40 != 0 {
             0x9C00
         } else {
@@ -282,7 +348,7 @@ impl GbcPpu {
         let tile_index = self.vram[map_addr as usize & 0x1FFF];
         let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
         let shade = (self.bgp >> (color * 2)) & 0x03;
-        Self::shade_to_pixel(shade)
+        (Self::shade_to_pixel(shade), color)
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
