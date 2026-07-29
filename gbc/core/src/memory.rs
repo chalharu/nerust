@@ -246,12 +246,19 @@ impl GbcMemoryBus {
 
     pub fn set_cgb_mode(&mut self, enabled: bool) {
         self.ppu.cgb_mode = enabled;
+        self.ppu.cgb_game = enabled;
         if enabled {
             // Initialize CGB palettes with CGB boot ROM defaults.
             // When the boot ROM is skipped, these provide visible colors
             // for DMG compatibility mode instead of all-black.
             self.ppu.init_default_cgb_palettes();
         }
+    }
+
+    /// Set whether the GAME itself is CGB-native (bit 7 of ROM header $143).
+    /// This controls CGB-only rendering behavior independent of hardware mode.
+    pub fn set_cgb_game(&mut self, enabled: bool) {
+        self.ppu.cgb_game = enabled;
     }
 
     pub fn is_dma_active(&self) -> bool {
