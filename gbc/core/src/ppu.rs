@@ -101,9 +101,10 @@ struct Sprite {
     y_flip: bool,
     x_flip: bool,
     palette: u8,
-    behind_bg: bool,
-    oam_index: u8,
-}
+        behind_bg: bool,
+        oam_index: u8,
+        oam_flags: u8,
+    }
 
 impl GbcPpu {
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
@@ -266,6 +267,7 @@ impl GbcPpu {
                         },
                         behind_bg: flags & 0x80 != 0,
                         oam_index: i as u8,
+                        oam_flags: flags,
                     });
                     if sprites.len() >= 10 {
                         break;
@@ -327,8 +329,15 @@ impl GbcPpu {
                         };
                         let c = self.read_tile_pixel(tile, tile_x, tile_y % 8, false);
                         if c != 0 {
-                            let shade = (spr.palette >> (c * 2)) & 0x03;
-                            obj_pixel = Some(Self::shade_to_pixel(shade));
+                            let pixel = if self.cgb_mode {
+                                // CGB: use OAM bits 2-0 for OBJ palette (0-7)
+                                let pal_idx = (spr.oam_flags & 0x07) as usize;
+                                Self::cgb_color_to_pixel(self.obj_palette[pal_idx * 4 + c as usize])
+                            } else {
+                                let shade = (spr.palette >> (c * 2)) & 0x03;
+                                Self::shade_to_pixel(shade)
+                            };
+                            obj_pixel = Some(pixel);
                             obj_behind_bg = spr.behind_bg;
                             break;
                         }
@@ -369,6 +378,35 @@ impl GbcPpu {
     }
 
     /// Convert 15-bit CGB color (rrrrrgggggbbbbb) to RGBA 32-bit.
+    /// Initialize CGB BG/OBJ palettes with CGB boot ROM defaults for DMG
+    /// compatibility mode. Used when boot ROM is skipped.
+    pub fn init_default_cgb_palettes(&mut self) {
+        // Initialize all 8 CGB BG and OBJ palettes with CGB boot ROM
+        // defaults for DMG compatibility mode (visible color output).
+        let default_bg: [u16; 32] = [
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 0: DMG default
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 1
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 2
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 3
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 4
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 5
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 6
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // BG palette 7
+        ];
+        let default_obj: [u16; 32] = [
+            0x7FFF, 0x001F, 0x0000, 0x0000, // OBJ palette 0: red accent
+            0x7FFF, 0x03E0, 0x0000, 0x0000, // OBJ palette 1: green accent
+            0x7FFF, 0x001F, 0x03FF, 0x0000, // OBJ palette 2: yellow accent
+            0x7FFF, 0x7C00, 0x0000, 0x0000, // OBJ palette 3: blue accent
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // OBJ palette 4
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // OBJ palette 5
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // OBJ palette 6
+            0x7FFF, 0x56B5, 0x294A, 0x0000, // OBJ palette 7
+        ];
+        self.bg_palette = default_bg;
+        self.obj_palette = default_obj;
+    }
+
     fn cgb_color_to_pixel(color: u16) -> u32 {
         let r = ((color >> 0) & 0x1F) as u32;
         let g = ((color >> 5) & 0x1F) as u32;
