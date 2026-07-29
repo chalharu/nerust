@@ -191,11 +191,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m2_win_en_toggle"
+  - id: "mealybug_m2_win_en_toggle_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m2_win_en_toggle"
+    description: "Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m2_win_en_toggle.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -206,11 +206,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_bgp_change"
+  - id: "mealybug_m3_bgp_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_bgp_change"
+    description: "Mealybug Tearoom Tests — m3_bgp_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_bgp_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -221,11 +221,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_bgp_change_sprites"
+  - id: "mealybug_m3_bgp_change_sprites_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_bgp_change_sprites"
+    description: "Mealybug Tearoom Tests — m3_bgp_change_sprites (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_bgp_change_sprites.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -236,11 +236,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_bg_en_change"
+  - id: "mealybug_m3_lcdc_bg_en_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -266,11 +266,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_bg_map_change"
+  - id: "mealybug_m3_lcdc_bg_map_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -296,11 +296,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_obj_en_change"
+  - id: "mealybug_m3_lcdc_obj_en_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -311,11 +311,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_obj_en_change_variant"
+  - id: "mealybug_m3_lcdc_obj_en_change_variant_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant"
+    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change_variant.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -326,11 +326,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_obj_size_change"
+  - id: "mealybug_m3_lcdc_obj_size_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -341,11 +341,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_obj_size_change_scx"
+  - id: "mealybug_m3_lcdc_obj_size_change_scx_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx"
+    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -356,11 +356,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_tile_sel_change"
+  - id: "mealybug_m3_lcdc_tile_sel_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -386,11 +386,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_tile_sel_win_change"
+  - id: "mealybug_m3_lcdc_tile_sel_win_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -416,11 +416,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_win_en_change_multiple"
+  - id: "mealybug_m3_lcdc_win_en_change_multiple_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple"
+    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -431,11 +431,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_win_en_change_multiple_wx"
+  - id: "mealybug_m3_lcdc_win_en_change_multiple_wx_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx"
+    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple_wx.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -446,11 +446,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_lcdc_win_map_change"
+  - id: "mealybug_m3_lcdc_win_map_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change"
+    description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -476,11 +476,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_obp0_change"
+  - id: "mealybug_m3_obp0_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_obp0_change"
+    description: "Mealybug Tearoom Tests — m3_obp0_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_obp0_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -491,11 +491,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_scx_high_5_bits"
+  - id: "mealybug_m3_scx_high_5_bits_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scx_high_5_bits"
+    description: "Mealybug Tearoom Tests — m3_scx_high_5_bits (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -521,11 +521,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_scx_low_3_bits"
+  - id: "mealybug_m3_scx_low_3_bits_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scx_low_3_bits"
+    description: "Mealybug Tearoom Tests — m3_scx_low_3_bits (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_low_3_bits.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -536,11 +536,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_scy_change"
+  - id: "mealybug_m3_scy_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scy_change"
+    description: "Mealybug Tearoom Tests — m3_scy_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -566,11 +566,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_window_timing"
+  - id: "mealybug_m3_window_timing_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_window_timing"
+    description: "Mealybug Tearoom Tests — m3_window_timing (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_window_timing.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -581,11 +581,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_window_timing_wx_0"
+  - id: "mealybug_m3_window_timing_wx_0_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_window_timing_wx_0"
+    description: "Mealybug Tearoom Tests — m3_window_timing_wx_0 (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_window_timing_wx_0.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -596,11 +596,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_wx_4_change"
+  - id: "mealybug_m3_wx_4_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_4_change"
+    description: "Mealybug Tearoom Tests — m3_wx_4_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_4_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -611,11 +611,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_wx_4_change_sprites"
+  - id: "mealybug_m3_wx_4_change_sprites_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_4_change_sprites"
+    description: "Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_4_change_sprites.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -626,11 +626,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_wx_5_change"
+  - id: "mealybug_m3_wx_5_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_5_change"
+    description: "Mealybug Tearoom Tests — m3_wx_5_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_5_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
@@ -641,11 +641,11 @@ cases:
         memory: []
         pad: []
 
-  - id: "mealybug_m3_wx_6_change"
+  - id: "mealybug_m3_wx_6_change_cgb"
     category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_6_change"
+    description: "Mealybug Tearoom Tests — m3_wx_6_change (CGB D)"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_6_change.gb"
-    model: dmg
+    model: cgb
     perf: false
     events:
       - cycles: 200_000
