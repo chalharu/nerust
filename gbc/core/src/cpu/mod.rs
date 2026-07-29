@@ -8,6 +8,13 @@ static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::
 impl Lr35902Cpu {
     /// Step one M-cycle (no device advancement — caller must call step_devices).
     pub fn step(&mut self, bus: &mut GbcMemoryBus) {
+        // Set sub-cycle timing offset for PPU mid-scanline event tracking.
+        // offset = 0 during FetchOpcode (before instruction starts)
+        // offset = step * 4 during execute phases
+        bus.cpu_cycle_offset = match self.phase() {
+            Phase::FetchOpcode => 0,
+            Phase::ExecuteOpcode { step, .. } => (step as u32) * 4,
+        };
         if self.ime_delayed() {
             bus.set_ime(true);
             self.set_ime_delayed(false);

@@ -40,6 +40,11 @@ pub struct GbcMemoryBus {
     hdma3: u8,
     hdma4: u8,
     hdma5: u8,
+
+    /// Sub-cycle timing: T-cycles consumed by the current CPU instruction
+    /// before this step. Set by the main loop before each cpu.step() call.
+    /// Used by PPU write_register for sub-M-cycle mode3 pixel_x estimation.
+    pub(crate) cpu_cycle_offset: u32,
 }
 
 impl GbcMemoryBus {
@@ -68,6 +73,7 @@ impl GbcMemoryBus {
             hdma3: 0xFF,
             hdma4: 0xFF,
             hdma5: 0xFF,
+            cpu_cycle_offset: 0,
         }
     }
 
@@ -149,7 +155,8 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
+              0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
+                self.ppu.cpu_cycle_offset = self.cpu_cycle_offset;
                 self.ppu.write_register(addr, value);
             }
             0xFF46 => self.dma.start(value),
