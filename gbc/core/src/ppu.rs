@@ -41,6 +41,10 @@ pub struct GbcPpu {
     opri: u8,
     key0: u8, // full $FF6C value (bits: 7=CGB game, 2=DMG emulation)
 
+    /// Sub-cycle timing offset (0-12 T-cycles) from the current CPU instruction.
+    /// Set by the memory bus before each register write.
+    pub(crate) cpu_cycle_offset: u32,
+
     vram: [u8; 0x4000],
     oam: [u8; 160],
     bg_palette: [u16; 32],
@@ -92,6 +96,7 @@ impl Default for GbcPpu {
             obpd: 0,
             opri: 1,
             key0: 0,
+            cpu_cycle_offset: 0,
             vram: [0; 0x4000],
             oam: [0; 160],
             bg_palette: [0; 32],
@@ -124,8 +129,7 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position being rendered during Mode 3 (0-159).
-    /// Mode 3 starts at T_CYCLES_OAM_SEARCH (80 T-cycles).
-    /// Pixel X is rendered at approximately T-cycle 79 + X (empirical).
+    /// Empirical: px = mc - 79 places transitions at expected positions.
     fn mode3_pixel_x(&self) -> u8 {
         if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
