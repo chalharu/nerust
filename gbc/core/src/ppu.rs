@@ -60,6 +60,11 @@ pub struct GbcPpu {
     pub cgb_mode: bool,
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
 
+    /// Prevents STAT interrupt from firing repeatedly during the same mode.
+    /// Set to the PpuMode value that last triggered lcd_stat; cleared to None
+    /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
+    lcd_stat_last_mode: Option<PpuMode>,
+
     /// Mid-scanline register changes during Mode 3 (pixel transfer).
     /// Stored as (pixel_x, reg_addr, value) and applied in render_scanline
     /// at the correct pixel boundary.
@@ -98,6 +103,7 @@ impl Default for GbcPpu {
             lyc_matched_ly: 0,
             cgb_mode: false,
             cgb_game: false,
+            lcd_stat_last_mode: None,
             mid_events: Vec::new(),
         }
     }
@@ -194,23 +200,30 @@ impl GbcPpu {
             self.check_lyc(&mut lcd_stat);
         }
 
-        let mode_val = match current_mode {
+        // Fire STAT interrupt only when entering a new mode, not repeatedly.
+        // This matches real hardware behavior: STAT interrupt fires once per
+        // mode transition, not continuously during a mode.
+        let stat_mode_val = match current_mode {
             PpuMode::HBlank => 0,
             PpuMode::VBlank => 1,
             PpuMode::OamSearch => 2,
             PpuMode::PixelTransfer => 3,
         };
-        self.stat = (self.stat & 0xFC) | mode_val;
+        let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
+        self.lcd_stat_last_mode = Some(current_mode);
+        self.stat = (self.stat & 0xFC) | stat_mode_val;
         self.check_lyc(&mut lcd_stat);
 
-        if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 {
-            lcd_stat = true;
-        }
-        if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 {
-            lcd_stat = true;
-        }
-        if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 {
-            lcd_stat = true;
+        if mode_changed {
+            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 {
+                lcd_stat = true;
+            }
+            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 {
+                lcd_stat = true;
+            }
+            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 {
+                lcd_stat = true;
+            }
         }
 
         PpuStepResult {
