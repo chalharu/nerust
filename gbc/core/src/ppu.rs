@@ -657,8 +657,6 @@ impl GbcPpu {
     }
 
     fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8, bool) {
-
-    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8, bool) {
         let tile_map_base: u16 = if self.lcdc & 0x40 != 0 {
             0x9C00
         } else {
