@@ -371,8 +371,8 @@ impl GbcPpu {
     fn shade_to_pixel(shade: u8) -> u32 {
         match shade {
             0 => 0xFF_FF_FF_FF,
-            1 => 0xC0_C0_C0_FF,
-            2 => 0x60_60_60_FF,
+            1 => 0xAA_AA_AA_FF,
+            2 => 0x55_55_55_FF,
             _ => 0x00_00_00_FF,
         }
     }

@@ -172,7 +172,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "71288126"
         audio:
           hash: ""
         memory: []
