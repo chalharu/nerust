@@ -72,7 +72,10 @@ pub struct GbcPpu {
     /// Mid-scanline register changes during Mode 3 (pixel transfer).
     /// Stored as (pixel_x, reg_addr, value) and applied in render_scanline
     /// at the correct pixel boundary.
+    /// event_count tracks the number of events in the current scanline,
+    /// used to alternate px offset for alternating write patterns.
     mid_events: Vec<(u8, u16, u8)>,
+    event_count: u8,
 }
 
 impl Default for GbcPpu {
@@ -110,6 +113,7 @@ impl Default for GbcPpu {
             cgb_game: false,
             lcd_stat_last_mode: None,
             mid_events: Vec::new(),
+            event_count: 0,
         }
     }
 }
@@ -476,6 +480,7 @@ impl GbcPpu {
             self.frame_buffer[base + x] = pixel;
         }
         self.mid_events.clear();
+        self.event_count = 0;
     }
 
     fn read_tile_pixel(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool) -> u8 {
@@ -766,7 +771,12 @@ impl GbcPpu {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B => {
                 if self.is_mode3() {
                     let px = self.mode3_pixel_x();
-                    self.mid_events.push((px, addr, value));
+                    // Empirical: writes alternate between earlier and later
+                    // effective timing. Odd-numbered events (1st, 3rd, 5th)
+                    // use px = mc - 79; even-numbered need +1 = mc - 78.
+                    let adj_px = px + (self.event_count % 2);
+                    self.mid_events.push((adj_px.min(159), addr, value));
+                    self.event_count = self.event_count.wrapping_add(1);
                 }
             }
             _ => {}
