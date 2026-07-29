@@ -39,7 +39,7 @@ pub struct GbcPpu {
     obpi: u8,
     obpd: u8,
     opri: u8,
-    pub key0: u8, // full $FF6C value (bits: 7=CGB game, 2=DMG emulation)
+    key0: u8, // full $FF6C value (bits: 7=CGB game, 2=DMG emulation)
 
     vram: [u8; 0x4000],
     oam: [u8; 160],
@@ -191,6 +191,21 @@ impl GbcPpu {
             lcd_stat,
             vblank,
         }
+    }
+
+    pub fn key0(&self) -> u8 { self.key0 }
+
+    /// Write $FF6C (KEY0/OPRI). Only bit 0 affects sprite priority;
+    /// upper bits are stored for DMG emulation mode detection.
+    pub fn set_key0(&mut self, value: u8) {
+        self.key0 = value;
+        self.opri = value & 0x01;
+    }
+
+    /// Set KEY0 without changing OPRI. Used by internal initialization
+    /// (boot ROM emulation) to avoid overriding the desired default.
+    pub fn raw_set_key0(&mut self, value: u8) {
+        self.key0 = value;
     }
 
     fn check_lyc(&mut self, lcd_stat: &mut bool) {
@@ -660,7 +675,7 @@ impl GbcPpu {
                     (pal >> 8) as u8
                 }
             }
-             0xFF6C => self.key0 | 0xFE,
+              0xFF6C => self.key0() | 0xFE,
             _ => 0xFF,
         }
     }
@@ -725,10 +740,9 @@ impl GbcPpu {
                      }
                  }
             }
-             0xFF6C => {
-                 self.key0 = value;
-                 self.opri = value & 0x01;
-             }
+              0xFF6C => {
+                  self.set_key0(value);
+              }
             _ => {}
         }
     }
