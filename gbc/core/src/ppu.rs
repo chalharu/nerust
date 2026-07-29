@@ -133,23 +133,17 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position during Mode 3 (0-159).
-    /// px = mc - 79 + (event_count % 2).
-    /// All mealybug register writes use ld[c],a (step 2, offset=8).
-    /// -79 = -(80 + 12 - 4 - 8) = -(OAM + overhead - pending - offset).
     /// Pixel position in Mode 3 (0-159).
-    /// Derived from hardware timing:
-    ///   eff = mc + 4(pending) + cpu_cycle_offset  (real T-cycle of write)
-    ///   px  = eff - 87 + (event_count % 2)
-    ///   87  = 80(OAM) + 12(tile fetch overhead) - 5(pipeline latency)
-    ///   event_count%2: restore writes (+1) vs set writes (+0) due to
-    ///     internal pipeline value-change timing asymmetry.
-    /// Simplified for ld[c],a (offset=4):
-    ///   px = mc - 79 + (event_count % 2)
+    /// 1T-step + dispatch fix (5 M-cycles = 20 T-cycles consumed):
+    ///   eff = mc + 1(pending) + cpu_cycle_offset
+    ///   px  = eff - 104 + (event_count % 2)
+    ///   104 = 80(OAM) + 12(fetch) - 5(pipeline) + 17(dispatch adjustment)
     fn mode3_pixel_x(&self) -> u8 {
-        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
+        if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        let px = self.mode_clock as i32 - 79 + (self.event_count % 2) as i32;
+        let eff = self.mode_clock + 1 + self.cpu_cycle_offset;
+        let px = (eff as i32) - 104 + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
