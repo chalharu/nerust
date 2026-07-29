@@ -47,6 +47,7 @@ pub struct GbcPpu {
 
     mode_clock: u32,
     frame_complete: bool,
+    pending_ly: Option<u8>,
     frame_buffer: [u32; 160 * 144],
 }
 
@@ -76,6 +77,7 @@ impl Default for GbcPpu {
             obj_palette: [0; 32],
             mode_clock: 0,
             frame_complete: false,
+            pending_ly: None,
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144], // white
         }
     }
@@ -96,6 +98,15 @@ impl GbcPpu {
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
         let frame_done = self.frame_complete;
         self.frame_complete = false;
+
+        // Render scanline that was deferred from the previous step.
+        // By now the CPU has processed LYC interrupts from step_devices,
+        // so LCDC changes from handlers take effect for this render.
+        if let Some(render_ly) = self.pending_ly.take() {
+            if render_ly < VBLANK_START && self.lcdc & 0x80 != 0 {
+                self.render_scanline_for_ly(render_ly);
+            }
+        }
 
         if self.lcdc & 0x80 == 0 {
             self.ly = 0;
@@ -143,7 +154,7 @@ impl GbcPpu {
 
             self.check_lyc(&mut lcd_stat);
             if self.ly < VBLANK_START {
-                self.render_scanline();
+                self.pending_ly = Some(self.ly);
             }
         }
 
@@ -198,6 +209,13 @@ impl GbcPpu {
                 }
             }
         }
+    }
+
+    fn render_scanline_for_ly(&mut self, render_ly: u8) {
+        let saved_ly = self.ly;
+        self.ly = render_ly;
+        self.render_scanline();
+        self.ly = saved_ly;
     }
 
     fn render_scanline(&mut self) {
