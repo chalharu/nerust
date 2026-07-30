@@ -169,10 +169,17 @@ impl Mode3Timing {
 
     pub(super) fn write_register(&mut self, register: u16, old_value: u8, value: u8) {
         match register {
+            // WIN_EN 1→0 when active: schedule disable at next tile boundary
             0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 && self.window_active => {
                 self.window_disable_pending = true;
             }
-            0xFF4B if self.window_seen && value.saturating_sub(7) > self.pixel_x => {
+            // WIN_EN 1→0 when not yet active: prevent future activation
+            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 && !self.window_active => {
+                self.window_triggered = true;
+                self.window_seen = true;
+            }
+            // WX change: window moves to new position
+            0xFF4B if self.window_seen => {
                 self.window_can_retrigger = true;
             }
             _ => {}
