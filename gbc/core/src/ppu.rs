@@ -146,7 +146,6 @@ struct Sprite {
     y: i16,
     y_flip: bool,
     x_flip: bool,
-    palette: u8,
     behind_bg: bool,
     oam_index: u8,
     oam_flags: u8,
@@ -352,11 +351,6 @@ impl GbcPpu {
                         y: sprite_top,
                         y_flip: flags & 0x40 != 0,
                         x_flip: flags & 0x20 != 0,
-                        palette: if flags & 0x10 != 0 {
-                            self.obp1
-                        } else {
-                            self.obp0
-                        },
                         behind_bg: flags & 0x80 != 0,
                         oam_index: i as u8,
                         oam_flags: flags,
@@ -529,10 +523,20 @@ impl GbcPpu {
                                 Self::cgb_color_to_pixel(self.obj_palette[pal_idx * 4 + c as usize])
                             } else if self.cgb_mode {
                                 // DMG game on CGB: OBP0/OBP1 selects from OBJ palette 0
-                                let shade = (spr.palette >> (c * 2)) & 0x03;
+                                let palette = if spr.oam_flags & 0x10 != 0 {
+                                    self.obp1
+                                } else {
+                                    self.obp0
+                                };
+                                let shade = (palette >> (c * 2)) & 0x03;
                                 Self::cgb_color_to_pixel(self.obj_palette[shade as usize])
                             } else {
-                                let shade = (spr.palette >> (c * 2)) & 0x03;
+                                let palette = if spr.oam_flags & 0x10 != 0 {
+                                    self.obp1
+                                } else {
+                                    self.obp0
+                                };
+                                let shade = (palette >> (c * 2)) & 0x03;
                                 Self::shade_to_pixel(shade)
                             };
                             obj_pixel = Some(pixel);
@@ -745,6 +749,10 @@ impl GbcPpu {
     pub fn load_font_tiles(&mut self, rom_bank1: &[u8]) {
         let len = rom_bank1.len().min(0x800);
         self.vram[0x0000..len].copy_from_slice(&rom_bank1[..len]);
+        self.vram[0x190..0x1A0].copy_from_slice(&[
+            0x3C, 0x00, 0x42, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0xB9, 0x00, 0xA5, 0x00, 0x42, 0x00,
+            0x3C, 0x00,
+        ]);
     }
 
     fn cgb_color_to_pixel(color: u16) -> u32 {
