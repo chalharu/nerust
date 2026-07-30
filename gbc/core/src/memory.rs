@@ -98,7 +98,13 @@ impl GbcMemoryBus {
         match addr {
             0xFE00..=0xFE9F => self.ppu.read_oam((addr & 0xFF) as u8),
             0xFEA0..=0xFEFF => 0x00,
-            0xFF00 => self.joypad | 0xC0,
+            0xFF00 => {
+                // TODO: filter lower nibble by select bits (4-5).
+                // When bit4=0, return d-pad state; when bit5=0, return
+                // button state; when both=1, return $F.
+                // GbcJoypad device will handle this logic (future phase).
+                self.joypad | 0xC0
+            }
             0xFF01 => self.serial.read_sb(),
             0xFF02 => self.serial.read_sc(),
             0xFF04..=0xFF07 => self.timer.read(addr),
@@ -150,7 +156,12 @@ impl GbcMemoryBus {
             0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF] = value,
             0xE000..=0xFDFF => self.write(addr - 0x2000, value),
             0xFE00..=0xFE9F => self.ppu.write_oam((addr & 0xFF) as u8, value),
-            0xFF00 => self.joypad = (self.joypad & 0x30) | (value & 0x30),
+            0xFF00 => {
+                // TODO: GbcJoypad device will manage select bits and
+                // filter logic (future phase). Currently only stores
+                // bits 4-5 directly.
+                self.joypad = (self.joypad & 0x30) | (value & 0x30);
+            }
             0xFF01 => self.serial.write_sb(value),
             0xFF02 => {
                 if self.serial.write_sc(value) {

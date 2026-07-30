@@ -1,5 +1,12 @@
 use std::collections::VecDeque;
 
+#[derive(Debug, Clone, Copy)]
+struct PendingWrite {
+    pixel_x: u8,
+    register: u16,
+    value: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FetchStage {
     Tile,
@@ -62,6 +69,9 @@ pub(super) struct Mode3Pipeline {
     sprite_x: Vec<i16>,
     next_sprite: usize,
     last_sprite_tile: Option<i16>,
+
+    // ── Pending register writes (applied at pixel_x) ──
+    pending_writes: Vec<PendingWrite>,
 }
 
 impl Mode3Pipeline {
@@ -95,6 +105,7 @@ impl Mode3Pipeline {
             sprite_x,
             next_sprite: 0,
             last_sprite_tile: None,
+            pending_writes: Vec::new(),
         }
     }
 
@@ -110,6 +121,9 @@ impl Mode3Pipeline {
         if self.complete {
             return None;
         }
+
+        // Apply pending register writes whose pixel_x has been reached
+        self.apply_pending_writes();
 
         // 1. Startup phase: initial pipeline fill + SCX fine scroll
         if self.startup_remaining > 0 {
@@ -161,11 +175,9 @@ impl Mode3Pipeline {
 
         // 6. Pop pixel from FIFO
         if let Some(bg_color) = self.bg_fifo.pop_front() {
-            // Fine scroll discard
+            // Fine scroll discard: skip pixels without advancing output
             if self.discard < self.fine_scroll {
                 self.discard += 1;
-                self.pixel_x += 1;
-                if self.pixel_x >= 160 { self.complete = true; }
                 return None;
             }
 
@@ -175,7 +187,7 @@ impl Mode3Pipeline {
             } else {
                 if cgb_game {
                     // CGB native: palette from attribute byte
-                    let attr = 0; // TODO: pass attribute from fetcher
+                    let attr = self.fetch_attr;
                     let pal = (attr & 0x07) as usize;
                     Self::cgb_color(bg_palette[pal * 4 + bg_color as usize])
                 } else if cgb_mode {
@@ -365,5 +377,34 @@ impl Mode3Pipeline {
 
     pub(super) fn complete(&self) -> bool {
         self.complete
+    }
+
+    /// Queue a register write that should take effect at the current pixel_x + 6 (fetcher restart delay).
+    pub(super) fn queue_register_write(&mut self, register: u16, value: u8) {
+        let apply_x = self.pixel_x.saturating_add(6).min(159);
+        self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
+    }
+
+    /// Apply any pending writes whose pixel_x has been reached.
+    fn apply_pending_writes(&mut self) {
+        let before = self.pending_writes.len();
+        self.pending_writes.retain(|w| {
+            if w.pixel_x <= self.pixel_x {
+                match w.register {
+                    0xFF47 => self.bgp = w.value,
+                    0xFF48 => self.obp0 = w.value,
+                    0xFF49 => self.obp1 = w.value,
+                    0xFF4A => self.wy = w.value,
+                    0xFF4B => self.wx = w.value,
+                    0xFF40 => self.lcdc = w.value,
+                    0xFF42 => self.scy = w.value,
+                    0xFF43 => self.scx = w.value,
+                    _ => {}
+                }
+                false
+            } else {
+                true
+            }
+        });
     }
 }
