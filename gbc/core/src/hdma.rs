@@ -51,7 +51,27 @@ impl HdmaController {
         self.active
     }
 
-    /// Read $FF55: returns remaining length | status.
+    /// Read HDMA registers FF51-FF54.
+    pub fn read_register(&self, addr: u16) -> u8 {
+        match addr {
+            0xFF51 => (self.src >> 8) as u8,
+            0xFF52 => (self.src & 0xFF) as u8,
+            0xFF53 => (self.dst >> 8) as u8,
+            0xFF54 => (self.dst & 0xFF) as u8,
+            _ => 0xFF,
+        }
+    }
+
+    /// Write HDMA registers FF51-FF54.
+    pub fn write_register(&mut self, addr: u16, value: u8) {
+        match addr {
+            0xFF51 => self.src = (self.src & 0x00FF) | ((value as u16) << 8),
+            0xFF52 => self.src = (self.src & 0xFF00) | (value as u16),
+            0xFF53 => self.dst = (self.dst & 0x00FF) | ((value as u16) << 8),
+            0xFF54 => self.dst = (self.dst & 0xFF00) | (value as u16),
+            _ => {}
+        }
+    }
     /// Bit 7 = 0 while active, 1 when idle/completed/cancelled.
     /// Lower 7 bits = remaining - 1 (or $7F when idle).
     pub fn read_status(&self) -> u8 {
@@ -85,14 +105,18 @@ impl HdmaController {
     }
 
     /// Called from step_devices to track HBlank transitions.
-    pub fn set_hblank(&mut self, on: bool) {
+    /// Returns true when a new HBlank entry triggers an HDMA transfer.
+    pub fn set_hblank(&mut self, on: bool) -> bool {
         if self.hblank_mode && self.active {
             if on && !self.hblank_transferred {
                 self.hblank_transferred = true;
-            } else if !on {
+                return true;
+            }
+            if !on {
                 self.hblank_transferred = false;
             }
         }
+        false
     }
 
     /// Whether we should transfer a block this step (HDMA in new HBlank).
