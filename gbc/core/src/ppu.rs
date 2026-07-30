@@ -41,10 +41,6 @@ pub struct GbcPpu {
     opri: u8,
     key0: u8, // full $FF6C value (bits: 7=CGB game, 2=DMG emulation)
 
-    /// Sub-cycle timing offset (0-12 T-cycles) from the current CPU instruction.
-    /// Set by the memory bus before each register write.
-    pub(crate) cpu_cycle_offset: u32,
-
     vram: [u8; 0x4000],
     oam: [u8; 160],
     bg_palette: [u16; 32],
@@ -99,7 +95,6 @@ impl Default for GbcPpu {
             obpd: 0,
             opri: 1,
             key0: 0,
-            cpu_cycle_offset: 0,
             vram: [0; 0x4000],
             oam: [0; 160],
             bg_palette: [0; 32],
@@ -133,33 +128,21 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position during Mode 3 (0-159).
-    /// Pixel position in Mode 3 (0-159).
-    /// 1T-step + dispatch fix (5 M-cycles = 20 T-cycles consumed):
-    ///   eff = mc + 1(pending) + cpu_cycle_offset
-    ///   px  = eff - 104 + (event_count % 2)
-    ///   104 = 80(OAM) + 12(fetch) - 5(pipeline) + 17(dispatch adjustment)
-    /// Pixel position in Mode 3 (0-159).
     /// Tile-based pipeline: 8 pixels per tile, 12 T-cycles per tile
-    /// (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 92.
-    /// px = ((eff - 92) / 12) * 8 + min((eff - 92) % 12, 8) + (count % 2)
+    /// (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 87.
+    /// px = mode_clock - 80 (DMG) or - 81 (CGB) + event_parity.
     fn mode3_pixel_x(&self) -> u8 {
-        if self.ly >= VBLANK_START || self.mode_clock + 1 + self.cpu_cycle_offset <= T_CYCLES_OAM_SEARCH {
+        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        // mode_clock has been pre-advanced by 4 + cpu_cycle_offset
-        // (in write_register). Compute pixel position directly.
-        // Empirical: px = mc_adv - 87 + (cnt%2).
-        // CGB T3: -1 T-cycle offset → px = mc_adv - 88 + (cnt%2).
-        let base = if self.cgb_mode { 88 } else { 87 };
+        // Tile-based pipeline: 8 pixels per tile, 12 T-cycles per tile
+        // (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 87 (80 + 7).
+        // Dispatch takes 20 T-cycles (5 M-cycles CGB D), adding 16 T-cycles vs
+        // the old 4 T-cycle (1 M-cycle) dispatch. Base = 80 + 16 = 96.
+        // CGB has 1 extra pipeline T-cycle.
+        let base = if self.cgb_mode { 97 } else { 96 };
         let px = self.mode_clock as i32 - base + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
-    }
-
-    fn is_mode3(&self) -> bool {
-        let clock = self.mode_clock + 4; // pending step
-        self.ly < VBLANK_START
-            && clock > T_CYCLES_OAM_SEARCH
-            && clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
     }
 
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
@@ -760,20 +743,15 @@ impl GbcPpu {
     }
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
-        // Track mid-scanline changes during Mode 3 (pixel transfer)
+        // Track mid-scanline changes during Mode 3 (pixel transfer).
+        // mode_clock is at the correct T-cycle (PPU advances 1 per step_tcycle call).
         match addr {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B => {
-                // Advance PPU to the write's exact T-cycle: pending step
-                // (4 T-cycles) + instruction offset (0/4/8 T-cycles).
-                self.mode_clock += 4 + self.cpu_cycle_offset;
-                // Check if we're within mode 3 (80 < mc <= 252)
                 if self.ly < VBLANK_START
                     && self.mode_clock > T_CYCLES_OAM_SEARCH
                     && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
                 {
                     let px = self.mode3_pixel_x();
-                    // SCX changes take effect at the next tile boundary
-                    // (8-pixel alignment for tile fetches).
                     let tile_px = if addr == 0xFF43 {
                         (px + 7) & !7
                     } else {
@@ -783,8 +761,6 @@ impl GbcPpu {
                     self.mid_events.push((adj_px.min(159), addr, value));
                     self.event_count = self.event_count.wrapping_add(1);
                 }
-                // Revert to original state (step_devices advances mode_clock)
-                self.mode_clock -= 4 + self.cpu_cycle_offset;
             }
             _ => {}
         }
