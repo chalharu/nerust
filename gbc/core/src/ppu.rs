@@ -201,7 +201,6 @@ impl GbcPpu {
         if let Some(pipeline) = self.mode3_pipeline.as_mut()
             && !pipeline.complete()
         {
-            // Step pipeline for timing only — pixel output via render_scanline
             pipeline.step(&self.vram, &self.bg_palette, self.cgb_mode, self.cgb_game, self.ly);
             if pipeline.complete() {
                 self.render_scanline();
@@ -961,16 +960,15 @@ impl GbcPpu {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
                 if self.ly < VBLANK_START && self.mode3_pipeline.is_some() =>
             {
-                if let Some(pipeline) = self.mode3_pipeline.as_mut() {
-                    let pixel_x = pipeline.queue_register_write(addr, value);
-                    // Also push to mode3_writes for render_scanline fallback
-                    let old_value = self.read_register(addr);
-                    self.mode3_writes.push(LatchedWrite {
-                        pixel_x,
-                        register: addr,
-                        old_value,
-                        value,
-                        window_started: false,
+                 let old_value = self.read_register(addr);
+                 if let Some(pipeline) = self.mode3_pipeline.as_mut() {
+                     let pixel_x = pipeline.queue_register_write(addr, value, old_value);
+                     self.mode3_writes.push(LatchedWrite {
+                         pixel_x,
+                         register: addr,
+                         old_value,
+                         value,
+                         window_started: false,
                     });
                 }
             }
