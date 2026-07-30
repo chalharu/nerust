@@ -39,8 +39,18 @@ impl Lr35902Cpu {
                     return;
                 }
                 let op = bus.read(self.registers().pc());
-                let pc = self.registers().pc();
-                self.registers_mut().set_pc(pc.wrapping_add(1));
+                // HALT bug: when HALT is executed with IME=0 and a pending
+                // interrupt, the CPU immediately wakes (doesn't halt), but
+                // PC is not incremented during the next opcode fetch. The
+                // byte after HALT executes twice. Clear the flag after
+                // applying to prevent further repeats.
+                let halt_bug = bus.is_halt_bug_active();
+                if halt_bug {
+                    bus.clear_halt_bug();
+                } else {
+                    let pc = self.registers().pc();
+                    self.registers_mut().set_pc(pc.wrapping_add(1));
+                }
                 self.set_opcode(op);
                 self.set_operand(0, 0);
                 self.set_operand(1, 0);

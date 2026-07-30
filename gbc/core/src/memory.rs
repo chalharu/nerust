@@ -287,6 +287,14 @@ impl GbcMemoryBus {
         self.interrupt.is_halted_or_stopped()
     }
 
+    pub fn is_halt_bug_active(&self) -> bool {
+        self.interrupt.is_halt_bug_active()
+    }
+
+    pub fn clear_halt_bug(&mut self) {
+        self.interrupt.clear_halt_bug();
+    }
+
     pub fn set_cgb_mode(&mut self, enabled: bool) {
         self.ppu.cgb_mode = enabled;
         self.ppu.cgb_game = enabled;

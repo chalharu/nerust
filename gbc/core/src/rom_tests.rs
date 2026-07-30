@@ -241,7 +241,7 @@ fn dmg_acid2() {
 }
 
 #[test]
-#[ignore = "halt bug not implemented"]
+#[ignore = "halt bug not implemented (test ROM hangs)"]
 fn halt_bug() {
     assert_passed(&run_rom_mem("halt_bug.gb", 10_000_000), "halt_bug");
 }
