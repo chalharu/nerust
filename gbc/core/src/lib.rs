@@ -18,6 +18,8 @@ pub(crate) mod cpu_registers;
 #[allow(dead_code)]
 pub(crate) mod dma;
 #[allow(dead_code)]
+pub(crate) mod hdma;
+#[allow(dead_code)]
 pub(crate) mod interrupt;
 #[allow(dead_code)]
 pub mod memory;

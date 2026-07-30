@@ -3,6 +3,7 @@ use crate::{
     cartridge::Cartridge,
     cpu_core::Lr35902Cpu,
     dma::DmaController,
+    hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
     ppu::GbcPpu,
     serial::Serial,
@@ -35,12 +36,7 @@ pub struct GbcMemoryBus {
     double_speed: bool,
     speed_switch_pending: bool,
 
-    // CGB HDMA registers (FF51-FF55) — stub for v1
-    hdma1: u8,
-    hdma2: u8,
-    hdma3: u8,
-    hdma4: u8,
-    hdma5: u8,
+    hdma: HdmaController,
 
     /// Sub-cycle timing: T-cycles consumed by the current CPU instruction
     /// before this step. Set by the main loop before each cpu.step() call.
@@ -79,11 +75,7 @@ impl GbcMemoryBus {
             double_speed: false,
             speed_switch_pending: false,
 
-            hdma1: 0xFF,
-            hdma2: 0xFF,
-            hdma3: 0xFF,
-            hdma4: 0xFF,
-            hdma5: 0xFF,
+            hdma: HdmaController::new(),
             cpu_cycle_offset: 0,
             tick: 0,
             ppu_ds_toggle: false,
@@ -121,13 +113,10 @@ impl GbcMemoryBus {
                 }
             }
             0xFF68..=0xFF6B => self.ppu.read_palette(addr),
-            0xFF4D => self.read_key1(),
-            0xFF51 => self.hdma1,
-            0xFF52 => self.hdma2,
-            0xFF53 => self.hdma3,
-            0xFF54 => self.hdma4,
-            0xFF55 => self.hdma5,
-            0xFF70 => self.wram_bank,
+             0xFF4D => self.read_key1(),
+             0xFF51..=0xFF54 => self.hdma.read_register(addr),
+             0xFF55 => self.hdma.read_status(),
+             0xFF70 => self.wram_bank,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
             _ => self.read_storage(addr),
@@ -175,13 +164,15 @@ impl GbcMemoryBus {
                  self.ppu.write_register(addr, value);
              }
             0xFF46 => self.dma.start(value),
-            0xFF4D => self.write_key1(value),
-            // HDMA registers (CGB) — stub, filled in Phase 7
-            0xFF51 => self.hdma1 = value,
-            0xFF52 => self.hdma2 = value,
-            0xFF53 => self.hdma3 = value,
-            0xFF54 => self.hdma4 = value,
-            0xFF55 => self.hdma5 = value,
+             0xFF4D => self.write_key1(value),
+             0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
+             0xFF55 => {
+                 self.hdma.start(value);
+                 if !self.hdma.hblank_mode {
+                     // GDMA: transfer immediately
+                     self.transfer_hdma_block();
+                 }
+             }
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
@@ -237,7 +228,16 @@ impl GbcMemoryBus {
         self.cpu_cycle_offset = t1;
 
         let video = 1u32;
+        let was_hblank = self.ppu.is_hblank();
         let ppu_res = self.ppu.step(video);
+        let now_hblank = self.ppu.is_hblank();
+        // HDMA: transfer one block at the start of each HBlank period
+        if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
+            self.transfer_hdma_block();
+        }
+        if was_hblank && !now_hblank {
+            self.hdma.set_hblank(false);
+        }
         if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
         if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
         self.apu.step(video);
@@ -377,6 +377,17 @@ impl GbcMemoryBus {
         } else {
             false
         }
+    }
+
+    // ── CGB HDMA / GDMA ──────────────────────────────────────
+
+    /// Transfer one block (16 bytes) from src to dst.
+    fn transfer_hdma_block(&mut self) {
+        for i in 0..16u16 {
+            let byte = self.read_storage(self.hdma.src.wrapping_add(i));
+            self.write(self.hdma.dst.wrapping_add(i), byte);
+        }
+        self.hdma.advance();
     }
 
     // ── CGB double-speed ─────────────────────────────────────

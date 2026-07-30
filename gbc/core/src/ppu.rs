@@ -241,6 +241,23 @@ impl GbcPpu {
         }
     }
 
+    /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
+    pub fn is_hblank(&self) -> bool {
+        let mode = if self.ly >= VBLANK_START {
+            PpuMode::VBlank
+        } else {
+            let t = self.mode_clock;
+            if t <= T_CYCLES_OAM_SEARCH {
+                PpuMode::OamSearch
+            } else if t <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
+                PpuMode::PixelTransfer
+            } else {
+                PpuMode::HBlank
+            }
+        };
+        mode == PpuMode::HBlank
+    }
+
     pub fn render(&self, fb: &mut FrameBuffer) {
         let stride = fb.stride();
         let dst = fb.as_mut();
