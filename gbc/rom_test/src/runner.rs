@@ -54,6 +54,13 @@ pub fn run_case(
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
+
+    // Optional boot ROM tick alignment (env var for testing).
+    if let Some(tick_str) = std::env::var("NERUST_INIT_TICK").ok() {
+        if let Ok(tick) = tick_str.parse() {
+            bus.set_initial_tick(tick);
+        }
+    }
     // CGB mode depends on HARDWARE (requested model), not effective model.
     // A CGB running a DMG-only ROM still applies boot ROM palettes.
     let hw_is_cgb = match case.model {
