@@ -15,6 +15,7 @@ pub(super) struct Mode3Pipeline {
     pub(super) wx: u8,
     pub(super) wy: u8,
     pub(super) bgp: u8,
+    startup_dots: u8,
 
     // Window state
     pub(super) window_active: bool,
@@ -33,14 +34,15 @@ struct PendingWrite {
 
 impl Mode3Pipeline {
     pub(super) fn new(
-        scx: u8, scy: u8, wx: u8, wy: u8, lcdc: u8,
+        scx: u8, scy: u8, wx: u8, wy: u8, lcdc: u8, bgp: u8, cgb_mode: bool,
     ) -> Self {
         Self {
             pixel_x: 0,
             fine_scroll: scx & 7,
             complete: false,
             lcdc, scx, scy, wx, wy,
-            bgp: 0xFC,
+            bgp,
+            startup_dots: if cgb_mode { 19 } else { 18 } + (scx & 7),
             window_active: false,
             window_line: 0,
             pending_writes: Vec::new(),
@@ -58,6 +60,12 @@ impl Mode3Pipeline {
         if self.complete { return None; }
         self.apply_pending_writes();
 
+        // Startup delay: pixel_x doesn't advance during pipeline fill
+        if self.startup_dots > 0 {
+            self.startup_dots -= 1;
+            return None;
+        }
+
         let scroll_x = self.scx.wrapping_add(self.pixel_x);
         let scroll_y = self.scy.wrapping_add(ly);
         let tile_col = (scroll_x / 8) as u16;
@@ -71,6 +79,15 @@ impl Mode3Pipeline {
         let map_idx = (map_addr & 0x1FFF) as usize;
         let tile = vram[map_idx];
 
+        // Read attribute byte (CGB only)
+        let attr = if cgb_game { vram[0x2000 + map_idx] } else { 0 };
+        let bank = if cgb_game { ((attr >> 3) & 0x01) as usize } else { 0 };
+        let hflip = cgb_game && (attr & 0x20) != 0;
+        let vflip = cgb_game && (attr & 0x40) != 0;
+
+        // Apply vertical flip
+        let eff_tile_y = if vflip { 7 - tile_y } else { tile_y };
+
         // Read pixel from tile data
         let signed = self.lcdc & 0x10 == 0;
         let tile_addr = if signed {
@@ -80,20 +97,16 @@ impl Mode3Pipeline {
             0x8000u16 + tile as u16 * 16
         };
 
-        let bank = if cgb_mode {
-            let attr = vram[0x2000 + map_idx];
-            ((attr >> 3) & 0x01) as usize
-        } else { 0 };
-
-        let row_addr = tile_addr + tile_y as u16 * 2;
+        let row_addr = tile_addr + eff_tile_y as u16 * 2;
         let row_idx = (row_addr & 0x1FFF) as usize;
         let low = vram[bank * 0x2000 + row_idx];
         let high = vram[bank * 0x2000 + row_idx + 1];
-        let bit = 7 - tile_x;
+
+        // Apply horizontal flip (read bits in reverse order)
+        let bit = if hflip { tile_x } else { 7 - tile_x };
         let color = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
 
         let pixel = if cgb_game {
-            let attr = vram[0x2000 + map_idx];
             let pal = (attr & 0x07) as usize;
             Self::cgb_color(bg_palette[pal * 4 + color as usize])
         } else if cgb_mode {
@@ -113,7 +126,7 @@ impl Mode3Pipeline {
     pub(super) fn fine_scroll_x(&self) -> u8 { self.fine_scroll }
     pub(super) fn complete(&self) -> bool { self.complete }
 
-    pub(super) fn queue_register_write(&mut self, register: u16, value: u8) {
+    pub(super) fn queue_register_write(&mut self, register: u16, value: u8) -> u8 {
         // Tile-fetch-related registers: 6-dot delay for fetcher restart.
         // Palette registers: immediate (take effect at current pixel).
         let delay = match register {
@@ -122,6 +135,7 @@ impl Mode3Pipeline {
         };
         let apply_x = self.pixel_x.saturating_add(delay).min(159);
         self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
+        apply_x
     }
 
     fn apply_pending_writes(&mut self) {
