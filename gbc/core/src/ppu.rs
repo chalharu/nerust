@@ -20,6 +20,22 @@ pub struct PpuStepResult {
     pub vblank: bool,
 }
 
+#[derive(Clone, Copy)]
+struct Mode3Write {
+    dot: u32,
+    register: u16,
+    old_value: u8,
+    value: u8,
+}
+
+#[derive(Clone, Copy)]
+struct LatchedWrite {
+    pixel_x: u8,
+    register: u16,
+    old_value: u8,
+    value: u8,
+}
+
 pub struct GbcPpu {
     lcdc: u8,
     stat: u8,
@@ -65,13 +81,7 @@ pub struct GbcPpu {
     /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
     lcd_stat_last_mode: Option<PpuMode>,
 
-    /// Mid-scanline register changes during Mode 3 (pixel transfer).
-    /// Stored as (pixel_x, reg_addr, value) and applied in render_scanline
-    /// at the correct pixel boundary.
-    /// event_count tracks the number of events in the current scanline,
-    /// used to alternate px offset for alternating write patterns.
-    mid_events: Vec<(u8, u16, u8)>,
-    event_count: u8,
+    mode3_writes: Vec<Mode3Write>,
 }
 
 impl Default for GbcPpu {
@@ -107,8 +117,7 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
-            mid_events: Vec::new(),
-            event_count: 0,
+            mode3_writes: Vec::new(),
         }
     }
 }
@@ -121,27 +130,12 @@ struct Sprite {
     y_flip: bool,
     x_flip: bool,
     palette: u8,
-        behind_bg: bool,
-        oam_index: u8,
-        oam_flags: u8,
-    }
+    behind_bg: bool,
+    oam_index: u8,
+    oam_flags: u8,
+}
 
 impl GbcPpu {
-    /// Current pixel position during Mode 3 (0-159).
-    /// First pixel at T-cycle 87 (DMG) / 88 (CGB).
-    /// Pixel output is 1 per T-cycle after initial pipeline delay.
-    fn mode3_pixel_x(&self) -> u8 {
-        if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
-            return 0;
-        }
-        // Pixel output is linear: 1 pixel per T-cycle starting at mode_clock 87/88.
-        // mode_clock advances 1 per step_tcycle. Base 101/100 accounts for
-        // 5 M-cycle dispatch (20 T-cycles) + ISR overhead.
-        let first_pixel = if self.cgb_mode { 101 } else { 100 };
-        let px = self.mode_clock as i32 - first_pixel + (self.event_count % 2) as i32;
-        px.clamp(0, 159) as u8
-    }
-
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
         let frame_done = self.frame_complete;
         self.frame_complete = false;
@@ -183,7 +177,9 @@ impl GbcPpu {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.lyc_matched_ly = self.ly;
             self.ly = self.ly.wrapping_add(1);
-            if self.ly >= VBLANK_START { vblank = true; }
+            if self.ly == VBLANK_START {
+                vblank = true;
+            }
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
                 self.frame_complete = true;
@@ -204,15 +200,27 @@ impl GbcPpu {
         self.check_lyc(&mut lcd_stat);
 
         if mode_changed {
-            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 { lcd_stat = true; }
-            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 { lcd_stat = true; }
-            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 { lcd_stat = true; }
+            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 {
+                lcd_stat = true;
+            }
+            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 {
+                lcd_stat = true;
+            }
+            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 {
+                lcd_stat = true;
+            }
         }
 
-        PpuStepResult { frame_done: self.frame_complete, lcd_stat, vblank }
+        PpuStepResult {
+            frame_done: self.frame_complete,
+            lcd_stat,
+            vblank,
+        }
     }
 
-    pub fn key0(&self) -> u8 { self.key0 }
+    pub fn key0(&self) -> u8 {
+        self.key0
+    }
 
     /// Write $FF6C (KEY0/OPRI). Only bit 0 affects sprite priority;
     /// upper bits are stored for DMG emulation mode detection.
@@ -282,6 +290,9 @@ impl GbcPpu {
         }
 
         let ly = self.ly as usize;
+        self.mode3_writes.sort_by_key(|event| event.dot);
+        self.restore_mid_event_initial_state();
+
         // sprite_height and sprite_double used for sprite collection
         let sprite_enabled = self.lcdc & 0x02 != 0;
         let sprite_double = self.lcdc & 0x04 != 0;
@@ -294,21 +305,6 @@ impl GbcPpu {
         // for tile Y calculation to avoid overflow when LCDC.2 changes mid-scanline.
 
         let base = ly * 160;
-
-        // Window line counter: increment once per scanline when window is active.
-        // Check at pixel 0 using the pre-scanline register state.
-        // (window enabled at mode 2 start determines if counter increments)
-        {
-            let win_en = self.lcdc & 0x20 != 0;
-            let bg_en = self.lcdc & 0x01 != 0;
-            let bg_win = if self.cgb_game { true } else { bg_en };
-            if win_en && bg_win
-                && ly as u8 >= self.wy
-                && (self.wx.wrapping_sub(7) as i16) < 168
-            {
-                self.window_line = self.window_line.wrapping_add(1);
-            }
-        }
 
         // Collect sprites for this scanline
         let mut sprites: Vec<Sprite> = Vec::new();
@@ -348,40 +344,70 @@ impl GbcPpu {
                 if dmg_priority {
                     a.oam_index.cmp(&b.oam_index)
                 } else {
-                    a.x.cmp(&b.x)
-                        .then_with(|| a.oam_index.cmp(&b.oam_index))
+                    a.x.cmp(&b.x).then_with(|| a.oam_index.cmp(&b.oam_index))
                 }
             });
         }
 
-        // Sort mid-scanline events by pixel position
-        self.mid_events.sort_by_key(|&(px, _, _)| px);
+        let pixel_events = self.map_mid_events_to_pixels(&sprites);
+        self.restore_mid_event_initial_state();
+        let fine_scroll_x = self.scx & 0x07;
         let mut ev_idx = 0usize;
+        let mut window_active = false;
+        let mut window_triggered = false;
+        let mut window_can_retrigger = false;
+        let mut window_disable_at = None;
+        let mut window_pixel = 0u8;
+        let mut active_window_y = self.window_line;
 
         for x in 0..160 {
             // Apply any pending mid-scanline register changes at this pixel
-            while ev_idx < self.mid_events.len() && self.mid_events[ev_idx].0 <= x as u8 {
-                let (_, reg, value) = self.mid_events[ev_idx];
-                match reg {
-                    0xFF40 => self.lcdc = value,
-                    0xFF42 => self.scy = value,
-                    0xFF43 => self.scx = value,
-              0xFF47 => self.bgp = value,
-              0xFF48 => self.obp0 = value,
-              0xFF49 => self.obp1 = value,
-                    0xFF4A => self.wy = value,
-                    0xFF4B => self.wx = value,
-                    _ => {}
+            while ev_idx < pixel_events.len() && pixel_events[ev_idx].pixel_x <= x as u8 {
+                let LatchedWrite {
+                    register: reg,
+                    old_value,
+                    value,
+                    ..
+                } = pixel_events[ev_idx];
+                if reg == 0xFF40 && window_active && old_value & 0x20 != 0 && value & 0x20 == 0 {
+                    let pixels_left = 8 - window_pixel % 8;
+                    window_disable_at = Some((x as u8).saturating_add(pixels_left));
                 }
+                if reg == 0xFF4B && window_triggered && i16::from(value) - 7 > x as i16 {
+                    window_can_retrigger = true;
+                }
+                self.set_render_register(reg, value);
                 ev_idx += 1;
+            }
+
+            if window_disable_at.is_some_and(|disable_x| x as u8 >= disable_x) {
+                window_active = false;
+                window_disable_at = None;
             }
 
             // Recompute derived state per-pixel (may have changed mid-scanline)
             let bg_en = self.lcdc & 0x01 != 0;
             let bg_win_en = if self.cgb_game { true } else { bg_en };
-            let win_en = bg_win_en && self.lcdc & 0x20 != 0;
             let spr_en = self.lcdc & 0x02 != 0;
             let _spr_dbl = self.lcdc & 0x04 != 0;
+
+            let window_x = self.wx as i16 - 7;
+            let may_start_window = !window_triggered || window_can_retrigger;
+            if !window_active
+                && may_start_window
+                && bg_win_en
+                && self.lcdc & 0x20 != 0
+                && ly as u8 >= self.wy
+                && window_x < 160
+                && x as i16 >= window_x.max(0)
+            {
+                window_active = true;
+                window_triggered = true;
+                window_can_retrigger = false;
+                window_pixel = if window_x < 0 { (-window_x) as u8 } else { 0 };
+                active_window_y = self.window_line;
+                self.window_line = self.window_line.wrapping_add(1);
+            }
 
             let mut pixel = 0xFF_FF_FF_FF;
             let mut bg_color = 0u8;
@@ -390,7 +416,9 @@ impl GbcPpu {
             let mut bg_priority = false;
             if bg_win_en {
                 let scroll_y = self.scy.wrapping_add(self.ly);
-                let scroll_x = self.scx.wrapping_add(x as u8);
+                let scroll_x = (self.scx & 0xF8)
+                    .wrapping_add(fine_scroll_x)
+                    .wrapping_add(x as u8);
                 let (p, c, prio) = self.read_bg_pixel(scroll_x, scroll_y);
                 pixel = p;
                 bg_color = c;
@@ -398,16 +426,12 @@ impl GbcPpu {
             }
 
             // Window layer (overlays BG when enabled and within window area)
-            if win_en {
-                let wx = self.wx.wrapping_sub(7) as i16;
-                let wy = self.wy as i16;
-                if x as i16 >= wx && (ly as i16) >= wy {
-                    let win_y = self.window_line.wrapping_sub(1);
-                    let (p, c, prio) = self.read_window_pixel((x as i16 - wx) as u8, win_y);
-                    pixel = p;
-                    bg_color = c;
-                    bg_priority = prio;
-                }
+            if window_active {
+                let (p, c, prio) = self.read_window_pixel(window_pixel, active_window_y);
+                pixel = p;
+                bg_color = c;
+                bg_priority = prio;
+                window_pixel = window_pixel.wrapping_add(1);
             }
 
             // Sprite layer
@@ -444,7 +468,7 @@ impl GbcPpu {
                                 // CGB game: use OAM bits 2-0 for OBJ palette (0-7)
                                 let pal_idx = (spr.oam_flags & 0x07) as usize;
                                 Self::cgb_color_to_pixel(self.obj_palette[pal_idx * 4 + c as usize])
-                             } else if self.cgb_mode {
+                            } else if self.cgb_mode {
                                 // DMG game on CGB: OBP0/OBP1 selects from OBJ palette 0
                                 let shade = (spr.palette >> (c * 2)) & 0x03;
                                 Self::cgb_color_to_pixel(self.obj_palette[shade as usize])
@@ -460,9 +484,10 @@ impl GbcPpu {
                 }
                 if let Some(sp) = obj_pixel {
                     // CGB master priority: LCDC.0=0 → sprites always on top
-                    if self.cgb_game && self.lcdc & 0x01 == 0 {
-                        pixel = sp;
-                    } else if (!bg_priority && !obj_behind_bg) || bg_color == 0 {
+                    if (self.cgb_game && self.lcdc & 0x01 == 0)
+                        || (!bg_priority && !obj_behind_bg)
+                        || bg_color == 0
+                    {
                         pixel = sp;
                     }
                 }
@@ -470,8 +495,109 @@ impl GbcPpu {
 
             self.frame_buffer[base + x] = pixel;
         }
-        self.mid_events.clear();
-        self.event_count = 0;
+        self.mode3_writes.clear();
+    }
+
+    fn restore_mid_event_initial_state(&mut self) {
+        for event_idx in (0..self.mode3_writes.len()).rev() {
+            let event = self.mode3_writes[event_idx];
+            self.set_render_register(event.register, event.old_value);
+        }
+    }
+
+    fn map_mid_events_to_pixels(&mut self, sprites: &[Sprite]) -> Vec<LatchedWrite> {
+        let mut mapped = Vec::with_capacity(self.mode3_writes.len());
+        let mut event_idx = 0usize;
+        let mut sprite_idx = 0usize;
+        let mut dot = T_CYCLES_OAM_SEARCH;
+        let mut pixel_x = 0u8;
+        let mut stall = 0u8;
+        let mut window_started = false;
+        let mut last_sprite_tile = None;
+        let first_pixel_dot = if self.cgb_mode { 99 } else { 98 } + u32::from(self.scx & 7);
+
+        while event_idx < self.mode3_writes.len() {
+            while event_idx < self.mode3_writes.len() && self.mode3_writes[event_idx].dot <= dot {
+                let event = self.mode3_writes[event_idx];
+                let apply_x = match event.register {
+                    0xFF40 if (event.old_value ^ event.value) & 0x40 != 0 => {
+                        pixel_x.saturating_add(7) & !7
+                    }
+                    _ => pixel_x,
+                };
+                mapped.push(LatchedWrite {
+                    pixel_x: apply_x.min(159),
+                    register: event.register,
+                    old_value: event.old_value,
+                    value: event.value,
+                });
+                self.set_render_register(event.register, event.value);
+                event_idx += 1;
+            }
+
+            if dot < first_pixel_dot {
+                dot += 1;
+                continue;
+            }
+            if stall != 0 {
+                stall -= 1;
+                dot += 1;
+                continue;
+            }
+
+            let window_x = self.wx as i16 - 7;
+            if !window_started
+                && self.lcdc & 0x20 != 0
+                && self.ly >= self.wy
+                && window_x < 160
+                && i16::from(pixel_x) >= window_x.max(0)
+            {
+                window_started = true;
+                stall = 5;
+                dot += 1;
+                continue;
+            }
+
+            while sprite_idx < sprites.len() && sprites[sprite_idx].x <= i16::from(pixel_x) {
+                let sprite = &sprites[sprite_idx];
+                let tile = (i16::from(pixel_x) + i16::from(self.scx)) / 8;
+                let wait = if sprite.x == -8 {
+                    5
+                } else if last_sprite_tile == Some(tile) {
+                    0
+                } else {
+                    let tile_x = (i16::from(pixel_x) + i16::from(self.scx)) & 7;
+                    (5 - tile_x).max(0) as u8
+                };
+                last_sprite_tile = Some(tile);
+                stall = stall.saturating_add(6 + wait);
+                sprite_idx += 1;
+            }
+            if stall != 0 {
+                stall -= 1;
+                dot += 1;
+                continue;
+            }
+
+            pixel_x = pixel_x.saturating_add(1).min(160);
+            dot += 1;
+        }
+
+        mapped
+    }
+
+    fn set_render_register(&mut self, reg: u16, value: u8) {
+        match reg {
+            0xFF40 => self.lcdc = value,
+            0xFF42 => self.scy = value,
+            0xFF43 => self.scx = value,
+            0xFF47 => self.bgp = value,
+            0xFF48 => self.obp0 = value,
+            0xFF49 => self.obp1 = value,
+            0xFF4A => self.wy = value,
+            0xFF4B => self.wx = value,
+            _ => {}
+        }
     }
 
     fn read_tile_pixel(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool) -> u8 {
@@ -566,17 +692,15 @@ impl GbcPpu {
         for i in 0..8 {
             let src_base = 29 * 4;
             let dst_base = i * 4;
-            for j in 0..4 {
-                self.bg_palette[dst_base + j] = palettes[src_base + j];
-            }
+            self.bg_palette[dst_base..dst_base + 4]
+                .copy_from_slice(&palettes[src_base..src_base + 4]);
         }
         // Load 8 OBJ palettes from palette 4 base
         for i in 0..8 {
             let src_base = 4 * 4;
             let dst_base = i * 4;
-            for j in 0..4 {
-                self.obj_palette[dst_base + j] = palettes[src_base + j];
-            }
+            self.obj_palette[dst_base..dst_base + 4]
+                .copy_from_slice(&palettes[src_base..src_base + 4]);
         }
     }
 
@@ -599,7 +723,7 @@ impl GbcPpu {
     }
 
     fn cgb_color_to_pixel(color: u16) -> u32 {
-        let r = ((color >> 0) & 0x1F) as u32;
+        let r = (color & 0x1F) as u32;
         let g = ((color >> 5) & 0x1F) as u32;
         let b = ((color >> 10) & 0x1F) as u32;
         // 5-bit to 8-bit: (value << 3) | (value >> 2)
@@ -612,7 +736,14 @@ impl GbcPpu {
     }
 
     /// Read tile pixel with CGB VRAM bank support.
-    fn read_tile_pixel_bank(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool, bank: usize) -> u8 {
+    fn read_tile_pixel_bank(
+        &self,
+        tile_index: u8,
+        tile_x: u8,
+        tile_y: u8,
+        signed_tiles: bool,
+        bank: usize,
+    ) -> u8 {
         let tile_addr = if signed_tiles {
             let signed_idx = tile_index as i8 as i16;
             (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
@@ -648,9 +779,18 @@ impl GbcPpu {
             let hflip = (attr >> 5) & 0x01 != 0;
             let vflip = (attr >> 6) & 0x01 != 0;
             let bg_priority = (attr >> 7) & 0x01 != 0; // bit 7: BG-to-OAM priority
-            let tile_x_eff = if hflip { 7 - (scroll_x % 8) } else { scroll_x % 8 };
-            let tile_y_eff = if vflip { 7 - (scroll_y % 8) } else { scroll_y % 8 };
-            let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
+            let tile_x_eff = if hflip {
+                7 - (scroll_x % 8)
+            } else {
+                scroll_x % 8
+            };
+            let tile_y_eff = if vflip {
+                7 - (scroll_y % 8)
+            } else {
+                scroll_y % 8
+            };
+            let color =
+                self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
             (Self::cgb_color_to_pixel(color15), color, bg_priority)
         } else if self.cgb_mode {
@@ -689,7 +829,8 @@ impl GbcPpu {
             let bg_priority = (attr >> 7) & 0x01 != 0;
             let tile_x_eff = if hflip { 7 - (win_x % 8) } else { win_x % 8 };
             let tile_y_eff = if vflip { 7 - (win_y % 8) } else { win_y % 8 };
-            let color = self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
+            let color =
+                self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
             let color15 = self.bg_palette[pal * 4 + color as usize];
             (Self::cgb_color_to_pixel(color15), color, bg_priority)
         } else if self.cgb_mode {
@@ -765,7 +906,7 @@ impl GbcPpu {
                     (pal >> 8) as u8
                 }
             }
-              0xFF6C => self.key0() | 0xFE,
+            0xFF6C => self.key0() | 0xFE,
             _ => 0xFF,
         }
     }
@@ -774,26 +915,29 @@ impl GbcPpu {
         // Track mid-scanline changes during Mode 3 (pixel transfer).
         // mode_clock is at the correct T-cycle (PPU advances 1 per step_tcycle call).
         match addr {
-            0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B => {
+            0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
                 if self.ly < VBLANK_START
                     && self.mode_clock > T_CYCLES_OAM_SEARCH
-                    && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
-                {
-                    let px = self.mode3_pixel_x();
-                    let tile_px = if addr == 0xFF43 {
-                        (px + 7) & !7
-                    } else {
-                        px
-                    };
-                    let adj_px = tile_px + (self.event_count % 2);
-                    self.mid_events.push((adj_px.min(159), addr, value));
-                    self.event_count = self.event_count.wrapping_add(1);
-                }
+                    && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER =>
+            {
+                let old_value = self.read_register(addr);
+                self.mode3_writes.push(Mode3Write {
+                    dot: self.mode_clock,
+                    register: addr,
+                    old_value,
+                    value,
+                });
             }
             _ => {}
         }
         match addr {
-            0xFF40 => self.lcdc = value,
+            0xFF40 => {
+                let lcd_was_enabled = self.lcdc & 0x80 != 0;
+                self.lcdc = value;
+                if !lcd_was_enabled && value & 0x80 != 0 {
+                    self.lcd_stat_last_mode = None;
+                }
+            }
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
             0xFF42 => self.scy = value,
             0xFF43 => self.scx = value,
@@ -804,56 +948,61 @@ impl GbcPpu {
             0xFF4A => self.wy = value,
             0xFF4B => self.wx = value,
             0xFF4F => self.vbk = value & 0x01,
-             0xFF68 => {
-                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
-                     self.bgpi = value & 0x3F;
-                     if value & 0x80 != 0 {
-                         self.bgpi |= 0x80;
-                     }
-                 }
-             }
-             0xFF69 => {
-                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
-                     let idx = (self.bgpi & 0x3F) as usize;
-                     let auto_inc = self.bgpi & 0x80 != 0;
-                     if idx & 1 == 0 {
-                         self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
-                     } else {
-                         self.bg_palette[idx >> 1] =
-                             (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                     }
-                     if auto_inc {
-                         self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
-                     }
-                 }
-             }
-             0xFF6A => {
-                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
-                     self.obpi = value & 0x3F;
-                     if value & 0x80 != 0 {
-                         self.obpi |= 0x80;
-                     }
-                 }
-             }
-             0xFF6B => {
-                 if self.key0 & 0x04 == 0 { // not DMG emulation mode
-                     let idx = (self.obpi & 0x3F) as usize;
-                     let auto_inc = self.obpi & 0x80 != 0;
-                     if idx & 1 == 0 {
-                         self.obj_palette[idx >> 1] =
-                             (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
-                     } else {
-                         self.obj_palette[idx >> 1] =
-                             (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                     }
-                     if auto_inc {
-                         self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
-                     }
-                 }
+            0xFF68 => {
+                if self.key0 & 0x04 == 0 {
+                    // not DMG emulation mode
+                    self.bgpi = value & 0x3F;
+                    if value & 0x80 != 0 {
+                        self.bgpi |= 0x80;
+                    }
+                }
             }
-              0xFF6C => {
-                  self.set_key0(value);
-              }
+            0xFF69 => {
+                if self.key0 & 0x04 == 0 {
+                    // not DMG emulation mode
+                    let idx = (self.bgpi & 0x3F) as usize;
+                    let auto_inc = self.bgpi & 0x80 != 0;
+                    if idx & 1 == 0 {
+                        self.bg_palette[idx >> 1] =
+                            (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
+                    } else {
+                        self.bg_palette[idx >> 1] =
+                            (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+                    }
+                    if auto_inc {
+                        self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
+                    }
+                }
+            }
+            0xFF6A => {
+                if self.key0 & 0x04 == 0 {
+                    // not DMG emulation mode
+                    self.obpi = value & 0x3F;
+                    if value & 0x80 != 0 {
+                        self.obpi |= 0x80;
+                    }
+                }
+            }
+            0xFF6B => {
+                if self.key0 & 0x04 == 0 {
+                    // not DMG emulation mode
+                    let idx = (self.obpi & 0x3F) as usize;
+                    let auto_inc = self.obpi & 0x80 != 0;
+                    if idx & 1 == 0 {
+                        self.obj_palette[idx >> 1] =
+                            (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
+                    } else {
+                        self.obj_palette[idx >> 1] =
+                            (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+                    }
+                    if auto_inc {
+                        self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
+                    }
+                }
+            }
+            0xFF6C => {
+                self.set_key0(value);
+            }
             _ => {}
         }
     }
@@ -909,8 +1058,9 @@ mod tests {
     #[test]
     fn ly_reaches_vblank_region() {
         let mut p = ppu();
-        step_ly(&mut p, VBLANK_START);
+        step_ly(&mut p, VBLANK_START - 1);
         let r = p.step(T_CYCLES_PER_SCANLINE);
+        assert_eq!(p.ly, VBLANK_START);
         assert!(r.vblank);
     }
 
@@ -969,10 +1119,10 @@ mod tests {
     fn vblank_interrupt_fires_during_vblank() {
         let mut p = ppu();
         p.write_register(0xFF41, 0x10);
-        step_ly(&mut p, VBLANK_START);
+        step_ly(&mut p, VBLANK_START - 1);
         let r = p.step(T_CYCLES_PER_SCANLINE);
         assert!(r.vblank);
-        assert!(r.lcd_stat);
+        assert!(p.step(1).lcd_stat);
     }
 
     #[test]
@@ -1068,6 +1218,29 @@ mod tests {
         let mut p = ppu();
         let _ = p.step(5);
         assert_eq!(p.read_register(0xFF41) & 0x03, 2);
+    }
+
+    #[test]
+    fn vblank_interrupt_fires_only_on_line_144() {
+        let mut p = ppu();
+        step_ly(&mut p, VBLANK_START - 1);
+
+        assert!(p.step(T_CYCLES_PER_SCANLINE).vblank);
+        assert!(!p.step(T_CYCLES_PER_SCANLINE).vblank);
+    }
+
+    #[test]
+    fn lcd_enable_fires_mode_2_stat_interrupt_on_line_zero() {
+        let mut p = ppu();
+        p.write_register(0xFF41, 0x20);
+        p.write_register(0xFF40, p.read_register(0xFF40) & !0x80);
+        p.step(1);
+        p.write_register(0xFF40, p.read_register(0xFF40) | 0x80);
+
+        let result = p.step(1);
+
+        assert!(result.lcd_stat);
+        assert_eq!(p.read_register(0xFF44), 0);
     }
 
     #[test]

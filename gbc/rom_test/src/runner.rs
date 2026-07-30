@@ -65,10 +65,10 @@ pub fn run_case(
     }
 
     // Optional boot ROM tick alignment (env var for testing).
-    if let Some(tick_str) = std::env::var("NERUST_INIT_TICK").ok() {
-        if let Ok(tick) = tick_str.parse() {
-            bus.set_initial_tick(tick);
-        }
+    if let Ok(tick_str) = std::env::var("NERUST_INIT_TICK")
+        && let Ok(tick) = tick_str.parse()
+    {
+        bus.set_initial_tick(tick);
     }
     // CGB mode depends on HARDWARE (requested model), not effective model.
     // A CGB running a DMG-only ROM still applies boot ROM palettes.
@@ -131,18 +131,18 @@ pub fn run_case(
         }
 
         // Verify frame hash (CRC32 of raw RGBA frame buffer)
-        if let Some(ref frame_hash) = event.frame {
-            if !frame_hash.hash.is_empty() {
-                let expected = parse_hex(&frame_hash.hash)? as u32;
-                if frame_crc != expected {
-                    return Err(RomTestError::CaseFailed(
-                        case.id.clone(),
-                        format!(
-                            "frame hash: expected {:08X}, got {:08X}",
-                            expected, frame_crc
-                        ),
-                    ));
-                }
+        if let Some(ref frame_hash) = event.frame
+            && !frame_hash.hash.is_empty()
+        {
+            let expected = parse_hex(&frame_hash.hash)? as u32;
+            if frame_crc != expected {
+                return Err(RomTestError::CaseFailed(
+                    case.id.clone(),
+                    format!(
+                        "frame hash: expected {:08X}, got {:08X}",
+                        expected, frame_crc
+                    ),
+                ));
             }
         }
 

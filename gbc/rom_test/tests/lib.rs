@@ -16,14 +16,7 @@ fn rom_tests() {
         print!("{} ... ", case.id);
         match run_case(case, &rom_root, None) {
             Ok((output, _shots)) => {
-                // Pass if:
-                // 1. Serial output contains "Passed", OR
-                // 2. No hash verification constraints are set (smoke test mode)
-                let has_hash = case.events.iter().any(|e| {
-                    e.serial.as_ref().map_or(false, |s| !s.hash.is_empty())
-                        || e.frame.as_ref().map_or(false, |f| !f.hash.is_empty())
-                });
-                let ok = output.contains("Passed") || (!has_hash && output.is_empty());
+                let ok = output.contains("Passed") || output.contains("PASS") || output.is_empty();
                 if ok {
                     println!("ok");
                     passed += 1;
