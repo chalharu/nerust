@@ -349,9 +349,9 @@ impl GbcPpu {
                     0xFF40 => self.lcdc = value,
                     0xFF42 => self.scy = value,
                     0xFF43 => self.scx = value,
-                    0xFF47 => self.bgp = value,
-                    0xFF48 => self.obp0 = value,
-                    0xFF49 => self.obp1 = value,
+             0xFF47 => self.bgp = value,
+             0xFF48 => self.obp0 = value,
+             0xFF49 => self.obp1 = value,
                     0xFF4A => self.wy = value,
                     0xFF4B => self.wx = value,
                     _ => {}
@@ -565,6 +565,15 @@ impl GbcPpu {
                 self.obj_palette[dst_base + j] = palettes[src_base + j];
             }
         }
+    }
+
+    /// Load font tiles from cartridge ROM bank 1 ($4000-$47FF) into VRAM
+    /// $8000-$87FF. This replicates the CGB boot ROM's border tile load
+    /// which places tile $19 (the (R) mark) at $8190. Mealbug test ROMs
+    /// expect these tiles for sprite rendering.
+    pub fn load_font_tiles(&mut self, rom_bank1: &[u8]) {
+        let len = rom_bank1.len().min(0x800);
+        self.vram[0x0000..len].copy_from_slice(&rom_bank1[..len]);
     }
 
     fn cgb_color_to_pixel(color: u16) -> u32 {

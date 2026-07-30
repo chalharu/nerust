@@ -50,10 +50,19 @@ pub fn run_case(
         nerust_gbc_core::cartridge_header::CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
             RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
         })?;
+    // Extract font bank 1 data before moving rom_bytes
+    let font_bank1: Vec<u8> = if rom_bytes.len() > 0x4000 {
+        rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
+    } else {
+        Vec::new()
+    };
     let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(&header, rom_bytes, None);
 
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
+    if !font_bank1.is_empty() {
+        bus.load_font_tiles(&font_bank1);
+    }
 
     // Optional boot ROM tick alignment (env var for testing).
     if let Some(tick_str) = std::env::var("NERUST_INIT_TICK").ok() {
