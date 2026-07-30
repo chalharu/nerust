@@ -1,183 +1,224 @@
-/// Per-pixel pipeline that handles BG AND window rendering.
-/// Replaces render_scanline for both tile paths.
-
-#[derive(Debug, Clone)]
-pub(super) struct Mode3Pipeline {
-    pub(super) pixel_x: u8,
-    /// Startup offset: fetch_pixel_x advancement during startup dots
-    startup_fetch_offset: u8,
-    complete: bool,
-
-    // Lached registers
-    pub(super) lcdc: u8,
-    pub(super) scx: u8,
-    pub(super) scy: u8,
-    pub(super) wx: u8,
-    pub(super) wy: u8,
-    pub(super) bgp: u8,
-    startup_dots: u8,
-    pub(super) fine_scroll: u8,
-
-    // Window state
-    pub(super) window_active: bool,
-    pub(super) window_line: u8,
-    window_pixel_count: u8,
-
-    // Pending register writes
-    pending_writes: Vec<PendingWrite>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FetchStage {
+    Tile,
+    DataLow,
+    DataHigh,
+    Push,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct PendingWrite { pixel_x: u8, register: u16, value: u8 }
+#[derive(Debug)]
+pub(super) struct Mode3Pipeline {
+    pixel_x: u8,
+    startup_dots: u8,
+    stall_dots: u8,
+    fetch_dot: u8,
+    fetch_pixel_x: u8,
+    fine_scroll_x: u8,
+    sprite_x: Vec<i16>,
+    next_sprite: usize,
+    last_sprite_tile: Option<i16>,
+    window_active: bool,
+    window_seen: bool,
+    window_triggered: bool,
+    window_can_retrigger: bool,
+    window_disable_pending: bool,
+    window_pixels: u8,
+    complete: bool,
+}
 
 impl Mode3Pipeline {
-    pub(super) fn new(
-        scx: u8, scy: u8, wx: u8, wy: u8, lcdc: u8, bgp: u8, cgb_mode: bool,
-    ) -> Self {
-        let cgb = if cgb_mode { 19 } else { 18 };
+    pub(super) fn new(cgb_mode: bool, scx: u8, sprite_x: Vec<i16>) -> Self {
         Self {
-            pixel_x: 0, fine_scroll: scx & 7, complete: false,
-            startup_fetch_offset: ((cgb + (scx & 7)) / 8) * 8,
-            lcdc, scx, scy, wx, wy, bgp,
-            startup_dots: cgb + (scx & 7),
-            window_active: false, window_line: 0, window_pixel_count: 0,
-            pending_writes: Vec::new(),
+            pixel_x: 0,
+            startup_dots: if cgb_mode { 19 } else { 18 } + (scx & 7),
+            stall_dots: 0,
+            fetch_dot: 0,
+            fetch_pixel_x: 0,
+            fine_scroll_x: scx & 7,
+            sprite_x,
+            next_sprite: 0,
+            last_sprite_tile: None,
+            window_active: false,
+            window_seen: false,
+            window_triggered: false,
+            window_can_retrigger: false,
+            window_disable_pending: false,
+            window_pixels: 0,
+            complete: false,
         }
     }
 
-    pub(super) fn step(
-        &mut self, vram: &[u8; 0x4000], bg_palette: &[u16; 32],
-        cgb_mode: bool, cgb_game: bool, ly: u8,
-    ) -> Option<u32> {
-        if self.complete { return None; }
-        self.apply_pending_writes();
+    pub(super) fn step(&mut self, lcdc: u8, scx: u8, ly: u8, wy: u8, wx: u8) {
+        if self.complete {
+            return;
+        }
+        if self.startup_dots != 0 {
+            if lcdc & 0x20 != 0 && ly >= wy && wx <= 7 {
+                self.window_seen = true;
+            }
+            self.startup_dots -= 1;
+            self.advance_fetcher();
+            return;
+        }
+        if self.stall_dots != 0 {
+            self.stall_dots -= 1;
+            return;
+        }
 
-        if self.startup_dots > 0 { self.startup_dots -= 1; return None; }
-
-        // Check window activation
-        let window_x = self.wx as i16 - 7;
+        let window_x = i16::from(wx) - 7;
         if !self.window_active
-            && self.lcdc & 0x20 != 0 && ly >= self.wy
+            && (!self.window_triggered || self.window_can_retrigger)
+            && lcdc & 0x20 != 0
+            && ly >= wy
             && window_x < 160
-            && self.pixel_x as i16 >= window_x.max(0)
+            && i16::from(self.pixel_x) >= window_x.max(0)
         {
             self.window_active = true;
-            self.window_line = self.window_line.wrapping_add(1);
-            self.window_pixel_count = if window_x < 0 { (-window_x) as u8 } else { 0 };
+            self.window_seen = true;
+            self.window_triggered = true;
+            self.window_can_retrigger = false;
+            self.window_pixels = if window_x < 0 { (-window_x) as u8 } else { 0 };
+            self.stall_dots = 5;
+            self.fetch_dot = 0;
+            self.fetch_pixel_x = self.pixel_x;
+            return;
         }
 
-        // Determine tile source
-        let (map_base, col, row, tile_x, tile_y) = if self.window_active {
-            let win_base = if self.lcdc & 0x40 != 0 { 0x9C00u16 } else { 0x9800u16 };
-            let win_row = self.window_line.wrapping_sub(1);
-            (win_base,
-             (self.window_pixel_count / 8) as u16,
-             (win_row / 8) as u16,
-             self.window_pixel_count % 8,
-             win_row & 7)
-        } else {
-            let sx = self.scx.wrapping_add(self.pixel_x);
-            let sy = self.scy.wrapping_add(ly);
-            (if self.lcdc & 0x08 != 0 { 0x9C00u16 } else { 0x9800u16 },
-             (sx / 8) as u16, (sy / 8) as u16, sx % 8, sy % 8)
-        };
+        if self.window_active && self.window_disable_pending && self.window_pixels & 7 == 0 {
+            self.window_active = false;
+            self.window_disable_pending = false;
+            self.stall_dots = 5;
+            self.fetch_dot = 0;
+            self.fetch_pixel_x = self.pixel_x;
+            return;
+        }
 
-        // Read tile from map
-        let map_addr = map_base + row * 32 + col;
-        let map_idx = (map_addr & 0x1FFF) as usize;
-        let tile = vram[map_idx];
+        if lcdc & 0x02 == 0 {
+            while self.next_sprite < self.sprite_x.len()
+                && self.sprite_x[self.next_sprite] <= i16::from(self.pixel_x)
+            {
+                self.next_sprite += 1;
+            }
+        }
 
-        let attr = if cgb_game { vram[0x2000 + map_idx] } else { 0 };
-        let bank = if cgb_game { ((attr >> 3) & 0x01) as usize } else { 0 };
-        let hflip = cgb_game && (attr & 0x20) != 0;
-        let vflip = cgb_game && (attr & 0x40) != 0;
-        let eff_y = if vflip { 7 - tile_y } else { tile_y };
+        while self.next_sprite < self.sprite_x.len()
+            && self.sprite_x[self.next_sprite] <= i16::from(self.pixel_x)
+        {
+            let sprite_x = self.sprite_x[self.next_sprite];
+            let tile = (i16::from(self.pixel_x) + i16::from(scx)) / 8;
+            let fetch_wait = if sprite_x == -8 {
+                5
+            } else if self.last_sprite_tile == Some(tile) {
+                0
+            } else {
+                let tile_x = (i16::from(self.pixel_x) + i16::from(scx)) & 7;
+                (5 - tile_x).max(0) as u8
+            };
+            self.last_sprite_tile = Some(tile);
+            self.stall_dots = self.stall_dots.saturating_add(6 + fetch_wait);
+            self.next_sprite += 1;
+        }
+        if self.stall_dots != 0 {
+            self.stall_dots -= 1;
+            return;
+        }
 
-        let signed = self.lcdc & 0x10 == 0;
-        let tile_addr = if signed {
-            (0x9000u16).wrapping_add_signed((tile as i8 as i16).wrapping_mul(16))
-        } else {
-            0x8000u16 + tile as u16 * 16
-        };
-        let row_addr = tile_addr + eff_y as u16 * 2;
-        let ri = (row_addr & 0x1FFF) as usize;
-        let low = vram[bank * 0x2000 + ri];
-        let high = vram[bank * 0x2000 + ri + 1];
-        let bit = if hflip { tile_x } else { 7 - tile_x };
-        let color = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
-
-        let pixel = if cgb_game {
-            Self::cgb_color(bg_palette[((attr & 0x07) as usize) * 4 + color as usize])
-        } else if cgb_mode {
-            Self::cgb_color(bg_palette[((self.bgp >> (color * 2)) & 0x03) as usize])
-        } else {
-            Self::shade_to_pixel((self.bgp >> (color * 2)) & 0x03)
-        };
-
-        if self.window_active { self.window_pixel_count = self.window_pixel_count.wrapping_add(1); }
         self.pixel_x += 1;
-        if self.pixel_x >= 160 { self.complete = true; }
-        Some(pixel)
+        if self.window_active {
+            self.window_pixels = self.window_pixels.wrapping_add(1);
+        }
+        self.complete = self.pixel_x == 160;
+        self.advance_fetcher();
     }
 
-    // ── Public accessors ──
-
-    pub(super) fn pixel_x(&self) -> u8 { self.pixel_x }
-    pub(super) fn fine_scroll_x(&self) -> u8 { self.fine_scroll }
-    pub(super) fn complete(&self) -> bool { self.complete }
-
-    // ── Register write queue ──
-
-    fn fetch_pixel_x(&self) -> u8 {
-        (self.startup_fetch_offset + (self.pixel_x / 8) * 8).min(159)
+    fn advance_fetcher(&mut self) {
+        self.fetch_dot = (self.fetch_dot + 1) & 7;
+        if self.fetch_dot == 0 {
+            self.fetch_pixel_x = self.fetch_pixel_x.saturating_add(8);
+        }
     }
 
-    pub(super) fn queue_register_write(&mut self, register: u16, value: u8, old_value: u8) -> u8 {
-        let changed = old_value ^ value;
-        let apply_x = match register {
-            0xFF42 | 0xFF43 => self.fetch_pixel_x(),
-            0xFF40 if changed & 0x08 != 0 || changed & 0x10 != 0 || changed & 0x40 != 0 => self.fetch_pixel_x(),
-            0xFF4A | 0xFF4B => self.pixel_x.saturating_add(6).min(159),
+    pub(super) fn fetch_stage(&self) -> FetchStage {
+        match self.fetch_dot {
+            0 | 1 => FetchStage::Tile,
+            2 | 3 => FetchStage::DataLow,
+            4 | 5 => FetchStage::DataHigh,
+            _ => FetchStage::Push,
+        }
+    }
+
+    pub(super) fn latch_pixel(&mut self, register: u16, old_value: u8, value: u8, ly: u8) -> u8 {
+        if register == 0xFF43
+            && ly != 0
+            && self.pixel_x == 0
+            && self.fetch_stage() == FetchStage::Tile
+            && self.fetch_dot == 0
+        {
+            self.fine_scroll_x = value & 7;
+        }
+        let pixel_x = match register {
+            0xFF40 if (old_value ^ value) & 0x10 != 0 => self.fetch_pixel_x,
+            0xFF40 if (old_value ^ value) & 0x40 != 0 => self.fetch_pixel_x,
+            0xFF42 => self.fetch_pixel_x,
+            0xFF43 => self.fetch_pixel_x,
+            0xFF40 if (old_value ^ value) & 0x08 != 0 => self.fetch_pixel_x,
             _ => self.pixel_x,
-        }.min(159);
-        self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
-        apply_x
+        };
+        pixel_x.min(159)
     }
 
-    fn apply_pending_writes(&mut self) {
-        self.pending_writes.retain(|w| {
-            if w.pixel_x <= self.pixel_x {
-                match w.register {
-                    0xFF40 => {
-                        let old_lcdc = self.lcdc;
-                        self.lcdc = w.value;
-                        // WIN_EN toggle: deactivate/reactivate immediately
-                        if old_lcdc & 0x20 != 0 && w.value & 0x20 == 0 {
-                            self.window_active = false;
-                        }
-                    }
-                    0xFF42 => self.scy = w.value,
-                    0xFF43 => self.scx = w.value,
-                    0xFF47 => self.bgp = w.value,
-                    0xFF4A => self.wy = w.value,
-                    0xFF4B => self.wx = w.value,
-                    _ => {}
-                }
-                false
-            } else { true }
-        });
+    pub(super) fn write_register(&mut self, register: u16, old_value: u8, value: u8) {
+        match register {
+            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 && self.window_active => {
+                self.window_disable_pending = true;
+            }
+            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 => {
+                self.window_triggered = true;
+                self.window_seen = true;
+            }
+            0xFF4B if self.window_seen => {
+                self.window_can_retrigger = true;
+            }
+            _ => {}
+        }
     }
 
-    // ── Conversion ──
-
-    fn cgb_color(c: u16) -> u32 {
-        let r = ((c >> 0) & 0x1F) as u32;
-        let g = ((c >> 5) & 0x1F) as u32;
-        let b = ((c >> 10) & 0x1F) as u32;
-        ((r << 3 | r >> 2) << 24) | ((g << 3 | g >> 2) << 16) | ((b << 3 | b >> 2) << 8) | 0xFF
+    pub(super) fn fine_scroll_x(&self) -> u8 {
+        self.fine_scroll_x
     }
 
-    fn shade_to_pixel(shade: u8) -> u32 {
-        match shade { 0 => 0xFFFF_FFFF, 1 => 0xAAAA_AAFF, 2 => 0x5555_55FF, _ => 0x0000_00FF }
+    pub(super) fn window_seen(&self) -> bool {
+        self.window_seen
+    }
+
+    pub(super) fn complete(&self) -> bool {
+        self.complete
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetcher_advances_through_two_dot_stages() {
+        let mut pipeline = Mode3Pipeline::new(true, 0, Vec::new());
+        let expected = [
+            FetchStage::Tile,
+            FetchStage::Tile,
+            FetchStage::DataLow,
+            FetchStage::DataLow,
+            FetchStage::DataHigh,
+            FetchStage::DataHigh,
+            FetchStage::Push,
+            FetchStage::Push,
+        ];
+
+        for stage in expected {
+            assert_eq!(pipeline.fetch_stage(), stage);
+            pipeline.advance_fetcher();
+        }
+
+        assert_eq!(pipeline.fetch_stage(), FetchStage::Tile);
     }
 }
