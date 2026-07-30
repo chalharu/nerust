@@ -310,6 +310,12 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Load font tiles from cartridge ROM bank 1 into VRAM $8000-$87FF.
+    /// Replicates what copy_font does in mealybug test ROMs.
+    pub fn load_font_tiles(&mut self, bank1_data: &[u8]) {
+        self.ppu.load_font_tiles(bank1_data);
+    }
+
     /// Set whether the GAME itself is CGB-native (bit 7 of ROM header $143).
     /// This controls CGB-only rendering behavior independent of hardware mode.
     pub fn set_cgb_game(&mut self, enabled: bool) {
