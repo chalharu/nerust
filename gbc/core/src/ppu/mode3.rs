@@ -111,7 +111,8 @@ impl Mode3Timing {
             self.fine_scroll_x = value & 7;
         }
         let pixel_x = match register {
-            0xFF40 if (old_value ^ value) & 0x40 != 0 => self.pixel_x.saturating_add(7) & !7,
+            0xFF40 if (old_value ^ value) & 0x10 != 0 => self.fetch_pixel_x,
+            0xFF40 if (old_value ^ value) & 0x40 != 0 => self.fetch_pixel_x,
             0xFF42 => self.fetch_pixel_x,
             0xFF43 => self.fetch_pixel_x,
             0xFF40 if (old_value ^ value) & 0x08 != 0 => self.fetch_pixel_x,
