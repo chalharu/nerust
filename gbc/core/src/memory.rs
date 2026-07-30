@@ -1,7 +1,7 @@
 use crate::{
     apu::GbcApu,
     cartridge::Cartridge,
-    cpu_core::{Lr35902Cpu, Phase},
+    cpu_core::Lr35902Cpu,
     dma::DmaController,
     interrupt::{InterruptController, InterruptKind},
     ppu::GbcPpu,
@@ -169,10 +169,9 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-              0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
-                self.ppu.cpu_cycle_offset = self.cpu_cycle_offset;
-                self.ppu.write_register(addr, value);
-            }
+               0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
+                 self.ppu.write_register(addr, value);
+             }
             0xFF46 => self.dma.start(value),
             0xFF4D => self.write_key1(value),
             // HDMA registers (CGB) — stub, filled in Phase 7
@@ -196,23 +195,11 @@ impl GbcMemoryBus {
         }
     }
 
-    // ── step_devices ─────────────────────────────────────────
+    // ── step_devices (legacy, used by test code) ─────────────
 
-    /// Advance all devices by 4 T-cycles (1 M-cycle) — LEGACY interface.
-    /// Does NOT advance the CPU (caller must manage cpu separately).
-    /// Used by test code that creates its own PPU and steps it directly.
-    pub fn step_devices(&mut self, cycles: u32) -> bool {
-        let mut frame_done = false;
-        for _ in 0..cycles {
-            let done = self.step_tcycle_dummy();
-            if done { frame_done = true; }
-        }
-        frame_done
-    }
-
-    /// Advance PPU + timer + DMA by 1 T-cycle (no CPU advancement).
-    /// Used by legacy callers that manage the CPU separately.
-    fn step_tcycle_dummy(&mut self) -> bool {
+    /// Advance PPU+timer+DMA by 1 T-cycle (no CPU). Used by tests
+    /// that step PPU directly without a CPU context.
+    pub fn step_devices_tcycle(&mut self) -> bool {
         self.tick = self.tick.wrapping_add(1);
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
@@ -232,13 +219,20 @@ impl GbcMemoryBus {
         ppu_res.frame_done
     }
 
+    /// Legacy batch interface: advance by `cycles` T-cycles (no CPU).
+    pub fn step_devices(&mut self, cycles: u32) -> bool {
+        let mut done = false;
+        for _ in 0..cycles { if self.step_devices_tcycle() { done = true; } }
+        done
+    }
+
     /// Advance ALL devices (including CPU) by 1 T-cycle.
     /// Call this 4 times per CPU M-cycle for proper T-cycle synchronization.
     /// Returns true if a PPU frame completed.
     pub fn step_tcycle(&mut self, cpu: &mut Lr35902Cpu) -> bool {
         self.tick = self.tick.wrapping_add(1);
         let t1 = self.tick % 4;
-        self.cpu_cycle_offset = t1 as u32;
+        self.cpu_cycle_offset = t1;
 
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
