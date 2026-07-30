@@ -31,6 +31,10 @@ pub struct InterruptController {
     ie: u8,
     if_: u8,
     halted: HaltState,
+    /// HALT bug: when HALT executes with IME=0 and a pending interrupt,
+    /// the next opcode fetch does not increment PC. This flag persists
+    /// through the halt-wake cycle and is cleared after one fetch.
+    halt_bug_pending: bool,
 }
 
 impl InterruptController {
@@ -40,6 +44,7 @@ impl InterruptController {
             ie: 0,
             if_: 0xE1,
             halted: HaltState::Running,
+            halt_bug_pending: false,
         }
     }
 
@@ -84,8 +89,8 @@ impl InterruptController {
     }
 
     pub fn halt(&mut self) {
-        let bug = !self.ime && (self.ie & self.if_ & 0x1F) != 0;
-        self.halted = HaltState::Halted { bug_triggered: bug };
+        self.halt_bug_pending = !self.ime && (self.ie & self.if_ & 0x1F) != 0;
+        self.halted = HaltState::Halted { bug_triggered: self.halt_bug_pending };
     }
 
     pub fn stop(&mut self) {
@@ -126,12 +131,11 @@ impl InterruptController {
     }
 
     pub fn is_halt_bug_active(&self) -> bool {
-        matches!(
-            self.halted,
-            HaltState::Halted {
-                bug_triggered: true
-            }
-        )
+        self.halt_bug_pending
+    }
+
+    pub fn clear_halt_bug(&mut self) {
+        self.halt_bug_pending = false;
     }
 
     pub fn set_ime(&mut self, v: bool) {
