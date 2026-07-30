@@ -129,7 +129,6 @@ impl Mode3Pipeline {
         if self.startup_remaining > 0 {
             self.startup_remaining -= 1;
             self.advance_fetcher(vram, cgb_mode, ly);
-            // During startup, check if WX=0 activates window immediately
             if self.startup_remaining == 0 && self.wx == 0 && self.lcdc & 0x20 != 0 && ly >= self.wy {
                 self.window_active = true;
                 self.window_line = self.window_line.wrapping_add(1);
