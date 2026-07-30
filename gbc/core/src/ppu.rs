@@ -580,6 +580,15 @@ impl GbcPpu {
         }
     }
 
+    /// Set OBJ palette 0 to DMG grayscale for boot ROM compatibility.
+    /// On real CGB, the boot ROM initializes this; when skipped we must too.
+    pub fn init_dmg_grayscale_palette(&mut self) {
+        self.obj_palette[0] = 0x7FFF; // white
+        self.obj_palette[1] = 0x56B5; // light gray
+        self.obj_palette[2] = 0x294A; // dark gray
+        self.obj_palette[3] = 0x0000; // black
+    }
+
     /// Load font tiles from cartridge ROM bank 1 ($4000-$47FF) into VRAM
     /// $8000-$87FF. This replicates the CGB boot ROM's border tile load
     /// which places tile $19 (the (R) mark) at $8190. Mealbug test ROMs
