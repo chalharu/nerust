@@ -98,8 +98,9 @@ impl GbcMemoryBus {
     // ── read / write ──────────────────────────────────────────
 
     pub fn read(&self, addr: u16) -> u8 {
-        if self.dma.is_oam_locked() {
-            return self.read_dma(addr).unwrap_or(0xFF);
+        // OAM DMA: only OAM/VRAM are locked. Other regions accessible normally.
+        if self.dma.is_oam_locked() && matches!(addr, 0x8000..=0x9FFF | 0xFE00..=0xFE9F) {
+            return 0xFF;
         }
 
         match addr {
@@ -148,7 +149,8 @@ impl GbcMemoryBus {
     }
 
     pub fn write(&mut self, addr: u16, value: u8) {
-        if self.dma.is_oam_locked() && !self.write_dma(addr, value) {
+        // OAM DMA: only OAM/VRAM writes are dropped. Other regions writable.
+        if self.dma.is_oam_locked() && matches!(addr, 0x8000..=0x9FFF | 0xFE00..=0xFE9F) {
             return;
         }
 
