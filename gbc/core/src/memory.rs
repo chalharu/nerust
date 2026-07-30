@@ -166,9 +166,12 @@ impl GbcMemoryBus {
             0xFF46 => self.dma.start(value),
              0xFF4D => self.write_key1(value),
              0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
-             0xFF55 => {
-                 self.hdma.start(value);
-             }
+              0xFF55 => {
+                  self.hdma.start(value);
+                  if !self.hdma.hblank_mode {
+                      self.transfer_hdma_block();
+                  }
+              }
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
@@ -224,7 +227,16 @@ impl GbcMemoryBus {
         self.cpu_cycle_offset = t1;
 
         let video = 1u32;
+        let was_hblank = self.ppu.is_hblank();
         let ppu_res = self.ppu.step(video);
+        let now_hblank = self.ppu.is_hblank();
+        // HDMA: transfer one block at the start of each HBlank period
+        if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
+            self.transfer_hdma_block();
+        }
+        if was_hblank && !now_hblank {
+            self.hdma.set_hblank(false);
+        }
         if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
         if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
         self.apu.step(video);
