@@ -366,9 +366,9 @@ impl GbcPpu {
                     0xFF40 => self.lcdc = value,
                     0xFF42 => self.scy = value,
                     0xFF43 => self.scx = value,
-             0xFF47 => self.bgp = value,
-             0xFF48 => self.obp0 = value,
-             0xFF49 => self.obp1 = value,
+              0xFF47 => self.bgp = value,
+              0xFF48 => self.obp0 = value,
+              0xFF49 => self.obp1 = value,
                     0xFF4A => self.wy = value,
                     0xFF4B => self.wx = value,
                     _ => {}
@@ -497,12 +497,8 @@ impl GbcPpu {
         }
     }
 
-    /// Convert 15-bit CGB color (rrrrrgggggbbbbb) to RGBA 32-bit.
     /// Initialize CGB BG/OBJ palettes with CGB boot ROM defaults for DMG
     /// compatibility mode. Used when boot ROM is skipped.
-    /// Initialize CGB palettes with SameBoy boot ROM default values.
-    /// Palettes from SameBoy cgb_boot.asm `Palettes:` table.
-    /// DMG compatibility default: OBJ=palette 4, BG=palette 29 (combo 0).
     pub fn init_default_cgb_palettes(&mut self) {
         // SameBoy boot ROM Palettes table (56 palettes × 4 colors)
         let palettes: [u16; 56 * 4] = [
