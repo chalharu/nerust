@@ -106,16 +106,23 @@ impl Mode3Pipeline {
         {
             let sprite_x = self.sprite_x[self.next_sprite];
             let tile = (i16::from(self.pixel_x) + i16::from(scx)) / 8;
-            let fetch_wait = if sprite_x == -8 {
-                5
-            } else if self.last_sprite_tile == Some(tile) {
+            let fetch_wait = if self.last_sprite_tile == Some(tile) {
                 0
             } else {
                 let tile_x = (i16::from(self.pixel_x) + i16::from(scx)) & 7;
                 (5 - tile_x).max(0) as u8
             };
             self.last_sprite_tile = Some(tile);
-            self.stall_dots = self.stall_dots.saturating_add(6 + fetch_wait);
+            let fetch_dots = if sprite_x < 0 {
+                if sprite_x <= -5 {
+                    (3 - sprite_x) as u8
+                } else {
+                    6
+                }
+            } else {
+                6 + fetch_wait
+            };
+            self.stall_dots = self.stall_dots.saturating_add(fetch_dots);
             self.next_sprite += 1;
         }
         if self.stall_dots != 0 {
@@ -157,8 +164,12 @@ impl Mode3Pipeline {
             self.fine_scroll_x = value & 7;
         }
         let pixel_x = match register {
-            0xFF40 if (old_value ^ value) & 0x10 != 0 => self.fetch_pixel_x,
-            0xFF40 if (old_value ^ value) & 0x40 != 0 => self.fetch_pixel_x,
+            0xFF40 if (old_value ^ value) & 0x10 != 0 => {
+                self.fetch_pixel_x.saturating_sub(8)
+            }
+            0xFF40 if (old_value ^ value) & 0x40 != 0 => {
+                self.fetch_pixel_x.saturating_sub(8)
+            }
             0xFF42 => self.fetch_pixel_x,
             0xFF43 => self.fetch_pixel_x,
             0xFF40 if (old_value ^ value) & 0x08 != 0 => self.fetch_pixel_x,
