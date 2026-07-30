@@ -1,5 +1,9 @@
 use nerust_render_traits::FrameBuffer;
 
+mod mode3;
+
+use mode3::Mode3Timing;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PpuMode {
     HBlank = 0,
@@ -21,19 +25,23 @@ pub struct PpuStepResult {
 }
 
 #[derive(Clone, Copy)]
-struct Mode3Write {
-    dot: u32,
+struct LatchedWrite {
+    pixel_x: u8,
     register: u16,
     old_value: u8,
     value: u8,
 }
 
 #[derive(Clone, Copy)]
-struct LatchedWrite {
-    pixel_x: u8,
-    register: u16,
-    old_value: u8,
-    value: u8,
+struct RenderRegisters {
+    lcdc: u8,
+    scy: u8,
+    scx: u8,
+    bgp: u8,
+    obp0: u8,
+    obp1: u8,
+    wy: u8,
+    wx: u8,
 }
 
 pub struct GbcPpu {
@@ -80,8 +88,11 @@ pub struct GbcPpu {
     /// Set to the PpuMode value that last triggered lcd_stat; cleared to None
     /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
     lcd_stat_last_mode: Option<PpuMode>,
+    mode_stat_pending: bool,
 
-    mode3_writes: Vec<Mode3Write>,
+    mode3_timing: Option<Mode3Timing>,
+    mode3_registers: Option<RenderRegisters>,
+    mode3_writes: Vec<LatchedWrite>,
 }
 
 impl Default for GbcPpu {
@@ -117,6 +128,9 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
+            mode_stat_pending: false,
+            mode3_timing: None,
+            mode3_registers: None,
             mode3_writes: Vec::new(),
         }
     }
@@ -137,14 +151,15 @@ struct Sprite {
 
 impl GbcPpu {
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
-        let frame_done = self.frame_complete;
         self.frame_complete = false;
 
         if self.lcdc & 0x80 == 0 {
             self.ly = 0;
             self.mode_clock = 0;
+            self.mode3_timing = None;
+            self.mode3_registers = None;
             return PpuStepResult {
-                frame_done,
+                frame_done: false,
                 lcd_stat: false,
                 vblank: false,
             };
@@ -153,68 +168,83 @@ impl GbcPpu {
         let mut lcd_stat = false;
         let mut vblank = false;
 
-        self.mode_clock += cycles;
-
-        let current_mode = if self.ly >= VBLANK_START {
-            PpuMode::VBlank
-        } else {
-            let t = self.mode_clock;
-            if t > T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
-                && t - cycles <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER
-            {
-                self.render_scanline();
-            }
-            if t <= T_CYCLES_OAM_SEARCH {
-                PpuMode::OamSearch
-            } else if t <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
-                PpuMode::PixelTransfer
-            } else {
-                PpuMode::HBlank
-            }
-        };
-
-        while self.mode_clock >= T_CYCLES_PER_SCANLINE {
-            self.mode_clock -= T_CYCLES_PER_SCANLINE;
-            self.lyc_matched_ly = self.ly;
-            self.ly = self.ly.wrapping_add(1);
-            if self.ly == VBLANK_START {
-                vblank = true;
-            }
-            if self.ly >= SCANLINES_PER_FRAME {
-                self.ly = 0;
-                self.frame_complete = true;
-                self.window_line = 0;
-            }
-            self.check_lyc(&mut lcd_stat);
-        }
-
-        let stat_mode_val = match current_mode {
-            PpuMode::HBlank => 0,
-            PpuMode::VBlank => 1,
-            PpuMode::OamSearch => 2,
-            PpuMode::PixelTransfer => 3,
-        };
-        let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
-        self.lcd_stat_last_mode = Some(current_mode);
-        self.stat = (self.stat & 0xFC) | stat_mode_val;
-        self.check_lyc(&mut lcd_stat);
-
-        if mode_changed {
-            if current_mode == PpuMode::VBlank && (self.stat & 0x10) != 0 {
-                lcd_stat = true;
-            }
-            if current_mode == PpuMode::OamSearch && (self.stat & 0x20) != 0 {
-                lcd_stat = true;
-            }
-            if current_mode == PpuMode::HBlank && (self.stat & 0x08) != 0 {
-                lcd_stat = true;
-            }
+        for _ in 0..cycles {
+            self.step_dot(&mut lcd_stat, &mut vblank);
         }
 
         PpuStepResult {
             frame_done: self.frame_complete,
             lcd_stat,
             vblank,
+        }
+    }
+
+    fn step_dot(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
+        *lcd_stat |= std::mem::take(&mut self.mode_stat_pending);
+        self.mode_clock += 1;
+
+        if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
+            let sprites = self.scanline_sprite_x_positions();
+            self.mode3_timing = Some(Mode3Timing::new(self.cgb_mode, self.scx, sprites));
+            self.mode3_registers = Some(self.render_registers());
+        }
+
+        if let Some(timing) = self.mode3_timing.as_mut()
+            && !timing.complete()
+        {
+            timing.step(self.lcdc, self.scx, self.ly, self.wy, self.wx);
+            if timing.complete() {
+                self.render_scanline();
+            }
+        }
+
+        if self.mode_clock >= T_CYCLES_PER_SCANLINE {
+            self.mode_clock -= T_CYCLES_PER_SCANLINE;
+            self.mode3_timing = None;
+            self.mode3_registers = None;
+            self.lyc_matched_ly = self.ly;
+            self.ly = self.ly.wrapping_add(1);
+            if self.ly == VBLANK_START {
+                *vblank = true;
+            }
+            if self.ly >= SCANLINES_PER_FRAME {
+                self.ly = 0;
+                self.frame_complete = true;
+                self.window_line = 0;
+            }
+            self.check_lyc(lcd_stat);
+        }
+
+        let current_mode = self.current_mode();
+        let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
+        self.lcd_stat_last_mode = Some(current_mode);
+        self.stat = (self.stat & 0xFC) | current_mode as u8;
+        self.check_lyc(lcd_stat);
+
+        if mode_changed {
+            let enabled = match current_mode {
+                PpuMode::HBlank => self.stat & 0x08 != 0,
+                PpuMode::VBlank => self.stat & 0x10 != 0,
+                PpuMode::OamSearch => self.stat & 0x20 != 0,
+                PpuMode::PixelTransfer => false,
+            };
+            self.mode_stat_pending |= enabled;
+        }
+    }
+
+    fn current_mode(&self) -> PpuMode {
+        if self.ly >= VBLANK_START {
+            PpuMode::VBlank
+        } else if self.mode_clock <= T_CYCLES_OAM_SEARCH {
+            PpuMode::OamSearch
+        } else if self
+            .mode3_timing
+            .as_ref()
+            .is_some_and(|timing| !timing.complete())
+        {
+            PpuMode::PixelTransfer
+        } else {
+            PpuMode::HBlank
         }
     }
 
@@ -251,19 +281,7 @@ impl GbcPpu {
 
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
     pub fn is_hblank(&self) -> bool {
-        let mode = if self.ly >= VBLANK_START {
-            PpuMode::VBlank
-        } else {
-            let t = self.mode_clock;
-            if t <= T_CYCLES_OAM_SEARCH {
-                PpuMode::OamSearch
-            } else if t <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
-                PpuMode::PixelTransfer
-            } else {
-                PpuMode::HBlank
-            }
-        };
-        mode == PpuMode::HBlank
+        self.current_mode() == PpuMode::HBlank
     }
 
     pub fn render(&self, fb: &mut FrameBuffer) {
@@ -290,8 +308,7 @@ impl GbcPpu {
         }
 
         let ly = self.ly as usize;
-        self.mode3_writes.sort_by_key(|event| event.dot);
-        self.restore_mid_event_initial_state();
+        self.restore_mode3_registers();
 
         // sprite_height and sprite_double used for sprite collection
         let sprite_enabled = self.lcdc & 0x02 != 0;
@@ -349,9 +366,12 @@ impl GbcPpu {
             });
         }
 
-        let pixel_events = self.map_mid_events_to_pixels(&sprites);
-        self.restore_mid_event_initial_state();
-        let fine_scroll_x = self.scx & 0x07;
+        let pixel_events = self.mode3_writes.clone();
+        self.restore_mode3_registers();
+        let fine_scroll_x = self
+            .mode3_timing
+            .as_ref()
+            .map_or(self.scx & 0x07, Mode3Timing::fine_scroll_x);
         let mut ev_idx = 0usize;
         let mut window_active = false;
         let mut window_triggered = false;
@@ -498,92 +518,46 @@ impl GbcPpu {
         self.mode3_writes.clear();
     }
 
-    fn restore_mid_event_initial_state(&mut self) {
-        for event_idx in (0..self.mode3_writes.len()).rev() {
-            let event = self.mode3_writes[event_idx];
-            self.set_render_register(event.register, event.old_value);
+    fn render_registers(&self) -> RenderRegisters {
+        RenderRegisters {
+            lcdc: self.lcdc,
+            scy: self.scy,
+            scx: self.scx,
+            bgp: self.bgp,
+            obp0: self.obp0,
+            obp1: self.obp1,
+            wy: self.wy,
+            wx: self.wx,
         }
     }
 
-    fn map_mid_events_to_pixels(&mut self, sprites: &[Sprite]) -> Vec<LatchedWrite> {
-        let mut mapped = Vec::with_capacity(self.mode3_writes.len());
-        let mut event_idx = 0usize;
-        let mut sprite_idx = 0usize;
-        let mut dot = T_CYCLES_OAM_SEARCH;
-        let mut pixel_x = 0u8;
-        let mut stall = 0u8;
-        let mut window_started = false;
-        let mut last_sprite_tile = None;
-        let first_pixel_dot = if self.cgb_mode { 99 } else { 98 } + u32::from(self.scx & 7);
-
-        while event_idx < self.mode3_writes.len() {
-            while event_idx < self.mode3_writes.len() && self.mode3_writes[event_idx].dot <= dot {
-                let event = self.mode3_writes[event_idx];
-                let apply_x = match event.register {
-                    0xFF40 if (event.old_value ^ event.value) & 0x40 != 0 => {
-                        pixel_x.saturating_add(7) & !7
-                    }
-                    _ => pixel_x,
-                };
-                mapped.push(LatchedWrite {
-                    pixel_x: apply_x.min(159),
-                    register: event.register,
-                    old_value: event.old_value,
-                    value: event.value,
-                });
-                self.set_render_register(event.register, event.value);
-                event_idx += 1;
-            }
-
-            if dot < first_pixel_dot {
-                dot += 1;
-                continue;
-            }
-            if stall != 0 {
-                stall -= 1;
-                dot += 1;
-                continue;
-            }
-
-            let window_x = self.wx as i16 - 7;
-            if !window_started
-                && self.lcdc & 0x20 != 0
-                && self.ly >= self.wy
-                && window_x < 160
-                && i16::from(pixel_x) >= window_x.max(0)
-            {
-                window_started = true;
-                stall = 5;
-                dot += 1;
-                continue;
-            }
-
-            while sprite_idx < sprites.len() && sprites[sprite_idx].x <= i16::from(pixel_x) {
-                let sprite = &sprites[sprite_idx];
-                let tile = (i16::from(pixel_x) + i16::from(self.scx)) / 8;
-                let wait = if sprite.x == -8 {
-                    5
-                } else if last_sprite_tile == Some(tile) {
-                    0
-                } else {
-                    let tile_x = (i16::from(pixel_x) + i16::from(self.scx)) & 7;
-                    (5 - tile_x).max(0) as u8
-                };
-                last_sprite_tile = Some(tile);
-                stall = stall.saturating_add(6 + wait);
-                sprite_idx += 1;
-            }
-            if stall != 0 {
-                stall -= 1;
-                dot += 1;
-                continue;
-            }
-
-            pixel_x = pixel_x.saturating_add(1).min(160);
-            dot += 1;
+    fn restore_mode3_registers(&mut self) {
+        if let Some(registers) = self.mode3_registers {
+            self.lcdc = registers.lcdc;
+            self.scy = registers.scy;
+            self.scx = registers.scx;
+            self.bgp = registers.bgp;
+            self.obp0 = registers.obp0;
+            self.obp1 = registers.obp1;
+            self.wy = registers.wy;
+            self.wx = registers.wx;
         }
+    }
 
-        mapped
+    fn scanline_sprite_x_positions(&self) -> Vec<i16> {
+        let sprite_height = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
+        let mut sprites = Vec::with_capacity(10);
+        for index in 0..40 {
+            let top = i16::from(self.oam[index * 4]) - 16;
+            if i16::from(self.ly) >= top && i16::from(self.ly) < top + sprite_height {
+                sprites.push((i16::from(self.oam[index * 4 + 1]) - 8, index));
+                if sprites.len() == 10 {
+                    break;
+                }
+            }
+        }
+        sprites.sort_by_key(|&(x, index)| (x, index));
+        sprites.into_iter().map(|(x, _)| x).collect()
     }
 
     fn set_render_register(&mut self, reg: u16, value: u8) {
@@ -916,13 +890,16 @@ impl GbcPpu {
         // mode_clock is at the correct T-cycle (PPU advances 1 per step_tcycle call).
         match addr {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
-                if self.ly < VBLANK_START
-                    && self.mode_clock > T_CYCLES_OAM_SEARCH
-                    && self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER =>
+                if self.ly < VBLANK_START && self.mode3_timing.is_some() =>
             {
                 let old_value = self.read_register(addr);
-                self.mode3_writes.push(Mode3Write {
-                    dot: self.mode_clock,
+                let pixel_x = self
+                    .mode3_timing
+                    .as_ref()
+                    .expect("mode 3 timing checked above")
+                    .latch_pixel(addr, old_value, value);
+                self.mode3_writes.push(LatchedWrite {
+                    pixel_x,
                     register: addr,
                     old_value,
                     value,
@@ -1237,6 +1214,7 @@ mod tests {
         p.step(1);
         p.write_register(0xFF40, p.read_register(0xFF40) | 0x80);
 
+        p.step(1);
         let result = p.step(1);
 
         assert!(result.lcd_stat);
