@@ -148,9 +148,19 @@ impl Mode3Pipeline {
         self.pending_writes.retain(|w| {
             if w.pixel_x <= self.pixel_x {
                 match w.register {
-                    0xFF40 => self.lcdc = w.value, 0xFF42 => self.scy = w.value,
-                    0xFF43 => self.scx = w.value, 0xFF47 => self.bgp = w.value,
-                    0xFF4A => self.wy = w.value, 0xFF4B => self.wx = w.value,
+                    0xFF40 => {
+                        let old_lcdc = self.lcdc;
+                        self.lcdc = w.value;
+                        // WIN_EN toggle: deactivate/reactivate immediately
+                        if old_lcdc & 0x20 != 0 && w.value & 0x20 == 0 {
+                            self.window_active = false;
+                        }
+                    }
+                    0xFF42 => self.scy = w.value,
+                    0xFF43 => self.scx = w.value,
+                    0xFF47 => self.bgp = w.value,
+                    0xFF4A => self.wy = w.value,
+                    0xFF4B => self.wx = w.value,
                     _ => {}
                 }
                 false
