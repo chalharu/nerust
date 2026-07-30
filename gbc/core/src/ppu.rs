@@ -387,6 +387,7 @@ impl GbcPpu {
         let mut window_zero_at = None;
         let mut window_pixel = 0u8;
         let mut active_window_y = self.window_line;
+        let mut background_restart_x = None;
 
         for x in 0..160 {
             // Apply any pending mid-scanline register changes at this pixel
@@ -400,18 +401,17 @@ impl GbcPpu {
                 } = pixel_events[ev_idx];
                 if reg == 0xFF40 && window_active && old_value & 0x20 != 0 && value & 0x20 == 0 {
                     let pixels_left = 8 - window_pixel % 8;
-                    window_disable_at = Some((x as u8).saturating_add(pixels_left));
+                    window_disable_at =
+                        Some((x as u8).saturating_add(pixels_left).saturating_add(8));
                 }
                 if reg == 0xFF4B {
                     window_zero_at = None;
                 }
-                if reg == 0xFF4B
-                    && write_window_started
-                    && i16::from(value) - 7 > x as i16
-                    && value.saturating_sub(7) & 0x07 == 5
-                {
+                if reg == 0xFF4B && write_window_started && i16::from(value) - 7 > x as i16 {
                     window_can_retrigger = true;
-                    window_zero_at = Some(value.saturating_sub(7));
+                    if value.saturating_sub(7) & 0x07 == 5 {
+                        window_zero_at = Some(value.saturating_sub(7));
+                    }
                 }
                 if reg == 0xFF4B && window_triggered && i16::from(value) - 7 == x as i16 {
                     window_zero_at = Some(x as u8);
@@ -423,6 +423,7 @@ impl GbcPpu {
             if window_disable_at.is_some_and(|disable_x| x as u8 >= disable_x) {
                 window_active = false;
                 window_disable_at = None;
+                background_restart_x = Some(x as u8);
             }
 
             // Recompute derived state per-pixel (may have changed mid-scanline)
@@ -462,9 +463,13 @@ impl GbcPpu {
             let mut bg_priority = false;
             if bg_win_en {
                 let scroll_y = self.scy.wrapping_add(self.ly);
-                let scroll_x = (self.scx & 0xF8)
-                    .wrapping_add(fine_scroll_x)
-                    .wrapping_add(x as u8);
+                let scroll_x = if let Some(restart_x) = background_restart_x {
+                    (self.scx & 0xF8).wrapping_add((x as u8).wrapping_sub(restart_x))
+                } else {
+                    (self.scx & 0xF8)
+                        .wrapping_add(fine_scroll_x)
+                        .wrapping_add(x as u8)
+                };
                 let (p, c, prio) = self.read_bg_pixel(scroll_x, scroll_y);
                 pixel = p;
                 bg_color = c;
@@ -952,11 +957,12 @@ impl GbcPpu {
                 if self.ly < VBLANK_START && self.mode3_timing.is_some() =>
             {
                 let old_value = self.read_register(addr);
-                let pixel_x = self
+                let timing = self
                     .mode3_timing
                     .as_mut()
-                    .expect("mode 3 timing checked above")
-                    .latch_pixel(addr, old_value, value, self.ly);
+                    .expect("mode 3 timing checked above");
+                let pixel_x = timing.latch_pixel(addr, old_value, value, self.ly);
+                timing.write_register(addr, old_value, value);
                 self.mode3_writes.push(LatchedWrite {
                     pixel_x,
                     register: addr,

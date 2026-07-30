@@ -9,8 +9,12 @@ pub(super) struct Mode3Timing {
     sprite_x: Vec<i16>,
     next_sprite: usize,
     last_sprite_tile: Option<i16>,
-    window_started: bool,
+    window_active: bool,
     window_seen: bool,
+    window_triggered: bool,
+    window_can_retrigger: bool,
+    window_disable_pending: bool,
+    window_pixels: u8,
     complete: bool,
 }
 
@@ -26,8 +30,12 @@ impl Mode3Timing {
             sprite_x,
             next_sprite: 0,
             last_sprite_tile: None,
-            window_started: false,
+            window_active: false,
             window_seen: false,
+            window_triggered: false,
+            window_can_retrigger: false,
+            window_disable_pending: false,
+            window_pixels: 0,
             complete: false,
         }
     }
@@ -50,14 +58,27 @@ impl Mode3Timing {
         }
 
         let window_x = i16::from(wx) - 7;
-        if !self.window_started
+        if !self.window_active
+            && (!self.window_triggered || self.window_can_retrigger)
             && lcdc & 0x20 != 0
             && ly >= wy
             && window_x < 160
             && i16::from(self.pixel_x) >= window_x.max(0)
         {
-            self.window_started = true;
+            self.window_active = true;
             self.window_seen = true;
+            self.window_triggered = true;
+            self.window_can_retrigger = false;
+            self.window_pixels = if window_x < 0 { (-window_x) as u8 } else { 0 };
+            self.stall_dots = 5;
+            self.fetch_dot = 0;
+            self.fetch_pixel_x = self.pixel_x;
+            return;
+        }
+
+        if self.window_active && self.window_disable_pending && self.window_pixels & 7 == 0 {
+            self.window_active = false;
+            self.window_disable_pending = false;
             self.stall_dots = 5;
             self.fetch_dot = 0;
             self.fetch_pixel_x = self.pixel_x;
@@ -95,6 +116,9 @@ impl Mode3Timing {
         }
 
         self.pixel_x += 1;
+        if self.window_active {
+            self.window_pixels = self.window_pixels.wrapping_add(1);
+        }
         self.complete = self.pixel_x == 160;
         self.advance_fetcher();
     }
@@ -119,6 +143,18 @@ impl Mode3Timing {
             _ => self.pixel_x,
         };
         pixel_x.min(159)
+    }
+
+    pub(super) fn write_register(&mut self, register: u16, old_value: u8, value: u8) {
+        match register {
+            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 && self.window_active => {
+                self.window_disable_pending = true;
+            }
+            0xFF4B if self.window_seen && value.saturating_sub(7) > self.pixel_x => {
+                self.window_can_retrigger = true;
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn fine_scroll_x(&self) -> u8 {
