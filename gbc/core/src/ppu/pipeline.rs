@@ -5,7 +5,6 @@
 #[derive(Debug, Clone)]
 pub(super) struct Mode3Pipeline {
     pub(super) pixel_x: u8,
-    pub(super) fine_scroll: u8,
     complete: bool,
 
     // Lached registers (updated by pending writes)
@@ -16,6 +15,8 @@ pub(super) struct Mode3Pipeline {
     pub(super) wy: u8,
     pub(super) bgp: u8,
     startup_dots: u8,
+    /// Fine scroll latched at scanline start (SCX & 7)
+    pub(super) fine_scroll: u8,
 
     // Window state
     pub(super) window_active: bool,
@@ -126,14 +127,25 @@ impl Mode3Pipeline {
     pub(super) fn fine_scroll_x(&self) -> u8 { self.fine_scroll }
     pub(super) fn complete(&self) -> bool { self.complete }
 
-    pub(super) fn queue_register_write(&mut self, register: u16, value: u8) -> u8 {
-        // Tile-fetch-related registers: 6-dot delay for fetcher restart.
-        // Palette registers: immediate (take effect at current pixel).
-        let delay = match register {
-            0xFF40 | 0xFF42 | 0xFF43 | 0xFF4A | 0xFF4B => 6,
-            _ => 0, // 0xFF47 (BGP), 0xFF48 (OBP0), 0xFF49 (OBP1)
-        };
-        let apply_x = self.pixel_x.saturating_add(delay).min(159);
+    pub(super) fn queue_register_write(&mut self, register: u16, value: u8, old_value: u8) -> u8 {
+        // Compute apply_x based on register type:
+        // - Tile-fetch registers (SCX, SCY, LCDC bits 3/4/6): next tile boundary
+        // - Window position (WX, WY): 6-dot fetcher restart delay
+        // - Palette (BGP, OBP0, OBP1), WIN_EN: immediate (current pixel)
+        let changed_bits = old_value ^ value;
+        let apply_x = match register {
+            0xFF42 | 0xFF43 => { // SCY, SCX → next tile boundary
+                ((self.pixel_x + 7) / 8) * 8
+            }
+            0xFF40 if changed_bits & 0x08 != 0 || changed_bits & 0x10 != 0 || changed_bits & 0x40 != 0 => {
+                // LCDC bits 3 (BG_MAP), 4 (TILE_SEL), 6 (WIN_MAP) → next tile boundary
+                ((self.pixel_x + 7) / 8) * 8
+            }
+            0xFF4A | 0xFF4B => { // WY, WX → 6-dot delay
+                self.pixel_x.saturating_add(6)
+            }
+            _ => self.pixel_x, // immediate: BGP, OBP0, OBP1, WIN_EN
+        }.min(159);
         self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
         apply_x
     }
