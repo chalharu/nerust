@@ -103,10 +103,10 @@ impl Default for GbcPpu {
             frame_complete: false,
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
             window_line: 0,
-            lyc_matched_ly: 0,
+            lyc_matched_ly: 0xFF,
             cgb_mode: false,
             cgb_game: false,
-            lcd_stat_last_mode: None,
+            lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mid_events: Vec::new(),
             event_count: 0,
         }
@@ -180,8 +180,8 @@ impl GbcPpu {
 
         while self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
+            self.lyc_matched_ly = self.ly;
             self.ly = self.ly.wrapping_add(1);
-            self.lyc_matched_ly = 0;
             if self.ly >= VBLANK_START { vblank = true; }
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
