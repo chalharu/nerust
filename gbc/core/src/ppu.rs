@@ -990,14 +990,23 @@ impl GbcPpu {
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
-            0xFF42 => self.scy = value,
-            0xFF43 => self.scx = value,
-            0xFF45 => self.lyc = value,
-            0xFF47 => self.bgp = value,
-            0xFF48 => self.obp0 = value,
-            0xFF49 => self.obp1 = value,
-            0xFF4A => self.wy = value,
-            0xFF4B => self.wx = value,
+             0xFF42 => {
+                 // SCY: immediate update only outside mode 3 (events handle mid-scanline)
+                 if self.mode3_pipeline.is_none() { self.scy = value; }
+             }
+             0xFF43 => {
+                 if self.mode3_pipeline.is_none() { self.scx = value; }
+             }
+             0xFF45 => self.lyc = value,
+             0xFF47 => self.bgp = value,
+             0xFF48 => self.obp0 = value,
+             0xFF49 => self.obp1 = value,
+             0xFF4A => {
+                 if self.mode3_pipeline.is_none() { self.wy = value; }
+             }
+             0xFF4B => {
+                 if self.mode3_pipeline.is_none() { self.wx = value; }
+             }
             0xFF4F => self.vbk = value & 0x01,
             0xFF68 => {
                 if self.key0 & 0x04 == 0 {
