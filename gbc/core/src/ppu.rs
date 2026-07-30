@@ -1,9 +1,8 @@
 use nerust_render_traits::FrameBuffer;
 
-mod mode3;
 mod pipeline;
 
-use mode3::Mode3Timing;
+use pipeline::Mode3Pipeline;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PpuMode {
@@ -93,10 +92,9 @@ pub struct GbcPpu {
     lcd_stat_last_mode: Option<PpuMode>,
     mode_stat_delay: u8,
 
-    mode3_timing: Option<Mode3Timing>,
     mode3_registers: Option<RenderRegisters>,
     mode3_writes: Vec<LatchedWrite>,
-    mode3_pipeline: Option<pipeline::Mode3Pipeline>,
+    mode3_pipeline: Option<Mode3Pipeline>,
 }
 
 impl Default for GbcPpu {
@@ -134,7 +132,6 @@ impl Default for GbcPpu {
             cgb_game: false,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mode_stat_delay: 0,
-            mode3_timing: None,
             mode3_registers: None,
             mode3_writes: Vec::new(),
             mode3_pipeline: None,
@@ -161,7 +158,7 @@ impl GbcPpu {
         if self.lcdc & 0x80 == 0 {
             self.ly = 0;
             self.mode_clock = 0;
-            self.mode3_timing = None;
+            self.mode3_pipeline = None;
             self.mode3_registers = None;
             return PpuStepResult {
                 frame_done: false,
@@ -193,15 +190,14 @@ impl GbcPpu {
 
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
             let sprites = self.scanline_sprite_x_positions();
-            self.mode3_pipeline = Some(pipeline::Mode3Pipeline::new(
-                self.scx, self.scy, self.wx, self.wy, self.lcdc, self.bgp, self.cgb_mode,
-            ));
+            self.mode3_pipeline = Some(Mode3Pipeline::new(self.cgb_mode, self.scx, sprites));
+            self.mode3_registers = Some(self.render_registers());
         }
 
         if let Some(pipeline) = self.mode3_pipeline.as_mut()
             && !pipeline.complete()
         {
-            pipeline.step(&self.vram, &self.bg_palette, self.cgb_mode, self.cgb_game, self.ly);
+            pipeline.step(self.lcdc, self.scx, self.ly, self.wy, self.wx);
             if pipeline.complete() {
                 self.render_scanline();
                 self.mode3_pipeline = None;
@@ -210,7 +206,7 @@ impl GbcPpu {
 
         if self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
-            self.mode3_timing = None;
+            self.mode3_pipeline = None;
             self.mode3_registers = None;
             self.lyc_matched_ly = self.ly;
             self.ly = self.ly.wrapping_add(1);
@@ -255,9 +251,9 @@ impl GbcPpu {
         } else if self.mode_clock <= T_CYCLES_OAM_SEARCH {
             PpuMode::OamSearch
         } else if self
-            .mode3_timing
+            .mode3_pipeline
             .as_ref()
-            .is_some_and(|timing| !timing.complete())
+            .is_some_and(|pipeline| !pipeline.complete())
         {
             PpuMode::PixelTransfer
         } else {
@@ -381,12 +377,9 @@ impl GbcPpu {
         let pixel_events = self.mode3_writes.clone();
         self.restore_mode3_registers();
         let fine_scroll_x = self
-            .mode3_timing
+            .mode3_pipeline
             .as_ref()
-            .map_or(
-                self.mode3_pipeline.as_ref().map_or(self.scx & 0x07, |p| p.fine_scroll_x()),
-                Mode3Timing::fine_scroll_x,
-            );
+            .map_or(self.scx & 0x07, Mode3Pipeline::fine_scroll_x);
         let mut ev_idx = 0usize;
         let mut window_active = false;
         let mut window_triggered = false;
@@ -963,17 +956,24 @@ impl GbcPpu {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
                 if self.ly < VBLANK_START && self.mode3_pipeline.is_some() =>
             {
-                 let old_value = self.read_register(addr);
-                 if let Some(pipeline) = self.mode3_pipeline.as_mut() {
-                     let pixel_x = pipeline.queue_register_write(addr, value, old_value);
-                     self.mode3_writes.push(LatchedWrite {
-                         pixel_x,
-                         register: addr,
-                         old_value,
-                         value,
-                         window_started: false,
-                    });
-                }
+                let old_value = self.read_register(addr);
+                let pipeline = self
+                    .mode3_pipeline
+                    .as_mut()
+                    .expect("mode 3 pipeline checked above");
+                let pixel_x = pipeline.latch_pixel(addr, old_value, value, self.ly);
+                pipeline.write_register(addr, old_value, value);
+                self.mode3_writes.push(LatchedWrite {
+                    pixel_x,
+                    register: addr,
+                    old_value,
+                    value,
+                    window_started: self
+                        .mode3_pipeline
+                        .as_ref()
+                        .expect("mode 3 pipeline checked above")
+                        .window_seen(),
+                });
             }
             _ => {}
         }
@@ -990,23 +990,14 @@ impl GbcPpu {
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
-             0xFF42 => {
-                 // SCY: immediate update only outside mode 3 (events handle mid-scanline)
-                 if self.mode3_pipeline.is_none() { self.scy = value; }
-             }
-             0xFF43 => {
-                 if self.mode3_pipeline.is_none() { self.scx = value; }
-             }
-             0xFF45 => self.lyc = value,
-             0xFF47 => self.bgp = value,
-             0xFF48 => self.obp0 = value,
-             0xFF49 => self.obp1 = value,
-             0xFF4A => {
-                 if self.mode3_pipeline.is_none() { self.wy = value; }
-             }
-             0xFF4B => {
-                 if self.mode3_pipeline.is_none() { self.wx = value; }
-             }
+            0xFF42 => self.scy = value,
+            0xFF43 => self.scx = value,
+            0xFF45 => self.lyc = value,
+            0xFF47 => self.bgp = value,
+            0xFF48 => self.obp0 = value,
+            0xFF49 => self.obp1 = value,
+            0xFF4A => self.wy = value,
+            0xFF4B => self.wx = value,
             0xFF4F => self.vbk = value & 0x01,
             0xFF68 => {
                 if self.key0 & 0x04 == 0 {
