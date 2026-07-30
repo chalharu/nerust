@@ -8,6 +8,7 @@ pub(super) struct Mode3Timing {
     next_sprite: usize,
     last_sprite_tile: Option<i16>,
     window_started: bool,
+    window_seen: bool,
     complete: bool,
 }
 
@@ -22,6 +23,7 @@ impl Mode3Timing {
             next_sprite: 0,
             last_sprite_tile: None,
             window_started: false,
+            window_seen: false,
             complete: false,
         }
     }
@@ -31,6 +33,9 @@ impl Mode3Timing {
             return;
         }
         if self.startup_dots != 0 {
+            if lcdc & 0x20 != 0 && ly >= wy && wx <= 7 {
+                self.window_seen = true;
+            }
             self.startup_dots -= 1;
             return;
         }
@@ -47,6 +52,7 @@ impl Mode3Timing {
             && i16::from(self.pixel_x) >= window_x.max(0)
         {
             self.window_started = true;
+            self.window_seen = true;
             self.stall_dots = 5;
             return;
         }
@@ -95,6 +101,10 @@ impl Mode3Timing {
 
     pub(super) fn fine_scroll_x(&self) -> u8 {
         self.fine_scroll_x
+    }
+
+    pub(super) fn window_seen(&self) -> bool {
+        self.window_seen
     }
 
     pub(super) fn complete(&self) -> bool {
