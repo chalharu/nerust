@@ -128,20 +128,16 @@ struct Sprite {
 
 impl GbcPpu {
     /// Current pixel position during Mode 3 (0-159).
-    /// Tile-based pipeline: 8 pixels per tile, 12 T-cycles per tile
-    /// (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 87.
-    /// px = mode_clock - 80 (DMG) or - 81 (CGB) + event_parity.
+    /// First pixel at T-cycle 87 (DMG) / 88 (CGB).
+    /// Pixel output is 1 per T-cycle after initial pipeline delay.
     fn mode3_pixel_x(&self) -> u8 {
         if self.ly >= VBLANK_START || self.mode_clock <= T_CYCLES_OAM_SEARCH {
             return 0;
         }
-        // Tile-based pipeline: 8 pixels per tile, 12 T-cycles per tile
-        // (8 pixel T-cycles + 4 fetch overhead). First pixel at T-cycle 87 (80 + 7).
-        // Dispatch takes 20 T-cycles (5 M-cycles CGB D), adding 16 T-cycles vs
-        // the old 4 T-cycle (1 M-cycle) dispatch. Base = 80 + 16 = 96.
-        // CGB has 1 extra pipeline T-cycle.
-        let base = if self.cgb_mode { 97 } else { 96 };
-        let px = self.mode_clock as i32 - base + (self.event_count % 2) as i32;
+        // Pixel output is linear: 1 pixel per T-cycle starting at mode_clock 87/88.
+        // mode_clock advances 1 per step_tcycle.
+        let first_pixel = if self.cgb_mode { 101 } else { 100 };
+        let px = self.mode_clock as i32 - first_pixel + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
     }
 
