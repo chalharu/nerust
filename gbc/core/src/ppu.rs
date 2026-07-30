@@ -75,6 +75,7 @@ pub struct GbcPpu {
     frame_complete: bool,
     frame_buffer: [u32; 160 * 144],
     window_line: u8,
+    window_eligible: bool,
     /// Prevents LYC=LY STAT interrupt double-fire.
     /// Set to current ly when a LYC=LY match fires and bit 6 is enabled.
     /// Cleared when ly changes (while loop). This ensures the handler's
@@ -125,6 +126,7 @@ impl Default for GbcPpu {
             frame_complete: false,
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
             window_line: 0,
+            window_eligible: false,
             lyc_matched_ly: 0xFF,
             cgb_mode: false,
             cgb_game: false,
@@ -216,6 +218,7 @@ impl GbcPpu {
                 self.frame_complete = true;
                 self.window_line = 0;
             }
+            self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
             self.check_lyc(lcd_stat);
         }
 
@@ -435,11 +438,17 @@ impl GbcPpu {
             let _spr_dbl = self.lcdc & 0x04 != 0;
 
             let window_x = self.wx as i16 - 7;
-            let may_start_window = !window_triggered || window_can_retrigger;
+            let may_start_window =
+                (!window_triggered && self.window_eligible) || window_can_retrigger;
+            let window_enabled = if window_triggered {
+                self.lcdc & 0x20 != 0
+            } else {
+                self.window_eligible
+            };
             if !window_active
                 && may_start_window
                 && bg_win_en
-                && self.lcdc & 0x20 != 0
+                && window_enabled
                 && ly as u8 >= self.wy
                 && window_x < 160
                 && x as i16 >= window_x.max(0)
@@ -959,7 +968,11 @@ impl GbcPpu {
                 let lcd_was_enabled = self.lcdc & 0x80 != 0;
                 self.lcdc = value;
                 if !lcd_was_enabled && value & 0x80 != 0 {
-                    self.lcd_stat_last_mode = None;
+                    self.lcd_stat_last_mode = Some(PpuMode::OamSearch);
+                    self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
+                    if self.stat & 0x20 != 0 {
+                        self.mode_stat_delay = 1;
+                    }
                 }
             }
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
@@ -1261,7 +1274,6 @@ mod tests {
         p.step(1);
         p.write_register(0xFF40, p.read_register(0xFF40) | 0x80);
 
-        assert!(!p.step(5).lcd_stat);
         let result = p.step(1);
 
         assert!(result.lcd_stat);
