@@ -88,7 +88,7 @@ pub struct GbcPpu {
     /// Set to the PpuMode value that last triggered lcd_stat; cleared to None
     /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
     lcd_stat_last_mode: Option<PpuMode>,
-    mode_stat_pending: bool,
+    mode_stat_delay: u8,
 
     mode3_timing: Option<Mode3Timing>,
     mode3_registers: Option<RenderRegisters>,
@@ -128,7 +128,7 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
-            mode_stat_pending: false,
+            mode_stat_delay: 0,
             mode3_timing: None,
             mode3_registers: None,
             mode3_writes: Vec::new(),
@@ -180,7 +180,10 @@ impl GbcPpu {
     }
 
     fn step_dot(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
-        *lcd_stat |= std::mem::take(&mut self.mode_stat_pending);
+        if self.mode_stat_delay != 0 {
+            self.mode_stat_delay -= 1;
+            *lcd_stat |= self.mode_stat_delay == 0;
+        }
         self.mode_clock += 1;
 
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
@@ -228,7 +231,13 @@ impl GbcPpu {
                 PpuMode::OamSearch => self.stat & 0x20 != 0,
                 PpuMode::PixelTransfer => false,
             };
-            self.mode_stat_pending |= enabled;
+            if enabled {
+                self.mode_stat_delay = if current_mode == PpuMode::OamSearch && self.ly == 0 {
+                    5
+                } else {
+                    1
+                };
+            }
         }
     }
 
@@ -1214,7 +1223,7 @@ mod tests {
         p.step(1);
         p.write_register(0xFF40, p.read_register(0xFF40) | 0x80);
 
-        p.step(1);
+        assert!(!p.step(5).lcd_stat);
         let result = p.step(1);
 
         assert!(result.lcd_stat);
