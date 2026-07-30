@@ -194,7 +194,7 @@ impl GbcPpu {
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
             let sprites = self.scanline_sprite_x_positions();
             self.mode3_pipeline = Some(pipeline::Mode3Pipeline::new(
-                self.cgb_mode, self.scx, self.scy, self.ly, sprites,
+                self.cgb_mode, self.scx, self.scy,
                 self.wx, self.wy, self.lcdc,
             ));
         }
