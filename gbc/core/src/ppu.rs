@@ -135,7 +135,8 @@ impl GbcPpu {
             return 0;
         }
         // Pixel output is linear: 1 pixel per T-cycle starting at mode_clock 87/88.
-        // mode_clock advances 1 per step_tcycle.
+        // mode_clock advances 1 per step_tcycle. Base 101/100 accounts for
+        // 5 M-cycle dispatch (20 T-cycles) + ISR overhead.
         let first_pixel = if self.cgb_mode { 101 } else { 100 };
         let px = self.mode_clock as i32 - first_pixel + (self.event_count % 2) as i32;
         px.clamp(0, 159) as u8
