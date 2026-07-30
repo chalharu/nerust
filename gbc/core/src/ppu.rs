@@ -954,9 +954,9 @@ impl GbcPpu {
                 let old_value = self.read_register(addr);
                 let pixel_x = self
                     .mode3_timing
-                    .as_ref()
+                    .as_mut()
                     .expect("mode 3 timing checked above")
-                    .latch_pixel(addr, old_value, value);
+                    .latch_pixel(addr, old_value, value, self.ly);
                 self.mode3_writes.push(LatchedWrite {
                     pixel_x,
                     register: addr,
