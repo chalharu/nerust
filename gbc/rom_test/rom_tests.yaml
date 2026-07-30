@@ -202,7 +202,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "68220742"
         memory: []
         pad: []
 
@@ -217,7 +217,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "31A9CE19"
         memory: []
         pad: []
 
@@ -427,7 +427,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "D4D3471D"
         memory: []
         pad: []
 
@@ -532,7 +532,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "CC5985CC"
         memory: []
         pad: []
 
@@ -577,7 +577,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "6A57241D"
         memory: []
         pad: []
 
@@ -622,7 +622,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "E3EAF371"
         memory: []
         pad: []
 
