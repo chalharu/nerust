@@ -3,6 +3,8 @@ pub(super) struct Mode3Timing {
     pixel_x: u8,
     startup_dots: u8,
     stall_dots: u8,
+    fetch_dot: u8,
+    fetch_pixel_x: u8,
     fine_scroll_x: u8,
     sprite_x: Vec<i16>,
     next_sprite: usize,
@@ -18,6 +20,8 @@ impl Mode3Timing {
             pixel_x: 0,
             startup_dots: if cgb_mode { 19 } else { 18 } + (scx & 7),
             stall_dots: 0,
+            fetch_dot: 0,
+            fetch_pixel_x: 0,
             fine_scroll_x: scx & 7,
             sprite_x,
             next_sprite: 0,
@@ -37,6 +41,7 @@ impl Mode3Timing {
                 self.window_seen = true;
             }
             self.startup_dots -= 1;
+            self.advance_fetcher();
             return;
         }
         if self.stall_dots != 0 {
@@ -54,6 +59,8 @@ impl Mode3Timing {
             self.window_started = true;
             self.window_seen = true;
             self.stall_dots = 5;
+            self.fetch_dot = 0;
+            self.fetch_pixel_x = self.pixel_x;
             return;
         }
 
@@ -89,11 +96,25 @@ impl Mode3Timing {
 
         self.pixel_x += 1;
         self.complete = self.pixel_x == 160;
+        self.advance_fetcher();
     }
 
-    pub(super) fn latch_pixel(&self, register: u16, old_value: u8, value: u8) -> u8 {
+    fn advance_fetcher(&mut self) {
+        self.fetch_dot = (self.fetch_dot + 1) & 7;
+        if self.fetch_dot == 0 {
+            self.fetch_pixel_x = self.fetch_pixel_x.saturating_add(8);
+        }
+    }
+
+    pub(super) fn latch_pixel(&mut self, register: u16, old_value: u8, value: u8, ly: u8) -> u8 {
+        if register == 0xFF43 && ly != 0 && self.pixel_x == 0 && self.fetch_dot == 0 {
+            self.fine_scroll_x = value & 7;
+        }
         let pixel_x = match register {
             0xFF40 if (old_value ^ value) & 0x40 != 0 => self.pixel_x.saturating_add(7) & !7,
+            0xFF42 => self.fetch_pixel_x,
+            0xFF43 => self.fetch_pixel_x,
+            0xFF40 if (old_value ^ value) & 0x08 != 0 => self.fetch_pixel_x,
             _ => self.pixel_x,
         };
         pixel_x.min(159)
