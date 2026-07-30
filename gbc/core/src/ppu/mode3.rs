@@ -1,3 +1,11 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FetchStage {
+    Tile,
+    DataLow,
+    DataHigh,
+    Push,
+}
+
 #[derive(Debug)]
 pub(super) struct Mode3Timing {
     pixel_x: u8,
@@ -130,8 +138,22 @@ impl Mode3Timing {
         }
     }
 
+    pub(super) fn fetch_stage(&self) -> FetchStage {
+        match self.fetch_dot {
+            0 | 1 => FetchStage::Tile,
+            2 | 3 => FetchStage::DataLow,
+            4 | 5 => FetchStage::DataHigh,
+            _ => FetchStage::Push,
+        }
+    }
+
     pub(super) fn latch_pixel(&mut self, register: u16, old_value: u8, value: u8, ly: u8) -> u8 {
-        if register == 0xFF43 && ly != 0 && self.pixel_x == 0 && self.fetch_dot == 0 {
+        if register == 0xFF43
+            && ly != 0
+            && self.pixel_x == 0
+            && self.fetch_stage() == FetchStage::Tile
+            && self.fetch_dot == 0
+        {
             self.fine_scroll_x = value & 7;
         }
         let pixel_x = match register {
@@ -167,5 +189,32 @@ impl Mode3Timing {
 
     pub(super) fn complete(&self) -> bool {
         self.complete
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetcher_advances_through_two_dot_stages() {
+        let mut timing = Mode3Timing::new(true, 0, Vec::new());
+        let expected = [
+            FetchStage::Tile,
+            FetchStage::Tile,
+            FetchStage::DataLow,
+            FetchStage::DataLow,
+            FetchStage::DataHigh,
+            FetchStage::DataHigh,
+            FetchStage::Push,
+            FetchStage::Push,
+        ];
+
+        for stage in expected {
+            assert_eq!(timing.fetch_stage(), stage);
+            timing.advance_fetcher();
+        }
+
+        assert_eq!(timing.fetch_stage(), FetchStage::Tile);
     }
 }
