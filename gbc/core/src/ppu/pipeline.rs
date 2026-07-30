@@ -1,52 +1,26 @@
-use std::collections::VecDeque;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FetchStage {
-    Tile,     // Read tile index from map
-    DataLow,  // Read bitplane 0
-    DataHigh, // Read bitplane 1
-    Sleep,
-    Push,     // Combine planes → push 8 pixels to FIFO
-}
+/// Per-pixel BG fetcher that exactly mirrors read_bg_pixel from the old
+/// render_scanline. No FIFO — reads VRAM directly for each pixel.
+/// This is a stepping stone toward the full FIFO pipeline.
 
 #[derive(Debug, Clone)]
 pub(super) struct Mode3Pipeline {
-    // ── Fetcher state machine ──
-    fetch_stage: FetchStage,
-    fetch_dot: u8,          // 0-1 within each stage (each stage = 2 dots)
-    fetch_pixel_x: u8,      // tile-aligned X position (0, 8, 16, ...)
-    tile_index: u8,         // latched tile index from map
-    tile_attr: u8,          // latched attribute byte (CGB)
-    tile_y: u8,             // latched row within tile (0-7)
-    tile_row_low: u8,       // latched bitplane 0 byte
-    tile_row_high: u8,      // latched bitplane 1 byte
-
-    // ── BG pixel FIFO ──
-    bg_fifo: VecDeque<u8>,
-
-    // ── Output ──
-    pixel_x: u8,
-    fine_scroll: u8,        // SCX & 7 — discard from first tile
-    discard: u8,            // fine scroll discard counter
+    pub(super) pixel_x: u8,
+    pub(super) fine_scroll: u8,
     complete: bool,
 
-    // ── Stalls ──
-    stall: u8,
-    startup: u8,            // initial pipeline fill dots
-
-    // ── Latched registers (updated by pending writes) ──
+    // Lached registers (updated by pending writes)
     pub(super) lcdc: u8,
-    scx: u8,
-    scy: u8,
+    pub(super) scx: u8,
+    pub(super) scy: u8,
     pub(super) wx: u8,
     pub(super) wy: u8,
     pub(super) bgp: u8,
 
-    // ── Window state ──
+    // Window state
     pub(super) window_active: bool,
     pub(super) window_line: u8,
 
-    // ── Pending register writes ──
+    // Pending register writes
     pending_writes: Vec<PendingWrite>,
 }
 
@@ -59,25 +33,12 @@ struct PendingWrite {
 
 impl Mode3Pipeline {
     pub(super) fn new(
-        cgb_mode: bool, scx: u8, scy: u8,
-        wx: u8, wy: u8, lcdc: u8,
+        scx: u8, scy: u8, wx: u8, wy: u8, lcdc: u8,
     ) -> Self {
         Self {
-            fetch_stage: FetchStage::Tile,
-            fetch_dot: 0,
-            fetch_pixel_x: 0,
-            tile_index: 0,
-            tile_attr: 0,
-            tile_y: 0,
-            tile_row_low: 0,
-            tile_row_high: 0,
-            bg_fifo: VecDeque::with_capacity(16),
             pixel_x: 0,
             fine_scroll: scx & 7,
-            discard: 0,
             complete: false,
-            stall: 0,
-            startup: if cgb_mode { 19 } else { 18 } + (scx & 7),
             lcdc, scx, scy, wx, wy,
             bgp: 0xFC,
             window_active: false,
@@ -97,122 +58,69 @@ impl Mode3Pipeline {
         if self.complete { return None; }
         self.apply_pending_writes();
 
-        if self.startup > 0 {
-            self.startup -= 1;
-            self.advance_fetcher(vram, cgb_mode, ly);
-            return None;
-        }
+        let scroll_x = self.scx.wrapping_add(self.pixel_x);
+        let scroll_y = self.scy.wrapping_add(ly);
+        let tile_col = (scroll_x / 8) as u16;
+        let tile_row = (scroll_y / 8) as u16;
+        let tile_x = scroll_x % 8;
+        let tile_y = scroll_y % 8;
 
-        if self.stall > 0 {
-            self.stall -= 1;
-            return None;
-        }
+        // Read tile index from map
+        let map_base: u16 = if self.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
+        let map_addr = map_base + tile_row * 32 + tile_col;
+        let map_idx = (map_addr & 0x1FFF) as usize;
+        let tile = vram[map_idx];
 
-        // Keep FIFO filled: advance fetcher while FIFO < 8
-        while self.bg_fifo.len() < 8 {
-            self.advance_fetcher(vram, cgb_mode, ly);
-        }
+        // Read pixel from tile data
+        let signed = self.lcdc & 0x10 == 0;
+        let tile_addr = if signed {
+            let signed_idx = tile as i8 as i16;
+            (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
+        } else {
+            0x8000u16 + tile as u16 * 16
+        };
 
-        // Fine scroll: discard first `fine_scroll` pixels from FIFO once
-        while self.discard < self.fine_scroll {
-            self.bg_fifo.pop_front();
-            self.discard += 1;
-        }
+        let bank = if cgb_mode {
+            let attr = vram[0x2000 + map_idx];
+            ((attr >> 3) & 0x01) as usize
+        } else { 0 };
 
-        // Pop pixel from FIFO
-        if let Some(bg_color) = self.bg_fifo.pop_front() {
+        let row_addr = tile_addr + tile_y as u16 * 2;
+        let row_idx = (row_addr & 0x1FFF) as usize;
+        let low = vram[bank * 0x2000 + row_idx];
+        let high = vram[bank * 0x2000 + row_idx + 1];
+        let bit = 7 - tile_x;
+        let color = ((low >> bit) & 1) | (((high >> bit) & 1) << 1);
 
-            let pixel = if cgb_game {
-                let pal = (self.tile_attr & 0x07) as usize;
-                Self::cgb_color(bg_palette[pal * 4 + bg_color as usize])
-            } else if cgb_mode {
-                let shade = (self.bgp >> (bg_color * 2)) & 0x03;
-                Self::cgb_color(bg_palette[shade as usize])
-            } else {
-                let shade = (self.bgp >> (bg_color * 2)) & 0x03;
-                Self::shade_to_pixel(shade)
-            };
+        let pixel = if cgb_game {
+            let attr = vram[0x2000 + map_idx];
+            let pal = (attr & 0x07) as usize;
+            Self::cgb_color(bg_palette[pal * 4 + color as usize])
+        } else if cgb_mode {
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            Self::cgb_color(bg_palette[shade as usize])
+        } else {
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            Self::shade_to_pixel(shade)
+        };
 
-            self.pixel_x += 1;
-            if self.pixel_x >= 160 { self.complete = true; }
-            return Some(pixel);
-        }
-
-        None
+        self.pixel_x += 1;
+        if self.pixel_x >= 160 { self.complete = true; }
+        Some(pixel)
     }
 
-    // ── Fetcher: advances one dot through stage pipeline ──
-
-    fn advance_fetcher(&mut self, vram: &[u8; 0x4000], cgb_mode: bool, ly: u8) {
-        self.fetch_dot += 1;
-        if self.fetch_dot < 2 { return; }
-        self.fetch_dot = 0;
-
-        match self.fetch_stage {
-            FetchStage::Tile => {
-                // Read tile index from background map
-                let map_base: u16 = if self.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
-                let tile_col = (self.scx as u32 + self.fetch_pixel_x as u32) as u16 / 8 & 0x1F;
-                let tile_row = (ly as u32 + self.scy as u32) as u16 / 8 & 0x1F;
-                let map_addr = map_base + tile_row * 32 + tile_col;
-                let map_idx = (map_addr & 0x1FFF) as usize;
-                self.tile_index = vram[map_idx];
-                if cgb_mode {
-                    self.tile_attr = vram[0x2000 + map_idx];
-                }
-                let vflip = cgb_mode && self.tile_attr & 0x40 != 0;
-                let raw_y = ly.wrapping_add(self.scy) & 7;
-                self.tile_y = if vflip { 7 - raw_y } else { raw_y };
-                self.fetch_stage = FetchStage::DataLow;
-            }
-            FetchStage::DataLow => {
-                let signed = self.lcdc & 0x10 == 0;
-                let tile_addr = if signed {
-                    (0x9000u16).wrapping_add_signed((self.tile_index as i8 as i16).wrapping_mul(16))
-                } else {
-                    0x8000u16 + self.tile_index as u16 * 16
-                };
-                let bank = if cgb_mode { ((self.tile_attr >> 3) & 0x01) as usize } else { 0 };
-                let row_addr = tile_addr + self.tile_y as u16 * 2;
-                let row_idx = (row_addr & 0x1FFF) as usize;
-                self.tile_row_low = vram[bank * 0x2000 + row_idx];
-                self.fetch_stage = FetchStage::DataHigh;
-            }
-            FetchStage::DataHigh => {
-                let signed = self.lcdc & 0x10 == 0;
-                let tile_addr = if signed {
-                    (0x9000u16).wrapping_add_signed((self.tile_index as i8 as i16).wrapping_mul(16))
-                } else {
-                    0x8000u16 + self.tile_index as u16 * 16
-                };
-                let bank = if cgb_mode { ((self.tile_attr >> 3) & 0x01) as usize } else { 0 };
-                let row_addr = tile_addr + self.tile_y as u16 * 2;
-                let row_idx = (row_addr & 0x1FFF) as usize;
-                self.tile_row_high = vram[bank * 0x2000 + row_idx + 1];
-                self.fetch_stage = FetchStage::Sleep;
-            }
-            FetchStage::Sleep => {
-                self.fetch_stage = FetchStage::Push;
-            }
-            FetchStage::Push => {
-                let hflip = cgb_mode && self.tile_attr & 0x20 != 0;
-                let low = self.tile_row_low;
-                let high = self.tile_row_high;
-                for bit in 0..8u8 {
-                    let b = if hflip { bit } else { 7 - bit };
-                    let color = ((low >> b) & 1) | (((high >> b) & 1) << 1);
-                    self.bg_fifo.push_back(color);
-                }
-                self.fetch_pixel_x = self.fetch_pixel_x.wrapping_add(8);
-                self.fetch_stage = FetchStage::Tile;
-            }
-        }
-    }
-
-    // ── Pending write handling ──
+    pub(super) fn pixel_x(&self) -> u8 { self.pixel_x }
+    pub(super) fn fine_scroll_x(&self) -> u8 { self.fine_scroll }
+    pub(super) fn complete(&self) -> bool { self.complete }
 
     pub(super) fn queue_register_write(&mut self, register: u16, value: u8) {
-        let apply_x = self.pixel_x.saturating_add(6).min(159);
+        // Tile-fetch-related registers: 6-dot delay for fetcher restart.
+        // Palette registers: immediate (take effect at current pixel).
+        let delay = match register {
+            0xFF40 | 0xFF42 | 0xFF43 | 0xFF4A | 0xFF4B => 6,
+            _ => 0, // 0xFF47 (BGP), 0xFF48 (OBP0), 0xFF49 (OBP1)
+        };
+        let apply_x = self.pixel_x.saturating_add(delay).min(159);
         self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
     }
 
@@ -229,13 +137,9 @@ impl Mode3Pipeline {
                     _ => {}
                 }
                 false
-            } else {
-                true
-            }
+            } else { true }
         });
     }
-
-    // ── Conversion helpers ──
 
     fn cgb_color(color15: u16) -> u32 {
         let r = ((color15 >> 0) & 0x1F) as u32;
@@ -249,14 +153,8 @@ impl Mode3Pipeline {
 
     fn shade_to_pixel(shade: u8) -> u32 {
         match shade {
-            0 => 0xFF_FF_FF_FF,
-            1 => 0xAA_AA_AA_FF,
-            2 => 0x55_55_55_FF,
-            _ => 0x00_00_00_FF,
+            0 => 0xFF_FF_FF_FF, 1 => 0xAA_AA_AA_FF,
+            2 => 0x55_55_55_FF, _ => 0x00_00_00_FF,
         }
     }
-
-    pub(super) fn pixel_x(&self) -> u8 { self.pixel_x }
-    pub(super) fn fine_scroll_x(&self) -> u8 { self.fine_scroll }
-    pub(super) fn complete(&self) -> bool { self.complete }
 }
