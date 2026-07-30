@@ -383,7 +383,10 @@ impl GbcPpu {
         let fine_scroll_x = self
             .mode3_timing
             .as_ref()
-            .map_or(self.scx & 0x07, Mode3Timing::fine_scroll_x);
+            .map_or(
+                self.mode3_pipeline.as_ref().map_or(self.scx & 0x07, |p| p.fine_scroll_x()),
+                Mode3Timing::fine_scroll_x,
+            );
         let mut ev_idx = 0usize;
         let mut window_active = false;
         let mut window_triggered = false;

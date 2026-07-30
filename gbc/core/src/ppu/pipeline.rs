@@ -134,12 +134,11 @@ impl Mode3Pipeline {
         // - Palette (BGP, OBP0, OBP1), WIN_EN: immediate (current pixel)
         let changed_bits = old_value ^ value;
         let apply_x = match register {
-            0xFF42 | 0xFF43 => { // SCY, SCX → next tile boundary
-                ((self.pixel_x + 7) / 8) * 8
+            0xFF42 | 0xFF43 => { // SCY, SCX → current tile start (fetch_pixel_x equivalent)
+                (self.pixel_x / 8) * 8
             }
             0xFF40 if changed_bits & 0x08 != 0 || changed_bits & 0x10 != 0 || changed_bits & 0x40 != 0 => {
-                // LCDC bits 3 (BG_MAP), 4 (TILE_SEL), 6 (WIN_MAP) → next tile boundary
-                ((self.pixel_x + 7) / 8) * 8
+                (self.pixel_x / 8) * 8 // LCDC bits 3,4,6 → current tile start
             }
             0xFF4A | 0xFF4B => { // WY, WX → 6-dot delay
                 self.pixel_x.saturating_add(6)
