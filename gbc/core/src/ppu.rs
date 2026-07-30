@@ -1,6 +1,7 @@
 use nerust_render_traits::FrameBuffer;
 
 mod mode3;
+mod pipeline;
 
 use mode3::Mode3Timing;
 
@@ -95,6 +96,7 @@ pub struct GbcPpu {
     mode3_timing: Option<Mode3Timing>,
     mode3_registers: Option<RenderRegisters>,
     mode3_writes: Vec<LatchedWrite>,
+    mode3_pipeline: Option<pipeline::Mode3Pipeline>,
 }
 
 impl Default for GbcPpu {
@@ -135,6 +137,7 @@ impl Default for GbcPpu {
             mode3_timing: None,
             mode3_registers: None,
             mode3_writes: Vec::new(),
+            mode3_pipeline: None,
         }
     }
 }
@@ -190,16 +193,25 @@ impl GbcPpu {
 
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
             let sprites = self.scanline_sprite_x_positions();
-            self.mode3_timing = Some(Mode3Timing::new(self.cgb_mode, self.scx, sprites));
-            self.mode3_registers = Some(self.render_registers());
+            self.mode3_pipeline = Some(pipeline::Mode3Pipeline::new(
+                self.cgb_mode, self.scx, self.scy, self.ly, sprites,
+                self.wx, self.wy, self.lcdc,
+            ));
         }
 
-        if let Some(timing) = self.mode3_timing.as_mut()
-            && !timing.complete()
+        if let Some(pipeline) = self.mode3_pipeline.as_mut()
+            && !pipeline.complete()
         {
-            timing.step(self.lcdc, self.scx, self.ly, self.wy, self.wx);
-            if timing.complete() {
-                self.render_scanline();
+            if let Some(pixel) = pipeline.step(
+                &self.vram, &self.bg_palette, self.cgb_mode, self.cgb_game, self.ly,
+            ) {
+                let idx = self.ly as usize * 160 + pipeline.pixel_x() as usize - 1;
+                if idx < self.frame_buffer.len() {
+                    self.frame_buffer[idx] = pixel;
+                }
+            }
+            if pipeline.complete() {
+                self.mode3_pipeline = None;
             }
         }
 
