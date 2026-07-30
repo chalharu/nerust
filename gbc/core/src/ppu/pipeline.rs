@@ -4,6 +4,8 @@
 #[derive(Debug, Clone)]
 pub(super) struct Mode3Pipeline {
     pub(super) pixel_x: u8,
+    /// Total dots since mode 3 start (for fetch_pixel_x calculation)
+    dot: u16,
     complete: bool,
 
     // Lached registers
@@ -33,7 +35,7 @@ impl Mode3Pipeline {
         scx: u8, scy: u8, wx: u8, wy: u8, lcdc: u8, bgp: u8, cgb_mode: bool,
     ) -> Self {
         Self {
-            pixel_x: 0, fine_scroll: scx & 7, complete: false,
+            pixel_x: 0, dot: 0, fine_scroll: scx & 7, complete: false,
             lcdc, scx, scy, wx, wy, bgp,
             startup_dots: if cgb_mode { 19 } else { 18 } + (scx & 7),
             window_active: false, window_line: 0, window_pixel_count: 0,
@@ -48,7 +50,9 @@ impl Mode3Pipeline {
         if self.complete { return None; }
         self.apply_pending_writes();
 
-        if self.startup_dots > 0 { self.startup_dots -= 1; return None; }
+        if self.startup_dots > 0 { self.startup_dots -= 1; self.dot += 1; return None; }
+
+        self.dot += 1;
 
         // Check window activation
         let window_x = self.wx as i16 - 7;
@@ -124,12 +128,16 @@ impl Mode3Pipeline {
 
     // ── Register write queue ──
 
+    fn fetch_pixel_x(&self) -> u8 {
+        ((self.dot / 8) * 8).min(159) as u8
+    }
+
     pub(super) fn queue_register_write(&mut self, register: u16, value: u8, old_value: u8) -> u8 {
         let changed = old_value ^ value;
         let apply_x = match register {
-            0xFF42 | 0xFF43 => (self.pixel_x / 8) * 8,
-            0xFF40 if changed & 0x08 != 0 || changed & 0x10 != 0 || changed & 0x40 != 0 => (self.pixel_x / 8) * 8,
-            0xFF4A | 0xFF4B => self.pixel_x.saturating_add(6),
+            0xFF42 | 0xFF43 => self.fetch_pixel_x(),
+            0xFF40 if changed & 0x08 != 0 || changed & 0x10 != 0 || changed & 0x40 != 0 => self.fetch_pixel_x(),
+            0xFF4A | 0xFF4B => self.pixel_x.saturating_add(6).min(159),
             _ => self.pixel_x,
         }.min(159);
         self.pending_writes.push(PendingWrite { pixel_x: apply_x, register, value });
