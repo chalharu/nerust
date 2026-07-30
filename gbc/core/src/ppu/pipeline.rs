@@ -63,7 +63,7 @@ impl Mode3Pipeline {
         {
             self.window_active = true;
             self.window_line = self.window_line.wrapping_add(1);
-            self.window_pixel_count = 0;
+            self.window_pixel_count = if window_x < 0 { (-window_x) as u8 } else { 0 };
         }
 
         // Determine tile source
