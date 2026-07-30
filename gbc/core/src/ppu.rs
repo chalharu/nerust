@@ -30,6 +30,7 @@ struct LatchedWrite {
     register: u16,
     old_value: u8,
     value: u8,
+    window_started: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -386,6 +387,7 @@ impl GbcPpu {
         let mut window_triggered = false;
         let mut window_can_retrigger = false;
         let mut window_disable_at = None;
+        let mut window_zero_at = None;
         let mut window_pixel = 0u8;
         let mut active_window_y = self.window_line;
 
@@ -396,14 +398,26 @@ impl GbcPpu {
                     register: reg,
                     old_value,
                     value,
+                    window_started: write_window_started,
                     ..
                 } = pixel_events[ev_idx];
                 if reg == 0xFF40 && window_active && old_value & 0x20 != 0 && value & 0x20 == 0 {
                     let pixels_left = 8 - window_pixel % 8;
                     window_disable_at = Some((x as u8).saturating_add(pixels_left));
                 }
-                if reg == 0xFF4B && window_triggered && i16::from(value) - 7 > x as i16 {
+                if reg == 0xFF4B {
+                    window_zero_at = None;
+                }
+                if reg == 0xFF4B
+                    && write_window_started
+                    && i16::from(value) - 7 > x as i16
+                    && value.saturating_sub(7) & 0x07 == 5
+                {
                     window_can_retrigger = true;
+                    window_zero_at = Some(value.saturating_sub(7));
+                }
+                if reg == 0xFF4B && window_triggered && i16::from(value) - 7 == x as i16 {
+                    window_zero_at = Some(x as u8);
                 }
                 self.set_render_register(reg, value);
                 ev_idx += 1;
@@ -461,6 +475,13 @@ impl GbcPpu {
                 bg_color = c;
                 bg_priority = prio;
                 window_pixel = window_pixel.wrapping_add(1);
+            }
+
+            if window_zero_at == Some(x as u8) {
+                pixel = self.background_palette_pixel(0);
+                bg_color = 0;
+                bg_priority = false;
+                window_zero_at = None;
             }
 
             // Sprite layer
@@ -603,6 +624,18 @@ impl GbcPpu {
             1 => 0xAA_AA_AA_FF,
             2 => 0x55_55_55_FF,
             _ => 0x00_00_00_FF,
+        }
+    }
+
+    fn background_palette_pixel(&self, color: u8) -> u32 {
+        if self.cgb_game {
+            Self::cgb_color_to_pixel(self.bg_palette[color as usize])
+        } else if self.cgb_mode {
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            Self::cgb_color_to_pixel(self.bg_palette[shade as usize])
+        } else {
+            let shade = (self.bgp >> (color * 2)) & 0x03;
+            Self::shade_to_pixel(shade)
         }
     }
 
@@ -912,6 +945,11 @@ impl GbcPpu {
                     register: addr,
                     old_value,
                     value,
+                    window_started: self
+                        .mode3_timing
+                        .as_ref()
+                        .expect("mode 3 timing checked above")
+                        .window_seen(),
                 });
             }
             _ => {}
