@@ -963,29 +963,13 @@ impl GbcPpu {
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
         // Track mid-scanline changes during Mode 3 (pixel transfer).
-        // mode_clock is at the correct T-cycle (PPU advances 1 per step_tcycle call).
         match addr {
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
-                if self.ly < VBLANK_START && self.mode3_timing.is_some() =>
+                if self.ly < VBLANK_START && self.mode3_pipeline.is_some() =>
             {
-                let old_value = self.read_register(addr);
-                let timing = self
-                    .mode3_timing
-                    .as_mut()
-                    .expect("mode 3 timing checked above");
-                let pixel_x = timing.latch_pixel(addr, old_value, value, self.ly);
-                timing.write_register(addr, old_value, value);
-                self.mode3_writes.push(LatchedWrite {
-                    pixel_x,
-                    register: addr,
-                    old_value,
-                    value,
-                    window_started: self
-                        .mode3_timing
-                        .as_ref()
-                        .expect("mode 3 timing checked above")
-                        .window_seen(),
-                });
+                if let Some(pipeline) = self.mode3_pipeline.as_mut() {
+                    pipeline.queue_register_write(addr, value);
+                }
             }
             _ => {}
         }
