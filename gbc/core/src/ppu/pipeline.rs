@@ -233,7 +233,6 @@ impl Mode3Pipeline {
                 self.pending_tile_select = None;
             }
         }
-
         if self.startup_dots != 0 {
             if self.window_eligible
                 && self.registers.lcdc & 0x20 != 0
@@ -309,11 +308,15 @@ impl Mode3Pipeline {
             FetchStage::DataLow if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(false)
             }
-            FetchStage::DataLow => self.fetcher.low = vram[self.fetcher.data_address],
+            FetchStage::DataLow => {
+                self.fetcher.low = vram[self.fetcher.data_address];
+            }
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(true)
             }
-            FetchStage::DataHigh => self.fetcher.high = vram[self.fetcher.data_address],
+            FetchStage::DataHigh => {
+                self.fetcher.high = vram[self.fetcher.data_address];
+            }
             FetchStage::Push if self.fetcher.stage_dot == 0 => self.push_bg_tile(),
             FetchStage::Push => {}
         }
@@ -495,7 +498,11 @@ impl Mode3Pipeline {
                 + u16::from(tile_y & 7) * 2
                 + u16::from(fetch.dot == 4);
             let value = vram[bank * 0x2000 + usize::from(address & 0x1FFF)];
-            if fetch.dot == 2 { fetch.low = value } else { fetch.high = value }
+            if fetch.dot == 2 {
+                fetch.low = value
+            } else {
+                fetch.high = value;
+            }
         }
         fetch.dot += 1;
         if fetch.dot < 6 {
@@ -684,6 +691,7 @@ impl Mode3Pipeline {
     pub(super) fn final_window_line(&self) -> u8 {
         self.window_line.wrapping_add(u8::from(self.window_seen))
     }
+
 }
 
 #[cfg(test)]
