@@ -151,6 +151,7 @@ pub(super) struct Mode3Pipeline {
     pending_scy: Option<(u8, u8)>,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
+    refetch_push_map: bool,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -201,6 +202,7 @@ impl Mode3Pipeline {
             pending_scy: None,
             pending_map_select: None,
             pending_tile_select: None,
+            refetch_push_map: false,
             obj_line: [None; 160],
         }
     }
@@ -322,7 +324,12 @@ impl Mode3Pipeline {
             FetchStage::DataHigh => {
                 self.fetcher.high = vram[self.fetcher.data_address];
             }
-            FetchStage::Push if self.fetcher.stage_dot == 0 => self.push_bg_tile(),
+            FetchStage::Push if self.fetcher.stage_dot == 0 => {
+                if self.refetch_push_map {
+                    self.refetch_push_map(vram);
+                }
+                self.push_bg_tile();
+            }
             FetchStage::Push => {}
         }
         self.fetcher.advance();
@@ -391,6 +398,17 @@ impl Mode3Pipeline {
                 | (((self.fetcher.high >> bit) & 1) << 1);
             self.bg_fifo.push_back(BgPixel { color, palette, priority });
         }
+    }
+
+    fn refetch_push_map(&mut self, vram: &[u8; 0x4000]) {
+        self.refetch_push_map = false;
+        let map_base = if self.registers.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
+        self.fetcher.map_address = map_base + (self.fetcher.map_address & 0x03FF);
+        self.read_tile(vram);
+        self.prepare_tile_data_address(false);
+        self.fetcher.low = vram[self.fetcher.data_address];
+        self.prepare_tile_data_address(true);
+        self.fetcher.high = vram[self.fetcher.data_address];
     }
 
     fn update_window_state(&mut self) {
@@ -668,10 +686,21 @@ impl Mode3Pipeline {
                     self.pending_obj_size = Some(value & 4);
                 }
                 if (old ^ value) & 0x48 != 0 {
-                    if self.output_stall >= 2 {
+                    let last_object_x = self
+                        .next_sprite
+                        .checked_sub(1)
+                        .map(|i| self.sprites[i].x);
+                    let immediate = self.output_stall >= 2
+                        && (last_object_x == Some(-8)
+                            || self.fetcher.stage == FetchStage::Tile);
+                    if immediate {
                         self.registers.lcdc =
                             (self.registers.lcdc & !0x48) | (value & 0x48);
                         self.pending_map_select = None;
+                        self.refetch_push_map = last_object_x == Some(-8)
+                            && self.fetcher.stage == FetchStage::Push
+                            && !self.window_active
+                            && (old ^ value) & 0x08 != 0;
                     } else {
                         self.pending_map_select = Some((4, value & 0x48));
                     }
