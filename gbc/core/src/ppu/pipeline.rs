@@ -58,11 +58,10 @@ struct Fetcher {
     tile_index: u8,
     attributes: u8,
     tile_y: u8,
+    map_address: u16,
+    data_address: usize,
     low: u8,
     high: u8,
-    tile_valid: bool,
-    low_valid: bool,
-    high_valid: bool,
 }
 
 impl Fetcher {
@@ -74,11 +73,10 @@ impl Fetcher {
             tile_index: 0,
             attributes: 0,
             tile_y: 0,
+            map_address: 0,
+            data_address: 0,
             low: 0,
             high: 0,
-            tile_valid: false,
-            low_valid: false,
-            high_valid: false,
         }
     }
 
@@ -87,6 +85,12 @@ impl Fetcher {
     }
 
     fn advance(&mut self) {
+        if self.stage == FetchStage::Push {
+            self.stage_dot = 0;
+            self.tile_column = self.tile_column.wrapping_add(1);
+            self.stage = FetchStage::Tile;
+            return;
+        }
         self.stage_dot += 1;
         if self.stage_dot != 2 {
             return;
@@ -96,13 +100,7 @@ impl Fetcher {
             FetchStage::Tile => FetchStage::DataLow,
             FetchStage::DataLow => FetchStage::DataHigh,
             FetchStage::DataHigh => FetchStage::Push,
-            FetchStage::Push => {
-                self.tile_column = self.tile_column.wrapping_add(1);
-                self.tile_valid = false;
-                self.low_valid = false;
-                self.high_valid = false;
-                FetchStage::Tile
-            }
+            FetchStage::Push => unreachable!("push advances in one dot"),
         };
     }
 }
@@ -150,6 +148,8 @@ pub(super) struct Mode3Pipeline {
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_scy: Option<(u8, u8)>,
+    pending_map_select: Option<(u8, u8)>,
+    pending_tile_select: Option<(u8, u8)>,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -197,6 +197,8 @@ impl Mode3Pipeline {
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_scy: None,
+            pending_map_select: None,
+            pending_tile_select: None,
             obj_line: [None; 160],
         }
     }
@@ -215,6 +217,20 @@ impl Mode3Pipeline {
             if *countdown == 0 {
                 self.registers.scy = *value;
                 self.pending_scy = None;
+            }
+        }
+        if let Some((countdown, value)) = self.pending_map_select.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.lcdc = (self.registers.lcdc & !0x48) | *value;
+                self.pending_map_select = None;
+            }
+        }
+        if let Some((countdown, value)) = self.pending_tile_select.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.lcdc = (self.registers.lcdc & !0x10) | *value;
+                self.pending_tile_select = None;
             }
         }
 
@@ -284,32 +300,27 @@ impl Mode3Pipeline {
     }
 
     fn step_bg_fetcher(&mut self, vram: &[u8; 0x4000]) {
-        if self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() > 8 {
+        if self.fetcher.stage == FetchStage::Push && !self.bg_fifo.is_empty() {
             return;
         }
         match self.fetcher.stage {
-            FetchStage::Tile if !self.fetcher.tile_valid => {
-                self.fetch_tile(vram);
-                self.fetcher.tile_valid = true;
+            FetchStage::Tile if self.fetcher.stage_dot == 0 => self.prepare_tile_address(),
+            FetchStage::Tile => self.read_tile(vram),
+            FetchStage::DataLow if self.fetcher.stage_dot == 0 => {
+                self.prepare_tile_data_address(false)
             }
-            FetchStage::Tile => {}
-            FetchStage::DataLow if !self.fetcher.low_valid => {
-                self.fetcher.low = self.fetch_tile_byte(vram, false);
-                self.fetcher.low_valid = true;
+            FetchStage::DataLow => self.fetcher.low = vram[self.fetcher.data_address],
+            FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
+                self.prepare_tile_data_address(true)
             }
-            FetchStage::DataLow => {}
-            FetchStage::DataHigh if !self.fetcher.high_valid => {
-                self.fetcher.high = self.fetch_tile_byte(vram, true);
-                self.fetcher.high_valid = true;
-            }
-            FetchStage::DataHigh => {}
+            FetchStage::DataHigh => self.fetcher.high = vram[self.fetcher.data_address],
             FetchStage::Push if self.fetcher.stage_dot == 0 => self.push_bg_tile(),
             FetchStage::Push => {}
         }
         self.fetcher.advance();
     }
 
-    fn fetch_tile(&mut self, vram: &[u8; 0x4000]) {
+    fn prepare_tile_address(&mut self) {
         if !self.window_active && self.fetcher.stage_dot == 0 {
             let new_column = self.registers.scx >> 3;
             self.fetcher.tile_column = self
@@ -326,20 +337,24 @@ impl Mode3Pipeline {
             let map = if self.registers.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
             (map, y >> 3, y & 7)
         };
-        let map_addr = map_base
+        self.fetcher.map_address = map_base
             + u16::from(tile_row) * 32
             + u16::from(self.fetcher.tile_column & 31);
-        let map_index = usize::from(map_addr & 0x1FFF);
+        self.fetcher.tile_y = tile_y;
+    }
+
+    fn read_tile(&mut self, vram: &[u8; 0x4000]) {
+        let map_index = usize::from(self.fetcher.map_address & 0x1FFF);
         self.fetcher.tile_index = vram[map_index];
         self.fetcher.attributes = if self.cgb_game { vram[0x2000 + map_index] } else { 0 };
         self.fetcher.tile_y = if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
-            7 - tile_y
+            7 - self.fetcher.tile_y
         } else {
-            tile_y
+            self.fetcher.tile_y
         };
     }
 
-    fn fetch_tile_byte(&self, vram: &[u8; 0x4000], high: bool) -> u8 {
+    fn prepare_tile_data_address(&mut self, high: bool) {
         let tile_address = if self.registers.lcdc & 0x10 == 0 {
             0x9000u16.wrapping_add_signed(
                 (self.fetcher.tile_index as i8 as i16).wrapping_mul(16),
@@ -355,7 +370,7 @@ impl Mode3Pipeline {
         let address = tile_address
             + u16::from(self.fetcher.tile_y) * 2
             + u16::from(high);
-        vram[bank * 0x2000 + usize::from(address & 0x1FFF)]
+        self.fetcher.data_address = bank * 0x2000 + usize::from(address & 0x1FFF);
     }
 
     fn push_bg_tile(&mut self) {
@@ -403,6 +418,7 @@ impl Mode3Pipeline {
             self.window_pixels = if window_x < 0 { (-window_x) as u8 } else { 0 };
             self.bg_fifo.clear();
             self.fetcher.restart(self.window_pixels >> 3);
+            self.prepare_tile_address();
             self.fetcher.stage_dot = 1;
             self.fine_discard = self.window_pixels & 7;
             self.window_start_delay = u8::from(
@@ -415,7 +431,7 @@ impl Mode3Pipeline {
         if self.sprite_fetch.is_some() {
             return;
         }
-        if self.registers.lcdc & 0x02 == 0 {
+        if !self.cgb_mode && self.registers.lcdc & 0x02 == 0 {
             while self.next_sprite < self.sprites.len()
                 && self.sprites[self.next_sprite].x <= i16::from(self.pixel_x)
             {
@@ -459,6 +475,7 @@ impl Mode3Pipeline {
     fn step_sprite_fetch(&mut self, vram: &[u8; 0x4000]) {
         let Some(fetch) = self.sprite_fetch.as_mut() else { return };
         if fetch.dot == 2 || fetch.dot == 4 {
+            fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
             let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8;
             if fetch.sprite.flags & 0x40 != 0 {
                 tile_y = fetch.height - 1 - tile_y;
@@ -605,12 +622,19 @@ impl Mode3Pipeline {
         match register {
             0xFF40 => {
                 let old = self.registers.lcdc;
-                self.registers.lcdc = (value & !3) | (old & 3);
+                self.registers.lcdc = (value & !0x5B) | (old & 0x5B);
                 if (old ^ value) & 1 != 0 {
                     self.pending_bg_enable = Some((2, value & 1));
                 }
                 if (old ^ value) & 2 != 0 {
                     self.pending_obj_enable = Some((2, value & 2));
+                }
+                if (old ^ value) & 0x48 != 0 {
+                    self.pending_map_select = Some((4, value & 0x48));
+                }
+                if (old ^ value) & 0x10 != 0 {
+                    let delay = if self.window_active { 2 } else { 3 };
+                    self.pending_tile_select = Some((delay, value & 0x10));
                 }
                 if old & 0x20 != 0 && value & 0x20 == 0 {
                     if self.window_active {
@@ -622,12 +646,11 @@ impl Mode3Pipeline {
                     }
                 }
             }
-            0xFF42 => self.pending_scy = Some((2, value)),
+            0xFF42 => self.pending_scy = Some((4, value)),
             0xFF43 => {
                 if self.ly != 0
                     && self.pixel_x == 0
                     && self.fetcher.stage == FetchStage::Tile
-                    && self.fetcher.stage_dot == 0
                 {
                     self.fine_discard = value & 7;
                 }
@@ -687,13 +710,14 @@ mod tests {
             FetchStage::Tile,
             FetchStage::DataLow,
             FetchStage::DataHigh,
-            FetchStage::Push,
         ] {
             assert_eq!(fetcher.stage, stage);
             fetcher.advance();
             assert_eq!(fetcher.stage, stage);
             fetcher.advance();
         }
+        assert_eq!(fetcher.stage, FetchStage::Push);
+        fetcher.advance();
         assert_eq!(fetcher.stage, FetchStage::Tile);
         assert_eq!(fetcher.tile_column, 1);
     }
