@@ -790,6 +790,7 @@ impl Mode3Pipeline {
         self.window_line.wrapping_add(u8::from(self.window_seen))
     }
 
+
 }
 
 #[cfg(test)]
