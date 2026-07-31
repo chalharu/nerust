@@ -51,6 +51,27 @@ fn exec_n(rom: &[u8], n: usize) -> Lr35902Cpu {
     cpu
 }
 
+#[test]
+fn ei_enables_ime_after_following_instruction() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x00]);
+
+    step_until_done(&mut cpu, &mut bus);
+    assert!(!bus.ime_enabled());
+
+    step_until_done(&mut cpu, &mut bus);
+    assert!(bus.ime_enabled());
+}
+
+#[test]
+fn di_cancels_pending_ei() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0xF3]);
+
+    step_until_done(&mut cpu, &mut bus);
+    step_until_done(&mut cpu, &mut bus);
+
+    assert!(!bus.ime_enabled());
+}
+
 // ── M-cycle measurement ────────────────────────────────
 
 fn measure_mcycles(opcode: u8, operands: &[u8]) -> usize {

@@ -8,10 +8,6 @@ static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::
 impl Lr35902Cpu {
     /// Step one M-cycle (no device advancement — caller must call step_devices).
     pub fn step(&mut self, bus: &mut GbcMemoryBus) {
-        if self.ime_delayed() {
-            bus.set_ime(true);
-            self.set_ime_delayed(false);
-        }
         if bus.is_halted_or_stopped() {
             self.check_interrupts(bus);
             if bus.is_halted_or_stopped() {
@@ -30,6 +26,7 @@ impl Lr35902Cpu {
                 if matches!(self.phase(), Phase::InterruptDispatch { .. }) {
                     return;
                 }
+                self.arm_delayed_ime();
                 let op = bus.read(self.registers().pc());
                 // HALT bug: when HALT is executed with IME=0 and a pending
                 // interrupt, the CPU immediately wakes (doesn't halt), but
@@ -50,7 +47,7 @@ impl Lr35902Cpu {
 
                 let h = TABLE[op as usize];
                 match h(self, bus, 0) {
-                    StepResult::Exit => {}
+                    StepResult::Exit => self.finish_instruction(bus),
                     StepResult::Continue => {
                         self.set_phase(Phase::ExecuteOpcode {
                             handler: h,
@@ -60,7 +57,10 @@ impl Lr35902Cpu {
                 }
             }
             Phase::ExecuteOpcode { handler, step } => match handler(self, bus, step) {
-                StepResult::Exit => self.set_phase(Phase::FetchOpcode),
+                StepResult::Exit => {
+                    self.set_phase(Phase::FetchOpcode);
+                    self.finish_instruction(bus);
+                }
                 StepResult::Continue => {
                     self.set_phase(Phase::ExecuteOpcode {
                         handler,
@@ -79,6 +79,12 @@ impl Lr35902Cpu {
                     });
                 }
             }
+        }
+    }
+
+    fn finish_instruction(&mut self, bus: &mut GbcMemoryBus) {
+        if self.take_armed_ime() {
+            bus.set_ime(true);
         }
     }
 
