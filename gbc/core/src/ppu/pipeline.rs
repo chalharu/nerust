@@ -5,6 +5,7 @@ enum FetchStage {
     Tile,
     DataLow,
     DataHigh,
+    Sleep,
     Push,
 }
 
@@ -62,6 +63,7 @@ struct Fetcher {
     data_address: usize,
     low: u8,
     high: u8,
+    skip_sleep: bool,
 }
 
 impl Fetcher {
@@ -77,6 +79,7 @@ impl Fetcher {
             data_address: 0,
             low: 0,
             high: 0,
+            skip_sleep: true,
         }
     }
 
@@ -85,6 +88,11 @@ impl Fetcher {
     }
 
     fn advance(&mut self) {
+        if self.stage == FetchStage::Sleep {
+            self.stage_dot = 0;
+            self.stage = FetchStage::Push;
+            return;
+        }
         if self.stage == FetchStage::Push {
             self.stage_dot = 0;
             self.tile_column = self.tile_column.wrapping_add(1);
@@ -99,7 +107,12 @@ impl Fetcher {
         self.stage = match self.stage {
             FetchStage::Tile => FetchStage::DataLow,
             FetchStage::DataLow => FetchStage::DataHigh,
-            FetchStage::DataHigh => FetchStage::Push,
+            FetchStage::DataHigh if self.skip_sleep => {
+                self.skip_sleep = false;
+                FetchStage::Push
+            }
+            FetchStage::DataHigh => FetchStage::Sleep,
+            FetchStage::Sleep => unreachable!("sleep advances in one dot"),
             FetchStage::Push => unreachable!("push advances in one dot"),
         };
     }
@@ -346,6 +359,7 @@ impl Mode3Pipeline {
             FetchStage::DataHigh => {
                 self.fetcher.high = vram[self.fetcher.data_address];
             }
+            FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
                 if self.refetch_push_map {
                     self.refetch_push_map(vram);
