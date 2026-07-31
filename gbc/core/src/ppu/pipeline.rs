@@ -633,11 +633,18 @@ impl Mode3Pipeline {
                 let old = self.registers.lcdc;
                 self.registers.lcdc = (value & !0x5B) | (old & 0x5B);
                 if (old ^ value) & 1 != 0 {
-                    if self.output_stall >= 2 {
+                    let delay = if self.fetcher.stage == FetchStage::Tile
+                        && self.fetcher.stage_dot == 0
+                    {
+                        0
+                    } else {
+                        2u8.saturating_sub(self.output_stall)
+                    };
+                    if delay == 0 {
                         self.registers.lcdc = (self.registers.lcdc & !1) | (value & 1);
                         self.pending_bg_enable = None;
                     } else {
-                        self.pending_bg_enable = Some((2, value & 1));
+                        self.pending_bg_enable = Some((delay, value & 1));
                     }
                 }
                 if (old ^ value) & 2 != 0 {
