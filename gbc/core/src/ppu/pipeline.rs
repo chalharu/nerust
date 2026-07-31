@@ -148,11 +148,13 @@ pub(super) struct Mode3Pipeline {
     last_sprite_tile: Option<i16>,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
+    pending_bgp: Option<(u8, u8)>,
     pending_obj_size: Option<u8>,
     pending_scy: Option<(u8, u8)>,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
     refetch_push_map: bool,
+    wx_written: bool,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -200,11 +202,13 @@ impl Mode3Pipeline {
             last_sprite_tile: None,
             pending_bg_enable: None,
             pending_obj_enable: None,
+            pending_bgp: None,
             pending_obj_size: None,
             pending_scy: None,
             pending_map_select: None,
             pending_tile_select: None,
             refetch_push_map: false,
+            wx_written: false,
             obj_line: [None; 160],
         }
     }
@@ -295,6 +299,13 @@ impl Mode3Pipeline {
             if *countdown == 0 {
                 self.registers.lcdc = (self.registers.lcdc & !2) | *value;
                 self.pending_obj_enable = None;
+            }
+        }
+        if let Some((countdown, value)) = self.pending_bgp.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.bgp = *value;
+                self.pending_bgp = None;
             }
         }
         if self.window_active {
@@ -449,9 +460,11 @@ impl Mode3Pipeline {
             self.prepare_tile_address();
             self.fetcher.stage_dot = 1;
             self.fine_discard = self.window_pixels & 7;
-            self.window_start_delay = u8::from(
-                self.registers.wx == 0 && self.registers.scx & 7 != 0,
-            );
+            self.window_start_delay = if self.registers.wx == 0 && self.registers.scx & 7 != 0 {
+                2
+            } else {
+                0
+            };
         }
     }
 
@@ -762,11 +775,25 @@ impl Mode3Pipeline {
                 }
                 self.registers.scx = value;
             }
-            0xFF47 => self.registers.bgp = value,
+            0xFF47 => {
+                if self.registers.wx == 0
+                    && self.registers.scx & 7 == 0
+                    && self.registers.lcdc & 0x20 != 0
+                    && self.window_eligible
+                    && !self.wx_written
+                    && value != 0
+                {
+                    self.pending_bgp = Some((7, value));
+                } else {
+                    self.registers.bgp = value;
+                    self.pending_bgp = None;
+                }
+            }
             0xFF48 => self.registers.obp0 = value,
             0xFF49 => self.registers.obp1 = value,
             0xFF4A => self.registers.wy = value,
             0xFF4B => {
+                self.wx_written = true;
                 self.window_zero_at = None;
                 self.registers.wx = value;
                 if self.window_seen {
