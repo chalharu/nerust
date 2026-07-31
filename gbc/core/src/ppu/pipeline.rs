@@ -126,6 +126,7 @@ pub(super) struct Mode3Pipeline {
     window_seen: bool,
     window_triggered: bool,
     window_can_retrigger: bool,
+    window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
     window_line: u8,
     window_pixels: u8,
@@ -133,6 +134,8 @@ pub(super) struct Mode3Pipeline {
     sprites: Vec<Sprite>,
     next_sprite: usize,
     sprite_fetch: Option<SpriteFetch>,
+    output_stall: u8,
+    last_sprite_tile: Option<i16>,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -166,12 +169,15 @@ impl Mode3Pipeline {
             window_seen: false,
             window_triggered: false,
             window_can_retrigger: false,
+            window_zero_at: None,
             window_disable_countdown: None,
             window_line,
             window_pixels: 0,
             sprites,
             next_sprite: 0,
             sprite_fetch: None,
+            output_stall: 0,
+            last_sprite_tile: None,
             obj_line: [None; 160],
         }
     }
@@ -186,14 +192,15 @@ impl Mode3Pipeline {
             return None;
         }
 
-        self.start_sprite_fetch();
-        if self.sprite_fetch.is_some() {
-            self.step_sprite_fetch(vram);
-        } else {
-            self.step_bg_fetcher(vram);
-        }
-
         if self.startup_dots != 0 {
+            if self.window_eligible
+                && self.registers.lcdc & 0x20 != 0
+                && self.ly >= self.registers.wy
+                && self.registers.wx <= 7
+            {
+                self.window_seen = true;
+            }
+            self.step_bg_fetcher(vram);
             self.startup_dots -= 1;
             if self.startup_dots == 0 {
                 for _ in 0..self.fine_discard {
@@ -203,9 +210,23 @@ impl Mode3Pipeline {
             return None;
         }
 
+        self.start_sprite_fetch();
+        if self.sprite_fetch.is_some() {
+            self.step_sprite_fetch(vram);
+        } else {
+            self.step_bg_fetcher(vram);
+        }
+        if self.output_stall != 0 {
+            self.output_stall -= 1;
+            return None;
+        }
         self.update_window_state();
-        let bg = self.bg_fifo.pop_front()?;
+        let mut bg = self.bg_fifo.pop_front()?;
         let x = self.pixel_x;
+        if self.window_zero_at == Some(x) {
+            bg = BgPixel::default();
+            self.window_zero_at = None;
+        }
         let color = self.compose_pixel(bg, self.obj_line[x as usize], bg_palette, obj_palette);
         self.pixel_x += 1;
         if self.window_active {
@@ -329,19 +350,36 @@ impl Mode3Pipeline {
         }
         if self.registers.lcdc & 0x02 == 0 {
             while self.next_sprite < self.sprites.len()
-                && self.sprites[self.next_sprite].x <= i16::from(self.pixel_x) + 8
+                && self.sprites[self.next_sprite].x <= i16::from(self.pixel_x)
             {
                 self.next_sprite += 1;
             }
             return;
         }
         if self.next_sprite >= self.sprites.len()
-            || self.sprites[self.next_sprite].x > i16::from(self.pixel_x) + 8
+            || self.sprites[self.next_sprite].x > i16::from(self.pixel_x)
         {
             return;
         }
         let sprite = self.sprites[self.next_sprite];
         self.next_sprite += 1;
+        let tile = (i16::from(self.pixel_x) + i16::from(self.registers.scx)) / 8;
+        let fetch_wait = if self.last_sprite_tile == Some(tile) {
+            0
+        } else {
+            let tile_x = (i16::from(self.pixel_x) + i16::from(self.registers.scx)) & 7;
+            (5 - tile_x).max(0) as u8
+        };
+        self.last_sprite_tile = Some(tile);
+        self.output_stall = if sprite.x < 0 {
+            if sprite.x <= -5 {
+                (3 - sprite.x) as u8
+            } else {
+                6
+            }
+        } else {
+            6 + fetch_wait
+        };
         self.sprite_fetch = Some(SpriteFetch {
             sprite,
             dot: 0,
@@ -518,9 +556,16 @@ impl Mode3Pipeline {
             0xFF49 => self.registers.obp1 = value,
             0xFF4A => self.registers.wy = value,
             0xFF4B => {
+                self.window_zero_at = None;
                 self.registers.wx = value;
                 if self.window_seen {
                     self.window_can_retrigger = true;
+                    let window_x = i16::from(value) - 7;
+                    if window_x > i16::from(self.pixel_x) && value.saturating_sub(7) & 7 == 5 {
+                        self.window_zero_at = Some(value.saturating_sub(7));
+                    } else if self.window_triggered && window_x == i16::from(self.pixel_x) {
+                        self.window_zero_at = Some(self.pixel_x);
+                    }
                 }
             }
             _ => {}
