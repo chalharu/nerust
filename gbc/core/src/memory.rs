@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::{
     apu::GbcApu,
     cartridge::Cartridge,
@@ -12,6 +14,12 @@ use crate::{
 
 const WRAM_SIZE: usize = 0x8000;
 const HRAM_SIZE: usize = 0x7F;
+
+#[derive(Debug, Clone, Copy)]
+struct PpuWriteEvent {
+    addr: u16,
+    value: u8,
+}
 
 /// Top-level memory bus for the Game Boy / GBC.
 ///
@@ -47,6 +55,9 @@ pub struct GbcMemoryBus {
     ppu_ds_toggle: bool,
     /// DMA transfer sub-cycle counter: 1 byte per 4 T-cycles.
     dma_tcounter: u8,
+    /// Routes CPU bus writes through the end-of-T-cycle event queue.
+    cpu_step_active: bool,
+    pending_ppu_writes: VecDeque<PpuWriteEvent>,
 }
 
 impl GbcMemoryBus {
@@ -74,6 +85,8 @@ impl GbcMemoryBus {
             tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
+            cpu_step_active: false,
+            pending_ppu_writes: VecDeque::new(),
         }
     }
 
@@ -165,9 +178,13 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-               0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
-                 self.ppu.write_register(addr, value);
-             }
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
+                if self.cpu_step_active {
+                    self.pending_ppu_writes.push_back(PpuWriteEvent { addr, value });
+                } else {
+                    self.ppu.write_register(addr, value);
+                }
+            }
             0xFF46 => self.dma.start(value),
              0xFF4D => self.write_key1(value),
              0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
@@ -254,11 +271,19 @@ impl GbcMemoryBus {
                 self.ppu.write_oam(offset, byte);
             }
         }
-        // CPU runs every 4th T-cycle (end of M-cycle)
         if t1 == 3 {
+            self.cpu_step_active = true;
             cpu.step(self);
+            self.cpu_step_active = false;
         }
+        self.deliver_ppu_write_events();
         ppu_res.frame_done
+    }
+
+    fn deliver_ppu_write_events(&mut self) {
+        while let Some(event) = self.pending_ppu_writes.pop_front() {
+            self.ppu.write_register(event.addr, event.value);
+        }
     }
 
     // ── facade methods ───────────────────────────────────────
@@ -560,6 +585,24 @@ mod tests {
     #[test]
     fn is_dma_active_returns_false_by_default() {
         assert!(!bus().is_dma_active());
+    }
+
+    #[test]
+    fn cpu_ppu_write_is_delivered_at_tcycle_boundary() {
+        let mut bus = bus();
+        let initial = bus.read(0xFF42);
+
+        bus.cpu_step_active = true;
+        bus.write(0xFF42, 0x5A);
+        bus.cpu_step_active = false;
+
+        assert_eq!(bus.read(0xFF42), initial);
+        assert_eq!(bus.pending_ppu_writes.len(), 1);
+
+        bus.deliver_ppu_write_events();
+
+        assert_eq!(bus.read(0xFF42), 0x5A);
+        assert!(bus.pending_ppu_writes.is_empty());
     }
 
     // ── DMA constrained access ────────────────────────────
