@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult, dispatch_interrupt};
+use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult};
 use crate::memory::GbcMemoryBus;
 
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
@@ -68,17 +68,26 @@ impl Lr35902Cpu {
                     });
                 }
             },
-            Phase::InterruptDispatch { remaining } => {
-                // CGB D dispatch = 5 M-cycles total.
-                // FetchOpcode consumed 1, InterruptDispatch consumes 4.
-                if remaining <= 1 {
-                    self.set_phase(Phase::FetchOpcode);
-                } else {
-                    self.set_phase(Phase::InterruptDispatch {
-                        remaining: remaining - 1,
-                    });
+            Phase::InterruptDispatch { kind, step } => match step {
+                1 => self.set_phase(Phase::InterruptDispatch { kind, step: 2 }),
+                2 => {
+                    let sp = self.registers().sp().wrapping_sub(1);
+                    self.registers_mut().set_sp(sp);
+                    bus.write(sp, (self.registers().pc() >> 8) as u8);
+                    self.set_phase(Phase::InterruptDispatch { kind, step: 3 });
                 }
-            }
+                3 => {
+                    let sp = self.registers().sp().wrapping_sub(1);
+                    self.registers_mut().set_sp(sp);
+                    bus.write(sp, self.registers().pc() as u8);
+                    self.set_phase(Phase::InterruptDispatch { kind, step: 4 });
+                }
+                4 => {
+                    self.registers_mut().set_pc(kind.vector());
+                    self.set_phase(Phase::FetchOpcode);
+                }
+                _ => unreachable!("invalid interrupt dispatch step"),
+            },
         }
     }
 
@@ -92,11 +101,7 @@ impl Lr35902Cpu {
         if bus.ime_enabled()
             && let Some(kind) = bus.acknowledge_interrupt()
         {
-            dispatch_interrupt(self.registers_mut(), kind, bus);
-            // CGB D dispatch = 5 M-cycles total (20 T-cycles).
-            // The FetchOpcode that detected the interrupt is dispatch M1.
-            // Remaining 4 M-cycles as InterruptDispatch.
-            self.set_phase(Phase::InterruptDispatch { remaining: 4 });
+            self.set_phase(Phase::InterruptDispatch { kind, step: 1 });
         } else {
             bus.acknowledge_interrupt();
         }

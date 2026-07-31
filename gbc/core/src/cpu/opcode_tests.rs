@@ -72,6 +72,37 @@ fn di_cancels_pending_ei() {
     assert!(!bus.ime_enabled());
 }
 
+#[test]
+fn interrupt_dispatch_pushes_pc_on_m3_and_m4() {
+    let (mut cpu, mut bus) = setup(&[0x00]);
+    cpu.registers_mut().set_sp(0xFFFE);
+    bus.write(0xFFFF, 0x01);
+    bus.write(0xFF0F, 0x01);
+    bus.set_ime(true);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 1, .. }));
+    assert_eq!(cpu.registers().sp(), 0xFFFE);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 2, .. }));
+    assert_eq!(cpu.registers().sp(), 0xFFFE);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 3, .. }));
+    assert_eq!(cpu.registers().sp(), 0xFFFD);
+    assert_eq!(bus.read(0xFFFD), (BASE >> 8) as u8);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 4, .. }));
+    assert_eq!(cpu.registers().sp(), 0xFFFC);
+    assert_eq!(bus.read(0xFFFC), BASE as u8);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::FetchOpcode));
+    assert_eq!(cpu.registers().pc(), 0x0040);
+}
+
 // ── M-cycle measurement ────────────────────────────────
 
 fn measure_mcycles(opcode: u8, operands: &[u8]) -> usize {

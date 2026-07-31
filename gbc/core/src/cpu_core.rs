@@ -22,10 +22,16 @@ pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepRe
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Phase {
     FetchOpcode,
-    ExecuteOpcode { handler: HandlerFn, step: u8 },
+    ExecuteOpcode {
+        handler: HandlerFn,
+        step: u8,
+    },
     /// Real hardware takes 5 M-cycles to acknowledge and dispatch
     /// an interrupt (push PC, set PC to handler vector).
-    InterruptDispatch { remaining: u32 },
+    InterruptDispatch {
+        kind: InterruptKind,
+        step: u8,
+    },
 }
 
 pub struct Lr35902Cpu {
@@ -170,19 +176,4 @@ impl Default for Lr35902Cpu {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Push PC to stack and jump to interrupt vector.
-pub(crate) fn dispatch_interrupt(
-    regs: &mut CpuRegisters,
-    kind: InterruptKind,
-    bus: &mut GbcMemoryBus,
-) {
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), (regs.pc() >> 8) as u8);
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), regs.pc() as u8);
-    regs.set_pc(kind.vector());
 }
