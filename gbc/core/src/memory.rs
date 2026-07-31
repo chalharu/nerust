@@ -38,11 +38,6 @@ pub struct GbcMemoryBus {
 
     hdma: HdmaController,
 
-    /// Sub-cycle timing: T-cycles consumed by the current CPU instruction
-    /// before this step. Set by the main loop before each cpu.step() call.
-    /// Used by PPU write_register for sub-M-cycle mode3 pixel_x estimation.
-    pub(crate) cpu_cycle_offset: u32,
-
     /// T-cycle accumulator for CPU/PPU synchronization.
     /// Each step_tcycle() increments this; CPU runs every 4th T-cycle.
     tick: u32,
@@ -76,7 +71,6 @@ impl GbcMemoryBus {
             speed_switch_pending: false,
 
             hdma: HdmaController::new(),
-            cpu_cycle_offset: 0,
             tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
@@ -235,7 +229,6 @@ impl GbcMemoryBus {
     pub fn step_tcycle(&mut self, cpu: &mut Lr35902Cpu) -> bool {
         self.tick = self.tick.wrapping_add(1);
         let t1 = self.tick % 4;
-        self.cpu_cycle_offset = t1;
 
         let video = 1u32;
         let was_hblank = self.ppu.is_hblank();
@@ -263,9 +256,6 @@ impl GbcMemoryBus {
         }
         // CPU runs every 4th T-cycle (end of M-cycle)
         if t1 == 3 {
-            // cpu_cycle_offset is already set to 3 (T4 write for DMG).
-            // cpu.step() processes 1 full M-cycle; write timing is
-            // adjusted by mode3_pixel_x via cpu_cycle_offset.
             cpu.step(self);
         }
         ppu_res.frame_done
