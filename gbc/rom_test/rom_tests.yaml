@@ -232,7 +232,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "C9E3D488"
         memory: []
         pad: []
 
@@ -247,7 +247,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "F24538D9"
         memory: []
         pad: []
 
@@ -277,7 +277,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "C87825C9"
         memory: []
         pad: []
 
@@ -307,7 +307,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "0394C786"
         memory: []
         pad: []
 
@@ -322,7 +322,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "852CD3B7"
         memory: []
         pad: []
 
@@ -337,7 +337,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "35461FB5"
         memory: []
         pad: []
 
@@ -352,7 +352,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "68901ADA"
         memory: []
         pad: []
 
@@ -367,7 +367,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "7B47B5CD"
         memory: []
         pad: []
 
@@ -397,7 +397,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "09F3035D"
         memory: []
         pad: []
 
@@ -457,7 +457,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "B79A2CDD"
         memory: []
         pad: []
 
@@ -502,7 +502,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "A3277237"
         memory: []
         pad: []
 
@@ -547,7 +547,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "B50E8F8A"
         memory: []
         pad: []
 
@@ -592,7 +592,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "811157A0"
         memory: []
         pad: []
 
