@@ -9,6 +9,12 @@ enum FetchStage {
     Push,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BgDataRead {
+    Low,
+    High,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Sprite {
     pub(super) x: i16,
@@ -174,6 +180,7 @@ pub(super) struct Mode3Pipeline {
     wx_written: bool,
     pending_tile_select_write: Option<(u8, u8)>,
     active_tile_select_write: Option<(u8, u8)>,
+    last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
     obj_line: [Option<ObjPixel>; 160],
 }
@@ -232,6 +239,7 @@ impl Mode3Pipeline {
             wx_written: false,
             pending_tile_select_write: None,
             active_tile_select_write: None,
+            last_bg_data_read: None,
             tile_data_bus: 0,
             obj_line: [None; 160],
         }
@@ -246,6 +254,7 @@ impl Mode3Pipeline {
         if self.complete {
             return None;
         }
+        self.last_bg_data_read = None;
         if let Some(write) = self.pending_tile_select_write.take() {
             self.active_tile_select_write = Some(write);
         }
@@ -369,6 +378,7 @@ impl Mode3Pipeline {
                     vram[self.fetcher.data_address]
                 };
                 self.active_tile_select_write = None;
+                self.last_bg_data_read = Some(BgDataRead::Low);
             }
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(true)
@@ -381,6 +391,7 @@ impl Mode3Pipeline {
                 };
                 self.tile_data_bus = self.fetcher.high;
                 self.active_tile_select_write = None;
+                self.last_bg_data_read = Some(BgDataRead::High);
             }
             FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
@@ -822,8 +833,29 @@ impl Mode3Pipeline {
                     }
                 }
                 if changed & 0x10 != 0 {
+                    let old_tile_select = old_written & 0x10;
+                    let new_tile_select = value & 0x10;
+                    let collided = match (
+                        old_tile_select,
+                        new_tile_select,
+                        self.last_bg_data_read,
+                    ) {
+                        (0, new, Some(BgDataRead::Low)) if new != 0 => {
+                            self.fetcher.low = self.tile_data_bus;
+                            true
+                        }
+                        (0, new, Some(BgDataRead::High)) if new != 0 => {
+                            self.fetcher.high = self.tile_data_bus;
+                            true
+                        }
+                        (old, 0, Some(BgDataRead::High)) if old != 0 => {
+                            self.fetcher.high = self.fetcher.low;
+                            true
+                        }
+                        _ => false,
+                    };
                     self.pending_tile_select_write =
-                        Some((old_written & 0x10, value & 0x10));
+                        (!collided).then_some((old_tile_select, new_tile_select));
                     self.pending_tile_select = Some((3, value & 0x10));
                 }
                 if old_written & 0x20 != 0 && value & 0x20 == 0 {
