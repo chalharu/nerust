@@ -2,7 +2,7 @@ use nerust_render_traits::FrameBuffer;
 
 mod pipeline;
 
-use pipeline::Mode3Pipeline;
+use pipeline::{Mode3Pipeline, Registers, Sprite};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PpuMode {
@@ -22,27 +22,6 @@ pub struct PpuStepResult {
     pub frame_done: bool,
     pub lcd_stat: bool,
     pub vblank: bool,
-}
-
-#[derive(Clone, Copy)]
-struct LatchedWrite {
-    pixel_x: u8,
-    register: u16,
-    old_value: u8,
-    value: u8,
-    window_started: bool,
-}
-
-#[derive(Clone, Copy)]
-struct RenderRegisters {
-    lcdc: u8,
-    scy: u8,
-    scx: u8,
-    bgp: u8,
-    obp0: u8,
-    obp1: u8,
-    wy: u8,
-    wx: u8,
 }
 
 pub struct GbcPpu {
@@ -92,8 +71,6 @@ pub struct GbcPpu {
     lcd_stat_last_mode: Option<PpuMode>,
     mode_stat_delay: u8,
 
-    mode3_registers: Option<RenderRegisters>,
-    mode3_writes: Vec<LatchedWrite>,
     mode3_pipeline: Option<Mode3Pipeline>,
 }
 
@@ -132,23 +109,9 @@ impl Default for GbcPpu {
             cgb_game: false,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mode_stat_delay: 0,
-            mode3_registers: None,
-            mode3_writes: Vec::new(),
             mode3_pipeline: None,
         }
     }
-}
-
-/// Per-scanline sprite info extracted from OAM.
-struct Sprite {
-    x: i16,
-    tile: u8,
-    y: i16,
-    y_flip: bool,
-    x_flip: bool,
-    behind_bg: bool,
-    oam_index: u8,
-    oam_flags: u8,
 }
 
 impl GbcPpu {
@@ -159,7 +122,6 @@ impl GbcPpu {
             self.ly = 0;
             self.mode_clock = 0;
             self.mode3_pipeline = None;
-            self.mode3_registers = None;
             return PpuStepResult {
                 frame_done: false,
                 lcd_stat: false,
@@ -189,17 +151,38 @@ impl GbcPpu {
         self.mode_clock += 1;
 
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
-            let sprites = self.scanline_sprite_x_positions();
-            self.mode3_pipeline = Some(Mode3Pipeline::new(self.cgb_mode, self.scx, sprites));
-            self.mode3_registers = Some(self.render_registers());
+            let sprites = self.scanline_sprites();
+            self.mode3_pipeline = Some(Mode3Pipeline::new(
+                Registers {
+                    lcdc: self.lcdc,
+                    scy: self.scy,
+                    scx: self.scx,
+                    wy: self.wy,
+                    wx: self.wx,
+                    bgp: self.bgp,
+                    obp0: self.obp0,
+                    obp1: self.obp1,
+                },
+                self.ly,
+                self.window_line,
+                sprites,
+                self.cgb_mode,
+                self.cgb_game,
+                self.opri,
+            ));
         }
 
         if let Some(pipeline) = self.mode3_pipeline.as_mut()
             && !pipeline.complete()
         {
-            pipeline.step(self.lcdc, self.scx, self.ly, self.wy, self.wx);
+            if let Some(output) =
+                pipeline.step(&self.vram, &self.bg_palette, &self.obj_palette)
+            {
+                self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
+                    output.color;
+            }
             if pipeline.complete() {
-                self.render_scanline();
+                self.window_line = pipeline.final_window_line();
                 self.mode3_pipeline = None;
             }
         }
@@ -207,7 +190,6 @@ impl GbcPpu {
         if self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.mode3_pipeline = None;
-            self.mode3_registers = None;
             self.lyc_matched_ly = self.ly;
             self.ly = self.ly.wrapping_add(1);
             if self.ly == VBLANK_START {
@@ -315,347 +297,25 @@ impl GbcPpu {
         }
     }
 
-    fn render_scanline(&mut self) {
-        if self.ly >= VBLANK_START || self.lcdc & 0x80 == 0 {
-            return;
-        }
-
-        let ly = self.ly as usize;
-        self.restore_mode3_registers();
-
-        // sprite_height and sprite_double used for sprite collection
-        let sprite_enabled = self.lcdc & 0x02 != 0;
-        let sprite_double = self.lcdc & 0x04 != 0;
-        let sprite_height = if sprite_double { 16 } else { 8 };
-        // Derived state (bg_win_enabled, window_enabled) is per-pixel (can change mid-scanline)
-
-        // sprite_height is captured at scanline start for sprite collection
-        // spr_dbl and spr_h are per-pixel for new sprite visibility
-        // But existing sprites in the list use the original sprite_height
-        // for tile Y calculation to avoid overflow when LCDC.2 changes mid-scanline.
-
-        let base = ly * 160;
-
-        // Collect sprites for this scanline
-        let mut sprites: Vec<Sprite> = Vec::new();
-        if sprite_enabled {
-            for i in 0..40 {
-                let y_pos = self.oam[i * 4] as i16;
-                let x_pos = self.oam[i * 4 + 1] as i16;
-                let tile = self.oam[i * 4 + 2];
-                let flags = self.oam[i * 4 + 3];
-                let sprite_top = y_pos - 16;
-                if (ly as i16) >= sprite_top && (ly as i16) < sprite_top + sprite_height as i16 {
-                    sprites.push(Sprite {
-                        x: x_pos - 8,
-                        tile,
-                        y: sprite_top,
-                        y_flip: flags & 0x40 != 0,
-                        x_flip: flags & 0x20 != 0,
-                        behind_bg: flags & 0x80 != 0,
-                        oam_index: i as u8,
-                        oam_flags: flags,
-                    });
-                    if sprites.len() >= 10 {
-                        break;
-                    }
-                }
-            }
-            // $FF6C: Object Priority Mode
-            // 0 (CGB): sort by X ascending, then OAM index ascending
-            // 1 (DMG): sort by OAM index ascending only
-            let dmg_priority = self.cgb_game && (self.opri & 0x01) != 0;
-            sprites.sort_by(|a, b| {
-                if dmg_priority {
-                    a.oam_index.cmp(&b.oam_index)
-                } else {
-                    a.x.cmp(&b.x).then_with(|| a.oam_index.cmp(&b.oam_index))
-                }
-            });
-        }
-
-        let pixel_events = self.mode3_writes.clone();
-        self.restore_mode3_registers();
-        let fine_scroll_x = self
-            .mode3_pipeline
-            .as_ref()
-            .map_or(self.scx & 0x07, Mode3Pipeline::fine_scroll_x);
-        let mut ev_idx = 0usize;
-        let mut window_active = false;
-        let mut window_triggered = false;
-        let mut window_can_retrigger = false;
-        let mut window_disable_at = None;
-        let mut window_zero_at = None;
-        let mut window_pixel = 0u8;
-        let mut active_window_y = self.window_line;
-        let mut background_restart_x = None;
-
-        for x in 0..160 {
-            // Apply any pending mid-scanline register changes at this pixel
-            while ev_idx < pixel_events.len() && pixel_events[ev_idx].pixel_x <= x as u8 {
-                let LatchedWrite {
-                    register: reg,
-                    old_value,
-                    value,
-                    window_started: write_window_started,
-                    ..
-                } = pixel_events[ev_idx];
-                if reg == 0xFF40 && window_active && old_value & 0x20 != 0 && value & 0x20 == 0 {
-                    let pixels_left = 8 - window_pixel % 8;
-                    window_disable_at =
-                        Some((x as u8).saturating_add(pixels_left).saturating_add(8));
-                }
-                if reg == 0xFF4B {
-                    window_zero_at = None;
-                }
-                if reg == 0xFF4B && write_window_started && i16::from(value) - 7 > x as i16 {
-                    window_can_retrigger = true;
-                    if value.saturating_sub(7) & 0x07 == 5 {
-                        window_zero_at = Some(value.saturating_sub(7));
-                    }
-                }
-                if reg == 0xFF4B && window_triggered && i16::from(value) - 7 == x as i16 {
-                    window_zero_at = Some(x as u8);
-                }
-                self.set_render_register(reg, value);
-                ev_idx += 1;
-            }
-
-            if window_disable_at.is_some_and(|disable_x| x as u8 >= disable_x) {
-                window_active = false;
-                window_disable_at = None;
-                background_restart_x = Some(x as u8);
-            }
-
-            // Recompute derived state per-pixel (may have changed mid-scanline)
-            let bg_en = self.lcdc & 0x01 != 0;
-            let bg_win_en = if self.cgb_game { true } else { bg_en };
-            let spr_en = self.lcdc & 0x02 != 0;
-            let _spr_dbl = self.lcdc & 0x04 != 0;
-
-            let window_x = self.wx as i16 - 7;
-            let may_start_window =
-                (!window_triggered && self.window_eligible) || window_can_retrigger;
-            let window_enabled = if window_triggered {
-                self.lcdc & 0x20 != 0
-            } else {
-                self.window_eligible
-            };
-            if !window_active
-                && may_start_window
-                && bg_win_en
-                && window_enabled
-                && ly as u8 >= self.wy
-                && window_x < 160
-                && x as i16 >= window_x.max(0)
-            {
-                window_active = true;
-                window_triggered = true;
-                window_can_retrigger = false;
-                window_pixel = if window_x < 0 { (-window_x) as u8 } else { 0 };
-                active_window_y = self.window_line;
-                self.window_line = self.window_line.wrapping_add(1);
-            }
-
-            let mut pixel = 0xFF_FF_FF_FF;
-            let mut bg_color = 0u8;
-
-            // BG layer (white when disabled)
-            let mut bg_priority = false;
-            if bg_win_en {
-                let scroll_y = self.scy.wrapping_add(self.ly);
-                let scroll_x = if let Some(restart_x) = background_restart_x {
-                    (self.scx & 0xF8).wrapping_add((x as u8).wrapping_sub(restart_x))
-                } else {
-                    (self.scx & 0xF8)
-                        .wrapping_add(fine_scroll_x)
-                        .wrapping_add(x as u8)
-                };
-                let (p, c, prio) = self.read_bg_pixel(scroll_x, scroll_y);
-                pixel = p;
-                bg_color = c;
-                bg_priority = prio;
-            }
-
-            // Window layer (overlays BG when enabled and within window area)
-            if window_active {
-                let (p, c, prio) = self.read_window_pixel(window_pixel, active_window_y);
-                pixel = p;
-                bg_color = c;
-                bg_priority = prio;
-                window_pixel = window_pixel.wrapping_add(1);
-            }
-
-            if window_zero_at == Some(x as u8) {
-                pixel = self.background_palette_pixel(0);
-                bg_color = 0;
-                bg_priority = false;
-                window_zero_at = None;
-            }
-
-            // Sprite layer
-            if spr_en {
-                // Resolve OBJ pixel (highest priority non-transparent), then
-                // check behind_bg. Per spec: if the winning OBJ pixel has
-                // behind_bg set, the sprite is hidden — do NOT fall through
-                // to lower-priority sprites.
-                let mut obj_pixel: Option<u32> = None;
-                let mut obj_behind_bg = false;
-                for spr in sprites.iter() {
-                    let sx = x as i16 - spr.x;
-                    if (0..8).contains(&sx) {
-                        let tile_x = if spr.x_flip { 7 - sx as u8 } else { sx as u8 };
-                        let rel_y = (ly as i16 - spr.y) as u16;
-                        let tile_y = if spr.y_flip {
-                            (sprite_height as u16 - 1).saturating_sub(rel_y) as u8
-                        } else {
-                            rel_y as u8
-                        };
-                        let tile = if sprite_double {
-                            spr.tile & 0xFE | if tile_y >= 8 { 1 } else { 0 }
-                        } else {
-                            spr.tile
-                        };
-                        let c = if self.cgb_mode {
-                            let bank = ((spr.oam_flags >> 3) & 0x01) as usize;
-                            self.read_tile_pixel_bank(tile, tile_x, tile_y % 8, false, bank)
-                        } else {
-                            self.read_tile_pixel(tile, tile_x, tile_y % 8, false)
-                        };
-                        if c != 0 {
-                            let pixel = if self.cgb_game {
-                                // CGB game: use OAM bits 2-0 for OBJ palette (0-7)
-                                let pal_idx = (spr.oam_flags & 0x07) as usize;
-                                Self::cgb_color_to_pixel(self.obj_palette[pal_idx * 4 + c as usize])
-                            } else if self.cgb_mode {
-                                // DMG game on CGB: OBP0/OBP1 selects from OBJ palette 0
-                                let palette = if spr.oam_flags & 0x10 != 0 {
-                                    self.obp1
-                                } else {
-                                    self.obp0
-                                };
-                                let shade = (palette >> (c * 2)) & 0x03;
-                                Self::cgb_color_to_pixel(self.obj_palette[shade as usize])
-                            } else {
-                                let palette = if spr.oam_flags & 0x10 != 0 {
-                                    self.obp1
-                                } else {
-                                    self.obp0
-                                };
-                                let shade = (palette >> (c * 2)) & 0x03;
-                                Self::shade_to_pixel(shade)
-                            };
-                            obj_pixel = Some(pixel);
-                            obj_behind_bg = spr.behind_bg;
-                            break;
-                        }
-                    }
-                }
-                if let Some(sp) = obj_pixel {
-                    // CGB master priority: LCDC.0=0 → sprites always on top
-                    if (self.cgb_game && self.lcdc & 0x01 == 0)
-                        || (!bg_priority && !obj_behind_bg)
-                        || bg_color == 0
-                    {
-                        pixel = sp;
-                    }
-                }
-            }
-
-            self.frame_buffer[base + x] = pixel;
-        }
-        self.mode3_writes.clear();
-    }
-
-    fn render_registers(&self) -> RenderRegisters {
-        RenderRegisters {
-            lcdc: self.lcdc,
-            scy: self.scy,
-            scx: self.scx,
-            bgp: self.bgp,
-            obp0: self.obp0,
-            obp1: self.obp1,
-            wy: self.wy,
-            wx: self.wx,
-        }
-    }
-
-    fn restore_mode3_registers(&mut self) {
-        if let Some(registers) = self.mode3_registers {
-            self.lcdc = registers.lcdc;
-            self.scy = registers.scy;
-            self.scx = registers.scx;
-            self.bgp = registers.bgp;
-            self.obp0 = registers.obp0;
-            self.obp1 = registers.obp1;
-            self.wy = registers.wy;
-            self.wx = registers.wx;
-        }
-    }
-
-    fn scanline_sprite_x_positions(&self) -> Vec<i16> {
+    fn scanline_sprites(&self) -> Vec<Sprite> {
         let sprite_height = if self.lcdc & 0x04 != 0 { 16 } else { 8 };
         let mut sprites = Vec::with_capacity(10);
         for index in 0..40 {
             let top = i16::from(self.oam[index * 4]) - 16;
             if i16::from(self.ly) >= top && i16::from(self.ly) < top + sprite_height {
-                sprites.push((i16::from(self.oam[index * 4 + 1]) - 8, index));
+                sprites.push(Sprite {
+                    x: i16::from(self.oam[index * 4 + 1]) - 8,
+                    tile: self.oam[index * 4 + 2],
+                    y: top,
+                    flags: self.oam[index * 4 + 3],
+                    oam_index: index as u8,
+                });
                 if sprites.len() == 10 {
                     break;
                 }
             }
         }
-        sprites.sort_by_key(|&(x, index)| (x, index));
-        sprites.into_iter().map(|(x, _)| x).collect()
-    }
-
-    fn set_render_register(&mut self, reg: u16, value: u8) {
-        match reg {
-            0xFF40 => self.lcdc = value,
-            0xFF42 => self.scy = value,
-            0xFF43 => self.scx = value,
-            0xFF47 => self.bgp = value,
-            0xFF48 => self.obp0 = value,
-            0xFF49 => self.obp1 = value,
-            0xFF4A => self.wy = value,
-            0xFF4B => self.wx = value,
-            _ => {}
-        }
-    }
-
-    fn read_tile_pixel(&self, tile_index: u8, tile_x: u8, tile_y: u8, signed_tiles: bool) -> u8 {
-        let tile_addr = if signed_tiles {
-            let signed_idx = tile_index as i8 as i16;
-            (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
-        } else {
-            0x8000u16 + tile_index as u16 * 16
-        };
-        let row_addr = tile_addr + (tile_y as u16) * 2;
-        let low = self.vram[row_addr as usize & 0x1FFF];
-        let high = self.vram[(row_addr + 1) as usize & 0x1FFF];
-        let bit = 7 - tile_x;
-        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
-    }
-
-    fn shade_to_pixel(shade: u8) -> u32 {
-        match shade {
-            0 => 0xFF_FF_FF_FF,
-            1 => 0xAA_AA_AA_FF,
-            2 => 0x55_55_55_FF,
-            _ => 0x00_00_00_FF,
-        }
-    }
-
-    fn background_palette_pixel(&self, color: u8) -> u32 {
-        if self.cgb_game {
-            Self::cgb_color_to_pixel(self.bg_palette[color as usize])
-        } else if self.cgb_mode {
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            Self::cgb_color_to_pixel(self.bg_palette[shade as usize])
-        } else {
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            Self::shade_to_pixel(shade)
-        }
+        sprites
     }
 
     /// Initialize CGB BG/OBJ palettes with CGB boot ROM defaults for DMG
@@ -761,130 +421,6 @@ impl GbcPpu {
         ]);
     }
 
-    fn cgb_color_to_pixel(color: u16) -> u32 {
-        let r = (color & 0x1F) as u32;
-        let g = ((color >> 5) & 0x1F) as u32;
-        let b = ((color >> 10) & 0x1F) as u32;
-        // 5-bit to 8-bit: (value << 3) | (value >> 2)
-        let r8 = (r << 3) | (r >> 2);
-        let g8 = (g << 3) | (g >> 2);
-        let b8 = (b << 3) | (b >> 2);
-        // render() extracts: R=(pixel>>24), G=(pixel>>16), B=(pixel>>8), A=pixel
-        // So pixel format is 0xRRGGBBAA
-        (r8 << 24) | (g8 << 16) | (b8 << 8) | 0x000000FF
-    }
-
-    /// Read tile pixel with CGB VRAM bank support.
-    fn read_tile_pixel_bank(
-        &self,
-        tile_index: u8,
-        tile_x: u8,
-        tile_y: u8,
-        signed_tiles: bool,
-        bank: usize,
-    ) -> u8 {
-        let tile_addr = if signed_tiles {
-            let signed_idx = tile_index as i8 as i16;
-            (0x9000u16).wrapping_add_signed(signed_idx.wrapping_mul(16))
-        } else {
-            0x8000u16 + tile_index as u16 * 16
-        };
-        let row_addr = tile_addr + (tile_y as u16) * 2;
-        let base = bank * 0x2000;
-        let low = self.vram[base + (row_addr as usize & 0x1FFF)];
-        let high = self.vram[base + ((row_addr + 1) as usize & 0x1FFF)];
-        let bit = 7 - tile_x;
-        ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
-    }
-
-    fn read_bg_pixel(&self, scroll_x: u8, scroll_y: u8) -> (u32, u8, bool) {
-        let tile_map_base: u16 = if self.lcdc & 0x08 != 0 {
-            0x9C00
-        } else {
-            0x9800
-        };
-        let signed_tiles = self.lcdc & 0x10 == 0;
-        let tile_col = (scroll_x / 8) as u16;
-        let tile_row = (scroll_y / 8) as u16;
-        let map_addr = tile_map_base + tile_row * 32 + tile_col;
-        let map_idx = map_addr as usize & 0x1FFF;
-        let tile_index = self.vram[map_idx];
-
-        if self.cgb_game {
-            // CGB: read attribute byte from VRAM bank 1 at same map address
-            let attr = self.vram[0x2000 + map_idx];
-            let pal = (attr & 0x07) as usize; // palette 0-7
-            let bank = ((attr >> 3) & 0x01) as usize; // VRAM bank
-            let hflip = (attr >> 5) & 0x01 != 0;
-            let vflip = (attr >> 6) & 0x01 != 0;
-            let bg_priority = (attr >> 7) & 0x01 != 0; // bit 7: BG-to-OAM priority
-            let tile_x_eff = if hflip {
-                7 - (scroll_x % 8)
-            } else {
-                scroll_x % 8
-            };
-            let tile_y_eff = if vflip {
-                7 - (scroll_y % 8)
-            } else {
-                scroll_y % 8
-            };
-            let color =
-                self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
-            let color15 = self.bg_palette[pal * 4 + color as usize];
-            (Self::cgb_color_to_pixel(color15), color, bg_priority)
-        } else if self.cgb_mode {
-            // DMG game on CGB: BGP selects from CGB palette 0
-            let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            let color15 = self.bg_palette[shade as usize];
-            (Self::cgb_color_to_pixel(color15), color, false)
-        } else {
-            // Pure DMG hardware: BGP selects grayscale shade
-            let color = self.read_tile_pixel(tile_index, scroll_x % 8, scroll_y % 8, signed_tiles);
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            (Self::shade_to_pixel(shade), color, false)
-        }
-    }
-
-    fn read_window_pixel(&self, win_x: u8, win_y: u8) -> (u32, u8, bool) {
-        let tile_map_base: u16 = if self.lcdc & 0x40 != 0 {
-            0x9C00
-        } else {
-            0x9800
-        };
-        let signed_tiles = self.lcdc & 0x10 == 0;
-        let tile_col = (win_x / 8) as u16;
-        let tile_row = (win_y / 8) as u16;
-        let map_addr = tile_map_base + tile_row * 32 + tile_col;
-        let map_idx = map_addr as usize & 0x1FFF;
-        let tile_index = self.vram[map_idx];
-
-        if self.cgb_game {
-            let attr = self.vram[0x2000 + map_idx];
-            let pal = (attr & 0x07) as usize;
-            let bank = ((attr >> 3) & 0x01) as usize;
-            let hflip = (attr >> 5) & 0x01 != 0;
-            let vflip = (attr >> 6) & 0x01 != 0;
-            let bg_priority = (attr >> 7) & 0x01 != 0;
-            let tile_x_eff = if hflip { 7 - (win_x % 8) } else { win_x % 8 };
-            let tile_y_eff = if vflip { 7 - (win_y % 8) } else { win_y % 8 };
-            let color =
-                self.read_tile_pixel_bank(tile_index, tile_x_eff, tile_y_eff, signed_tiles, bank);
-            let color15 = self.bg_palette[pal * 4 + color as usize];
-            (Self::cgb_color_to_pixel(color15), color, bg_priority)
-        } else if self.cgb_mode {
-            // DMG game on CGB: BGP selects from CGB palette 0
-            let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            let color15 = self.bg_palette[shade as usize];
-            (Self::cgb_color_to_pixel(color15), color, false)
-        } else {
-            let color = self.read_tile_pixel(tile_index, win_x % 8, win_y % 8, signed_tiles);
-            let shade = (self.bgp >> (color * 2)) & 0x03;
-            (Self::shade_to_pixel(shade), color, false)
-        }
-    }
-
     pub fn read_vram(&self, addr: u16) -> u8 {
         let idx = if self.vbk == 0 {
             addr & 0x1FFF
@@ -951,31 +487,10 @@ impl GbcPpu {
     }
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
-        // Track mid-scanline changes during Mode 3 (pixel transfer).
-        match addr {
-            0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
-                if self.ly < VBLANK_START && self.mode3_pipeline.is_some() =>
-            {
-                let old_value = self.read_register(addr);
-                let pipeline = self
-                    .mode3_pipeline
-                    .as_mut()
-                    .expect("mode 3 pipeline checked above");
-                let pixel_x = pipeline.latch_pixel(addr, old_value, value, self.ly);
-                pipeline.write_register(addr, old_value, value);
-                self.mode3_writes.push(LatchedWrite {
-                    pixel_x,
-                    register: addr,
-                    old_value,
-                    value,
-                    window_started: self
-                        .mode3_pipeline
-                        .as_ref()
-                        .expect("mode 3 pipeline checked above")
-                        .window_seen(),
-                });
-            }
-            _ => {}
+        if matches!(addr, 0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B)
+            && let Some(pipeline) = self.mode3_pipeline.as_mut()
+        {
+            pipeline.write_register(addr, value);
         }
         match addr {
             0xFF40 => {

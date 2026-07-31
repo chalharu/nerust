@@ -1,209 +1,527 @@
+use std::collections::VecDeque;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FetchStage {
+enum FetchStage {
     Tile,
     DataLow,
     DataHigh,
     Push,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Sprite {
+    pub(super) x: i16,
+    pub(super) tile: u8,
+    pub(super) y: i16,
+    pub(super) flags: u8,
+    pub(super) oam_index: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Registers {
+    pub(super) lcdc: u8,
+    pub(super) scy: u8,
+    pub(super) scx: u8,
+    pub(super) wy: u8,
+    pub(super) wx: u8,
+    pub(super) bgp: u8,
+    pub(super) obp0: u8,
+    pub(super) obp1: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OutputPixel {
+    pub(super) x: u8,
+    pub(super) color: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BgPixel {
+    color: u8,
+    palette: u8,
+    priority: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ObjPixel {
+    color: u8,
+    palette: u8,
+    behind_bg: bool,
+    priority_key: u16,
+}
+
+#[derive(Debug)]
+struct Fetcher {
+    stage: FetchStage,
+    stage_dot: u8,
+    tile_column: u8,
+    tile_index: u8,
+    attributes: u8,
+    tile_y: u8,
+    low: u8,
+    high: u8,
+}
+
+impl Fetcher {
+    fn new(tile_column: u8) -> Self {
+        Self {
+            stage: FetchStage::Tile,
+            stage_dot: 0,
+            tile_column,
+            tile_index: 0,
+            attributes: 0,
+            tile_y: 0,
+            low: 0,
+            high: 0,
+        }
+    }
+
+    fn restart(&mut self, tile_column: u8) {
+        *self = Self::new(tile_column);
+    }
+
+    fn advance(&mut self) {
+        self.stage_dot += 1;
+        if self.stage_dot != 2 {
+            return;
+        }
+        self.stage_dot = 0;
+        self.stage = match self.stage {
+            FetchStage::Tile => FetchStage::DataLow,
+            FetchStage::DataLow => FetchStage::DataHigh,
+            FetchStage::DataHigh => FetchStage::Push,
+            FetchStage::Push => {
+                self.tile_column = self.tile_column.wrapping_add(1);
+                FetchStage::Tile
+            }
+        };
+    }
+}
+
+#[derive(Debug)]
+struct SpriteFetch {
+    sprite: Sprite,
+    dot: u8,
+    low: u8,
+    high: u8,
+    height: u8,
+}
+
 #[derive(Debug)]
 pub(super) struct Mode3Pipeline {
-    pixel_x: u8,
+    registers: Registers,
+    ly: u8,
+    cgb_mode: bool,
+    cgb_game: bool,
+    oam_priority: bool,
     startup_dots: u8,
-    stall_dots: u8,
-    fetch_dot: u8,
-    fetch_pixel_x: u8,
-    fine_scroll_x: u8,
-    sprite_x: Vec<i16>,
-    next_sprite: usize,
-    last_sprite_tile: Option<i16>,
+    fine_discard: u8,
+    pixel_x: u8,
+    complete: bool,
+
+    fetcher: Fetcher,
+    bg_fifo: VecDeque<BgPixel>,
     window_active: bool,
     window_seen: bool,
     window_triggered: bool,
     window_can_retrigger: bool,
     window_disable_pending: bool,
+    window_line: u8,
     window_pixels: u8,
-    complete: bool,
+
+    sprites: Vec<Sprite>,
+    next_sprite: usize,
+    sprite_fetch: Option<SpriteFetch>,
+    obj_line: [Option<ObjPixel>; 160],
 }
 
 impl Mode3Pipeline {
-    pub(super) fn new(cgb_mode: bool, scx: u8, sprite_x: Vec<i16>) -> Self {
+    pub(super) fn new(
+        registers: Registers,
+        ly: u8,
+        window_line: u8,
+        mut sprites: Vec<Sprite>,
+        cgb_mode: bool,
+        cgb_game: bool,
+        opri: u8,
+    ) -> Self {
+        let oam_priority = cgb_game && opri & 1 != 0;
+        sprites.sort_by(|a, b| a.x.cmp(&b.x).then_with(|| a.oam_index.cmp(&b.oam_index)));
         Self {
+            registers,
+            ly,
+            cgb_mode,
+            cgb_game,
+            oam_priority,
+            startup_dots: if cgb_mode { 19 } else { 18 } + (registers.scx & 7),
+            fine_discard: registers.scx & 7,
             pixel_x: 0,
-            startup_dots: if cgb_mode { 19 } else { 18 } + (scx & 7),
-            stall_dots: 0,
-            fetch_dot: 0,
-            fetch_pixel_x: 0,
-            fine_scroll_x: scx & 7,
-            sprite_x,
-            next_sprite: 0,
-            last_sprite_tile: None,
+            complete: false,
+            fetcher: Fetcher::new(registers.scx >> 3),
+            bg_fifo: VecDeque::with_capacity(16),
             window_active: false,
             window_seen: false,
             window_triggered: false,
             window_can_retrigger: false,
             window_disable_pending: false,
+            window_line,
             window_pixels: 0,
-            complete: false,
+            sprites,
+            next_sprite: 0,
+            sprite_fetch: None,
+            obj_line: [None; 160],
         }
     }
 
-    pub(super) fn step(&mut self, lcdc: u8, scx: u8, ly: u8, wy: u8, wx: u8) {
+    pub(super) fn step(
+        &mut self,
+        vram: &[u8; 0x4000],
+        bg_palette: &[u16; 32],
+        obj_palette: &[u16; 32],
+    ) -> Option<OutputPixel> {
         if self.complete {
-            return;
+            return None;
         }
+
+        self.update_window_state();
+        self.start_sprite_fetch();
+        if self.sprite_fetch.is_some() {
+            self.step_sprite_fetch(vram);
+        } else {
+            self.step_bg_fetcher(vram);
+        }
+
         if self.startup_dots != 0 {
-            if lcdc & 0x20 != 0 && ly >= wy && wx <= 7 {
-                self.window_seen = true;
-            }
             self.startup_dots -= 1;
-            self.advance_fetcher();
-            return;
-        }
-        if self.stall_dots != 0 {
-            self.stall_dots -= 1;
-            return;
-        }
-
-        let window_x = i16::from(wx) - 7;
-        if !self.window_active
-            && (!self.window_triggered || self.window_can_retrigger)
-            && lcdc & 0x20 != 0
-            && ly >= wy
-            && window_x < 160
-            && i16::from(self.pixel_x) >= window_x.max(0)
-        {
-            self.window_active = true;
-            self.window_seen = true;
-            self.window_triggered = true;
-            self.window_can_retrigger = false;
-            self.window_pixels = if window_x < 0 { (-window_x) as u8 } else { 0 };
-            self.stall_dots = 5;
-            self.fetch_dot = 0;
-            self.fetch_pixel_x = self.pixel_x;
-            return;
-        }
-
-        if self.window_active && self.window_disable_pending && self.window_pixels & 7 == 0 {
-            self.window_active = false;
-            self.window_disable_pending = false;
-            self.stall_dots = 5;
-            self.fetch_dot = 0;
-            self.fetch_pixel_x = self.pixel_x;
-            return;
-        }
-
-        if lcdc & 0x02 == 0 {
-            while self.next_sprite < self.sprite_x.len()
-                && self.sprite_x[self.next_sprite] <= i16::from(self.pixel_x)
-            {
-                self.next_sprite += 1;
-            }
-        }
-
-        while self.next_sprite < self.sprite_x.len()
-            && self.sprite_x[self.next_sprite] <= i16::from(self.pixel_x)
-        {
-            let sprite_x = self.sprite_x[self.next_sprite];
-            let tile = (i16::from(self.pixel_x) + i16::from(scx)) / 8;
-            let fetch_wait = if self.last_sprite_tile == Some(tile) {
-                0
-            } else {
-                let tile_x = (i16::from(self.pixel_x) + i16::from(scx)) & 7;
-                (5 - tile_x).max(0) as u8
-            };
-            self.last_sprite_tile = Some(tile);
-            let fetch_dots = if sprite_x < 0 {
-                if sprite_x <= -5 {
-                    (3 - sprite_x) as u8
-                } else {
-                    6
+            if self.startup_dots == 0 {
+                for _ in 0..self.fine_discard {
+                    self.bg_fifo.pop_front();
                 }
-            } else {
-                6 + fetch_wait
-            };
-            self.stall_dots = self.stall_dots.saturating_add(fetch_dots);
-            self.next_sprite += 1;
-        }
-        if self.stall_dots != 0 {
-            self.stall_dots -= 1;
-            return;
+            }
+            return None;
         }
 
+        let bg = self.bg_fifo.pop_front()?;
+        let x = self.pixel_x;
+        let color = self.compose_pixel(bg, self.obj_line[x as usize], bg_palette, obj_palette);
         self.pixel_x += 1;
         if self.window_active {
             self.window_pixels = self.window_pixels.wrapping_add(1);
         }
         self.complete = self.pixel_x == 160;
-        self.advance_fetcher();
+        Some(OutputPixel { x, color })
     }
 
-    fn advance_fetcher(&mut self) {
-        self.fetch_dot = (self.fetch_dot + 1) & 7;
-        if self.fetch_dot == 0 {
-            self.fetch_pixel_x = self.fetch_pixel_x.saturating_add(8);
+    fn step_bg_fetcher(&mut self, vram: &[u8; 0x4000]) {
+        if self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() > 8 {
+            return;
         }
-    }
-
-    pub(super) fn fetch_stage(&self) -> FetchStage {
-        match self.fetch_dot {
-            0 | 1 => FetchStage::Tile,
-            2 | 3 => FetchStage::DataLow,
-            4 | 5 => FetchStage::DataHigh,
-            _ => FetchStage::Push,
-        }
-    }
-
-    pub(super) fn latch_pixel(&mut self, register: u16, old_value: u8, value: u8, ly: u8) -> u8 {
-        if register == 0xFF43
-            && ly != 0
-            && self.pixel_x == 0
-            && self.fetch_stage() == FetchStage::Tile
-            && self.fetch_dot == 0
-        {
-            self.fine_scroll_x = value & 7;
-        }
-        let pixel_x = match register {
-            0xFF40 if (old_value ^ value) & 0x10 != 0 => {
-                self.fetch_pixel_x.saturating_sub(8)
+        if self.fetcher.stage_dot == 0 {
+            match self.fetcher.stage {
+                FetchStage::Tile => self.fetch_tile(vram),
+                FetchStage::DataLow => self.fetcher.low = self.fetch_tile_byte(vram, false),
+                FetchStage::DataHigh => self.fetcher.high = self.fetch_tile_byte(vram, true),
+                FetchStage::Push => self.push_bg_tile(),
             }
-            0xFF40 if (old_value ^ value) & 0x40 != 0 => {
-                self.fetch_pixel_x.saturating_sub(8)
-            }
-            0xFF42 => self.fetch_pixel_x,
-            0xFF43 => self.fetch_pixel_x,
-            0xFF40 if (old_value ^ value) & 0x08 != 0 => self.fetch_pixel_x,
-            _ => self.pixel_x,
+        }
+        self.fetcher.advance();
+    }
+
+    fn fetch_tile(&mut self, vram: &[u8; 0x4000]) {
+        let (map_base, tile_row, tile_y) = if self.window_active {
+            let map = if self.registers.lcdc & 0x40 != 0 { 0x9C00 } else { 0x9800 };
+            (map, self.window_line >> 3, self.window_line & 7)
+        } else {
+            let y = self.registers.scy.wrapping_add(self.ly);
+            let map = if self.registers.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
+            (map, y >> 3, y & 7)
         };
-        pixel_x.min(159)
+        let map_addr = map_base
+            + u16::from(tile_row) * 32
+            + u16::from(self.fetcher.tile_column & 31);
+        let map_index = usize::from(map_addr & 0x1FFF);
+        self.fetcher.tile_index = vram[map_index];
+        self.fetcher.attributes = if self.cgb_game { vram[0x2000 + map_index] } else { 0 };
+        self.fetcher.tile_y = if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
+            7 - tile_y
+        } else {
+            tile_y
+        };
     }
 
-    pub(super) fn write_register(&mut self, register: u16, old_value: u8, value: u8) {
+    fn fetch_tile_byte(&self, vram: &[u8; 0x4000], high: bool) -> u8 {
+        let tile_address = if self.registers.lcdc & 0x10 == 0 {
+            0x9000u16.wrapping_add_signed(
+                (self.fetcher.tile_index as i8 as i16).wrapping_mul(16),
+            )
+        } else {
+            0x8000 + u16::from(self.fetcher.tile_index) * 16
+        };
+        let bank = if self.cgb_game {
+            usize::from((self.fetcher.attributes >> 3) & 1)
+        } else {
+            0
+        };
+        let address = tile_address
+            + u16::from(self.fetcher.tile_y) * 2
+            + u16::from(high);
+        vram[bank * 0x2000 + usize::from(address & 0x1FFF)]
+    }
+
+    fn push_bg_tile(&mut self) {
+        let flipped = self.cgb_game && self.fetcher.attributes & 0x20 != 0;
+        let palette = if self.cgb_game { self.fetcher.attributes & 7 } else { 0 };
+        let priority = self.cgb_game && self.fetcher.attributes & 0x80 != 0;
+        for x in 0..8 {
+            let bit = if flipped { x } else { 7 - x };
+            let color = ((self.fetcher.low >> bit) & 1)
+                | (((self.fetcher.high >> bit) & 1) << 1);
+            self.bg_fifo.push_back(BgPixel { color, palette, priority });
+        }
+    }
+
+    fn update_window_state(&mut self) {
+        if self.window_active && self.window_disable_pending && self.window_pixels & 7 == 0 {
+            self.window_active = false;
+            self.window_disable_pending = false;
+            self.bg_fifo.clear();
+            let bg_x = self.registers.scx.wrapping_add(self.pixel_x) >> 3;
+            self.fetcher.restart(bg_x);
+            return;
+        }
+
+        let window_x = i16::from(self.registers.wx) - 7;
+        let can_trigger = !self.window_triggered || self.window_can_retrigger;
+        if !self.window_active
+            && can_trigger
+            && self.registers.lcdc & 0x20 != 0
+            && self.ly >= self.registers.wy
+            && window_x < 160
+            && i16::from(self.pixel_x) >= window_x.max(0)
+        {
+            if self.window_triggered {
+                self.window_line = self.window_line.wrapping_add(1);
+            }
+            self.window_active = true;
+            self.window_seen = true;
+            self.window_triggered = true;
+            self.window_can_retrigger = false;
+            self.window_pixels = if window_x < 0 { (-window_x) as u8 } else { 0 };
+            self.bg_fifo.clear();
+            self.fetcher.restart(self.window_pixels >> 3);
+            self.fine_discard = self.window_pixels & 7;
+        }
+    }
+
+    fn start_sprite_fetch(&mut self) {
+        if self.sprite_fetch.is_some() {
+            return;
+        }
+        if self.registers.lcdc & 0x02 == 0 {
+            while self.next_sprite < self.sprites.len()
+                && self.sprites[self.next_sprite].x <= i16::from(self.pixel_x) + 8
+            {
+                self.next_sprite += 1;
+            }
+            return;
+        }
+        if self.next_sprite >= self.sprites.len()
+            || self.sprites[self.next_sprite].x > i16::from(self.pixel_x) + 8
+        {
+            return;
+        }
+        let sprite = self.sprites[self.next_sprite];
+        self.next_sprite += 1;
+        self.sprite_fetch = Some(SpriteFetch {
+            sprite,
+            dot: 0,
+            low: 0,
+            high: 0,
+            height: if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 },
+        });
+    }
+
+    fn step_sprite_fetch(&mut self, vram: &[u8; 0x4000]) {
+        let Some(fetch) = self.sprite_fetch.as_mut() else { return };
+        if fetch.dot == 2 || fetch.dot == 4 {
+            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8;
+            if fetch.sprite.flags & 0x40 != 0 {
+                tile_y = fetch.height - 1 - tile_y;
+            }
+            let tile = if fetch.height == 16 {
+                (fetch.sprite.tile & 0xFE) | u8::from(tile_y >= 8)
+            } else {
+                fetch.sprite.tile
+            };
+            let bank = if self.cgb_mode {
+                usize::from((fetch.sprite.flags >> 3) & 1)
+            } else {
+                0
+            };
+            let address = 0x8000u16
+                + u16::from(tile) * 16
+                + u16::from(tile_y & 7) * 2
+                + u16::from(fetch.dot == 4);
+            let value = vram[bank * 0x2000 + usize::from(address & 0x1FFF)];
+            if fetch.dot == 2 { fetch.low = value } else { fetch.high = value }
+        }
+        fetch.dot += 1;
+        if fetch.dot < 6 {
+            return;
+        }
+        let fetch = self.sprite_fetch.take().expect("sprite fetch is active");
+        self.merge_sprite(fetch);
+    }
+
+    fn merge_sprite(&mut self, fetch: SpriteFetch) {
+        for pixel in 0..8i16 {
+            let screen_x = fetch.sprite.x + pixel;
+            if !(0..160).contains(&screen_x) {
+                continue;
+            }
+            let tile_x = if fetch.sprite.flags & 0x20 != 0 {
+                pixel as u8
+            } else {
+                7 - pixel as u8
+            };
+            let color = ((fetch.low >> tile_x) & 1) | (((fetch.high >> tile_x) & 1) << 1);
+            if color == 0 {
+                continue;
+            }
+            let x_priority = fetch.sprite.x.clamp(-8, 159) + 8;
+            let priority_key = if self.oam_priority {
+                u16::from(fetch.sprite.oam_index)
+            } else {
+                (x_priority as u16) << 8 | u16::from(fetch.sprite.oam_index)
+            };
+            let candidate = ObjPixel {
+                color,
+                palette: if self.cgb_game {
+                    fetch.sprite.flags & 7
+                } else {
+                    u8::from(fetch.sprite.flags & 0x10 != 0)
+                },
+                behind_bg: fetch.sprite.flags & 0x80 != 0,
+                priority_key,
+            };
+            let slot = &mut self.obj_line[screen_x as usize];
+            if slot.is_none_or(|existing| priority_key < existing.priority_key) {
+                *slot = Some(candidate);
+            }
+        }
+    }
+
+    fn compose_pixel(
+        &self,
+        bg: BgPixel,
+        obj: Option<ObjPixel>,
+        bg_palette: &[u16; 32],
+        obj_palette: &[u16; 32],
+    ) -> u32 {
+        let bg_enabled = self.cgb_game || self.registers.lcdc & 0x01 != 0;
+        let bg_color = if bg_enabled { bg.color } else { 0 };
+        let mut pixel = self.bg_pixel(bg_color, bg.palette, bg_palette);
+        if self.registers.lcdc & 0x02 == 0 {
+            return pixel;
+        }
+        let Some(obj) = obj else { return pixel };
+        let obj_visible = (self.cgb_game && self.registers.lcdc & 0x01 == 0)
+            || bg_color == 0
+            || (!bg.priority && !obj.behind_bg);
+        if obj_visible {
+            pixel = self.obj_pixel(obj, obj_palette);
+        }
+        pixel
+    }
+
+    fn bg_pixel(&self, color: u8, palette: u8, palettes: &[u16; 32]) -> u32 {
+        if self.cgb_game {
+            Self::cgb_color(palettes[usize::from(palette) * 4 + usize::from(color)])
+        } else if self.cgb_mode {
+            let shade = (self.registers.bgp >> (color * 2)) & 3;
+            Self::cgb_color(palettes[usize::from(shade)])
+        } else {
+            Self::dmg_color((self.registers.bgp >> (color * 2)) & 3)
+        }
+    }
+
+    fn obj_pixel(&self, pixel: ObjPixel, palettes: &[u16; 32]) -> u32 {
+        if self.cgb_game {
+            Self::cgb_color(
+                palettes[usize::from(pixel.palette) * 4 + usize::from(pixel.color)],
+            )
+        } else if self.cgb_mode {
+            let palette = if pixel.palette == 0 {
+                self.registers.obp0
+            } else {
+                self.registers.obp1
+            };
+            Self::cgb_color(palettes[usize::from((palette >> (pixel.color * 2)) & 3)])
+        } else {
+            let palette = if pixel.palette == 0 {
+                self.registers.obp0
+            } else {
+                self.registers.obp1
+            };
+            Self::dmg_color((palette >> (pixel.color * 2)) & 3)
+        }
+    }
+
+    fn cgb_color(color: u16) -> u32 {
+        let r = u32::from(color & 0x1F);
+        let g = u32::from((color >> 5) & 0x1F);
+        let b = u32::from((color >> 10) & 0x1F);
+        (((r << 3) | (r >> 2)) << 24)
+            | (((g << 3) | (g >> 2)) << 16)
+            | (((b << 3) | (b >> 2)) << 8)
+            | 0xFF
+    }
+
+    fn dmg_color(shade: u8) -> u32 {
+        match shade {
+            0 => 0xFFFF_FFFF,
+            1 => 0xAAAA_AAFF,
+            2 => 0x5555_55FF,
+            _ => 0x0000_00FF,
+        }
+    }
+
+    pub(super) fn write_register(&mut self, register: u16, value: u8) {
         match register {
-            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 && self.window_active => {
-                self.window_disable_pending = true;
+            0xFF40 => {
+                let old = self.registers.lcdc;
+                self.registers.lcdc = value;
+                if old & 0x20 != 0 && value & 0x20 == 0 {
+                    if self.window_active {
+                        self.window_disable_pending = true;
+                    } else {
+                        self.window_triggered = true;
+                        self.window_seen = true;
+                    }
+                }
             }
-            0xFF40 if old_value & 0x20 != 0 && value & 0x20 == 0 => {
-                self.window_triggered = true;
-                self.window_seen = true;
-            }
-            0xFF4B if self.window_seen => {
-                self.window_can_retrigger = true;
+            0xFF42 => self.registers.scy = value,
+            0xFF43 => self.registers.scx = value,
+            0xFF47 => self.registers.bgp = value,
+            0xFF48 => self.registers.obp0 = value,
+            0xFF49 => self.registers.obp1 = value,
+            0xFF4A => self.registers.wy = value,
+            0xFF4B => {
+                self.registers.wx = value;
+                if self.window_seen {
+                    self.window_can_retrigger = true;
+                }
             }
             _ => {}
         }
     }
 
-    pub(super) fn fine_scroll_x(&self) -> u8 {
-        self.fine_scroll_x
-    }
-
-    pub(super) fn window_seen(&self) -> bool {
-        self.window_seen
-    }
-
     pub(super) fn complete(&self) -> bool {
         self.complete
+    }
+
+    pub(super) fn final_window_line(&self) -> u8 {
+        self.window_line.wrapping_add(u8::from(self.window_seen))
     }
 }
 
@@ -211,25 +529,50 @@ impl Mode3Pipeline {
 mod tests {
     use super::*;
 
-    #[test]
-    fn fetcher_advances_through_two_dot_stages() {
-        let mut pipeline = Mode3Pipeline::new(true, 0, Vec::new());
-        let expected = [
-            FetchStage::Tile,
-            FetchStage::Tile,
-            FetchStage::DataLow,
-            FetchStage::DataLow,
-            FetchStage::DataHigh,
-            FetchStage::DataHigh,
-            FetchStage::Push,
-            FetchStage::Push,
-        ];
-
-        for stage in expected {
-            assert_eq!(pipeline.fetch_stage(), stage);
-            pipeline.advance_fetcher();
+    fn registers() -> Registers {
+        Registers {
+            lcdc: 0x91,
+            scy: 0,
+            scx: 0,
+            wy: 0,
+            wx: 0,
+            bgp: 0xE4,
+            obp0: 0xE4,
+            obp1: 0xE4,
         }
+    }
 
-        assert_eq!(pipeline.fetch_stage(), FetchStage::Tile);
+    #[test]
+    fn fetcher_reads_each_stage_for_two_dots() {
+        let mut fetcher = Fetcher::new(0);
+        for stage in [
+            FetchStage::Tile,
+            FetchStage::DataLow,
+            FetchStage::DataHigh,
+            FetchStage::Push,
+        ] {
+            assert_eq!(fetcher.stage, stage);
+            fetcher.advance();
+            assert_eq!(fetcher.stage, stage);
+            fetcher.advance();
+        }
+        assert_eq!(fetcher.stage, FetchStage::Tile);
+        assert_eq!(fetcher.tile_column, 1);
+    }
+
+    #[test]
+    fn pipeline_outputs_160_pixels() {
+        let mut pipeline = Mode3Pipeline::new(registers(), 0, 0, Vec::new(), false, false, 0);
+        let vram = [0; 0x4000];
+        let palettes = [0; 32];
+        let mut pixels = 0;
+        for _ in 0..400 {
+            pixels += usize::from(pipeline.step(&vram, &palettes, &palettes).is_some());
+            if pipeline.complete() {
+                break;
+            }
+        }
+        assert_eq!(pixels, 160);
+        assert!(pipeline.complete());
     }
 }
