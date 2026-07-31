@@ -165,6 +165,7 @@ impl GbcPpu {
                 },
                 self.ly,
                 self.window_line,
+                self.window_eligible,
                 sprites,
                 self.cgb_mode,
                 self.cgb_game,
