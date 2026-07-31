@@ -738,7 +738,7 @@ impl Mode3Pipeline {
                     }
                 }
                 if changed & 0x10 != 0 {
-                    let delay = if self.window_active { 2 } else { 3 };
+                    let delay = 3;
                     self.pending_tile_select = Some((delay, value & 0x10));
                 }
                 if old_written & 0x20 != 0 && value & 0x20 == 0 {
