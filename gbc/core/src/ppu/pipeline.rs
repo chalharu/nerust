@@ -108,6 +108,8 @@ impl Fetcher {
 #[derive(Debug)]
 struct SpriteFetch {
     sprite: Sprite,
+    bg_wait: u8,
+    advance_bg: bool,
     dot: u8,
     low: u8,
     high: u8,
@@ -495,7 +497,7 @@ impl Mode3Pipeline {
             (5 - tile_x).max(0) as u8
         };
         self.last_sprite_tile = Some(tile);
-        self.output_stall = if sprite.x < 0 {
+        let stall = if sprite.x < 0 {
             if sprite.x <= -5 {
                 (3 - sprite.x) as u8
             } else if sprite.x == -4 {
@@ -506,8 +508,11 @@ impl Mode3Pipeline {
         } else {
             6 + fetch_wait
         };
+        self.output_stall = stall;
         self.sprite_fetch = Some(SpriteFetch {
             sprite,
+            bg_wait: stall - 6,
+            advance_bg: true,
             dot: 0,
             low: 0,
             high: 0,
@@ -516,14 +521,20 @@ impl Mode3Pipeline {
     }
 
     fn step_sprite_fetch(&mut self, vram: &[u8; 0x4000]) {
+        if self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.bg_wait != 0) {
+            if self.sprite_fetch.as_ref().unwrap().advance_bg {
+                self.step_bg_fetcher(vram);
+            }
+            self.sprite_fetch.as_mut().unwrap().bg_wait -= 1;
+            return;
+        }
         let Some(fetch) = self.sprite_fetch.as_mut() else { return };
         if fetch.dot == 2 || fetch.dot == 4 {
             fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
-            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y)
-                .clamp(0, 15) as u8;
+            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8
+                & (fetch.height - 1);
             if fetch.sprite.flags & 0x40 != 0 {
-                tile_y = tile_y.min(fetch.height.saturating_sub(1));
-                tile_y = fetch.height - 1 - tile_y;
+                tile_y ^= fetch.height - 1;
             }
             let tile = if fetch.height == 16 {
                 (fetch.sprite.tile & 0xFE) | u8::from(tile_y >= 8)
@@ -707,6 +718,9 @@ impl Mode3Pipeline {
                     self.pending_obj_size = Some(value & 4);
                 }
                 if changed & 0x08 != 0 {
+                    if let Some(fetch) = self.sprite_fetch.as_mut() {
+                        fetch.advance_bg = false;
+                    }
                     let last_object_x = self
                         .next_sprite
                         .checked_sub(1)
@@ -727,6 +741,9 @@ impl Mode3Pipeline {
                     }
                 }
                 if changed & 0x40 != 0 {
+                    if let Some(fetch) = self.sprite_fetch.as_mut() {
+                        fetch.advance_bg = false;
+                    }
                     let object_x = self
                         .next_sprite
                         .checked_sub(1)
