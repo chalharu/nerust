@@ -246,7 +246,9 @@ impl Mode3Pipeline {
         if self.complete {
             return None;
         }
-        self.active_tile_select_write = self.pending_tile_select_write.take();
+        if let Some(write) = self.pending_tile_select_write.take() {
+            self.active_tile_select_write = Some(write);
+        }
         if let Some((countdown, value)) = self.pending_scy.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -366,6 +368,7 @@ impl Mode3Pipeline {
                 } else {
                     vram[self.fetcher.data_address]
                 };
+                self.active_tile_select_write = None;
             }
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(true)
@@ -377,6 +380,7 @@ impl Mode3Pipeline {
                     _ => vram[self.fetcher.data_address],
                 };
                 self.tile_data_bus = self.fetcher.high;
+                self.active_tile_select_write = None;
             }
             FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
