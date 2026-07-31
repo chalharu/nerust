@@ -660,6 +660,7 @@ impl Mode3Pipeline {
                 self.written_lcdc = value;
                 let changed = old_written ^ value;
                 let defer_obj_size = changed & 4 != 0
+                    && value & 4 == 0
                     && self.registers.scx != 0
                     && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
                 let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
