@@ -32,6 +32,7 @@ pub struct Lr35902Cpu {
     registers: CpuRegisters,
     phase: Phase,
     ime_delayed: bool,
+    ime_enable_armed: bool,
     opcode: u8,
     operands: [u8; 2],
     operand_count: u8,
@@ -43,6 +44,7 @@ impl Lr35902Cpu {
             registers: CpuRegisters::new(),
             phase: Phase::FetchOpcode,
             ime_delayed: false,
+            ime_enable_armed: false,
             opcode: 0,
             operands: [0; 2],
             operand_count: 0,
@@ -107,6 +109,22 @@ impl Lr35902Cpu {
     #[inline]
     pub(crate) fn set_ime_delayed(&mut self, v: bool) {
         self.ime_delayed = v;
+    }
+    #[inline]
+    pub(crate) fn arm_delayed_ime(&mut self) {
+        if self.ime_delayed {
+            self.ime_delayed = false;
+            self.ime_enable_armed = true;
+        }
+    }
+    #[inline]
+    pub(crate) fn take_armed_ime(&mut self) -> bool {
+        std::mem::take(&mut self.ime_enable_armed)
+    }
+    #[inline]
+    pub(crate) fn cancel_delayed_ime(&mut self) {
+        self.ime_delayed = false;
+        self.ime_enable_armed = false;
     }
     #[inline]
     pub fn registers(&self) -> &CpuRegisters {

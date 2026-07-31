@@ -154,7 +154,8 @@ impl CpuStepState for Ei {
 }
 pub(crate) struct Di;
 impl CpuStepState for Di {
-    fn exec(_: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        core.cancel_delayed_ime();
         bus.set_ime(false);
         StepResult::Exit
     }
