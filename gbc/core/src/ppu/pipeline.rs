@@ -519,8 +519,10 @@ impl Mode3Pipeline {
         let Some(fetch) = self.sprite_fetch.as_mut() else { return };
         if fetch.dot == 2 || fetch.dot == 4 {
             fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
-            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8;
+            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y)
+                .clamp(0, 15) as u8;
             if fetch.sprite.flags & 0x40 != 0 {
+                tile_y = tile_y.min(fetch.height.saturating_sub(1));
                 tile_y = fetch.height - 1 - tile_y;
             }
             let tile = if fetch.height == 16 {
