@@ -60,6 +60,9 @@ struct Fetcher {
     tile_y: u8,
     low: u8,
     high: u8,
+    tile_valid: bool,
+    low_valid: bool,
+    high_valid: bool,
 }
 
 impl Fetcher {
@@ -73,6 +76,9 @@ impl Fetcher {
             tile_y: 0,
             low: 0,
             high: 0,
+            tile_valid: false,
+            low_valid: false,
+            high_valid: false,
         }
     }
 
@@ -92,6 +98,9 @@ impl Fetcher {
             FetchStage::DataHigh => FetchStage::Push,
             FetchStage::Push => {
                 self.tile_column = self.tile_column.wrapping_add(1);
+                self.tile_valid = false;
+                self.low_valid = false;
+                self.high_valid = false;
                 FetchStage::Tile
             }
         };
@@ -116,6 +125,7 @@ pub(super) struct Mode3Pipeline {
     oam_priority: bool,
     startup_dots: u8,
     fine_discard: u8,
+    scx_tile_latch: u8,
     pixel_x: u8,
     complete: bool,
 
@@ -160,9 +170,10 @@ impl Mode3Pipeline {
             oam_priority,
             startup_dots: if cgb_mode { 19 } else { 18 } + (registers.scx & 7),
             fine_discard: registers.scx & 7,
+            scx_tile_latch: registers.scx >> 3,
             pixel_x: 0,
             complete: false,
-            fetcher: Fetcher::new(registers.scx >> 3),
+            fetcher: Fetcher::new((registers.scx >> 3).wrapping_sub(1)),
             bg_fifo: VecDeque::with_capacity(16),
             window_active: false,
             window_eligible,
@@ -203,7 +214,7 @@ impl Mode3Pipeline {
             self.step_bg_fetcher(vram);
             self.startup_dots -= 1;
             if self.startup_dots == 0 {
-                for _ in 0..self.fine_discard {
+                for _ in 0..8 + self.fine_discard {
                     self.bg_fifo.pop_front();
                 }
             }
@@ -213,7 +224,7 @@ impl Mode3Pipeline {
         self.start_sprite_fetch();
         if self.sprite_fetch.is_some() {
             self.step_sprite_fetch(vram);
-        } else {
+        } else if self.output_stall == 0 {
             self.step_bg_fetcher(vram);
         }
         if self.output_stall != 0 {
@@ -244,9 +255,21 @@ impl Mode3Pipeline {
             return;
         }
         match self.fetcher.stage {
-            FetchStage::Tile => self.fetch_tile(vram),
-            FetchStage::DataLow => self.fetcher.low = self.fetch_tile_byte(vram, false),
-            FetchStage::DataHigh => self.fetcher.high = self.fetch_tile_byte(vram, true),
+            FetchStage::Tile if !self.fetcher.tile_valid => {
+                self.fetch_tile(vram);
+                self.fetcher.tile_valid = true;
+            }
+            FetchStage::Tile => {}
+            FetchStage::DataLow if !self.fetcher.low_valid => {
+                self.fetcher.low = self.fetch_tile_byte(vram, false);
+                self.fetcher.low_valid = true;
+            }
+            FetchStage::DataLow => {}
+            FetchStage::DataHigh if !self.fetcher.high_valid => {
+                self.fetcher.high = self.fetch_tile_byte(vram, true);
+                self.fetcher.high_valid = true;
+            }
+            FetchStage::DataHigh => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => self.push_bg_tile(),
             FetchStage::Push => {}
         }
@@ -254,6 +277,14 @@ impl Mode3Pipeline {
     }
 
     fn fetch_tile(&mut self, vram: &[u8; 0x4000]) {
+        if !self.window_active && self.fetcher.stage_dot == 0 {
+            let new_column = self.registers.scx >> 3;
+            self.fetcher.tile_column = self
+                .fetcher
+                .tile_column
+                .wrapping_add(new_column.wrapping_sub(self.scx_tile_latch));
+            self.scx_tile_latch = new_column;
+        }
         let (map_base, tile_row, tile_y) = if self.window_active {
             let map = if self.registers.lcdc & 0x40 != 0 { 0x9C00 } else { 0x9800 };
             (map, self.window_line >> 3, self.window_line & 7)
@@ -550,7 +581,16 @@ impl Mode3Pipeline {
                 }
             }
             0xFF42 => self.registers.scy = value,
-            0xFF43 => self.registers.scx = value,
+            0xFF43 => {
+                if self.ly != 0
+                    && self.pixel_x == 0
+                    && self.fetcher.stage == FetchStage::Tile
+                    && self.fetcher.stage_dot == 0
+                {
+                    self.fine_discard = value & 7;
+                }
+                self.registers.scx = value;
+            }
             0xFF47 => self.registers.bgp = value,
             0xFF48 => self.registers.obp0 = value,
             0xFF49 => self.registers.obp1 = value,
