@@ -125,6 +125,7 @@ pub(super) struct Mode3Pipeline {
     cgb_game: bool,
     oam_priority: bool,
     startup_dots: u8,
+    initial_dummy_pending: bool,
     fine_discard: u8,
     scx_tile_latch: u8,
     pixel_x: u8,
@@ -181,6 +182,7 @@ impl Mode3Pipeline {
             cgb_game,
             oam_priority,
             startup_dots: if cgb_mode { 19 } else { 18 } + (registers.scx & 7),
+            initial_dummy_pending: true,
             fine_discard: registers.scx & 7,
             scx_tile_latch: registers.scx >> 3,
             pixel_x: 0,
@@ -254,6 +256,11 @@ impl Mode3Pipeline {
                 self.window_seen = true;
             }
             self.step_bg_fetcher(vram);
+            if self.initial_dummy_pending && !self.bg_fifo.is_empty() {
+                self.bg_fifo.clear();
+                self.fetcher.tile_column = self.fetcher.tile_column.wrapping_sub(1);
+                self.initial_dummy_pending = false;
+            }
             self.startup_dots -= 1;
             if self.startup_dots == 0 {
                 for _ in 0..self.fine_discard {
