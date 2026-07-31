@@ -631,7 +631,12 @@ impl Mode3Pipeline {
                 let old = self.registers.lcdc;
                 self.registers.lcdc = (value & !0x5B) | (old & 0x5B);
                 if (old ^ value) & 1 != 0 {
-                    self.pending_bg_enable = Some((2, value & 1));
+                    if self.output_stall >= 2 {
+                        self.registers.lcdc = (self.registers.lcdc & !1) | (value & 1);
+                        self.pending_bg_enable = None;
+                    } else {
+                        self.pending_bg_enable = Some((2, value & 1));
+                    }
                 }
                 if (old ^ value) & 2 != 0 {
                     if self.output_stall >= 2 {
