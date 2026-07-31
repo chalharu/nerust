@@ -138,6 +138,7 @@ pub(super) struct Mode3Pipeline {
     window_can_retrigger: bool,
     window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
+    window_start_delay: u8,
     window_line: u8,
     window_pixels: u8,
 
@@ -146,6 +147,9 @@ pub(super) struct Mode3Pipeline {
     sprite_fetch: Option<SpriteFetch>,
     output_stall: u8,
     last_sprite_tile: Option<i16>,
+    pending_bg_enable: Option<(u8, u8)>,
+    pending_obj_enable: Option<(u8, u8)>,
+    pending_scy: Option<(u8, u8)>,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -173,7 +177,7 @@ impl Mode3Pipeline {
             scx_tile_latch: registers.scx >> 3,
             pixel_x: 0,
             complete: false,
-            fetcher: Fetcher::new((registers.scx >> 3).wrapping_sub(1)),
+            fetcher: Fetcher::new(registers.scx >> 3),
             bg_fifo: VecDeque::with_capacity(16),
             window_active: false,
             window_eligible,
@@ -182,6 +186,7 @@ impl Mode3Pipeline {
             window_can_retrigger: false,
             window_zero_at: None,
             window_disable_countdown: None,
+            window_start_delay: 0,
             window_line,
             window_pixels: 0,
             sprites,
@@ -189,6 +194,9 @@ impl Mode3Pipeline {
             sprite_fetch: None,
             output_stall: 0,
             last_sprite_tile: None,
+            pending_bg_enable: None,
+            pending_obj_enable: None,
+            pending_scy: None,
             obj_line: [None; 160],
         }
     }
@@ -202,6 +210,13 @@ impl Mode3Pipeline {
         if self.complete {
             return None;
         }
+        if let Some((countdown, value)) = self.pending_scy.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.scy = *value;
+                self.pending_scy = None;
+            }
+        }
 
         if self.startup_dots != 0 {
             if self.window_eligible
@@ -214,13 +229,17 @@ impl Mode3Pipeline {
             self.step_bg_fetcher(vram);
             self.startup_dots -= 1;
             if self.startup_dots == 0 {
-                for _ in 0..8 + self.fine_discard {
+                for _ in 0..self.fine_discard {
                     self.bg_fifo.pop_front();
                 }
             }
             return None;
         }
 
+        if self.window_start_delay != 0 {
+            self.window_start_delay -= 1;
+            return None;
+        }
         self.start_sprite_fetch();
         if self.sprite_fetch.is_some() {
             self.step_sprite_fetch(vram);
@@ -240,6 +259,20 @@ impl Mode3Pipeline {
         }
         let color = self.compose_pixel(bg, self.obj_line[x as usize], bg_palette, obj_palette);
         self.pixel_x += 1;
+        if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.lcdc = (self.registers.lcdc & !1) | *value;
+                self.pending_bg_enable = None;
+            }
+        }
+        if let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.lcdc = (self.registers.lcdc & !2) | *value;
+                self.pending_obj_enable = None;
+            }
+        }
         if self.window_active {
             self.window_pixels = self.window_pixels.wrapping_add(1);
             if let Some(countdown) = self.window_disable_countdown.as_mut() {
@@ -372,6 +405,9 @@ impl Mode3Pipeline {
             self.fetcher.restart(self.window_pixels >> 3);
             self.fetcher.stage_dot = 1;
             self.fine_discard = self.window_pixels & 7;
+            self.window_start_delay = u8::from(
+                self.registers.wx == 0 && self.registers.scx & 7 != 0,
+            );
         }
     }
 
@@ -569,7 +605,13 @@ impl Mode3Pipeline {
         match register {
             0xFF40 => {
                 let old = self.registers.lcdc;
-                self.registers.lcdc = value;
+                self.registers.lcdc = (value & !3) | (old & 3);
+                if (old ^ value) & 1 != 0 {
+                    self.pending_bg_enable = Some((2, value & 1));
+                }
+                if (old ^ value) & 2 != 0 {
+                    self.pending_obj_enable = Some((2, value & 2));
+                }
                 if old & 0x20 != 0 && value & 0x20 == 0 {
                     if self.window_active {
                         let pixels_left = 8 - (self.window_pixels & 7);
@@ -580,7 +622,7 @@ impl Mode3Pipeline {
                     }
                 }
             }
-            0xFF42 => self.registers.scy = value,
+            0xFF42 => self.pending_scy = Some((2, value)),
             0xFF43 => {
                 if self.ly != 0
                     && self.pixel_x == 0
