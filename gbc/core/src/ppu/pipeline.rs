@@ -460,6 +460,8 @@ impl Mode3Pipeline {
         self.output_stall = if sprite.x < 0 {
             if sprite.x <= -5 {
                 (3 - sprite.x) as u8
+            } else if sprite.x == -4 {
+                7
             } else {
                 6
             }
