@@ -634,7 +634,12 @@ impl Mode3Pipeline {
                     self.pending_bg_enable = Some((2, value & 1));
                 }
                 if (old ^ value) & 2 != 0 {
-                    self.pending_obj_enable = Some((2, value & 2));
+                    if self.output_stall >= 2 {
+                        self.registers.lcdc = (self.registers.lcdc & !2) | (value & 2);
+                        self.pending_obj_enable = None;
+                    } else {
+                        self.pending_obj_enable = Some((2, value & 2));
+                    }
                 }
                 if (old ^ value) & 0x48 != 0 {
                     self.pending_map_select = Some((4, value & 0x48));
