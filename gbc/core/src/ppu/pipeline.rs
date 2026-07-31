@@ -127,6 +127,7 @@ struct SpriteFetch {
     low: u8,
     high: u8,
     height: u8,
+    data_address: usize,
 }
 
 #[derive(Debug)]
@@ -171,6 +172,9 @@ pub(super) struct Mode3Pipeline {
     pending_tile_select: Option<(u8, u8)>,
     refetch_push_map: bool,
     wx_written: bool,
+    pending_tile_select_write: Option<(u8, u8)>,
+    active_tile_select_write: Option<(u8, u8)>,
+    tile_data_bus: u8,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -226,6 +230,9 @@ impl Mode3Pipeline {
             pending_tile_select: None,
             refetch_push_map: false,
             wx_written: false,
+            pending_tile_select_write: None,
+            active_tile_select_write: None,
+            tile_data_bus: 0,
             obj_line: [None; 160],
         }
     }
@@ -239,6 +246,7 @@ impl Mode3Pipeline {
         if self.complete {
             return None;
         }
+        self.active_tile_select_write = self.pending_tile_select_write.take();
         if let Some((countdown, value)) = self.pending_scy.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -351,13 +359,24 @@ impl Mode3Pipeline {
                 self.prepare_tile_data_address(false)
             }
             FetchStage::DataLow => {
-                self.fetcher.low = vram[self.fetcher.data_address];
+                self.fetcher.low = if self.active_tile_select_write
+                    .is_some_and(|(old, new)| old == 0 && new != 0)
+                {
+                    self.tile_data_bus
+                } else {
+                    vram[self.fetcher.data_address]
+                };
             }
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(true)
             }
             FetchStage::DataHigh => {
-                self.fetcher.high = vram[self.fetcher.data_address];
+                self.fetcher.high = match self.active_tile_select_write {
+                    Some((0, new)) if new != 0 => self.tile_data_bus,
+                    Some((old, 0)) if old != 0 => self.fetcher.low,
+                    _ => vram[self.fetcher.data_address],
+                };
+                self.tile_data_bus = self.fetcher.high;
             }
             FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
@@ -538,6 +557,7 @@ impl Mode3Pipeline {
             low: 0,
             high: 0,
             height: if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 },
+            data_address: 0,
         });
     }
 
@@ -573,11 +593,15 @@ impl Mode3Pipeline {
                 + u16::from(tile) * 16
                 + u16::from(tile_y & 7) * 2
                 + u16::from(fetch.dot == 4);
-            let value = vram[bank * 0x2000 + usize::from(address & 0x1FFF)];
-            if fetch.dot == 2 {
+            fetch.data_address = bank * 0x2000 + usize::from(address & 0x1FFF);
+        }
+        if fetch.dot == 3 || fetch.dot == 5 {
+            let value = vram[fetch.data_address];
+            if fetch.dot == 3 {
                 fetch.low = value
             } else {
                 fetch.high = value;
+                self.tile_data_bus = value;
             }
         }
         fetch.dot += 1;
@@ -794,6 +818,8 @@ impl Mode3Pipeline {
                     }
                 }
                 if changed & 0x10 != 0 {
+                    self.pending_tile_select_write =
+                        Some((old_written & 0x10, value & 0x10));
                     self.pending_tile_select = Some((3, value & 0x10));
                 }
                 if old_written & 0x20 != 0 && value & 0x20 == 0 {
