@@ -213,7 +213,12 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         crate::cartridge_header::CartridgeType::Mbc1
         | crate::cartridge_header::CartridgeType::Mbc1Ram
         | crate::cartridge_header::CartridgeType::Mbc1RamBattery => {
-            let ram = ram.unwrap_or_else(|| vec![0; header.ram_size.bytes]);
+            let ram_size = if header.cartridge_type.has_ram() && header.ram_size.bytes == 0 {
+                0x2000
+            } else {
+                header.ram_size.bytes
+            };
+            let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
             Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
         }
         _ => Box::new(RomOnly::new(rom)),
@@ -265,6 +270,21 @@ mod tests {
         assert_eq!(mbc.read_ram(0xA000), 0xFF); // disabled
         mbc.write_rom(0x0000, 0x0A); // enable RAM
         assert_eq!(mbc.read_ram(0xA000), 0x77);
+    }
+
+    #[test]
+    fn mbc1_ram_type_with_zero_size_gets_minimum_ram() {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0147] = 0x02;
+        rom[0x0148] = 0x00;
+        rom[0x0149] = 0x00;
+        let header = CartridgeHeader::parse(&rom).unwrap();
+        let mut mbc = create_mbc(&header, rom, None);
+
+        mbc.write_rom(0x0000, 0x0A);
+        mbc.write_ram(0xA000, 0x5A);
+
+        assert_eq!(mbc.read_ram(0xA000), 0x5A);
     }
 
     #[test]
