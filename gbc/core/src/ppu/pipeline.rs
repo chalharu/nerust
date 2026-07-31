@@ -117,6 +117,7 @@ struct SpriteFetch {
 #[derive(Debug)]
 pub(super) struct Mode3Pipeline {
     registers: Registers,
+    written_lcdc: u8,
     ly: u8,
     cgb_mode: bool,
     cgb_game: bool,
@@ -170,6 +171,7 @@ impl Mode3Pipeline {
         sprites.sort_by(|a, b| a.x.cmp(&b.x).then_with(|| a.oam_index.cmp(&b.oam_index)));
         Self {
             registers,
+            written_lcdc: registers.lcdc,
             ly,
             cgb_mode,
             cgb_game,
@@ -654,12 +656,15 @@ impl Mode3Pipeline {
         match register {
             0xFF40 => {
                 let old = self.registers.lcdc;
-                let defer_obj_size = (old ^ value) & 4 != 0
+                let old_written = self.written_lcdc;
+                self.written_lcdc = value;
+                let changed = old_written ^ value;
+                let defer_obj_size = changed & 4 != 0
                     && self.registers.scx != 0
                     && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
                 let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
                 self.registers.lcdc = (value & !preserve) | (old & preserve);
-                if (old ^ value) & 1 != 0 {
+                if changed & 1 != 0 {
                     let delay = if self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0
                     {
@@ -674,7 +679,7 @@ impl Mode3Pipeline {
                         self.pending_bg_enable = Some((delay, value & 1));
                     }
                 }
-                if (old ^ value) & 2 != 0 {
+                if changed & 2 != 0 {
                     if self.output_stall >= 2 {
                         self.registers.lcdc = (self.registers.lcdc & !2) | (value & 2);
                         self.pending_obj_enable = None;
@@ -685,7 +690,7 @@ impl Mode3Pipeline {
                 if defer_obj_size {
                     self.pending_obj_size = Some(value & 4);
                 }
-                if (old ^ value) & 0x48 != 0 {
+                if changed & 0x08 != 0 {
                     let last_object_x = self
                         .next_sprite
                         .checked_sub(1)
@@ -700,16 +705,43 @@ impl Mode3Pipeline {
                         self.refetch_push_map = last_object_x == Some(-8)
                             && self.fetcher.stage == FetchStage::Push
                             && !self.window_active
-                            && (old ^ value) & 0x08 != 0;
+                            && changed & 0x08 != 0;
                     } else {
                         self.pending_map_select = Some((4, value & 0x48));
                     }
                 }
-                if (old ^ value) & 0x10 != 0 {
+                if changed & 0x40 != 0 {
+                    let object_x = self
+                        .next_sprite
+                        .checked_sub(1)
+                        .map(|i| self.sprites[i].x);
+                    let initial_offscreen_set = !self.window_active
+                        && value & 0x40 != 0
+                        && object_x == Some(-8)
+                        && self.output_stall >= 2;
+                    let immediate_active = self.window_active
+                        && self.output_stall < 2
+                        && object_x.is_none_or(|x| x >= 0);
+                    if initial_offscreen_set || immediate_active {
+                        self.registers.lcdc =
+                            (self.registers.lcdc & !0x40) | (value & 0x40);
+                        self.pending_map_select = None;
+                    } else {
+                        let delay = if self.window_active && self.output_stall >= 8 {
+                            self.output_stall.saturating_add(5)
+                        } else if self.window_active && self.output_stall >= 2 {
+                            4u8.max(self.output_stall)
+                        } else {
+                            4
+                        };
+                        self.pending_map_select = Some((delay, value & 0x48));
+                    }
+                }
+                if changed & 0x10 != 0 {
                     let delay = if self.window_active { 2 } else { 3 };
                     self.pending_tile_select = Some((delay, value & 0x10));
                 }
-                if old & 0x20 != 0 && value & 0x20 == 0 {
+                if old_written & 0x20 != 0 && value & 0x20 == 0 {
                     if self.window_active {
                         let pixels_left = 8 - (self.window_pixels & 7);
                         self.window_disable_countdown = Some(pixels_left + 8);
