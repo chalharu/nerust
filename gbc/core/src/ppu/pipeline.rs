@@ -147,6 +147,7 @@ pub(super) struct Mode3Pipeline {
     last_sprite_tile: Option<i16>,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
+    pending_obj_size: Option<u8>,
     pending_scy: Option<(u8, u8)>,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
@@ -196,6 +197,7 @@ impl Mode3Pipeline {
             last_sprite_tile: None,
             pending_bg_enable: None,
             pending_obj_enable: None,
+            pending_obj_size: None,
             pending_scy: None,
             pending_map_select: None,
             pending_tile_select: None,
@@ -260,6 +262,9 @@ impl Mode3Pipeline {
             self.step_sprite_fetch(vram);
         } else if self.output_stall == 0 {
             self.step_bg_fetcher(vram);
+        }
+        if let Some(value) = self.pending_obj_size.take() {
+            self.registers.lcdc = (self.registers.lcdc & !4) | value;
         }
         if self.output_stall != 0 {
             self.output_stall -= 1;
@@ -631,7 +636,11 @@ impl Mode3Pipeline {
         match register {
             0xFF40 => {
                 let old = self.registers.lcdc;
-                self.registers.lcdc = (value & !0x5B) | (old & 0x5B);
+                let defer_obj_size = (old ^ value) & 4 != 0
+                    && self.registers.scx != 0
+                    && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
+                let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
+                self.registers.lcdc = (value & !preserve) | (old & preserve);
                 if (old ^ value) & 1 != 0 {
                     let delay = if self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0
@@ -654,6 +663,9 @@ impl Mode3Pipeline {
                     } else {
                         self.pending_obj_enable = Some((2, value & 2));
                     }
+                }
+                if defer_obj_size {
+                    self.pending_obj_size = Some(value & 4);
                 }
                 if (old ^ value) & 0x48 != 0 {
                     if self.output_stall >= 2 {
