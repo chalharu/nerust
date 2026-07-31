@@ -647,7 +647,13 @@ impl Mode3Pipeline {
                     }
                 }
                 if (old ^ value) & 0x48 != 0 {
-                    self.pending_map_select = Some((4, value & 0x48));
+                    if self.output_stall >= 2 {
+                        self.registers.lcdc =
+                            (self.registers.lcdc & !0x48) | (value & 0x48);
+                        self.pending_map_select = None;
+                    } else {
+                        self.pending_map_select = Some((4, value & 0x48));
+                    }
                 }
                 if (old ^ value) & 0x10 != 0 {
                     let delay = if self.window_active { 2 } else { 3 };
