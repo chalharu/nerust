@@ -186,7 +186,7 @@ serde_json = { version = "=1.0.151" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
-tao = { version = "=0.35.3" }
+tao = { version = "=0.36.0" }
 thiserror = { version = "=2.0.19" }
 time = { version = "=0.3.54" }
 typetag = { version = "=0.2.23" }
