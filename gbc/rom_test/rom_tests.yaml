@@ -517,7 +517,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "28BF17CF"
         memory: []
         pad: []
 
