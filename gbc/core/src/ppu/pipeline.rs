@@ -182,6 +182,7 @@ pub(super) struct Mode3Pipeline {
     wx_written: bool,
     pending_tile_select_write: Option<(u8, u8)>,
     active_tile_select_write: Option<(u8, u8)>,
+    cgb_c_tile_write_persistent: bool,
     last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
     obj_line: [Option<ObjPixel>; 160],
@@ -244,6 +245,7 @@ impl Mode3Pipeline {
             wx_written: false,
             pending_tile_select_write: None,
             active_tile_select_write: None,
+            cgb_c_tile_write_persistent: false,
             last_bg_data_read: None,
             tile_data_bus: 0,
             obj_line: [None; 160],
@@ -265,7 +267,11 @@ impl Mode3Pipeline {
                 self.active_tile_select_write = Some(write);
             }
         } else {
-            self.active_tile_select_write = self.pending_tile_select_write.take();
+            if let Some(write) = self.pending_tile_select_write.take() {
+                self.active_tile_select_write = Some(write);
+            } else if !self.cgb_c_tile_write_persistent {
+                self.active_tile_select_write = None;
+            }
         }
         if self.cgb_revision_d {
             self.advance_scy_write();
@@ -387,14 +393,21 @@ impl Mode3Pipeline {
             FetchStage::DataLow => {
                 self.fetcher.low = if self.active_tile_select_write
                     .is_some_and(|(old, new)| {
-                        old == 0 && new != 0 && self.cgb_revision_d
+                        old == 0
+                            && new != 0
+                            && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
                     })
                 {
                     self.tile_data_bus
+                } else if self.active_tile_select_write.is_some_and(|(old, new)| {
+                    old != 0 && new == 0 && self.cgb_c_tile_write_persistent
+                }) {
+                    self.fetcher.tile_index
                 } else {
                     vram[self.fetcher.data_address]
                 };
                 self.active_tile_select_write = None;
+                self.cgb_c_tile_write_persistent = false;
                 self.last_bg_data_read = Some(BgDataRead::Low);
             }
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
@@ -408,6 +421,7 @@ impl Mode3Pipeline {
                 };
                 self.tile_data_bus = self.fetcher.high;
                 self.active_tile_select_write = None;
+                self.cgb_c_tile_write_persistent = false;
                 self.last_bg_data_read = Some(BgDataRead::High);
             }
             FetchStage::Sleep => {}
@@ -913,6 +927,10 @@ impl Mode3Pipeline {
                         };
                     self.pending_tile_select_write =
                         (!collided).then_some((old_tile_select, new_tile_select));
+                    self.cgb_c_tile_write_persistent = !self.cgb_revision_d
+                        && !self.window_active
+                        && self.fetcher.stage == FetchStage::Tile
+                        && self.fetcher.stage_dot == 0;
                     self.pending_tile_select = Some((3, value & 0x10));
                 }
                 if old_written & 0x20 != 0 && value & 0x20 == 0 {
