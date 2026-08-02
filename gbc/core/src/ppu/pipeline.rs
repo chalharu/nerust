@@ -394,6 +394,21 @@ impl Mode3Pipeline {
                 .next_sprite
                 .checked_sub(1)
                 .map(|index| self.sprites[index].x);
+            let reload_low_only = self.cgb_revision_d
+                && !self.window_active
+                && last_sprite_x == Some(8)
+                && self.fetcher.tile_y == 0
+                && self.active_tile_select_write.is_some_and(|(old, new)| {
+                    old != 0 && new == 0
+                });
+            if reload_low_only {
+                let lcdc = self.registers.lcdc;
+                self.registers.lcdc |= 0x10;
+                self.prepare_tile_data_address(false);
+                self.fetcher.low = vram[self.fetcher.data_address];
+                self.registers.lcdc = lcdc;
+                self.active_tile_select_write = None;
+            }
             let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
                 match (last_sprite_x, self.active_tile_select_write) {
                     (Some(x), Some((old, 0))) if x <= -7 && old != 0 => {
