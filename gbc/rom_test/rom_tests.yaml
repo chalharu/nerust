@@ -7,12 +7,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 10_000_000
+      - cycles: 3_000_000
         serial:
-          hash: ""
+          hash: "2B25B1A8"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -23,12 +21,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 600_000
         serial:
-          hash: ""
+          hash: "D56D47C8"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -39,12 +35,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 10_000_000
+      - cycles: 3_000_000
         serial:
-          hash: ""
+          hash: "80207C1D"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -55,12 +49,94 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 10_000_000
+      - cycles: 3_500_000
         serial:
-          hash: ""
+          hash: "2CEED1BE"
         frame:
           hash: ""
-        audio:
+        memory: []
+        pad: []
+  - id: "cpu_instrs_05_op_rp"
+    category: "cpu_instrs"
+    description: "CPU op rp"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/05-op rp.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 4_500_000
+        serial:
+          hash: "25328ED0"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "cpu_instrs_06_ld_r_r"
+    category: "cpu_instrs"
+    description: "CPU ld r,r"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/06-ld r,r.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 800_000
+        serial:
+          hash: "CFC3176B"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "cpu_instrs_07_jr_jp_call_ret_rst"
+    category: "cpu_instrs"
+    description: "CPU jr,jp,call,ret,rst"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 1_000_000
+        serial:
+          hash: "B7D8A077"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "cpu_instrs_08_misc_instrs"
+    category: "cpu_instrs"
+    description: "CPU misc instrs"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/08-misc instrs.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 800_000
+        serial:
+          hash: "2CA5A744"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "cpu_instrs_09_op_r_r"
+    category: "cpu_instrs"
+    description: "CPU op r,r"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/09-op r,r.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 10_500_000
+        serial:
+          hash: "DE6AFDDD"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "cpu_instrs_10_bit_ops"
+    category: "cpu_instrs"
+    description: "CPU bit ops"
+    rom: "retrio_gb-test-roms/cpu_instrs/individual/10-bit ops.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 16_000_000
+        serial:
+          hash: "F81CB006"
+        frame:
           hash: ""
         memory: []
         pad: []
@@ -71,12 +147,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 20_000_000
         serial:
-          hash: ""
+          hash: "05A6D948"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -87,12 +161,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 800_000
         serial:
-          hash: ""
+          hash: "EB56FABB"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -103,12 +175,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 600_000
         serial:
-          hash: ""
+          hash: "7A15AF07"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -119,12 +189,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 600_000
         serial:
-          hash: ""
+          hash: "E5881150"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -135,12 +203,10 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 700_000
         serial:
-          hash: ""
+          hash: "D2B4F231"
         frame:
-          hash: ""
-        audio:
           hash: ""
         memory: []
         pad: []
@@ -151,14 +217,84 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 1_800_000
+        serial:
+          hash: "A2165D86"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mem_timing2_read"
+    category: "mem_timing"
+    description: "Memory read timing (mem_timing-2)"
+    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/01-read_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 600_000
         serial:
           hash: ""
         frame:
           hash: ""
-        audio:
+        memory:
+          - address: "0xA015"
+            value: "0x50"
+          - address: "0xA01A"
+            value: "0x64"
+        pad: []
+  - id: "mem_timing2_write"
+    category: "mem_timing"
+    description: "Memory write timing (mem_timing-2)"
+    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/02-write_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 600_000
+        serial:
           hash: ""
-        memory: []
+        frame:
+          hash: ""
+        memory:
+          - address: "0xA016"
+            value: "0x50"
+          - address: "0xA01B"
+            value: "0x64"
+        pad: []
+  - id: "mem_timing2_modify"
+    category: "mem_timing"
+    description: "Memory modify timing (mem_timing-2)"
+    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/03-modify_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 700_000
+        serial:
+          hash: ""
+        frame:
+          hash: ""
+        memory:
+          - address: "0xA017"
+            value: "0x50"
+          - address: "0xA01C"
+            value: "0x64"
+        pad: []
+  - id: "mem_timing2_all"
+    category: "mem_timing"
+    description: "Memory timing combined (mem_timing-2)"
+    rom: "retrio_gb-test-roms/mem_timing-2/mem_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 3_300_000
+        serial:
+          hash: ""
+        frame:
+          hash: ""
+        memory:
+          - address: "0xA027"
+            value: "0x50"
+          - address: "0xA02C"
+            value: "0x64"
         pad: []
   - id: "dmg_acid2"
     category: "ppu"
@@ -167,7 +303,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 15_000_000
+      - cycles: 250_000
         serial:
           hash: ""
         frame:
@@ -181,7 +317,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 15_000_000
+      - cycles: 250_000
         serial:
           hash: ""
         frame:
@@ -195,7 +331,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -209,7 +345,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 80_000
         serial:
           hash: ""
         frame:
@@ -223,7 +359,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -237,7 +373,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 110_000
         serial:
           hash: ""
         frame:
@@ -251,7 +387,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -265,7 +401,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -279,7 +415,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -293,7 +429,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 40_000
         serial:
           hash: ""
         frame:
@@ -307,7 +443,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -321,7 +457,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 110_000
         serial:
           hash: ""
         frame:
@@ -335,7 +471,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 110_000
         serial:
           hash: ""
         frame:
@@ -349,7 +485,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -363,7 +499,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -377,7 +513,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -391,7 +527,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -405,7 +541,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 130_000
         serial:
           hash: ""
         frame:
@@ -419,7 +555,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -433,7 +569,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -447,7 +583,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -461,7 +597,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 40_000
         serial:
           hash: ""
         frame:
@@ -475,7 +611,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 110_000
         serial:
           hash: ""
         frame:
@@ -489,7 +625,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -503,7 +639,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 80_000
         serial:
           hash: ""
         frame:
@@ -517,7 +653,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 110_000
         serial:
           hash: ""
         frame:
@@ -531,7 +667,7 @@ cases:
     model: cgbc
     perf: false
     events:
-      - cycles: 400_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -545,7 +681,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -559,7 +695,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 90_000
         serial:
           hash: ""
         frame:
@@ -573,7 +709,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 130_000
         serial:
           hash: ""
         frame:
@@ -587,7 +723,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 150_000
         serial:
           hash: ""
         frame:
@@ -601,7 +737,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 130_000
         serial:
           hash: ""
         frame:
@@ -615,7 +751,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 200_000
+      - cycles: 130_000
         serial:
           hash: ""
         frame:
@@ -629,7 +765,7 @@ cases:
     model: cgb
     perf: false
     events:
-      - cycles: 25_000_000
+      - cycles: 350_000
         serial:
           hash: ""
         frame:
@@ -643,7 +779,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -658,7 +794,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -673,7 +809,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -688,7 +824,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -703,7 +839,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -718,7 +854,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -733,7 +869,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -748,7 +884,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -763,7 +899,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -778,7 +914,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
@@ -793,7 +929,7 @@ cases:
     model: dmg
     perf: false
     events:
-      - cycles: 30_000_000
+      - cycles: 250_000
         serial:
           hash: ""
           suffix: "0305080D1522"
