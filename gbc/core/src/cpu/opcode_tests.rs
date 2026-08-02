@@ -81,20 +81,32 @@ fn interrupt_dispatch_pushes_pc_on_m3_and_m4() {
     bus.set_ime(true);
 
     cpu.step(&mut bus);
-    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 1, .. }));
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 1, .. }
+    ));
     assert_eq!(cpu.registers().sp(), 0xFFFE);
 
     cpu.step(&mut bus);
-    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 2, .. }));
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 2, .. }
+    ));
     assert_eq!(cpu.registers().sp(), 0xFFFE);
 
     cpu.step(&mut bus);
-    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 3, .. }));
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 3, .. }
+    ));
     assert_eq!(cpu.registers().sp(), 0xFFFD);
     assert_eq!(bus.read(0xFFFD), (BASE >> 8) as u8);
 
     cpu.step(&mut bus);
-    assert!(matches!(cpu.phase(), Phase::InterruptDispatch { step: 4, .. }));
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 4, .. }
+    ));
     assert_eq!(cpu.registers().sp(), 0xFFFC);
     assert_eq!(bus.read(0xFFFC), BASE as u8);
 

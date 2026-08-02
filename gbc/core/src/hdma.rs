@@ -76,7 +76,7 @@ impl HdmaController {
     /// Lower 7 bits = remaining - 1 (or $7F when idle).
     pub fn read_status(&self) -> u8 {
         if self.active {
-            self.remaining - 1  // bit 7 = 0
+            self.remaining - 1 // bit 7 = 0
         } else if self.remaining > 0 {
             // Cancelled: return remaining with bit 7 = 1
             (self.remaining - 1) | 0x80
