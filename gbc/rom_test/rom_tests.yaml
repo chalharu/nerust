@@ -262,7 +262,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "45A32C3D"
         memory: []
         pad: []
 
@@ -292,7 +292,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "3DCD5FBE"
         memory: []
         pad: []
 
@@ -472,7 +472,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "B757E910"
         memory: []
         pad: []
 
