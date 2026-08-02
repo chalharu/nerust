@@ -16,6 +16,14 @@ enum BgDataRead {
 }
 
 #[derive(Debug, Clone, Copy)]
+enum WindowReload {
+    Both,
+    Low,
+    CopyLowToHigh,
+    CopyNextLowToHigh,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(super) struct Sprite {
     pub(super) x: i16,
     pub(super) tile: u8,
@@ -185,6 +193,7 @@ pub(super) struct Mode3Pipeline {
     active_tile_select_write: Option<(u8, u8)>,
     cgb_c_tile_write_persistent: bool,
     cgb_c_high_glitch: Option<(u8, u8)>,
+    reload_window_tile: Option<WindowReload>,
     last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
     object_data_bus: Option<u8>,
@@ -252,6 +261,7 @@ impl Mode3Pipeline {
             active_tile_select_write: None,
             cgb_c_tile_write_persistent: false,
             cgb_c_high_glitch: None,
+            reload_window_tile: None,
             last_bg_data_read: None,
             tile_data_bus: 0,
             object_data_bus: None,
@@ -337,6 +347,7 @@ impl Mode3Pipeline {
         if !self.cgb_revision_d {
             self.advance_scy_write();
         }
+        self.apply_window_reload(vram);
         if let Some((countdown, value)) = self.pending_obj_size.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -514,6 +525,38 @@ impl Mode3Pipeline {
             FetchStage::Push => {}
         }
         self.fetcher.advance();
+    }
+
+    fn apply_window_reload(&mut self, vram: &[u8; 0x4000]) {
+        let Some(reload) = self.reload_window_tile else { return };
+        let len = self.bg_fifo.len();
+        if len == 0 || len > 8 {
+            return;
+        }
+        if matches!(reload, WindowReload::CopyNextLowToHigh) && len != 8 {
+            return;
+        }
+        self.reload_window_tile = None;
+        let lcdc = self.registers.lcdc;
+        self.registers.lcdc |= 0x10;
+        self.prepare_tile_data_address(false);
+        let low = vram[self.fetcher.data_address];
+        self.prepare_tile_data_address(true);
+        let high = vram[self.fetcher.data_address];
+        self.registers.lcdc = lcdc;
+        for (index, pixel) in self.bg_fifo.iter_mut().enumerate() {
+            let bit = len - 1 - index;
+            let low_bit = (low >> bit) & 1;
+            let high_bit = (high >> bit) & 1;
+            pixel.color = match reload {
+                WindowReload::Both => low_bit | (high_bit << 1),
+                WindowReload::Low => low_bit | (pixel.color & 2),
+                WindowReload::CopyLowToHigh | WindowReload::CopyNextLowToHigh => {
+                    let bit = pixel.color & 1;
+                    bit | (bit << 1)
+                }
+            };
+        }
     }
 
     fn advance_scy_write(&mut self) {
@@ -999,6 +1042,23 @@ impl Mode3Pipeline {
                 if changed & 0x10 != 0 {
                     let old_tile_select = old_written & 0x10;
                     let new_tile_select = value & 0x10;
+                    if self.cgb_revision_d
+                        && self.window_active
+                        && old_tile_select != 0
+                        && new_tile_select == 0
+                    {
+                        self.reload_window_tile = self
+                            .next_sprite
+                            .checked_sub(1)
+                            .map(|index| self.sprites[index].x)
+                            .and_then(|x| match x {
+                                -8 => Some(WindowReload::Both),
+                                -7 => Some(WindowReload::Low),
+                                7 => Some(WindowReload::CopyNextLowToHigh),
+                                8..=9 => Some(WindowReload::CopyLowToHigh),
+                                _ => None,
+                            });
+                    }
                     let collided = self.cgb_revision_d
                         && match (
                             old_tile_select,
