@@ -394,17 +394,29 @@ impl Mode3Pipeline {
                 .next_sprite
                 .checked_sub(1)
                 .map(|index| self.sprites[index].x);
-            if self.cgb_revision_d
-                && !self.window_active
-                && last_sprite_x.is_some_and(|x| x <= -6)
-                && self.active_tile_select_write.is_some_and(|(old, new)| {
-                    old != 0 && new == 0
-                })
-            {
+            let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
+                match (last_sprite_x, self.active_tile_select_write) {
+                    (Some(x), Some((old, 0))) if x <= -7 && old != 0 => {
+                        Some((old, false))
+                    }
+                    (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
+                    (Some(x), Some((0, new)))
+                        if (-5..=-4).contains(&x) && new != 0 =>
+                    {
+                        Some((new, true))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some((tile_select, high_only)) = offscreen_tile_select {
                 let lcdc = self.registers.lcdc;
-                self.registers.lcdc |= 0x10;
-                self.prepare_tile_data_address(false);
-                self.fetcher.low = vram[self.fetcher.data_address];
+                self.registers.lcdc = (lcdc & !0x10) | tile_select;
+                if !high_only {
+                    self.prepare_tile_data_address(false);
+                    self.fetcher.low = vram[self.fetcher.data_address];
+                }
                 self.prepare_tile_data_address(true);
                 self.fetcher.high = vram[self.fetcher.data_address];
                 self.registers.lcdc = lcdc;
