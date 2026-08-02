@@ -149,6 +149,7 @@ pub(super) struct Mode3Pipeline {
     initial_dummy_pending: bool,
     fine_discard: u8,
     scx_tile_latch: u8,
+    pending_scx_high: Option<u8>,
     pixel_x: u8,
     complete: bool,
 
@@ -211,6 +212,7 @@ impl Mode3Pipeline {
             initial_dummy_pending: true,
             fine_discard: registers.scx & 7,
             scx_tile_latch: registers.scx >> 3,
+            pending_scx_high: None,
             pixel_x: 0,
             complete: false,
             fetcher: Fetcher::new(registers.scx >> 3),
@@ -436,6 +438,9 @@ impl Mode3Pipeline {
                 .tile_column
                 .wrapping_add(new_column.wrapping_sub(self.scx_tile_latch));
             self.scx_tile_latch = new_column;
+            if let Some(value) = self.pending_scx_high.take() {
+                self.registers.scx = (self.registers.scx & 7) | value;
+            }
         }
         let (map_base, tile_row, tile_y) = if self.window_active {
             let map = if self.registers.lcdc & 0x40 != 0 { 0x9C00 } else { 0x9800 };
@@ -913,7 +918,16 @@ impl Mode3Pipeline {
                 {
                     self.fine_discard = value & 7;
                 }
-                self.registers.scx = value;
+                let defer_high = !self.cgb_revision_d
+                    && (matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
+                        || (self.fetcher.stage == FetchStage::Tile
+                            && self.fetcher.stage_dot == 0));
+                if defer_high {
+                    self.pending_scx_high = Some(value & 0xF8);
+                    self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
+                } else {
+                    self.registers.scx = value;
+                }
             }
             0xFF47 => {
                 if self.registers.wx == 0
