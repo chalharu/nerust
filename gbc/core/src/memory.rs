@@ -260,6 +260,14 @@ impl GbcMemoryBus {
 
     /// Advance ALL devices (including CPU) by 1 T-cycle.
     /// Call this 4 times per CPU M-cycle for proper T-cycle synchronization.
+    ///
+    /// Timing model (T-cycle = 2 master clocks):
+    /// - Normal speed: 1 CPU M-cycle = 8 T-cycles (= 4 steps here), 1 PPU
+    ///   dot = 2 T-cycles (= 1 step). A frame always spans 70224 steps.
+    /// - Double speed (KEY1): 1 CPU M-cycle = 4 T-cycles (= 2 steps), so the
+    ///   CPU steps twice per 4-step window while the PPU dot rate is
+    ///   unchanged.
+    ///
     /// Returns true if a PPU frame completed.
     pub fn step_tcycle(&mut self, cpu: &mut impl CpuStepper) -> bool {
         self.tick = self.tick.wrapping_add(1);
@@ -295,7 +303,14 @@ impl GbcMemoryBus {
                 self.ppu.write_oam(offset, byte);
             }
         }
-        if t1 == 3 {
+        // CPU M-cycle cadence: every 4 steps normally, every 2 steps in
+        // double-speed mode (4 T-cycles = 1 M-cycle).
+        let cpu_runs = if self.double_speed {
+            t1 == 1 || t1 == 3
+        } else {
+            t1 == 3
+        };
+        if cpu_runs {
             self.cpu_step_active = true;
             cpu.step(self);
             self.cpu_step_active = false;
@@ -480,6 +495,32 @@ mod tests {
 
     fn bus() -> GbcMemoryBus {
         GbcMemoryBus::new([0; 0x100], false)
+    }
+
+    /// Counts how many M-cycles `step_tcycle` advances the CPU.
+    struct CountingCpu {
+        steps: u32,
+    }
+
+    impl CpuStepper for CountingCpu {
+        fn step(&mut self, _bus: &mut GbcMemoryBus) {
+            self.steps += 1;
+        }
+    }
+
+    fn cpu_steps(cycles: u32, double_speed: bool) -> u32 {
+        let mut bus = bus();
+        if double_speed {
+            bus.write(0xFF4D, 0x01);
+            bus.stop();
+        }
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..cycles {
+            for _ in 0..4 {
+                bus.step_tcycle(&mut cpu);
+            }
+        }
+        cpu.steps
     }
 
     #[test]
@@ -741,6 +782,65 @@ mod tests {
         bus.stop();
         assert_eq!(bus.read(0xFF04), 0);
         assert!(bus.is_halted_or_stopped());
+    }
+
+    #[test]
+    fn stop_with_speed_switch_continues_execution() {
+        let mut bus = bus();
+        bus.write(0xFF4D, 0x01); // prepare speed switch
+        assert!(!bus.is_halted_or_stopped());
+        bus.stop();
+        // Speed switch does not halt the CPU.
+        assert!(!bus.is_halted_or_stopped());
+        // KEY1 now reports double speed (bit0) and no pending flag (bit7).
+        assert_eq!(bus.read(0xFF4D), 0x7F);
+    }
+
+    #[test]
+    fn stop_without_speed_switch_sets_halted() {
+        let mut bus = bus();
+        bus.stop();
+        assert!(bus.is_halted_or_stopped());
+        // No speed switch performed.
+        assert_eq!(bus.read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn normal_speed_cpu_steps_once_per_4_tcycles() {
+        // 4 M-cycles = 16 T-cycles → 4 CPU steps at normal speed.
+        assert_eq!(cpu_steps(4, false), 4);
+    }
+
+    #[test]
+    fn double_speed_cpu_steps_twice_per_4_tcycles() {
+        // 4 M-cycles = 16 T-cycles → 8 CPU steps in double-speed mode
+        // (1 M-cycle = 2 T-cycles).
+        assert_eq!(cpu_steps(4, true), 8);
+    }
+
+    #[test]
+    fn double_speed_keeps_ppu_frame_rate() {
+        // Frame length in steps must be identical in both modes:
+        // 70224 steps/frame regardless of CPU speed.
+        let mut normal = bus();
+        let mut double = bus();
+        double.write(0xFF4D, 0x01);
+        double.stop();
+        let mut normal_cpu = CountingCpu { steps: 0 };
+        let mut double_cpu = CountingCpu { steps: 0 };
+        let mut normal_frames = 0;
+        let mut double_frames = 0;
+        for _ in 0..70224 {
+            if normal.step_tcycle(&mut normal_cpu) {
+                normal_frames += 1;
+            }
+            if double.step_tcycle(&mut double_cpu) {
+                double_frames += 1;
+            }
+        }
+        assert_eq!(normal_frames, 1);
+        assert_eq!(double_frames, 1);
+        assert_eq!(double_cpu.steps, normal_cpu.steps * 2);
     }
 
     // ── Default impl ──────────────────────────────────────
