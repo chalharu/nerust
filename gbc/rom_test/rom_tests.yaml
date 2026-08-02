@@ -160,7 +160,6 @@ cases:
           hash: ""
         memory: []
         pad: []
-
   - id: "dmg_acid2"
     category: "ppu"
     description: "DMG acid2 PPU test — reference image rendering"
@@ -175,7 +174,6 @@ cases:
           hash: "C1453957"
         memory: []
         pad: []
-
   - id: "dmg_acid2_cgb"
     category: "ppu"
     description: "dmg-acid2 on CGB hardware — verifies DMG game CGB palette behavior"
@@ -190,7 +188,6 @@ cases:
           hash: "2A88898D"
         memory: []
         pad: []
-
   - id: "mealybug_m2_win_en_toggle_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)"
@@ -205,7 +202,6 @@ cases:
           hash: "68220742"
         memory: []
         pad: []
-
   - id: "mealybug_m3_bgp_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_bgp_change (CGB D)"
@@ -220,7 +216,6 @@ cases:
           hash: "31A9CE19"
         memory: []
         pad: []
-
   - id: "mealybug_m3_bgp_change_sprites_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_bgp_change_sprites (CGB D)"
@@ -235,7 +230,6 @@ cases:
           hash: "C9E3D488"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_bg_en_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change (CGB D)"
@@ -250,7 +244,6 @@ cases:
           hash: "F24538D9"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_bg_en_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change2"
@@ -265,7 +258,6 @@ cases:
           hash: "45A32C3D"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_bg_map_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change (CGB D)"
@@ -280,7 +272,6 @@ cases:
           hash: "C87825C9"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_bg_map_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change2"
@@ -295,7 +286,6 @@ cases:
           hash: "3DCD5FBE"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_obj_en_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change (CGB D)"
@@ -310,7 +300,6 @@ cases:
           hash: "0394C786"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_obj_en_change_variant_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant (CGB D)"
@@ -325,7 +314,6 @@ cases:
           hash: "852CD3B7"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_obj_size_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change (CGB D)"
@@ -340,7 +328,6 @@ cases:
           hash: "35461FB5"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_obj_size_change_scx_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx (CGB D)"
@@ -355,7 +342,6 @@ cases:
           hash: "68901ADA"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_tile_sel_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change (CGB D)"
@@ -370,7 +356,6 @@ cases:
           hash: "7B47B5CD"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_tile_sel_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change2"
@@ -385,7 +370,6 @@ cases:
           hash: "2BB3195E"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_tile_sel_win_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change (CGB D)"
@@ -400,7 +384,6 @@ cases:
           hash: "09F3035D"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_tile_sel_win_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change2"
@@ -415,7 +398,6 @@ cases:
           hash: "9385582A"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_win_en_change_multiple_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)"
@@ -430,7 +412,6 @@ cases:
           hash: "D4D3471D"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_win_en_change_multiple_wx_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (CGB D)"
@@ -445,7 +426,6 @@ cases:
           hash: ""
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_win_map_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)"
@@ -460,7 +440,6 @@ cases:
           hash: "B79A2CDD"
         memory: []
         pad: []
-
   - id: "mealybug_m3_lcdc_win_map_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change2"
@@ -475,7 +454,6 @@ cases:
           hash: "B757E910"
         memory: []
         pad: []
-
   - id: "mealybug_m3_obp0_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_obp0_change (CGB D)"
@@ -490,7 +468,6 @@ cases:
           hash: "E7EB160E"
         memory: []
         pad: []
-
   - id: "mealybug_m3_scx_high_5_bits_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scx_high_5_bits (CGB D)"
@@ -505,7 +482,6 @@ cases:
           hash: "A3277237"
         memory: []
         pad: []
-
   - id: "mealybug_m3_scx_high_5_bits_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scx_high_5_bits_change2"
@@ -520,7 +496,6 @@ cases:
           hash: "28BF17CF"
         memory: []
         pad: []
-
   - id: "mealybug_m3_scx_low_3_bits_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scx_low_3_bits (CGB D)"
@@ -535,7 +510,6 @@ cases:
           hash: "CC5985CC"
         memory: []
         pad: []
-
   - id: "mealybug_m3_scy_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scy_change (CGB D)"
@@ -550,7 +524,6 @@ cases:
           hash: "B50E8F8A"
         memory: []
         pad: []
-
   - id: "mealybug_m3_scy_change2"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scy_change2"
@@ -565,7 +538,6 @@ cases:
           hash: "A68BCAE0"
         memory: []
         pad: []
-
   - id: "mealybug_m3_window_timing_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_window_timing (CGB D)"
@@ -580,7 +552,6 @@ cases:
           hash: "6A57241D"
         memory: []
         pad: []
-
   - id: "mealybug_m3_window_timing_wx_0_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_window_timing_wx_0 (CGB D)"
@@ -595,7 +566,6 @@ cases:
           hash: "811157A0"
         memory: []
         pad: []
-
   - id: "mealybug_m3_wx_4_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_wx_4_change (CGB D)"
@@ -610,7 +580,6 @@ cases:
           hash: ""
         memory: []
         pad: []
-
   - id: "mealybug_m3_wx_4_change_sprites_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)"
@@ -625,7 +594,6 @@ cases:
           hash: "E3EAF371"
         memory: []
         pad: []
-
   - id: "mealybug_m3_wx_5_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_wx_5_change (CGB D)"
@@ -640,7 +608,6 @@ cases:
           hash: ""
         memory: []
         pad: []
-
   - id: "mealybug_m3_wx_6_change_cgb"
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_wx_6_change (CGB D)"
@@ -655,8 +622,6 @@ cases:
           hash: ""
         memory: []
         pad: []
-
-
   - id: "cgb_acid2"
     category: "ppu"
     description: "cgb-acid2 — CGB PPU compliance test"
