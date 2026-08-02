@@ -187,6 +187,7 @@ pub(super) struct Mode3Pipeline {
     last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
     object_data_bus: Option<u8>,
+    sprite_scy_latch: Option<u8>,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -252,6 +253,7 @@ impl Mode3Pipeline {
             last_bg_data_read: None,
             tile_data_bus: 0,
             object_data_bus: None,
+            sprite_scy_latch: None,
             obj_line: [None; 160],
         }
     }
@@ -438,6 +440,23 @@ impl Mode3Pipeline {
             }
             FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
+                if !self.window_active && let Some(scy) = self.sprite_scy_latch.take() {
+                    let y = scy.wrapping_add(self.ly);
+                    let map_base = if self.registers.lcdc & 0x08 != 0 {
+                        0x9C00
+                    } else {
+                        0x9800
+                    };
+                    self.fetcher.map_address = map_base
+                        + u16::from(y >> 3) * 32
+                        + u16::from(self.fetcher.tile_column & 31);
+                    self.fetcher.tile_y = y & 7;
+                    self.read_tile(vram);
+                    self.prepare_tile_data_address(false);
+                    self.fetcher.low = vram[self.fetcher.data_address];
+                    self.prepare_tile_data_address(true);
+                    self.fetcher.high = vram[self.fetcher.data_address];
+                }
                 if self.refetch_push_map {
                     self.refetch_push_map(vram);
                 }
@@ -694,6 +713,18 @@ impl Mode3Pipeline {
             return;
         }
         let fetch = self.sprite_fetch.take().expect("sprite fetch is active");
+        self.sprite_scy_latch = (self.cgb_revision_d
+            && fetch.sprite.x < 0
+            && !self.window_active)
+            .then(|| {
+                if fetch.sprite.x == -8 {
+                    self.pending_scy
+                        .map(|(_, value)| value)
+                        .unwrap_or(self.registers.scy)
+                } else {
+                    self.registers.scy
+                }
+            });
         self.merge_sprite(fetch);
     }
 
