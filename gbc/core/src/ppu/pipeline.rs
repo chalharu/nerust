@@ -478,6 +478,10 @@ impl Mode3Pipeline {
                 self.prepare_tile_data_address(false)
             }
             FetchStage::DataLow => {
+                let reset_glitch = !self.cgb_revision_d
+                    && self.active_tile_select_write.is_some_and(|(old, new)| {
+                        old != 0 && new == 0 && self.cgb_c_tile_write_persistent
+                    });
                 self.fetcher.low = if self.active_tile_select_write
                     .is_some_and(|(old, new)| {
                         old == 0
@@ -493,6 +497,15 @@ impl Mode3Pipeline {
                 } else {
                     vram[self.fetcher.data_address]
                 };
+                if reset_glitch {
+                    let lcdc = self.registers.lcdc;
+                    let data_address = self.fetcher.data_address;
+                    self.registers.lcdc |= 0x10;
+                    self.prepare_tile_data_address(false);
+                    self.object_data_bus = Some(vram[self.fetcher.data_address]);
+                    self.fetcher.data_address = data_address;
+                    self.registers.lcdc = lcdc;
+                }
                 self.active_tile_select_write = None;
                 self.cgb_c_tile_write_persistent = false;
                 self.last_bg_data_read = Some(BgDataRead::Low);
@@ -501,7 +514,9 @@ impl Mode3Pipeline {
                 self.prepare_tile_data_address(true)
             }
             FetchStage::DataHigh => {
-                self.fetcher.high = match self.cgb_c_high_glitch.take() {
+                let high_glitch = self.cgb_c_high_glitch.take();
+                let reset_glitch = high_glitch.is_some_and(|(old, new)| old != 0 && new == 0);
+                self.fetcher.high = match high_glitch {
                     Some((0, new)) if new != 0 => {
                         self.object_data_bus.unwrap_or(self.tile_data_bus)
                     }
@@ -514,6 +529,15 @@ impl Mode3Pipeline {
                         _ => vram[self.fetcher.data_address],
                     },
                 };
+                if reset_glitch {
+                    let lcdc = self.registers.lcdc;
+                    let data_address = self.fetcher.data_address;
+                    self.registers.lcdc |= 0x10;
+                    self.prepare_tile_data_address(true);
+                    self.object_data_bus = Some(vram[self.fetcher.data_address]);
+                    self.fetcher.data_address = data_address;
+                    self.registers.lcdc = lcdc;
+                }
                 self.tile_data_bus = self.fetcher.high;
                 self.active_tile_select_write = None;
                 self.cgb_c_tile_write_persistent = false;
