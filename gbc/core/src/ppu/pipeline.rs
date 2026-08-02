@@ -743,13 +743,10 @@ impl Mode3Pipeline {
                 let old_written = self.written_lcdc;
                 self.written_lcdc = value;
                 let changed = old_written ^ value;
-                let obj_size_delay = if changed & 4 != 0
-                    && value & 4 == 0
-                    && self.registers.scx != 0
-                {
+                let obj_size_delay = if changed & 4 != 0 && value & 4 == 0 {
                     self.sprite_fetch
                         .as_ref()
-                        .and_then(|fetch| (1..=2).contains(&fetch.dot).then_some(3 - fetch.dot))
+                        .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
                 } else {
                     None
                 };
