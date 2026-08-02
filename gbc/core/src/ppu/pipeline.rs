@@ -256,8 +256,12 @@ impl Mode3Pipeline {
             return None;
         }
         self.last_bg_data_read = None;
-        if let Some(write) = self.pending_tile_select_write.take() {
-            self.active_tile_select_write = Some(write);
+        if self.cgb_revision_d {
+            if let Some(write) = self.pending_tile_select_write.take() {
+                self.active_tile_select_write = Some(write);
+            }
+        } else {
+            self.active_tile_select_write = self.pending_tile_select_write.take();
         }
         if let Some((countdown, value)) = self.pending_scy.as_mut() {
             *countdown = countdown.saturating_sub(1);
