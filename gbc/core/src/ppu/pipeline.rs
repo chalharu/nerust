@@ -761,7 +761,9 @@ impl Mode3Pipeline {
                 let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
                 self.registers.lcdc = (value & !preserve) | (old & preserve);
                 if changed & 1 != 0 {
-                    let delay = if self.fetcher.stage == FetchStage::Tile
+                    let delay = if !self.cgb_revision_d {
+                        2
+                    } else if self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0
                     {
                         0
