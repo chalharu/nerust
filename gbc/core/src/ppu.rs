@@ -152,6 +152,13 @@ impl GbcPpu {
         }
         self.mode_clock += 1;
 
+        self.start_pipeline_if_needed();
+        self.step_pipeline();
+        self.advance_scanline(lcd_stat, vblank);
+        self.update_mode_and_stat(lcd_stat);
+    }
+
+    fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
             let sprites = self.scanline_sprites();
             self.mode3_pipeline = Some(Mode3Pipeline::new(
@@ -175,7 +182,9 @@ impl GbcPpu {
                 self.opri,
             ));
         }
+    }
 
+    fn step_pipeline(&mut self) {
         if let Some(pipeline) = self.mode3_pipeline.as_mut()
             && !pipeline.complete()
         {
@@ -188,7 +197,9 @@ impl GbcPpu {
                 self.mode3_pipeline = None;
             }
         }
+    }
 
+    fn advance_scanline(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
         if self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.mode3_pipeline = None;
@@ -205,7 +216,9 @@ impl GbcPpu {
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
             self.check_lyc(lcd_stat);
         }
+    }
 
+    fn update_mode_and_stat(&mut self, lcd_stat: &mut bool) {
         let current_mode = self.current_mode();
         let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
         self.lcd_stat_last_mode = Some(current_mode);
