@@ -1,0 +1,9 @@
+[submodule "roms/gbc/mattcurrie_cgb-acid2/repo/mgblib"]
+	path = roms/gbc/mattcurrie_cgb-acid2/repo/mgblib
+	url = https://github.com/mattcurrie/mgblib
+[submodule "roms/gbc/mattcurrie_dmg-acid2/repo/mgblib"]
+	path = roms/gbc/mattcurrie_dmg-acid2/repo/mgblib
+	url = https://github.com/mattcurrie/mgblib
+[submodule "roms/gbc/mattcurrie_mealybug-tearoom-tests/repo/mgblib"]
+	path = roms/gbc/mattcurrie_mealybug-tearoom-tests/repo/mgblib
+	url = https://github.com/mattcurrie/mgblib
