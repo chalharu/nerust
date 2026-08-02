@@ -202,6 +202,8 @@ pub(super) struct Mode3Pipeline {
     corrected_output: Option<OutputPixel>,
     force_bg_high_delay: u8,
     force_bg_high_pixels: u8,
+    force_bg_low: u8,
+    force_bg_low_pixels: u8,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -274,6 +276,8 @@ impl Mode3Pipeline {
             corrected_output: None,
             force_bg_high_delay: 0,
             force_bg_high_pixels: 0,
+            force_bg_low: 0,
+            force_bg_low_pixels: 0,
             obj_line: [None; 160],
         }
     }
@@ -379,6 +383,11 @@ impl Mode3Pipeline {
         } else if self.force_bg_high_pixels != 0 {
             bg.color |= 2;
             self.force_bg_high_pixels -= 1;
+        }
+        if self.force_bg_low_pixels != 0 {
+            let bit = self.force_bg_low_pixels - 1;
+            bg.color = (bg.color & 2) | ((self.force_bg_low >> bit) & 1);
+            self.force_bg_low_pixels -= 1;
         }
         let obj = self.obj_line[x as usize];
         let color = self.compose_pixel(bg, obj, bg_palette, obj_palette);
@@ -1143,6 +1152,23 @@ impl Mode3Pipeline {
                         && self.fetcher.stage_dot == 0
                         && (self.window_active
                             || (old_tile_select != 0 && new_tile_select == 0));
+                    if !self.cgb_revision_d
+                        && !self.window_active
+                        && old_tile_select != 0
+                        && new_tile_select == 0
+                        && self.fetcher.stage == FetchStage::Tile
+                        && self.fetcher.stage_dot == 0
+                        && self
+                            .next_sprite
+                            .checked_sub(1)
+                            .map(|index| self.sprites[index].x)
+                            == Some(5)
+                    {
+                        let low = self.object_data_bus.unwrap_or(self.tile_data_bus);
+                        self.correct_last_bg_color(|color| (color & 2) | ((low >> 7) & 1));
+                        self.force_bg_low = low;
+                        self.force_bg_low_pixels = 7;
+                    }
                     self.cgb_c_high_glitch = (!self.cgb_revision_d
                         && self.fetcher.stage == FetchStage::DataLow
                         && self.fetcher.stage_dot == 0
