@@ -390,6 +390,26 @@ impl Mode3Pipeline {
 
     fn step_bg_fetcher(&mut self, vram: &[u8; 0x4000]) {
         if self.fetcher.stage == FetchStage::Push && !self.bg_fifo.is_empty() {
+            let last_sprite_x = self
+                .next_sprite
+                .checked_sub(1)
+                .map(|index| self.sprites[index].x);
+            if self.cgb_revision_d
+                && !self.window_active
+                && last_sprite_x.is_some_and(|x| x <= -6)
+                && self.active_tile_select_write.is_some_and(|(old, new)| {
+                    old != 0 && new == 0
+                })
+            {
+                let lcdc = self.registers.lcdc;
+                self.registers.lcdc |= 0x10;
+                self.prepare_tile_data_address(false);
+                self.fetcher.low = vram[self.fetcher.data_address];
+                self.prepare_tile_data_address(true);
+                self.fetcher.high = vram[self.fetcher.data_address];
+                self.registers.lcdc = lcdc;
+                self.active_tile_select_write = None;
+            }
             return;
         }
         match self.fetcher.stage {
