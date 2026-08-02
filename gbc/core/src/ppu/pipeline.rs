@@ -176,6 +176,7 @@ pub(super) struct Mode3Pipeline {
     pending_obj_size: Option<(u8, u8)>,
     relatch_obj_size_high: bool,
     pending_scy: Option<(u8, u8)>,
+    scy_written: bool,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
     refetch_push_map: bool,
@@ -242,6 +243,7 @@ impl Mode3Pipeline {
             pending_obj_size: None,
             relatch_obj_size_high: false,
             pending_scy: None,
+            scy_written: false,
             pending_map_select: None,
             pending_tile_select: None,
             refetch_push_map: false,
@@ -715,7 +717,8 @@ impl Mode3Pipeline {
         let fetch = self.sprite_fetch.take().expect("sprite fetch is active");
         self.sprite_scy_latch = (self.cgb_revision_d
             && fetch.sprite.x < 0
-            && !self.window_active)
+            && !self.window_active
+            && self.scy_written)
             .then(|| {
                 if fetch.sprite.x == -8 {
                     self.pending_scy
@@ -994,6 +997,7 @@ impl Mode3Pipeline {
                 }
             }
             0xFF42 => {
+                self.scy_written = true;
                 if self.cgb_revision_d {
                     self.pending_scy = Some((4, value));
                 } else {
