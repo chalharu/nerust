@@ -174,6 +174,7 @@ pub(super) struct Mode3Pipeline {
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
     pending_obj_size: Option<(u8, u8)>,
+    relatch_obj_size_high: bool,
     pending_scy: Option<(u8, u8)>,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
@@ -235,6 +236,7 @@ impl Mode3Pipeline {
             pending_obj_enable: None,
             pending_bgp: None,
             pending_obj_size: None,
+            relatch_obj_size_high: false,
             pending_scy: None,
             pending_map_select: None,
             pending_tile_select: None,
@@ -621,8 +623,13 @@ impl Mode3Pipeline {
             self.step_bg_fetcher(vram);
         }
         let Some(fetch) = self.sprite_fetch.as_mut() else { return };
-        if fetch.dot == 2 || (fetch.dot == 4 && self.registers.scx != 0) {
+        let relatch_high = fetch.dot == 4
+            && (self.registers.scx != 0 || self.relatch_obj_size_high);
+        if fetch.dot == 2 || relatch_high {
             fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
+        }
+        if fetch.dot == 4 {
+            self.relatch_obj_size_high = false;
         }
         if fetch.dot == 2 || fetch.dot == 4 {
             let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8
@@ -783,7 +790,12 @@ impl Mode3Pipeline {
                 let old_written = self.written_lcdc;
                 self.written_lcdc = value;
                 let changed = old_written ^ value;
-                let obj_size_delay = if changed & 4 != 0 && value & 4 == 0 {
+                let defer_obj_size_set = value & 4 != 0
+                    && self.registers.scx == 0
+                    && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
+                let obj_size_delay = if changed & 4 != 0
+                    && (value & 4 == 0 || defer_obj_size_set)
+                {
                     self.sprite_fetch
                         .as_ref()
                         .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
@@ -820,6 +832,7 @@ impl Mode3Pipeline {
                 }
                 if let Some(delay) = obj_size_delay {
                     self.pending_obj_size = Some((delay, value & 4));
+                    self.relatch_obj_size_high = defer_obj_size_set;
                 }
                 if changed & 0x08 != 0 {
                     if let Some(fetch) = self.sprite_fetch.as_mut() {
