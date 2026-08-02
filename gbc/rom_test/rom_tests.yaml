@@ -562,7 +562,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "A68BCAE0"
         memory: []
         pad: []
 

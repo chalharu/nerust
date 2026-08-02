@@ -263,12 +263,8 @@ impl Mode3Pipeline {
         } else {
             self.active_tile_select_write = self.pending_tile_select_write.take();
         }
-        if let Some((countdown, value)) = self.pending_scy.as_mut() {
-            *countdown = countdown.saturating_sub(1);
-            if *countdown == 0 {
-                self.registers.scy = *value;
-                self.pending_scy = None;
-            }
+        if self.cgb_revision_d {
+            self.advance_scy_write();
         }
         if let Some((countdown, value)) = self.pending_map_select.as_mut() {
             *countdown = countdown.saturating_sub(1);
@@ -293,6 +289,9 @@ impl Mode3Pipeline {
                 self.window_seen = true;
             }
             self.step_bg_fetcher(vram);
+            if !self.cgb_revision_d {
+                self.advance_scy_write();
+            }
             if self.initial_dummy_pending && !self.bg_fifo.is_empty() {
                 self.bg_fifo.clear();
                 self.fetcher.tile_column = self.fetcher.tile_column.wrapping_sub(1);
@@ -316,6 +315,9 @@ impl Mode3Pipeline {
             self.step_sprite_fetch(vram);
         } else if self.output_stall == 0 {
             self.step_bg_fetcher(vram);
+        }
+        if !self.cgb_revision_d {
+            self.advance_scy_write();
         }
         if let Some((countdown, value)) = self.pending_obj_size.as_mut() {
             *countdown = countdown.saturating_sub(1);
@@ -416,6 +418,16 @@ impl Mode3Pipeline {
         self.fetcher.advance();
     }
 
+    fn advance_scy_write(&mut self) {
+        if let Some((countdown, value)) = self.pending_scy.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.scy = *value;
+                self.pending_scy = None;
+            }
+        }
+    }
+
     fn prepare_tile_address(&mut self) {
         if !self.window_active && self.fetcher.stage_dot == 0 {
             let new_column = self.registers.scx >> 3;
@@ -451,6 +463,12 @@ impl Mode3Pipeline {
     }
 
     fn prepare_tile_data_address(&mut self, high: bool) {
+        if !self.cgb_revision_d && !self.window_active {
+            self.fetcher.tile_y = self.registers.scy.wrapping_add(self.ly) & 7;
+            if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
+                self.fetcher.tile_y = 7 - self.fetcher.tile_y;
+            }
+        }
         let tile_address = if self.registers.lcdc & 0x10 == 0 {
             0x9000u16.wrapping_add_signed(
                 (self.fetcher.tile_index as i8 as i16).wrapping_mul(16),
@@ -885,7 +903,7 @@ impl Mode3Pipeline {
                 if self.cgb_revision_d {
                     self.pending_scy = Some((4, value));
                 } else {
-                    self.pending_scy = Some((1, value));
+                    self.pending_scy = Some((3, value));
                 }
             }
             0xFF43 => {
