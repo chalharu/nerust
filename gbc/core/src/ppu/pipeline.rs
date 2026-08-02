@@ -942,7 +942,9 @@ impl Mode3Pipeline {
                         (!collided).then_some((old_tile_select, new_tile_select));
                     self.cgb_c_tile_write_persistent = !self.cgb_revision_d
                         && self.fetcher.stage == FetchStage::Tile
-                        && self.fetcher.stage_dot == 0;
+                        && self.fetcher.stage_dot == 0
+                        && (self.window_active
+                            || (old_tile_select != 0 && new_tile_select == 0));
                     self.cgb_c_high_glitch = (!self.cgb_revision_d
                         && self.fetcher.stage == FetchStage::DataLow
                         && self.fetcher.stage_dot == 0
