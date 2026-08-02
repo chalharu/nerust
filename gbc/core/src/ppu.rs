@@ -489,6 +489,29 @@ impl GbcPpu {
     }
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
+        self.dispatch_pipeline_write(addr, value);
+        match addr {
+            0xFF40 => self.write_lcdc(value),
+            0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
+            0xFF42 => self.scy = value,
+            0xFF43 => self.scx = value,
+            0xFF45 => self.lyc = value,
+            0xFF47 => self.bgp = value,
+            0xFF48 => self.obp0 = value,
+            0xFF49 => self.obp1 = value,
+            0xFF4A => self.wy = value,
+            0xFF4B => self.wx = value,
+            0xFF4F => self.vbk = value & 0x01,
+            0xFF68 => self.write_bgpi(value),
+            0xFF69 => self.write_bg_palette_data(value),
+            0xFF6A => self.write_obpi(value),
+            0xFF6B => self.write_obj_palette_data(value),
+            0xFF6C => self.set_key0(value),
+            _ => {}
+        }
+    }
+
+    fn dispatch_pipeline_write(&mut self, addr: u16, value: u8) {
         if matches!(
             addr,
             0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
@@ -500,84 +523,70 @@ impl GbcPpu {
                     output.color;
             }
         }
-        match addr {
-            0xFF40 => {
-                let lcd_was_enabled = self.lcdc & 0x80 != 0;
-                self.lcdc = value;
-                if !lcd_was_enabled && value & 0x80 != 0 {
-                    self.lcd_stat_last_mode = Some(PpuMode::OamSearch);
-                    self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
-                    if self.stat & 0x20 != 0 {
-                        self.mode_stat_delay = 1;
-                    }
-                }
+    }
+
+    fn write_lcdc(&mut self, value: u8) {
+        let lcd_was_enabled = self.lcdc & 0x80 != 0;
+        self.lcdc = value;
+        if !lcd_was_enabled && value & 0x80 != 0 {
+            self.lcd_stat_last_mode = Some(PpuMode::OamSearch);
+            self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
+            if self.stat & 0x20 != 0 {
+                self.mode_stat_delay = 1;
             }
-            0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
-            0xFF42 => self.scy = value,
-            0xFF43 => self.scx = value,
-            0xFF45 => self.lyc = value,
-            0xFF47 => self.bgp = value,
-            0xFF48 => self.obp0 = value,
-            0xFF49 => self.obp1 = value,
-            0xFF4A => self.wy = value,
-            0xFF4B => self.wx = value,
-            0xFF4F => self.vbk = value & 0x01,
-            0xFF68 => {
-                if self.key0 & 0x04 == 0 {
-                    // not DMG emulation mode
-                    self.bgpi = value & 0x3F;
-                    if value & 0x80 != 0 {
-                        self.bgpi |= 0x80;
-                    }
-                }
+        }
+    }
+
+    fn write_bgpi(&mut self, value: u8) {
+        if self.key0 & 0x04 == 0 {
+            // not DMG emulation mode
+            self.bgpi = value & 0x3F;
+            if value & 0x80 != 0 {
+                self.bgpi |= 0x80;
             }
-            0xFF69 => {
-                if self.key0 & 0x04 == 0 {
-                    // not DMG emulation mode
-                    let idx = (self.bgpi & 0x3F) as usize;
-                    let auto_inc = self.bgpi & 0x80 != 0;
-                    if idx & 1 == 0 {
-                        self.bg_palette[idx >> 1] =
-                            (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
-                    } else {
-                        self.bg_palette[idx >> 1] =
-                            (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                    }
-                    if auto_inc {
-                        self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
-                    }
-                }
+        }
+    }
+
+    fn write_obpi(&mut self, value: u8) {
+        if self.key0 & 0x04 == 0 {
+            // not DMG emulation mode
+            self.obpi = value & 0x3F;
+            if value & 0x80 != 0 {
+                self.obpi |= 0x80;
             }
-            0xFF6A => {
-                if self.key0 & 0x04 == 0 {
-                    // not DMG emulation mode
-                    self.obpi = value & 0x3F;
-                    if value & 0x80 != 0 {
-                        self.obpi |= 0x80;
-                    }
-                }
-            }
-            0xFF6B => {
-                if self.key0 & 0x04 == 0 {
-                    // not DMG emulation mode
-                    let idx = (self.obpi & 0x3F) as usize;
-                    let auto_inc = self.obpi & 0x80 != 0;
-                    if idx & 1 == 0 {
-                        self.obj_palette[idx >> 1] =
-                            (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
-                    } else {
-                        self.obj_palette[idx >> 1] =
-                            (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
-                    }
-                    if auto_inc {
-                        self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
-                    }
-                }
-            }
-            0xFF6C => {
-                self.set_key0(value);
-            }
-            _ => {}
+        }
+    }
+
+    fn write_bg_palette_data(&mut self, value: u8) {
+        if self.key0 & 0x04 != 0 {
+            return;
+        }
+        let idx = (self.bgpi & 0x3F) as usize;
+        let auto_inc = self.bgpi & 0x80 != 0;
+        if idx & 1 == 0 {
+            self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
+        } else {
+            self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+        }
+        if auto_inc {
+            self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
+        }
+    }
+
+    fn write_obj_palette_data(&mut self, value: u8) {
+        if self.key0 & 0x04 != 0 {
+            return;
+        }
+        let idx = (self.obpi & 0x3F) as usize;
+        let auto_inc = self.obpi & 0x80 != 0;
+        if idx & 1 == 0 {
+            self.obj_palette[idx >> 1] = (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
+        } else {
+            self.obj_palette[idx >> 1] =
+                (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+        }
+        if auto_inc {
+            self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
         }
     }
 

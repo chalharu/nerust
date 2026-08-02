@@ -1,9 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
 use nerust_gbc_rom_test::{
-    manifest::RomManifest,
+    manifest::{RomCase, RomManifest},
     report::{CaseResult, write_html_report},
     runner::run_case,
 };
@@ -58,59 +58,17 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mut results: Vec<CaseResult> = Vec::new();
-    let mut passed = 0u32;
-    let mut failed = 0u32;
-
     // Determine screenshots directory if --report is enabled
     // If --open is specified without --report, enable report implicitly
     let do_report = cli.report || cli.open;
-    let screenshots_dir = if do_report {
-        let target_dir = std::env::var("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("target"));
-        let dir = target_dir.join("rom_tests").join("screenshots");
-        std::fs::create_dir_all(&dir).ok();
-        Some(dir)
-    } else {
-        None
-    };
+    let screenshots_dir = screenshots_dir(do_report);
 
+    let mut results: Vec<CaseResult> = Vec::new();
+    let mut passed = 0u32;
+    let mut failed = 0u32;
     for case in selected {
         print!("{} ... ", case.id);
-        let result = match run_case(case, &rom_root, screenshots_dir.as_deref()) {
-            Ok((output, shots)) => {
-                // Pass if: serial says PASS, OR frame hash matched (no error but no serial)
-                let passed =
-                    output.contains("Passed") || output.contains("PASS") || output.is_empty();
-                if passed {
-                    println!("ok");
-                } else {
-                    println!("FAILED (output len={})", output.len());
-                }
-                CaseResult {
-                    id: case.id.clone(),
-                    category: case.category.clone(),
-                    description: case.description.clone(),
-                    passed,
-                    output: if passed { String::new() } else { output },
-                    error: None,
-                    screenshots: shots,
-                }
-            }
-            Err(e) => {
-                println!("ERROR: {}", e);
-                CaseResult {
-                    id: case.id.clone(),
-                    category: case.category.clone(),
-                    description: case.description.clone(),
-                    passed: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                    screenshots: Vec::new(),
-                }
-            }
-        };
+        let result = run_single_case(case, &rom_root, screenshots_dir.as_deref());
         if result.passed {
             passed += 1;
         } else {
@@ -121,14 +79,15 @@ fn main() {
 
     println!("\n{} passed, {} failed", passed, failed);
 
-    let mut report_summary = None;
-    if do_report {
+    let report_summary = if do_report {
         let manifest_name = manifest_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("rom_tests");
-        report_summary = write_html_report(None, manifest_name, &results).ok();
-    }
+        write_html_report(None, manifest_name, &results).ok()
+    } else {
+        None
+    };
 
     if cli.open
         && let Some(ref summary) = report_summary
@@ -141,5 +100,52 @@ fn main() {
 
     if failed > 0 {
         std::process::exit(1);
+    }
+}
+
+fn screenshots_dir(report: bool) -> Option<PathBuf> {
+    if !report {
+        return None;
+    }
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("target"));
+    let dir = target_dir.join("rom_tests").join("screenshots");
+    std::fs::create_dir_all(&dir).ok();
+    Some(dir)
+}
+
+fn run_single_case(case: &RomCase, rom_root: &Path, screenshots_dir: Option<&Path>) -> CaseResult {
+    match run_case(case, rom_root, screenshots_dir) {
+        Ok((output, shots)) => {
+            // Pass if: serial says PASS, OR frame hash matched (no error but no serial)
+            let passed = output.contains("Passed") || output.contains("PASS") || output.is_empty();
+            if passed {
+                println!("ok");
+            } else {
+                println!("FAILED (output len={})", output.len());
+            }
+            CaseResult {
+                id: case.id.clone(),
+                category: case.category.clone(),
+                description: case.description.clone(),
+                passed,
+                output: if passed { String::new() } else { output },
+                error: None,
+                screenshots: shots,
+            }
+        }
+        Err(e) => {
+            println!("ERROR: {}", e);
+            CaseResult {
+                id: case.id.clone(),
+                category: case.category.clone(),
+                description: case.description.clone(),
+                passed: false,
+                output: String::new(),
+                error: Some(e.to_string()),
+                screenshots: Vec::new(),
+            }
+        }
     }
 }

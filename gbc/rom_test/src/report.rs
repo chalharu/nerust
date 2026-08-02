@@ -78,49 +78,10 @@ pub fn write_html_report(
     )
     .ok();
 
-    let mut by_category: std::collections::BTreeMap<&str, Vec<&CaseResult>> =
-        std::collections::BTreeMap::new();
-    for r in case_results {
-        by_category.entry(r.category.as_str()).or_default().push(r);
-    }
-
-    for (category, cases) in &by_category {
+    for (category, cases) in &group_by_category(case_results) {
         write!(html, "<h2 class=\"category\">{}</h2><table><tr><th>ID</th><th>Description</th><th>Result</th><th>Details</th></tr>", category).ok();
         for case in cases {
-            let status = if case.passed { "pass" } else { "fail" };
-            let label = if case.passed { "PASS" } else { "FAIL" };
-            write!(
-                html,
-                "<tr><td>{}</td><td>{}</td><td class=\"{}\">{}</td><td>",
-                case.id, case.description, status, label
-            )
-            .ok();
-
-            if let Some(ref err) = case.error {
-                write!(html, "<div class=\"error\">{}</div>", err).ok();
-            }
-            if !case.output.is_empty() {
-                let sanitized = case
-                    .output
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;");
-                write!(
-                    html,
-                    "<details><summary>Serial output</summary><pre>{}</pre></details>",
-                    sanitized
-                )
-                .ok();
-            }
-            for (i, shot) in case.screenshots.iter().enumerate() {
-                write!(
-                    html,
-                    "<details><summary>Event {} screenshot</summary><img class=\"screenshot\" src=\"screenshots/{}\" alt=\"event {}\"></details>",
-                    i, shot, i
-                )
-                .ok();
-            }
-            write!(html, "</td></tr>").ok();
+            write_case_row(&mut html, case);
         }
         write!(html, "</table>").ok();
     }
@@ -146,4 +107,52 @@ pub fn write_html_report(
         passed,
         failed,
     })
+}
+
+fn group_by_category(
+    case_results: &[CaseResult],
+) -> std::collections::BTreeMap<&str, Vec<&CaseResult>> {
+    let mut by_category: std::collections::BTreeMap<&str, Vec<&CaseResult>> =
+        std::collections::BTreeMap::new();
+    for r in case_results {
+        by_category.entry(r.category.as_str()).or_default().push(r);
+    }
+    by_category
+}
+
+fn write_case_row(html: &mut String, case: &CaseResult) {
+    let status = if case.passed { "pass" } else { "fail" };
+    let label = if case.passed { "PASS" } else { "FAIL" };
+    write!(
+        html,
+        "<tr><td>{}</td><td>{}</td><td class=\"{}\">{}</td><td>",
+        case.id, case.description, status, label
+    )
+    .ok();
+
+    if let Some(ref err) = case.error {
+        write!(html, "<div class=\"error\">{}</div>", err).ok();
+    }
+    if !case.output.is_empty() {
+        let sanitized = case
+            .output
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        write!(
+            html,
+            "<details><summary>Serial output</summary><pre>{}</pre></details>",
+            sanitized
+        )
+        .ok();
+    }
+    for (i, shot) in case.screenshots.iter().enumerate() {
+        write!(
+            html,
+            "<details><summary>Event {} screenshot</summary><img class=\"screenshot\" src=\"screenshots/{}\" alt=\"event {}\"></details>",
+            i, shot, i
+        )
+        .ok();
+    }
+    write!(html, "</td></tr>").ok();
 }

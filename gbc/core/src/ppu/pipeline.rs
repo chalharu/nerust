@@ -1016,188 +1016,7 @@ impl Mode3Pipeline {
 
     pub(super) fn write_register(&mut self, register: u16, value: u8) {
         match register {
-            0xFF40 => {
-                let old = self.registers.lcdc;
-                let old_written = self.written_lcdc;
-                self.written_lcdc = value;
-                let changed = old_written ^ value;
-                let defer_obj_size_set = value & 4 != 0
-                    && self.registers.scx == 0
-                    && self
-                        .sprite_fetch
-                        .as_ref()
-                        .is_some_and(|fetch| fetch.dot == 2);
-                let obj_size_delay = if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
-                    self.sprite_fetch
-                        .as_ref()
-                        .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
-                } else {
-                    None
-                };
-                let defer_obj_size = obj_size_delay.is_some();
-                let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
-                self.registers.lcdc = (value & !preserve) | (old & preserve);
-                if changed & 1 != 0 {
-                    let delay = if !self.cgb_revision_d {
-                        2
-                    } else if self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0
-                    {
-                        0
-                    } else {
-                        2u8.saturating_sub(self.output_stall)
-                    };
-                    if delay == 0 {
-                        self.registers.lcdc = (self.registers.lcdc & !1) | (value & 1);
-                        self.pending_bg_enable = None;
-                    } else {
-                        self.pending_bg_enable = Some((delay, value & 1));
-                    }
-                }
-                if changed & 2 != 0 {
-                    if self.output_stall >= 2 {
-                        self.registers.lcdc = (self.registers.lcdc & !2) | (value & 2);
-                        self.pending_obj_enable = None;
-                    } else {
-                        self.pending_obj_enable = Some((2, value & 2));
-                    }
-                }
-                if let Some(delay) = obj_size_delay {
-                    self.pending_obj_size = Some((delay, value & 4));
-                    self.relatch_obj_size_high = defer_obj_size_set;
-                }
-                if changed & 0x08 != 0 {
-                    if let Some(fetch) = self.sprite_fetch.as_mut() {
-                        fetch.advance_bg = false;
-                    }
-                    let last_object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
-                    let immediate = self.output_stall >= 2
-                        && (last_object_x == Some(-8) || self.fetcher.stage == FetchStage::Tile);
-                    if immediate {
-                        self.registers.lcdc = (self.registers.lcdc & !0x48) | (value & 0x48);
-                        self.pending_map_select = None;
-                        self.refetch_push_map = last_object_x == Some(-8)
-                            && self.fetcher.stage == FetchStage::Push
-                            && !self.window_active
-                            && changed & 0x08 != 0;
-                    } else {
-                        self.pending_map_select = Some((4, value & 0x48));
-                    }
-                }
-                if changed & 0x40 != 0 {
-                    if let Some(fetch) = self.sprite_fetch.as_mut() {
-                        fetch.advance_bg = false;
-                    }
-                    let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
-                    let initial_offscreen_set = !self.window_active
-                        && value & 0x40 != 0
-                        && object_x == Some(-8)
-                        && self.output_stall >= 2;
-                    let immediate_active = self.cgb_revision_d
-                        && self.window_active
-                        && self.output_stall < 2
-                        && object_x.is_none_or(|x| x >= 0);
-                    if initial_offscreen_set || immediate_active {
-                        self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
-                        self.pending_map_select = None;
-                    } else {
-                        let delay = if self.window_active && self.output_stall >= 8 {
-                            self.output_stall.saturating_add(5)
-                        } else if self.window_active && self.output_stall >= 2 {
-                            4u8.max(self.output_stall)
-                        } else {
-                            4
-                        };
-                        self.pending_map_select = Some((delay, value & 0x48));
-                    }
-                }
-                if changed & 0x10 != 0 {
-                    let old_tile_select = old_written & 0x10;
-                    let new_tile_select = value & 0x10;
-                    if self.cgb_revision_d
-                        && self.window_active
-                        && old_tile_select != 0
-                        && new_tile_select == 0
-                    {
-                        let object_x = self
-                            .next_sprite
-                            .checked_sub(1)
-                            .map(|index| self.sprites[index].x);
-                        if object_x == Some(-7) {
-                            self.correct_last_bg_color(|color| color | 1);
-                        } else if object_x == Some(0) && self.fetcher.tile_y == 0 {
-                            self.force_bg_high_delay = 8;
-                            self.force_bg_high_pixels = 8;
-                        } else if object_x == Some(9) {
-                            self.correct_last_bg_color(|color| color & 1);
-                        }
-                        self.reload_window_tile = self
-                            .next_sprite
-                            .checked_sub(1)
-                            .map(|index| self.sprites[index].x)
-                            .and_then(|x| match x {
-                                -8 => Some(WindowReload::Both),
-                                -7 => Some(WindowReload::Low),
-                                7 => Some(WindowReload::CopyNextLowToHigh),
-                                8..=9 => Some(WindowReload::CopyLowToHigh),
-                                _ => None,
-                            });
-                    }
-                    let collided = self.cgb_revision_d
-                        && match (old_tile_select, new_tile_select, self.last_bg_data_read) {
-                            (0, new, Some(BgDataRead::Low)) if new != 0 => {
-                                self.fetcher.low = self.tile_data_bus;
-                                true
-                            }
-                            (0, new, Some(BgDataRead::High)) if new != 0 => {
-                                self.fetcher.high = self.tile_data_bus;
-                                true
-                            }
-                            (old, 0, Some(BgDataRead::High)) if old != 0 => {
-                                self.fetcher.high = self.fetcher.low;
-                                true
-                            }
-                            _ => false,
-                        };
-                    self.pending_tile_select_write =
-                        (!collided).then_some((old_tile_select, new_tile_select));
-                    self.cgb_c_tile_write_persistent = !self.cgb_revision_d
-                        && self.fetcher.stage == FetchStage::Tile
-                        && self.fetcher.stage_dot == 0
-                        && (self.window_active || (old_tile_select != 0 && new_tile_select == 0));
-                    if !self.cgb_revision_d
-                        && !self.window_active
-                        && old_tile_select != 0
-                        && new_tile_select == 0
-                        && self.fetcher.stage == FetchStage::Tile
-                        && self.fetcher.stage_dot == 0
-                        && self
-                            .next_sprite
-                            .checked_sub(1)
-                            .map(|index| self.sprites[index].x)
-                            == Some(5)
-                    {
-                        let low = self.object_data_bus.unwrap_or(self.tile_data_bus);
-                        self.correct_last_bg_color(|color| (color & 2) | ((low >> 7) & 1));
-                        self.force_bg_low = low;
-                        self.force_bg_low_pixels = 7;
-                    }
-                    self.cgb_c_high_glitch = (!self.cgb_revision_d
-                        && self.fetcher.stage == FetchStage::DataLow
-                        && self.fetcher.stage_dot == 0
-                        && self.bg_fifo.len() == 5)
-                        .then_some((old_tile_select, new_tile_select));
-                    self.pending_tile_select = Some((3, value & 0x10));
-                }
-                if old_written & 0x20 != 0 && value & 0x20 == 0 {
-                    if self.window_active {
-                        let pixels_left = 8 - (self.window_pixels & 7);
-                        self.window_disable_countdown = Some(pixels_left + 8);
-                    } else {
-                        self.window_triggered = true;
-                        self.window_seen = true;
-                    }
-                }
-            }
+            0xFF40 => self.write_lcdc(value),
             0xFF42 => {
                 self.scy_written = true;
                 if self.cgb_revision_d {
@@ -1206,56 +1025,268 @@ impl Mode3Pipeline {
                     self.pending_scy = Some((3, value));
                 }
             }
-            0xFF43 => {
-                if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
-                    self.fine_discard = value & 7;
-                }
-                let defer_high = if self.cgb_revision_d {
-                    (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
-                        || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
-                } else {
-                    matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
-                        || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
-                };
-                if defer_high {
-                    self.pending_scx_high = Some(value & 0xF8);
-                    self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
-                } else {
-                    self.registers.scx = value;
-                }
-            }
-            0xFF47 => {
-                if self.registers.wx == 0
-                    && self.registers.scx & 7 == 0
-                    && self.registers.lcdc & 0x20 != 0
-                    && self.window_eligible
-                    && !self.wx_written
-                    && value != 0
-                {
-                    self.pending_bgp = Some((7, value));
-                } else {
-                    self.registers.bgp = value;
-                    self.pending_bgp = None;
-                }
-            }
+            0xFF43 => self.write_scx(value),
+            0xFF47 => self.write_bgp(value),
             0xFF48 => self.registers.obp0 = value,
             0xFF49 => self.registers.obp1 = value,
             0xFF4A => self.registers.wy = value,
-            0xFF4B => {
-                self.wx_written = true;
-                self.window_zero_at = None;
-                self.registers.wx = value;
-                if self.window_seen {
-                    self.window_can_retrigger = true;
-                    let window_x = i16::from(value) - 7;
-                    if window_x > i16::from(self.pixel_x) && value.saturating_sub(7) & 7 == 5 {
-                        self.window_zero_at = Some(value.saturating_sub(7));
-                    } else if self.window_triggered && window_x == i16::from(self.pixel_x) {
-                        self.window_zero_at = Some(self.pixel_x);
-                    }
-                }
-            }
+            0xFF4B => self.write_wx(value),
             _ => {}
+        }
+    }
+
+    fn write_lcdc(&mut self, value: u8) {
+        let old = self.registers.lcdc;
+        let old_written = self.written_lcdc;
+        self.written_lcdc = value;
+        let changed = old_written ^ value;
+        let defer_obj_size_set = value & 4 != 0
+            && self.registers.scx == 0
+            && self
+                .sprite_fetch
+                .as_ref()
+                .is_some_and(|fetch| fetch.dot == 2);
+        let obj_size_delay = if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
+            self.sprite_fetch
+                .as_ref()
+                .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
+        } else {
+            None
+        };
+        let defer_obj_size = obj_size_delay.is_some();
+        let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
+        self.registers.lcdc = (value & !preserve) | (old & preserve);
+
+        if changed & 1 != 0 {
+            self.apply_bg_enable(value);
+        }
+        if changed & 2 != 0 {
+            self.apply_obj_enable(value);
+        }
+        if let Some(delay) = obj_size_delay {
+            self.apply_obj_size_delay(value, delay, defer_obj_size_set);
+        }
+        if changed & 0x08 != 0 {
+            self.apply_bg_map_change(value);
+        }
+        if changed & 0x40 != 0 {
+            self.apply_window_map_change(value);
+        }
+        if changed & 0x10 != 0 {
+            self.apply_tile_select_change(value, old_written);
+        }
+        if old_written & 0x20 != 0 && value & 0x20 == 0 {
+            self.apply_window_disable();
+        }
+    }
+
+    fn apply_bg_enable(&mut self, value: u8) {
+        let delay = if !self.cgb_revision_d {
+            2
+        } else if self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0 {
+            0
+        } else {
+            2u8.saturating_sub(self.output_stall)
+        };
+        if delay == 0 {
+            self.registers.lcdc = (self.registers.lcdc & !1) | (value & 1);
+            self.pending_bg_enable = None;
+        } else {
+            self.pending_bg_enable = Some((delay, value & 1));
+        }
+    }
+
+    fn apply_obj_enable(&mut self, value: u8) {
+        if self.output_stall >= 2 {
+            self.registers.lcdc = (self.registers.lcdc & !2) | (value & 2);
+            self.pending_obj_enable = None;
+        } else {
+            self.pending_obj_enable = Some((2, value & 2));
+        }
+    }
+
+    fn apply_obj_size_delay(&mut self, value: u8, delay: u8, defer_set: bool) {
+        self.pending_obj_size = Some((delay, value & 4));
+        self.relatch_obj_size_high = defer_set;
+    }
+
+    fn apply_bg_map_change(&mut self, value: u8) {
+        if let Some(fetch) = self.sprite_fetch.as_mut() {
+            fetch.advance_bg = false;
+        }
+        let last_object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        let immediate = self.output_stall >= 2
+            && (last_object_x == Some(-8) || self.fetcher.stage == FetchStage::Tile);
+        if immediate {
+            self.registers.lcdc = (self.registers.lcdc & !0x48) | (value & 0x48);
+            self.pending_map_select = None;
+            self.refetch_push_map = last_object_x == Some(-8)
+                && self.fetcher.stage == FetchStage::Push
+                && !self.window_active;
+        } else {
+            self.pending_map_select = Some((4, value & 0x48));
+        }
+    }
+
+    fn apply_window_map_change(&mut self, value: u8) {
+        if let Some(fetch) = self.sprite_fetch.as_mut() {
+            fetch.advance_bg = false;
+        }
+        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        let initial_offscreen_set = !self.window_active
+            && value & 0x40 != 0
+            && object_x == Some(-8)
+            && self.output_stall >= 2;
+        let immediate_active = self.cgb_revision_d
+            && self.window_active
+            && self.output_stall < 2
+            && object_x.is_none_or(|x| x >= 0);
+        if initial_offscreen_set || immediate_active {
+            self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
+            self.pending_map_select = None;
+        } else {
+            let delay = if self.window_active && self.output_stall >= 8 {
+                self.output_stall.saturating_add(5)
+            } else if self.window_active && self.output_stall >= 2 {
+                4u8.max(self.output_stall)
+            } else {
+                4
+            };
+            self.pending_map_select = Some((delay, value & 0x48));
+        }
+    }
+
+    fn apply_tile_select_change(&mut self, value: u8, old_written: u8) {
+        let old_tile_select = old_written & 0x10;
+        let new_tile_select = value & 0x10;
+        if self.cgb_revision_d && self.window_active && old_tile_select != 0 && new_tile_select == 0
+        {
+            let object_x = self
+                .next_sprite
+                .checked_sub(1)
+                .map(|index| self.sprites[index].x);
+            if object_x == Some(-7) {
+                self.correct_last_bg_color(|color| color | 1);
+            } else if object_x == Some(0) && self.fetcher.tile_y == 0 {
+                self.force_bg_high_delay = 8;
+                self.force_bg_high_pixels = 8;
+            } else if object_x == Some(9) {
+                self.correct_last_bg_color(|color| color & 1);
+            }
+            self.reload_window_tile = self
+                .next_sprite
+                .checked_sub(1)
+                .map(|index| self.sprites[index].x)
+                .and_then(|x| match x {
+                    -8 => Some(WindowReload::Both),
+                    -7 => Some(WindowReload::Low),
+                    7 => Some(WindowReload::CopyNextLowToHigh),
+                    8..=9 => Some(WindowReload::CopyLowToHigh),
+                    _ => None,
+                });
+        }
+        let collided = self.cgb_revision_d
+            && match (old_tile_select, new_tile_select, self.last_bg_data_read) {
+                (0, new, Some(BgDataRead::Low)) if new != 0 => {
+                    self.fetcher.low = self.tile_data_bus;
+                    true
+                }
+                (0, new, Some(BgDataRead::High)) if new != 0 => {
+                    self.fetcher.high = self.tile_data_bus;
+                    true
+                }
+                (old, 0, Some(BgDataRead::High)) if old != 0 => {
+                    self.fetcher.high = self.fetcher.low;
+                    true
+                }
+                _ => false,
+            };
+        self.pending_tile_select_write = (!collided).then_some((old_tile_select, new_tile_select));
+        self.cgb_c_tile_write_persistent = !self.cgb_revision_d
+            && self.fetcher.stage == FetchStage::Tile
+            && self.fetcher.stage_dot == 0
+            && (self.window_active || (old_tile_select != 0 && new_tile_select == 0));
+        if !self.cgb_revision_d
+            && !self.window_active
+            && old_tile_select != 0
+            && new_tile_select == 0
+            && self.fetcher.stage == FetchStage::Tile
+            && self.fetcher.stage_dot == 0
+            && self
+                .next_sprite
+                .checked_sub(1)
+                .map(|index| self.sprites[index].x)
+                == Some(5)
+        {
+            let low = self.object_data_bus.unwrap_or(self.tile_data_bus);
+            self.correct_last_bg_color(|color| (color & 2) | ((low >> 7) & 1));
+            self.force_bg_low = low;
+            self.force_bg_low_pixels = 7;
+        }
+        self.cgb_c_high_glitch = (!self.cgb_revision_d
+            && self.fetcher.stage == FetchStage::DataLow
+            && self.fetcher.stage_dot == 0
+            && self.bg_fifo.len() == 5)
+            .then_some((old_tile_select, new_tile_select));
+        self.pending_tile_select = Some((3, value & 0x10));
+    }
+
+    fn apply_window_disable(&mut self) {
+        if self.window_active {
+            let pixels_left = 8 - (self.window_pixels & 7);
+            self.window_disable_countdown = Some(pixels_left + 8);
+        } else {
+            self.window_triggered = true;
+            self.window_seen = true;
+        }
+    }
+
+    fn write_scx(&mut self, value: u8) {
+        if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
+            self.fine_discard = value & 7;
+        }
+        let defer_high = if self.cgb_revision_d {
+            (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
+                || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
+        } else {
+            matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
+                || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
+        };
+        if defer_high {
+            self.pending_scx_high = Some(value & 0xF8);
+            self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
+        } else {
+            self.registers.scx = value;
+        }
+    }
+
+    fn write_bgp(&mut self, value: u8) {
+        if self.registers.wx == 0
+            && self.registers.scx & 7 == 0
+            && self.registers.lcdc & 0x20 != 0
+            && self.window_eligible
+            && !self.wx_written
+            && value != 0
+        {
+            self.pending_bgp = Some((7, value));
+        } else {
+            self.registers.bgp = value;
+            self.pending_bgp = None;
+        }
+    }
+
+    fn write_wx(&mut self, value: u8) {
+        self.wx_written = true;
+        self.window_zero_at = None;
+        self.registers.wx = value;
+        if self.window_seen {
+            self.window_can_retrigger = true;
+            let window_x = i16::from(value) - 7;
+            if window_x > i16::from(self.pixel_x) && value.saturating_sub(7) & 7 == 5 {
+                self.window_zero_at = Some(value.saturating_sub(7));
+            } else if self.window_triggered && window_x == i16::from(self.pixel_x) {
+                self.window_zero_at = Some(self.pixel_x);
+            }
         }
     }
 
