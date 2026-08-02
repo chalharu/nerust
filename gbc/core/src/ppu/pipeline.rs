@@ -612,6 +612,14 @@ impl Mode3Pipeline {
             self.sprite_fetch.as_mut().unwrap().bg_wait -= 1;
             return;
         }
+        if self
+            .sprite_fetch
+            .as_ref()
+            .is_some_and(|fetch| fetch.advance_bg && fetch.dot < 2)
+            && !self.window_active
+        {
+            self.step_bg_fetcher(vram);
+        }
         let Some(fetch) = self.sprite_fetch.as_mut() else { return };
         if fetch.dot == 2 || (fetch.dot == 4 && self.registers.scx != 0) {
             fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
