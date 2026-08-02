@@ -64,6 +64,7 @@ pub struct GbcPpu {
     /// background map attributes (palette, bank, flip, priority).
     pub cgb_mode: bool,
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
+    pub cgb_revision_d: bool,
 
     /// Prevents STAT interrupt from firing repeatedly during the same mode.
     /// Set to the PpuMode value that last triggered lcd_stat; cleared to None
@@ -107,6 +108,7 @@ impl Default for GbcPpu {
             lyc_matched_ly: 0xFF,
             cgb_mode: false,
             cgb_game: false,
+            cgb_revision_d: true,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mode_stat_delay: 0,
             mode3_pipeline: None,
@@ -169,6 +171,7 @@ impl GbcPpu {
                 sprites,
                 self.cgb_mode,
                 self.cgb_game,
+                self.cgb_revision_d,
                 self.opri,
             ));
         }

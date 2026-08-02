@@ -335,6 +335,10 @@ impl GbcMemoryBus {
         }
     }
 
+    pub fn set_cgb_revision_d(&mut self, enabled: bool) {
+        self.ppu.cgb_revision_d = enabled;
+    }
+
     /// Load font tiles from cartridge ROM bank 1 into VRAM $8000-$87FF.
     /// Replicates what copy_font does in mealybug test ROMs.
     pub fn load_font_tiles(&mut self, bank1_data: &[u8]) {

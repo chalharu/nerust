@@ -68,6 +68,7 @@ pub enum GbcModel {
     Dmg,
     #[default]
     Cgb,
+    CgbC,
     Agb,
 }
 

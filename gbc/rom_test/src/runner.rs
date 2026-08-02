@@ -15,7 +15,7 @@ fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestE
     let cgb_flag = rom_bytes.get(0x143).copied().unwrap_or(0);
     let requested = match case.model {
         super::manifest::GbcModel::Dmg => GbcModel::Dmg,
-        super::manifest::GbcModel::Cgb => GbcModel::Cgb,
+        super::manifest::GbcModel::Cgb | super::manifest::GbcModel::CgbC => GbcModel::Cgb,
         super::manifest::GbcModel::Agb => GbcModel::Agb,
     };
     // Auto-downgrade: DMG-only ROM ($00) on CGB/AGB → DMG mode
@@ -73,11 +73,14 @@ pub fn run_case(
     // CGB mode depends on HARDWARE (requested model), not effective model.
     // A CGB running a DMG-only ROM still applies boot ROM palettes.
     let hw_is_cgb = match case.model {
-        super::manifest::GbcModel::Cgb | super::manifest::GbcModel::Agb => true,
+        super::manifest::GbcModel::Cgb
+        | super::manifest::GbcModel::CgbC
+        | super::manifest::GbcModel::Agb => true,
         super::manifest::GbcModel::Dmg => false,
     };
     let rom_is_cgb = header.cgb_flag & 0x80 != 0;
     bus.set_cgb_mode(hw_is_cgb);
+    bus.set_cgb_revision_d(case.model != super::manifest::GbcModel::CgbC);
     // CGB-only rendering features (bg_priority, master priority, etc.)
     // only activate when the GAME is CGB-native, not just the hardware.
     bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
