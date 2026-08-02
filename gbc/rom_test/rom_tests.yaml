@@ -255,7 +255,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -285,7 +285,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -375,7 +375,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -405,7 +405,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -465,7 +465,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -510,7 +510,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scx_high_5_bits_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000
@@ -555,7 +555,7 @@ cases:
     category: "ppu"
     description: "Mealybug Tearoom Tests — m3_scy_change2"
     rom: "mattcurrie_mealybug-tearoom-tests/m3_scy_change2.gb"
-    model: cgb
+    model: cgbc
     perf: false
     events:
       - cycles: 400_000

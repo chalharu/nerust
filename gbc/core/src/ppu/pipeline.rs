@@ -143,6 +143,7 @@ pub(super) struct Mode3Pipeline {
     ly: u8,
     cgb_mode: bool,
     cgb_game: bool,
+    cgb_revision_d: bool,
     oam_priority: bool,
     startup_dots: u8,
     initial_dummy_pending: bool,
@@ -193,6 +194,7 @@ impl Mode3Pipeline {
         mut sprites: Vec<Sprite>,
         cgb_mode: bool,
         cgb_game: bool,
+        cgb_revision_d: bool,
         opri: u8,
     ) -> Self {
         let oam_priority = cgb_game && opri & 1 != 0;
@@ -203,6 +205,7 @@ impl Mode3Pipeline {
             ly,
             cgb_mode,
             cgb_game,
+            cgb_revision_d,
             oam_priority,
             startup_dots: if cgb_mode { 19 } else { 18 } + (registers.scx & 7),
             initial_dummy_pending: true,
@@ -868,7 +871,13 @@ impl Mode3Pipeline {
                     }
                 }
             }
-            0xFF42 => self.pending_scy = Some((4, value)),
+            0xFF42 => {
+                if self.cgb_revision_d {
+                    self.pending_scy = Some((4, value));
+                } else {
+                    self.pending_scy = Some((1, value));
+                }
+            }
             0xFF43 => {
                 if self.ly != 0
                     && self.pixel_x == 0
@@ -963,7 +972,7 @@ mod tests {
     #[test]
     fn pipeline_outputs_160_pixels() {
         let mut pipeline =
-            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), false, false, 0);
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), false, false, true, 0);
         let vram = [0; 0x4000];
         let palettes = [0; 32];
         let mut pixels = 0;
