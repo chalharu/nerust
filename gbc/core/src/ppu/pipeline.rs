@@ -823,7 +823,8 @@ impl Mode3Pipeline {
                         && value & 0x40 != 0
                         && object_x == Some(-8)
                         && self.output_stall >= 2;
-                    let immediate_active = self.window_active
+                    let immediate_active = self.cgb_revision_d
+                        && self.window_active
                         && self.output_stall < 2
                         && object_x.is_none_or(|x| x >= 0);
                     if initial_offscreen_set || immediate_active {
