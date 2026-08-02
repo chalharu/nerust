@@ -208,6 +208,7 @@ pub(super) struct Mode3Pipeline {
 }
 
 impl Mode3Pipeline {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         registers: Registers,
         ly: u8,
@@ -439,9 +440,9 @@ impl Mode3Pipeline {
                 && !self.window_active
                 && last_sprite_x == Some(8)
                 && self.fetcher.tile_y == 0
-                && self.active_tile_select_write.is_some_and(|(old, new)| {
-                    old != 0 && new == 0
-                });
+                && self
+                    .active_tile_select_write
+                    .is_some_and(|(old, new)| old != 0 && new == 0);
             if reload_low_only {
                 let lcdc = self.registers.lcdc;
                 self.registers.lcdc |= 0x10;
@@ -452,13 +453,9 @@ impl Mode3Pipeline {
             }
             let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
                 match (last_sprite_x, self.active_tile_select_write) {
-                    (Some(x), Some((old, 0))) if x <= -7 && old != 0 => {
-                        Some((old, false))
-                    }
+                    (Some(x), Some((old, 0))) if x <= -7 && old != 0 => Some((old, false)),
                     (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
-                    (Some(x), Some((0, new)))
-                        if (-5..=-4).contains(&x) && new != 0 =>
-                    {
+                    (Some(x), Some((0, new))) if (-5..=-4).contains(&x) && new != 0 => {
                         Some((new, true))
                     }
                     _ => None,
@@ -491,13 +488,11 @@ impl Mode3Pipeline {
                     && self.active_tile_select_write.is_some_and(|(old, new)| {
                         old != 0 && new == 0 && self.cgb_c_tile_write_persistent
                     });
-                self.fetcher.low = if self.active_tile_select_write
-                    .is_some_and(|(old, new)| {
-                        old == 0
-                            && new != 0
-                            && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
-                    })
-                {
+                self.fetcher.low = if self.active_tile_select_write.is_some_and(|(old, new)| {
+                    old == 0
+                        && new != 0
+                        && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
+                }) {
                     self.object_data_bus.unwrap_or(self.tile_data_bus)
                 } else if self.active_tile_select_write.is_some_and(|(old, new)| {
                     old != 0 && new == 0 && self.cgb_c_tile_write_persistent
@@ -554,7 +549,9 @@ impl Mode3Pipeline {
             }
             FetchStage::Sleep => {}
             FetchStage::Push if self.fetcher.stage_dot == 0 => {
-                if !self.window_active && let Some(scy) = self.sprite_scy_latch.take() {
+                if !self.window_active
+                    && let Some(scy) = self.sprite_scy_latch.take()
+                {
                     let y = scy.wrapping_add(self.ly);
                     let map_base = if self.registers.lcdc & 0x08 != 0 {
                         0x9C00
@@ -582,7 +579,9 @@ impl Mode3Pipeline {
     }
 
     fn apply_window_reload(&mut self, vram: &[u8; 0x4000]) {
-        let Some(reload) = self.reload_window_tile else { return };
+        let Some(reload) = self.reload_window_tile else {
+            return;
+        };
         let len = self.bg_fifo.len();
         if len == 0 || len > 8 {
             return;
@@ -636,23 +635,34 @@ impl Mode3Pipeline {
             }
         }
         let (map_base, tile_row, tile_y) = if self.window_active {
-            let map = if self.registers.lcdc & 0x40 != 0 { 0x9C00 } else { 0x9800 };
+            let map = if self.registers.lcdc & 0x40 != 0 {
+                0x9C00
+            } else {
+                0x9800
+            };
             (map, self.window_line >> 3, self.window_line & 7)
         } else {
             let y = self.registers.scy.wrapping_add(self.ly);
-            let map = if self.registers.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
+            let map = if self.registers.lcdc & 0x08 != 0 {
+                0x9C00
+            } else {
+                0x9800
+            };
             (map, y >> 3, y & 7)
         };
-        self.fetcher.map_address = map_base
-            + u16::from(tile_row) * 32
-            + u16::from(self.fetcher.tile_column & 31);
+        self.fetcher.map_address =
+            map_base + u16::from(tile_row) * 32 + u16::from(self.fetcher.tile_column & 31);
         self.fetcher.tile_y = tile_y;
     }
 
     fn read_tile(&mut self, vram: &[u8; 0x4000]) {
         let map_index = usize::from(self.fetcher.map_address & 0x1FFF);
         self.fetcher.tile_index = vram[map_index];
-        self.fetcher.attributes = if self.cgb_game { vram[0x2000 + map_index] } else { 0 };
+        self.fetcher.attributes = if self.cgb_game {
+            vram[0x2000 + map_index]
+        } else {
+            0
+        };
         self.fetcher.tile_y = if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
             7 - self.fetcher.tile_y
         } else {
@@ -668,9 +678,7 @@ impl Mode3Pipeline {
             }
         }
         let tile_address = if self.registers.lcdc & 0x10 == 0 {
-            0x9000u16.wrapping_add_signed(
-                (self.fetcher.tile_index as i8 as i16).wrapping_mul(16),
-            )
+            0x9000u16.wrapping_add_signed((self.fetcher.tile_index as i8 as i16).wrapping_mul(16))
         } else {
             0x8000 + u16::from(self.fetcher.tile_index) * 16
         };
@@ -679,27 +687,36 @@ impl Mode3Pipeline {
         } else {
             0
         };
-        let address = tile_address
-            + u16::from(self.fetcher.tile_y) * 2
-            + u16::from(high);
+        let address = tile_address + u16::from(self.fetcher.tile_y) * 2 + u16::from(high);
         self.fetcher.data_address = bank * 0x2000 + usize::from(address & 0x1FFF);
     }
 
     fn push_bg_tile(&mut self) {
         let flipped = self.cgb_game && self.fetcher.attributes & 0x20 != 0;
-        let palette = if self.cgb_game { self.fetcher.attributes & 7 } else { 0 };
+        let palette = if self.cgb_game {
+            self.fetcher.attributes & 7
+        } else {
+            0
+        };
         let priority = self.cgb_game && self.fetcher.attributes & 0x80 != 0;
         for x in 0..8 {
             let bit = if flipped { x } else { 7 - x };
-            let color = ((self.fetcher.low >> bit) & 1)
-                | (((self.fetcher.high >> bit) & 1) << 1);
-            self.bg_fifo.push_back(BgPixel { color, palette, priority });
+            let color = ((self.fetcher.low >> bit) & 1) | (((self.fetcher.high >> bit) & 1) << 1);
+            self.bg_fifo.push_back(BgPixel {
+                color,
+                palette,
+                priority,
+            });
         }
     }
 
     fn refetch_push_map(&mut self, vram: &[u8; 0x4000]) {
         self.refetch_push_map = false;
-        let map_base = if self.registers.lcdc & 0x08 != 0 { 0x9C00 } else { 0x9800 };
+        let map_base = if self.registers.lcdc & 0x08 != 0 {
+            0x9C00
+        } else {
+            0x9800
+        };
         self.fetcher.map_address = map_base + (self.fetcher.map_address & 0x03FF);
         self.read_tile(vram);
         self.prepare_tile_data_address(false);
@@ -792,13 +809,21 @@ impl Mode3Pipeline {
             dot: 0,
             low: 0,
             high: 0,
-            height: if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 },
+            height: if self.registers.lcdc & 0x04 != 0 {
+                16
+            } else {
+                8
+            },
             data_address: 0,
         });
     }
 
     fn step_sprite_fetch(&mut self, vram: &[u8; 0x4000]) {
-        if self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.bg_wait != 0) {
+        if self
+            .sprite_fetch
+            .as_ref()
+            .is_some_and(|fetch| fetch.bg_wait != 0)
+        {
             if self.sprite_fetch.as_ref().unwrap().advance_bg {
                 self.step_bg_fetcher(vram);
             }
@@ -813,18 +838,23 @@ impl Mode3Pipeline {
         {
             self.step_bg_fetcher(vram);
         }
-        let Some(fetch) = self.sprite_fetch.as_mut() else { return };
-        let relatch_high = fetch.dot == 4
-            && (self.registers.scx != 0 || self.relatch_obj_size_high);
+        let Some(fetch) = self.sprite_fetch.as_mut() else {
+            return;
+        };
+        let relatch_high =
+            fetch.dot == 4 && (self.registers.scx != 0 || self.relatch_obj_size_high);
         if fetch.dot == 2 || relatch_high {
-            fetch.height = if self.registers.lcdc & 0x04 != 0 { 16 } else { 8 };
+            fetch.height = if self.registers.lcdc & 0x04 != 0 {
+                16
+            } else {
+                8
+            };
         }
         if fetch.dot == 4 {
             self.relatch_obj_size_high = false;
         }
         if fetch.dot == 2 || fetch.dot == 4 {
-            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8
-                & (fetch.height - 1);
+            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8 & (fetch.height - 1);
             if fetch.sprite.flags & 0x40 != 0 {
                 tile_y ^= fetch.height - 1;
             }
@@ -859,19 +889,17 @@ impl Mode3Pipeline {
             return;
         }
         let fetch = self.sprite_fetch.take().expect("sprite fetch is active");
-        self.sprite_scy_latch = (self.cgb_revision_d
-            && fetch.sprite.x < 0
-            && !self.window_active
-            && self.scy_written)
-            .then(|| {
-                if fetch.sprite.x == -8 {
-                    self.pending_scy
-                        .map(|(_, value)| value)
-                        .unwrap_or(self.registers.scy)
-                } else {
-                    self.registers.scy
-                }
-            });
+        self.sprite_scy_latch =
+            (self.cgb_revision_d && fetch.sprite.x < 0 && !self.window_active && self.scy_written)
+                .then(|| {
+                    if fetch.sprite.x == -8 {
+                        self.pending_scy
+                            .map(|(_, value)| value)
+                            .unwrap_or(self.registers.scy)
+                    } else {
+                        self.registers.scy
+                    }
+                });
         self.merge_sprite(fetch);
     }
 
@@ -949,9 +977,7 @@ impl Mode3Pipeline {
 
     fn obj_pixel(&self, pixel: ObjPixel, palettes: &[u16; 32]) -> u32 {
         if self.cgb_game {
-            Self::cgb_color(
-                palettes[usize::from(pixel.palette) * 4 + usize::from(pixel.color)],
-            )
+            Self::cgb_color(palettes[usize::from(pixel.palette) * 4 + usize::from(pixel.color)])
         } else if self.cgb_mode {
             let palette = if pixel.palette == 0 {
                 self.registers.obp0
@@ -997,10 +1023,11 @@ impl Mode3Pipeline {
                 let changed = old_written ^ value;
                 let defer_obj_size_set = value & 4 != 0
                     && self.registers.scx == 0
-                    && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
-                let obj_size_delay = if changed & 4 != 0
-                    && (value & 4 == 0 || defer_obj_size_set)
-                {
+                    && self
+                        .sprite_fetch
+                        .as_ref()
+                        .is_some_and(|fetch| fetch.dot == 2);
+                let obj_size_delay = if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
                     self.sprite_fetch
                         .as_ref()
                         .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
@@ -1013,8 +1040,7 @@ impl Mode3Pipeline {
                 if changed & 1 != 0 {
                     let delay = if !self.cgb_revision_d {
                         2
-                    } else if self.fetcher.stage == FetchStage::Tile
-                        && self.fetcher.stage_dot == 0
+                    } else if self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0
                     {
                         0
                     } else {
@@ -1043,16 +1069,11 @@ impl Mode3Pipeline {
                     if let Some(fetch) = self.sprite_fetch.as_mut() {
                         fetch.advance_bg = false;
                     }
-                    let last_object_x = self
-                        .next_sprite
-                        .checked_sub(1)
-                        .map(|i| self.sprites[i].x);
+                    let last_object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
                     let immediate = self.output_stall >= 2
-                        && (last_object_x == Some(-8)
-                            || self.fetcher.stage == FetchStage::Tile);
+                        && (last_object_x == Some(-8) || self.fetcher.stage == FetchStage::Tile);
                     if immediate {
-                        self.registers.lcdc =
-                            (self.registers.lcdc & !0x48) | (value & 0x48);
+                        self.registers.lcdc = (self.registers.lcdc & !0x48) | (value & 0x48);
                         self.pending_map_select = None;
                         self.refetch_push_map = last_object_x == Some(-8)
                             && self.fetcher.stage == FetchStage::Push
@@ -1066,10 +1087,7 @@ impl Mode3Pipeline {
                     if let Some(fetch) = self.sprite_fetch.as_mut() {
                         fetch.advance_bg = false;
                     }
-                    let object_x = self
-                        .next_sprite
-                        .checked_sub(1)
-                        .map(|i| self.sprites[i].x);
+                    let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
                     let initial_offscreen_set = !self.window_active
                         && value & 0x40 != 0
                         && object_x == Some(-8)
@@ -1079,8 +1097,7 @@ impl Mode3Pipeline {
                         && self.output_stall < 2
                         && object_x.is_none_or(|x| x >= 0);
                     if initial_offscreen_set || immediate_active {
-                        self.registers.lcdc =
-                            (self.registers.lcdc & !0x40) | (value & 0x40);
+                        self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
                         self.pending_map_select = None;
                     } else {
                         let delay = if self.window_active && self.output_stall >= 8 {
@@ -1126,11 +1143,7 @@ impl Mode3Pipeline {
                             });
                     }
                     let collided = self.cgb_revision_d
-                        && match (
-                            old_tile_select,
-                            new_tile_select,
-                            self.last_bg_data_read,
-                        ) {
+                        && match (old_tile_select, new_tile_select, self.last_bg_data_read) {
                             (0, new, Some(BgDataRead::Low)) if new != 0 => {
                                 self.fetcher.low = self.tile_data_bus;
                                 true
@@ -1150,8 +1163,7 @@ impl Mode3Pipeline {
                     self.cgb_c_tile_write_persistent = !self.cgb_revision_d
                         && self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0
-                        && (self.window_active
-                            || (old_tile_select != 0 && new_tile_select == 0));
+                        && (self.window_active || (old_tile_select != 0 && new_tile_select == 0));
                     if !self.cgb_revision_d
                         && !self.window_active
                         && old_tile_select != 0
@@ -1195,20 +1207,15 @@ impl Mode3Pipeline {
                 }
             }
             0xFF43 => {
-                if self.ly != 0
-                    && self.pixel_x == 0
-                    && self.fetcher.stage == FetchStage::Tile
-                {
+                if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
                     self.fine_discard = value & 7;
                 }
                 let defer_high = if self.cgb_revision_d {
                     (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
-                        || (self.fetcher.stage == FetchStage::Tile
-                            && self.fetcher.stage_dot == 0)
+                        || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
                 } else {
                     matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
-                        || (self.fetcher.stage == FetchStage::Tile
-                            && self.fetcher.stage_dot == 0)
+                        || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
                 };
                 if defer_high {
                     self.pending_scx_high = Some(value & 0xF8);
@@ -1257,7 +1264,9 @@ impl Mode3Pipeline {
     }
 
     fn correct_last_bg_color(&mut self, update: impl FnOnce(u8) -> u8) {
-        let Some((x, color, candidates)) = self.last_output else { return };
+        let Some((x, color, candidates)) = self.last_output else {
+            return;
+        };
         let corrected = update(color) & 3;
         self.last_output = Some((x, corrected, candidates));
         self.corrected_output = Some(OutputPixel {
@@ -1273,8 +1282,6 @@ impl Mode3Pipeline {
     pub(super) fn final_window_line(&self) -> u8 {
         self.window_line.wrapping_add(u8::from(self.window_seen))
     }
-
-
 }
 
 #[cfg(test)]
@@ -1297,11 +1304,7 @@ mod tests {
     #[test]
     fn fetcher_reads_each_stage_for_two_dots() {
         let mut fetcher = Fetcher::new(0);
-        for stage in [
-            FetchStage::Tile,
-            FetchStage::DataLow,
-            FetchStage::DataHigh,
-        ] {
+        for stage in [FetchStage::Tile, FetchStage::DataLow, FetchStage::DataHigh] {
             assert_eq!(fetcher.stage, stage);
             fetcher.advance();
             assert_eq!(fetcher.stage, stage);

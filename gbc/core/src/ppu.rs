@@ -179,9 +179,7 @@ impl GbcPpu {
         if let Some(pipeline) = self.mode3_pipeline.as_mut()
             && !pipeline.complete()
         {
-            if let Some(output) =
-                pipeline.step(&self.vram, &self.bg_palette, &self.obj_palette)
-            {
+            if let Some(output) = pipeline.step(&self.vram, &self.bg_palette, &self.obj_palette) {
                 self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
                     output.color;
             }
@@ -491,8 +489,10 @@ impl GbcPpu {
     }
 
     pub fn write_register(&mut self, addr: u16, value: u8) {
-        if matches!(addr, 0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B)
-            && let Some(pipeline) = self.mode3_pipeline.as_mut()
+        if matches!(
+            addr,
+            0xFF40 | 0xFF42 | 0xFF43 | 0xFF47 | 0xFF48 | 0xFF49 | 0xFF4A | 0xFF4B
+        ) && let Some(pipeline) = self.mode3_pipeline.as_mut()
         {
             pipeline.write_register(addr, value);
             if let Some(output) = pipeline.take_corrected_output() {

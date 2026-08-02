@@ -117,7 +117,7 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt.read_if(),
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-             0xFF40..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
+            0xFF40..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
             0xFF50 => {
                 if self.boot_rom_mapped {
                     0xFE
@@ -126,10 +126,10 @@ impl GbcMemoryBus {
                 }
             }
             0xFF68..=0xFF6B => self.ppu.read_palette(addr),
-             0xFF4D => self.read_key1(),
-             0xFF51..=0xFF54 => self.hdma.read_register(addr),
-             0xFF55 => self.hdma.read_status(),
-             0xFF70 => self.wram_bank,
+            0xFF4D => self.read_key1(),
+            0xFF51..=0xFF54 => self.hdma.read_register(addr),
+            0xFF55 => self.hdma.read_status(),
+            0xFF70 => self.wram_bank,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
             _ => self.read_storage(addr),
@@ -180,20 +180,21 @@ impl GbcMemoryBus {
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
                 if self.cpu_step_active {
-                    self.pending_ppu_writes.push_back(PpuWriteEvent { addr, value });
+                    self.pending_ppu_writes
+                        .push_back(PpuWriteEvent { addr, value });
                 } else {
                     self.ppu.write_register(addr, value);
                 }
             }
             0xFF46 => self.dma.start(value),
-             0xFF4D => self.write_key1(value),
-             0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
-              0xFF55 => {
-                  self.hdma.start(value);
-                  if !self.hdma.hblank_mode {
-                      self.transfer_hdma_block();
-                  }
-              }
+            0xFF4D => self.write_key1(value),
+            0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
+            0xFF55 => {
+                self.hdma.start(value);
+                if !self.hdma.hblank_mode {
+                    self.transfer_hdma_block();
+                }
+            }
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
@@ -217,10 +218,16 @@ impl GbcMemoryBus {
         self.tick = self.tick.wrapping_add(1);
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
-        if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
-        if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
+        if ppu_res.lcd_stat {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
+        if ppu_res.vblank {
+            self.interrupt.request(InterruptKind::VBlank);
+        }
         self.apu.step(video);
-        if self.timer.step(1).overflow { self.interrupt.request(InterruptKind::Timer); }
+        if self.timer.step(1).overflow {
+            self.interrupt.request(InterruptKind::Timer);
+        }
         if self.dma.active() {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
@@ -236,7 +243,11 @@ impl GbcMemoryBus {
     /// Legacy batch interface: advance by `cycles` T-cycles (no CPU).
     pub fn step_devices(&mut self, cycles: u32) -> bool {
         let mut done = false;
-        for _ in 0..cycles { if self.step_devices_tcycle() { done = true; } }
+        for _ in 0..cycles {
+            if self.step_devices_tcycle() {
+                done = true;
+            }
+        }
         done
     }
 
@@ -258,10 +269,16 @@ impl GbcMemoryBus {
         if was_hblank && !now_hblank {
             self.hdma.set_hblank(false);
         }
-        if ppu_res.lcd_stat { self.interrupt.request(InterruptKind::LcdStat); }
-        if ppu_res.vblank { self.interrupt.request(InterruptKind::VBlank); }
+        if ppu_res.lcd_stat {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
+        if ppu_res.vblank {
+            self.interrupt.request(InterruptKind::VBlank);
+        }
         self.apu.step(video);
-        if self.timer.step(1).overflow { self.interrupt.request(InterruptKind::Timer); }
+        if self.timer.step(1).overflow {
+            self.interrupt.request(InterruptKind::Timer);
+        }
         if self.dma.active() {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
