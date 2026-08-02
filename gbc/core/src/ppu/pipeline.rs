@@ -172,7 +172,7 @@ pub(super) struct Mode3Pipeline {
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
-    pending_obj_size: Option<u8>,
+    pending_obj_size: Option<(u8, u8)>,
     pending_scy: Option<(u8, u8)>,
     pending_map_select: Option<(u8, u8)>,
     pending_tile_select: Option<(u8, u8)>,
@@ -312,8 +312,12 @@ impl Mode3Pipeline {
         } else if self.output_stall == 0 {
             self.step_bg_fetcher(vram);
         }
-        if let Some(value) = self.pending_obj_size.take() {
-            self.registers.lcdc = (self.registers.lcdc & !4) | value;
+        if let Some((countdown, value)) = self.pending_obj_size.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                self.registers.lcdc = (self.registers.lcdc & !4) | *value;
+                self.pending_obj_size = None;
+            }
         }
         if self.output_stall != 0 {
             self.output_stall -= 1;
@@ -747,10 +751,17 @@ impl Mode3Pipeline {
                 let old_written = self.written_lcdc;
                 self.written_lcdc = value;
                 let changed = old_written ^ value;
-                let defer_obj_size = changed & 4 != 0
+                let obj_size_delay = if changed & 4 != 0
                     && value & 4 == 0
                     && self.registers.scx != 0
-                    && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 2);
+                {
+                    self.sprite_fetch
+                        .as_ref()
+                        .and_then(|fetch| (1..=2).contains(&fetch.dot).then_some(3 - fetch.dot))
+                } else {
+                    None
+                };
+                let defer_obj_size = obj_size_delay.is_some();
                 let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
                 self.registers.lcdc = (value & !preserve) | (old & preserve);
                 if changed & 1 != 0 {
@@ -776,8 +787,8 @@ impl Mode3Pipeline {
                         self.pending_obj_enable = Some((2, value & 2));
                     }
                 }
-                if defer_obj_size {
-                    self.pending_obj_size = Some(value & 4);
+                if let Some(delay) = obj_size_delay {
+                    self.pending_obj_size = Some((delay, value & 4));
                 }
                 if changed & 0x08 != 0 {
                     if let Some(fetch) = self.sprite_fetch.as_mut() {
