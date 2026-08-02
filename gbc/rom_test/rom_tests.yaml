@@ -412,7 +412,7 @@ cases:
         serial:
           hash: ""
         frame:
-          hash: ""
+          hash: "9385582A"
         memory: []
         pad: []
 
