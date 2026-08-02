@@ -183,6 +183,7 @@ pub(super) struct Mode3Pipeline {
     pending_tile_select_write: Option<(u8, u8)>,
     active_tile_select_write: Option<(u8, u8)>,
     cgb_c_tile_write_persistent: bool,
+    cgb_c_high_glitch: Option<(u8, u8)>,
     last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
     object_data_bus: Option<u8>,
@@ -247,6 +248,7 @@ impl Mode3Pipeline {
             pending_tile_select_write: None,
             active_tile_select_write: None,
             cgb_c_tile_write_persistent: false,
+            cgb_c_high_glitch: None,
             last_bg_data_read: None,
             tile_data_bus: 0,
             object_data_bus: None,
@@ -416,12 +418,18 @@ impl Mode3Pipeline {
                 self.prepare_tile_data_address(true)
             }
             FetchStage::DataHigh => {
-                self.fetcher.high = match self.active_tile_select_write {
-                    Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                self.fetcher.high = match self.cgb_c_high_glitch.take() {
+                    Some((0, new)) if new != 0 => {
                         self.object_data_bus.unwrap_or(self.tile_data_bus)
                     }
-                    Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
-                    _ => vram[self.fetcher.data_address],
+                    Some((old, 0)) if old != 0 => self.fetcher.tile_index,
+                    _ => match self.active_tile_select_write {
+                        Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                            self.object_data_bus.unwrap_or(self.tile_data_bus)
+                        }
+                        Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
+                        _ => vram[self.fetcher.data_address],
+                    },
                 };
                 self.tile_data_bus = self.fetcher.high;
                 self.active_tile_select_write = None;
@@ -935,6 +943,11 @@ impl Mode3Pipeline {
                     self.cgb_c_tile_write_persistent = !self.cgb_revision_d
                         && self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0;
+                    self.cgb_c_high_glitch = (!self.cgb_revision_d
+                        && self.fetcher.stage == FetchStage::DataLow
+                        && self.fetcher.stage_dot == 0
+                        && self.bg_fifo.len() == 5)
+                        .then_some((old_tile_select, new_tile_select));
                     self.pending_tile_select = Some((3, value & 0x10));
                 }
                 if old_written & 0x20 != 0 && value & 0x20 == 0 {
