@@ -293,6 +293,25 @@ impl Mode3Pipeline {
             return None;
         }
         self.last_bg_data_read = None;
+        self.deliver_register_writes();
+        if self.step_startup(vram) {
+            return None;
+        }
+        if self.window_start_delay != 0 {
+            self.window_start_delay -= 1;
+            return None;
+        }
+        self.step_fetch_and_sprites(vram);
+        if self.output_stall != 0 {
+            self.output_stall -= 1;
+            return None;
+        }
+        let output = self.emit_output_pixel(bg_palette, obj_palette)?;
+        self.advance_pending_countdowns();
+        Some(output)
+    }
+
+    fn deliver_register_writes(&mut self) {
         if self.cgb_revision_d {
             if let Some(write) = self.pending_tile_select_write.take() {
                 self.active_tile_select_write = Some(write);
@@ -321,36 +340,38 @@ impl Mode3Pipeline {
                 self.pending_tile_select = None;
             }
         }
-        if self.startup_dots != 0 {
-            if self.window_eligible
-                && self.registers.lcdc & 0x20 != 0
-                && self.ly >= self.registers.wy
-                && self.registers.wx <= 7
-            {
-                self.window_seen = true;
-            }
-            self.step_bg_fetcher(vram);
-            if !self.cgb_revision_d {
-                self.advance_scy_write();
-            }
-            if self.initial_dummy_pending && !self.bg_fifo.is_empty() {
-                self.bg_fifo.clear();
-                self.fetcher.tile_column = self.fetcher.tile_column.wrapping_sub(1);
-                self.initial_dummy_pending = false;
-            }
-            self.startup_dots -= 1;
-            if self.startup_dots == 0 {
-                for _ in 0..self.fine_discard {
-                    self.bg_fifo.pop_front();
-                }
-            }
-            return None;
-        }
+    }
 
-        if self.window_start_delay != 0 {
-            self.window_start_delay -= 1;
-            return None;
+    fn step_startup(&mut self, vram: &[u8; 0x4000]) -> bool {
+        if self.startup_dots == 0 {
+            return false;
         }
+        if self.window_eligible
+            && self.registers.lcdc & 0x20 != 0
+            && self.ly >= self.registers.wy
+            && self.registers.wx <= 7
+        {
+            self.window_seen = true;
+        }
+        self.step_bg_fetcher(vram);
+        if !self.cgb_revision_d {
+            self.advance_scy_write();
+        }
+        if self.initial_dummy_pending && !self.bg_fifo.is_empty() {
+            self.bg_fifo.clear();
+            self.fetcher.tile_column = self.fetcher.tile_column.wrapping_sub(1);
+            self.initial_dummy_pending = false;
+        }
+        self.startup_dots -= 1;
+        if self.startup_dots == 0 {
+            for _ in 0..self.fine_discard {
+                self.bg_fifo.pop_front();
+            }
+        }
+        true
+    }
+
+    fn step_fetch_and_sprites(&mut self, vram: &[u8; 0x4000]) {
         self.start_sprite_fetch();
         if self.sprite_fetch.is_some() {
             self.step_sprite_fetch(vram);
@@ -368,10 +389,13 @@ impl Mode3Pipeline {
                 self.pending_obj_size = None;
             }
         }
-        if self.output_stall != 0 {
-            self.output_stall -= 1;
-            return None;
-        }
+    }
+
+    fn emit_output_pixel(
+        &mut self,
+        bg_palette: &[u16; 32],
+        obj_palette: &[u16; 32],
+    ) -> Option<OutputPixel> {
         self.update_window_state();
         let mut bg = self.bg_fifo.pop_front()?;
         let x = self.pixel_x;
@@ -399,6 +423,17 @@ impl Mode3Pipeline {
         });
         self.last_output = Some((x, bg.color, candidates));
         self.pixel_x += 1;
+        if self.window_active {
+            self.window_pixels = self.window_pixels.wrapping_add(1);
+            if let Some(countdown) = self.window_disable_countdown.as_mut() {
+                *countdown = countdown.saturating_sub(1);
+            }
+        }
+        self.complete = self.pixel_x == 160;
+        Some(OutputPixel { x, color })
+    }
+
+    fn advance_pending_countdowns(&mut self) {
         if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -420,61 +455,10 @@ impl Mode3Pipeline {
                 self.pending_bgp = None;
             }
         }
-        if self.window_active {
-            self.window_pixels = self.window_pixels.wrapping_add(1);
-            if let Some(countdown) = self.window_disable_countdown.as_mut() {
-                *countdown = countdown.saturating_sub(1);
-            }
-        }
-        self.complete = self.pixel_x == 160;
-        Some(OutputPixel { x, color })
     }
 
     fn step_bg_fetcher(&mut self, vram: &[u8; 0x4000]) {
-        if self.fetcher.stage == FetchStage::Push && !self.bg_fifo.is_empty() {
-            let last_sprite_x = self
-                .next_sprite
-                .checked_sub(1)
-                .map(|index| self.sprites[index].x);
-            let reload_low_only = self.cgb_revision_d
-                && !self.window_active
-                && last_sprite_x == Some(8)
-                && self.fetcher.tile_y == 0
-                && self
-                    .active_tile_select_write
-                    .is_some_and(|(old, new)| old != 0 && new == 0);
-            if reload_low_only {
-                let lcdc = self.registers.lcdc;
-                self.registers.lcdc |= 0x10;
-                self.prepare_tile_data_address(false);
-                self.fetcher.low = vram[self.fetcher.data_address];
-                self.registers.lcdc = lcdc;
-                self.active_tile_select_write = None;
-            }
-            let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
-                match (last_sprite_x, self.active_tile_select_write) {
-                    (Some(x), Some((old, 0))) if x <= -7 && old != 0 => Some((old, false)),
-                    (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
-                    (Some(x), Some((0, new))) if (-5..=-4).contains(&x) && new != 0 => {
-                        Some((new, true))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if let Some((tile_select, high_only)) = offscreen_tile_select {
-                let lcdc = self.registers.lcdc;
-                self.registers.lcdc = (lcdc & !0x10) | tile_select;
-                if !high_only {
-                    self.prepare_tile_data_address(false);
-                    self.fetcher.low = vram[self.fetcher.data_address];
-                }
-                self.prepare_tile_data_address(true);
-                self.fetcher.high = vram[self.fetcher.data_address];
-                self.registers.lcdc = lcdc;
-                self.active_tile_select_write = None;
-            }
+        if self.step_bg_push_wait(vram) {
             return;
         }
         match self.fetcher.stage {
@@ -483,99 +467,151 @@ impl Mode3Pipeline {
             FetchStage::DataLow if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(false)
             }
-            FetchStage::DataLow => {
-                let reset_glitch = !self.cgb_revision_d
-                    && self.active_tile_select_write.is_some_and(|(old, new)| {
-                        old != 0 && new == 0 && self.cgb_c_tile_write_persistent
-                    });
-                self.fetcher.low = if self.active_tile_select_write.is_some_and(|(old, new)| {
-                    old == 0
-                        && new != 0
-                        && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
-                }) {
-                    self.object_data_bus.unwrap_or(self.tile_data_bus)
-                } else if self.active_tile_select_write.is_some_and(|(old, new)| {
-                    old != 0 && new == 0 && self.cgb_c_tile_write_persistent
-                }) {
-                    self.fetcher.tile_index
-                } else {
-                    vram[self.fetcher.data_address]
-                };
-                if reset_glitch {
-                    let lcdc = self.registers.lcdc;
-                    let data_address = self.fetcher.data_address;
-                    self.registers.lcdc |= 0x10;
-                    self.prepare_tile_data_address(false);
-                    self.object_data_bus = Some(vram[self.fetcher.data_address]);
-                    self.fetcher.data_address = data_address;
-                    self.registers.lcdc = lcdc;
-                }
-                self.active_tile_select_write = None;
-                self.cgb_c_tile_write_persistent = false;
-                self.last_bg_data_read = Some(BgDataRead::Low);
-            }
+            FetchStage::DataLow => self.fetch_data_low(vram),
             FetchStage::DataHigh if self.fetcher.stage_dot == 0 => {
                 self.prepare_tile_data_address(true)
             }
-            FetchStage::DataHigh => {
-                let high_glitch = self.cgb_c_high_glitch.take();
-                let reset_glitch = high_glitch.is_some_and(|(old, new)| old != 0 && new == 0);
-                self.fetcher.high = match high_glitch {
-                    Some((0, new)) if new != 0 => {
-                        self.object_data_bus.unwrap_or(self.tile_data_bus)
-                    }
-                    Some((old, 0)) if old != 0 => self.fetcher.tile_index,
-                    _ => match self.active_tile_select_write {
-                        Some((0, new)) if new != 0 && self.cgb_revision_d => {
-                            self.object_data_bus.unwrap_or(self.tile_data_bus)
-                        }
-                        Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
-                        _ => vram[self.fetcher.data_address],
-                    },
-                };
-                if reset_glitch {
-                    let lcdc = self.registers.lcdc;
-                    let data_address = self.fetcher.data_address;
-                    self.registers.lcdc |= 0x10;
-                    self.prepare_tile_data_address(true);
-                    self.object_data_bus = Some(vram[self.fetcher.data_address]);
-                    self.fetcher.data_address = data_address;
-                    self.registers.lcdc = lcdc;
-                }
-                self.tile_data_bus = self.fetcher.high;
-                self.active_tile_select_write = None;
-                self.cgb_c_tile_write_persistent = false;
-                self.last_bg_data_read = Some(BgDataRead::High);
-            }
+            FetchStage::DataHigh => self.fetch_data_high(vram),
             FetchStage::Sleep => {}
-            FetchStage::Push if self.fetcher.stage_dot == 0 => {
-                if !self.window_active
-                    && let Some(scy) = self.sprite_scy_latch.take()
-                {
-                    let y = scy.wrapping_add(self.ly);
-                    let map_base = if self.registers.lcdc & 0x08 != 0 {
-                        0x9C00
-                    } else {
-                        0x9800
-                    };
-                    self.fetcher.map_address = map_base
-                        + u16::from(y >> 3) * 32
-                        + u16::from(self.fetcher.tile_column & 31);
-                    self.fetcher.tile_y = y & 7;
-                    self.read_tile(vram);
-                    self.prepare_tile_data_address(false);
-                    self.fetcher.low = vram[self.fetcher.data_address];
-                    self.prepare_tile_data_address(true);
-                    self.fetcher.high = vram[self.fetcher.data_address];
-                }
-                if self.refetch_push_map {
-                    self.refetch_push_map(vram);
-                }
-                self.push_bg_tile();
-            }
+            FetchStage::Push if self.fetcher.stage_dot == 0 => self.fetch_push(vram),
             FetchStage::Push => {}
         }
         self.fetcher.advance();
+    }
+
+    fn step_bg_push_wait(&mut self, vram: &[u8; 0x4000]) -> bool {
+        if self.fetcher.stage != FetchStage::Push || self.bg_fifo.is_empty() {
+            return false;
+        }
+        let last_sprite_x = self
+            .next_sprite
+            .checked_sub(1)
+            .map(|index| self.sprites[index].x);
+        let reload_low_only = self.cgb_revision_d
+            && !self.window_active
+            && last_sprite_x == Some(8)
+            && self.fetcher.tile_y == 0
+            && self
+                .active_tile_select_write
+                .is_some_and(|(old, new)| old != 0 && new == 0);
+        if reload_low_only {
+            let lcdc = self.registers.lcdc;
+            self.registers.lcdc |= 0x10;
+            self.prepare_tile_data_address(false);
+            self.fetcher.low = vram[self.fetcher.data_address];
+            self.registers.lcdc = lcdc;
+            self.active_tile_select_write = None;
+        }
+        let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
+            match (last_sprite_x, self.active_tile_select_write) {
+                (Some(x), Some((old, 0))) if x <= -7 && old != 0 => Some((old, false)),
+                (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
+                (Some(x), Some((0, new))) if (-5..=-4).contains(&x) && new != 0 => {
+                    Some((new, true))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some((tile_select, high_only)) = offscreen_tile_select {
+            let lcdc = self.registers.lcdc;
+            self.registers.lcdc = (lcdc & !0x10) | tile_select;
+            if !high_only {
+                self.prepare_tile_data_address(false);
+                self.fetcher.low = vram[self.fetcher.data_address];
+            }
+            self.prepare_tile_data_address(true);
+            self.fetcher.high = vram[self.fetcher.data_address];
+            self.registers.lcdc = lcdc;
+            self.active_tile_select_write = None;
+        }
+        true
+    }
+
+    fn fetch_data_low(&mut self, vram: &[u8; 0x4000]) {
+        let reset_glitch = !self.cgb_revision_d
+            && self
+                .active_tile_select_write
+                .is_some_and(|(old, new)| old != 0 && new == 0 && self.cgb_c_tile_write_persistent);
+        self.fetcher.low = if self.active_tile_select_write.is_some_and(|(old, new)| {
+            old == 0 && new != 0 && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
+        }) {
+            self.object_data_bus.unwrap_or(self.tile_data_bus)
+        } else if self
+            .active_tile_select_write
+            .is_some_and(|(old, new)| old != 0 && new == 0 && self.cgb_c_tile_write_persistent)
+        {
+            self.fetcher.tile_index
+        } else {
+            vram[self.fetcher.data_address]
+        };
+        if reset_glitch {
+            let lcdc = self.registers.lcdc;
+            let data_address = self.fetcher.data_address;
+            self.registers.lcdc |= 0x10;
+            self.prepare_tile_data_address(false);
+            self.object_data_bus = Some(vram[self.fetcher.data_address]);
+            self.fetcher.data_address = data_address;
+            self.registers.lcdc = lcdc;
+        }
+        self.active_tile_select_write = None;
+        self.cgb_c_tile_write_persistent = false;
+        self.last_bg_data_read = Some(BgDataRead::Low);
+    }
+
+    fn fetch_data_high(&mut self, vram: &[u8; 0x4000]) {
+        let high_glitch = self.cgb_c_high_glitch.take();
+        let reset_glitch = high_glitch.is_some_and(|(old, new)| old != 0 && new == 0);
+        self.fetcher.high = match high_glitch {
+            Some((0, new)) if new != 0 => self.object_data_bus.unwrap_or(self.tile_data_bus),
+            Some((old, 0)) if old != 0 => self.fetcher.tile_index,
+            _ => match self.active_tile_select_write {
+                Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                    self.object_data_bus.unwrap_or(self.tile_data_bus)
+                }
+                Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
+                _ => vram[self.fetcher.data_address],
+            },
+        };
+        if reset_glitch {
+            let lcdc = self.registers.lcdc;
+            let data_address = self.fetcher.data_address;
+            self.registers.lcdc |= 0x10;
+            self.prepare_tile_data_address(true);
+            self.object_data_bus = Some(vram[self.fetcher.data_address]);
+            self.fetcher.data_address = data_address;
+            self.registers.lcdc = lcdc;
+        }
+        self.tile_data_bus = self.fetcher.high;
+        self.active_tile_select_write = None;
+        self.cgb_c_tile_write_persistent = false;
+        self.last_bg_data_read = Some(BgDataRead::High);
+    }
+
+    fn fetch_push(&mut self, vram: &[u8; 0x4000]) {
+        if !self.window_active
+            && let Some(scy) = self.sprite_scy_latch.take()
+        {
+            let y = scy.wrapping_add(self.ly);
+            let map_base = if self.registers.lcdc & 0x08 != 0 {
+                0x9C00
+            } else {
+                0x9800
+            };
+            self.fetcher.map_address =
+                map_base + u16::from(y >> 3) * 32 + u16::from(self.fetcher.tile_column & 31);
+            self.fetcher.tile_y = y & 7;
+            self.read_tile(vram);
+            self.prepare_tile_data_address(false);
+            self.fetcher.low = vram[self.fetcher.data_address];
+            self.prepare_tile_data_address(true);
+            self.fetcher.high = vram[self.fetcher.data_address];
+        }
+        if self.refetch_push_map {
+            self.refetch_push_map(vram);
+        }
+        self.push_bg_tile();
     }
 
     fn apply_window_reload(&mut self, vram: &[u8; 0x4000]) {
@@ -733,7 +769,10 @@ impl Mode3Pipeline {
             self.fetcher.restart(self.registers.scx >> 3);
             return;
         }
+        self.try_activate_window();
+    }
 
+    fn try_activate_window(&mut self) {
         let window_x = i16::from(self.registers.wx) - 7;
         let can_trigger = !self.window_triggered || self.window_can_retrigger;
         let window_enabled = if self.window_triggered {
