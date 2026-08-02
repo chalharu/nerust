@@ -926,10 +926,15 @@ impl Mode3Pipeline {
                 {
                     self.fine_discard = value & 7;
                 }
-                let defer_high = !self.cgb_revision_d
-                    && (matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
+                let defer_high = if self.cgb_revision_d {
+                    (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
                         || (self.fetcher.stage == FetchStage::Tile
-                            && self.fetcher.stage_dot == 0));
+                            && self.fetcher.stage_dot == 0)
+                } else {
+                    matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
+                        || (self.fetcher.stage == FetchStage::Tile
+                            && self.fetcher.stage_dot == 0)
+                };
                 if defer_high {
                     self.pending_scx_high = Some(value & 0xF8);
                     self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
