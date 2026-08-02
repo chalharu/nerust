@@ -933,7 +933,6 @@ impl Mode3Pipeline {
                     self.pending_tile_select_write =
                         (!collided).then_some((old_tile_select, new_tile_select));
                     self.cgb_c_tile_write_persistent = !self.cgb_revision_d
-                        && !self.window_active
                         && self.fetcher.stage == FetchStage::Tile
                         && self.fetcher.stage_dot == 0;
                     self.pending_tile_select = Some((3, value & 0x10));
