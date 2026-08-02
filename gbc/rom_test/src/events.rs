@@ -18,6 +18,9 @@ pub struct MemoryEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct HashEntry {
     pub hash: String, // hex-encoded CRC32 or SHA256
+    /// Optional suffix of the serial output that must match (hex-encoded bytes).
+    #[serde(default)]
+    pub suffix: Option<String>,
 }
 
 /// A single test event: run for `cycles` M-cycles, then verify.

@@ -118,8 +118,12 @@ fn screenshots_dir(report: bool) -> Option<PathBuf> {
 fn run_single_case(case: &RomCase, rom_root: &Path, screenshots_dir: Option<&Path>) -> CaseResult {
     match run_case(case, rom_root, screenshots_dir) {
         Ok((output, shots)) => {
-            // Pass if: serial says PASS, OR frame hash matched (no error but no serial)
-            let passed = output.contains("Passed") || output.contains("PASS") || output.is_empty();
+            // Pass if: serial says PASS, OR frame hash matched (no error but no serial),
+            // OR an explicit serial suffix check was configured and succeeded.
+            let passed = case.has_explicit_verification()
+                || output.contains("Passed")
+                || output.contains("PASS")
+                || output.is_empty();
             if passed {
                 println!("ok");
             } else {
