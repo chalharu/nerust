@@ -380,7 +380,9 @@ impl Mode3Pipeline {
             }
             FetchStage::DataLow => {
                 self.fetcher.low = if self.active_tile_select_write
-                    .is_some_and(|(old, new)| old == 0 && new != 0)
+                    .is_some_and(|(old, new)| {
+                        old == 0 && new != 0 && self.cgb_revision_d
+                    })
                 {
                     self.tile_data_bus
                 } else {
@@ -394,7 +396,7 @@ impl Mode3Pipeline {
             }
             FetchStage::DataHigh => {
                 self.fetcher.high = match self.active_tile_select_write {
-                    Some((0, new)) if new != 0 => self.tile_data_bus,
+                    Some((0, new)) if new != 0 && self.cgb_revision_d => self.tile_data_bus,
                     Some((old, 0)) if old != 0 => self.fetcher.low,
                     _ => vram[self.fetcher.data_address],
                 };
