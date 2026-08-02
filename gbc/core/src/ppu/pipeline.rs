@@ -921,25 +921,8 @@ impl Mode3Pipeline {
             self.relatch_obj_size_high = false;
         }
         if fetch.dot == 2 || fetch.dot == 4 {
-            let mut tile_y = (i16::from(self.ly) - fetch.sprite.y) as u8 & (fetch.height - 1);
-            if fetch.sprite.flags & 0x40 != 0 {
-                tile_y ^= fetch.height - 1;
-            }
-            let tile = if fetch.height == 16 {
-                (fetch.sprite.tile & 0xFE) | u8::from(tile_y >= 8)
-            } else {
-                fetch.sprite.tile
-            };
-            let bank = if self.cgb_mode {
-                usize::from((fetch.sprite.flags >> 3) & 1)
-            } else {
-                0
-            };
-            let address = 0x8000u16
-                + u16::from(tile) * 16
-                + u16::from(tile_y & 7) * 2
-                + u16::from(fetch.dot == 4);
-            fetch.data_address = bank * 0x2000 + usize::from(address & 0x1FFF);
+            let address = sprite_fetch_data_address(fetch, self.ly, self.cgb_mode);
+            fetch.data_address = address;
         }
     }
 
@@ -1401,6 +1384,28 @@ impl Mode3Pipeline {
     pub(super) fn final_window_line(&self) -> u8 {
         self.window_line.wrapping_add(u8::from(self.window_seen))
     }
+}
+
+fn sprite_fetch_data_address(fetch: &SpriteFetch, ly: u8, cgb_mode: bool) -> usize {
+    let mut tile_y = (i16::from(ly) - fetch.sprite.y) as u8 & (fetch.height - 1);
+    if fetch.sprite.flags & 0x40 != 0 {
+        tile_y ^= fetch.height - 1;
+    }
+    let tile = if fetch.height == 16 {
+        (fetch.sprite.tile & 0xFE) | u8::from(tile_y >= 8)
+    } else {
+        fetch.sprite.tile
+    };
+    let bank = if cgb_mode {
+        usize::from((fetch.sprite.flags >> 3) & 1)
+    } else {
+        0
+    };
+    let address = 0x8000u16
+        + u16::from(tile) * 16
+        + u16::from(tile_y & 7) * 2
+        + u16::from(fetch.dot == 4);
+    bank * 0x2000 + usize::from(address & 0x1FFF)
 }
 
 #[cfg(test)]
