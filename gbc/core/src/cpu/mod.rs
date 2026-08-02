@@ -1,13 +1,13 @@
 use std::sync::LazyLock;
 
 use crate::cpu_core::{HandlerFn, Lr35902Cpu, Phase, StepResult};
-use crate::memory::GbcMemoryBus;
+use crate::memory::{CpuStepper, GbcMemoryBus};
 
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
 
-impl Lr35902Cpu {
+impl CpuStepper for Lr35902Cpu {
     /// Step one M-cycle (no device advancement — caller must call step_devices).
-    pub fn step(&mut self, bus: &mut GbcMemoryBus) {
+    fn step(&mut self, bus: &mut GbcMemoryBus) {
         if bus.is_halted_or_stopped() {
             self.check_interrupts(bus);
             if bus.is_halted_or_stopped() {
@@ -90,7 +90,9 @@ impl Lr35902Cpu {
             },
         }
     }
+}
 
+impl Lr35902Cpu {
     fn finish_instruction(&mut self, bus: &mut GbcMemoryBus) {
         if self.take_armed_ime() {
             bus.set_ime(true);
