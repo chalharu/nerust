@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use crate::{
     apu::GbcApu,
     cartridge::Cartridge,
-    cpu_core::Lr35902Cpu,
     dma::DmaController,
     hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
@@ -19,6 +18,14 @@ const HRAM_SIZE: usize = 0x7F;
 struct PpuWriteEvent {
     addr: u16,
     value: u8,
+}
+
+/// Abstraction over the CPU used by [`GbcMemoryBus::step_tcycle`].
+///
+/// Breaking the direct `memory -> cpu_core` module reference avoids a
+/// circular dependency between the two modules.
+pub trait CpuStepper {
+    fn step(&mut self, bus: &mut GbcMemoryBus);
 }
 
 /// Top-level memory bus for the Game Boy / GBC.
@@ -254,7 +261,7 @@ impl GbcMemoryBus {
     /// Advance ALL devices (including CPU) by 1 T-cycle.
     /// Call this 4 times per CPU M-cycle for proper T-cycle synchronization.
     /// Returns true if a PPU frame completed.
-    pub fn step_tcycle(&mut self, cpu: &mut Lr35902Cpu) -> bool {
+    pub fn step_tcycle(&mut self, cpu: &mut impl CpuStepper) -> bool {
         self.tick = self.tick.wrapping_add(1);
         let t1 = self.tick % 4;
 

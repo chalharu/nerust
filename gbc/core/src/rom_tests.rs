@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::cartridge::Cartridge;
 use crate::cpu_core::Lr35902Cpu;
-use crate::memory::GbcMemoryBus;
+use crate::memory::{CpuStepper, GbcMemoryBus};
 
 fn load_rom(subpath: &str) -> Cartridge {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
