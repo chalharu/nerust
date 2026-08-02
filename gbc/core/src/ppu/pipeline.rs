@@ -185,6 +185,7 @@ pub(super) struct Mode3Pipeline {
     cgb_c_tile_write_persistent: bool,
     last_bg_data_read: Option<BgDataRead>,
     tile_data_bus: u8,
+    object_data_bus: Option<u8>,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -248,6 +249,7 @@ impl Mode3Pipeline {
             cgb_c_tile_write_persistent: false,
             last_bg_data_read: None,
             tile_data_bus: 0,
+            object_data_bus: None,
             obj_line: [None; 160],
         }
     }
@@ -398,7 +400,7 @@ impl Mode3Pipeline {
                             && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
                     })
                 {
-                    self.tile_data_bus
+                    self.object_data_bus.unwrap_or(self.tile_data_bus)
                 } else if self.active_tile_select_write.is_some_and(|(old, new)| {
                     old != 0 && new == 0 && self.cgb_c_tile_write_persistent
                 }) {
@@ -415,7 +417,9 @@ impl Mode3Pipeline {
             }
             FetchStage::DataHigh => {
                 self.fetcher.high = match self.active_tile_select_write {
-                    Some((0, new)) if new != 0 && self.cgb_revision_d => self.tile_data_bus,
+                    Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                        self.object_data_bus.unwrap_or(self.tile_data_bus)
+                    }
                     Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
                     _ => vram[self.fetcher.data_address],
                 };
@@ -674,6 +678,7 @@ impl Mode3Pipeline {
             } else {
                 fetch.high = value;
                 self.tile_data_bus = value;
+                self.object_data_bus = Some(value);
             }
         }
         fetch.dot += 1;
