@@ -385,8 +385,11 @@ impl GbcMemoryBus {
     pub fn stop(&mut self) {
         self.timer.reset_div();
         if self.speed_switch_pending {
+            // CGB speed switch: KEY1 bit 7 (prepare) was set before STOP.
+            // The switch happens and execution continues (no halt).
             self.speed_switch_pending = false;
             self.double_speed = !self.double_speed;
+            return;
         }
         self.interrupt.stop();
     }
@@ -448,15 +451,17 @@ impl GbcMemoryBus {
     fn read_key1(&self) -> u8 {
         let mut val = 0x7E;
         if self.double_speed {
-            val |= 0x80;
+            val |= 0x01; // bit0 = current speed (0 normal, 1 double)
         }
         if self.speed_switch_pending {
-            val |= 0x01;
+            val |= 0x80; // bit7 = prepare speed switch flag
         }
         val
     }
 
     fn write_key1(&mut self, value: u8) {
+        // Writing $01 prepares a speed switch: the written value's bit 0 is
+        // latched into the prepare-speed-switch flag (read back on bit 7).
         if value & 0x01 != 0 {
             self.speed_switch_pending = true;
         }
@@ -670,7 +675,8 @@ mod tests {
     fn write_key1_sets_pending_flag() {
         let mut bus = bus();
         bus.write(0xFF4D, 0x01);
-        assert_eq!(bus.read(0xFF4D), 0x7F);
+        // bit7 = prepare-speed-switch flag, bit0 = current speed (normal)
+        assert_eq!(bus.read(0xFF4D), 0xFE);
     }
 
     // ── WRAM bank select ──────────────────────────────────

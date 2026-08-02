@@ -1,5 +1,19 @@
 rom_root: "../../roms/gbc"
 cases:
+  - id: "cpu_instrs_all"
+    category: "cpu_instrs"
+    description: "CPU instrs — combined suite (all 11 subtests)"
+    rom: "retrio_gb-test-roms/cpu_instrs/cpu_instrs.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 60_000_000
+        serial:
+          hash: "483E4D0E"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
   - id: "cpu_instrs_01_special"
     category: "cpu_instrs"
     description: "CPU special instructions"
