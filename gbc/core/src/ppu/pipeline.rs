@@ -168,7 +168,6 @@ pub(super) struct Mode3Pipeline {
     next_sprite: usize,
     sprite_fetch: Option<SpriteFetch>,
     output_stall: u8,
-    last_sprite_tile: Option<i16>,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
@@ -227,7 +226,6 @@ impl Mode3Pipeline {
             next_sprite: 0,
             sprite_fetch: None,
             output_stall: 0,
-            last_sprite_tile: None,
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
@@ -548,14 +546,8 @@ impl Mode3Pipeline {
         }
         let sprite = self.sprites[self.next_sprite];
         self.next_sprite += 1;
-        let tile = (i16::from(self.pixel_x) + i16::from(self.registers.scx)) / 8;
-        let fetch_wait = if self.last_sprite_tile == Some(tile) {
-            0
-        } else {
-            let tile_x = (i16::from(self.pixel_x) + i16::from(self.registers.scx)) & 7;
-            (5 - tile_x).max(0) as u8
-        };
-        self.last_sprite_tile = Some(tile);
+        let tile_x = (i16::from(self.pixel_x) + i16::from(self.registers.scx)) & 7;
+        let fetch_wait = (5 - tile_x).max(0) as u8;
         let stall = if sprite.x < 0 {
             if sprite.x <= -5 {
                 (3 - sprite.x) as u8
