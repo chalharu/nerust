@@ -7,7 +7,7 @@ use nerust_gbc_core::{
 };
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use super::{error::RomTestError, manifest::RomCase, media};
+use super::{error::RomTestError, events::RomEvent, manifest::RomCase, media};
 
 /// Read ROM bytes and determine effective model based on header CGB flag.
 fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestError> {
@@ -90,126 +90,154 @@ pub fn run_case(
     // Process each event
     let mut screenshots: Vec<String> = Vec::new();
     for (event_idx, event) in case.events.iter().enumerate() {
-        for _ in 0..event.cycles {
-            // T-cycle synchronized: CPU + PPU advance at 1 T-cycle per call.
-            // 4 calls = 1 M-cycle for CPU, 4 T-cycles for PPU.
-            for _ in 0..4 {
-                bus.step_tcycle(&mut cpu);
-            }
+        step_cycles(&mut bus, &mut cpu, event.cycles);
+        let (png_data, frame_crc) = render_frame(&mut bus)?;
+        if let Some(dir) = screenshots_dir {
+            screenshots.push(save_screenshot(&png_data, dir, &case.id, event_idx)?);
         }
-
-        // Compute PNG screenshot data (for both file save and hash check)
-        let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-        fb.resize(160, 144);
-        bus.render_frame(&mut fb);
-        let png_data = media::encode_screenshot_png(&fb)?;
-
-        // Compute frame hash from raw RGBA pixels (stride-aware)
-        let stride = fb.stride();
-        let w = fb.width();
-        let h = fb.height();
-        let src = fb.as_ref();
-        let mut rgba = Vec::with_capacity(w * h * 4);
-        for y in 0..h {
-            let row_start = y * stride;
-            rgba.extend_from_slice(&src[row_start..row_start + w * 4]);
-        }
-        let frame_crc = crc32(&rgba);
-
-        // Save screenshot to file if requested
-        if let Some(screenshots_dir) = screenshots_dir {
-            let shot_name = format!("{}_{}.png", case.id, event_idx);
-            let shot_path = screenshots_dir.join(&shot_name);
-            std::fs::write(&shot_path, &png_data).map_err(RomTestError::Io)?;
-            screenshots.push(shot_name);
-        }
-
-        // Verify serial output hash
-        if let Some(serial_hash) = event.serial.as_ref().filter(|s| !s.hash.is_empty()) {
-            let actual = crc32(bus.serial_output());
-            let expected = parse_hex(&serial_hash.hash)? as u32;
-            if actual != expected {
-                return Err(RomTestError::SerialMismatch(case.id.clone()));
-            }
-        }
-
-        // Verify frame hash (CRC32 of raw RGBA frame buffer)
-        if let Some(ref frame_hash) = event.frame
-            && !frame_hash.hash.is_empty()
-        {
-            let expected = parse_hex(&frame_hash.hash)? as u32;
-            if frame_crc != expected {
-                return Err(RomTestError::CaseFailed(
-                    case.id.clone(),
-                    format!(
-                        "frame hash: expected {:08X}, got {:08X}",
-                        expected, frame_crc
-                    ),
-                ));
-            }
-        }
-
-        // Verify audio hash (stub)
-        if let Some(ref audio_hash) = event.audio {
-            let _ = audio_hash;
-        }
-
-        // Verify memory values
-        if let Some(ref memory) = event.memory {
-            for entry in memory {
-                let addr = parse_hex(&entry.address)? as u16;
-                let expected = parse_hex(&entry.value)? as u8;
-                let actual = bus.read(addr);
-                if actual != expected {
-                    return Err(RomTestError::CaseFailed(
-                        case.id.clone(),
-                        format!(
-                            "memory at ${:04X}: expected ${:02X}, got ${:02X}",
-                            addr, expected, actual
-                        ),
-                    ));
-                }
-            }
-        }
-
-        // Apply pad input
-        if let Some(ref pad) = event.pad {
-            let mut joypad = 0xFFu8;
-            for entry in pad {
-                // GBC joypad: bits 0-3 = direction/button, bit 4=select, bit 5=select
-                // 0 = pressed, 1 = released
-                let mask = match entry.button.as_str() {
-                    "right" => !0x01,
-                    "left" => !0x02,
-                    "up" => !0x04,
-                    "down" => !0x08,
-                    "a" => !0x01,
-                    "b" => !0x02,
-                    "select" => !0x04,
-                    "start" => !0x08,
-                    _ => 0xFF,
-                };
-                let pressed = entry.state == "press";
-                if pressed {
-                    if entry.button == "a"
-                        || entry.button == "b"
-                        || entry.button == "select"
-                        || entry.button == "start"
-                    {
-                        joypad &= mask & 0x0F; // button keys: bits 0-3
-                    } else {
-                        joypad &= mask & 0xF0; // direction keys: bits 4-7
-                    }
-                }
-            }
-            bus.set_joypad(joypad);
-        }
+        verify_event(&mut bus, event, case, frame_crc)?;
     }
 
     Ok((
         String::from_utf8_lossy(bus.serial_output()).into_owned(),
         screenshots,
     ))
+}
+
+fn step_cycles(bus: &mut GbcMemoryBus, cpu: &mut Lr35902Cpu, cycles: usize) {
+    for _ in 0..cycles {
+        // T-cycle synchronized: CPU + PPU advance at 1 T-cycle per call.
+        // 4 calls = 1 M-cycle for CPU, 4 T-cycles for PPU.
+        for _ in 0..4 {
+            bus.step_tcycle(cpu);
+        }
+    }
+}
+
+fn render_frame(bus: &mut GbcMemoryBus) -> Result<(Vec<u8>, u32), RomTestError> {
+    // Compute PNG screenshot data (for both file save and hash check)
+    let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+    fb.resize(160, 144);
+    bus.render_frame(&mut fb);
+    let png_data = media::encode_screenshot_png(&fb)?;
+
+    // Compute frame hash from raw RGBA pixels (stride-aware)
+    let stride = fb.stride();
+    let w = fb.width();
+    let h = fb.height();
+    let src = fb.as_ref();
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        let row_start = y * stride;
+        rgba.extend_from_slice(&src[row_start..row_start + w * 4]);
+    }
+    let frame_crc = crc32(&rgba);
+    Ok((png_data, frame_crc))
+}
+
+fn save_screenshot(
+    png_data: &[u8],
+    dir: &Path,
+    case_id: &str,
+    event_idx: usize,
+) -> Result<String, RomTestError> {
+    let shot_name = format!("{}_{}.png", case_id, event_idx);
+    let shot_path = dir.join(&shot_name);
+    std::fs::write(&shot_path, png_data).map_err(RomTestError::Io)?;
+    Ok(shot_name)
+}
+
+fn verify_event(
+    bus: &mut GbcMemoryBus,
+    event: &RomEvent,
+    case: &RomCase,
+    frame_crc: u32,
+) -> Result<(), RomTestError> {
+    // Verify serial output hash
+    if let Some(serial_hash) = event.serial.as_ref().filter(|s| !s.hash.is_empty()) {
+        let actual = crc32(bus.serial_output());
+        let expected = parse_hex(&serial_hash.hash)? as u32;
+        if actual != expected {
+            return Err(RomTestError::SerialMismatch(case.id.clone()));
+        }
+    }
+
+    // Verify frame hash (CRC32 of raw RGBA frame buffer)
+    if let Some(ref frame_hash) = event.frame
+        && !frame_hash.hash.is_empty()
+    {
+        let expected = parse_hex(&frame_hash.hash)? as u32;
+        if frame_crc != expected {
+            return Err(RomTestError::CaseFailed(
+                case.id.clone(),
+                format!(
+                    "frame hash: expected {:08X}, got {:08X}",
+                    expected, frame_crc
+                ),
+            ));
+        }
+    }
+
+    // Verify audio hash (stub)
+    if let Some(ref audio_hash) = event.audio {
+        let _ = audio_hash;
+    }
+
+    // Verify memory values
+    if let Some(ref memory) = event.memory {
+        for entry in memory {
+            let addr = parse_hex(&entry.address)? as u16;
+            let expected = parse_hex(&entry.value)? as u8;
+            let actual = bus.read(addr);
+            if actual != expected {
+                return Err(RomTestError::CaseFailed(
+                    case.id.clone(),
+                    format!(
+                        "memory at ${:04X}: expected ${:02X}, got ${:02X}",
+                        addr, expected, actual
+                    ),
+                ));
+            }
+        }
+    }
+
+    // Apply pad input
+    apply_pad_input(bus, event);
+    Ok(())
+}
+
+fn apply_pad_input(bus: &mut GbcMemoryBus, event: &RomEvent) {
+    if let Some(ref pad) = event.pad {
+        let mut joypad = 0xFFu8;
+        for entry in pad {
+            // GBC joypad: bits 0-3 = direction/button, bit 4=select, bit 5=select
+            // 0 = pressed, 1 = released
+            let mask = match entry.button.as_str() {
+                "right" => !0x01,
+                "left" => !0x02,
+                "up" => !0x04,
+                "down" => !0x08,
+                "a" => !0x01,
+                "b" => !0x02,
+                "select" => !0x04,
+                "start" => !0x08,
+                _ => 0xFF,
+            };
+            let pressed = entry.state == "press";
+            if pressed {
+                if entry.button == "a"
+                    || entry.button == "b"
+                    || entry.button == "select"
+                    || entry.button == "start"
+                {
+                    joypad &= mask & 0x0F; // button keys: bits 0-3
+                } else {
+                    joypad &= mask & 0xF0; // direction keys: bits 4-7
+                }
+            }
+        }
+        bus.set_joypad(joypad);
+    }
 }
 
 fn parse_hex(s: &str) -> Result<u64, RomTestError> {
