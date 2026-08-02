@@ -198,6 +198,10 @@ pub(super) struct Mode3Pipeline {
     tile_data_bus: u8,
     object_data_bus: Option<u8>,
     sprite_scy_latch: Option<u8>,
+    last_output: Option<(u8, u8, [u32; 4])>,
+    corrected_output: Option<OutputPixel>,
+    force_bg_high_delay: u8,
+    force_bg_high_pixels: u8,
     obj_line: [Option<ObjPixel>; 160],
 }
 
@@ -266,6 +270,10 @@ impl Mode3Pipeline {
             tile_data_bus: 0,
             object_data_bus: None,
             sprite_scy_latch: None,
+            last_output: None,
+            corrected_output: None,
+            force_bg_high_delay: 0,
+            force_bg_high_pixels: 0,
             obj_line: [None; 160],
         }
     }
@@ -366,7 +374,20 @@ impl Mode3Pipeline {
             bg = BgPixel::default();
             self.window_zero_at = None;
         }
-        let color = self.compose_pixel(bg, self.obj_line[x as usize], bg_palette, obj_palette);
+        if self.force_bg_high_delay != 0 {
+            self.force_bg_high_delay -= 1;
+        } else if self.force_bg_high_pixels != 0 {
+            bg.color |= 2;
+            self.force_bg_high_pixels -= 1;
+        }
+        let obj = self.obj_line[x as usize];
+        let color = self.compose_pixel(bg, obj, bg_palette, obj_palette);
+        let candidates = std::array::from_fn(|candidate| {
+            let mut candidate_bg = bg;
+            candidate_bg.color = candidate as u8;
+            self.compose_pixel(candidate_bg, obj, bg_palette, obj_palette)
+        });
+        self.last_output = Some((x, bg.color, candidates));
         self.pixel_x += 1;
         if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
             *countdown = countdown.saturating_sub(1);
@@ -1047,6 +1068,18 @@ impl Mode3Pipeline {
                         && old_tile_select != 0
                         && new_tile_select == 0
                     {
+                        let object_x = self
+                            .next_sprite
+                            .checked_sub(1)
+                            .map(|index| self.sprites[index].x);
+                        if object_x == Some(-7) {
+                            self.correct_last_bg_color(|color| color | 1);
+                        } else if object_x == Some(0) && self.fetcher.tile_y == 0 {
+                            self.force_bg_high_delay = 8;
+                            self.force_bg_high_pixels = 8;
+                        } else if object_x == Some(9) {
+                            self.correct_last_bg_color(|color| color & 1);
+                        }
                         self.reload_window_tile = self
                             .next_sprite
                             .checked_sub(1)
@@ -1171,6 +1204,20 @@ impl Mode3Pipeline {
 
     pub(super) fn complete(&self) -> bool {
         self.complete
+    }
+
+    fn correct_last_bg_color(&mut self, update: impl FnOnce(u8) -> u8) {
+        let Some((x, color, candidates)) = self.last_output else { return };
+        let corrected = update(color) & 3;
+        self.last_output = Some((x, corrected, candidates));
+        self.corrected_output = Some(OutputPixel {
+            x,
+            color: candidates[usize::from(corrected)],
+        });
+    }
+
+    pub(super) fn take_corrected_output(&mut self) -> Option<OutputPixel> {
+        self.corrected_output.take()
     }
 
     pub(super) fn final_window_line(&self) -> u8 {
