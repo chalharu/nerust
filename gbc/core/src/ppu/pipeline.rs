@@ -845,25 +845,26 @@ impl Mode3Pipeline {
                 if changed & 0x10 != 0 {
                     let old_tile_select = old_written & 0x10;
                     let new_tile_select = value & 0x10;
-                    let collided = match (
-                        old_tile_select,
-                        new_tile_select,
-                        self.last_bg_data_read,
-                    ) {
-                        (0, new, Some(BgDataRead::Low)) if new != 0 => {
-                            self.fetcher.low = self.tile_data_bus;
-                            true
-                        }
-                        (0, new, Some(BgDataRead::High)) if new != 0 => {
-                            self.fetcher.high = self.tile_data_bus;
-                            true
-                        }
-                        (old, 0, Some(BgDataRead::High)) if old != 0 => {
-                            self.fetcher.high = self.fetcher.low;
-                            true
-                        }
-                        _ => false,
-                    };
+                    let collided = self.cgb_revision_d
+                        && match (
+                            old_tile_select,
+                            new_tile_select,
+                            self.last_bg_data_read,
+                        ) {
+                            (0, new, Some(BgDataRead::Low)) if new != 0 => {
+                                self.fetcher.low = self.tile_data_bus;
+                                true
+                            }
+                            (0, new, Some(BgDataRead::High)) if new != 0 => {
+                                self.fetcher.high = self.tile_data_bus;
+                                true
+                            }
+                            (old, 0, Some(BgDataRead::High)) if old != 0 => {
+                                self.fetcher.high = self.fetcher.low;
+                                true
+                            }
+                            _ => false,
+                        };
                     self.pending_tile_select_write =
                         (!collided).then_some((old_tile_select, new_tile_select));
                     self.pending_tile_select = Some((3, value & 0x10));
