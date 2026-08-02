@@ -495,6 +495,10 @@ impl GbcPpu {
             && let Some(pipeline) = self.mode3_pipeline.as_mut()
         {
             pipeline.write_register(addr, value);
+            if let Some(output) = pipeline.take_corrected_output() {
+                self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
+                    output.color;
+            }
         }
         match addr {
             0xFF40 => {
