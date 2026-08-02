@@ -397,7 +397,7 @@ impl Mode3Pipeline {
             FetchStage::DataHigh => {
                 self.fetcher.high = match self.active_tile_select_write {
                     Some((0, new)) if new != 0 && self.cgb_revision_d => self.tile_data_bus,
-                    Some((old, 0)) if old != 0 => self.fetcher.low,
+                    Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
                     _ => vram[self.fetcher.data_address],
                 };
                 self.tile_data_bus = self.fetcher.high;
