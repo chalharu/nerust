@@ -162,6 +162,18 @@ fn verify_event(
         }
     }
 
+    // Verify serial output suffix (e.g. mooneye test suite success marker)
+    if let Some(suffix) = event
+        .serial
+        .as_ref()
+        .and_then(|s| s.suffix.as_deref().filter(|s| !s.is_empty()))
+    {
+        let expected = parse_hex_suffix(suffix)?;
+        if !bus.serial_output().ends_with(&expected) {
+            return Err(RomTestError::SerialMismatch(case.id.clone()));
+        }
+    }
+
     // Verify frame hash (CRC32 of raw RGBA frame buffer)
     if let Some(ref frame_hash) = event.frame
         && !frame_hash.hash.is_empty()
@@ -244,6 +256,23 @@ fn parse_hex(s: &str) -> Result<u64, RomTestError> {
     let s = s.trim_start_matches("0x").trim_start_matches("0X");
     u64::from_str_radix(s, 16)
         .map_err(|_| RomTestError::InvalidManifest(format!("invalid hex value: {}", s)))
+}
+
+fn parse_hex_suffix(s: &str) -> Result<Vec<u8>, RomTestError> {
+    let s = s.trim_start_matches("0x").trim_start_matches("0X");
+    if !s.len().is_multiple_of(2) {
+        return Err(RomTestError::InvalidManifest(format!(
+            "invalid hex suffix: {}",
+            s
+        )));
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&s[i..i + 2], 16)
+                .map_err(|_| RomTestError::InvalidManifest(format!("invalid hex suffix: {}", s)))
+        })
+        .collect()
 }
 
 fn crc32(data: &[u8]) -> u32 {

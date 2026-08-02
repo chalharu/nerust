@@ -106,4 +106,16 @@ impl RomCase {
     pub fn rom_path(&self, rom_root: &Path) -> PathBuf {
         rom_root.join(&self.rom)
     }
+
+    /// Whether any event configures an explicit verification (serial suffix,
+    /// serial hash, frame hash, audio hash, or memory check).
+    pub fn has_explicit_verification(&self) -> bool {
+        self.events.iter().any(|event| {
+            event.serial.as_ref().is_some_and(|s| {
+                !s.hash.is_empty() || s.suffix.as_deref().is_some_and(|x| !x.is_empty())
+            }) || event.frame.as_ref().is_some_and(|f| !f.hash.is_empty())
+                || event.audio.as_ref().is_some_and(|a| !a.hash.is_empty())
+                || event.memory.as_ref().is_some_and(|m| !m.is_empty())
+        })
+    }
 }

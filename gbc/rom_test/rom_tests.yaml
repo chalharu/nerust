@@ -636,3 +636,168 @@ cases:
           hash: "31BF4BB3"
         memory: []
         pad: []
+  - id: "mooneye_boot_regs_dmgABC"
+    category: "mooneye"
+    description: "Mooneye Test Suite — boot_regs-dmgABC"
+    rom: "Gekkio_mooneye-test-suite/acceptance/boot_regs-dmgABC.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_div_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — div_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/div_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_ei_sequence"
+    category: "mooneye"
+    description: "Mooneye Test Suite — ei_sequence"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ei_sequence.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_ei_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — ei_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ei_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_halt_ime0_ei"
+    category: "mooneye"
+    description: "Mooneye Test Suite — halt_ime0_ei"
+    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime0_ei.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_halt_ime1_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — halt_ime1_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime1_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_if_ie_registers"
+    category: "mooneye"
+    description: "Mooneye Test Suite — if_ie_registers"
+    rom: "Gekkio_mooneye-test-suite/acceptance/if_ie_registers.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_intr_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — intr_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/intr_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_pop_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — pop_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/pop_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_rapid_di_ei"
+    category: "mooneye"
+    description: "Mooneye Test Suite — rapid_di_ei"
+    rom: "Gekkio_mooneye-test-suite/acceptance/rapid_di_ei.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_reti_intr_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — reti_intr_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/reti_intr_timing.gb"
+    model: dmg
+    perf: false
+    events:
+      - cycles: 30_000_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []

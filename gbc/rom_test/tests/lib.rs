@@ -16,7 +16,10 @@ fn rom_tests() {
         print!("{} ... ", case.id);
         match run_case(case, &rom_root, None) {
             Ok((output, _shots)) => {
-                let ok = output.contains("Passed") || output.contains("PASS") || output.is_empty();
+                let ok = case.has_explicit_verification()
+                    || output.contains("Passed")
+                    || output.contains("PASS")
+                    || output.is_empty();
                 if ok {
                     println!("ok");
                     passed += 1;

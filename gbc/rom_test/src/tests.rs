@@ -23,7 +23,9 @@ pub fn run_manifest(manifest_path: &Path) -> Result<(), RomTestError> {
         print!("  {} ... ", case.id);
         match run_case(case, &rom_root, None) {
             Ok((output, _shots)) => {
-                let has_passed = output.contains("Passed") || output.contains("PASS");
+                let has_passed = case.has_explicit_verification()
+                    || output.contains("Passed")
+                    || output.contains("PASS");
                 if has_passed {
                     println!("ok");
                     passed += 1;
