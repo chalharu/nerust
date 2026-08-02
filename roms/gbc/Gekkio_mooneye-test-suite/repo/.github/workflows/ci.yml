@@ -1,0 +1,75 @@
+name: ci
+on:
+  - push
+
+jobs:
+  build:
+    name: Build test ROMs
+    runs-on: ubuntu-latest
+    env:
+      WLA_DX_REPO: vhelin/wla-dx
+      WLA_DX_COMMIT: 89a90a56be5c2b8cf19a9afa3e1b32384ddb1a97
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Update Ubuntu package lists
+        run: sudo apt update
+      - name: Install Ubuntu packages
+        run: sudo apt install cmake
+      - name: Cache wla-dx
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: ~/wla-dx
+          key: wla-dx-${{ env.WLA_DX_COMMIT }}
+      - name: Build wla-dx
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: .github/scripts/install_wla-dx.sh
+      - name: Build test ROMs
+        run: make clean all
+        env:
+          WLA: ~/wla-dx/binaries/wla-gb
+          WLALINK: ~/wla-dx/binaries/wlalink
+      - name: Persist built test ROMs
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests
+          path: build
+  deploy:
+    name: Deploy release ZIP
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Install Ubuntu packages
+        run: sudo snap install aws-cli --classic
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install s3-indexer
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -sSL https://gekkio.fi/files/s3-indexer/s3-indexer -o "$HOME/bin/s3-indexer"
+          chmod +x "$HOME/bin/s3-indexer"
+          echo "$HOME/bin" >> $GITHUB_PATH
+      - name: Download built test ROMs
+        uses: actions/download-artifact@v8
+        with:
+          name: tests
+          path: build
+      - name: Generate version identifier
+        run: |
+          echo MTS_VERSION="$(date +%Y%m%d-%H%M)-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      - name: Prepare release
+        run: .github/scripts/prepare_release.sh mts-"${MTS_VERSION}"
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ENDPOINT_URL_S3: ${{ secrets.S3_ENDPOINT }}
+        run: |
+          aws s3 cp mts-"${MTS_VERSION}".zip s3://${{ secrets.S3_BUCKET }}/releases/mts/mts-"${MTS_VERSION}"/
+          aws s3 cp mts-"${MTS_VERSION}".tar.gz s3://${{ secrets.S3_BUCKET }}/releases/mts/mts-"${MTS_VERSION}"/
+          aws s3 cp mts-"${MTS_VERSION}".tar.xz s3://${{ secrets.S3_BUCKET }}/releases/mts/mts-"${MTS_VERSION}"/
+          s3-indexer --bucket ${{ secrets.S3_BUCKET }} --prefix "releases/mts/mts-${MTS_VERSION}" --title "Index of mts-${MTS_VERSION}" --upload
+          s3-indexer --bucket ${{ secrets.S3_BUCKET }} --prefix "releases/mts" --title "Mooneye Test Suite" --upload
