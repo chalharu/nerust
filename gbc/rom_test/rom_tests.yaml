@@ -801,6 +801,21 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_stat_irq_blocking"
+    category: "mooneye"
+    description: "Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 400_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
   - id: "mooneye_boot_regs_dmgABC"
     category: "mooneye"
     description: "Mooneye Test Suite — boot_regs-dmgABC"
