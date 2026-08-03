@@ -11,8 +11,8 @@ pub enum RomTestError {
     #[error("ROM case `{0}` failed: {1}")]
     CaseFailed(String, String),
 
-    #[error("unexpected serial output for `{0}`")]
-    SerialMismatch(String),
+    #[error("unexpected serial output for `{0}` (hex: {1})")]
+    SerialMismatch(String, String),
 
     #[error("unexpected frame hash for `{0}`")]
     FrameMismatch(String),

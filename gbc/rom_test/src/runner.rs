@@ -158,7 +158,10 @@ fn verify_event(
         let actual = crc32(bus.serial_output());
         let expected = parse_hex(&serial_hash.hash)? as u32;
         if actual != expected {
-            return Err(RomTestError::SerialMismatch(case.id.clone()));
+            return Err(RomTestError::SerialMismatch(
+                case.id.clone(),
+                format!("{:08X}", actual),
+            ));
         }
     }
 
@@ -170,7 +173,13 @@ fn verify_event(
     {
         let expected = parse_hex_suffix(suffix)?;
         if !bus.serial_output().ends_with(&expected) {
-            return Err(RomTestError::SerialMismatch(case.id.clone()));
+            return Err(RomTestError::SerialMismatch(
+                case.id.clone(),
+                bus.serial_output()
+                    .iter()
+                    .map(|b| format!("{:02X}", b))
+                    .collect(),
+            ));
         }
     }
 
