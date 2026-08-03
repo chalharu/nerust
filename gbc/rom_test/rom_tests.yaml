@@ -1506,3 +1506,123 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_timer_tim00_div_trigger"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim00_div_trigger.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim01_div_trigger"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim01_div_trigger.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim10_div_trigger"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim10_div_trigger.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim11_div_trigger"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim11_div_trigger.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tima_reload"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tima_reload.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tima_write_reloading"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tima_write_reloading.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tma_write_reloading"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tma_write_reloading.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_rapid_toggle"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/rapid_toggle.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
