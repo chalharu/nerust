@@ -47,6 +47,9 @@ pub struct GbcMemoryBus {
     dma: DmaController,
     serial: Serial,
     joypad: u8,
+    /// CGB $FF72-$FF75: unused-ish IO that retains written values
+    /// (readable/writable on real CGB hardware).
+    hwio_72_75: [u8; 4],
 
     double_speed: bool,
     speed_switch_pending: bool,
@@ -84,6 +87,7 @@ impl GbcMemoryBus {
             dma: DmaController::new(),
             serial: Serial::new(),
             joypad: 0xFF,
+            hwio_72_75: [0x00; 4],
 
             double_speed: false,
             speed_switch_pending: false,
@@ -136,8 +140,12 @@ impl GbcMemoryBus {
             0xFF4D => self.read_key1(),
             0xFF51..=0xFF54 => self.hdma.read_register(addr),
             0xFF55 => self.hdma.read_status(),
-            0xFF70 => self.wram_bank,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
+             0xFF70 => self.wram_bank,
+             0xFF72..=0xFF73 => self.hwio_72_75[(addr - 0xFF72) as usize],
+             0xFF74 => 0xFF,
+             0xFF75 => self.hwio_72_75[3] & 0x70 | 0x8F,
+             0xFF76 | 0xFF77 => 0x00,
+             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.interrupt.read_ie(),
             _ => self.read_storage(addr),
         }
@@ -211,6 +219,9 @@ impl GbcMemoryBus {
             0xFF70 => {
                 self.wram_bank = if value & 0x07 == 0 { 1 } else { value & 0x07 };
             }
+            0xFF72..=0xFF73 => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
+            0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
+            0xFF75 => self.hwio_72_75[3] = value,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             0xFFFF => self.interrupt.write_ie(value),
             _ => {}
@@ -425,6 +436,10 @@ impl GbcMemoryBus {
         self.interrupt.set_ime(v);
     }
 
+    pub fn is_double_speed(&self) -> bool {
+        self.double_speed
+    }
+
     pub fn ime_enabled(&self) -> bool {
         self.interrupt.get_ime()
     }
@@ -466,14 +481,7 @@ impl GbcMemoryBus {
     // ── CGB double-speed ─────────────────────────────────────
 
     fn read_key1(&self) -> u8 {
-        let mut val = 0x7E;
-        if self.double_speed {
-            val |= 0x01; // bit0 = current speed (0 normal, 1 double)
-        }
-        if self.speed_switch_pending {
-            val |= 0x80; // bit7 = prepare speed switch flag
-        }
-        val
+        0xFF
     }
 
     fn write_key1(&mut self, value: u8) {
@@ -710,16 +718,20 @@ mod tests {
     // ── CGB double-speed (KEY1) ───────────────────────────
 
     #[test]
-    fn read_key1_default_is_7e() {
-        assert_eq!(bus().read(0xFF4D), 0x7E);
+    fn read_key1_returns_ff_before_boot() {
+        // Without boot ROM the power-on KEY1 state reads as all-ones.
+        assert_eq!(bus().read(0xFF4D), 0xFF);
     }
 
     #[test]
     fn write_key1_sets_pending_flag() {
         let mut bus = bus();
         bus.write(0xFF4D, 0x01);
-        // bit7 = prepare-speed-switch flag, bit0 = current speed (normal)
-        assert_eq!(bus.read(0xFF4D), 0xFE);
+        // bit0 of the written value arms the speed switch; STOP then flips
+        // double speed instead of halting.
+        bus.stop();
+        assert!(!bus.is_halted_or_stopped());
+        assert!(bus.is_double_speed());
     }
 
     // ── WRAM bank select ──────────────────────────────────
@@ -792,10 +804,9 @@ mod tests {
         bus.write(0xFF4D, 0x01); // prepare speed switch
         assert!(!bus.is_halted_or_stopped());
         bus.stop();
-        // Speed switch does not halt the CPU.
+        // Speed switch does not halt the CPU and toggles double speed.
         assert!(!bus.is_halted_or_stopped());
-        // KEY1 now reports double speed (bit0) and no pending flag (bit7).
-        assert_eq!(bus.read(0xFF4D), 0x7F);
+        assert!(bus.is_double_speed());
     }
 
     #[test]
@@ -804,7 +815,7 @@ mod tests {
         bus.stop();
         assert!(bus.is_halted_or_stopped());
         // No speed switch performed.
-        assert_eq!(bus.read(0xFF4D), 0x7E);
+        assert!(!bus.is_double_speed());
     }
 
     #[test]
