@@ -8,21 +8,25 @@ pub enum RomTestError {
     #[error("invalid manifest: {0}")]
     InvalidManifest(String),
 
-    #[error("ROM case `{0}` failed: {1}")]
-    CaseFailed(String, String),
-
-    #[error("unexpected serial output for `{0}` (hex: {1})")]
-    SerialMismatch(String, String),
-
-    #[error("unexpected frame hash for `{0}`")]
-    FrameMismatch(String),
-
-    #[error("unexpected audio hash for `{0}`")]
-    AudioMismatch(String),
-
     #[error("YAML parse error: {0}")]
     YamlParse(#[from] serde_saphyr::Error),
 
     #[error("PNG encoding error: {0}")]
     PngEncoding(#[from] png::EncodingError),
+
+    #[error("PNG decoding error: {0}")]
+    PngDecoding(#[from] png::DecodingError),
+}
+
+impl RomTestError {
+    /// Coarse category for grouping failures in reports.
+    pub fn category(&self) -> &'static str {
+        match self {
+            RomTestError::Io(_) => "io",
+            RomTestError::InvalidManifest(_) => "config",
+            RomTestError::YamlParse(_) => "config",
+            RomTestError::PngEncoding(_) => "png",
+            RomTestError::PngDecoding(_) => "png",
+        }
+    }
 }

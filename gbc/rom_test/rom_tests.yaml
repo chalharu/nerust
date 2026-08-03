@@ -1,1913 +1,1636 @@
+---
 rom_root: "../../roms/gbc"
-cases:
-  - id: "cpu_instrs_all"
-    category: "cpu_instrs"
-    description: "CPU instrs — combined suite (all 11 subtests)"
-    rom: "retrio_gb-test-roms/cpu_instrs/cpu_instrs.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 60_000_000
-        serial:
-          hash: "483E4D0E"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_01_special"
-    category: "cpu_instrs"
-    description: "CPU special instructions"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/01-special.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: "2B25B1A8"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_02_interrupts"
-    category: "cpu_instrs"
-    description: "CPU interrupt handling"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/02-interrupts.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 600_000
-        serial:
-          hash: "D56D47C8"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_03_op_sp_hl"
-    category: "cpu_instrs"
-    description: "CPU op SP, HL"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/03-op sp,hl.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: "80207C1D"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_04_op_r_imm"
-    category: "cpu_instrs"
-    description: "CPU op r, imm"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/04-op r,imm.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 3_500_000
-        serial:
-          hash: "2CEED1BE"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_05_op_rp"
-    category: "cpu_instrs"
-    description: "CPU op rp"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/05-op rp.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 4_500_000
-        serial:
-          hash: "25328ED0"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_06_ld_r_r"
-    category: "cpu_instrs"
-    description: "CPU ld r,r"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/06-ld r,r.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 800_000
-        serial:
-          hash: "CFC3176B"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_07_jr_jp_call_ret_rst"
-    category: "cpu_instrs"
-    description: "CPU jr,jp,call,ret,rst"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/07-jr,jp,call,ret,rst.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: "B7D8A077"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_08_misc_instrs"
-    category: "cpu_instrs"
-    description: "CPU misc instrs"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/08-misc instrs.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 800_000
-        serial:
-          hash: "2CA5A744"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_09_op_r_r"
-    category: "cpu_instrs"
-    description: "CPU op r,r"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/09-op r,r.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 10_500_000
-        serial:
-          hash: "DE6AFDDD"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_10_bit_ops"
-    category: "cpu_instrs"
-    description: "CPU bit ops"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/10-bit ops.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 16_000_000
-        serial:
-          hash: "F81CB006"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cpu_instrs_11_op_a_hl"
-    category: "cpu_instrs"
-    description: "CPU op a,(hl)"
-    rom: "retrio_gb-test-roms/cpu_instrs/individual/11-op a,(hl).gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 20_000_000
-        serial:
-          hash: "05A6D948"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "instr_timing"
-    category: "timing"
-    description: "Instruction timing verification"
-    rom: "retrio_gb-test-roms/instr_timing/instr_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 800_000
-        serial:
-          hash: "EB56FABB"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mem_timing_read"
-    category: "mem_timing"
-    description: "Memory read timing"
-    rom: "retrio_gb-test-roms/mem_timing/individual/01-read_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 600_000
-        serial:
-          hash: "7A15AF07"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mem_timing_write"
-    category: "mem_timing"
-    description: "Memory write timing"
-    rom: "retrio_gb-test-roms/mem_timing/individual/02-write_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 600_000
-        serial:
-          hash: "E5881150"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mem_timing_modify"
-    category: "mem_timing"
-    description: "Memory modify timing"
-    rom: "retrio_gb-test-roms/mem_timing/individual/03-modify_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 700_000
-        serial:
-          hash: "D2B4F231"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mem_timing_all"
-    category: "mem_timing"
-    description: "Memory timing combined"
-    rom: "retrio_gb-test-roms/mem_timing/mem_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 1_800_000
-        serial:
-          hash: "A2165D86"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mem_timing2_read"
-    category: "mem_timing"
-    description: "Memory read timing (mem_timing-2)"
-    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/01-read_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 600_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory:
-          - address: "0xA015"
-            value: "0x50"
-          - address: "0xA01A"
-            value: "0x64"
-        pad: []
-  - id: "mem_timing2_write"
-    category: "mem_timing"
-    description: "Memory write timing (mem_timing-2)"
-    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/02-write_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 600_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory:
-          - address: "0xA016"
-            value: "0x50"
-          - address: "0xA01B"
-            value: "0x64"
-        pad: []
-  - id: "mem_timing2_modify"
-    category: "mem_timing"
-    description: "Memory modify timing (mem_timing-2)"
-    rom: "retrio_gb-test-roms/mem_timing-2/rom_singles/03-modify_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 700_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory:
-          - address: "0xA017"
-            value: "0x50"
-          - address: "0xA01C"
-            value: "0x64"
-        pad: []
-  - id: "mem_timing2_all"
-    category: "mem_timing"
-    description: "Memory timing combined (mem_timing-2)"
-    rom: "retrio_gb-test-roms/mem_timing-2/mem_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 3_300_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory:
-          - address: "0xA027"
-            value: "0x50"
-          - address: "0xA02C"
-            value: "0x64"
-        pad: []
-  - id: "dmg_acid2"
-    category: "ppu"
-    description: "DMG acid2 PPU test — reference image rendering"
-    rom: "mattcurrie_dmg-acid2/dmg-acid2.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-        frame:
-          hash: "C1453957"
-        memory: []
-        pad: []
-  - id: "dmg_acid2_cgb"
-    category: "ppu"
-    description: "dmg-acid2 on CGB hardware — verifies DMG game CGB palette behavior"
-    rom: "mattcurrie_dmg-acid2/dmg-acid2.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-        frame:
-          hash: "2A88898D"
-        memory: []
-        pad: []
-  - id: "mealybug_m2_win_en_toggle_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m2_win_en_toggle.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "68220742"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_bgp_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_bgp_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_bgp_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 80_000
-        serial:
-          hash: ""
-        frame:
-          hash: "31A9CE19"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_bgp_change_sprites_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_bgp_change_sprites (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_bgp_change_sprites.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "C9E3D488"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_bg_en_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 110_000
-        serial:
-          hash: ""
-        frame:
-          hash: "F24538D9"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_bg_en_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_en_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_en_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "45A32C3D"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_bg_map_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "C87825C9"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_bg_map_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_bg_map_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_bg_map_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "3DCD5FBE"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_obj_en_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 40_000
-        serial:
-          hash: ""
-        frame:
-          hash: "0394C786"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_obj_en_change_variant_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_en_change_variant.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "852CD3B7"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_obj_size_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 110_000
-        serial:
-          hash: ""
-        frame:
-          hash: "35461FB5"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_obj_size_change_scx_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_obj_size_change_scx.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 110_000
-        serial:
-          hash: ""
-        frame:
-          hash: "68901ADA"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_tile_sel_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "7B47B5CD"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_tile_sel_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "2BB3195E"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_tile_sel_win_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "09F3035D"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_tile_sel_win_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_tile_sel_win_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "9385582A"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_win_en_change_multiple_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 130_000
-        serial:
-          hash: ""
-        frame:
-          hash: "D4D3471D"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_win_en_change_multiple_wx_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_en_change_multiple_wx.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_win_map_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "B79A2CDD"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_lcdc_win_map_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_lcdc_win_map_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_lcdc_win_map_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "B757E910"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_obp0_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_obp0_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_obp0_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 40_000
-        serial:
-          hash: ""
-        frame:
-          hash: "E7EB160E"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_scx_high_5_bits_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scx_high_5_bits (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 110_000
-        serial:
-          hash: ""
-        frame:
-          hash: "A3277237"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_scx_high_5_bits_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scx_high_5_bits_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_high_5_bits_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "28BF17CF"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_scx_low_3_bits_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scx_low_3_bits (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_scx_low_3_bits.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 80_000
-        serial:
-          hash: ""
-        frame:
-          hash: "CC5985CC"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_scy_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scy_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_scy_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 110_000
-        serial:
-          hash: ""
-        frame:
-          hash: "B50E8F8A"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_scy_change2"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_scy_change2"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_scy_change2.gb"
-    model: cgbc
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "A68BCAE0"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_window_timing_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_window_timing (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_window_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "6A57241D"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_window_timing_wx_0_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_window_timing_wx_0 (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_window_timing_wx_0.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 90_000
-        serial:
-          hash: ""
-        frame:
-          hash: "811157A0"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_wx_4_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_4_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_4_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 130_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mealybug_m3_wx_4_change_sprites_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_4_change_sprites.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 150_000
-        serial:
-          hash: ""
-        frame:
-          hash: "E3EAF371"
-        memory: []
-        pad: []
-  - id: "mealybug_m3_wx_5_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_5_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_5_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 130_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mealybug_m3_wx_6_change_cgb"
-    category: "ppu"
-    description: "Mealybug Tearoom Tests — m3_wx_6_change (CGB D)"
-    rom: "mattcurrie_mealybug-tearoom-tests/m3_wx_6_change.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 130_000
-        serial:
-          hash: ""
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "cgb_acid2"
-    category: "ppu"
-    description: "cgb-acid2 — CGB PPU compliance test"
-    rom: "mattcurrie_cgb-acid2/cgb-acid2.gbc"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 350_000
-        serial:
-          hash: ""
-        frame:
-          hash: "31BF4BB3"
-        memory: []
-        pad: []
-  - id: "mooneye_stat_lyc_onoff"
-    category: "mooneye"
-    description: "Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ppu/stat_lyc_onoff.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 400_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_stat_irq_blocking"
-    category: "mooneye"
-    description: "Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ppu/stat_irq_blocking.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 400_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_intr_2_mode3_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ppu/intr_2_mode3_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 400_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_boot_regs_dmgABC"
-    category: "mooneye"
-    description: "Mooneye Test Suite — boot_regs-dmgABC"
-    rom: "Gekkio_mooneye-test-suite/acceptance/boot_regs-dmgABC.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_div_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — div_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/div_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_ei_sequence"
-    category: "mooneye"
-    description: "Mooneye Test Suite — ei_sequence"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ei_sequence.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_ei_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — ei_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ei_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_halt_ime0_ei"
-    category: "mooneye"
-    description: "Mooneye Test Suite — halt_ime0_ei"
-    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime0_ei.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_halt_ime1_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — halt_ime1_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime1_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_if_ie_registers"
-    category: "mooneye"
-    description: "Mooneye Test Suite — if_ie_registers"
-    rom: "Gekkio_mooneye-test-suite/acceptance/if_ie_registers.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_halt_ime0_nointr_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — halt_ime0_nointr_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime0_nointr_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_interrupts_ie_push"
-    category: "mooneye"
-    description: "Mooneye Test Suite — interrupts/ie_push"
-    rom: "Gekkio_mooneye-test-suite/acceptance/interrupts/ie_push.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_intr_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — intr_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/intr_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_pop_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — pop_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/pop_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_rapid_di_ei"
-    category: "mooneye"
-    description: "Mooneye Test Suite — rapid_di_ei"
-    rom: "Gekkio_mooneye-test-suite/acceptance/rapid_di_ei.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_reti_intr_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — reti_intr_timing"
-    rom: "Gekkio_mooneye-test-suite/acceptance/reti_intr_timing.gb"
-    model: dmg
-    perf: false
-    events:
-      - cycles: 250_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_512kb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_512kb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_512kb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_1Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_1Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_1Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_2Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_2Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_2Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_4Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_4Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_4Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_8Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_8Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_8Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_16Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_16Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_16Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_32Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_32Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_32Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc5_rom_64Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc5 rom_64Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc5/rom_64Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 3_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_bits_bank1"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 bits_bank1 (ROM bank bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank1.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 4_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_bits_bank2"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 bits_bank2 (ROM bank bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_bank2.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 4_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_bits_mode"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 bits_mode (banking mode bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_mode.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 4_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_bits_ramg"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 bits_ramg (RAM enable bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/bits_ramg.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 8_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_512kb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_512kb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_1Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_1Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_1Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_2Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_2Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_2Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_4Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_4Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_4Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_8Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_8Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_8Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc1_rom_16Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc1/rom_16Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_bits_ramg"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 bits_ramg (RAM enable bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_ramg.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 8_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_bits_romb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 bits_romb (ROM bank bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_romb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 4_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_bits_unused"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 bits_unused (unused bits)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/bits_unused.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 4_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_ram"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 ram (RAM banking)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/ram.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_rom_512kb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 rom_512kb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_512kb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_rom_1Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 rom_1Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_1Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_mbc2_rom_2Mb"
-    category: "mooneye"
-    description: "Mooneye Test Suite — mbc2 rom_2Mb (ROM bank switching)"
-    rom: "Gekkio_mooneye-test-suite/emulator-only/mbc2/rom_2Mb.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_000_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_bits_mem_oam"
-    category: "mooneye"
-    description: "Mooneye Test Suite — bits/mem_oam (OAM memory)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/bits/mem_oam.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_bits_reg_f"
-    category: "mooneye"
-    description: "Mooneye Test Suite — bits/reg_f (F register)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/bits/reg_f.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_instr_daa"
-    category: "mooneye"
-    description: "Mooneye Test Suite — instr/daa (DAA instruction)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/instr/daa.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 500_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_oam_dma_basic"
-    category: "mooneye"
-    description: "Mooneye Test Suite — oam_dma/basic (OAM DMA)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma/basic.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_oam_dma_reg_read"
-    category: "mooneye"
-    description: "Mooneye Test Suite — oam_dma/reg_read (DMA register readback)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma/reg_read.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_oam_dma_start"
-    category: "mooneye"
-    description: "Mooneye Test Suite — oam_dma_start (DMA startup timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_start.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_oam_dma_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — oam_dma_timing (DMA transfer timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_oam_dma_restart"
-    category: "mooneye"
-    description: "Mooneye Test Suite — oam_dma_restart (DMA restart timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_restart.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_div_write"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/div_write (DIV register write)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/div_write.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 1_500_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim00"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim00.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim01"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim01.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim10"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim10.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim11"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim11.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim00_div_trigger"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim00_div_trigger.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim01_div_trigger"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim01_div_trigger.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim10_div_trigger"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim10_div_trigger.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tim11_div_trigger"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim11_div_trigger.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tima_reload"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tima_reload.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tima_write_reloading"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tima_write_reloading.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_tma_write_reloading"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tma_write_reloading.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_timer_rapid_toggle"
-    category: "mooneye"
-    description: "Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/timer/rapid_toggle.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_call_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — call_timing (CALL instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/call_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_call_timing2"
-    category: "mooneye"
-    description: "Mooneye Test Suite — call_timing2 (CALL instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/call_timing2.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_call_cc_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — call_cc_timing (conditional CALL timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/call_cc_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_call_cc_timing2"
-    category: "mooneye"
-    description: "Mooneye Test Suite — call_cc_timing2 (conditional CALL timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/call_cc_timing2.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_jp_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — jp_timing (JP instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/jp_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_jp_cc_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — jp_cc_timing (conditional JP timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/jp_cc_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_ret_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — ret_timing (RET instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ret_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_ret_cc_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — ret_cc_timing (conditional RET timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ret_cc_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_reti_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — reti_timing (RETI instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/reti_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_push_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — push_timing (PUSH instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/push_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_rst_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — rst_timing (RST instruction timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/rst_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_add_sp_e_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/add_sp_e_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
-  - id: "mooneye_ld_hl_sp_e_timing"
-    category: "mooneye"
-    description: "Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing)"
-    rom: "Gekkio_mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb"
-    model: cgb
-    perf: false
-    events:
-      - cycles: 300_000
-        serial:
-          hash: ""
-          suffix: "0305080D1522"
-        frame:
-          hash: ""
-        memory: []
-        pad: []
+expected_failures:
+  # PPU DMG
+  - "m3_bgp_change@dmg"
+  # PPU CGB-C
+  - "m3_bgp_change@cgb_c"
+  # PPU DMG
+  - "m3_bgp_change_sprites@dmg"
+  # PPU CGB-C
+  - "m3_bgp_change_sprites@cgb_c"
+  # PPU DMG
+  - "m3_lcdc_bg_en_change@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_bg_en_change@cgb_c"
+  # PPU DMG
+  - "m3_lcdc_bg_map_change@dmg"
+  - "m3_lcdc_obj_en_change@dmg"
+  - "m3_lcdc_obj_en_change_variant@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_obj_en_change_variant@cgb_c"
+  # PPU DMG
+  - "m3_lcdc_obj_size_change@dmg"
+  - "m3_lcdc_obj_size_change_scx@dmg"
+  - "m3_lcdc_tile_sel_change@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_tile_sel_change@cgb_c"
+  # PPU DMG
+  - "m3_lcdc_tile_sel_win_change@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_tile_sel_win_change@cgb_c"
+  # PPU DMG
+  - "m3_lcdc_win_en_change_multiple_wx@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_win_en_change_multiple_wx@cgb_c"
+  # PPU CGB-D
+  - "m3_lcdc_win_en_change_multiple_wx@cgb_d"
+  # PPU DMG
+  - "m3_lcdc_win_map_change@dmg"
+  # PPU CGB-C
+  - "m3_lcdc_win_map_change@cgb_c"
+  # PPU DMG
+  - "m3_obp0_change@dmg"
+  # PPU CGB-C
+  - "m3_obp0_change@cgb_c"
+  # PPU DMG
+  - "m3_scx_high_5_bits@dmg"
+  # PPU CGB-C
+  - "m3_scx_high_5_bits@cgb_c"
+  # PPU DMG
+  - "m3_scy_change@dmg"
+  # PPU CGB-C
+  - "m3_scy_change@cgb_c"
+  # PPU DMG
+  - "m3_window_timing@dmg"
+  # PPU CGB-C
+  - "m3_window_timing@cgb_c"
+  # PPU DMG
+  - "m3_window_timing_wx_0@dmg"
+  # PPU CGB-C
+  - "m3_window_timing_wx_0@cgb_c"
+  # PPU DMG
+  - "m3_wx_4_change@dmg"
+  # PPU CGB-C
+  - "m3_wx_4_change@cgb_c"
+  # PPU CGB-D
+  - "m3_wx_4_change@cgb_d"
+  # PPU DMG
+  - "m3_wx_5_change@dmg"
+  # PPU CGB-C
+  - "m3_wx_5_change@cgb_c"
+  # PPU CGB-D
+  - "m3_wx_5_change@cgb_d"
+  # PPU DMG
+  - "m3_wx_6_change@dmg"
+  # PPU CGB-C
+  - "m3_wx_6_change@cgb_c"
+  # PPU CGB-D
+  - "m3_wx_6_change@cgb_d"
+suites:
+- name: retrio_gb-test-roms
+  cases:
+  - id: cpu_instrs_all
+    description: CPU instrs — combined suite (all 11 subtests)
+    rom: cpu_instrs/cpu_instrs.gb
+    models:
+    - dmg
+    cycles: 60000000
+    verify:
+      serial:
+        hash: 483E4D0E
+    tags:
+    - cpu
+  - id: cpu_instrs_01_special
+    description: CPU special instructions
+    rom: cpu_instrs/individual/01-special.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      serial:
+        hash: 2B25B1A8
+    tags:
+    - cpu
+  - id: cpu_instrs_02_interrupts
+    description: CPU interrupt handling
+    rom: cpu_instrs/individual/02-interrupts.gb
+    models:
+    - dmg
+    cycles: 600000
+    verify:
+      serial:
+        hash: D56D47C8
+    tags:
+    - interrupt
+    - cpu
+  - id: cpu_instrs_03_op_sp_hl
+    description: CPU op SP, HL
+    rom: cpu_instrs/individual/03-op sp,hl.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      serial:
+        hash: 80207C1D
+    tags:
+    - cpu
+  - id: cpu_instrs_04_op_r_imm
+    description: CPU op r, imm
+    rom: cpu_instrs/individual/04-op r,imm.gb
+    models:
+    - dmg
+    cycles: 3500000
+    verify:
+      serial:
+        hash: 2CEED1BE
+    tags:
+    - cpu
+  - id: cpu_instrs_05_op_rp
+    description: CPU op rp
+    rom: cpu_instrs/individual/05-op rp.gb
+    models:
+    - dmg
+    cycles: 4500000
+    verify:
+      serial:
+        hash: 25328ED0
+    tags:
+    - cpu
+  - id: cpu_instrs_06_ld_r_r
+    description: CPU ld r,r
+    rom: cpu_instrs/individual/06-ld r,r.gb
+    models:
+    - dmg
+    cycles: 800000
+    verify:
+      serial:
+        hash: CFC3176B
+    tags:
+    - cpu
+  - id: cpu_instrs_07_jr_jp_call_ret_rst
+    description: CPU jr,jp,call,ret,rst
+    rom: cpu_instrs/individual/07-jr,jp,call,ret,rst.gb
+    models:
+    - dmg
+    cycles: 1000000
+    verify:
+      serial:
+        hash: B7D8A077
+    tags:
+    - cpu
+  - id: cpu_instrs_08_misc_instrs
+    description: CPU misc instrs
+    rom: cpu_instrs/individual/08-misc instrs.gb
+    models:
+    - dmg
+    cycles: 800000
+    verify:
+      serial:
+        hash: 2CA5A744
+    tags:
+    - cpu
+  - id: cpu_instrs_09_op_r_r
+    description: CPU op r,r
+    rom: cpu_instrs/individual/09-op r,r.gb
+    models:
+    - dmg
+    cycles: 10500000
+    verify:
+      serial:
+        hash: DE6AFDDD
+    tags:
+    - cpu
+  - id: cpu_instrs_10_bit_ops
+    description: CPU bit ops
+    rom: cpu_instrs/individual/10-bit ops.gb
+    models:
+    - dmg
+    cycles: 16000000
+    verify:
+      serial:
+        hash: F81CB006
+    tags:
+    - cpu
+  - id: cpu_instrs_11_op_a_hl
+    description: CPU op a,(hl)
+    rom: cpu_instrs/individual/11-op a,(hl).gb
+    models:
+    - dmg
+    cycles: 20000000
+    verify:
+      serial:
+        hash: 05A6D948
+    tags:
+    - cpu
+  - id: instr_timing
+    description: Instruction timing verification
+    rom: instr_timing/instr_timing.gb
+    models:
+    - dmg
+    cycles: 800000
+    verify:
+      serial:
+        hash: EB56FABB
+    tags:
+    - cpu
+    - timing
+  - id: mem_timing_read
+    description: Memory read timing
+    rom: mem_timing/individual/01-read_timing.gb
+    models:
+    - dmg
+    cycles: 600000
+    verify:
+      serial:
+        hash: 7A15AF07
+    tags:
+    - memory
+    - timing
+  - id: mem_timing_write
+    description: Memory write timing
+    rom: mem_timing/individual/02-write_timing.gb
+    models:
+    - dmg
+    cycles: 600000
+    verify:
+      serial:
+        hash: E5881150
+    tags:
+    - memory
+    - timing
+  - id: mem_timing_modify
+    description: Memory modify timing
+    rom: mem_timing/individual/03-modify_timing.gb
+    models:
+    - dmg
+    cycles: 700000
+    verify:
+      serial:
+        hash: D2B4F231
+    tags:
+    - memory
+    - timing
+  - id: mem_timing_all
+    description: Memory timing combined
+    rom: mem_timing/mem_timing.gb
+    models:
+    - dmg
+    cycles: 1800000
+    verify:
+      serial:
+        hash: A2165D86
+    tags:
+    - memory
+    - timing
+  - id: mem_timing2_read
+    description: Memory read timing (mem_timing-2)
+    rom: mem_timing-2/rom_singles/01-read_timing.gb
+    models:
+    - dmg
+    cycles: 600000
+    verify:
+      memory:
+      - address: '0xA015'
+        value: '0x50'
+      - address: '0xA01A'
+        value: '0x64'
+    tags:
+    - memory
+    - timing
+  - id: mem_timing2_write
+    description: Memory write timing (mem_timing-2)
+    rom: mem_timing-2/rom_singles/02-write_timing.gb
+    models:
+    - dmg
+    cycles: 600000
+    verify:
+      memory:
+      - address: '0xA016'
+        value: '0x50'
+      - address: '0xA01B'
+        value: '0x64'
+    tags:
+    - memory
+    - timing
+  - id: mem_timing2_modify
+    description: Memory modify timing (mem_timing-2)
+    rom: mem_timing-2/rom_singles/03-modify_timing.gb
+    models:
+    - dmg
+    cycles: 700000
+    verify:
+      memory:
+      - address: '0xA017'
+        value: '0x50'
+      - address: '0xA01C'
+        value: '0x64'
+    tags:
+    - memory
+    - timing
+  - id: mem_timing2_all
+    description: Memory timing combined (mem_timing-2)
+    rom: mem_timing-2/mem_timing.gb
+    models:
+    - dmg
+    cycles: 3300000
+    verify:
+      memory:
+      - address: '0xA027'
+        value: '0x50'
+      - address: '0xA02C'
+        value: '0x64'
+    tags:
+    - memory
+    - timing
+- name: Gekkio_mooneye-test-suite
+  cases:
+  - id: stat_lyc_onoff
+    description: Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off)
+    rom: acceptance/ppu/stat_lyc_onoff.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+  - id: stat_irq_blocking
+    description: Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking)
+    rom: acceptance/ppu/stat_irq_blocking.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+  - id: intr_2_mode3_timing
+    description: Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt)
+    rom: acceptance/ppu/intr_2_mode3_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
+  - id: boot_regs_dmgABC
+    description: Mooneye Test Suite — boot_regs-dmgABC
+    rom: acceptance/boot_regs-dmgABC.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: div_timing
+    description: Mooneye Test Suite — div_timing
+    rom: acceptance/div_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+    - timing
+  - id: ei_sequence
+    description: Mooneye Test Suite — ei_sequence
+    rom: acceptance/ei_sequence.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+  - id: ei_timing
+    description: Mooneye Test Suite — ei_timing
+    rom: acceptance/ei_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: halt_ime0_ei
+    description: Mooneye Test Suite — halt_ime0_ei
+    rom: acceptance/halt_ime0_ei.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+  - id: halt_ime1_timing
+    description: Mooneye Test Suite — halt_ime1_timing
+    rom: acceptance/halt_ime1_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: if_ie_registers
+    description: Mooneye Test Suite — if_ie_registers
+    rom: acceptance/if_ie_registers.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+  - id: halt_ime0_nointr_timing
+    description: Mooneye Test Suite — halt_ime0_nointr_timing
+    rom: acceptance/halt_ime0_nointr_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: interrupts_ie_push
+    description: Mooneye Test Suite — interrupts/ie_push
+    rom: acceptance/interrupts/ie_push.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+  - id: intr_timing
+    description: Mooneye Test Suite — intr_timing
+    rom: acceptance/intr_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: pop_timing
+    description: Mooneye Test Suite — pop_timing
+    rom: acceptance/pop_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: rapid_di_ei
+    description: Mooneye Test Suite — rapid_di_ei
+    rom: acceptance/rapid_di_ei.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+  - id: reti_intr_timing
+    description: Mooneye Test Suite — reti_intr_timing
+    rom: acceptance/reti_intr_timing.gb
+    models:
+    - dmg
+    cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: mbc5_rom_512kb
+    description: Mooneye Test Suite — mbc5 rom_512kb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_512kb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_1Mb
+    description: Mooneye Test Suite — mbc5 rom_1Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_1Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_2Mb
+    description: Mooneye Test Suite — mbc5 rom_2Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_2Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_4Mb
+    description: Mooneye Test Suite — mbc5 rom_4Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_4Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_8Mb
+    description: Mooneye Test Suite — mbc5 rom_8Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_8Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_16Mb
+    description: Mooneye Test Suite — mbc5 rom_16Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_16Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_32Mb
+    description: Mooneye Test Suite — mbc5 rom_32Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_32Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc5_rom_64Mb
+    description: Mooneye Test Suite — mbc5 rom_64Mb (ROM bank switching)
+    rom: emulator-only/mbc5/rom_64Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 3000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_bits_bank1
+    description: Mooneye Test Suite — mbc1 bits_bank1 (ROM bank bits)
+    rom: emulator-only/mbc1/bits_bank1.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 4000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc1_bits_bank2
+    description: Mooneye Test Suite — mbc1 bits_bank2 (ROM bank bits)
+    rom: emulator-only/mbc1/bits_bank2.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 4000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc1_bits_mode
+    description: Mooneye Test Suite — mbc1 bits_mode (banking mode bits)
+    rom: emulator-only/mbc1/bits_mode.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 4000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc1_bits_ramg
+    description: Mooneye Test Suite — mbc1 bits_ramg (RAM enable bits)
+    rom: emulator-only/mbc1/bits_ramg.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 8000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc1_rom_512kb
+    description: Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_512kb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_rom_1Mb
+    description: Mooneye Test Suite — mbc1 rom_1Mb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_1Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_rom_2Mb
+    description: Mooneye Test Suite — mbc1 rom_2Mb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_2Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_rom_4Mb
+    description: Mooneye Test Suite — mbc1 rom_4Mb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_4Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_rom_8Mb
+    description: Mooneye Test Suite — mbc1 rom_8Mb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_8Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_rom_16Mb
+    description: Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching)
+    rom: emulator-only/mbc1/rom_16Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc2_bits_ramg
+    description: Mooneye Test Suite — mbc2 bits_ramg (RAM enable bits)
+    rom: emulator-only/mbc2/bits_ramg.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 8000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc2_bits_romb
+    description: Mooneye Test Suite — mbc2 bits_romb (ROM bank bits)
+    rom: emulator-only/mbc2/bits_romb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 4000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc2_bits_unused
+    description: Mooneye Test Suite — mbc2 bits_unused (unused bits)
+    rom: emulator-only/mbc2/bits_unused.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 4000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+    - cpu
+  - id: mbc2_ram
+    description: Mooneye Test Suite — mbc2 ram (RAM banking)
+    rom: emulator-only/mbc2/ram.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc2_rom_512kb
+    description: Mooneye Test Suite — mbc2 rom_512kb (ROM bank switching)
+    rom: emulator-only/mbc2/rom_512kb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc2_rom_1Mb
+    description: Mooneye Test Suite — mbc2 rom_1Mb (ROM bank switching)
+    rom: emulator-only/mbc2/rom_1Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc2_rom_2Mb
+    description: Mooneye Test Suite — mbc2 rom_2Mb (ROM bank switching)
+    rom: emulator-only/mbc2/rom_2Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: bits_mem_oam
+    description: Mooneye Test Suite — bits/mem_oam (OAM memory)
+    rom: acceptance/bits/mem_oam.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - cpu
+  - id: bits_reg_f
+    description: Mooneye Test Suite — bits/reg_f (F register)
+    rom: acceptance/bits/reg_f.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - cpu
+  - id: instr_daa
+    description: Mooneye Test Suite — instr/daa (DAA instruction)
+    rom: acceptance/instr/daa.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 500000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - cpu
+  - id: oam_dma_basic
+    description: Mooneye Test Suite — oam_dma/basic (OAM DMA)
+    rom: acceptance/oam_dma/basic.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+  - id: oam_dma_reg_read
+    description: Mooneye Test Suite — oam_dma/reg_read (DMA register readback)
+    rom: acceptance/oam_dma/reg_read.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+  - id: oam_dma_start
+    description: Mooneye Test Suite — oam_dma_start (DMA startup timing)
+    rom: acceptance/oam_dma_start.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+  - id: oam_dma_timing
+    description: Mooneye Test Suite — oam_dma_timing (DMA transfer timing)
+    rom: acceptance/oam_dma_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+    - timing
+  - id: oam_dma_restart
+    description: Mooneye Test Suite — oam_dma_restart (DMA restart timing)
+    rom: acceptance/oam_dma_restart.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+  - id: timer_div_write
+    description: Mooneye Test Suite — timer/div_write (DIV register write)
+    rom: acceptance/timer/div_write.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1500000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim00
+    description: Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz)
+    rom: acceptance/timer/tim00.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim01
+    description: Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz)
+    rom: acceptance/timer/tim01.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim10
+    description: Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz)
+    rom: acceptance/timer/tim10.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim11
+    description: Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz)
+    rom: acceptance/timer/tim11.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim00_div_trigger
+    description: Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge
+      trigger)
+    rom: acceptance/timer/tim00_div_trigger.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim01_div_trigger
+    description: Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge
+      trigger)
+    rom: acceptance/timer/tim01_div_trigger.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim10_div_trigger
+    description: Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge
+      trigger)
+    rom: acceptance/timer/tim10_div_trigger.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tim11_div_trigger
+    description: Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge
+      trigger)
+    rom: acceptance/timer/tim11_div_trigger.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tima_reload
+    description: Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay)
+    rom: acceptance/timer/tima_reload.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tima_write_reloading
+    description: Mooneye Test Suite — timer/tima_write_reloading (TIMA write during
+      reload)
+    rom: acceptance/timer/tima_write_reloading.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_tma_write_reloading
+    description: Mooneye Test Suite — timer/tma_write_reloading (TMA write during
+      reload)
+    rom: acceptance/timer/tma_write_reloading.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: timer_rapid_toggle
+    description: Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling)
+    rom: acceptance/timer/rapid_toggle.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timer
+  - id: call_timing
+    description: Mooneye Test Suite — call_timing (CALL instruction timing)
+    rom: acceptance/call_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: call_timing2
+    description: Mooneye Test Suite — call_timing2 (CALL instruction timing)
+    rom: acceptance/call_timing2.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: call_cc_timing
+    description: Mooneye Test Suite — call_cc_timing (conditional CALL timing)
+    rom: acceptance/call_cc_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: call_cc_timing2
+    description: Mooneye Test Suite — call_cc_timing2 (conditional CALL timing)
+    rom: acceptance/call_cc_timing2.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: jp_timing
+    description: Mooneye Test Suite — jp_timing (JP instruction timing)
+    rom: acceptance/jp_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: jp_cc_timing
+    description: Mooneye Test Suite — jp_cc_timing (conditional JP timing)
+    rom: acceptance/jp_cc_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: ret_timing
+    description: Mooneye Test Suite — ret_timing (RET instruction timing)
+    rom: acceptance/ret_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: ret_cc_timing
+    description: Mooneye Test Suite — ret_cc_timing (conditional RET timing)
+    rom: acceptance/ret_cc_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: reti_timing
+    description: Mooneye Test Suite — reti_timing (RETI instruction timing)
+    rom: acceptance/reti_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: push_timing
+    description: Mooneye Test Suite — push_timing (PUSH instruction timing)
+    rom: acceptance/push_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: rst_timing
+    description: Mooneye Test Suite — rst_timing (RST instruction timing)
+    rom: acceptance/rst_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: add_sp_e_timing
+    description: Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing)
+    rom: acceptance/add_sp_e_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: ld_hl_sp_e_timing
+    description: Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing)
+    rom: acceptance/ld_hl_sp_e_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+- name: mattcurrie_mealybug-tearoom-tests
+  cases:
+  - id: m2_win_en_toggle
+    description: Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)
+    rom: m2_win_en_toggle.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 150000
+    reference:
+      dmg: repo/expected/DMG-blob/m2_win_en_toggle.png
+      cgb_c: repo/expected/CPU CGB C/m2_win_en_toggle.png
+      cgb_d: repo/expected/CPU CGB D/m2_win_en_toggle.png
+  - id: m3_bgp_change
+    description: Mealybug Tearoom Tests — m3_bgp_change (CGB D)
+    rom: m3_bgp_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 80000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_bgp_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_bgp_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_bgp_change.png
+  - id: m3_bgp_change_sprites
+    description: Mealybug Tearoom Tests — m3_bgp_change_sprites (CGB D)
+    rom: m3_bgp_change_sprites.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_bgp_change_sprites.png
+      cgb_c: repo/expected/CPU CGB C/m3_bgp_change_sprites.png
+      cgb_d: repo/expected/CPU CGB D/m3_bgp_change_sprites.png
+  - id: m3_lcdc_bg_en_change
+    description: Mealybug Tearoom Tests — m3_lcdc_bg_en_change (CGB D)
+    rom: m3_lcdc_bg_en_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 110000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_bg_en_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_en_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_bg_en_change.png
+  - id: m3_lcdc_bg_en_change2
+    description: Mealybug Tearoom Tests — m3_lcdc_bg_en_change2
+    rom: m3_lcdc_bg_en_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_en_change2.png
+  - id: m3_lcdc_bg_map_change
+    description: Mealybug Tearoom Tests — m3_lcdc_bg_map_change (CGB D)
+    rom: m3_lcdc_bg_map_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_bg_map_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_map_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_bg_map_change.png
+  - id: m3_lcdc_bg_map_change2
+    description: Mealybug Tearoom Tests — m3_lcdc_bg_map_change2
+    rom: m3_lcdc_bg_map_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_map_change2.png
+  - id: m3_lcdc_obj_en_change
+    description: Mealybug Tearoom Tests — m3_lcdc_obj_en_change (CGB D)
+    rom: m3_lcdc_obj_en_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 40000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_obj_en_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_en_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_en_change.png
+  - id: m3_lcdc_obj_en_change_variant
+    description: Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant (CGB D)
+    rom: m3_lcdc_obj_en_change_variant.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_obj_en_change_variant.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_en_change_variant.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_en_change_variant.png
+  - id: m3_lcdc_obj_size_change
+    description: Mealybug Tearoom Tests — m3_lcdc_obj_size_change (CGB D)
+    rom: m3_lcdc_obj_size_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 110000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_obj_size_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_size_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_size_change.png
+  - id: m3_lcdc_obj_size_change_scx
+    description: Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx (CGB D)
+    rom: m3_lcdc_obj_size_change_scx.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 110000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_obj_size_change_scx.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_size_change_scx.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_size_change_scx.png
+  - id: m3_lcdc_tile_sel_change
+    description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_change (CGB D)
+    rom: m3_lcdc_tile_sel_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_tile_sel_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_tile_sel_change.png
+  - id: m3_lcdc_tile_sel_change2
+    description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_change2
+    rom: m3_lcdc_tile_sel_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_change2.png
+  - id: m3_lcdc_tile_sel_win_change
+    description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change (CGB D)
+    rom: m3_lcdc_tile_sel_win_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_tile_sel_win_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_win_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_tile_sel_win_change.png
+  - id: m3_lcdc_tile_sel_win_change2
+    description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change2
+    rom: m3_lcdc_tile_sel_win_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_win_change2.png
+  - id: m3_lcdc_win_en_change_multiple
+    description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)
+    rom: m3_lcdc_win_en_change_multiple.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 130000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_win_en_change_multiple.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_en_change_multiple.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_en_change_multiple.png
+  - id: m3_lcdc_win_en_change_multiple_wx
+    description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (CGB D)
+    rom: m3_lcdc_win_en_change_multiple_wx.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_win_en_change_multiple_wx.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_en_change_multiple_wx.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_en_change_multiple_wx.png
+  - id: m3_lcdc_win_map_change
+    description: Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)
+    rom: m3_lcdc_win_map_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_lcdc_win_map_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_map_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_map_change.png
+  - id: m3_lcdc_win_map_change2
+    description: Mealybug Tearoom Tests — m3_lcdc_win_map_change2
+    rom: m3_lcdc_win_map_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_map_change2.png
+  - id: m3_obp0_change
+    description: Mealybug Tearoom Tests — m3_obp0_change (CGB D)
+    rom: m3_obp0_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 40000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_obp0_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_obp0_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_obp0_change.png
+  - id: m3_scx_high_5_bits
+    description: Mealybug Tearoom Tests — m3_scx_high_5_bits (CGB D)
+    rom: m3_scx_high_5_bits.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 110000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_scx_high_5_bits.png
+      cgb_c: repo/expected/CPU CGB C/m3_scx_high_5_bits.png
+      cgb_d: repo/expected/CPU CGB D/m3_scx_high_5_bits.png
+    tags:
+    - cpu
+  - id: m3_scx_high_5_bits_change2
+    description: Mealybug Tearoom Tests — m3_scx_high_5_bits_change2
+    rom: m3_scx_high_5_bits_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_scx_high_5_bits_change2.png
+    tags:
+    - cpu
+  - id: m3_scx_low_3_bits
+    description: Mealybug Tearoom Tests — m3_scx_low_3_bits (CGB D)
+    rom: m3_scx_low_3_bits.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 80000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_scx_low_3_bits.png
+      cgb_c: repo/expected/CPU CGB C/m3_scx_low_3_bits.png
+      cgb_d: repo/expected/CPU CGB D/m3_scx_low_3_bits.png
+    tags:
+    - cpu
+  - id: m3_scy_change
+    description: Mealybug Tearoom Tests — m3_scy_change (CGB D)
+    rom: m3_scy_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 110000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_scy_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_scy_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_scy_change.png
+  - id: m3_scy_change2
+    description: Mealybug Tearoom Tests — m3_scy_change2
+    rom: m3_scy_change2.gb
+    models:
+    - cgb_c
+    cycles: 150000
+    reference:
+      cgb_c: repo/expected/CPU CGB C/m3_scy_change2.png
+  - id: m3_window_timing
+    description: Mealybug Tearoom Tests — m3_window_timing (CGB D)
+    rom: m3_window_timing.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_window_timing.png
+      cgb_c: repo/expected/CPU CGB C/m3_window_timing.png
+      cgb_d: repo/expected/CPU CGB D/m3_window_timing.png
+    tags:
+    - timing
+  - id: m3_window_timing_wx_0
+    description: Mealybug Tearoom Tests — m3_window_timing_wx_0 (CGB D)
+    rom: m3_window_timing_wx_0.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 90000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_window_timing_wx_0.png
+      cgb_c: repo/expected/CPU CGB C/m3_window_timing_wx_0.png
+      cgb_d: repo/expected/CPU CGB D/m3_window_timing_wx_0.png
+    tags:
+    - timing
+  - id: m3_wx_4_change
+    description: Mealybug Tearoom Tests — m3_wx_4_change (CGB D)
+    rom: m3_wx_4_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 130000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_wx_4_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_wx_4_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_wx_4_change.png
+  - id: m3_wx_4_change_sprites
+    description: Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)
+    rom: m3_wx_4_change_sprites.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 150000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_wx_4_change_sprites.png
+      cgb_c: repo/expected/CPU CGB C/m3_wx_4_change_sprites.png
+      cgb_d: repo/expected/CPU CGB D/m3_wx_4_change_sprites.png
+  - id: m3_wx_5_change
+    description: Mealybug Tearoom Tests — m3_wx_5_change (CGB D)
+    rom: m3_wx_5_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 130000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_wx_5_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_wx_5_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_wx_5_change.png
+  - id: m3_wx_6_change
+    description: Mealybug Tearoom Tests — m3_wx_6_change (CGB D)
+    rom: m3_wx_6_change.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    cycles: 130000
+    reference:
+      dmg: repo/expected/DMG-blob/m3_wx_6_change.png
+      cgb_c: repo/expected/CPU CGB C/m3_wx_6_change.png
+      cgb_d: repo/expected/CPU CGB D/m3_wx_6_change.png
+- name: mattcurrie_dmg-acid2
+  cases:
+  - id: dmg_acid2
+    description: DMG acid2 PPU test — reference image rendering
+    rom: dmg-acid2.gb
+    models:
+    - dmg
+    - cgb_c
+    - cgb_d
+    - agb
+    cycles: 250000
+    reference:
+      dmg: repo/img/reference-dmg.png
+      cgb_c: repo/img/reference-cgb.png
+      cgb_d: repo/img/reference-cgb.png
+    tags:
+    - ppu
+- name: mattcurrie_cgb-acid2
+  cases:
+  - id: cgb_acid2
+    description: cgb-acid2 — CGB PPU compliance test
+    rom: cgb-acid2.gbc
+    models:
+    - cgb_c
+    - cgb_d
+    - agb
+    cycles: 350000
+    reference:
+      cgb_c: repo/img/reference.png
+      cgb_d: repo/img/reference.png
+    tags:
+    - ppu

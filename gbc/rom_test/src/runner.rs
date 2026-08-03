@@ -1,42 +1,86 @@
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 use nerust_gbc_core::{
-    cartridge::Cartridge,
-    cpu_core::{GbcModel, Lr35902Cpu},
+    cartridge::Cartridge, cartridge_header::CartridgeHeader, cpu_core::Lr35902Cpu,
     memory::GbcMemoryBus,
 };
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use super::{error::RomTestError, events::RomEvent, manifest::RomCase, media};
+use super::{
+    error::RomTestError,
+    manifest::{GbcModel, MatrixCell},
+    media,
+    report::CaseResult,
+    verify::{self, CheckResult},
+};
 
-/// Read ROM bytes and determine effective model based on header CGB flag.
-fn effective_model(case: &RomCase, rom_path: &Path) -> Result<GbcModel, RomTestError> {
-    let rom_bytes = std::fs::read(rom_path).map_err(RomTestError::Io)?;
-    let cgb_flag = rom_bytes.get(0x143).copied().unwrap_or(0);
-    let requested = match case.model {
-        super::manifest::GbcModel::Dmg => GbcModel::Dmg,
-        super::manifest::GbcModel::Cgb | super::manifest::GbcModel::CgbC => GbcModel::Cgb,
-        super::manifest::GbcModel::Agb => GbcModel::Agb,
-    };
-    // Auto-downgrade: DMG-only ROM ($00) on CGB/AGB → DMG mode
-    if cgb_flag == 0x00 && (requested == GbcModel::Cgb || requested == GbcModel::Agb) {
-        return Ok(GbcModel::Dmg);
-    }
-    // Auto-upgrade: CGB-only ROM ($C0) on DMG → CGB mode
-    if cgb_flag == 0xC0 && requested == GbcModel::Dmg {
-        return Ok(GbcModel::Cgb);
-    }
-    Ok(requested)
+/// Run every selected matrix cell and collect structured results.
+pub fn run_manifest(
+    rom_root: &Path,
+    cells: &[MatrixCell<'_>],
+    artifacts_dir: Option<&Path>,
+    expected_failures: &[String],
+) -> Vec<CaseResult> {
+    cells
+        .iter()
+        .map(|cell| {
+            let expected = expected_failures.iter().any(|id| id == &cell.id());
+            run_case(cell, rom_root, artifacts_dir, expected)
+        })
+        .collect()
 }
 
-/// Run a ROM test case through all its events and return the serial output,
-/// plus paths to any captured screenshots.
+/// Run a single (case, model) matrix cell and return a structured result.
+///
+/// Pass criteria: every configured check passes and the run completes
+/// without error. A cell with no checks passes on successful completion.
 pub fn run_case(
-    case: &RomCase,
+    cell: &MatrixCell<'_>,
     rom_root: &Path,
-    screenshots_dir: Option<&Path>,
-) -> Result<(String, Vec<String>), RomTestError> {
-    let rom_path = case.rom_path(rom_root);
+    artifacts_dir: Option<&Path>,
+    expected_failure: bool,
+) -> CaseResult {
+    let started = Instant::now();
+    let mut acc = CaseAccumulator::default();
+
+    let (error, error_kind) = match run_cell(cell, rom_root, artifacts_dir, &mut acc) {
+        Ok(()) => (None, None),
+        Err(e) => (Some(e.to_string()), Some(e.category().to_string())),
+    };
+    let passed = error.is_none() && acc.checks.iter().all(|check| check.passed);
+
+    CaseResult {
+        id: cell.id(),
+        suite: cell.suite.name.clone(),
+        model: cell.model.name().to_string(),
+        description: cell.description().to_string(),
+        tags: cell.tags().to_vec(),
+        passed,
+        expected_failure,
+        checks: acc.checks,
+        error,
+        error_kind,
+        screenshot: acc.screenshot,
+        diff_image: acc.diff_image,
+        duration_ms: started.elapsed().as_millis() as u64,
+    }
+}
+
+/// Collects per-cell outputs produced during execution.
+#[derive(Default)]
+struct CaseAccumulator {
+    checks: Vec<CheckResult>,
+    screenshot: Option<String>,
+    diff_image: Option<String>,
+}
+
+fn run_cell(
+    cell: &MatrixCell<'_>,
+    rom_root: &Path,
+    artifacts_dir: Option<&Path>,
+    acc: &mut CaseAccumulator,
+) -> Result<(), RomTestError> {
+    let rom_path = cell.rom_path(rom_root);
     if !rom_path.exists() {
         return Err(RomTestError::InvalidManifest(format!(
             "ROM not found: {}",
@@ -44,12 +88,11 @@ pub fn run_case(
         )));
     }
 
-    let model = effective_model(case, &rom_path)?;
     let rom_bytes = std::fs::read(&rom_path)?;
-    let header =
-        nerust_gbc_core::cartridge_header::CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
-            RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
-        })?;
+    let header = CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
+        RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
+    })?;
+    let model = effective_model(cell, &header);
     // Extract font bank 1 data before moving rom_bytes
     let font_bank1: Vec<u8> = if rom_bytes.len() > 0x4000 {
         rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
@@ -64,44 +107,93 @@ pub fn run_case(
         bus.load_font_tiles(&font_bank1);
     }
 
-    // Optional boot ROM tick alignment (env var for testing).
-    if let Ok(tick_str) = std::env::var("NERUST_INIT_TICK")
-        && let Ok(tick) = tick_str.parse()
-    {
-        bus.set_initial_tick(tick);
-    }
-    // CGB mode depends on HARDWARE (requested model), not effective model.
+    // CGB mode depends on HARDWARE (declared model), not effective model.
     // A CGB running a DMG-only ROM still applies boot ROM palettes.
-    let hw_is_cgb = match case.model {
-        super::manifest::GbcModel::Cgb
-        | super::manifest::GbcModel::CgbC
-        | super::manifest::GbcModel::Agb => true,
-        super::manifest::GbcModel::Dmg => false,
-    };
+    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
     let rom_is_cgb = header.cgb_flag & 0x80 != 0;
     bus.set_cgb_mode(hw_is_cgb);
-    bus.set_cgb_revision_d(case.model != super::manifest::GbcModel::CgbC);
+    bus.set_cgb_revision_d(matches!(cell.model, GbcModel::CgbD | GbcModel::Agb));
     // CGB-only rendering features (bg_priority, master priority, etc.)
     // only activate when the GAME is CGB-native, not just the hardware.
     bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
     let mut cpu = Lr35902Cpu::with_model(model);
     cpu.registers_mut().set_pc(0x0100);
 
-    // Process each event
-    let mut screenshots: Vec<String> = Vec::new();
-    for (event_idx, event) in case.events.iter().enumerate() {
-        step_cycles(&mut bus, &mut cpu, event.cycles);
-        let (png_data, frame_crc) = render_frame(&mut bus)?;
-        if let Some(dir) = screenshots_dir {
-            screenshots.push(save_screenshot(&png_data, dir, &case.id, event_idx)?);
-        }
-        verify_event(&mut bus, event, case, frame_crc)?;
+    step_cycles(&mut bus, &mut cpu, cell.cycles());
+    let rendered = render_frame(&bus)?;
+    if let Some(dir) = artifacts_dir {
+        let name = format!("{}.png", cell.id());
+        save_screenshot(&rendered.png, dir, "screenshots", &name)?;
+        acc.screenshot = Some(name);
     }
 
-    Ok((
-        String::from_utf8_lossy(bus.serial_output()).into_owned(),
-        screenshots,
-    ))
+    if let Some(ref_path) = cell.reference_path(rom_root) {
+        if !ref_path.exists() {
+            return Err(RomTestError::InvalidManifest(format!(
+                "reference image not found: {}",
+                ref_path.display()
+            )));
+        }
+        let ref_png = std::fs::read(&ref_path)?;
+        let diff_png = verify::verify_reference(
+            &verify::FramePixels {
+                rgba: &rendered.rgba,
+                width: rendered.width as u32,
+                height: rendered.height as u32,
+            },
+            &ref_png,
+            &ref_path.display().to_string(),
+            &mut acc.checks,
+        )?;
+        if let (Some(png), Some(dir)) = (diff_png, artifacts_dir) {
+            let name = format!("{}_diff.png", cell.id());
+            save_screenshot(&png, dir, "diffs", &name)?;
+            acc.diff_image = Some(name);
+        }
+    }
+
+    let serial_output = bus.serial_output();
+    cell.verify()
+        .verify_serial(serial_output, &mut acc.checks)?;
+    cell.verify().verify_frame(rendered.crc, &mut acc.checks);
+    cell.verify().verify_memory(&bus, &mut acc.checks)?;
+
+    Ok(())
+}
+
+struct RenderedFrame {
+    png: Vec<u8>,
+    /// Stride-aware RGBA pixels (160×144×4).
+    rgba: Vec<u8>,
+    /// CRC32 of `rgba`.
+    crc: u32,
+    width: usize,
+    height: usize,
+}
+
+fn render_frame(bus: &GbcMemoryBus) -> Result<RenderedFrame, RomTestError> {
+    let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+    fb.resize(160, 144);
+    bus.render_frame(&mut fb);
+    let png = media::encode_screenshot_png(&fb)?;
+
+    let stride = fb.stride();
+    let w = fb.width();
+    let h = fb.height();
+    let src = fb.as_ref();
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        let row_start = y * stride;
+        rgba.extend_from_slice(&src[row_start..row_start + w * 4]);
+    }
+    let crc = verify::crc32(&rgba);
+    Ok(RenderedFrame {
+        png,
+        rgba,
+        crc,
+        width: w,
+        height: h,
+    })
 }
 
 fn step_cycles(bus: &mut GbcMemoryBus, cpu: &mut Lr35902Cpu, cycles: usize) {
@@ -114,179 +206,40 @@ fn step_cycles(bus: &mut GbcMemoryBus, cpu: &mut Lr35902Cpu, cycles: usize) {
     }
 }
 
-fn render_frame(bus: &mut GbcMemoryBus) -> Result<(Vec<u8>, u32), RomTestError> {
-    // Compute PNG screenshot data (for both file save and hash check)
-    let mut fb = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-    fb.resize(160, 144);
-    bus.render_frame(&mut fb);
-    let png_data = media::encode_screenshot_png(&fb)?;
-
-    // Compute frame hash from raw RGBA pixels (stride-aware)
-    let stride = fb.stride();
-    let w = fb.width();
-    let h = fb.height();
-    let src = fb.as_ref();
-    let mut rgba = Vec::with_capacity(w * h * 4);
-    for y in 0..h {
-        let row_start = y * stride;
-        rgba.extend_from_slice(&src[row_start..row_start + w * 4]);
-    }
-    let frame_crc = crc32(&rgba);
-    Ok((png_data, frame_crc))
-}
-
 fn save_screenshot(
     png_data: &[u8],
-    dir: &Path,
-    case_id: &str,
-    event_idx: usize,
-) -> Result<String, RomTestError> {
-    let shot_name = format!("{}_{}.png", case_id, event_idx);
-    let shot_path = dir.join(&shot_name);
-    std::fs::write(&shot_path, png_data).map_err(RomTestError::Io)?;
-    Ok(shot_name)
-}
-
-fn verify_event(
-    bus: &mut GbcMemoryBus,
-    event: &RomEvent,
-    case: &RomCase,
-    frame_crc: u32,
+    root: &Path,
+    subdir: &str,
+    name: &str,
 ) -> Result<(), RomTestError> {
-    // Verify serial output hash
-    if let Some(serial_hash) = event.serial.as_ref().filter(|s| !s.hash.is_empty()) {
-        let actual = crc32(bus.serial_output());
-        let expected = parse_hex(&serial_hash.hash)? as u32;
-        if actual != expected {
-            return Err(RomTestError::SerialMismatch(
-                case.id.clone(),
-                format!("{:08X}", actual),
-            ));
-        }
-    }
-
-    // Verify serial output suffix (e.g. mooneye test suite success marker)
-    if let Some(suffix) = event
-        .serial
-        .as_ref()
-        .and_then(|s| s.suffix.as_deref().filter(|s| !s.is_empty()))
-    {
-        let expected = parse_hex_suffix(suffix)?;
-        if !bus.serial_output().ends_with(&expected) {
-            return Err(RomTestError::SerialMismatch(
-                case.id.clone(),
-                bus.serial_output()
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect(),
-            ));
-        }
-    }
-
-    // Verify frame hash (CRC32 of raw RGBA frame buffer)
-    if let Some(ref frame_hash) = event.frame
-        && !frame_hash.hash.is_empty()
-    {
-        let expected = parse_hex(&frame_hash.hash)? as u32;
-        if frame_crc != expected {
-            return Err(RomTestError::CaseFailed(
-                case.id.clone(),
-                format!(
-                    "frame hash: expected {:08X}, got {:08X}",
-                    expected, frame_crc
-                ),
-            ));
-        }
-    }
-
-    // Verify audio hash (stub)
-    if let Some(ref audio_hash) = event.audio {
-        let _ = audio_hash;
-    }
-
-    // Verify memory values
-    if let Some(ref memory) = event.memory {
-        for entry in memory {
-            let addr = parse_hex(&entry.address)? as u16;
-            let expected = parse_hex(&entry.value)? as u8;
-            let actual = bus.read(addr);
-            if actual != expected {
-                return Err(RomTestError::CaseFailed(
-                    case.id.clone(),
-                    format!(
-                        "memory at ${:04X}: expected ${:02X}, got ${:02X}",
-                        addr, expected, actual
-                    ),
-                ));
-            }
-        }
-    }
-
-    // Apply pad input
-    apply_pad_input(bus, event);
+    let dir = root.join(subdir);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(name), png_data)?;
     Ok(())
 }
 
-fn apply_pad_input(bus: &mut GbcMemoryBus, event: &RomEvent) {
-    if let Some(ref pad) = event.pad {
-        let mut joypad = 0xFFu8;
-        for entry in pad {
-            // GBC joypad: bits 0-3 = direction/button, bit 4=select, bit 5=select
-            // 0 = pressed, 1 = released
-            let mask = match entry.button.as_str() {
-                "right" => !0x01,
-                "left" => !0x02,
-                "up" => !0x04,
-                "down" => !0x08,
-                "a" => !0x01,
-                "b" => !0x02,
-                "select" => !0x04,
-                "start" => !0x08,
-                _ => 0xFF,
-            };
-            let pressed = entry.state == "press";
-            if pressed {
-                if entry.button == "a"
-                    || entry.button == "b"
-                    || entry.button == "select"
-                    || entry.button == "start"
-                {
-                    joypad &= mask & 0x0F; // button keys: bits 0-3
-                } else {
-                    joypad &= mask & 0xF0; // direction keys: bits 4-7
-                }
-            }
-        }
-        bus.set_joypad(joypad);
+/// Map a manifest model to the core CPU model, with ROM header auto-adjust.
+fn effective_model(
+    cell: &MatrixCell<'_>,
+    header: &CartridgeHeader,
+) -> nerust_gbc_core::cpu_core::GbcModel {
+    let requested = match cell.model {
+        GbcModel::Dmg => nerust_gbc_core::cpu_core::GbcModel::Dmg,
+        GbcModel::CgbC | GbcModel::CgbD => nerust_gbc_core::cpu_core::GbcModel::Cgb,
+        GbcModel::Agb => nerust_gbc_core::cpu_core::GbcModel::Agb,
+    };
+    // Auto-downgrade: DMG-only ROM ($00) on CGB/AGB → DMG mode
+    if header.cgb_flag == 0x00
+        && matches!(
+            requested,
+            nerust_gbc_core::cpu_core::GbcModel::Cgb | nerust_gbc_core::cpu_core::GbcModel::Agb
+        )
+    {
+        return nerust_gbc_core::cpu_core::GbcModel::Dmg;
     }
-}
-
-fn parse_hex(s: &str) -> Result<u64, RomTestError> {
-    let s = s.trim_start_matches("0x").trim_start_matches("0X");
-    u64::from_str_radix(s, 16)
-        .map_err(|_| RomTestError::InvalidManifest(format!("invalid hex value: {}", s)))
-}
-
-fn parse_hex_suffix(s: &str) -> Result<Vec<u8>, RomTestError> {
-    let s = s.trim_start_matches("0x").trim_start_matches("0X");
-    if !s.len().is_multiple_of(2) {
-        return Err(RomTestError::InvalidManifest(format!(
-            "invalid hex suffix: {}",
-            s
-        )));
+    // Auto-upgrade: CGB-only ROM ($C0) on DMG → CGB mode
+    if header.cgb_flag == 0xC0 && requested == nerust_gbc_core::cpu_core::GbcModel::Dmg {
+        return nerust_gbc_core::cpu_core::GbcModel::Cgb;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|_| RomTestError::InvalidManifest(format!("invalid hex suffix: {}", s)))
-        })
-        .collect()
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
-    let mut digest = crc.digest();
-    digest.update(data);
-    digest.finalize()
+    requested
 }

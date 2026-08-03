@@ -1,11 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use nerust_gbc_rom_test::{
-    manifest::{RomCase, RomManifest},
-    report::{CaseResult, write_html_report},
-    runner::run_case,
+    manifest::{GbcModel, RomManifest},
+    report::{Summary, write_html_report, write_json},
+    runner::run_manifest,
 };
 
 #[derive(Parser)]
@@ -15,20 +15,39 @@ struct Cli {
     #[arg(short, long, default_value = "rom_tests.yaml")]
     manifest: PathBuf,
 
-    /// Filter by test case IDs
+    /// Filter by test case IDs (`id` or `id@model`)
     ids: Vec<String>,
 
-    /// Performance test mode
-    #[arg(short, long)]
-    perf: bool,
+    /// Filter by hardware model (dmg, cgb_c, cgb_d, agb)
+    #[arg(long)]
+    model: Vec<GbcModel>,
 
-    /// Write HTML report to $CARGO_TARGET_DIR/rom_tests/
+    /// Filter by tag
+    #[arg(long)]
+    tag: Vec<String>,
+
+    /// Output format
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
+
+    /// Write HTML report (same as --format html)
     #[arg(short, long)]
     report: bool,
 
     /// Open the HTML report in the default browser after tests complete
     #[arg(short = 'O', long)]
     open: bool,
+
+    /// Ignore the manifest's expected_failures list; every failure counts
+    #[arg(long)]
+    ignore_expected_failures: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+    Html,
 }
 
 fn manifest_path(cli: &Cli) -> PathBuf {
@@ -45,6 +64,30 @@ fn manifest_path(cli: &Cli) -> PathBuf {
     crate_dir.join(&cli.manifest)
 }
 
+fn artifacts_dir() -> PathBuf {
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("target"));
+    target_dir.join("rom_tests")
+}
+
+fn failure_detail(case: &nerust_gbc_rom_test::report::CaseResult) -> String {
+    if let Some(ref error) = case.error {
+        return error.clone();
+    }
+    case.checks
+        .iter()
+        .filter(|check| !check.passed)
+        .map(|check| {
+            format!(
+                "{}: expected {}, got {}",
+                check.name, check.expected, check.actual
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn main() {
     let cli = Cli::parse();
     let manifest_path = manifest_path(&cli);
@@ -52,104 +95,80 @@ fn main() {
     let manifest = RomManifest::load(&manifest_path).expect("failed to load manifest");
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
 
-    let selected = manifest.select(&cli.ids, cli.perf);
-    if selected.is_empty() {
+    let cells = manifest.select(&cli.ids, &cli.model, &cli.tag);
+    if cells.is_empty() {
         eprintln!("No matching test cases found");
         std::process::exit(1);
     }
 
-    // Determine screenshots directory if --report is enabled
-    // If --open is specified without --report, enable report implicitly
-    let do_report = cli.report || cli.open;
-    let screenshots_dir = screenshots_dir(do_report);
-
-    let mut results: Vec<CaseResult> = Vec::new();
-    let mut passed = 0u32;
-    let mut failed = 0u32;
-    for case in selected {
-        print!("{} ... ", case.id);
-        let result = run_single_case(case, &rom_root, screenshots_dir.as_deref());
-        if result.passed {
-            passed += 1;
-        } else {
-            failed += 1;
-        }
-        results.push(result);
-    }
-
-    println!("\n{} passed, {} failed", passed, failed);
-
-    let report_summary = if do_report {
-        let manifest_name = manifest_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("rom_tests");
-        write_html_report(None, manifest_name, &results).ok()
+    let artifacts = artifacts_dir();
+    let expected_failures: &[String] = if cli.ignore_expected_failures {
+        &[]
     } else {
-        None
+        &manifest.expected_failures
+    };
+    let results = run_manifest(&rom_root, &cells, Some(&artifacts), expected_failures);
+
+    let manifest_name = manifest_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("rom_tests");
+
+    let format = if cli.format == OutputFormat::Text && (cli.report || cli.open) {
+        OutputFormat::Html
+    } else {
+        cli.format
     };
 
+    match format {
+        OutputFormat::Text => {
+            for result in &results {
+                if result.passed {
+                    println!("{} ... ok", result.id);
+                } else if result.expected_failure {
+                    println!(
+                        "{} ... expected failure ({})",
+                        result.id,
+                        failure_detail(result)
+                    );
+                } else {
+                    println!("{} ... FAILED ({})", result.id, failure_detail(result));
+                }
+            }
+        }
+        OutputFormat::Json => {
+            println!("{}", write_json(manifest_name, &results));
+        }
+        OutputFormat::Html => {
+            let _ = write_html_report(None, manifest_name, &results);
+        }
+    }
+
+    let summary = Summary::of(&results);
+    let summary_line = if summary.expected_failures > 0 {
+        format!(
+            "{} passed, {} failed ({} expected, {} unexpected)",
+            summary.passed, summary.failed, summary.expected_failures, summary.unexpected
+        )
+    } else {
+        format!("{} passed, {} failed", summary.passed, summary.failed)
+    };
+    if format == OutputFormat::Json {
+        eprintln!("{}", summary_line);
+    } else {
+        println!("\n{}", summary_line);
+    }
+
     if cli.open
-        && let Some(ref summary) = report_summary
+        && let Ok(outcome) = write_html_report(None, manifest_name, &results)
     {
-        let path = &summary.report_path;
+        let path = &outcome.report_path;
         if open::that(path).is_ok() {
             eprintln!("Opened report: {}", path.display());
         }
     }
 
-    if failed > 0 {
+    if summary.unexpected > 0 {
         std::process::exit(1);
-    }
-}
-
-fn screenshots_dir(report: bool) -> Option<PathBuf> {
-    if !report {
-        return None;
-    }
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("target"));
-    let dir = target_dir.join("rom_tests").join("screenshots");
-    std::fs::create_dir_all(&dir).ok();
-    Some(dir)
-}
-
-fn run_single_case(case: &RomCase, rom_root: &Path, screenshots_dir: Option<&Path>) -> CaseResult {
-    match run_case(case, rom_root, screenshots_dir) {
-        Ok((output, shots)) => {
-            // Pass if: serial says PASS, OR frame hash matched (no error but no serial),
-            // OR an explicit serial suffix check was configured and succeeded.
-            let passed = case.has_explicit_verification()
-                || output.contains("Passed")
-                || output.contains("PASS")
-                || output.is_empty();
-            if passed {
-                println!("ok");
-            } else {
-                println!("FAILED (output len={})", output.len());
-            }
-            CaseResult {
-                id: case.id.clone(),
-                category: case.category.clone(),
-                description: case.description.clone(),
-                passed,
-                output: if passed { String::new() } else { output },
-                error: None,
-                screenshots: shots,
-            }
-        }
-        Err(e) => {
-            println!("ERROR: {}", e);
-            CaseResult {
-                id: case.id.clone(),
-                category: case.category.clone(),
-                description: case.description.clone(),
-                passed: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-                screenshots: Vec::new(),
-            }
-        }
     }
 }
