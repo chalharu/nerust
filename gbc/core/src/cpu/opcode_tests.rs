@@ -517,3 +517,16 @@ fn ld_a_a16_takes_16_t_cycles() {
     }
     assert_eq!(n, 16, "LD A,(a16) should take 16 T-cycles (4 M-cycles)");
 }
+
+#[test]
+fn ei_then_halt_enables_ime_for_halt() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x76]); // EI, HALT
+    cpu.registers_mut().set_pc(BASE);
+    // Execute EI.
+    step_until_done(&mut cpu, &mut bus);
+    assert!(!bus.ime_enabled(), "IME not enabled immediately after EI");
+    // Execute HALT; the delayed IME from EI applies during HALT.
+    step_until_done(&mut cpu, &mut bus);
+    assert!(bus.ime_enabled(), "IME must be enabled during HALT after EI");
+    assert!(bus.is_halted_or_stopped(), "HALT should halt the CPU");
+}
