@@ -128,8 +128,9 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt.read_if(),
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
-            0xFF50 => {
+             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
+             0xFF46 => self.dma.read_register(),
+             0xFF50 => {
                 if self.boot_rom_mapped {
                     0xFE
                 } else {
@@ -250,9 +251,10 @@ impl GbcMemoryBus {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
                 self.dma_tcounter = 0;
-                let (src, offset) = self.dma.transfer_step();
-                let byte = self.read_raw(src.wrapping_add(offset as u16));
-                self.ppu.write_oam(offset, byte);
+                if let Some((src, offset)) = self.dma.transfer_step() {
+                    let byte = self.read_raw(src);
+                    self.ppu.write_oam(offset, byte);
+                }
             }
         }
         ppu_res.frame_done
@@ -311,9 +313,10 @@ impl GbcMemoryBus {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
                 self.dma_tcounter = 0;
-                let (src, offset) = self.dma.transfer_step();
-                let byte = self.read_raw(src.wrapping_add(offset as u16));
-                self.ppu.write_oam(offset, byte);
+                if let Some((src, offset)) = self.dma.transfer_step() {
+                    let byte = self.read_raw(src);
+                    self.ppu.write_oam(offset, byte);
+                }
             }
         }
         // CPU M-cycle cadence: every 4 steps normally, every 2 steps in

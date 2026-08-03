@@ -1431,6 +1431,66 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_oam_dma_reg_read"
+    category: "mooneye"
+    description: "Mooneye Test Suite — oam_dma/reg_read (DMA register readback)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma/reg_read.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_oam_dma_start"
+    category: "mooneye"
+    description: "Mooneye Test Suite — oam_dma_start (DMA startup timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_start.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_oam_dma_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — oam_dma_timing (DMA transfer timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_oam_dma_restart"
+    category: "mooneye"
+    description: "Mooneye Test Suite — oam_dma_restart (DMA restart timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma_restart.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
   - id: "mooneye_timer_div_write"
     category: "mooneye"
     description: "Mooneye Test Suite — timer/div_write (DIV register write)"
