@@ -1371,3 +1371,138 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_bits_mem_oam"
+    category: "mooneye"
+    description: "Mooneye Test Suite — bits/mem_oam (OAM memory)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/bits/mem_oam.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_bits_reg_f"
+    category: "mooneye"
+    description: "Mooneye Test Suite — bits/reg_f (F register)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/bits/reg_f.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_instr_daa"
+    category: "mooneye"
+    description: "Mooneye Test Suite — instr/daa (DAA instruction)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/instr/daa.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 500_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_oam_dma_basic"
+    category: "mooneye"
+    description: "Mooneye Test Suite — oam_dma/basic (OAM DMA)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/oam_dma/basic.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_div_write"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/div_write (DIV register write)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/div_write.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 1_500_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim00"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim00.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim01"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim01.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim10"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim10.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_timer_tim11"
+    category: "mooneye"
+    description: "Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/timer/tim11.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
