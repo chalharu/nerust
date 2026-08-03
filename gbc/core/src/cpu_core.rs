@@ -1,5 +1,4 @@
 use crate::cpu_registers::CpuRegisters;
-use crate::interrupt::InterruptKind;
 use crate::memory::GbcMemoryBus;
 
 /// Game Boy model variant for post-boot register initialization.
@@ -27,10 +26,16 @@ pub(crate) enum Phase {
         step: u8,
     },
     /// Real hardware takes 5 M-cycles to acknowledge and dispatch
-    /// an interrupt (push PC, set PC to handler vector).
+    /// an interrupt (push PC, set PC to handler vector). The dispatch
+    /// re-evaluates IE & IF after pushing PC (the push can write to the
+    /// IE/IF registers, cancelling or changing the dispatch — mooneye ie_push).
     InterruptDispatch {
-        kind: InterruptKind,
         step: u8,
+        /// IE snapshot taken after the high-byte PC push.
+        pending_ie: u8,
+        /// IF value used for the dispatch decision (old IF if the low-byte
+        /// push targets the IF register).
+        pending_if: u8,
     },
 }
 

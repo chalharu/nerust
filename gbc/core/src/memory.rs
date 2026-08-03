@@ -447,6 +447,21 @@ impl GbcMemoryBus {
         self.interrupt.get_ime()
     }
 
+    /// Read the IE register (raw).
+    pub fn read_ie(&self) -> u8 {
+        self.interrupt.read_ie()
+    }
+
+    /// Read the IF register (bits 0-4 only).
+    pub fn read_if_raw(&self) -> u8 {
+        self.interrupt.read_if_raw()
+    }
+
+    /// Clear a single IF bit.
+    pub fn clear_if_bit(&mut self, bit: u8) {
+        self.interrupt.clear_if_bit(bit);
+    }
+
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {
