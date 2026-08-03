@@ -1686,3 +1686,198 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_call_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — call_timing (CALL instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/call_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_call_timing2"
+    category: "mooneye"
+    description: "Mooneye Test Suite — call_timing2 (CALL instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/call_timing2.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_call_cc_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — call_cc_timing (conditional CALL timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/call_cc_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_call_cc_timing2"
+    category: "mooneye"
+    description: "Mooneye Test Suite — call_cc_timing2 (conditional CALL timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/call_cc_timing2.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_jp_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — jp_timing (JP instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/jp_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_jp_cc_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — jp_cc_timing (conditional JP timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/jp_cc_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_ret_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — ret_timing (RET instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ret_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_ret_cc_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — ret_cc_timing (conditional RET timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ret_cc_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_reti_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — reti_timing (RETI instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/reti_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_push_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — push_timing (PUSH instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/push_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_rst_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — rst_timing (RST instruction timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/rst_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_add_sp_e_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/add_sp_e_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_ld_hl_sp_e_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing)"
+    rom: "Gekkio_mooneye-test-suite/acceptance/ld_hl_sp_e_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
