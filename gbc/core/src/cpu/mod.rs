@@ -16,7 +16,12 @@ impl CpuStepper for Lr35902Cpu {
             // An interrupt was just dispatched (HALT woke up). The detection
             // M-cycle is consumed here; the InterruptDispatch phase runs on
             // the next step, matching the real hardware 5 M-cycle dispatch.
-            return;
+            if matches!(self.phase(), Phase::InterruptDispatch { .. }) {
+                return;
+            }
+            // IME=0 wake: no dispatch happens, so the instruction after HALT
+            // starts on this M-cycle (no extra delay), exactly as if a series
+            // of NOPs had been waiting for the interrupt.
         }
 
         match self.phase() {
@@ -72,22 +77,54 @@ impl CpuStepper for Lr35902Cpu {
                     });
                 }
             },
-            Phase::InterruptDispatch { kind, step } => match step {
-                1 => self.set_phase(Phase::InterruptDispatch { kind, step: 2 }),
+            Phase::InterruptDispatch {
+                step,
+                pending_ie,
+                pending_if,
+            } => match step {
+                1 => self.set_phase(Phase::InterruptDispatch {
+                    step: 2,
+                    pending_ie,
+                    pending_if,
+                }),
                 2 => {
                     let sp = self.registers().sp().wrapping_sub(1);
                     self.registers_mut().set_sp(sp);
                     bus.write(sp, (self.registers().pc() >> 8) as u8);
-                    self.set_phase(Phase::InterruptDispatch { kind, step: 3 });
+                    // The high-byte push may have written to the IE register
+                    // ($FFFF); snapshot IE now for the dispatch decision.
+                    let pending_ie = bus.read_ie();
+                    self.set_phase(Phase::InterruptDispatch {
+                        step: 3,
+                        pending_ie,
+                        pending_if,
+                    });
                 }
                 3 => {
                     let sp = self.registers().sp().wrapping_sub(1);
                     self.registers_mut().set_sp(sp);
+                    // If the low-byte push targets the IF register ($FF0F),
+                    // the dispatch decision uses the pre-write IF value.
+                    let pending_if = bus.read_if_raw();
                     bus.write(sp, self.registers().pc() as u8);
-                    self.set_phase(Phase::InterruptDispatch { kind, step: 4 });
+                    self.set_phase(Phase::InterruptDispatch {
+                        step: 4,
+                        pending_ie,
+                        pending_if,
+                    });
                 }
                 4 => {
-                    self.registers_mut().set_pc(kind.vector());
+                    // Re-evaluate IE & IF after the pushes (the pushes can
+                    // modify IE/IF, cancelling or changing the dispatch).
+                    let queue = pending_ie & pending_if & 0x1F;
+                    if queue != 0 {
+                        let n = queue.trailing_zeros() as u8;
+                        bus.clear_if_bit(n);
+                        self.registers_mut().set_pc((n as u16) * 8 + 0x40);
+                    } else {
+                        // Dispatch cancelled: PC is set to 0, IF untouched.
+                        self.registers_mut().set_pc(0);
+                    }
                     self.set_phase(Phase::FetchOpcode);
                 }
                 _ => unreachable!("invalid interrupt dispatch step"),
@@ -105,9 +142,13 @@ impl Lr35902Cpu {
 
     fn check_interrupts(&mut self, bus: &mut GbcMemoryBus) {
         if bus.ime_enabled()
-            && let Some(kind) = bus.acknowledge_interrupt()
+            && let Some(_kind) = bus.acknowledge_interrupt()
         {
-            self.set_phase(Phase::InterruptDispatch { kind, step: 1 });
+            self.set_phase(Phase::InterruptDispatch {
+                step: 1,
+                pending_ie: 0,
+                pending_if: 0,
+            });
         } else {
             bus.acknowledge_interrupt();
         }

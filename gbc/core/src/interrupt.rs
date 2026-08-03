@@ -80,8 +80,21 @@ impl InterruptController {
             _ => return None,
         };
 
-        self.if_ &= !kind.bit();
+        // The IF bit is NOT cleared here. The interrupt dispatch phase
+        // re-evaluates IE & IF after pushing PC (the push can write to the
+        // IE/IF registers), which may cancel or change the dispatch
+        // (mooneye ie_push).
         Some(kind)
+    }
+
+    /// Raw IF value (bits 0-4 only).
+    pub fn read_if_raw(&self) -> u8 {
+        self.if_ & 0x1F
+    }
+
+    /// Clear a single IF bit.
+    pub fn clear_if_bit(&mut self, bit: u8) {
+        self.if_ &= !(1 << bit);
     }
 
     pub fn interrupt_pending(&self) -> bool {
@@ -193,7 +206,9 @@ mod tests {
         let kind = ic.acknowledge().expect("should ack");
         assert_eq!(kind, InterruptKind::VBlank);
         assert!(!ic.get_ime());
-        assert_eq!(ic.if_ & 0x01, 0x00);
+        // IF bit is NOT cleared by acknowledge; the interrupt dispatch phase
+        // clears it after re-evaluating IE & IF (mooneye ie_push).
+        assert_eq!(ic.if_ & 0x01, 0x01);
     }
 
     #[test]
@@ -206,7 +221,8 @@ mod tests {
 
         let kind = ic.acknowledge().expect("should ack");
         assert_eq!(kind, InterruptKind::VBlank);
-        assert_eq!(ic.if_, 0xE0 | 0x04); // Timer still pending
+        // Both bits still pending until the dispatch phase clears one.
+        assert_eq!(ic.if_, 0xE0 | 0x05);
     }
 
     #[test]

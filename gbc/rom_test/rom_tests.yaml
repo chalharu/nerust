@@ -936,6 +936,36 @@ cases:
           hash: ""
         memory: []
         pad: []
+  - id: "mooneye_halt_ime0_nointr_timing"
+    category: "mooneye"
+    description: "Mooneye Test Suite — halt_ime0_nointr_timing"
+    rom: "Gekkio_mooneye-test-suite/acceptance/halt_ime0_nointr_timing.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
+  - id: "mooneye_interrupts_ie_push"
+    category: "mooneye"
+    description: "Mooneye Test Suite — interrupts/ie_push"
+    rom: "Gekkio_mooneye-test-suite/acceptance/interrupts/ie_push.gb"
+    model: cgb
+    perf: false
+    events:
+      - cycles: 300_000
+        serial:
+          hash: ""
+          suffix: "0305080D1522"
+        frame:
+          hash: ""
+        memory: []
+        pad: []
   - id: "mooneye_intr_timing"
     category: "mooneye"
     description: "Mooneye Test Suite — intr_timing"
