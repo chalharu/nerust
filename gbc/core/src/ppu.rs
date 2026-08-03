@@ -71,6 +71,9 @@ pub struct GbcPpu {
     /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
     lcd_stat_last_mode: Option<PpuMode>,
     mode_stat_delay: u8,
+    /// Internal STAT interrupt line. Once raised it stays asserted, blocking
+    /// further STAT interrupts, until the PPU enters mode 3 (PixelTransfer).
+    stat_irq_line: bool,
 
     /// Remaining T-cycles after LCDC.7 0->1 before the PPU starts the first
     /// scanline. During this window STAT mode bits read as 00 and the LYC
@@ -116,6 +119,7 @@ impl Default for GbcPpu {
             cgb_revision_d: true,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mode_stat_delay: 0,
+            stat_irq_line: false,
             lcd_on_delay: 0,
             mode3_pipeline: None,
         }
@@ -168,7 +172,10 @@ impl GbcPpu {
     fn step_dot(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
         if self.mode_stat_delay != 0 {
             self.mode_stat_delay -= 1;
-            *lcd_stat |= self.mode_stat_delay == 0;
+            if self.mode_stat_delay == 0 {
+                self.stat_irq_line = true;
+                *lcd_stat = true;
+            }
         }
         self.mode_clock += 1;
 
@@ -242,6 +249,11 @@ impl GbcPpu {
         let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
         self.lcd_stat_last_mode = Some(current_mode);
         self.stat = (self.stat & 0xFC) | current_mode as u8;
+
+        // Mode 3 (PixelTransfer) clears the internal STAT interrupt line.
+        if current_mode == PpuMode::PixelTransfer {
+            self.stat_irq_line = false;
+        }
         self.check_lyc(lcd_stat);
 
         if mode_changed {
@@ -251,13 +263,36 @@ impl GbcPpu {
                 PpuMode::OamSearch => self.stat & 0x20 != 0,
                 PpuMode::PixelTransfer => false,
             };
-            if enabled {
+            if enabled && !self.stat_irq_line {
                 self.mode_stat_delay = if current_mode == PpuMode::OamSearch && self.ly == 0 {
                     5
                 } else {
                     1
                 };
             }
+        }
+    }
+
+    /// After a STAT register write, raise the mode interrupt immediately if
+    /// the PPU is already in a mode whose interrupt was just enabled. A
+    /// pending internal line blocks a new interrupt until cleared by mode 3.
+    fn check_stat_write(&mut self) {
+        if self.stat_irq_line {
+            return;
+        }
+        let current_mode = self.current_mode();
+        let enabled = match current_mode {
+            PpuMode::HBlank => self.stat & 0x08 != 0,
+            PpuMode::VBlank => self.stat & 0x10 != 0,
+            PpuMode::OamSearch => self.stat & 0x20 != 0,
+            PpuMode::PixelTransfer => false,
+        };
+        if enabled {
+            self.mode_stat_delay = if current_mode == PpuMode::OamSearch && self.ly == 0 {
+                5
+            } else {
+                1
+            };
         }
     }
 
@@ -301,8 +336,16 @@ impl GbcPpu {
         // Fire LYC=LY interrupt only on a false->true edge of the
         // comparison. Re-enabling the LCD while LY==LYC already held (or
         // re-entering the same line) must not raise a second interrupt.
-        if coincide && !self.prev_lyc_coincide && (self.stat & 0x40) != 0 {
+        if coincide && !self.prev_lyc_coincide && (self.stat & 0x40) != 0 && !self.stat_irq_line {
+            self.stat_irq_line = true;
             *lcd_stat = true;
+        }
+        // In mode 3, the comparison acts as a level: the line was cleared on
+        // mode-3 entry, so a still-holding comparison (with the LYC=LY
+        // interrupt enabled) re-asserts it.
+        if coincide && (self.stat & 0x40) != 0 && self.current_mode() == PpuMode::PixelTransfer
+        {
+            self.stat_irq_line = true;
         }
         self.prev_lyc_coincide = coincide;
     }
@@ -523,7 +566,10 @@ impl GbcPpu {
         self.dispatch_pipeline_write(addr, value);
         match addr {
             0xFF40 => self.write_lcdc(value),
-            0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
+            0xFF41 => {
+                self.stat = (self.stat & 0x07) | (value & 0x78);
+                self.check_stat_write();
+            }
             0xFF42 => self.scy = value,
             0xFF43 => self.scx = value,
             0xFF45 => {
@@ -886,6 +932,34 @@ mod tests {
         let mut p = ppu();
         let _ = p.step(260);
         assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+    }
+
+    #[test]
+    fn stat_irq_line_blocks_repeated_mode_interrupts() {
+        let mut p = ppu();
+        // Enable all mode interrupts, then advance one line so the mode-2
+        // interrupt from the STAT write is consumed before reaching VBlank.
+        p.write_register(0xFF41, 0x78);
+        p.step(1);
+        // Advance to LY=144 (VBlank, mode 1). The mode-1 transition fires a
+        // STAT interrupt during the last scanline step and asserts the line.
+        step_ly(&mut p, VBLANK_START);
+        // While the line stays asserted (mode 1, no mode 3 yet), a mode
+        // transition to HBlank on the next scanline must not re-fire.
+        assert!(!p.step(T_CYCLES_PER_SCANLINE).lcd_stat);
+    }
+
+    #[test]
+    fn stat_write_enabling_current_mode_fires_immediately() {
+        let mut p = ppu();
+        // Advance into VBlank (mode 1), then enable the mode 1 interrupt.
+        for _ in 0..144 {
+            p.step(T_CYCLES_PER_SCANLINE);
+        }
+        p.step(1);
+        p.write_register(0xFF41, 0x10);
+        // Mode 1 interrupt fires immediately (delay 1 T-cycle).
+        assert!(p.step(1).lcd_stat);
     }
 
     #[test]
