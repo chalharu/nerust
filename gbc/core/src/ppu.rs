@@ -103,11 +103,11 @@ impl Default for GbcPpu {
             obpi: 0,
             obpd: 0,
             opri: 1,
-            key0: 0,
+            key0: 0xFF,
             vram: [0; 0x4000],
             oam: [0; 160],
-            bg_palette: [0; 32],
-            obj_palette: [0; 32],
+            bg_palette: [0xFFFF; 32],
+            obj_palette: [0xFFFF; 32],
             mode_clock: 0,
             frame_complete: false,
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
@@ -634,22 +634,18 @@ impl GbcPpu {
     }
 
     fn write_bgpi(&mut self, value: u8) {
-        if self.key0 & 0x04 == 0 {
-            // not DMG emulation mode
-            self.bgpi = value & 0x3F;
-            if value & 0x80 != 0 {
-                self.bgpi |= 0x80;
-            }
+        // BCPS index/auto-increment always updates, even in DMG emulation
+        // mode (only the palette data writes below are gated by KEY0 bit 2).
+        self.bgpi = value & 0x3F;
+        if value & 0x80 != 0 {
+            self.bgpi |= 0x80;
         }
     }
 
     fn write_obpi(&mut self, value: u8) {
-        if self.key0 & 0x04 == 0 {
-            // not DMG emulation mode
-            self.obpi = value & 0x3F;
-            if value & 0x80 != 0 {
-                self.obpi |= 0x80;
-            }
+        self.obpi = value & 0x3F;
+        if value & 0x80 != 0 {
+            self.obpi |= 0x80;
         }
     }
 
