@@ -13,6 +13,10 @@ impl CpuStepper for Lr35902Cpu {
             if bus.is_halted_or_stopped() {
                 return;
             }
+            // An interrupt was just dispatched (HALT woke up). The detection
+            // M-cycle is consumed here; the InterruptDispatch phase runs on
+            // the next step, matching the real hardware 5 M-cycle dispatch.
+            return;
         }
 
         match self.phase() {
