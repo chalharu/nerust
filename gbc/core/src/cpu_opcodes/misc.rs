@@ -133,7 +133,13 @@ impl CpuStepState for Invalid {
 
 pub(crate) struct Halt;
 impl CpuStepState for Halt {
-    fn exec(_: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        // EI immediately before HALT: the delayed IME must take effect for
+        // the HALT to wait for interrupts (real hardware enables IME during
+        // the instruction after EI).
+        if core.take_armed_ime() {
+            bus.set_ime(true);
+        }
         bus.halt_cpu();
         StepResult::Exit
     }
