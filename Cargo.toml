@@ -195,6 +195,7 @@ serde-saphyr = { version = "=0.0.29" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.151" }
+sha2 = { version = "=0.10.9" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }

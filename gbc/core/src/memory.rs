@@ -425,12 +425,6 @@ impl GbcMemoryBus {
         self.interrupt.stop();
     }
 
-    /// Set initial tick for boot ROM timing alignment.
-    /// Call before running to match boot ROM's final tick at PC=$0100.
-    pub fn set_initial_tick(&mut self, v: u32) {
-        self.tick = v;
-    }
-
     pub fn halt_cpu(&mut self) {
         self.interrupt.halt();
     }
