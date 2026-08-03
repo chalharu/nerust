@@ -55,11 +55,11 @@ pub struct GbcPpu {
     frame_buffer: [u32; 160 * 144],
     window_line: u8,
     window_eligible: bool,
-    /// Prevents LYC=LY STAT interrupt double-fire.
-    /// Set to current ly when a LYC=LY match fires and bit 6 is enabled.
-    /// Cleared when ly changes (while loop). This ensures the handler's
-    /// reti won't dispatch to the wrong handler address (HL was updated).
-    lyc_matched_ly: u8,
+    /// Previous LY=LYC coincidence bit. The LYC STAT interrupt is edge
+    /// triggered: it only fires on a false->true transition, so re-enabling
+    /// the LCD while the comparison already holds (LY=LYC unchanged) does
+    /// not raise a second interrupt.
+    prev_lyc_coincide: bool,
     /// CGB mode: enables VRAM bank 1, 15-bit RGB palettes, and
     /// background map attributes (palette, bank, flip, priority).
     pub cgb_mode: bool,
@@ -71,6 +71,11 @@ pub struct GbcPpu {
     /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
     lcd_stat_last_mode: Option<PpuMode>,
     mode_stat_delay: u8,
+
+    /// Remaining T-cycles after LCDC.7 0->1 before the PPU starts the first
+    /// scanline. During this window STAT mode bits read as 00 and the LYC
+    /// comparison clock is not running.
+    lcd_on_delay: u32,
 
     mode3_pipeline: Option<Mode3Pipeline>,
 }
@@ -105,12 +110,13 @@ impl Default for GbcPpu {
             frame_buffer: [0xFF_FF_FF_FF; 160 * 144],
             window_line: 0,
             window_eligible: false,
-            lyc_matched_ly: 0xFF,
+            prev_lyc_coincide: false,
             cgb_mode: false,
             cgb_game: false,
             cgb_revision_d: true,
             lcd_stat_last_mode: Some(PpuMode::OamSearch),
             mode_stat_delay: 0,
+            lcd_on_delay: 0,
             mode3_pipeline: None,
         }
     }
@@ -124,6 +130,9 @@ impl GbcPpu {
             self.ly = 0;
             self.mode_clock = 0;
             self.mode3_pipeline = None;
+            // LCD off: STAT mode bits read as 00 (HBlank); the LYC
+            // coincidence bit (bit2) is latched and retained.
+            self.stat &= !0x03;
             return PpuStepResult {
                 frame_done: false,
                 lcd_stat: false,
@@ -135,9 +144,20 @@ impl GbcPpu {
         let mut vblank = false;
 
         for _ in 0..cycles {
+            if self.lcd_on_delay > 0 {
+                // PPU is powering on: STAT mode bits stay at 00, but the
+                // LYC comparison clock starts immediately (LY=0 was latched
+                // by the LCDC write) so a coincident LY==LYC can fire the
+                // STAT interrupt right away.
+                self.lcd_on_delay -= 1;
+                self.stat &= !0x03;
+                let mut on_stat = false;
+                self.check_lyc(&mut on_stat);
+                lcd_stat |= on_stat;
+                continue;
+            }
             self.step_dot(&mut lcd_stat, &mut vblank);
         }
-
         PpuStepResult {
             frame_done: self.frame_complete,
             lcd_stat,
@@ -203,7 +223,6 @@ impl GbcPpu {
         if self.mode_clock >= T_CYCLES_PER_SCANLINE {
             self.mode_clock -= T_CYCLES_PER_SCANLINE;
             self.mode3_pipeline = None;
-            self.lyc_matched_ly = self.ly;
             self.ly = self.ly.wrapping_add(1);
             if self.ly == VBLANK_START {
                 *vblank = true;
@@ -279,14 +298,13 @@ impl GbcPpu {
         let coincide = self.ly == self.lyc;
         let bit2 = if coincide { 0x04 } else { 0x00 };
         self.stat = (self.stat & !0x04) | bit2;
-        // Fire LYC=LY interrupt only once per LY change.
-        // Without this guard, line-159 re-fires the same match before
-        // the handler's ldh [rLYC], a executes, causing a second dispatch
-        // after reti — but HL was already updated to the NEXT handler.
-        if coincide && (self.stat & 0x40) != 0 && self.ly != self.lyc_matched_ly {
-            self.lyc_matched_ly = self.ly;
+        // Fire LYC=LY interrupt only on a false->true edge of the
+        // comparison. Re-enabling the LCD while LY==LYC already held (or
+        // re-entering the same line) must not raise a second interrupt.
+        if coincide && !self.prev_lyc_coincide && (self.stat & 0x40) != 0 {
             *lcd_stat = true;
         }
+        self.prev_lyc_coincide = coincide;
     }
 
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
@@ -508,7 +526,16 @@ impl GbcPpu {
             0xFF41 => self.stat = (self.stat & 0x07) | (value & 0x78),
             0xFF42 => self.scy = value,
             0xFF43 => self.scx = value,
-            0xFF45 => self.lyc = value,
+            0xFF45 => {
+                self.lyc = value;
+                // Writing LYC updates the LY=LYC comparison immediately
+                // while the LCD is on. When off, the comparison clock is
+                // stopped and the coincidence bit is latched.
+                if self.lcdc & 0x80 != 0 {
+                    let mut lcd_stat = false;
+                    self.check_lyc(&mut lcd_stat);
+                }
+            }
             0xFF47 => self.bgp = value,
             0xFF48 => self.obp0 = value,
             0xFF49 => self.obp1 = value,
@@ -542,8 +569,18 @@ impl GbcPpu {
         let lcd_was_enabled = self.lcdc & 0x80 != 0;
         self.lcdc = value;
         if !lcd_was_enabled && value & 0x80 != 0 {
-            self.lcd_stat_last_mode = Some(PpuMode::OamSearch);
+            // The PPU starts at the beginning of the next scanline. During
+            // the power-on delay (20 T-cycles) STAT mode bits read as 00 and
+            // the LYC comparison clock is not running.
+            self.lcd_on_delay = 20;
+            self.lcd_stat_last_mode = Some(PpuMode::HBlank);
             self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
+            // LY=0 at power-on. The comparison against LYC is evaluated on
+            // the first step() during the power-on delay. Keep the previous
+            // coincidence state so only a false->true transition (e.g. after
+            // the comparison was false while off) raises a new interrupt.
+            self.ly = 0;
+            self.stat &= !0x03;
             if self.stat & 0x20 != 0 {
                 self.mode_stat_delay = 1;
             }
@@ -833,8 +870,13 @@ mod tests {
         p.step(1);
         p.write_register(0xFF40, p.read_register(0xFF40) | 0x80);
 
+        // LCD on: mode bits read as 00 during the power-on delay, then mode 2
+        // (OAM search) starts on the first scanline and raises STAT.
         let result = p.step(1);
+        assert!(!result.lcd_stat);
+        assert_eq!(p.read_register(0xFF44), 0);
 
+        let result = p.step(20);
         assert!(result.lcd_stat);
         assert_eq!(p.read_register(0xFF44), 0);
     }
