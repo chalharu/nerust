@@ -56,6 +56,10 @@ pub struct GbcMemoryBus {
 
     hdma: HdmaController,
 
+    /// CGB hardware mode ($FF4F/$FF68-$FF6B/$FF70/$FF72-$FF77 only exist on
+    /// CGB hardware; on DMG they read as unmapped $FF).
+    cgb_mode: bool,
+
     /// T-cycle accumulator for CPU/PPU synchronization.
     /// Each step_tcycle() increments this; CPU runs every 4th T-cycle.
     tick: u32,
@@ -93,6 +97,7 @@ impl GbcMemoryBus {
             speed_switch_pending: false,
 
             hdma: HdmaController::new(),
+            cgb_mode: false,
             tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
@@ -128,7 +133,8 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt.read_if(),
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-             0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => self.ppu.read_register(addr),
+             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
+             0xFF4F | 0xFF6C if self.cgb_mode => self.ppu.read_register(addr),
              0xFF46 => self.dma.read_register(),
              0xFF50 => {
                 if self.boot_rom_mapped {
@@ -137,18 +143,18 @@ impl GbcMemoryBus {
                     0xFF
                 }
             }
-            0xFF68..=0xFF6B => self.ppu.read_palette(addr),
-            0xFF4D => self.read_key1(),
-            0xFF51..=0xFF54 => self.hdma.read_register(addr),
-            0xFF55 => self.hdma.read_status(),
-             0xFF70 => self.wram_bank,
-             0xFF72..=0xFF73 => self.hwio_72_75[(addr - 0xFF72) as usize],
+             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.read_palette(addr),
+             0xFF4D if self.cgb_mode => self.read_key1(),
+             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
+             0xFF55 if self.cgb_mode => self.hdma.read_status(),
+             0xFF70 if self.cgb_mode => self.wram_bank,
+             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
              0xFF74 => 0xFF,
-             0xFF75 => self.hwio_72_75[3] & 0x70 | 0x8F,
-             0xFF76 | 0xFF77 => 0x00,
+             0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
+             0xFF76 | 0xFF77 if self.cgb_mode => 0x00,
              0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF => self.interrupt.read_ie(),
-            _ => self.read_storage(addr),
+             0xFFFF => self.interrupt.read_ie(),
+             _ => self.read_storage(addr),
         }
     }
 
@@ -194,7 +200,7 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B | 0xFF4F | 0xFF6C => {
+             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 if self.cpu_step_active {
                     self.pending_ppu_writes
                         .push_back(PpuWriteEvent { addr, value });
@@ -202,27 +208,35 @@ impl GbcMemoryBus {
                     self.ppu.write_register(addr, value);
                 }
             }
-            0xFF46 => self.dma.start(value),
-            0xFF4D => self.write_key1(value),
-            0xFF51..=0xFF54 => self.hdma.write_register(addr, value),
-            0xFF55 => {
+             0xFF4F | 0xFF6C if self.cgb_mode => {
+                if self.cpu_step_active {
+                    self.pending_ppu_writes
+                        .push_back(PpuWriteEvent { addr, value });
+                } else {
+                    self.ppu.write_register(addr, value);
+                }
+            }
+             0xFF46 => self.dma.start(value),
+             0xFF4D if self.cgb_mode => self.write_key1(value),
+             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
+             0xFF55 if self.cgb_mode => {
                 self.hdma.start(value);
                 if !self.hdma.hblank_mode {
                     self.transfer_hdma_block();
                 }
             }
-            0xFF50 => {
+             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
                 }
             }
-            0xFF68..=0xFF6B => self.ppu.write_palette(addr, value),
-            0xFF70 => {
+             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
+             0xFF70 if self.cgb_mode => {
                 self.wram_bank = if value & 0x07 == 0 { 1 } else { value & 0x07 };
             }
-            0xFF72..=0xFF73 => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
-            0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
-            0xFF75 => self.hwio_72_75[3] = value,
+             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
+             0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
+             0xFF75 if self.cgb_mode => self.hwio_72_75[3] = value,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             0xFFFF => self.interrupt.write_ie(value),
             _ => {}
@@ -376,6 +390,7 @@ impl GbcMemoryBus {
     }
 
     pub fn set_cgb_mode(&mut self, enabled: bool) {
+        self.cgb_mode = enabled;
         self.ppu.cgb_mode = enabled;
         self.ppu.cgb_game = enabled;
         if enabled {
@@ -525,6 +540,12 @@ mod tests {
         GbcMemoryBus::new([0; 0x100], false)
     }
 
+    fn cgb_bus() -> GbcMemoryBus {
+        let mut bus = bus();
+        bus.set_cgb_mode(true);
+        bus
+    }
+
     /// Counts how many M-cycles `step_tcycle` advances the CPU.
     struct CountingCpu {
         steps: u32,
@@ -537,7 +558,7 @@ mod tests {
     }
 
     fn cpu_steps(cycles: u32, double_speed: bool) -> u32 {
-        let mut bus = bus();
+        let mut bus = if double_speed { cgb_bus() } else { bus() };
         if double_speed {
             bus.write(0xFF4D, 0x01);
             bus.stop();
@@ -743,7 +764,7 @@ mod tests {
 
     #[test]
     fn write_key1_sets_pending_flag() {
-        let mut bus = bus();
+        let mut bus = cgb_bus();
         bus.write(0xFF4D, 0x01);
         // bit0 of the written value arms the speed switch; STOP then flips
         // double speed instead of halting.
@@ -756,19 +777,19 @@ mod tests {
 
     #[test]
     fn wram_bank_default_is_1() {
-        assert_eq!(bus().read(0xFF70), 1);
+        assert_eq!(cgb_bus().read(0xFF70), 1);
     }
 
     #[test]
     fn write_wram_bank_select_updates_value() {
-        let mut bus = bus();
+        let mut bus = cgb_bus();
         bus.write(0xFF70, 0x03);
         assert_eq!(bus.read(0xFF70), 0x03);
     }
 
     #[test]
     fn write_wram_bank_0_clamps_to_1() {
-        let mut bus = bus();
+        let mut bus = cgb_bus();
         bus.write(0xFF70, 0x00);
         assert_eq!(bus.read(0xFF70), 1);
     }
@@ -818,7 +839,7 @@ mod tests {
 
     #[test]
     fn stop_with_speed_switch_continues_execution() {
-        let mut bus = bus();
+        let mut bus = cgb_bus();
         bus.write(0xFF4D, 0x01); // prepare speed switch
         assert!(!bus.is_halted_or_stopped());
         bus.stop();
@@ -854,7 +875,7 @@ mod tests {
         // Frame length in steps must be identical in both modes:
         // 70224 steps/frame regardless of CPU speed.
         let mut normal = bus();
-        let mut double = bus();
+        let mut double = cgb_bus();
         double.write(0xFF4D, 0x01);
         double.stop();
         let mut normal_cpu = CountingCpu { steps: 0 };

@@ -52,14 +52,9 @@ impl HdmaController {
     }
 
     /// Read HDMA registers FF51-FF54.
-    pub fn read_register(&self, addr: u16) -> u8 {
-        match addr {
-            0xFF51 => (self.src >> 8) as u8,
-            0xFF52 => (self.src & 0xFF) as u8,
-            0xFF53 => (self.dst >> 8) as u8,
-            0xFF54 => (self.dst & 0xFF) as u8,
-            _ => 0xFF,
-        }
+    /// HDMA1-4 (FF51-FF54) are write-only; reading returns $FF.
+    pub fn read_register(&self, _addr: u16) -> u8 {
+        0xFF
     }
 
     /// Write HDMA registers FF51-FF54.

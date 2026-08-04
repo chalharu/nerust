@@ -594,23 +594,31 @@ impl GbcPpu {
             0xFF4B => self.wx,
             0xFF4F => 0xFE | self.vbk,
             0xFF68 => self.bgpi | 0x40,
-            0xFF69 => {
-                let idx = (self.bgpi & 0x3F) as usize;
-                let pal = self.bg_palette[idx >> 1];
-                if idx & 1 == 0 {
-                    pal as u8
+             0xFF69 => {
+                if self.current_mode() == PpuMode::PixelTransfer {
+                    0xFF
                 } else {
-                    (pal >> 8) as u8
+                    let idx = (self.bgpi & 0x3F) as usize;
+                    let pal = self.bg_palette[idx >> 1];
+                    if idx & 1 == 0 {
+                        pal as u8
+                    } else {
+                        (pal >> 8) as u8
+                    }
                 }
             }
-            0xFF6A => self.obpi | 0x40,
-            0xFF6B => {
-                let idx = (self.obpi & 0x3F) as usize;
-                let pal = self.obj_palette[idx >> 1];
-                if idx & 1 == 0 {
-                    pal as u8
+             0xFF6A => self.obpi | 0x40,
+             0xFF6B => {
+                if self.current_mode() == PpuMode::PixelTransfer {
+                    0xFF
                 } else {
-                    (pal >> 8) as u8
+                    let idx = (self.obpi & 0x3F) as usize;
+                    let pal = self.obj_palette[idx >> 1];
+                    if idx & 1 == 0 {
+                        pal as u8
+                    } else {
+                        (pal >> 8) as u8
+                    }
                 }
             }
             0xFF6C => self.key0() | 0xFE,
