@@ -25,6 +25,7 @@ impl<const R: u8> CpuStepState for Push<R> {
             };
             core.set_operand(0, (v >> 8) as u8);
             core.set_operand(1, v as u8);
+            bus.trigger_oam_bug(core.registers().sp());
             return StepResult::Continue;
         }
         if step == 2 {
@@ -49,6 +50,7 @@ impl<const R: u8> CpuStepState for Pop<R> {
             return StepResult::Continue;
         }
         if step == 1 {
+            bus.trigger_oam_bug(core.registers().sp());
             let v = bus.read(core.registers().sp());
             core.set_operand(0, v);
             let _t = core.registers().sp().wrapping_add(1);

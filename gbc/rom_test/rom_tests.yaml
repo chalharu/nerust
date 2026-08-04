@@ -299,6 +299,111 @@ suites:
     - ppu
     - timing
 
+  - id: oam_bug_1
+    description: OAM corruption - 1-lcd_sync (retrio, DMG)
+    rom: oam_bug/rom_singles/1-lcd_sync.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_2
+    description: OAM corruption - 2-causes (retrio, DMG)
+    rom: oam_bug/rom_singles/2-causes.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_3
+    description: OAM corruption - 3-non_causes (retrio, DMG)
+    rom: oam_bug/rom_singles/3-non_causes.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_4
+    description: OAM corruption - 4-scanline_timing (retrio, DMG)
+    rom: oam_bug/rom_singles/4-scanline_timing.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_5
+    description: OAM corruption - 5-timing_bug (retrio, DMG)
+    rom: oam_bug/rom_singles/5-timing_bug.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_6
+    description: OAM corruption - 6-timing_no_bug (retrio, DMG)
+    rom: oam_bug/rom_singles/6-timing_no_bug.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_7
+    description: OAM corruption - 7-timing_effect (retrio, DMG)
+    rom: oam_bug/rom_singles/7-timing_effect.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+  - id: oam_bug_8
+    description: OAM corruption - 8-instr_effect (retrio, DMG)
+    rom: oam_bug/rom_singles/8-instr_effect.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+
+
   - id: dmg_sound
     description: DMG sound hardware tests (retrio)
     rom: dmg_sound/dmg_sound.gb

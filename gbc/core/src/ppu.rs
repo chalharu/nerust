@@ -80,6 +80,12 @@ pub struct GbcPpu {
     /// comparison clock is not running.
     lcd_on_delay: u32,
 
+    /// DMG OAM bug: OAM row currently being scanned during mode 2 (OAM
+    /// search). 0xFF means OAM is not being accessed (CGB, LCD off, or not
+    /// in mode 2). A 16-bit CPU operation targeting $FE00-$FEFF during OAM
+    /// search corrupts this row by copying from 8 bytes earlier.
+    accessed_oam_row: u8,
+
     mode3_pipeline: Option<Mode3Pipeline>,
 }
 
@@ -121,6 +127,7 @@ impl Default for GbcPpu {
             mode_stat_delay: 0,
             stat_irq_line: false,
             lcd_on_delay: 0,
+            accessed_oam_row: 0xFF,
             mode3_pipeline: None,
         }
     }
@@ -183,6 +190,18 @@ impl GbcPpu {
         self.step_pipeline();
         self.advance_scanline(lcd_stat, vblank);
         self.update_mode_and_stat(lcd_stat);
+        // Track the OAM row being scanned during mode 2 for the DMG OAM bug.
+        if self.cgb_mode {
+            self.accessed_oam_row = 0xFF;
+        } else if self.lcdc & 0x80 != 0
+            && self.ly < VBLANK_START
+            && self.mode_clock < T_CYCLES_OAM_SEARCH
+        {
+            let row = ((self.mode_clock / 2) & !1) as u8 * 4 + 8;
+            self.accessed_oam_row = if row + 8 <= 160 { row } else { 0xFF };
+        } else {
+            self.accessed_oam_row = 0xFF;
+        }
     }
 
     fn start_pipeline_if_needed(&mut self) {
@@ -532,6 +551,32 @@ impl GbcPpu {
 
     pub fn write_oam(&mut self, addr: u8, value: u8) {
         self.oam[addr as usize] = value;
+    }
+
+    /// DMG OAM bug: a 16-bit CPU operation touching $FE00-$FEFF during OAM
+    /// search corrupts the currently-scanned OAM row by copying 8 bytes from
+    /// the previous row. Returns true if corruption happened.
+    pub fn trigger_oam_bug(&mut self, address: u16) -> bool {
+        if self.cgb_mode {
+            return false;
+        }
+        if !(0xFE00..0xFF00).contains(&address) {
+            return false;
+        }
+        let row = self.accessed_oam_row;
+        if row == 0xFF || row < 8 {
+            return false;
+        }
+        let row = usize::from(row);
+        let a = u16::from_le_bytes([self.oam[row], self.oam[row + 1]]);
+        let b = u16::from_le_bytes([self.oam[row - 4], self.oam[row - 3]]);
+        let c = u16::from_le_bytes([self.oam[row - 2], self.oam[row - 1]]);
+        let glitch = ((a ^ c) & (b ^ c)) ^ c;
+        let prev = self.oam[row - 8..row].to_vec();
+        self.oam[row] = (glitch & 0xFF) as u8;
+        self.oam[row + 1] = (glitch >> 8) as u8;
+        self.oam[row + 2..row + 8].copy_from_slice(&prev[2..8]);
+        true
     }
 
     pub fn read_register(&self, addr: u16) -> u8 {
