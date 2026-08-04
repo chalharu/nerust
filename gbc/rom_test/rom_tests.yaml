@@ -257,6 +257,47 @@ suites:
     tags:
     - memory
     - timing
+
+  - id: interrupt_time
+    description: Interrupt handling time (retrio)
+    rom: interrupt_time/interrupt_time.gb
+    models:
+    - cgb_d
+    cycles: 2000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - interrupt
+    - timing
+  - id: halt_bug
+    description: HALT bug (retrio)
+    rom: halt_bug.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - cpu
+    - timing
+
+  - id: oam_bug
+    description: OAM corruption bug (retrio, DMG)
+    rom: oam_bug/oam_bug.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - ppu
+    - timing
 - name: Gekkio_mooneye-test-suite
   cases:
   - id: stat_lyc_onoff
