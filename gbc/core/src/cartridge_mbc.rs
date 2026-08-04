@@ -70,10 +70,22 @@ pub struct Mbc1 {
     banking_mode: bool,
     battery: bool,
     rom_bank_mask: u8,
+    /// 8 Mbit MBC1 multicart: the ROM is laid out as several games, and the
+    /// bank registers select game + bank with a different bit layout
+    /// (bank1 low 4 bits select the bank, bank2 selects the game via << 4).
+    multicart: bool,
 }
 
 impl Mbc1 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
+        Self::with_multicart(rom, ram, battery, false)
+    }
+
+    pub fn new_multicart(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
+        Self::with_multicart(rom, ram, battery, true)
+    }
+
+    fn with_multicart(rom: Vec<u8>, ram: Vec<u8>, battery: bool, multicart: bool) -> Self {
         let rom_bank_mask = Self::bank_mask(rom.len() / 0x4000);
         Self {
             rom,
@@ -84,6 +96,7 @@ impl Mbc1 {
             banking_mode: false,
             battery,
             rom_bank_mask,
+            multicart,
         }
     }
 
@@ -91,26 +104,34 @@ impl Mbc1 {
         bank_count.saturating_sub(1) as u8
     }
 
-    fn rom_bank_effective(&self) -> usize {
+    /// Lower (bank 0 / $0000-$3FFF) and upper (banked / $4000-$7FFF) ROM bank
+    /// numbers, following the MBC1 mode and (for 8 Mbit multicarts) the
+    /// multicart bank bit layout.
+    fn bank_layout(&self) -> (usize, usize) {
         let bank = if self.rom_bank == 0 { 1 } else { self.rom_bank };
-        let bank_count = self.rom.len() / 0x4000;
-        let upper = if bank_count > 32 {
-            (self.ram_bank as usize) << 5
+        let (upper_bits, lower_bits) = if self.multicart {
+            ((self.ram_bank as usize) << 4, (bank as usize) & 0x0F)
+        } else {
+            ((self.ram_bank as usize) << 5, bank as usize)
+        };
+        let lower_bank = if self.banking_mode {
+            upper_bits
         } else {
             0
         };
-        (upper | (bank as usize)) & self.rom_bank_mask as usize
+        (lower_bank, upper_bits | lower_bits)
+    }
+
+    fn rom_bank_effective(&self) -> usize {
+        let (_, upper_bank) = self.bank_layout();
+        upper_bank & self.rom_bank_mask as usize
     }
 }
 
 impl Mbc for Mbc1 {
     fn read_rom0(&self, addr: u16) -> u8 {
-        let bank = if self.banking_mode {
-            (self.ram_bank as usize) << 5
-        } else {
-            0
-        };
-        let offset = (bank & self.rom_bank_mask as usize) * 0x4000 + addr as usize;
+        let (lower_bank, _) = self.bank_layout();
+        let offset = (lower_bank & self.rom_bank_mask as usize) * 0x4000 + addr as usize;
         self.rom.get(offset).copied().unwrap_or(0xFF)
     }
 
@@ -146,8 +167,12 @@ impl Mbc for Mbc1 {
         } else {
             0
         };
-        let offset = bank * 0x2000 + (addr as usize - 0xA000);
-        self.ram.get(offset).copied().unwrap_or(0xFF)
+        // Mask the banked address into the physical RAM size: cartridges with
+        // a small RAM chip only wire the low address lines, so RAM bank bits
+        // beyond the chip size alias back to the start of the chip.
+        let mask = self.ram.len() - 1;
+        let offset = ((bank * 0x2000) | (addr as usize - 0xA000)) & mask;
+        self.ram[offset]
     }
 
     fn write_ram(&mut self, addr: u16, value: u8) {
@@ -159,10 +184,9 @@ impl Mbc for Mbc1 {
         } else {
             0
         };
-        let offset = bank * 0x2000 + (addr as usize - 0xA000);
-        if let Some(cell) = self.ram.get_mut(offset) {
-            *cell = value;
-        }
+        let mask = self.ram.len() - 1;
+        let offset = ((bank * 0x2000) | (addr as usize - 0xA000)) & mask;
+        self.ram[offset] = value;
     }
 
     fn has_battery(&self) -> bool {
@@ -429,7 +453,11 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
                 header.ram_size.bytes
             };
             let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
-            Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
+            if header.multicart {
+                Box::new(Mbc1::new_multicart(rom, ram, header.cartridge_type.has_battery()))
+            } else {
+                Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
+            }
         }
         crate::cartridge_header::CartridgeType::Mbc5
         | crate::cartridge_header::CartridgeType::Mbc5Ram
