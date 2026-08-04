@@ -345,6 +345,20 @@ suites:
     - ppu
     - interrupt
     - timing
+  - id: vblank_stat_intr_C
+    description: Mooneye Test Suite — misc/ppu/vblank_stat_intr-C
+    rom: misc/ppu/vblank_stat_intr-C.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
   - id: intr_2_mode3_timing
     description: Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt)
     rom: acceptance/ppu/intr_2_mode3_timing.gb
@@ -493,6 +507,42 @@ suites:
     tags:
     - timing
     - serial
+  - id: boot_div_cgbABCDE
+    description: Mooneye Test Suite — misc/boot_div-cgbABCDE
+    rom: misc/boot_div-cgbABCDE.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_hwio_C
+    description: Mooneye Test Suite — misc/boot_hwio-C
+    rom: misc/boot_hwio-C.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_regs_cgb
+    description: Mooneye Test Suite — misc/boot_regs-cgb
+    rom: misc/boot_regs-cgb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
   - id: div_timing
     description: Mooneye Test Suite — div_timing
     rom: acceptance/div_timing.gb
@@ -805,6 +855,30 @@ suites:
     tags:
     - mbc
     - cpu
+  - id: mbc1_ram_64kb
+    description: Mooneye Test Suite — mbc1 ram_64kb (64 KiB RAM)
+    rom: emulator-only/mbc1/ram_64kb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 2000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_ram_256kb
+    description: Mooneye Test Suite — mbc1 ram_256kb (256 KiB RAM)
+    rom: emulator-only/mbc1/ram_256kb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 2000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
   - id: mbc1_rom_512kb
     description: Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching)
     rom: emulator-only/mbc1/rom_512kb.gb
@@ -868,6 +942,18 @@ suites:
   - id: mbc1_rom_16Mb
     description: Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching)
     rom: emulator-only/mbc1/rom_16Mb.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - mbc
+  - id: mbc1_multicart_rom_8Mb
+    description: Mooneye Test Suite — mbc1 multicart_rom_8Mb (multicart ROM)
+    rom: emulator-only/mbc1/multicart_rom_8Mb.gb
     models:
     - cgb_c
     - cgb_d
@@ -993,6 +1079,18 @@ suites:
     rom: acceptance/bits/unused_hwio-GS.gb
     models:
     - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - cpu
+  - id: bits_unused_hwio_C
+    description: Mooneye Test Suite — misc/bits/unused_hwio-C
+    rom: misc/bits/unused_hwio-C.gb
+    models:
+    - cgb_c
+    - cgb_d
     cycles: 300000
     verify:
       serial:
