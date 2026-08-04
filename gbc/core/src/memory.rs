@@ -479,6 +479,12 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Trigger the DMG OAM bug from a 16-bit CPU operation that touches the
+    /// OAM region ($FE00-$FEFF) during OAM search.
+    pub fn trigger_oam_bug(&mut self, address: u16) -> bool {
+        self.ppu.trigger_oam_bug(address)
+    }
+
     // ── CGB HDMA / GDMA ──────────────────────────────────────
 
     /// Transfer one block (16 bytes) from src to dst.

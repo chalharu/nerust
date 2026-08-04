@@ -126,6 +126,7 @@ impl CpuStepState for LdAHli {
             return StepResult::Continue;
         }
         let a = core.registers().hl();
+        bus.trigger_oam_bug(a);
         core.registers_mut().set_a(bus.read(a));
         core.registers_mut().set_hl(a.wrapping_add(1));
         StepResult::Exit
@@ -153,6 +154,7 @@ impl CpuStepState for LdAHld {
             return StepResult::Continue;
         }
         let a = core.registers().hl();
+        bus.trigger_oam_bug(a);
         core.registers_mut().set_a(bus.read(a));
         core.registers_mut().set_hl(a.wrapping_sub(1));
         StepResult::Exit

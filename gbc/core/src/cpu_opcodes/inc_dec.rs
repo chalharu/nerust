@@ -33,17 +33,18 @@ impl<const R: u8> CpuStepState for DecR8<R> {
 
 pub(crate) struct IncR16<const R: u8>;
 impl<const R: u8> CpuStepState for IncR16<R> {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            return StepResult::Continue;
-        }
-        // step == 1
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let v = match R {
             reg::BC => core.registers().bc(),
             reg::DE => core.registers().de(),
             reg::R16_HL => core.registers().hl(),
             _ => core.registers().sp(),
         };
+        if step == 0 {
+            bus.trigger_oam_bug(v);
+            return StepResult::Continue;
+        }
+        // step == 1
         let r = v.wrapping_add(1);
         match R {
             reg::BC => core.registers_mut().set_bc(r),
@@ -57,17 +58,18 @@ impl<const R: u8> CpuStepState for IncR16<R> {
 
 pub(crate) struct DecR16<const R: u8>;
 impl<const R: u8> CpuStepState for DecR16<R> {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step == 0 {
-            return StepResult::Continue;
-        }
-        // step == 1
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         let v = match R {
             reg::BC => core.registers().bc(),
             reg::DE => core.registers().de(),
             reg::R16_HL => core.registers().hl(),
             _ => core.registers().sp(),
         };
+        if step == 0 {
+            bus.trigger_oam_bug(v);
+            return StepResult::Continue;
+        }
+        // step == 1
         let r = v.wrapping_sub(1);
         match R {
             reg::BC => core.registers_mut().set_bc(r),
