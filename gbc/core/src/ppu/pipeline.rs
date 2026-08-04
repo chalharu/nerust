@@ -178,6 +178,9 @@ pub(super) struct Mode3Pipeline {
     next_sprite: usize,
     sprite_fetch: Option<SpriteFetch>,
     output_stall: u8,
+    /// Extra mode-3 dots added by sprite fetches (extend the pixel transfer
+    /// period beyond the base 172 dots).
+    sprite_extra_dots: u8,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
@@ -253,6 +256,7 @@ impl Mode3Pipeline {
             next_sprite: 0,
             sprite_fetch: None,
             output_stall: 0,
+            sprite_extra_dots: 0,
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
@@ -829,6 +833,9 @@ impl Mode3Pipeline {
         self.next_sprite += 1;
         let stall = self.sprite_stall(&sprite, i16::from(self.pixel_x));
         self.output_stall = stall;
+        // Mode-3 extension: the first sprite adds `stall`, subsequent sprites
+        // at the same position add less (consecutive fetches reuse setup).
+        self.sprite_extra_dots = self.sprite_extra_dots.saturating_add(stall);
         self.sprite_fetch = Some(SpriteFetch {
             sprite,
             bg_wait: stall - 6,
@@ -1363,6 +1370,10 @@ impl Mode3Pipeline {
 
     pub(super) fn complete(&self) -> bool {
         self.complete
+    }
+
+    pub(super) fn sprite_extra_dots(&self) -> u8 {
+        self.sprite_extra_dots
     }
 
     fn correct_last_bg_color(&mut self, update: impl FnOnce(u8) -> u8) {

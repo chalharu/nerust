@@ -301,7 +301,11 @@ impl GbcPpu {
             PpuMode::VBlank
         } else if self.mode_clock <= T_CYCLES_OAM_SEARCH {
             PpuMode::OamSearch
-        } else if self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
+        } else if self.mode_clock
+            <= T_CYCLES_OAM_SEARCH
+                + T_CYCLES_PIXEL_TRANSFER
+                + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()))
+        {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
