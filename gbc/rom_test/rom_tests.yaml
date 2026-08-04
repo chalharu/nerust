@@ -298,6 +298,31 @@ suites:
     tags:
     - ppu
     - timing
+
+  - id: dmg_sound
+    description: DMG sound hardware tests (retrio)
+    rom: dmg_sound/dmg_sound.gb
+    models:
+    - dmg
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - apu
+  - id: cgb_sound
+    description: CGB sound hardware tests (retrio)
+    rom: cgb_sound/cgb_sound.gb
+    models:
+    - cgb_d
+    cycles: 3000000
+    verify:
+      memory:
+      - address: '0xA000'
+        value: '0x00'
+    tags:
+    - apu
 - name: Gekkio_mooneye-test-suite
   cases:
   - id: stat_lyc_onoff
