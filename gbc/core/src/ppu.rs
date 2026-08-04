@@ -301,11 +301,7 @@ impl GbcPpu {
             PpuMode::VBlank
         } else if self.mode_clock <= T_CYCLES_OAM_SEARCH {
             PpuMode::OamSearch
-        } else if self
-            .mode3_pipeline
-            .as_ref()
-            .is_some_and(|pipeline| !pipeline.complete())
-        {
+        } else if self.mode_clock <= T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -516,14 +512,14 @@ impl GbcPpu {
     }
 
     pub fn read_oam(&self, addr: u8) -> u8 {
-        // On CGB, OAM is blocked (reads return 0xFF) during mode 3.
-        // (OAM remains readable during mode 2 on CGB.)
+        // On CGB, OAM is blocked (reads return 0xFF) during mode 2 and 3.
+        // (OAM is only readable during HBlank and VBlank.)
         if self.cgb_mode
             && self.lcdc & 0x80 != 0
-            && self
-                .mode3_pipeline
-                .as_ref()
-                .is_some_and(|pipeline| !pipeline.complete())
+            && matches!(
+                self.current_mode(),
+                PpuMode::OamSearch | PpuMode::PixelTransfer
+            )
         {
             return 0xFF;
         }
