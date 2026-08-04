@@ -474,6 +474,12 @@ impl GbcMemoryBus {
     // ── DMA access ───────────────────────────────────────────
 
     fn read_raw(&self, addr: u16) -> u8 {
+        // OAM DMA reads the source through its own bus decode: the whole
+        // $E000-$FFFF range behaves as WRAM echo (addr & $1FFF), matching real
+        // hardware where the DMA can read $FE00/$FF00 as echo RAM.
+        if (0xE000..=0xFFFF).contains(&addr) {
+            return self.wram[addr as usize & 0x1FFF];
+        }
         self.read_storage(addr)
     }
 
