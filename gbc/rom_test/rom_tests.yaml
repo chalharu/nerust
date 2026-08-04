@@ -373,6 +373,62 @@ suites:
     - ppu
     - interrupt
     - timing
+  - id: intr_2_0_timing
+    description: Mooneye Test Suite — intr_2_0_timing (mode 2 to mode 0 interrupt)
+    rom: acceptance/ppu/intr_2_0_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
+  - id: intr_2_mode0_timing
+    description: Mooneye Test Suite — intr_2_mode0_timing (mode 2 to mode 0 interrupt)
+    rom: acceptance/ppu/intr_2_mode0_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
+  - id: intr_2_mode0_timing_sprites
+    description: Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode 0 interrupt with sprites)
+    rom: acceptance/ppu/intr_2_mode0_timing_sprites.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
+  - id: intr_2_oam_ok_timing
+    description: Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable OAM)
+    rom: acceptance/ppu/intr_2_oam_ok_timing.gb
+    models:
+    - cgb_c
+    - cgb_d
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
   - id: boot_regs_dmgABC
     description: Mooneye Test Suite — boot_regs-dmgABC
     rom: acceptance/boot_regs-dmgABC.gb
