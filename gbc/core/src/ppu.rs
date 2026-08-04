@@ -516,6 +516,17 @@ impl GbcPpu {
     }
 
     pub fn read_oam(&self, addr: u8) -> u8 {
+        // On CGB, OAM is blocked (reads return 0xFF) during mode 3.
+        // (OAM remains readable during mode 2 on CGB.)
+        if self.cgb_mode
+            && self.lcdc & 0x80 != 0
+            && self
+                .mode3_pipeline
+                .as_ref()
+                .is_some_and(|pipeline| !pipeline.complete())
+        {
+            return 0xFF;
+        }
         self.oam[addr as usize]
     }
 
