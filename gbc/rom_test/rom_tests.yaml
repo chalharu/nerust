@@ -283,6 +283,68 @@ suites:
         suffix: '0305080D1522'
     tags:
     - ppu
+  - id: intr_1_2_timing_GS
+    description: Mooneye Test Suite — ppu/intr_1_2_timing-GS
+    rom: acceptance/ppu/intr_1_2_timing-GS.gb
+    models:
+    - dmg
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
+  - id: hblank_ly_scx_timing_GS
+    description: Mooneye Test Suite — ppu/hblank_ly_scx_timing-GS
+    rom: acceptance/ppu/hblank_ly_scx_timing-GS.gb
+    models:
+    - dmg
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - timing
+  - id: lcdon_timing_GS
+    description: Mooneye Test Suite — ppu/lcdon_timing-GS
+    rom: acceptance/ppu/lcdon_timing-GS.gb
+    models:
+    - dmg
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - timing
+  - id: lcdon_write_timing_GS
+    description: Mooneye Test Suite — ppu/lcdon_write_timing-GS
+    rom: acceptance/ppu/lcdon_write_timing-GS.gb
+    models:
+    - dmg
+    cycles: 1000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - timing
+  - id: vblank_stat_intr_GS
+    description: Mooneye Test Suite — ppu/vblank_stat_intr-GS
+    rom: acceptance/ppu/vblank_stat_intr-GS.gb
+    models:
+    - dmg
+    cycles: 400000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - ppu
+    - interrupt
+    - timing
   - id: intr_2_mode3_timing
     description: Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt)
     rom: acceptance/ppu/intr_2_mode3_timing.gb
@@ -364,6 +426,73 @@ suites:
         suffix: '0305080D1522'
     tags:
     - timing
+  - id: boot_div_dmg0
+    description: Mooneye Test Suite — boot_div-dmg0 (DIV during boot on DMG 0)
+    rom: acceptance/boot_div-dmg0.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_div_dmgABCmgb
+    description: Mooneye Test Suite — boot_div-dmgABCmgb (DIV during boot)
+    rom: acceptance/boot_div-dmgABCmgb.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_hwio_dmg0
+    description: Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG 0)
+    rom: acceptance/boot_hwio-dmg0.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_hwio_dmgABCmgb
+    description: Mooneye Test Suite — boot_hwio-dmgABCmgb (HWIO during boot)
+    rom: acceptance/boot_hwio-dmgABCmgb.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_regs_dmg0
+    description: Mooneye Test Suite — boot_regs-dmg0 (register values during boot)
+    rom: acceptance/boot_regs-dmg0.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+  - id: boot_sclk_align
+    description: Mooneye Test Suite — serial/boot_sclk_align-dmgABCmgb
+    rom: acceptance/serial/boot_sclk_align-dmgABCmgb.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - timing
+    - serial
   - id: div_timing
     description: Mooneye Test Suite — div_timing
     rom: acceptance/div_timing.gb
@@ -416,6 +545,30 @@ suites:
     models:
     - dmg
     cycles: 250000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: halt_ime1_timing2_GS
+    description: Mooneye Test Suite — halt_ime1_timing2-GS
+    rom: acceptance/halt_ime1_timing2-GS.gb
+    models:
+    - dmg
+    cycles: 2000000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - interrupt
+    - timing
+  - id: di_timing_GS
+    description: Mooneye Test Suite — di_timing-GS
+    rom: acceptance/di_timing-GS.gb
+    models:
+    - dmg
+    cycles: 300000
     verify:
       serial:
         suffix: '0305080D1522'
@@ -835,6 +988,17 @@ suites:
         suffix: '0305080D1522'
     tags:
     - cpu
+  - id: bits_unused_hwio_GS
+    description: Mooneye Test Suite — bits/unused_hwio-GS
+    rom: acceptance/bits/unused_hwio-GS.gb
+    models:
+    - dmg
+    cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - cpu
   - id: instr_daa
     description: Mooneye Test Suite — instr/daa (DAA instruction)
     rom: acceptance/instr/daa.gb
@@ -878,6 +1042,17 @@ suites:
     - cgb_c
     - cgb_d
     cycles: 300000
+    verify:
+      serial:
+        suffix: '0305080D1522'
+    tags:
+    - oam_dma
+  - id: oam_dma_sources_GS
+    description: Mooneye Test Suite — oam_dma/sources-GS
+    rom: acceptance/oam_dma/sources-GS.gb
+    models:
+    - dmg
+    cycles: 1000000
     verify:
       serial:
         suffix: '0305080D1522'
