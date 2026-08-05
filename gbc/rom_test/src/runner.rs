@@ -92,7 +92,6 @@ fn run_cell(
     let header = CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
         RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
     })?;
-    let model = effective_model(cell, &header);
     // Extract font bank 1 data before moving rom_bytes
     let font_bank1: Vec<u8> = if rom_bytes.len() > 0x4000 {
         rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
@@ -116,7 +115,19 @@ fn run_cell(
     // CGB-only rendering features (bg_priority, master priority, etc.)
     // only activate when the GAME is CGB-native, not just the hardware.
     bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
-    let mut cpu = Lr35902Cpu::with_model(model);
+    let mut cpu = match cell.model {
+        GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
+        GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
+        GbcModel::CgbC | GbcModel::CgbD => {
+            Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Cgb)
+        }
+        GbcModel::Agb => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Agb),
+    };
+    if hw_is_cgb && !rom_is_cgb {
+        // A CGB running a DMG-compatible game (cgb_flag bit 7 clear) gets the
+        // "CGB in DMG mode" post-boot registers (D=$00, E=$08, HL=$007C).
+        cpu.set_cgb_dmg_mode_registers();
+    }
     cpu.registers_mut().set_pc(0x0100);
 
     step_cycles(&mut bus, &mut cpu, cell.cycles());
@@ -218,28 +229,3 @@ fn save_screenshot(
     Ok(())
 }
 
-/// Map a manifest model to the core CPU model, with ROM header auto-adjust.
-fn effective_model(
-    cell: &MatrixCell<'_>,
-    header: &CartridgeHeader,
-) -> nerust_gbc_core::cpu_core::GbcModel {
-    let requested = match cell.model {
-        GbcModel::Dmg => nerust_gbc_core::cpu_core::GbcModel::Dmg,
-        GbcModel::CgbC | GbcModel::CgbD => nerust_gbc_core::cpu_core::GbcModel::Cgb,
-        GbcModel::Agb => nerust_gbc_core::cpu_core::GbcModel::Agb,
-    };
-    // Auto-downgrade: DMG-only ROM ($00) on CGB/AGB → DMG mode
-    if header.cgb_flag == 0x00
-        && matches!(
-            requested,
-            nerust_gbc_core::cpu_core::GbcModel::Cgb | nerust_gbc_core::cpu_core::GbcModel::Agb
-        )
-    {
-        return nerust_gbc_core::cpu_core::GbcModel::Dmg;
-    }
-    // Auto-upgrade: CGB-only ROM ($C0) on DMG → CGB mode
-    if header.cgb_flag == 0xC0 && requested == nerust_gbc_core::cpu_core::GbcModel::Dmg {
-        return nerust_gbc_core::cpu_core::GbcModel::Cgb;
-    }
-    requested
-}

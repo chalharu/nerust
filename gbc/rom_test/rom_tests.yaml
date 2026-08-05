@@ -615,7 +615,7 @@ suites:
     description: Mooneye Test Suite — boot_div-dmg0 (DIV during boot on DMG 0)
     rom: acceptance/boot_div-dmg0.gb
     models:
-    - dmg
+    - dmg0
     cycles: 300000
     verify:
       serial:
@@ -637,7 +637,7 @@ suites:
     description: Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG 0)
     rom: acceptance/boot_hwio-dmg0.gb
     models:
-    - dmg
+    - dmg0
     cycles: 300000
     verify:
       serial:
@@ -659,7 +659,7 @@ suites:
     description: Mooneye Test Suite — boot_regs-dmg0 (register values during boot)
     rom: acceptance/boot_regs-dmg0.gb
     models:
-    - dmg
+    - dmg0
     cycles: 300000
     verify:
       serial:
