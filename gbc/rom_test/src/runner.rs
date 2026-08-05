@@ -115,6 +115,13 @@ fn run_cell(
     // CGB-only rendering features (bg_priority, master priority, etc.)
     // only activate when the GAME is CGB-native, not just the hardware.
     bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
+    // The boot ROM is skipped; seed the timer counter with the value the
+    // boot ROM would have left for this hardware model (boot_div expects it).
+    match cell.model {
+        GbcModel::Dmg0 => bus.set_boot_counter(0x182F),
+        GbcModel::Dmg => bus.set_boot_counter(0xABCB),
+        GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
+    }
     let mut cpu = match cell.model {
         GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
         GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
