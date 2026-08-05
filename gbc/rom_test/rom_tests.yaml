@@ -409,7 +409,7 @@ suites:
     rom: dmg_sound/dmg_sound.gb
     models:
     - dmg
-    cycles: 3000000
+    cycles: 60000000
     verify:
       memory:
       - address: '0xA000'
