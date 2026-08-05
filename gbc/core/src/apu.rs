@@ -127,7 +127,11 @@ impl GbcApu {
             return;
         }
         let addend = self.sweep.addend;
-        let new_freq = if self.sweep.negate {
+        // The frequency is only updated when the shift is non-zero; with
+        // shift=0 the addend is recomputed but the frequency stays put.
+        let new_freq = if self.sweep.shift == 0 {
+            self.sweep.shadow
+        } else if self.sweep.negate {
             self.sweep.shadow.wrapping_sub(addend)
         } else {
             self.sweep.shadow + addend
@@ -337,10 +341,15 @@ impl GbcApu {
                     self.regs[idx] = value & !MASKS[idx];
                     match idx {
                         0 => {
-                            // NR10: sweep config.
+                            // NR10: sweep config. The sweep timer is reloaded
+                            // from the new period (mooneye 04-sweep expects
+                            // this to take effect on the NR10 write).
                             self.sweep.period = (self.regs[0] >> 4) & 7;
                             self.sweep.shift = self.regs[0] & 7;
                             self.sweep.negate = self.regs[0] & 8 != 0;
+                            if self.sweep.period != 0 {
+                                self.sweep.countdown = (self.sweep.period ^ 7) & 7;
+                            }
                         }
                         3 => {
                             // NR13: CH1 frequency low byte.
