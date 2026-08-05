@@ -279,7 +279,7 @@ mod tests {
         // Freq change from a set bit to an unset bit fires a tick (mooneye
         // rapid_toggle / TAC glitch behavior).
         let mut t = timer();
-        t.write(0xFF07, 0x04 | 0x00); // enable, freq 00 (bit 9)
+        t.write(0xFF07, 0x04); // enable, freq 00 (bit 9)
         t.div = 0x0200; // bit 9 set
         t.write(0xFF07, 0x04 | 0x01); // change to freq 01 (bit 3, unset)
         assert_eq!(t.tima, 1);

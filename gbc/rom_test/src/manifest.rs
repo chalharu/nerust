@@ -127,6 +127,7 @@ pub struct RomSuite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum GbcModel {
+    Dmg0,
     Dmg,
     CgbC,
     CgbD,
@@ -136,6 +137,7 @@ pub enum GbcModel {
 impl GbcModel {
     pub fn name(self) -> &'static str {
         match self {
+            GbcModel::Dmg0 => "dmg0",
             GbcModel::Dmg => "dmg",
             GbcModel::CgbC => "cgb_c",
             GbcModel::CgbD => "cgb_d",

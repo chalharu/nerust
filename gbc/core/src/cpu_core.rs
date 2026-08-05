@@ -5,6 +5,9 @@ use crate::memory::GbcMemoryBus;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GbcModel {
+    /// Original DMG-0 (early revision): distinct post-boot registers.
+    Dmg0,
+    /// Common DMG-CPU / MGB revision.
     Dmg,
     Cgb,
     Agb,
@@ -66,8 +69,21 @@ impl Lr35902Cpu {
     pub fn with_model(model: GbcModel) -> Self {
         let mut cpu = Self::new();
         match model {
+            GbcModel::Dmg0 => {
+                // DMG-0 post-boot register values (F=$00, B=$FF, E=$C1,
+                // H=$84, L=$03).
+                cpu.registers.set_a(0x01);
+                cpu.registers.set_f(0x00);
+                cpu.registers.set_b(0xFF);
+                cpu.registers.set_c(0x13);
+                cpu.registers.set_d(0x00);
+                cpu.registers.set_e(0xC1);
+                cpu.registers.set_h(0x84);
+                cpu.registers.set_l(0x03);
+            }
             GbcModel::Dmg => {
-                // DMG post-boot register values
+                // Common DMG-CPU / MGB post-boot register values
+                // (F=$B0, B=$00, E=$D8, H=$01, L=$4D).
                 cpu.registers.set_a(0x01);
                 cpu.registers.set_f(0xB0);
                 cpu.registers.set_b(0x00);
@@ -78,9 +94,10 @@ impl Lr35902Cpu {
                 cpu.registers.set_l(0x4D);
             }
             GbcModel::Cgb => {
-                // CGB post-boot: A=0x11, B=0x00, L=0x0D, Z=1
+                // CGB post-boot (CGB-native game): A=$11, F=$80, D=$FF,
+                // E=$56, L=$0D.
                 cpu.registers.set_a(0x11);
-                cpu.registers.set_f(0xB0);
+                cpu.registers.set_f(0x80);
                 cpu.registers.set_b(0x00);
                 cpu.registers.set_c(0x00);
                 cpu.registers.set_d(0xFF);
@@ -89,7 +106,7 @@ impl Lr35902Cpu {
                 cpu.registers.set_l(0x0D);
             }
             GbcModel::Agb => {
-                // AGB (GBA GBC mode): A=0x11, F=0x00, B=0x01, L=0x0D
+                // AGB (GBA GBC mode): A=$11, F=$00, B=$01, L=$0D
                 cpu.registers.set_a(0x11);
                 cpu.registers.set_f(0x00);
                 cpu.registers.set_b(0x01);
@@ -103,6 +120,16 @@ impl Lr35902Cpu {
         cpu.registers.set_sp(0xFFFE);
         cpu.registers.set_pc(0x0100);
         cpu
+    }
+
+    /// Override the CGB post-boot registers for a DMG-compatible game
+    /// (cgb_flag bit 7 clear): the CGB boot ROM initialises D=$00, E=$08 and
+    /// HL=$007C (or $991A) instead of the CGB-native D=$FF, E=$56, L=$0D.
+    pub fn set_cgb_dmg_mode_registers(&mut self) {
+        self.registers.set_d(0x00);
+        self.registers.set_e(0x08);
+        self.registers.set_h(0x00);
+        self.registers.set_l(0x7C);
     }
 
     #[inline]
