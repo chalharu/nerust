@@ -391,6 +391,7 @@ impl GbcMemoryBus {
 
     pub fn set_cgb_mode(&mut self, enabled: bool) {
         self.cgb_mode = enabled;
+        self.apu.set_cgb(enabled);
         self.ppu.cgb_mode = enabled;
         self.ppu.cgb_game = enabled;
         if enabled {
