@@ -45,6 +45,12 @@ impl DmaController {
         self.register
     }
 
+    /// Set the readable DMA register value without starting a transfer
+    /// (used for the post-boot state, where it reads $FF).
+    pub fn set_register(&mut self, value: u8) {
+        self.register = value;
+    }
+
     pub fn active(&self) -> bool {
         self.dest != 0xA1
     }

@@ -122,6 +122,7 @@ fn run_cell(
         GbcModel::Dmg => bus.set_boot_counter(0xABCB),
         GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
     }
+    bus.set_post_boot_io(hw_is_cgb);
     let mut cpu = match cell.model {
         GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
         GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),

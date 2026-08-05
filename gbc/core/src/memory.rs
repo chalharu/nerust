@@ -372,6 +372,29 @@ impl GbcMemoryBus {
         self.joypad = state;
     }
 
+    /// Apply the post-boot IO state the boot ROM leaves behind (mooneye
+    /// boot_hwio): APU registers, joypad select bits, a pending VBlank
+    /// interrupt and the DMA register.
+    pub fn set_post_boot_io(&mut self, cgb: bool) {
+        self.apu.set_post_boot_state();
+        // P1 reads $CF on DMG (both joypad directions selected), $FF on CGB.
+        self.joypad = if cgb { 0xFF } else { 0x0F };
+        self.interrupt.write_if(0x01); // VBlank pending from the boot frame
+        self.dma.set_register(0xFF);
+        if cgb {
+            // CGB boot ROM register values.
+            self.write(0xFF40, 0xFF); // LCDC
+            self.write(0xFF42, 0xFF); // SCY
+            self.write(0xFF48, 0x00); // OBP0
+            self.write(0xFF49, 0x00); // OBP1
+            self.write(0xFF68, 0xC8); // BCPS index
+            self.write(0xFF6A, 0xD0); // OCPS index
+            // SVBK reads $FF after boot (the CGB boot ROM leaves it
+            // uninitialised; the readable value is masked on write).
+            self.wram_bank = 0xFF;
+        }
+    }
+
     pub fn flush_audio(&mut self) -> Vec<f32> {
         self.apu.flush_samples()
     }

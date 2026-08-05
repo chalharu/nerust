@@ -160,6 +160,21 @@ impl GbcApu {
         self.cgb = cgb;
     }
 
+    /// Apply the post-boot register values the boot ROM leaves behind
+    /// (pandocs / mooneye boot_hwio): the APU is powered on, the sound
+    /// registers hold their boot values and CH1 is flagged active.
+    pub fn set_post_boot_state(&mut self) {
+        self.powered = true;
+        self.regs = [
+            0x00, 0x80, 0xF3, 0x00, 0x00, // NR10-NR14
+            0x00, 0x00, 0x00, 0x00, 0x00, // NR2x
+            0x00, 0x00, 0x00, 0x00, 0x00, // NR3x
+            0x00, 0x00, 0x00, 0x00, 0x00, // NR4x (FF1F unused, NR41-44)
+            0x77, 0xF3, 0x81,             // NR50, NR51, NR52
+        ];
+        self.channels[0].active = true;
+    }
+
     /// Whether the DAC of a channel is enabled (square/noise: NRx2 & $F8;
     /// wave: NR30 bit 7).
     fn dac_enabled(&self, ch: usize) -> bool {
