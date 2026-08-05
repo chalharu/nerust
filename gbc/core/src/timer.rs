@@ -172,6 +172,12 @@ impl Timer {
     pub fn reset_div(&mut self) {
         self.set_div(0);
     }
+
+    /// Set the 16-bit system counter to the post-boot value for a model
+    /// (the boot ROM advances the counter; skipping it needs this).
+    pub fn set_boot_counter(&mut self, value: u16) {
+        self.div = value;
+    }
 }
 
 impl Default for Timer {

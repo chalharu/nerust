@@ -249,6 +249,7 @@ impl GbcMemoryBus {
     /// that step PPU directly without a CPU context.
     pub fn step_devices_tcycle(&mut self) -> bool {
         self.tick = self.tick.wrapping_add(1);
+        let t1 = self.tick % 4;
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
         if ppu_res.lcd_stat {
@@ -260,6 +261,9 @@ impl GbcMemoryBus {
         self.apu.step(video);
         if self.timer.step(1).overflow {
             self.interrupt.request(InterruptKind::Timer);
+        }
+        if t1 == 3 && self.serial.step() {
+            self.interrupt.request(InterruptKind::Serial);
         }
         if self.dma.active() {
             self.dma_tcounter += 1;
@@ -344,6 +348,9 @@ impl GbcMemoryBus {
             self.cpu_step_active = true;
             cpu.step(self);
             self.cpu_step_active = false;
+            if self.serial.step() {
+                self.interrupt.request(InterruptKind::Serial);
+            }
         }
         self.deliver_ppu_write_events();
         ppu_res.frame_done
@@ -387,6 +394,11 @@ impl GbcMemoryBus {
 
     pub fn clear_halt_bug(&mut self) {
         self.interrupt.clear_halt_bug();
+    }
+
+    /// Set the timer's post-boot counter for a hardware model.
+    pub fn set_boot_counter(&mut self, value: u16) {
+        self.timer.set_boot_counter(value);
     }
 
     pub fn set_cgb_mode(&mut self, enabled: bool) {
