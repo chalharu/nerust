@@ -494,6 +494,19 @@ impl GbcPpu {
         }
     }
 
+    /// Seed the PPU's frame phase (LY / T-cycle offset into the line) at
+    /// power-on. The boot ROM runs with the LCD enabled, so by the time the
+    /// game code starts the PPU is mid-frame; its exact position depends on
+    /// the boot duration of the specific hardware model. `phase` is the
+    /// number of T-cycles into the frame (mod 70224).
+    pub fn set_frame_phase(&mut self, phase: u32) {
+        let phase = phase % 70224;
+        self.ly = (phase / T_CYCLES_PER_SCANLINE) as u8;
+        self.mode_clock = phase % T_CYCLES_PER_SCANLINE;
+        self.lcd_stat_last_mode = Some(self.current_mode());
+        self.prev_lyc_coincide = self.ly == self.lyc;
+    }
+
     /// Set OBJ palette 0 to DMG grayscale for boot ROM compatibility.
     /// On real CGB, the boot ROM initializes this; when skipped we must too.
     pub fn init_dmg_grayscale_palette(&mut self) {
@@ -621,7 +634,7 @@ impl GbcPpu {
                     }
                 }
             }
-            0xFF6C => self.key0() | 0xFE,
+            0xFF6C => 0xFF,
             _ => 0xFF,
         }
     }
