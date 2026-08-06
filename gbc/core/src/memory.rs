@@ -383,8 +383,6 @@ impl GbcMemoryBus {
         self.dma.set_register(0xFF);
         if cgb {
             // CGB boot ROM register values.
-            self.write(0xFF40, 0xFF); // LCDC
-            self.write(0xFF42, 0xFF); // SCY
             self.write(0xFF48, 0x00); // OBP0
             self.write(0xFF49, 0x00); // OBP1
             self.write(0xFF68, 0xC8); // BCPS index
@@ -422,6 +420,12 @@ impl GbcMemoryBus {
     /// Set the timer's post-boot counter for a hardware model.
     pub fn set_boot_counter(&mut self, value: u16) {
         self.timer.set_boot_counter(value);
+    }
+
+    /// Seed the PPU's frame phase (in T-cycles) for a hardware model whose
+    /// boot ROM leaves the LCD mid-frame.
+    pub fn set_ppu_frame_phase(&mut self, phase: u32) {
+        self.ppu.set_frame_phase(phase);
     }
 
     pub fn set_cgb_mode(&mut self, enabled: bool) {

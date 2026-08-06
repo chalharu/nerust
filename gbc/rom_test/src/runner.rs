@@ -122,6 +122,12 @@ fn run_cell(
         GbcModel::Dmg => bus.set_boot_counter(0xABCB),
         GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
     }
+    if matches!(cell.model, GbcModel::Dmg0) {
+        // DMG-0's boot ROM ends ~66220 T-cycles into a frame (boot_hwio-dmg0
+        // reads LY=$01, STAT=$83 at the register dump); the other models'
+        // boot durations align with a fresh frame start.
+        bus.set_ppu_frame_phase(66220);
+    }
     bus.set_post_boot_io(hw_is_cgb);
     let mut cpu = match cell.model {
         GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
