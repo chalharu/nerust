@@ -79,6 +79,9 @@ pub struct GbcPpu {
     /// scanline. During this window STAT mode bits read as 00 and the LYC
     /// comparison clock is not running.
     lcd_on_delay: u32,
+    /// The first line after the LCD is turned on is shorter than a normal
+    /// scanline (448 T-cycles; mode 2 is 76 and mode 0 is 4+8 shorter).
+    lcd_on_short_line: bool,
 
     /// DMG OAM bug: OAM row currently being scanned during mode 2 (OAM
     /// search). 0xFF means OAM is not being accessed (CGB, LCD off, or not
@@ -127,6 +130,7 @@ impl Default for GbcPpu {
             mode_stat_delay: 0,
             stat_irq_line: false,
             lcd_on_delay: 0,
+            lcd_on_short_line: false,
             accessed_oam_row: 0xFF,
             mode3_pipeline: None,
         }
@@ -195,7 +199,7 @@ impl GbcPpu {
             self.accessed_oam_row = 0xFF;
         } else if self.lcdc & 0x80 != 0
             && self.ly < VBLANK_START
-            && self.mode_clock < T_CYCLES_OAM_SEARCH
+            && self.mode_clock < self.oam_search_cycles()
         {
             let row = ((self.mode_clock / 2) & !1) as u8 * 4 + 8;
             self.accessed_oam_row = if row + 8 <= 160 { row } else { 0xFF };
@@ -205,7 +209,7 @@ impl GbcPpu {
     }
 
     fn start_pipeline_if_needed(&mut self) {
-        if self.ly < VBLANK_START && self.mode_clock == T_CYCLES_OAM_SEARCH + 1 {
+        if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
             self.mode3_pipeline = Some(Mode3Pipeline::new(
                 Registers {
@@ -246,9 +250,11 @@ impl GbcPpu {
     }
 
     fn advance_scanline(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
-        if self.mode_clock >= T_CYCLES_PER_SCANLINE {
-            self.mode_clock -= T_CYCLES_PER_SCANLINE;
+        let line_length = if self.lcd_on_short_line { 432 } else { T_CYCLES_PER_SCANLINE };
+        if self.mode_clock >= line_length {
+            self.mode_clock -= line_length;
             self.mode3_pipeline = None;
+            self.lcd_on_short_line = false;
             self.ly = self.ly.wrapping_add(1);
             if self.ly == VBLANK_START {
                 *vblank = true;
@@ -318,16 +324,26 @@ impl GbcPpu {
     fn current_mode(&self) -> PpuMode {
         if self.ly >= VBLANK_START {
             PpuMode::VBlank
-        } else if self.mode_clock <= T_CYCLES_OAM_SEARCH {
+        } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
         } else if self.mode_clock
-            <= T_CYCLES_OAM_SEARCH
+            <= self.oam_search_cycles()
                 + T_CYCLES_PIXEL_TRANSFER
                 + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()))
         {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
+        }
+    }
+
+    /// Mode 2 is 76 T-cycles (not 80) on the first line after the LCD is
+    /// turned on.
+    fn oam_search_cycles(&self) -> u32 {
+        if self.lcd_on_short_line {
+            76
+        } else {
+            T_CYCLES_OAM_SEARCH
         }
     }
 
@@ -696,6 +712,7 @@ impl GbcPpu {
             // the power-on delay (20 T-cycles) STAT mode bits read as 00 and
             // the LYC comparison clock is not running.
             self.lcd_on_delay = 20;
+            self.lcd_on_short_line = true;
             self.lcd_stat_last_mode = Some(PpuMode::HBlank);
             self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
             // LY=0 at power-on. The comparison against LYC is evaluated on
