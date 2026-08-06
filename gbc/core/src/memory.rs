@@ -147,7 +147,7 @@ impl GbcMemoryBus {
              0xFF4D if self.cgb_mode => self.read_key1(),
              0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
              0xFF55 if self.cgb_mode => self.hdma.read_status(),
-             0xFF70 if self.cgb_mode => self.wram_bank,
+             0xFF70 if self.cgb_mode => self.wram_bank | 0xF8,
              0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
              0xFF74 => 0xFF,
              0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
@@ -220,9 +220,14 @@ impl GbcMemoryBus {
              0xFF4D if self.cgb_mode => self.write_key1(value),
              0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
              0xFF55 if self.cgb_mode => {
-                self.hdma.start(value);
-                if !self.hdma.hblank_mode {
-                    self.transfer_hdma_block();
+                // HDMA requires a valid VRAM destination ($8000-$9FFF). With
+                // an invalid destination the transfer does not start and
+                // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
+                if self.hdma.dst & 0xE000 == 0x8000 {
+                    self.hdma.start(value);
+                    if !self.hdma.hblank_mode {
+                        self.transfer_hdma_block();
+                    }
                 }
             }
              0xFF50 => {
@@ -232,7 +237,11 @@ impl GbcMemoryBus {
             }
              0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
              0xFF70 if self.cgb_mode => {
-                self.wram_bank = if value & 0x07 == 0 { 1 } else { value & 0x07 };
+                // Writing 0 to SVBK is ignored on the CGB (the bank is
+                // unchanged); unused_hwio-C reads $FF after a $00 write.
+                if value & 0x07 != 0 {
+                    self.wram_bank = value & 0x07;
+                }
             }
              0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
              0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
@@ -823,21 +832,23 @@ mod tests {
 
     #[test]
     fn wram_bank_default_is_1() {
-        assert_eq!(cgb_bus().read(0xFF70), 1);
+        // SVBK reads the bank with bits 7-3 forced to 1.
+        assert_eq!(cgb_bus().read(0xFF70), 0xF9);
     }
 
     #[test]
     fn write_wram_bank_select_updates_value() {
         let mut bus = cgb_bus();
         bus.write(0xFF70, 0x03);
-        assert_eq!(bus.read(0xFF70), 0x03);
+        assert_eq!(bus.read(0xFF70), 0xFB);
     }
 
     #[test]
     fn write_wram_bank_0_clamps_to_1() {
+        // Writing 0 to SVBK leaves the bank unchanged (never selects bank 0).
         let mut bus = cgb_bus();
         bus.write(0xFF70, 0x00);
-        assert_eq!(bus.read(0xFF70), 1);
+        assert_eq!(bus.read(0xFF70), 0xF9);
     }
 
     // ── FF50 boot ROM disable ─────────────────────────────
