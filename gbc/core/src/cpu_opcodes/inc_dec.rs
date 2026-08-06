@@ -83,8 +83,9 @@ impl<const R: u8> CpuStepState for DecR16<R> {
 
 pub(crate) struct IncSp;
 impl CpuStepState for IncSp {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            bus.trigger_oam_bug(core.registers().sp());
             return StepResult::Continue;
         }
         // step == 1
@@ -95,8 +96,9 @@ impl CpuStepState for IncSp {
 }
 pub(crate) struct DecSp;
 impl CpuStepState for DecSp {
-    fn exec(core: &mut Lr35902Cpu, _: &mut GbcMemoryBus, step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            bus.trigger_oam_bug(core.registers().sp());
             return StepResult::Continue;
         }
         // step == 1

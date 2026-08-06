@@ -58,6 +58,7 @@ impl<const R: u8> CpuStepState for Pop<R> {
             return StepResult::Continue;
         }
         let lo = core.operand(0);
+        bus.trigger_oam_bug(core.registers().sp());
         let hi = bus.read(core.registers().sp());
         let _t = core.registers().sp().wrapping_add(1);
         core.registers_mut().set_sp(_t);
