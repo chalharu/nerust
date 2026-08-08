@@ -280,7 +280,7 @@ impl GbcMemoryBus {
                 self.dma_tcounter = 0;
                 if let Some((src, offset)) = self.dma.transfer_step() {
                     let byte = self.read_raw(src);
-                    self.ppu.write_oam(offset, byte);
+                    self.ppu.dma_write_oam(offset, byte);
                 }
             }
         }
@@ -342,7 +342,7 @@ impl GbcMemoryBus {
                 self.dma_tcounter = 0;
                 if let Some((src, offset)) = self.dma.transfer_step() {
                     let byte = self.read_raw(src);
-                    self.ppu.write_oam(offset, byte);
+                    self.ppu.dma_write_oam(offset, byte);
                 }
             }
         }

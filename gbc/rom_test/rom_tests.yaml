@@ -484,7 +484,7 @@ suites:
     rom: acceptance/ppu/lcdon_timing-GS.gb
     models:
     - dmg
-    cycles: 400000
+    cycles: 600000
     verify:
       serial:
         suffix: '0305080D1522'
