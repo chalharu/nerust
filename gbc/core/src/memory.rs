@@ -220,6 +220,7 @@ impl GbcMemoryBus {
                     self.wram[addr as usize & 0x1FFF] = value;
                 }
             }
+            0xE000..=0xFDFF => self.write(addr - 0x2000, value),
             0xFE00..=0xFE9F => self.ppu.write_oam((addr & 0xFF) as u8, value),
             0xFF00 => {
                 // TODO: GbcJoypad device will manage select bits and
