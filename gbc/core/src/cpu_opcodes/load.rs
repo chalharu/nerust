@@ -3,6 +3,7 @@ use crate::cpu_core::StepResult;
 use crate::cpu_opcodes::CpuStepState;
 use crate::cpu_opcodes::helpers::{read_r8, read_r16, write_r8, write_r16};
 use crate::memory::GbcMemoryBus;
+use crate::ppu::OamBugKind;
 
 fn r8(opcode: u8) -> u8 {
     opcode & 0x07
@@ -111,6 +112,7 @@ pub(crate) struct LdHliA;
 impl CpuStepState for LdHliA {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            bus.trigger_oam_bug(core.registers().hl(), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         bus.write(core.registers().hl(), core.registers().a());
@@ -123,10 +125,11 @@ pub(crate) struct LdAHli;
 impl CpuStepState for LdAHli {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            let a = core.registers().hl();
+            bus.trigger_oam_bug(a, OamBugKind::ReadInc, 0);
             return StepResult::Continue;
         }
         let a = core.registers().hl();
-        bus.trigger_oam_bug(a);
         core.registers_mut().set_a(bus.read(a));
         core.registers_mut().set_hl(a.wrapping_add(1));
         StepResult::Exit
@@ -139,6 +142,7 @@ pub(crate) struct LdHldA;
 impl CpuStepState for LdHldA {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            bus.trigger_oam_bug(core.registers().hl(), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         bus.write(core.registers().hl(), core.registers().a());
@@ -151,10 +155,11 @@ pub(crate) struct LdAHld;
 impl CpuStepState for LdAHld {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
+            let a = core.registers().hl();
+            bus.trigger_oam_bug(a, OamBugKind::ReadInc, 0);
             return StepResult::Continue;
         }
         let a = core.registers().hl();
-        bus.trigger_oam_bug(a);
         core.registers_mut().set_a(bus.read(a));
         core.registers_mut().set_hl(a.wrapping_sub(1));
         StepResult::Exit

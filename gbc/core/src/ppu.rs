@@ -12,6 +12,13 @@ enum PpuMode {
     PixelTransfer = 3,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OamBugKind {
+    Read,
+    Write,
+    ReadInc,
+}
+
 const T_CYCLES_PER_SCANLINE: u32 = 456;
 const T_CYCLES_OAM_SEARCH: u32 = 80;
 const T_CYCLES_PIXEL_TRANSFER: u32 = 172;
@@ -675,29 +682,76 @@ impl GbcPpu {
         self.oam[addr as usize] = value;
     }
 
-    /// DMG OAM bug: a 16-bit CPU operation touching $FE00-$FEFF during OAM
-    /// search corrupts the currently-scanned OAM row by copying 8 bytes from
-    /// the previous row. Returns true if corruption happened.
-    pub fn trigger_oam_bug(&mut self, address: u16) -> bool {
-        if self.cgb_mode {
+    /// DMG OAM bug. `kind` selects the pandocs-documented corruption pattern:
+    /// a 16-bit register operation placing a value in $FE00-$FEFF on the
+    /// address bus during OAM search glitches the 8-byte OAM row currently
+    /// being scanned. The accessed address (beyond selecting $FExx) has no
+    /// effect. `cycles_before_end` is the number of M-cycles between this
+    /// access and the end of the instruction, shifting the scanned row back.
+    /// Returns true if corruption happened.
+    pub fn trigger_oam_bug(
+        &mut self,
+        address: u16,
+        kind: OamBugKind,
+        cycles_before_end: i16,
+    ) -> bool {
+        if self.cgb_mode || self.lcdc & 0x80 == 0 {
             return false;
         }
-        if !(0xFE00..0xFF00).contains(&address) {
+        if self.current_mode() != PpuMode::OamSearch {
             return false;
         }
-        let row = self.accessed_oam_row;
-        if row == 0xFF || row < 8 {
+        if address & 0xFF00 != 0xFE00 {
             return false;
         }
-        let row = usize::from(row);
-        let a = u16::from_le_bytes([self.oam[row], self.oam[row + 1]]);
-        let b = u16::from_le_bytes([self.oam[row - 4], self.oam[row - 3]]);
-        let c = u16::from_le_bytes([self.oam[row - 2], self.oam[row - 1]]);
-        let glitch = ((a ^ c) & (b ^ c)) ^ c;
-        let prev = self.oam[row - 8..row].to_vec();
-        self.oam[row] = (glitch & 0xFF) as u8;
-        self.oam[row + 1] = (glitch >> 8) as u8;
-        self.oam[row + 2..row + 8].copy_from_slice(&prev[2..8]);
+        // The row currently being scanned, as an 8-byte OAM index. The PPU
+        // scans rows 0..19 during the 20 M-cycles of OAM search; the first
+        // row is not corruptible (access lands one row ahead of the scan
+        // pointer on real hardware).
+        let row = (usize::from(self.accessed_oam_row) / 8) as i16 - cycles_before_end;
+        self.oam_bug_corrupt(kind, row)
+    }
+
+    fn oam_bug_corrupt(&mut self, kind: OamBugKind, row: i16) -> bool {
+        if row < 1 || row > 19 {
+            return false;
+        }
+        let row = row as usize;
+        let word_at = |oam: &[u8], off: usize| u16::from_le_bytes([oam[off], oam[off + 1]]);
+        let mut kind = kind;
+        if kind == OamBugKind::ReadInc {
+            // Read combined with an increment/decrement: the first word of
+            // the preceding row is glitched, then the preceding row is
+            // copied both to the current row and two rows back.
+            if (4..=18).contains(&row) {
+                let a = word_at(&self.oam, (row - 2) * 8);
+                let b = word_at(&self.oam, (row - 1) * 8);
+                let c = word_at(&self.oam, row * 8);
+                let d = word_at(&self.oam, (row - 1) * 8 + 4);
+                let glitch = (b & (a | c | d)) | (a & c & d);
+                self.oam[(row - 1) * 8] = (glitch & 0xFF) as u8;
+                self.oam[(row - 1) * 8 + 1] = (glitch >> 8) as u8;
+                let prev_row = self.oam[(row - 1) * 8..(row - 1) * 8 + 8].to_vec();
+                self.oam[(row - 2) * 8..(row - 2) * 8 + 8].copy_from_slice(&prev_row);
+                self.oam[row * 8..row * 8 + 8].copy_from_slice(&prev_row);
+            }
+            kind = OamBugKind::Read;
+        }
+        // a = first word of the current row, b = first word of the preceding
+        // row, c = third word of the preceding row. The current row's first
+        // word is glitched and its last three words are copied from the
+        // preceding row.
+        let a = word_at(&self.oam, row * 8);
+        let b = word_at(&self.oam, (row - 1) * 8);
+        let c = word_at(&self.oam, (row - 1) * 8 + 4);
+        let corrupted = match kind {
+            OamBugKind::Write => ((a ^ c) & (b ^ c)) ^ c,
+            _ => b | (a & c),
+        };
+        self.oam[row * 8] = (corrupted & 0xFF) as u8;
+        self.oam[row * 8 + 1] = (corrupted >> 8) as u8;
+        let prev_tail = self.oam[(row - 1) * 8 + 2..(row - 1) * 8 + 8].to_vec();
+        self.oam[row * 8 + 2..row * 8 + 8].copy_from_slice(&prev_tail);
         true
     }
 

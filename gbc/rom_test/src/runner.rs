@@ -145,6 +145,27 @@ fn run_cell(
     cpu.registers_mut().set_pc(0x0100);
 
     step_cycles(&mut bus, &mut cpu, cell.cycles());
+    if std::env::var("DUMP_TEXT").is_ok() {
+        let toa = bus.read(0xD883) as u16 | ((bus.read(0xD884) as u16) << 8);
+        let mut text = Vec::new();
+        for a in 0xA004u16..0xC000 {
+            let b = bus.read(a);
+            if b == 0 {
+                break;
+            }
+            text.push(b);
+        }
+        eprintln!(
+            "TEXT_DUMP a000={:02x} toa={:04x} len={} str={}",
+            bus.read(0xA000),
+            toa,
+            text.len(),
+            String::from_utf8_lossy(&text)
+        );
+        if let Ok(p) = std::env::var("DUMP_TEXT_FILE") {
+            std::fs::write(p, &text).ok();
+        }
+    }
     let rendered = render_frame(&bus)?;
     if let Some(dir) = artifacts_dir {
         let name = format!("{}.png", cell.id());
