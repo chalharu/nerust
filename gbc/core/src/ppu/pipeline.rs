@@ -233,7 +233,7 @@ impl Mode3Pipeline {
             cgb_game,
             cgb_revision_d,
             oam_priority,
-            startup_dots: if cgb_mode { 19 } else { 18 } + (registers.scx & 7),
+            startup_dots: 19 + (registers.scx & 7),
             initial_dummy_pending: true,
             fine_discard: registers.scx & 7,
             scx_tile_latch: registers.scx >> 3,
@@ -864,11 +864,7 @@ impl Mode3Pipeline {
                 6
             }
         } else {
-            // The DMG's sprite fetch (tile data load) takes one M-cycle
-            // longer than the CGB's, so its first-sprite pixel stall is one
-            // dot longer (mealybug m3_obp0_change depends on this timing).
-            let base = if self.cgb_mode { 6 } else { 7 };
-            base + fetch_wait
+            6 + fetch_wait
         }
     }
 
