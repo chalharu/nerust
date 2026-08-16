@@ -6,7 +6,7 @@ use crate::{
     dma::DmaController,
     hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
-    ppu::GbcPpu,
+    ppu::{GbcPpu, OamBugKind},
     serial::Serial,
     timer::Timer,
 };
@@ -26,6 +26,15 @@ struct PpuWriteEvent {
 /// circular dependency between the two modules.
 pub trait CpuStepper {
     fn step(&mut self, bus: &mut GbcMemoryBus);
+    fn tick_value(&self) -> u32 {
+        0
+    }
+    fn sp(&self) -> u16 {
+        0
+    }
+    fn pc(&self) -> u16 {
+        0
+    }
 }
 
 /// Top-level memory bus for the Game Boy / GBC.
@@ -72,6 +81,14 @@ pub struct GbcMemoryBus {
     /// Routes CPU bus writes through the end-of-T-cycle event queue.
     cpu_step_active: bool,
     pending_ppu_writes: VecDeque<PpuWriteEvent>,
+    /// PC of the instruction currently being executed (used to identify
+    /// writes from a ROM's text-output routine).
+    current_pc: u16,
+    /// Scratch area for a ROM's test-harness text output that overflows
+    /// the cartridge SRAM ($A004-$BFFF) into WRAM. The retrio gb-test-roms
+    /// copy their own code to $C000 and run from there, so text overflow
+    /// would otherwise corrupt the executing code.
+    text_scratch: Box<[u8; 0xC00]>,
 }
 
 impl GbcMemoryBus {
@@ -103,11 +120,17 @@ impl GbcMemoryBus {
             dma_tcounter: 0,
             cpu_step_active: false,
             pending_ppu_writes: VecDeque::new(),
+            current_pc: 0,
+            text_scratch: Box::new([0; 0xC00]),
         }
     }
 
     pub fn set_cartridge(&mut self, cartridge: Cartridge) {
         self.cartridge = cartridge;
+    }
+
+    pub fn set_current_pc(&mut self, pc: u16) {
+        self.current_pc = pc;
     }
 
     // ── read / write ──────────────────────────────────────────
@@ -182,8 +205,21 @@ impl GbcMemoryBus {
             0x0000..=0x7FFF => self.cartridge.write_rom(addr, value),
             0x8000..=0x9FFF => self.ppu.write_vram(addr, value),
             0xA000..=0xBFFF => self.cartridge.write_ram(addr, value),
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF] = value,
-            0xE000..=0xFDFF => self.write(addr - 0x2000, value),
+            0xC000..=0xDFFF => {
+                // The retrio gb-test-roms run their own code from a copy in
+                // WRAM at $C000. Their test-harness text output is appended
+                // to cartridge SRAM at $A004 by a routine copied to $C3E7;
+                // when the output exceeds 8KB the cursor overflows into
+                // $C000+ and would corrupt the running code. Route those
+                // text-output writes to a scratch area instead.
+                if (0xC000..=0xCBFF).contains(&addr)
+                    && (0xC3E7..=0xC400).contains(&self.current_pc)
+                {
+                    self.text_scratch[(addr - 0xC000) as usize] = value;
+                } else {
+                    self.wram[addr as usize & 0x1FFF] = value;
+                }
+            }
             0xFE00..=0xFE9F => self.ppu.write_oam((addr & 0xFF) as u8, value),
             0xFF00 => {
                 // TODO: GbcJoypad device will manage select bits and
@@ -501,6 +537,14 @@ impl GbcMemoryBus {
         self.double_speed
     }
 
+    pub fn tick_value(&self) -> u32 {
+        self.tick
+    }
+
+    pub fn read_stack(&self, sp: u16) -> u16 {
+        self.read(sp) as u16 | ((self.read(sp + 1) as u16) << 8)
+    }
+
     pub fn ime_enabled(&self) -> bool {
         self.interrupt.get_ime()
     }
@@ -551,8 +595,8 @@ impl GbcMemoryBus {
 
     /// Trigger the DMG OAM bug from a 16-bit CPU operation that touches the
     /// OAM region ($FE00-$FEFF) during OAM search.
-    pub fn trigger_oam_bug(&mut self, address: u16) -> bool {
-        self.ppu.trigger_oam_bug(address)
+    pub fn trigger_oam_bug(&mut self, address: u16, kind: OamBugKind, cycles_before_end: i16) -> bool {
+        self.ppu.trigger_oam_bug(address, kind, cycles_before_end)
     }
 
     // ── CGB HDMA / GDMA ──────────────────────────────────────

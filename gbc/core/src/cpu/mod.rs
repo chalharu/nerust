@@ -6,6 +6,18 @@ use crate::memory::{CpuStepper, GbcMemoryBus};
 static TABLE: LazyLock<[HandlerFn; 256]> = LazyLock::new(|| crate::cpu_opcodes::handler_table());
 
 impl CpuStepper for Lr35902Cpu {
+    fn tick_value(&self) -> u32 {
+        0
+    }
+
+    fn sp(&self) -> u16 {
+        self.registers().sp()
+    }
+
+    fn pc(&self) -> u16 {
+        self.registers().pc()
+    }
+
     /// Step one M-cycle (no device advancement — caller must call step_devices).
     fn step(&mut self, bus: &mut GbcMemoryBus) {
         if bus.is_halted_or_stopped() {
@@ -36,7 +48,9 @@ impl CpuStepper for Lr35902Cpu {
                     return;
                 }
                 self.arm_delayed_ime();
-                let op = bus.read(self.registers().pc());
+                let fetch_pc = self.registers().pc();
+                bus.set_current_pc(fetch_pc);
+                let op = bus.read(fetch_pc);
                 // HALT bug: when HALT is executed with IME=0 and a pending
                 // interrupt, the CPU immediately wakes (doesn't halt), but
                 // PC is not incremented during the next opcode fetch. The

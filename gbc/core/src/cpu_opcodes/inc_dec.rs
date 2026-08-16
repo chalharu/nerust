@@ -4,6 +4,7 @@ use crate::cpu_opcodes::CpuStepState;
 use crate::cpu_opcodes::helpers::reg;
 use crate::cpu_opcodes::helpers::{read_r8, write_r8};
 use crate::memory::GbcMemoryBus;
+use crate::ppu::OamBugKind;
 
 pub(crate) struct IncR8<const R: u8>;
 impl<const R: u8> CpuStepState for IncR8<R> {
@@ -41,7 +42,7 @@ impl<const R: u8> CpuStepState for IncR16<R> {
             _ => core.registers().sp(),
         };
         if step == 0 {
-            bus.trigger_oam_bug(v);
+            bus.trigger_oam_bug(v, OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         // step == 1
@@ -66,7 +67,7 @@ impl<const R: u8> CpuStepState for DecR16<R> {
             _ => core.registers().sp(),
         };
         if step == 0 {
-            bus.trigger_oam_bug(v);
+            bus.trigger_oam_bug(v, OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         // step == 1
@@ -85,7 +86,7 @@ pub(crate) struct IncSp;
 impl CpuStepState for IncSp {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
-            bus.trigger_oam_bug(core.registers().sp());
+            bus.trigger_oam_bug(core.registers().sp(), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         // step == 1
@@ -98,7 +99,7 @@ pub(crate) struct DecSp;
 impl CpuStepState for DecSp {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
         if step == 0 {
-            bus.trigger_oam_bug(core.registers().sp());
+            bus.trigger_oam_bug(core.registers().sp(), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         // step == 1
