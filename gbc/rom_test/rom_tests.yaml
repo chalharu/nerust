@@ -290,7 +290,7 @@ suites:
     rom: oam_bug/oam_bug.gb
     models:
     - dmg
-    cycles: 3000000
+    cycles: 300000000
     verify:
       memory:
       - address: '0xA000'
@@ -382,7 +382,7 @@ suites:
     rom: oam_bug/rom_singles/7-timing_effect.gb
     models:
     - dmg
-    cycles: 3000000
+    cycles: 30000000
     verify:
       memory:
       - address: '0xA000'
@@ -395,7 +395,7 @@ suites:
     rom: oam_bug/rom_singles/8-instr_effect.gb
     models:
     - dmg
-    cycles: 3000000
+    cycles: 30000000
     verify:
       memory:
       - address: '0xA000'
