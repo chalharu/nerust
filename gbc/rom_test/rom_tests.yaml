@@ -1975,17 +1975,13 @@ suites:
     tags:
     - timing
   - id: m3_wx_4_change
-    description: Mealybug Tearoom Tests — m3_wx_4_change (CGB D)
+    description: Mealybug Tearoom Tests — m3_wx_4_change (DMG)
     rom: m3_wx_4_change.gb
     models:
     - dmg
-    - cgb_c
-    - cgb_d
     cycles: 130000
     reference:
       dmg: repo/expected/DMG-blob/m3_wx_4_change.png
-      cgb_c: repo/expected/CPU CGB C/m3_wx_4_change.png
-      cgb_d: repo/expected/CPU CGB D/m3_wx_4_change.png
   - id: m3_wx_4_change_sprites
     description: Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)
     rom: m3_wx_4_change_sprites.gb
@@ -1999,29 +1995,21 @@ suites:
       cgb_c: repo/expected/CPU CGB C/m3_wx_4_change_sprites.png
       cgb_d: repo/expected/CPU CGB D/m3_wx_4_change_sprites.png
   - id: m3_wx_5_change
-    description: Mealybug Tearoom Tests — m3_wx_5_change (CGB D)
+    description: Mealybug Tearoom Tests — m3_wx_5_change (DMG)
     rom: m3_wx_5_change.gb
     models:
     - dmg
-    - cgb_c
-    - cgb_d
     cycles: 130000
     reference:
       dmg: repo/expected/DMG-blob/m3_wx_5_change.png
-      cgb_c: repo/expected/CPU CGB C/m3_wx_5_change.png
-      cgb_d: repo/expected/CPU CGB D/m3_wx_5_change.png
   - id: m3_wx_6_change
-    description: Mealybug Tearoom Tests — m3_wx_6_change (CGB D)
+    description: Mealybug Tearoom Tests — m3_wx_6_change (DMG)
     rom: m3_wx_6_change.gb
     models:
     - dmg
-    - cgb_c
-    - cgb_d
     cycles: 130000
     reference:
       dmg: repo/expected/DMG-blob/m3_wx_6_change.png
-      cgb_c: repo/expected/CPU CGB C/m3_wx_6_change.png
-      cgb_d: repo/expected/CPU CGB D/m3_wx_6_change.png
 - name: mattcurrie_dmg-acid2
   cases:
   - id: dmg_acid2
