@@ -517,10 +517,13 @@ impl GbcMemoryBus {
     pub fn stop(&mut self) {
         self.timer.reset_div();
         if self.speed_switch_pending {
-            // CGB speed switch: KEY1 bit 7 (prepare) was set before STOP.
-            // The switch happens and execution continues (no halt).
+            // CGB speed switch: KEY1 bit 0 (prepare) was set before STOP.
+            // The switch happens and execution continues (no halt). The
+            // switch only occurs while IME = 0.
             self.speed_switch_pending = false;
-            self.double_speed = !self.double_speed;
+            if !self.interrupt.get_ime() {
+                self.double_speed = !self.double_speed;
+            }
             return;
         }
         self.interrupt.stop();
@@ -550,7 +553,9 @@ impl GbcMemoryBus {
         self.interrupt.get_ime()
     }
 
-    /// Read the IE register (raw).
+    /// Read IE ($FFFF) during the OAM-DMA-locked window of a CPU
+    /// instruction. Used by the interrupt dispatch when pushing PC to the
+    /// IE register.
     pub fn read_ie(&self) -> u8 {
         self.interrupt.read_ie()
     }
@@ -614,12 +619,14 @@ impl GbcMemoryBus {
     // ── CGB double-speed ─────────────────────────────────────
 
     fn read_key1(&self) -> u8 {
-        0xFF
+        // KEY1 ($FF4D): bit 7 reads the current CPU speed (1 = double),
+        // bit 0 the armed speed-switch flag; bits 1-6 read as 1.
+        0x7E | (u8::from(self.double_speed) << 7) | u8::from(self.speed_switch_pending)
     }
 
     fn write_key1(&mut self, value: u8) {
         // Writing $01 prepares a speed switch: the written value's bit 0 is
-        // latched into the prepare-speed-switch flag (read back on bit 7).
+        // latched into the prepare-speed-switch flag (read back on bit 0).
         if value & 0x01 != 0 {
             self.speed_switch_pending = true;
         }
@@ -857,9 +864,11 @@ mod tests {
     // ── CGB double-speed (KEY1) ───────────────────────────
 
     #[test]
-    fn read_key1_returns_ff_before_boot() {
-        // Without boot ROM the power-on KEY1 state reads as all-ones.
+    fn read_key1_reports_speed_and_pending_flag() {
+        // KEY1 is only readable on CGB hardware (DMG reads $FF).
+        // Bit 7 = current speed, bit 0 = armed switch, rest read 1.
         assert_eq!(bus().read(0xFF4D), 0xFF);
+        assert_eq!(cgb_bus().read(0xFF4D), 0x7E);
     }
 
     #[test]

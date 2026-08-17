@@ -73,14 +73,21 @@ pub struct GbcPpu {
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
     pub cgb_revision_d: bool,
 
-    /// Prevents STAT interrupt from firing repeatedly during the same mode.
-    /// Set to the PpuMode value that last triggered lcd_stat; cleared to None
-    /// when the mode changes (detected via current_mode != lcd_stat_last_mode).
-    lcd_stat_last_mode: Option<PpuMode>,
-    mode_stat_delay: u8,
-    /// Internal STAT interrupt line. Once raised it stays asserted, blocking
-    /// further STAT interrupts, until the PPU enters mode 3 (PixelTransfer).
-    stat_irq_line: bool,
+    /// Current level of the combined STAT interrupt signal. The LCD STAT
+    /// interrupt (IF bit 1) is requested on a rising edge of this signal.
+    /// The signal is the OR of the enabled STAT sources:
+    ///   - bit 3: mode 0 (HBlank)
+    ///   - bit 4: mode 1 (VBlank)
+    ///   - bit 5: mode 2 (OAM) — also active during VBlank (see below)
+    ///   - bit 6: LY=LYC coincidence
+    stat_signal: bool,
+    /// Forced-high override for the STAT signal, held until the PPU enters
+    /// mode 3. Models the mode-2 interrupt pulse right after the LCD is
+    /// turned on while STAT bit 5 is set.
+    stat_forced: bool,
+    /// T-cycles until the VBlank interrupt flag is raised. On real hardware
+    /// the VBL IF is set 4 T-cycles after LY becomes 144.
+    vblank_if_countdown: u8,
 
     /// Remaining T-cycles after LCDC.7 0->1 before the PPU starts the first
     /// scanline. During this window STAT mode bits read as 00 and the LYC
@@ -91,6 +98,12 @@ pub struct GbcPpu {
     /// The first line after the LCD is turned on is shorter than a normal
     /// scanline (448 T-cycles; mode 2 is 76 and mode 0 is 4+8 shorter).
     lcd_on_short_line: bool,
+
+    /// SCX fine-scroll penalty (SCX & 7) latched at the start of mode 3;
+    /// extends the pixel transfer period.
+    mode3_scx_penalty: u32,
+    /// Sprite-fetch stalls accumulated during the current mode 3.
+    mode3_sprite_penalty: u32,
 
     /// DMG OAM bug: OAM row currently being scanned during mode 2 (OAM
     /// search). 0xFF means OAM is not being accessed (CGB, LCD off, or not
@@ -135,13 +148,15 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             cgb_revision_d: true,
-            lcd_stat_last_mode: Some(PpuMode::OamSearch),
-            mode_stat_delay: 0,
-            stat_irq_line: false,
+            stat_signal: false,
+            stat_forced: false,
+            vblank_if_countdown: 0,
             lcd_on_delay: 0,
             lcd_on_hblank_extra: 0,
             ly_for_comparison: 0,
             lcd_on_short_line: false,
+            mode3_scx_penalty: 0,
+            mode3_sprite_penalty: 0,
             accessed_oam_row: 0xFF,
             mode3_pipeline: None,
         }
@@ -177,9 +192,14 @@ impl GbcPpu {
                 // STAT interrupt right away.
                 self.lcd_on_delay -= 1;
                 self.stat &= !0x03;
-                let mut on_stat = false;
-                self.check_lyc(&mut on_stat);
-                lcd_stat |= on_stat;
+                self.refresh_lyc_flag();
+                // The LCD-on forced pulse (stat_forced) only applies once
+                // the PPU actually starts the first line.
+                let signal = self.stat_signal_level();
+                if signal && !self.stat_signal {
+                    lcd_stat = true;
+                }
+                self.stat_signal = signal;
                 continue;
             }
             self.step_dot(&mut lcd_stat, &mut vblank);
@@ -191,12 +211,135 @@ impl GbcPpu {
         }
     }
 
+    /// Evaluate the combined STAT interrupt signal and request the LCD STAT
+    /// interrupt on a rising edge.
+    fn eval_stat_signal(&mut self, lcd_stat: &mut bool) {
+        let signal = self.stat_forced || self.stat_signal_level();
+        if signal && !self.stat_signal {
+            *lcd_stat = true;
+        }
+        self.stat_signal = signal;
+    }
+
+    /// The combined STAT interrupt signal level (TCAGBD 8.7):
+    ///   (LY=LYC && bit 6) || (mode 0 && bit 3) || (mode 2 && bit 5)
+    ///   || (mode 1 && (bit 4 || bit 5))
+    /// The mode used here is the internal "mode for interrupt", which differs
+    /// slightly from the mode visible in STAT reads: HBlank extends a few
+    /// T-cycles into the following line (so the signal does not drop between
+    /// HBlank and OAM search), VBlank starts 4 T-cycles into line 144, and
+    /// the mode-2 condition also pulses during VBlank lines (low for the
+    /// first 4 T-cycles of each VBlank line, then high — except on CGB
+    /// hardware, where it is high from clock 0 of line 144 so the mode-2
+    /// STAT fires one M-cycle before the VBL interrupt).
+    fn stat_signal_level(&self) -> bool {
+        if self.lcdc & 0x80 == 0 {
+            return false;
+        }
+        if self.stat & 0x40 != 0 && self.lyc_coincide() {
+            return true;
+        }
+        if self.lcd_on_delay > 0 {
+            // Powering on: only the LYC path is active.
+            return false;
+        }
+        match self.mode_for_interrupt() {
+            PpuMode::HBlank => self.stat & 0x08 != 0,
+            PpuMode::VBlank => {
+                // The mode-1 condition is level-active for all of VBlank
+                // (starting 4 T-cycles into line 144).
+                if self.stat & 0x10 != 0 {
+                    return true;
+                }
+                // The mode-2 (OAM) condition pulses during VBlank: low for
+                // the first few T-cycles of each line, then high.
+                if self.stat & 0x20 != 0 {
+                    let rise = if self.ly == VBLANK_START {
+                        if self.cgb_mode { 0 } else { 4 }
+                    } else {
+                        Self::vblank_oam_pulse_rise()
+                    };
+                    return self.mode_clock >= rise;
+                }
+                false
+            }
+            PpuMode::OamSearch => self.stat & 0x20 != 0,
+            PpuMode::PixelTransfer => false,
+        }
+    }
+
+    /// The internal mode driving the STAT interrupt signal. HBlank extends
+    /// into the start of the next line (until the mode-2 condition rises);
+    /// VBlank starts 4 T-cycles into line 144 (on CGB hardware the mode-2
+    /// condition fires at the very start of line 144 instead).
+    fn mode_for_interrupt(&self) -> PpuMode {
+        if self.ly >= VBLANK_START {
+            if !self.cgb_mode && self.ly == VBLANK_START && self.mode_clock < 4 {
+                PpuMode::HBlank
+            } else {
+                PpuMode::VBlank
+            }
+        } else if self.mode_clock < self.oam_irq_rise() {
+            PpuMode::HBlank
+        } else if self.mode_clock <= self.oam_search_cycles() {
+            PpuMode::OamSearch
+        } else if self.mode_clock <= self.mode3_end_clock() {
+            PpuMode::PixelTransfer
+        } else {
+            PpuMode::HBlank
+        }
+    }
+
+    /// T-cycle within the line at which the mode-2 STAT condition rises.
+    fn oam_irq_rise(&self) -> u32 {
+        if self.ly == 0 { 5 } else { 1 }
+    }
+
+    /// T-cycle at which the mode-2 condition rises on VBlank lines 145-153.
+    /// Hardware measurement (mooneye intr_1_2_timing-GS) places the pulse
+    /// 12 T-cycles into the line.
+    fn vblank_oam_pulse_rise() -> u32 {
+        12
+    }
+
+    /// T-cycle at which mode 0 (HBlank) starts: end of mode 3, which is
+    /// extended by the fine-scroll penalty and sprite-fetch stalls.
+    fn mode3_end_clock(&self) -> u32 {
+        self.oam_search_cycles()
+            + T_CYCLES_PIXEL_TRANSFER
+            + self.mode3_scx_penalty
+            + self
+                .mode3_pipeline
+                .as_ref()
+                .map_or(self.mode3_sprite_penalty, |p| {
+                    u32::from(p.sprite_extra_dots()).max(self.mode3_sprite_penalty)
+                })
+    }
+
+    /// The LY=LYC coincidence signal feeding the STAT interrupt.
+    fn lyc_coincide(&self) -> bool {
+        if !self.cgb_mode && self.ly_for_comparison < 0 {
+            false
+        } else if self.cgb_mode {
+            self.ly == self.lyc
+        } else {
+            self.ly_for_comparison as u16 == u16::from(self.lyc)
+        }
+    }
+
+    /// Refresh the visible LY=LYC coincidence flag (STAT bit 2).
+    fn refresh_lyc_flag(&mut self) {
+        let coincide = self.lyc_coincide();
+        let bit2 = if coincide { 0x04 } else { 0x00 };
+        self.stat = (self.stat & !0x04) | bit2;
+        self.prev_lyc_coincide = coincide;
+    }
+
     fn step_dot(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
-        if self.mode_stat_delay != 0 {
-            self.mode_stat_delay -= 1;
-            if self.mode_stat_delay == 0 {
-                self.stat_irq_line = true;
-                *lcd_stat = true;
+        if self.vblank_if_countdown != 0 {
+            self.vblank_if_countdown -= 1;
+            if self.vblank_if_countdown == 0 {
+                *vblank = true;
             }
         }
         self.mode_clock += 1;
@@ -211,8 +354,16 @@ impl GbcPpu {
 
         self.start_pipeline_if_needed();
         self.step_pipeline();
-        self.advance_scanline(lcd_stat, vblank);
-        self.update_mode_and_stat(lcd_stat);
+        self.advance_scanline(vblank);
+        // Update the visible STAT mode bits; mode 3 clears the LCD-on
+        // forced STAT pulse (after this dot's signal evaluation).
+        let current_mode = self.current_mode();
+        self.stat = (self.stat & 0xFC) | current_mode as u8;
+        self.refresh_lyc_flag();
+        self.eval_stat_signal(lcd_stat);
+        if current_mode == PpuMode::PixelTransfer {
+            self.stat_forced = false;
+        }
         // Track the OAM row being scanned during mode 2 for the DMG OAM bug.
         if self.cgb_mode {
             self.accessed_oam_row = 0xFF;
@@ -230,6 +381,8 @@ impl GbcPpu {
     fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
+            self.mode3_scx_penalty = u32::from(self.scx & 7);
+            self.mode3_sprite_penalty = 0;
             self.mode3_pipeline = Some(Mode3Pipeline::new(
                 Registers {
                     lcdc: self.lcdc,
@@ -261,6 +414,7 @@ impl GbcPpu {
                 self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
                     output.color;
             }
+            self.mode3_sprite_penalty = u32::from(pipeline.sprite_extra_dots());
             if pipeline.complete() {
                 self.window_line = pipeline.final_window_line();
                 self.mode3_pipeline = None;
@@ -268,7 +422,7 @@ impl GbcPpu {
         }
     }
 
-    fn advance_scanline(&mut self, lcd_stat: &mut bool, vblank: &mut bool) {
+    fn advance_scanline(&mut self, vblank: &mut bool) {
         let line_length = if self.lcd_on_short_line {
             if self.cgb_mode { 432 } else { 375 }
         } else {
@@ -284,7 +438,8 @@ impl GbcPpu {
                 self.lcd_on_hblank_extra = 4;
             }
             if self.ly == VBLANK_START {
-                *vblank = true;
+                // The VBL IF is set 4 T-cycles after LY becomes 144.
+                self.vblank_if_countdown = 4;
             }
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
@@ -292,59 +447,6 @@ impl GbcPpu {
                 self.window_line = 0;
             }
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
-            self.check_lyc(lcd_stat);
-        }
-    }
-
-    fn update_mode_and_stat(&mut self, lcd_stat: &mut bool) {
-        let current_mode = self.current_mode();
-        let mode_changed = self.lcd_stat_last_mode != Some(current_mode);
-        self.lcd_stat_last_mode = Some(current_mode);
-        self.stat = (self.stat & 0xFC) | current_mode as u8;
-
-        // Mode 3 (PixelTransfer) clears the internal STAT interrupt line.
-        if current_mode == PpuMode::PixelTransfer {
-            self.stat_irq_line = false;
-        }
-        self.check_lyc(lcd_stat);
-
-        if mode_changed {
-            let enabled = match current_mode {
-                PpuMode::HBlank => self.stat & 0x08 != 0,
-                PpuMode::VBlank => self.stat & 0x10 != 0,
-                PpuMode::OamSearch => self.stat & 0x20 != 0,
-                PpuMode::PixelTransfer => false,
-            };
-            if enabled && !self.stat_irq_line {
-                self.mode_stat_delay = if current_mode == PpuMode::OamSearch && self.ly == 0 {
-                    5
-                } else {
-                    1
-                };
-            }
-        }
-    }
-
-    /// After a STAT register write, raise the mode interrupt immediately if
-    /// the PPU is already in a mode whose interrupt was just enabled. A
-    /// pending internal line blocks a new interrupt until cleared by mode 3.
-    fn check_stat_write(&mut self) {
-        if self.stat_irq_line {
-            return;
-        }
-        let current_mode = self.current_mode();
-        let enabled = match current_mode {
-            PpuMode::HBlank => self.stat & 0x08 != 0,
-            PpuMode::VBlank => self.stat & 0x10 != 0,
-            PpuMode::OamSearch => self.stat & 0x20 != 0,
-            PpuMode::PixelTransfer => false,
-        };
-        if enabled {
-            self.mode_stat_delay = if current_mode == PpuMode::OamSearch && self.ly == 0 {
-                5
-            } else {
-                1
-            };
         }
     }
 
@@ -355,11 +457,7 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock
-            <= self.oam_search_cycles()
-                + T_CYCLES_PIXEL_TRANSFER
-                + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()))
-        {
+        } else if self.mode_clock <= self.mode3_end_clock() {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -371,7 +469,7 @@ impl GbcPpu {
     /// though the real mode has already advanced to OAM search.
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
-        if self.ly < VBLANK_START && self.lcd_on_hblank_extra > 0 {
+        if self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0 {
             stat &= 0xFC;
         }
         stat
@@ -402,36 +500,6 @@ impl GbcPpu {
     /// (boot ROM emulation) to avoid overriding the desired default.
     pub fn raw_set_key0(&mut self, value: u8) {
         self.key0 = value;
-    }
-
-    fn check_lyc(&mut self, lcd_stat: &mut bool) {
-        if !self.cgb_mode && self.ly_for_comparison < 0 {
-            self.stat &= !0x04;
-            self.prev_lyc_coincide = false;
-            return;
-        }
-        let coincide = if self.cgb_mode {
-            self.ly == self.lyc
-        } else {
-            self.ly_for_comparison as u16 == u16::from(self.lyc)
-        };
-        let bit2 = if coincide { 0x04 } else { 0x00 };
-        self.stat = (self.stat & !0x04) | bit2;
-        // Fire LYC=LY interrupt only on a false->true edge of the
-        // comparison. Re-enabling the LCD while LY==LYC already held (or
-        // re-entering the same line) must not raise a second interrupt.
-        if coincide && !self.prev_lyc_coincide && (self.stat & 0x40) != 0 && !self.stat_irq_line {
-            self.stat_irq_line = true;
-            *lcd_stat = true;
-        }
-        // In mode 3, the comparison acts as a level: the line was cleared on
-        // mode-3 entry, so a still-holding comparison (with the LYC=LY
-        // interrupt enabled) re-asserts it.
-        if coincide && (self.stat & 0x40) != 0 && self.current_mode() == PpuMode::PixelTransfer
-        {
-            self.stat_irq_line = true;
-        }
-        self.prev_lyc_coincide = coincide;
     }
 
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
@@ -568,7 +636,7 @@ impl GbcPpu {
         let phase = phase % 70224;
         self.ly = (phase / T_CYCLES_PER_SCANLINE) as u8;
         self.mode_clock = phase % T_CYCLES_PER_SCANLINE;
-        self.lcd_stat_last_mode = Some(self.current_mode());
+        self.stat_signal = self.stat_signal_level();
         self.prev_lyc_coincide = self.ly == self.lyc;
     }
 
@@ -599,10 +667,7 @@ impl GbcPpu {
             && self.lcdc & 0x80 != 0
             && self.lcd_on_delay == 0
             && self.mode_clock >= self.oam_search_cycles()
-            && self.mode_clock
-                <= self.oam_search_cycles()
-                    + T_CYCLES_PIXEL_TRANSFER
-                    + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()))
+            && self.mode_clock <= self.mode3_end_clock()
         {
             return 0xFF;
         }
@@ -619,10 +684,7 @@ impl GbcPpu {
             && self.lcdc & 0x80 != 0
             && self.lcd_on_delay == 0
             && self.mode_clock > self.oam_search_cycles()
-            && self.mode_clock
-                <= self.oam_search_cycles()
-                    + T_CYCLES_PIXEL_TRANSFER
-                    + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()))
+            && self.mode_clock <= self.mode3_end_clock()
         {
             return;
         }
@@ -647,12 +709,7 @@ impl GbcPpu {
                     PpuMode::OamSearch | PpuMode::PixelTransfer
                 )
             } else {
-                self.mode_clock
-                    <= self.oam_search_cycles()
-                        + T_CYCLES_PIXEL_TRANSFER
-                        + u32::from(
-                            self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots())
-                        )
+                self.mode_clock <= self.mode3_end_clock()
             };
             if blocked {
                 return 0xFF;
@@ -667,10 +724,7 @@ impl GbcPpu {
             && self.lcd_on_delay == 0
             && self.mode_clock > 0
             && self.mode_clock != self.oam_search_cycles()
-            && self.mode_clock
-                <= self.oam_search_cycles()
-                    + T_CYCLES_PIXEL_TRANSFER
-                    + u32::from(self.mode3_pipeline.as_ref().map_or(0, |p| p.sprite_extra_dots()));
+            && self.mode_clock <= self.mode3_end_clock();
         if blocked {
             return;
         }
@@ -808,7 +862,6 @@ impl GbcPpu {
             0xFF40 => self.write_lcdc(value),
             0xFF41 => {
                 self.stat = (self.stat & 0x07) | (value & 0x78);
-                self.check_stat_write();
             }
             0xFF42 => self.scy = value,
             0xFF43 => self.scx = value,
@@ -818,8 +871,7 @@ impl GbcPpu {
                 // while the LCD is on. When off, the comparison clock is
                 // stopped and the coincidence bit is latched.
                 if self.lcdc & 0x80 != 0 {
-                    let mut lcd_stat = false;
-                    self.check_lyc(&mut lcd_stat);
+                    self.refresh_lyc_flag();
                 }
             }
             0xFF47 => self.bgp = value,
@@ -860,7 +912,6 @@ impl GbcPpu {
             // the LYC comparison clock is not running.
             self.lcd_on_delay = if self.cgb_mode { 20 } else { 77 };
             self.lcd_on_short_line = true;
-            self.lcd_stat_last_mode = Some(PpuMode::HBlank);
             self.ly_for_comparison = 0;
             self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
             // LY=0 at power-on. The comparison against LYC is evaluated on
@@ -869,8 +920,10 @@ impl GbcPpu {
             // the comparison was false while off) raises a new interrupt.
             self.ly = 0;
             self.stat &= !0x03;
+            // A mode-2 STAT interrupt pulse right after the LCD turns on
+            // when the OAM interrupt is enabled.
             if self.stat & 0x20 != 0 {
-                self.mode_stat_delay = 1;
+                self.stat_forced = true;
             }
         }
     }
@@ -978,7 +1031,9 @@ mod tests {
         step_ly(&mut p, VBLANK_START - 1);
         let r = p.step(T_CYCLES_PER_SCANLINE);
         assert_eq!(p.ly, VBLANK_START);
-        assert!(r.vblank);
+        // The VBL interrupt fires 4 T-cycles after LY becomes 144.
+        assert!(!r.vblank);
+        assert!(p.step(4).vblank);
     }
 
     #[test]
@@ -1040,9 +1095,11 @@ mod tests {
         let mut p = ppu();
         p.write_register(0xFF41, 0x10);
         step_ly(&mut p, VBLANK_START - 1);
-        let r = p.step(T_CYCLES_PER_SCANLINE);
+        // LY becomes 144 at the end of this line; the VBL IF and the mode-1
+        // STAT interrupt fire 4 T-cycles later.
+        let r = p.step(T_CYCLES_PER_SCANLINE + 4);
         assert!(r.vblank);
-        assert!(p.step(1).lcd_stat);
+        assert!(r.lcd_stat);
     }
 
     #[test]
@@ -1145,7 +1202,8 @@ mod tests {
         let mut p = ppu();
         step_ly(&mut p, VBLANK_START - 1);
 
-        assert!(p.step(T_CYCLES_PER_SCANLINE).vblank);
+        // 4 T-cycles into line 144.
+        assert!(p.step(T_CYCLES_PER_SCANLINE + 4).vblank);
         assert!(!p.step(T_CYCLES_PER_SCANLINE).vblank);
     }
 
@@ -1198,10 +1256,11 @@ mod tests {
         for _ in 0..144 {
             p.step(T_CYCLES_PER_SCANLINE);
         }
+        // Line 144's first 4 T-cycles still belong to the previous HBlank,
+        // so the mode-1 condition is only met from T-cycle 4 on.
         p.step(1);
         p.write_register(0xFF41, 0x10);
-        // Mode 1 interrupt fires immediately (delay 1 T-cycle).
-        assert!(p.step(1).lcd_stat);
+        assert!(p.step(4).lcd_stat);
     }
 
     #[test]
@@ -1210,7 +1269,11 @@ mod tests {
         for _ in 0..144 {
             p.step(T_CYCLES_PER_SCANLINE);
         }
+        // The mode bits read as 0 (HBlank) for the first 4 T-cycles of
+        // line 144, then as 1 (VBlank).
         p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+        p.step(3);
         assert_eq!(p.read_register(0xFF41) & 0x03, 1);
     }
 

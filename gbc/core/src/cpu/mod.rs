@@ -93,56 +93,68 @@ impl CpuStepper for Lr35902Cpu {
             },
             Phase::InterruptDispatch {
                 step,
+                half,
                 pending_ie,
                 pending_if,
-            } => match step {
-                1 => self.set_phase(Phase::InterruptDispatch {
-                    step: 2,
-                    pending_ie,
-                    pending_if,
-                }),
-                2 => {
-                    let sp = self.registers().sp().wrapping_sub(1);
-                    self.registers_mut().set_sp(sp);
-                    bus.write(sp, (self.registers().pc() >> 8) as u8);
-                    // The high-byte push may have written to the IE register
-                    // ($FFFF); snapshot IE now for the dispatch decision.
-                    let pending_ie = bus.read_ie();
+            } => {
+                // In CGB double-speed mode the dispatch still takes
+                // 20 T-cycles, so each step lasts two CPU M-cycles.
+                if bus.is_double_speed() && !half {
                     self.set_phase(Phase::InterruptDispatch {
-                        step: 3,
+                        step,
+                        half: true,
                         pending_ie,
                         pending_if,
                     });
+                    return;
                 }
-                3 => {
-                    let sp = self.registers().sp().wrapping_sub(1);
-                    self.registers_mut().set_sp(sp);
-                    // If the low-byte push targets the IF register ($FF0F),
-                    // the dispatch decision uses the pre-write IF value.
-                    let pending_if = bus.read_if_raw();
-                    bus.write(sp, self.registers().pc() as u8);
-                    self.set_phase(Phase::InterruptDispatch {
-                        step: 4,
+                let next = |cpu: &mut Self, step, pending_ie, pending_if| {
+                    cpu.set_phase(Phase::InterruptDispatch {
+                        step,
+                        half: false,
                         pending_ie,
                         pending_if,
                     });
-                }
-                4 => {
-                    // Re-evaluate IE & IF after the pushes (the pushes can
-                    // modify IE/IF, cancelling or changing the dispatch).
-                    let queue = pending_ie & pending_if & 0x1F;
-                    if queue != 0 {
-                        let n = queue.trailing_zeros() as u8;
-                        bus.clear_if_bit(n);
-                        self.registers_mut().set_pc((n as u16) * 8 + 0x40);
-                    } else {
-                        // Dispatch cancelled: PC is set to 0, IF untouched.
-                        self.registers_mut().set_pc(0);
+                };
+                match step {
+                    1 => next(self, 2, pending_ie, pending_if),
+                    2 => {
+                        let sp = self.registers().sp().wrapping_sub(1);
+                        self.registers_mut().set_sp(sp);
+                        bus.write(sp, (self.registers().pc() >> 8) as u8);
+                        // The high-byte push may have written to the IE
+                        // register ($FFFF); snapshot IE now for the dispatch
+                        // decision.
+                        let pending_ie = bus.read_ie();
+                        next(self, 3, pending_ie, pending_if);
                     }
-                    self.set_phase(Phase::FetchOpcode);
+                    3 => {
+                        let sp = self.registers().sp().wrapping_sub(1);
+                        self.registers_mut().set_sp(sp);
+                        // If the low-byte push targets the IF register
+                        // ($FF0F), the dispatch decision uses the pre-write
+                        // IF value.
+                        let pending_if = bus.read_if_raw();
+                        bus.write(sp, self.registers().pc() as u8);
+                        next(self, 4, pending_ie, pending_if);
+                    }
+                    4 => {
+                        // Re-evaluate IE & IF after the pushes (the pushes can
+                        // modify IE/IF, cancelling or changing the dispatch).
+                        let queue = pending_ie & pending_if & 0x1F;
+                        if queue != 0 {
+                            let n = queue.trailing_zeros() as u8;
+                            bus.clear_if_bit(n);
+                            self.registers_mut().set_pc((n as u16) * 8 + 0x40);
+                        } else {
+                            // Dispatch cancelled: PC is set to 0, IF untouched.
+                            self.registers_mut().set_pc(0);
+                        }
+                        self.set_phase(Phase::FetchOpcode);
+                    }
+                    _ => unreachable!("invalid interrupt dispatch step"),
                 }
-                _ => unreachable!("invalid interrupt dispatch step"),
-            },
+            }
         }
     }
 }
@@ -160,6 +172,7 @@ impl Lr35902Cpu {
         {
             self.set_phase(Phase::InterruptDispatch {
                 step: 1,
+                half: false,
                 pending_ie: 0,
                 pending_if: 0,
             });
