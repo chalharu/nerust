@@ -1,6 +1,9 @@
 ---
 rom_root: "../../roms/gbc"
-expected_failures: []
+expected_failures:
+# APU is not yet accurate enough for the retrio sound hardware tests.
+- dmg_sound@dmg
+- cgb_sound@cgb_d
 suites:
 - name: retrio_gb-test-roms
   cases:

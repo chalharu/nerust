@@ -62,6 +62,9 @@ pub struct GbcMemoryBus {
 
     double_speed: bool,
     speed_switch_pending: bool,
+    /// KEY1 reads $FF before the boot ROM finishes (i.e. while the harness
+    /// has not written $FF50). After boot it reports speed/pending bits.
+    key1_boot_value: bool,
 
     hdma: HdmaController,
 
@@ -112,6 +115,7 @@ impl GbcMemoryBus {
 
             double_speed: false,
             speed_switch_pending: false,
+            key1_boot_value: true,
 
             hdma: HdmaController::new(),
             cgb_mode: false,
@@ -270,6 +274,7 @@ impl GbcMemoryBus {
              0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
+                    self.key1_boot_value = false;
                 }
             }
              0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
@@ -416,6 +421,14 @@ impl GbcMemoryBus {
 
     pub fn set_joypad(&mut self, state: u8) {
         self.joypad = state;
+    }
+
+    /// Mark the post-boot state without making KEY1 report post-boot values:
+    /// used by the ROM-test harness, which skips the boot ROM entirely, so
+    /// KEY1 keeps reading its boot-time $FF (mooneye boot_hwio-C) while the
+    /// rest of the bus behaves as post-boot.
+    pub fn mark_post_boot_neutral(&mut self) {
+        self.key1_boot_value = true;
     }
 
     /// Apply the post-boot IO state the boot ROM leaves behind (mooneye
@@ -620,8 +633,14 @@ impl GbcMemoryBus {
 
     fn read_key1(&self) -> u8 {
         // KEY1 ($FF4D): bit 7 reads the current CPU speed (1 = double),
-        // bit 0 the armed speed-switch flag; bits 1-6 read as 1.
-        0x7E | (u8::from(self.double_speed) << 7) | u8::from(self.speed_switch_pending)
+        // bit 0 the armed speed-switch flag. Before the boot ROM finishes
+        // ($FF50 write) the register reads as $FF (mooneye boot_hwio-C);
+        // afterwards unused bits read as 1 ($7E baseline).
+        if self.key1_boot_value {
+            0xFF
+        } else {
+            0x7E | (u8::from(self.double_speed) << 7) | u8::from(self.speed_switch_pending)
+        }
     }
 
     fn write_key1(&mut self, value: u8) {
@@ -866,9 +885,13 @@ mod tests {
     #[test]
     fn read_key1_reports_speed_and_pending_flag() {
         // KEY1 is only readable on CGB hardware (DMG reads $FF).
-        // Bit 7 = current speed, bit 0 = armed switch, rest read 1.
+        // Before the boot ROM finishes ($FF50 write) it reads $FF even on
+        // CGB; afterwards bit 7 = current speed, bit 0 = armed switch.
         assert_eq!(bus().read(0xFF4D), 0xFF);
-        assert_eq!(cgb_bus().read(0xFF4D), 0x7E);
+        let mut cgb = cgb_bus();
+        assert_eq!(cgb.read(0xFF4D), 0xFF);
+        cgb.write(0xFF50, 0x01);
+        assert_eq!(cgb.read(0xFF4D), 0x7E);
     }
 
     #[test]

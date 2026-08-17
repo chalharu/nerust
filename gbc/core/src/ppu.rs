@@ -200,6 +200,18 @@ impl GbcPpu {
                     lcd_stat = true;
                 }
                 self.stat_signal = signal;
+                if self.lcd_on_delay == 0 {
+                    // The first line starts at mode 2 (OAM search), so the
+                    // mode-2 STAT condition is active right away. Raise the
+                    // mode bits and evaluate once more at the handoff.
+                    self.stat = (self.stat & 0xFC) | PpuMode::OamSearch as u8;
+                    self.refresh_lyc_flag();
+                    let signal = self.stat_signal_level();
+                    if signal && !self.stat_signal {
+                        lcd_stat = true;
+                    }
+                    self.stat_signal = signal;
+                }
                 continue;
             }
             self.step_dot(&mut lcd_stat, &mut vblank);
@@ -283,7 +295,7 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock <= self.mode3_end_clock() {
+        } else if self.mode_clock < self.mode3_end_clock() {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -300,6 +312,22 @@ impl GbcPpu {
     /// 12 T-cycles into the line.
     fn vblank_oam_pulse_rise() -> u32 {
         12
+    }
+
+    /// T-cycles between LY becoming 144 and the VBL IF being set.
+    fn vblank_if_delay() -> u8 {
+        4
+    }
+
+    /// DMG LCD power-on delay (T-cycles).
+    fn lcd_on_delay_dmg() -> u32 {
+        77
+    }
+
+    /// T-cycles subtracted from the first line after the LCD is turned on
+    /// (DMG): the first line is 81 T-cycles shorter than a normal scanline.
+    fn lcd_on_short_dmg() -> u32 {
+        81
     }
 
     /// T-cycle at which mode 0 (HBlank) starts: end of mode 3, which is
@@ -354,7 +382,7 @@ impl GbcPpu {
 
         self.start_pipeline_if_needed();
         self.step_pipeline();
-        self.advance_scanline(vblank);
+        self.advance_scanline();
         // Update the visible STAT mode bits; mode 3 clears the LCD-on
         // forced STAT pulse (after this dot's signal evaluation).
         let current_mode = self.current_mode();
@@ -422,9 +450,13 @@ impl GbcPpu {
         }
     }
 
-    fn advance_scanline(&mut self, vblank: &mut bool) {
+    fn advance_scanline(&mut self) {
         let line_length = if self.lcd_on_short_line {
-            if self.cgb_mode { 432 } else { 375 }
+            if self.cgb_mode {
+                432
+            } else {
+                T_CYCLES_PER_SCANLINE - Self::lcd_on_short_dmg()
+            }
         } else {
             T_CYCLES_PER_SCANLINE
         };
@@ -439,7 +471,7 @@ impl GbcPpu {
             }
             if self.ly == VBLANK_START {
                 // The VBL IF is set 4 T-cycles after LY becomes 144.
-                self.vblank_if_countdown = 4;
+                self.vblank_if_countdown = Self::vblank_if_delay();
             }
             if self.ly >= SCANLINES_PER_FRAME {
                 self.ly = 0;
@@ -457,7 +489,7 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock <= self.mode3_end_clock() {
+        } else if self.mode_clock < self.mode3_end_clock() {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -476,10 +508,14 @@ impl GbcPpu {
     }
 
     /// Mode 2 is 76 T-cycles (not 80) on the first line after the LCD is
-    /// turned on.
+    /// turned on; on the DMG there is no OAM search on that line at all.
     fn oam_search_cycles(&self) -> u32 {
         if self.lcd_on_short_line {
-            if self.cgb_mode { 76 } else { 0 }
+            if self.cgb_mode {
+                76
+            } else {
+                0
+            }
         } else {
             T_CYCLES_OAM_SEARCH
         }
