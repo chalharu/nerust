@@ -64,6 +64,15 @@ fn main() {
                 );
             }
         }
+        if std::env::var("TRACE_RANGE").is_ok() {
+            let pc = cpu.registers().pc();
+            if (0x150..=0x400).contains(&pc) || pc == 0x48 {
+                eprintln!(
+                    "M{} pc={:04x} ly={} clock_stat={:02x} if={:02x}",
+                    mcycle, pc, bus.read(0xFF44), bus.read(0xFF41), bus.read(0xFF0F)
+                );
+            }
+        }
         let ly = bus.read(0xFF44);
         let stat = bus.read(0xFF41);
         let if_ = bus.read(0xFF0F);
@@ -107,6 +116,27 @@ fn main() {
     let out = bus.serial_output();
     eprintln!("SERIAL: {}", String::from_utf8_lossy(out));
     eprintln!("SERIAL HEX: {}", out.iter().map(|b| format!("{:02X}", b)).collect::<String>());
+
+    // Dump mooneye lcdon_timing-style pass results (HRAM buffers) when asked.
+    if let Ok(base) = std::env::var("DUMP_HRAM") {
+        let base = u16::from_str_radix(base.trim_start_matches("0x"), 16).unwrap();
+        let mut bytes = Vec::new();
+        for i in 0..24u16 {
+            bytes.push(bus.read(0xFF80 + base + i));
+        }
+        eprintln!(
+            "HRAM[{:04x}]: {}",
+            base,
+            bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
+        );
+    }
+    if std::env::var("DUMP_ALL_HRAM").is_ok() {
+        for row in 0..8u16 {
+            let base = 0xFF80 + row * 16;
+            let bytes: Vec<String> = (0..16).map(|i| format!("{:02x}", bus.read(base + i))).collect();
+            eprintln!("{:04x}: {}", base, bytes.join(" "));
+        }
+    }
 
     // Dump BG tilemap $9800 as text (mooneye harness writes results there;
     // the font is ASCII tiles loaded at VRAM tile 1 = char 0x20).
