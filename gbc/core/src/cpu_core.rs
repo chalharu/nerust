@@ -34,6 +34,10 @@ pub(crate) enum Phase {
     /// IE/IF registers, cancelling or changing the dispatch — mooneye ie_push).
     InterruptDispatch {
         step: u8,
+        /// Second half of a step in CGB double-speed mode: the dispatch is
+        /// a fixed 20 T-cycle sequence regardless of the CPU speed, so each
+        /// dispatch M-cycle lasts two (faster) M-cycles in double speed.
+        half: bool,
         /// IE snapshot taken after the high-byte PC push.
         pending_ie: u8,
         /// IF value used for the dispatch decision (old IF if the low-byte
