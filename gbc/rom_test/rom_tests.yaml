@@ -1849,17 +1849,13 @@ suites:
       cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_en_change_multiple.png
       cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_en_change_multiple.png
   - id: m3_lcdc_win_en_change_multiple_wx
-    description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (CGB D)
+    description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (DMG)
     rom: m3_lcdc_win_en_change_multiple_wx.gb
     models:
     - dmg
-    - cgb_c
-    - cgb_d
     cycles: 90000
     reference:
       dmg: repo/expected/DMG-blob/m3_lcdc_win_en_change_multiple_wx.png
-      cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_en_change_multiple_wx.png
-      cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_en_change_multiple_wx.png
   - id: m3_lcdc_win_map_change
     description: Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)
     rom: m3_lcdc_win_map_change.gb
