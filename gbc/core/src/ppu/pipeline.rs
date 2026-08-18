@@ -1184,7 +1184,16 @@ impl Mode3Pipeline {
     }
 
     fn apply_bg_enable(&mut self, value: u8) {
-        let delay = if !self.cgb_revision_d {
+        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        let immediate_dmg_disable = !self.cgb_mode
+            && value & 1 == 0
+            && self.pixel_x == 0
+            && object_x == Some(-6);
+        let delay = if immediate_dmg_disable {
+            0
+        } else if !self.cgb_mode {
+            1
+        } else if !self.cgb_revision_d {
             2
         } else if self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0 {
             0
@@ -1866,5 +1875,31 @@ mod tests {
         assert_eq!(pipeline.output_stall, 0);
         assert_eq!(pipeline.sprite_extra_dots, 0);
         assert_eq!(pipeline.pending_obj_enable, Some((1, 0)));
+    }
+
+    #[test]
+    fn dmg_bg_disable_is_immediate_at_clipped_x_minus_six() {
+        let sprite = Sprite {
+            x: -6,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            vec![sprite],
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.next_sprite = 1;
+        pipeline.apply_bg_enable(0);
+        assert_eq!(pipeline.registers.lcdc & 1, 0);
+        assert_eq!(pipeline.pending_bg_enable, None);
     }
 }
