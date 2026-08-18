@@ -1200,7 +1200,21 @@ impl Mode3Pipeline {
     }
 
     fn apply_obj_enable(&mut self, value: u8) {
-        if self.output_stall >= 2 {
+        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        if !self.cgb_mode
+            && value & 2 == 0
+            && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 0)
+        {
+            self.sprite_fetch = None;
+            self.sprite_extra_dots = self.sprite_extra_dots.saturating_sub(self.output_stall);
+            self.output_stall = 0;
+        }
+        if !self.cgb_mode && value & 2 == 0 && self.pixel_x == 0 && object_x == Some(-6) {
+            self.registers.lcdc &= !2;
+            self.pending_obj_enable = None;
+        } else if !self.cgb_mode {
+            self.pending_obj_enable = Some((1, value & 2));
+        } else if self.output_stall >= 2 {
             self.registers.lcdc = (self.registers.lcdc & !2) | (value & 2);
             self.pending_obj_enable = None;
         } else {
@@ -1811,5 +1825,46 @@ mod tests {
 
         assert_eq!(pipeline.registers.scx, 0x20);
         assert_eq!(pipeline.pending_scx_high, None);
+    }
+
+    #[test]
+    fn dmg_obj_disable_cancels_sprite_fetch_at_dot_zero() {
+        let sprite = Sprite {
+            x: 8,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            vec![sprite],
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.next_sprite = 1;
+        pipeline.output_stall = 6;
+        pipeline.sprite_extra_dots = 6;
+        pipeline.sprite_fetch = Some(SpriteFetch {
+            sprite,
+            bg_wait: 0,
+            advance_bg: true,
+            dot: 0,
+            low: 0,
+            high: 0,
+            height: 8,
+            data_address: 0,
+        });
+        pipeline.apply_obj_enable(0);
+
+        assert!(pipeline.sprite_fetch.is_none());
+        assert_eq!(pipeline.output_stall, 0);
+        assert_eq!(pipeline.sprite_extra_dots, 0);
+        assert_eq!(pipeline.pending_obj_enable, Some((1, 0)));
     }
 }
