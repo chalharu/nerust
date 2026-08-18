@@ -299,18 +299,24 @@ impl Mode3Pipeline {
         self.last_bg_data_read = None;
         self.deliver_register_writes();
         if self.step_startup(vram) {
+            self.advance_bgp_write();
             return None;
         }
         if self.window_start_delay != 0 {
             self.window_start_delay -= 1;
+            self.advance_bgp_write();
             return None;
         }
         self.step_fetch_and_sprites(vram);
         if self.output_stall != 0 {
             self.output_stall -= 1;
+            self.advance_bgp_write();
             return None;
         }
-        let output = self.emit_output_pixel(bg_palette, obj_palette)?;
+        let Some(output) = self.emit_output_pixel(bg_palette, obj_palette) else {
+            self.advance_bgp_write();
+            return None;
+        };
         self.advance_pending_countdowns();
         Some(output)
     }
@@ -452,6 +458,10 @@ impl Mode3Pipeline {
                 self.pending_obj_enable = None;
             }
         }
+        self.advance_bgp_write();
+    }
+
+    fn advance_bgp_write(&mut self) {
         if let Some((countdown, value)) = self.pending_bgp.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -1357,7 +1367,9 @@ impl Mode3Pipeline {
     }
 
     fn write_bgp(&mut self, value: u8) {
-        if self.ly != 0
+        if self.cgb_mode && !self.cgb_revision_d {
+            self.pending_bgp = Some((1, value));
+        } else if self.ly != 0
             && self.registers.wx == 0
             && self.registers.scx & 7 == 0
             && self.registers.lcdc & 0x20 != 0
@@ -1565,5 +1577,27 @@ mod tests {
             assert_eq!(pipeline.pending_map_select, Some((expected_delay, 0x08)));
             assert!(pipeline.refetch_push_map);
         }
+    }
+
+    #[test]
+    fn cgb_c_bgp_write_advances_during_sprite_stall() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            Vec::new(),
+            true,
+            true,
+            false,
+            0,
+        );
+        pipeline.startup_dots = 0;
+        pipeline.output_stall = 2;
+        pipeline.write_bgp(0x1B);
+
+        assert_eq!(pipeline.registers.bgp, 0xE4);
+        pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
+        assert_eq!(pipeline.registers.bgp, 0x1B);
     }
 }
