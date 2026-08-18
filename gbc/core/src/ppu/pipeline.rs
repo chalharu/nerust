@@ -1367,7 +1367,16 @@ impl Mode3Pipeline {
         if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
             self.fine_discard = value & 7;
         }
-        let defer_high = if self.cgb_revision_d {
+        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        let cgb_c_sprite_phase = self.cgb_mode
+            && !self.cgb_revision_d
+            && ((self.fetcher.stage == FetchStage::Push
+                && self.bg_fifo.len() == 2
+                && object_x == Some(0))
+                || (self.fetcher.stage == FetchStage::Sleep
+                    && self.output_stall == 2
+                    && matches!((self.bg_fifo.len(), object_x), (8, Some(8)) | (7, Some(9)))));
+        let defer_high = if self.cgb_revision_d || cgb_c_sprite_phase {
             (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
                 || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
         } else {
@@ -1772,5 +1781,35 @@ mod tests {
         pipeline.apply_window_map_change(0x40);
         assert_eq!(pipeline.registers.lcdc & 0x40, 0x40);
         assert_eq!(pipeline.pending_map_select, None);
+    }
+
+    #[test]
+    fn cgb_c_scx_high_bits_are_immediate_at_sprite_x_zero_push() {
+        let sprite = Sprite {
+            x: 0,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            64,
+            0,
+            false,
+            vec![sprite],
+            true,
+            true,
+            false,
+            0,
+        );
+        pipeline.next_sprite = 1;
+        pipeline.fetcher.stage = FetchStage::Push;
+        pipeline.bg_fifo.push_back(BgPixel::default());
+        pipeline.bg_fifo.push_back(BgPixel::default());
+        pipeline.write_scx(0x20);
+
+        assert_eq!(pipeline.registers.scx, 0x20);
+        assert_eq!(pipeline.pending_scx_high, None);
     }
 }
