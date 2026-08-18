@@ -301,22 +301,22 @@ impl Mode3Pipeline {
         self.last_bg_data_read = None;
         self.deliver_register_writes();
         if self.step_startup(vram) {
-            self.advance_bgp_write();
+            self.advance_dot_writes(!self.cgb_revision_d);
             return None;
         }
         if self.window_start_delay != 0 {
             self.window_start_delay -= 1;
-            self.advance_bgp_write();
+            self.advance_dot_writes(!self.cgb_revision_d);
             return None;
         }
         self.step_fetch_and_sprites(vram);
         if self.output_stall != 0 {
             self.output_stall -= 1;
-            self.advance_bgp_write();
+            self.advance_dot_writes(!self.cgb_revision_d);
             return None;
         }
         let Some(output) = self.emit_output_pixel(bg_palette, obj_palette) else {
-            self.advance_bgp_write();
+            self.advance_dot_writes(!self.cgb_revision_d);
             return None;
         };
         self.advance_pending_countdowns();
@@ -446,24 +446,24 @@ impl Mode3Pipeline {
     }
 
     fn advance_pending_countdowns(&mut self) {
-        if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
+        self.advance_dot_writes(true);
+    }
+
+    fn advance_dot_writes(&mut self, advance_lcdc: bool) {
+        if advance_lcdc && let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
                 self.registers.lcdc = (self.registers.lcdc & !1) | *value;
                 self.pending_bg_enable = None;
             }
         }
-        if let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
+        if advance_lcdc && let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
                 self.registers.lcdc = (self.registers.lcdc & !2) | *value;
                 self.pending_obj_enable = None;
             }
         }
-        self.advance_bgp_write();
-    }
-
-    fn advance_bgp_write(&mut self) {
         if let Some((countdown, value)) = self.pending_bgp.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -1704,5 +1704,30 @@ mod tests {
         );
         pipeline.write_bgp(0x1B);
         assert_eq!(pipeline.pending_bgp, Some((8, 0x1B)));
+    }
+
+    #[test]
+    fn cgb_c_lcdc_enable_latch_advances_during_stalls() {
+        for (revision_d, expected_countdown) in [(false, 1), (true, 2)] {
+            let mut pipeline = Mode3Pipeline::new(
+                registers(),
+                0,
+                0,
+                false,
+                Vec::new(),
+                true,
+                true,
+                revision_d,
+                0,
+            );
+            pipeline.startup_dots = 0;
+            pipeline.output_stall = 1;
+            pipeline.pending_bg_enable = Some((2, 0));
+            pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
+            assert_eq!(
+                pipeline.pending_bg_enable.map(|(countdown, _)| countdown),
+                Some(expected_countdown)
+            );
+        }
     }
 }
