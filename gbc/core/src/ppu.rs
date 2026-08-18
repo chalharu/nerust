@@ -513,7 +513,7 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock < self.mode3_end_clock() {
+        } else if self.mode_clock <= self.mode3_end_clock() {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -1291,6 +1291,16 @@ mod tests {
     fn stat_mode_is_0_during_hblank() {
         let mut p = ppu();
         let _ = p.step(260);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+    }
+
+    #[test]
+    fn stat_mode_keeps_final_pixel_transfer_t_cycle_visible() {
+        let mut p = ppu();
+        p.mode_clock = p.mode3_end_clock() - 1;
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 0x03, 3);
+        p.step(1);
         assert_eq!(p.read_register(0xFF41) & 0x03, 0);
     }
 
