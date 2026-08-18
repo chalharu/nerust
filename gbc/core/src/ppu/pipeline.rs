@@ -184,6 +184,7 @@ pub(super) struct Mode3Pipeline {
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
+    pending_obp: Option<(u8, u8, u8)>,
     pending_obj_size: Option<(u8, u8)>,
     relatch_obj_size_high: bool,
     pending_scy: Option<(u8, u8)>,
@@ -260,6 +261,7 @@ impl Mode3Pipeline {
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
+            pending_obp: None,
             pending_obj_size: None,
             relatch_obj_size_high: false,
             pending_scy: None,
@@ -467,6 +469,17 @@ impl Mode3Pipeline {
             if *countdown == 0 {
                 self.registers.bgp = *value;
                 self.pending_bgp = None;
+            }
+        }
+        if let Some((countdown, register, value)) = self.pending_obp.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                if *register == 0 {
+                    self.registers.obp0 = *value;
+                } else {
+                    self.registers.obp1 = *value;
+                }
+                self.pending_obp = None;
             }
         }
     }
@@ -1111,6 +1124,12 @@ impl Mode3Pipeline {
             }
             0xFF43 => self.write_scx(value),
             0xFF47 => self.write_bgp(value),
+            0xFF48 if self.cgb_mode && !self.cgb_revision_d => {
+                self.pending_obp = Some((1, 0, value));
+            }
+            0xFF49 if self.cgb_mode && !self.cgb_revision_d => {
+                self.pending_obp = Some((1, 1, value));
+            }
             0xFF48 => self.registers.obp0 = value,
             0xFF49 => self.registers.obp1 = value,
             0xFF4A => self.registers.wy = value,
@@ -1629,5 +1648,27 @@ mod tests {
         pipeline.write_bgp(0x2D);
         assert_eq!(pipeline.pending_bgp, None);
         assert_eq!(pipeline.registers.bgp, 0x2D);
+    }
+
+    #[test]
+    fn cgb_c_obj_palette_write_latches_after_one_dot() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            Vec::new(),
+            true,
+            true,
+            false,
+            0,
+        );
+        pipeline.startup_dots = 0;
+        pipeline.output_stall = 1;
+        pipeline.write_register(0xFF48, 0x1B);
+        assert_eq!(pipeline.registers.obp0, 0xE4);
+
+        pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
+        assert_eq!(pipeline.registers.obp0, 0x1B);
     }
 }
