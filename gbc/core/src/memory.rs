@@ -310,7 +310,10 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
         self.apu.step(video);
-        if self.timer.step(1).overflow {
+        // DIV/TIMA are driven by the CPU clock. They advance twice per PPU
+        // dot in CGB double-speed mode, while PPU/APU keep their normal rate.
+        let timer_cycles = if self.double_speed { 2 } else { 1 };
+        if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
         if t1 == 3 && self.serial.step() {
@@ -375,7 +378,10 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
         self.apu.step(video);
-        if self.timer.step(1).overflow {
+        // DIV/TIMA are driven by the CPU clock. They advance twice per PPU
+        // dot in CGB double-speed mode, while PPU/APU keep their normal rate.
+        let timer_cycles = if self.double_speed { 2 } else { 1 };
+        if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
         if self.dma.active() {
@@ -423,12 +429,11 @@ impl GbcMemoryBus {
         self.joypad = state;
     }
 
-    /// Mark the post-boot state without making KEY1 report post-boot values:
-    /// used by the ROM-test harness, which skips the boot ROM entirely, so
-    /// KEY1 keeps reading its boot-time $FF (mooneye boot_hwio-C) while the
-    /// rest of the bus behaves as post-boot.
-    pub fn mark_post_boot_neutral(&mut self) {
-        self.key1_boot_value = true;
+    /// Apply KEY1's post-boot visibility for the effective game mode.
+    /// Native CGB games can read the speed/switch bits, while a CGB running
+    /// a DMG-compatible game reads $FF (mooneye boot_hwio-C).
+    pub fn set_post_boot_key1(&mut self, cgb_game: bool) {
+        self.key1_boot_value = !cgb_game;
     }
 
     /// Apply the post-boot IO state the boot ROM leaves behind (mooneye
@@ -890,8 +895,15 @@ mod tests {
         assert_eq!(bus().read(0xFF4D), 0xFF);
         let mut cgb = cgb_bus();
         assert_eq!(cgb.read(0xFF4D), 0xFF);
-        cgb.write(0xFF50, 0x01);
+        cgb.set_post_boot_key1(true);
         assert_eq!(cgb.read(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn read_key1_stays_ff_in_cgb_dmg_compatibility_mode() {
+        let mut cgb = cgb_bus();
+        cgb.set_post_boot_key1(false);
+        assert_eq!(cgb.read(0xFF4D), 0xFF);
     }
 
     #[test]

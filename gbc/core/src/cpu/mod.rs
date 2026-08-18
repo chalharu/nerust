@@ -93,25 +93,12 @@ impl CpuStepper for Lr35902Cpu {
             },
             Phase::InterruptDispatch {
                 step,
-                half,
                 pending_ie,
                 pending_if,
             } => {
-                // In CGB double-speed mode the dispatch still takes
-                // 20 T-cycles, so each step lasts two CPU M-cycles.
-                if bus.is_double_speed() && !half {
-                    self.set_phase(Phase::InterruptDispatch {
-                        step,
-                        half: true,
-                        pending_ie,
-                        pending_if,
-                    });
-                    return;
-                }
                 let next = |cpu: &mut Self, step, pending_ie, pending_if| {
                     cpu.set_phase(Phase::InterruptDispatch {
                         step,
-                        half: false,
                         pending_ie,
                         pending_if,
                     });
@@ -172,7 +159,6 @@ impl Lr35902Cpu {
         {
             self.set_phase(Phase::InterruptDispatch {
                 step: 1,
-                half: false,
                 pending_ie: 0,
                 pending_if: 0,
             });

@@ -129,10 +129,9 @@ fn run_cell(
         bus.set_ppu_frame_phase(66220);
     }
     bus.set_post_boot_io(hw_is_cgb);
-    // The harness skips the boot ROM; boot-time-only registers (e.g. KEY1)
-    // still read their boot-time values unless the test writes $FF50.
-    // boot_hwio-C measures KEY1=$FF in this state.
-    bus.mark_post_boot_neutral();
+    // The harness skips the boot ROM. Native CGB games see KEY1's speed bits;
+    // CGB hardware running a DMG-compatible game reads $FF (boot_hwio-C).
+    bus.set_post_boot_key1(hw_is_cgb && rom_is_cgb);
     let mut cpu = match cell.model {
         GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
         GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
