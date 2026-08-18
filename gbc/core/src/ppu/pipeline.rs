@@ -1386,14 +1386,7 @@ impl Mode3Pipeline {
     }
 
     fn write_bgp(&mut self, value: u8) {
-        if (self.cgb_mode && !self.cgb_revision_d)
-            || (self.ly == 0
-                && self.window_active
-                && self.registers.wx == 0
-                && !self.wx_written)
-        {
-            self.pending_bgp = Some((1, value));
-        } else if self.ly != 0
+        if self.ly != 0
             && self.registers.wx == 0
             && self.registers.scx & 7 == 0
             && self.registers.lcdc & 0x20 != 0
@@ -1401,7 +1394,28 @@ impl Mode3Pipeline {
             && !self.wx_written
             && value != 0
         {
-            self.pending_bgp = Some((7, value));
+            let delay = if self.cgb_mode && !self.cgb_revision_d {
+                8
+            } else {
+                7
+            };
+            self.pending_bgp = Some((delay, value));
+        } else if (self.cgb_mode && !self.cgb_revision_d)
+            || (self.ly == 0
+                && self.window_active
+                && self.registers.wx == 0
+                && !self.wx_written)
+        {
+            let stable_line_zero_window = self.ly == 0
+                && self.window_active
+                && self.registers.wx == 0
+                && !self.wx_written;
+            let delay = if self.cgb_mode && !self.cgb_revision_d && stable_line_zero_window {
+                2
+            } else {
+                1
+            };
+            self.pending_bgp = Some((delay, value));
         } else {
             self.registers.bgp = value;
             self.pending_bgp = None;
@@ -1670,5 +1684,25 @@ mod tests {
 
         pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
         assert_eq!(pipeline.registers.obp0, 0x1B);
+    }
+
+    #[test]
+    fn cgb_c_wx_zero_aligned_bgp_quirk_takes_eight_dots() {
+        let mut regs = registers();
+        regs.lcdc |= 0x20;
+        regs.wx = 0;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            8,
+            0,
+            true,
+            Vec::new(),
+            true,
+            true,
+            false,
+            0,
+        );
+        pipeline.write_bgp(0x1B);
+        assert_eq!(pipeline.pending_bgp, Some((8, 0x1B)));
     }
 }
