@@ -1367,7 +1367,12 @@ impl Mode3Pipeline {
     }
 
     fn write_bgp(&mut self, value: u8) {
-        if self.cgb_mode && !self.cgb_revision_d {
+        if (self.cgb_mode && !self.cgb_revision_d)
+            || (self.ly == 0
+                && self.window_active
+                && self.registers.wx == 0
+                && !self.wx_written)
+        {
             self.pending_bgp = Some((1, value));
         } else if self.ly != 0
             && self.registers.wx == 0
@@ -1599,5 +1604,30 @@ mod tests {
         assert_eq!(pipeline.registers.bgp, 0xE4);
         pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
         assert_eq!(pipeline.registers.bgp, 0x1B);
+    }
+
+    #[test]
+    fn line_zero_wx_zero_bgp_latch_requires_stable_wx() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.window_active = true;
+        pipeline.registers.wx = 0;
+        pipeline.write_bgp(0x1B);
+        assert_eq!(pipeline.pending_bgp, Some((1, 0x1B)));
+
+        pipeline.pending_bgp = None;
+        pipeline.wx_written = true;
+        pipeline.write_bgp(0x2D);
+        assert_eq!(pipeline.pending_bgp, None);
+        assert_eq!(pipeline.registers.bgp, 0x2D);
     }
 }
