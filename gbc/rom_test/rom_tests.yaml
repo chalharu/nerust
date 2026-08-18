@@ -581,7 +581,7 @@ suites:
     models:
     - cgb_c
     - cgb_d
-    cycles: 400000
+    cycles: 6000000
     verify:
       serial:
         suffix: '0305080D1522'

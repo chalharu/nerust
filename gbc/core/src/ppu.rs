@@ -295,7 +295,12 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock < self.mode3_end_clock() {
+        } else if self.mode_clock < self.mode3_end_clock()
+            || self
+                .mode3_pipeline
+                .as_ref()
+                .is_some_and(Mode3Pipeline::unstarted_visible_sprite_pending)
+        {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
@@ -513,7 +518,12 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock <= self.mode3_end_clock() {
+        } else if self.mode_clock <= self.mode3_end_clock()
+            || self
+                .mode3_pipeline
+                .as_ref()
+                .is_some_and(Mode3Pipeline::unstarted_visible_sprite_pending)
+        {
             PpuMode::PixelTransfer
         } else {
             PpuMode::HBlank
