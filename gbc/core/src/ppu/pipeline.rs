@@ -1250,10 +1250,10 @@ impl Mode3Pipeline {
             && value & 0x40 != 0
             && object_x == Some(-8)
             && self.output_stall >= 2;
-        let immediate_active = self.cgb_revision_d
-            && self.window_active
+        let immediate_active = self.window_active
             && self.output_stall < 2
-            && object_x.is_none_or(|x| x >= 0);
+            && (self.cgb_revision_d && object_x.is_none_or(|x| x >= 0)
+                || !self.cgb_revision_d && self.cgb_mode && object_x == Some(0));
         if initial_offscreen_set || immediate_active {
             self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
             self.pending_map_select = None;
@@ -1745,5 +1745,32 @@ mod tests {
         assert!(!pipeline.window_triggered);
         assert!(!pipeline.window_seen);
         assert_eq!(pipeline.window_disable_countdown, None);
+    }
+
+    #[test]
+    fn cgb_c_window_map_change_is_immediate_at_sprite_x_zero() {
+        let sprite = Sprite {
+            x: 0,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            true,
+            vec![sprite],
+            true,
+            true,
+            false,
+            0,
+        );
+        pipeline.window_active = true;
+        pipeline.next_sprite = 1;
+        pipeline.apply_window_map_change(0x40);
+        assert_eq!(pipeline.registers.lcdc & 0x40, 0x40);
+        assert_eq!(pipeline.pending_map_select, None);
     }
 }
