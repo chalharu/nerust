@@ -1189,6 +1189,16 @@ impl Mode3Pipeline {
             fetch.advance_bg = false;
         }
         let last_object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        if !self.cgb_mode && matches!(last_object_x, Some(-7 | -6)) {
+            let delay = if last_object_x == Some(-7) { 3 } else { 2 };
+            self.pending_map_select = Some((delay, value & 0x08));
+            self.refetch_push_map = true;
+            return;
+        }
+        if !self.cgb_mode && last_object_x.is_none_or(|x| x >= 0) {
+            self.pending_map_select = Some((2, value & 0x08));
+            return;
+        }
         let immediate = self.output_stall >= 2
             && (last_object_x == Some(-8) || self.fetcher.stage == FetchStage::Tile);
         if immediate {
@@ -1515,5 +1525,45 @@ mod tests {
 
         assert!(visible.unstarted_visible_sprite_pending());
         assert!(!offscreen.unstarted_visible_sprite_pending());
+    }
+
+    #[test]
+    fn dmg_bg_map_change_relatches_during_clipped_sprite_fetch() {
+        for (x, expected_delay) in [(-7, 3), (-6, 2)] {
+            let sprite = Sprite {
+                x,
+                tile: 0,
+                y: 0,
+                flags: 0,
+                oam_index: 0,
+            };
+            let mut pipeline = Mode3Pipeline::new(
+                registers(),
+                0,
+                0,
+                false,
+                vec![sprite],
+                false,
+                false,
+                true,
+                0,
+            );
+            pipeline.next_sprite = 1;
+            pipeline.sprite_fetch = Some(SpriteFetch {
+                sprite,
+                bg_wait: 0,
+                advance_bg: true,
+                dot: 0,
+                low: 0,
+                high: 0,
+                height: 8,
+                data_address: 0,
+            });
+
+            pipeline.apply_bg_map_change(0x08);
+
+            assert_eq!(pipeline.pending_map_select, Some((expected_delay, 0x08)));
+            assert!(pipeline.refetch_push_map);
+        }
     }
 }
