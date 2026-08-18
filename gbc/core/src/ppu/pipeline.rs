@@ -830,11 +830,19 @@ impl Mode3Pipeline {
             return;
         }
         let sprite = self.sprites[self.next_sprite];
+        let reuses_fetch_setup = self
+            .next_sprite
+            .checked_sub(1)
+            .is_some_and(|previous| self.sprites[previous].x == sprite.x);
         self.next_sprite += 1;
-        let stall = self.sprite_stall(&sprite, i16::from(self.pixel_x));
+        let stall = if reuses_fetch_setup {
+            6
+        } else {
+            self.sprite_stall(&sprite, i16::from(self.pixel_x))
+        };
         self.output_stall = stall;
-        // Mode-3 extension: the first sprite adds `stall`, subsequent sprites
-        // at the same position add less (consecutive fetches reuse setup).
+        // The first sprite at an X position pays the BG fetch alignment;
+        // consecutive sprites at that X reuse setup and only cost 6 dots.
         self.sprite_extra_dots = self.sprite_extra_dots.saturating_add(stall);
         self.sprite_fetch = Some(SpriteFetch {
             sprite,
