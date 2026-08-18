@@ -1339,7 +1339,8 @@ impl Mode3Pipeline {
     }
 
     fn write_bgp(&mut self, value: u8) {
-        if self.registers.wx == 0
+        if self.ly != 0
+            && self.registers.wx == 0
             && self.registers.scx & 7 == 0
             && self.registers.lcdc & 0x20 != 0
             && self.window_eligible
