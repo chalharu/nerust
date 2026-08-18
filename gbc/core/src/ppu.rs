@@ -409,7 +409,11 @@ impl GbcPpu {
     fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
-            self.mode3_scx_penalty = u32::from(self.scx & 7);
+            // The fetcher pays the raw SCX fine-scroll delay, but the CPU
+            // observes the mode-3→0 boundary on 4-T-cycle bus phases. Round
+            // the STAT/access boundary up to 0/4/8 T-cycles (mooneye
+            // hblank_ly_scx_timing-GS).
+            self.mode3_scx_penalty = u32::from((self.scx & 7).div_ceil(4) * 4);
             self.mode3_sprite_penalty = 0;
             self.mode3_pipeline = Some(Mode3Pipeline::new(
                 Registers {
@@ -451,15 +455,7 @@ impl GbcPpu {
     }
 
     fn advance_scanline(&mut self) {
-        let line_length = if self.lcd_on_short_line {
-            if self.cgb_mode {
-                432
-            } else {
-                T_CYCLES_PER_SCANLINE - Self::lcd_on_short_dmg()
-            }
-        } else {
-            T_CYCLES_PER_SCANLINE
-        };
+        let line_length = self.line_length();
         if self.mode_clock >= line_length {
             self.mode_clock -= line_length;
             self.mode3_pipeline = None;
@@ -479,6 +475,34 @@ impl GbcPpu {
                 self.window_line = 0;
             }
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
+        }
+    }
+
+    fn line_length(&self) -> u32 {
+        if self.lcd_on_short_line {
+            if self.cgb_mode {
+                432
+            } else {
+                T_CYCLES_PER_SCANLINE - Self::lcd_on_short_dmg()
+            }
+        } else {
+            T_CYCLES_PER_SCANLINE
+        }
+    }
+
+    /// On DMG, the CPU-visible LY latch changes one T-cycle before the PPU's
+    /// internal line state advances. Keep rendering/LYC on the internal line,
+    /// but expose the next line during that final bus-access window.
+    fn visible_ly(&self) -> u8 {
+        if !self.cgb_mode
+            && self.lcdc & 0x80 != 0
+            && self.lcd_on_delay == 0
+            && self.mode_clock + 1 >= self.line_length()
+        {
+            let next = self.ly.wrapping_add(1);
+            if next >= SCANLINES_PER_FRAME { 0 } else { next }
+        } else {
+            self.ly
         }
     }
 
@@ -851,7 +875,7 @@ impl GbcPpu {
             0xFF41 => self.stat_mode(),
             0xFF42 => self.scy,
             0xFF43 => self.scx,
-            0xFF44 => self.ly,
+            0xFF44 => self.visible_ly(),
             0xFF45 => self.lyc,
             0xFF47 => self.bgp,
             0xFF48 => self.obp0,
@@ -1268,6 +1292,29 @@ mod tests {
         let mut p = ppu();
         let _ = p.step(260);
         assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+    }
+
+    #[test]
+    fn dmg_scx_quantizes_cpu_visible_hblank_boundary() {
+        let expected = [0, 4, 4, 4, 4, 8, 8, 8];
+        for (scx, expected_penalty) in expected.into_iter().enumerate() {
+            let mut p = ppu();
+            p.scx = scx as u8;
+            p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+            p.start_pipeline_if_needed();
+            assert_eq!(p.mode3_scx_penalty, expected_penalty, "SCX={scx}");
+        }
+    }
+
+    #[test]
+    fn dmg_ly_latch_exposes_next_line_on_final_t_cycle() {
+        let mut p = ppu();
+        p.ly = 65;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 2;
+        assert_eq!(p.read_register(0xFF44), 65);
+        p.mode_clock += 1;
+        assert_eq!(p.read_register(0xFF44), 66);
+        assert_eq!(p.ly, 65, "internal line advances on the following T-cycle");
     }
 
     #[test]
