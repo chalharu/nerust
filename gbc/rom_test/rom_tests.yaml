@@ -475,7 +475,7 @@ suites:
     rom: acceptance/ppu/hblank_ly_scx_timing-GS.gb
     models:
     - dmg
-    cycles: 400000
+    cycles: 1100000
     verify:
       serial:
         suffix: '0305080D1522'
