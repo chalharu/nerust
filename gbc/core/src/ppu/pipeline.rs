@@ -1385,6 +1385,10 @@ impl Mode3Pipeline {
         self.sprite_extra_dots
     }
 
+    pub(super) fn unstarted_visible_sprite_pending(&self) -> bool {
+        self.next_sprite < self.sprites.len() && self.sprites[self.next_sprite].x < 160
+    }
+
     fn correct_last_bg_color(&mut self, update: impl FnOnce(u8) -> u8) {
         let Some((x, color, candidates)) = self.last_output else {
             return;
@@ -1475,5 +1479,41 @@ mod tests {
         }
         assert_eq!(pixels, 160);
         assert!(pipeline.complete());
+    }
+
+    #[test]
+    fn only_unstarted_visible_sprites_hold_pixel_transfer_open() {
+        let sprite = |x| Sprite {
+            x,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let visible = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            vec![sprite(159)],
+            true,
+            true,
+            true,
+            0,
+        );
+        let offscreen = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            vec![sprite(160)],
+            true,
+            true,
+            true,
+            0,
+        );
+
+        assert!(visible.unstarted_visible_sprite_pending());
+        assert!(!offscreen.unstarted_visible_sprite_pending());
     }
 }
