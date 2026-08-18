@@ -1360,9 +1360,6 @@ impl Mode3Pipeline {
         if self.window_active {
             let pixels_left = 8 - (self.window_pixels & 7);
             self.window_disable_countdown = Some(pixels_left + 8);
-        } else {
-            self.window_triggered = true;
-            self.window_seen = true;
         }
     }
 
@@ -1729,5 +1726,24 @@ mod tests {
                 Some(expected_countdown)
             );
         }
+    }
+
+    #[test]
+    fn disabling_inactive_window_preserves_future_trigger() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.apply_window_disable();
+        assert!(!pipeline.window_triggered);
+        assert!(!pipeline.window_seen);
+        assert_eq!(pipeline.window_disable_countdown, None);
     }
 }
