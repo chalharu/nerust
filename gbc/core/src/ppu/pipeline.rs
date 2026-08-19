@@ -169,6 +169,7 @@ pub(super) struct Mode3Pipeline {
     window_triggered: bool,
     window_can_retrigger: bool,
     window_activation_pending: bool,
+    window_nametable_phase: u8,
     window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
     window_start_delay: u8,
@@ -250,6 +251,7 @@ impl Mode3Pipeline {
             window_triggered: false,
             window_can_retrigger: false,
             window_activation_pending: false,
+            window_nametable_phase: 5,
             window_zero_at: None,
             window_disable_countdown: None,
             window_start_delay: 0,
@@ -331,6 +333,9 @@ impl Mode3Pipeline {
 
     pub(super) fn set_wx_written_during_oam(&mut self, written: bool) {
         self.wx_written = written;
+        if written {
+            self.window_nametable_phase = self.registers.wx.wrapping_add(1) & 7;
+        }
         self.window_activation_pending = written
             && !self.cgb_mode
             && self.window_eligible
@@ -1474,7 +1479,9 @@ impl Mode3Pipeline {
         if self.window_seen {
             self.window_can_retrigger = true;
             let window_x = i16::from(value) - 7;
-            if window_x > i16::from(self.pixel_x) && value.saturating_sub(7) & 7 == 5 {
+            if window_x > i16::from(self.pixel_x)
+                && value.saturating_sub(7) & 7 == self.window_nametable_phase
+            {
                 self.window_zero_at = Some(value.saturating_sub(7));
             }
         }
@@ -1984,5 +1991,29 @@ mod tests {
         pipeline.window_triggered = true;
         pipeline.write_wx(7);
         assert_eq!(pipeline.window_zero_at, None);
+    }
+
+    #[test]
+    fn oam_wx_five_moves_nametable_collision_to_phase_six() {
+        let mut regs = registers();
+        regs.wx = 5;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            12,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.set_wx_written_during_oam(true);
+        pipeline.window_seen = true;
+        pipeline.window_triggered = true;
+        pipeline.write_wx(13);
+
+        assert_eq!(pipeline.window_nametable_phase, 6);
+        assert_eq!(pipeline.window_zero_at, Some(6));
     }
 }
