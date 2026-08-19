@@ -172,6 +172,7 @@ pub(super) struct Mode3Pipeline {
     window_activation_pending: bool,
     window_nametable_phase: u8,
     window_trigger_at: Option<u8>,
+    window_repositioned: bool,
     window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
     window_start_delay: u8,
@@ -256,6 +257,7 @@ impl Mode3Pipeline {
             window_activation_pending: false,
             window_nametable_phase: 5,
             window_trigger_at: None,
+            window_repositioned: false,
             window_zero_at: None,
             window_disable_countdown: None,
             window_start_delay: 0,
@@ -1416,8 +1418,33 @@ impl Mode3Pipeline {
 
     fn apply_window_disable(&mut self) {
         if self.window_active {
-            let pixels_left = 8 - (self.window_pixels & 7);
-            self.window_disable_countdown = Some(pixels_left + 8);
+            let fine = self.window_pixels & 7;
+            let window_x = i16::from(self.registers.wx) - 7;
+            let pixels_left = if !self.window_repositioned && fine == 0 && window_x > 0 {
+                0
+            } else {
+                8 - fine
+            };
+            self.window_disable_countdown = Some(
+                pixels_left
+                    + if self.window_repositioned || self.ly < 2 || window_x >= 9 {
+                        8
+                    } else {
+                        0
+                    },
+            );
+        } else {
+            let window_x = i16::from(self.registers.wx) - 7;
+            let distance = window_x - i16::from(self.pixel_x);
+            if (0..=7).contains(&distance) {
+                self.window_triggered = true;
+                self.window_can_retrigger = false;
+                if matches!(distance, 3 | 7) && window_x & 7 == 0 {
+                    self.window_zero_at = Some(window_x as u8);
+                }
+            } else if distance == 8 {
+                self.window_trigger_at = Some((window_x + 1) as u8);
+            }
         }
     }
 
@@ -1489,6 +1516,7 @@ impl Mode3Pipeline {
     }
 
     fn write_wx(&mut self, value: u8) {
+        self.window_repositioned |= self.window_active;
         let old_window_x = i16::from(self.registers.wx) - 7;
         let pixel_x = i16::from(self.pixel_x);
         if self.window_comparator_seen
@@ -2150,5 +2178,52 @@ mod tests {
 
         assert_eq!(pipeline.registers.scx, 0x20);
         assert_eq!(pipeline.pending_scx_high, None);
+    }
+
+    #[test]
+    fn dynamic_window_disable_stops_at_current_tile_boundary() {
+        let mut regs = registers();
+        regs.wx = 11;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            4,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.window_active = true;
+        pipeline.window_pixels = 6;
+        pipeline.apply_window_disable();
+        assert_eq!(pipeline.window_disable_countdown, Some(2));
+
+        pipeline.window_repositioned = true;
+        pipeline.apply_window_disable();
+        assert_eq!(pipeline.window_disable_countdown, Some(10));
+    }
+
+    #[test]
+    fn inactive_window_disable_latches_tile_aligned_collision() {
+        let mut regs = registers();
+        regs.wx = 15;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            15,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.pixel_x = 1;
+        pipeline.apply_window_disable();
+
+        assert!(pipeline.window_triggered);
+        assert_eq!(pipeline.window_zero_at, Some(8));
     }
 }
