@@ -104,6 +104,7 @@ pub struct GbcPpu {
     mode3_scx_penalty: u32,
     /// Sprite-fetch stalls accumulated during the current mode 3.
     mode3_sprite_penalty: u32,
+    wx_written_during_oam: bool,
 
     /// DMG OAM bug: OAM row currently being scanned during mode 2 (OAM
     /// search). 0xFF means OAM is not being accessed (CGB, LCD off, or not
@@ -157,6 +158,7 @@ impl Default for GbcPpu {
             lcd_on_short_line: false,
             mode3_scx_penalty: 0,
             mode3_sprite_penalty: 0,
+            wx_written_during_oam: false,
             accessed_oam_row: 0xFF,
             mode3_pipeline: None,
         }
@@ -420,7 +422,7 @@ impl GbcPpu {
             // hblank_ly_scx_timing-GS).
             self.mode3_scx_penalty = u32::from((self.scx & 7).div_ceil(4) * 4);
             self.mode3_sprite_penalty = 0;
-            self.mode3_pipeline = Some(Mode3Pipeline::new(
+            let mut pipeline = Mode3Pipeline::new(
                 Registers {
                     lcdc: self.lcdc,
                     scy: self.scy,
@@ -439,7 +441,10 @@ impl GbcPpu {
                 self.cgb_game,
                 self.cgb_revision_d,
                 self.opri,
-            ));
+            );
+            pipeline.set_wx_written_during_oam(self.wx_written_during_oam);
+            self.wx_written_during_oam = false;
+            self.mode3_pipeline = Some(pipeline);
         }
     }
 
@@ -464,6 +469,7 @@ impl GbcPpu {
         if self.mode_clock >= line_length {
             self.mode_clock -= line_length;
             self.mode3_pipeline = None;
+            self.wx_written_during_oam = false;
             self.lcd_on_short_line = false;
             self.ly = self.ly.wrapping_add(1);
             if !self.cgb_mode {
@@ -948,7 +954,12 @@ impl GbcPpu {
             0xFF48 => self.obp0 = value,
             0xFF49 => self.obp1 = value,
             0xFF4A => self.wy = value,
-            0xFF4B => self.wx = value,
+            0xFF4B => {
+                if self.current_mode() == PpuMode::OamSearch {
+                    self.wx_written_during_oam = true;
+                }
+                self.wx = value;
+            }
             0xFF4F => self.vbk = value & 0x01,
             0xFF68 => self.write_bgpi(value),
             0xFF69 => self.write_bg_palette_data(value),

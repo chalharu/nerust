@@ -168,6 +168,7 @@ pub(super) struct Mode3Pipeline {
     window_seen: bool,
     window_triggered: bool,
     window_can_retrigger: bool,
+    window_activation_pending: bool,
     window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
     window_start_delay: u8,
@@ -248,6 +249,7 @@ impl Mode3Pipeline {
             window_seen: false,
             window_triggered: false,
             window_can_retrigger: false,
+            window_activation_pending: false,
             window_zero_at: None,
             window_disable_countdown: None,
             window_start_delay: 0,
@@ -300,6 +302,10 @@ impl Mode3Pipeline {
         }
         self.last_bg_data_read = None;
         self.deliver_register_writes();
+        if self.window_activation_pending {
+            self.window_activation_pending = false;
+            self.try_activate_window();
+        }
         if self.step_startup(vram) {
             self.advance_dot_writes(!self.cgb_revision_d);
             return None;
@@ -321,6 +327,15 @@ impl Mode3Pipeline {
         };
         self.advance_pending_countdowns();
         Some(output)
+    }
+
+    pub(super) fn set_wx_written_during_oam(&mut self, written: bool) {
+        self.wx_written = written;
+        self.window_activation_pending = written
+            && !self.cgb_mode
+            && self.window_eligible
+            && (4..=5).contains(&self.registers.wx)
+            && self.sprites.is_empty();
     }
 
     fn deliver_register_writes(&mut self) {
@@ -409,12 +424,13 @@ impl Mode3Pipeline {
         obj_palette: &[u16; 32],
     ) -> Option<OutputPixel> {
         self.update_window_state();
-        let mut bg = self.bg_fifo.pop_front()?;
         let x = self.pixel_x;
-        if self.window_zero_at == Some(x) {
-            bg = BgPixel::default();
+        let mut bg = if self.window_zero_at == Some(x) {
             self.window_zero_at = None;
-        }
+            BgPixel::default()
+        } else {
+            self.bg_fifo.pop_front()?
+        };
         if self.force_bg_high_delay != 0 {
             self.force_bg_high_delay -= 1;
         } else if self.force_bg_high_pixels != 0 {
@@ -1460,8 +1476,6 @@ impl Mode3Pipeline {
             let window_x = i16::from(value) - 7;
             if window_x > i16::from(self.pixel_x) && value.saturating_sub(7) & 7 == 5 {
                 self.window_zero_at = Some(value.saturating_sub(7));
-            } else if self.window_triggered && window_x == i16::from(self.pixel_x) {
-                self.window_zero_at = Some(self.pixel_x);
             }
         }
     }
@@ -1901,5 +1915,74 @@ mod tests {
         pipeline.apply_bg_enable(0);
         assert_eq!(pipeline.registers.lcdc & 1, 0);
         assert_eq!(pipeline.pending_bg_enable, None);
+    }
+
+    #[test]
+    fn dmg_oam_wx_four_seeds_first_dot_window_activation() {
+        let mut regs = registers();
+        regs.lcdc |= 0x20;
+        regs.wy = 4;
+        regs.wx = 4;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            4,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.set_wx_written_during_oam(true);
+        assert!(pipeline.window_activation_pending);
+
+        pipeline.step(&[0; 0x4000], &[0; 32], &[0; 32]);
+        assert!(pipeline.window_active);
+        assert!(!pipeline.window_activation_pending);
+    }
+
+    #[test]
+    fn window_nametable_collision_inserts_without_consuming_fifo() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.bg_fifo.push_back(BgPixel {
+            color: 1,
+            palette: 0,
+            priority: false,
+        });
+        pipeline.window_zero_at = Some(0);
+
+        assert!(pipeline.emit_output_pixel(&[0; 32], &[0; 32]).is_some());
+        assert_eq!(pipeline.bg_fifo.len(), 1);
+        assert_eq!(pipeline.window_zero_at, None);
+    }
+
+    #[test]
+    fn exact_wx_coordinate_does_not_imply_nametable_collision() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            0,
+            0,
+            false,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.window_seen = true;
+        pipeline.window_triggered = true;
+        pipeline.write_wx(7);
+        assert_eq!(pipeline.window_zero_at, None);
     }
 }
