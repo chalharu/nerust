@@ -1323,8 +1323,14 @@ impl Mode3Pipeline {
                 self.output_stall.saturating_add(5)
             } else if self.window_active && self.output_stall >= 2 {
                 4u8.max(self.output_stall)
-            } else {
+            } else if !self.cgb_mode && !self.window_active && object_x == Some(0) {
                 4
+            } else if !self.cgb_mode && !self.window_active && self.output_stall == 0 {
+                1
+            } else if self.cgb_mode {
+                4
+            } else {
+                2
             };
             self.pending_map_select = Some((delay, value & 0x48));
         }
