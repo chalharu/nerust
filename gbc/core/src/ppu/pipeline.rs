@@ -165,11 +165,13 @@ pub(super) struct Mode3Pipeline {
     bg_fifo: VecDeque<BgPixel>,
     window_active: bool,
     window_eligible: bool,
+    window_comparator_seen: bool,
     window_seen: bool,
     window_triggered: bool,
     window_can_retrigger: bool,
     window_activation_pending: bool,
     window_nametable_phase: u8,
+    window_trigger_at: Option<u8>,
     window_zero_at: Option<u8>,
     window_disable_countdown: Option<u8>,
     window_start_delay: u8,
@@ -247,11 +249,13 @@ impl Mode3Pipeline {
             bg_fifo: VecDeque::with_capacity(16),
             window_active: false,
             window_eligible,
+            window_comparator_seen: false,
             window_seen: false,
             window_triggered: false,
             window_can_retrigger: false,
             window_activation_pending: false,
             window_nametable_phase: 5,
+            window_trigger_at: None,
             window_zero_at: None,
             window_disable_countdown: None,
             window_start_delay: 0,
@@ -383,7 +387,7 @@ impl Mode3Pipeline {
             && self.ly >= self.registers.wy
             && self.registers.wx <= 7
         {
-            self.window_seen = true;
+            self.window_comparator_seen = true;
         }
         self.step_bg_fetcher(vram);
         if !self.cgb_revision_d {
@@ -821,8 +825,15 @@ impl Mode3Pipeline {
     }
 
     fn try_activate_window(&mut self) {
-        let window_x = i16::from(self.registers.wx) - 7;
+        let window_x = self
+            .window_trigger_at
+            .map(i16::from)
+            .unwrap_or_else(|| i16::from(self.registers.wx) - 7);
         let can_trigger = !self.window_triggered || self.window_can_retrigger;
+        let phase_seven_blocked = !self.cgb_mode
+            && self.wx_written
+            && self.window_nametable_phase == 7
+            && self.registers.wx < 6;
         let window_enabled = if self.window_triggered {
             self.registers.lcdc & 0x20 != 0
         } else {
@@ -830,6 +841,7 @@ impl Mode3Pipeline {
         };
         if !self.window_active
             && can_trigger
+            && !phase_seven_blocked
             && window_enabled
             && self.ly >= self.registers.wy
             && window_x < 160
@@ -839,6 +851,8 @@ impl Mode3Pipeline {
                 self.window_line = self.window_line.wrapping_add(1);
             }
             self.window_active = true;
+            self.window_trigger_at = None;
+            self.window_comparator_seen = true;
             self.window_seen = true;
             self.window_triggered = true;
             self.window_can_retrigger = false;
@@ -1473,16 +1487,36 @@ impl Mode3Pipeline {
     }
 
     fn write_wx(&mut self, value: u8) {
+        let old_window_x = i16::from(self.registers.wx) - 7;
+        let pixel_x = i16::from(self.pixel_x);
+        if self.window_comparator_seen
+            && !self.window_active
+            && (pixel_x..=pixel_x + 1).contains(&old_window_x)
+        {
+            self.window_trigger_at = Some(old_window_x as u8);
+        }
         self.wx_written = true;
         self.window_zero_at = None;
         self.registers.wx = value;
-        if self.window_seen {
+        if self.window_comparator_seen {
             self.window_can_retrigger = true;
             let window_x = i16::from(value) - 7;
             if window_x > i16::from(self.pixel_x)
+                && self.window_nametable_phase != 7
                 && value.saturating_sub(7) & 7 == self.window_nametable_phase
             {
                 self.window_zero_at = Some(value.saturating_sub(7));
+            }
+            if !self.cgb_mode
+                && self.window_nametable_phase == 7
+                && !self.window_active
+                && self.window_trigger_at.is_none()
+                && window_x >= 0
+                && window_x < i16::from(self.pixel_x)
+            {
+                self.window_triggered = true;
+                self.window_can_retrigger = false;
+                self.window_zero_at = None;
             }
         }
     }
@@ -2009,11 +2043,89 @@ mod tests {
             0,
         );
         pipeline.set_wx_written_during_oam(true);
-        pipeline.window_seen = true;
+        pipeline.window_comparator_seen = true;
         pipeline.window_triggered = true;
         pipeline.write_wx(13);
 
         assert_eq!(pipeline.window_nametable_phase, 6);
         assert_eq!(pipeline.window_zero_at, Some(6));
+    }
+
+    #[test]
+    fn phase_seven_does_not_render_before_dynamic_wx_six() {
+        let mut regs = registers();
+        regs.lcdc |= 0x20;
+        regs.wx = 6;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            4,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.set_wx_written_during_oam(true);
+        pipeline.window_comparator_seen = true;
+        pipeline.write_wx(4);
+        pipeline.try_activate_window();
+
+        assert!(!pipeline.window_active);
+        assert!(!pipeline.window_seen);
+        assert_eq!(pipeline.final_window_line(), 0);
+    }
+
+    #[test]
+    fn wx_write_preserves_one_pixel_comparator_lookahead() {
+        let mut regs = registers();
+        regs.wx = 101;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            101,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.window_comparator_seen = true;
+        pipeline.window_nametable_phase = 7;
+        pipeline.pixel_x = 93;
+        pipeline.write_wx(80);
+        assert_eq!(pipeline.window_trigger_at, Some(94));
+
+        pipeline.pixel_x = 94;
+        pipeline.try_activate_window();
+        assert!(pipeline.window_active);
+        assert_eq!(pipeline.window_trigger_at, None);
+    }
+
+    #[test]
+    fn wx_write_replaces_trigger_beyond_comparator_lookahead() {
+        let mut regs = registers();
+        regs.wx = 102;
+        let mut pipeline = Mode3Pipeline::new(
+            regs,
+            102,
+            0,
+            true,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.window_comparator_seen = true;
+        pipeline.window_nametable_phase = 7;
+        pipeline.pixel_x = 93;
+        pipeline.write_wx(80);
+
+        assert_eq!(pipeline.window_trigger_at, None);
+        assert!(pipeline.window_triggered);
+        assert!(!pipeline.window_can_retrigger);
     }
 }
