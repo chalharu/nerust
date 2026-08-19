@@ -1222,10 +1222,8 @@ impl Mode3Pipeline {
 
     fn apply_bg_enable(&mut self, value: u8) {
         let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
-        let immediate_dmg_disable = !self.cgb_mode
-            && value & 1 == 0
-            && self.pixel_x == 0
-            && object_x == Some(-6);
+        let immediate_dmg_disable =
+            !self.cgb_mode && value & 1 == 0 && self.pixel_x == 0 && object_x == Some(-6);
         let delay = if immediate_dmg_disable {
             0
         } else if !self.cgb_mode {
@@ -1249,7 +1247,10 @@ impl Mode3Pipeline {
         let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
         if !self.cgb_mode
             && value & 2 == 0
-            && self.sprite_fetch.as_ref().is_some_and(|fetch| fetch.dot == 0)
+            && self
+                .sprite_fetch
+                .as_ref()
+                .is_some_and(|fetch| fetch.dot == 0)
         {
             self.sprite_fetch = None;
             self.sprite_extra_dots = self.sprite_extra_dots.saturating_sub(self.output_stall);
@@ -1494,15 +1495,10 @@ impl Mode3Pipeline {
             };
             self.pending_bgp = Some((delay, value));
         } else if (self.cgb_mode && !self.cgb_revision_d)
-            || (self.ly == 0
-                && self.window_active
-                && self.registers.wx == 0
-                && !self.wx_written)
+            || (self.ly == 0 && self.window_active && self.registers.wx == 0 && !self.wx_written)
         {
-            let stable_line_zero_window = self.ly == 0
-                && self.window_active
-                && self.registers.wx == 0
-                && !self.wx_written;
+            let stable_line_zero_window =
+                self.ly == 0 && self.window_active && self.registers.wx == 0 && !self.wx_written;
             let delay = if self.cgb_mode && !self.cgb_revision_d && stable_line_zero_window {
                 2
             } else {
@@ -1599,10 +1595,8 @@ fn sprite_fetch_data_address(fetch: &SpriteFetch, ly: u8, cgb_mode: bool) -> usi
     } else {
         0
     };
-    let address = 0x8000u16
-        + u16::from(tile) * 16
-        + u16::from(tile_y & 7) * 2
-        + u16::from(fetch.dot == 4);
+    let address =
+        0x8000u16 + u16::from(tile) * 16 + u16::from(tile_y & 7) * 2 + u16::from(fetch.dot == 4);
     bank * 0x2000 + usize::from(address & 0x1FFF)
 }
 
@@ -1733,17 +1727,8 @@ mod tests {
 
     #[test]
     fn cgb_c_bgp_write_advances_during_sprite_stall() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            false,
-            Vec::new(),
-            true,
-            true,
-            false,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, false, 0);
         pipeline.startup_dots = 0;
         pipeline.output_stall = 2;
         pipeline.write_bgp(0x1B);
@@ -1755,17 +1740,8 @@ mod tests {
 
     #[test]
     fn line_zero_wx_zero_bgp_latch_requires_stable_wx() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, true, Vec::new(), false, false, true, 0);
         pipeline.window_active = true;
         pipeline.registers.wx = 0;
         pipeline.write_bgp(0x1B);
@@ -1780,17 +1756,8 @@ mod tests {
 
     #[test]
     fn cgb_c_obj_palette_write_latches_after_one_dot() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            false,
-            Vec::new(),
-            true,
-            true,
-            false,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, false, 0);
         pipeline.startup_dots = 0;
         pipeline.output_stall = 1;
         pipeline.write_register(0xFF48, 0x1B);
@@ -1805,17 +1772,7 @@ mod tests {
         let mut regs = registers();
         regs.lcdc |= 0x20;
         regs.wx = 0;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            8,
-            0,
-            true,
-            Vec::new(),
-            true,
-            true,
-            false,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 8, 0, true, Vec::new(), true, true, false, 0);
         pipeline.write_bgp(0x1B);
         assert_eq!(pipeline.pending_bgp, Some((8, 0x1B)));
     }
@@ -1847,17 +1804,8 @@ mod tests {
 
     #[test]
     fn disabling_inactive_window_preserves_future_trigger() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, true, Vec::new(), false, false, true, 0);
         pipeline.apply_window_disable();
         assert!(!pipeline.window_triggered);
         assert!(!pipeline.window_seen);
@@ -1873,17 +1821,8 @@ mod tests {
             flags: 0,
             oam_index: 0,
         };
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            true,
-            vec![sprite],
-            true,
-            true,
-            false,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, true, vec![sprite], true, true, false, 0);
         pipeline.window_active = true;
         pipeline.next_sprite = 1;
         pipeline.apply_window_map_change(0x40);
@@ -1994,17 +1933,7 @@ mod tests {
         regs.lcdc |= 0x20;
         regs.wy = 4;
         regs.wx = 4;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            4,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 4, 0, true, Vec::new(), false, false, true, 0);
         pipeline.set_wx_written_during_oam(true);
         assert!(pipeline.window_activation_pending);
 
@@ -2015,17 +1944,8 @@ mod tests {
 
     #[test]
     fn window_nametable_collision_inserts_without_consuming_fifo() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            false,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), false, false, true, 0);
         pipeline.bg_fifo.push_back(BgPixel {
             color: 1,
             palette: 0,
@@ -2040,17 +1960,8 @@ mod tests {
 
     #[test]
     fn exact_wx_coordinate_does_not_imply_nametable_collision() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            0,
-            0,
-            false,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), false, false, true, 0);
         pipeline.window_seen = true;
         pipeline.window_triggered = true;
         pipeline.write_wx(7);
@@ -2061,17 +1972,7 @@ mod tests {
     fn oam_wx_five_moves_nametable_collision_to_phase_six() {
         let mut regs = registers();
         regs.wx = 5;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            12,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 12, 0, true, Vec::new(), false, false, true, 0);
         pipeline.set_wx_written_during_oam(true);
         pipeline.window_comparator_seen = true;
         pipeline.window_triggered = true;
@@ -2086,17 +1987,7 @@ mod tests {
         let mut regs = registers();
         regs.lcdc |= 0x20;
         regs.wx = 6;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            4,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 4, 0, true, Vec::new(), false, false, true, 0);
         pipeline.set_wx_written_during_oam(true);
         pipeline.window_comparator_seen = true;
         pipeline.write_wx(4);
@@ -2111,17 +2002,8 @@ mod tests {
     fn wx_write_preserves_one_pixel_comparator_lookahead() {
         let mut regs = registers();
         regs.wx = 101;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            101,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(regs, 101, 0, true, Vec::new(), false, false, true, 0);
         pipeline.window_comparator_seen = true;
         pipeline.window_nametable_phase = 7;
         pipeline.pixel_x = 93;
@@ -2138,17 +2020,8 @@ mod tests {
     fn wx_write_replaces_trigger_beyond_comparator_lookahead() {
         let mut regs = registers();
         regs.wx = 102;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            102,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(regs, 102, 0, true, Vec::new(), false, false, true, 0);
         pipeline.window_comparator_seen = true;
         pipeline.window_nametable_phase = 7;
         pipeline.pixel_x = 93;
@@ -2161,17 +2034,8 @@ mod tests {
 
     #[test]
     fn dmg_scx_high_bits_are_immediate_during_push() {
-        let mut pipeline = Mode3Pipeline::new(
-            registers(),
-            8,
-            0,
-            false,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 8, 0, false, Vec::new(), false, false, true, 0);
         pipeline.fetcher.stage = FetchStage::Push;
         pipeline.bg_fifo.push_back(BgPixel::default());
         pipeline.write_scx(0x20);
@@ -2184,17 +2048,7 @@ mod tests {
     fn dynamic_window_disable_stops_at_current_tile_boundary() {
         let mut regs = registers();
         regs.wx = 11;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            4,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 4, 0, true, Vec::new(), false, false, true, 0);
         pipeline.window_active = true;
         pipeline.window_pixels = 6;
         pipeline.apply_window_disable();
@@ -2209,17 +2063,7 @@ mod tests {
     fn inactive_window_disable_latches_tile_aligned_collision() {
         let mut regs = registers();
         regs.wx = 15;
-        let mut pipeline = Mode3Pipeline::new(
-            regs,
-            15,
-            0,
-            true,
-            Vec::new(),
-            false,
-            false,
-            true,
-            0,
-        );
+        let mut pipeline = Mode3Pipeline::new(regs, 15, 0, true, Vec::new(), false, false, true, 0);
         pipeline.pixel_x = 1;
         pipeline.apply_window_disable();
 

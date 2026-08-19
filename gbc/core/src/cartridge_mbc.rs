@@ -114,11 +114,7 @@ impl Mbc1 {
         } else {
             ((self.ram_bank as usize) << 5, bank as usize)
         };
-        let lower_bank = if self.banking_mode {
-            upper_bits
-        } else {
-            0
-        };
+        let lower_bank = if self.banking_mode { upper_bits } else { 0 };
         (lower_bank, upper_bits | lower_bits)
     }
 
@@ -372,9 +368,17 @@ impl Mbc for Mbc2 {
     }
 
     fn read_rom_n(&self, addr: u16) -> u8 {
-        let bank = if self.rom_bank == 0 { 1 } else { self.rom_bank as usize };
+        let bank = if self.rom_bank == 0 {
+            1
+        } else {
+            self.rom_bank as usize
+        };
         let bank_count = self.rom.len() / 0x4000;
-        let bank = if bank_count > 0 { bank & (bank_count - 1) } else { 0 };
+        let bank = if bank_count > 0 {
+            bank & (bank_count - 1)
+        } else {
+            0
+        };
         let offset = bank * 0x4000 + (addr as usize - 0x4000);
         self.rom.get(offset).copied().unwrap_or(0xFF)
     }
@@ -454,7 +458,11 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
             };
             let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
             if header.multicart {
-                Box::new(Mbc1::new_multicart(rom, ram, header.cartridge_type.has_battery()))
+                Box::new(Mbc1::new_multicart(
+                    rom,
+                    ram,
+                    header.cartridge_type.has_battery(),
+                ))
             } else {
                 Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
             }

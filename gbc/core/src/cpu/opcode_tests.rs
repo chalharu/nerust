@@ -527,6 +527,9 @@ fn ei_then_halt_enables_ime_for_halt() {
     assert!(!bus.ime_enabled(), "IME not enabled immediately after EI");
     // Execute HALT; the delayed IME from EI applies during HALT.
     step_until_done(&mut cpu, &mut bus);
-    assert!(bus.ime_enabled(), "IME must be enabled during HALT after EI");
+    assert!(
+        bus.ime_enabled(),
+        "IME must be enabled during HALT after EI"
+    );
     assert!(bus.is_halted_or_stopped(), "HALT should halt the CPU");
 }

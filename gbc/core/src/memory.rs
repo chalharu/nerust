@@ -160,28 +160,28 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt.read_if(),
             0xFF10..=0xFF3F => self.apu.read_register(addr),
-             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
-             0xFF4F | 0xFF6C if self.cgb_mode => self.ppu.read_register(addr),
-             0xFF46 => self.dma.read_register(),
-             0xFF50 => {
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
+            0xFF4F | 0xFF6C if self.cgb_mode => self.ppu.read_register(addr),
+            0xFF46 => self.dma.read_register(),
+            0xFF50 => {
                 if self.boot_rom_mapped {
                     0xFE
                 } else {
                     0xFF
                 }
             }
-             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.read_palette(addr),
-             0xFF4D if self.cgb_mode => self.read_key1(),
-             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
-             0xFF55 if self.cgb_mode => self.hdma.read_status(),
-             0xFF70 if self.cgb_mode => self.wram_bank | 0xF8,
-             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
-             0xFF74 => 0xFF,
-             0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
-             0xFF76 | 0xFF77 if self.cgb_mode => 0x00,
-             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-             0xFFFF => self.interrupt.read_ie(),
-             _ => self.read_storage(addr),
+            0xFF68..=0xFF6B if self.cgb_mode => self.ppu.read_palette(addr),
+            0xFF4D if self.cgb_mode => self.read_key1(),
+            0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
+            0xFF55 if self.cgb_mode => self.hdma.read_status(),
+            0xFF70 if self.cgb_mode => self.wram_bank | 0xF8,
+            0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
+            0xFF74 => 0xFF,
+            0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
+            0xFF76 | 0xFF77 if self.cgb_mode => 0x00,
+            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
+            0xFFFF => self.interrupt.read_ie(),
+            _ => self.read_storage(addr),
         }
     }
 
@@ -216,8 +216,7 @@ impl GbcMemoryBus {
                 // when the output exceeds 8KB the cursor overflows into
                 // $C000+ and would corrupt the running code. Route those
                 // text-output writes to a scratch area instead.
-                if (0xC000..=0xCBFF).contains(&addr)
-                    && (0xC3E7..=0xC400).contains(&self.current_pc)
+                if (0xC000..=0xCBFF).contains(&addr) && (0xC3E7..=0xC400).contains(&self.current_pc)
                 {
                     self.text_scratch[(addr - 0xC000) as usize] = value;
                 } else {
@@ -241,7 +240,7 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
                 if self.cpu_step_active {
                     self.pending_ppu_writes
                         .push_back(PpuWriteEvent { addr, value });
@@ -249,7 +248,7 @@ impl GbcMemoryBus {
                     self.ppu.write_register(addr, value);
                 }
             }
-             0xFF4F | 0xFF6C if self.cgb_mode => {
+            0xFF4F | 0xFF6C if self.cgb_mode => {
                 if self.cpu_step_active {
                     self.pending_ppu_writes
                         .push_back(PpuWriteEvent { addr, value });
@@ -257,10 +256,10 @@ impl GbcMemoryBus {
                     self.ppu.write_register(addr, value);
                 }
             }
-             0xFF46 => self.dma.start(value),
-             0xFF4D if self.cgb_mode => self.write_key1(value),
-             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
-             0xFF55 if self.cgb_mode => {
+            0xFF46 => self.dma.start(value),
+            0xFF4D if self.cgb_mode => self.write_key1(value),
+            0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
+            0xFF55 if self.cgb_mode => {
                 // HDMA requires a valid VRAM destination ($8000-$9FFF). With
                 // an invalid destination the transfer does not start and
                 // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
@@ -271,23 +270,23 @@ impl GbcMemoryBus {
                     }
                 }
             }
-             0xFF50 => {
+            0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
                     self.key1_boot_value = false;
                 }
             }
-             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
-             0xFF70 if self.cgb_mode => {
+            0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
+            0xFF70 if self.cgb_mode => {
                 // Writing 0 to SVBK is ignored on the CGB (the bank is
                 // unchanged); unused_hwio-C reads $FF after a $00 write.
                 if value & 0x07 != 0 {
                     self.wram_bank = value & 0x07;
                 }
             }
-             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
-             0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
-             0xFF75 if self.cgb_mode => self.hwio_72_75[3] = value,
+            0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
+            0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
+            0xFF75 if self.cgb_mode => self.hwio_72_75[3] = value,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             0xFFFF => self.interrupt.write_ie(value),
             _ => {}
@@ -619,7 +618,12 @@ impl GbcMemoryBus {
 
     /// Trigger the DMG OAM bug from a 16-bit CPU operation that touches the
     /// OAM region ($FE00-$FEFF) during OAM search.
-    pub fn trigger_oam_bug(&mut self, address: u16, kind: OamBugKind, cycles_before_end: i16) -> bool {
+    pub fn trigger_oam_bug(
+        &mut self,
+        address: u16,
+        kind: OamBugKind,
+        cycles_before_end: i16,
+    ) -> bool {
         self.ppu.trigger_oam_bug(address, kind, cycles_before_end)
     }
 
