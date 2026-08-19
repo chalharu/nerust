@@ -68,8 +68,7 @@ impl Timer {
     /// reset, or a TAC clock-select change). Returns true if a timer tick fired.
     fn set_div(&mut self, value: u16) -> bool {
         let triggers = self.div & !value;
-        let fired =
-            (self.tac & 0x04) != 0 && (triggers & self.selected_bit()) != 0;
+        let fired = (self.tac & 0x04) != 0 && (triggers & self.selected_bit()) != 0;
         if fired {
             self.increase_tima();
         }
@@ -111,9 +110,7 @@ impl Timer {
         }
         let old_bit = TAC_TRIGGER_BITS[(old_tac & 0x03) as usize];
         let new_bit = TAC_TRIGGER_BITS[(new_tac & 0x03) as usize];
-        if (self.div & old_bit) != 0
-            && ((new_tac & 0x04) == 0 || (self.div & new_bit) == 0)
-        {
+        if (self.div & old_bit) != 0 && ((new_tac & 0x04) == 0 || (self.div & new_bit) == 0) {
             self.increase_tima();
         }
     }

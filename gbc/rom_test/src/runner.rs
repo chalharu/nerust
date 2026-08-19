@@ -266,4 +266,3 @@ fn save_screenshot(
     std::fs::write(dir.join(name), png_data)?;
     Ok(())
 }
-

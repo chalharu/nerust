@@ -27,22 +27,14 @@ impl<const R: u8> CpuStepState for Push<R> {
             };
             core.set_operand(0, (v >> 8) as u8);
             core.set_operand(1, v as u8);
-            bus.trigger_oam_bug(
-                core.registers().sp().wrapping_sub(1),
-                OamBugKind::Write,
-                0,
-            );
+            bus.trigger_oam_bug(core.registers().sp().wrapping_sub(1), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         if step == 2 {
             let _t = core.registers().sp().wrapping_sub(1);
             core.registers_mut().set_sp(_t);
             bus.write(core.registers().sp(), core.operand(0));
-            bus.trigger_oam_bug(
-                core.registers().sp().wrapping_sub(1),
-                OamBugKind::Write,
-                0,
-            );
+            bus.trigger_oam_bug(core.registers().sp().wrapping_sub(1), OamBugKind::Write, 0);
             return StepResult::Continue;
         }
         let _t = core.registers().sp().wrapping_sub(1);

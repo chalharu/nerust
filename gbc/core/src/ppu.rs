@@ -551,11 +551,7 @@ impl GbcPpu {
     /// turned on; on the DMG there is no OAM search on that line at all.
     fn oam_search_cycles(&self) -> u32 {
         if self.lcd_on_short_line {
-            if self.cgb_mode {
-                76
-            } else {
-                0
-            }
+            if self.cgb_mode { 76 } else { 0 }
         } else {
             T_CYCLES_OAM_SEARCH
         }
@@ -843,7 +839,7 @@ impl GbcPpu {
     }
 
     fn oam_bug_corrupt(&mut self, kind: OamBugKind, row: i16) -> bool {
-        if row < 1 || row > 19 {
+        if !(1..=19).contains(&row) {
             return false;
         }
         let row = row as usize;
@@ -900,7 +896,7 @@ impl GbcPpu {
             0xFF4B => self.wx,
             0xFF4F => 0xFE | self.vbk,
             0xFF68 => self.bgpi | 0x40,
-             0xFF69 => {
+            0xFF69 => {
                 if self.current_mode() == PpuMode::PixelTransfer {
                     0xFF
                 } else {
@@ -913,8 +909,8 @@ impl GbcPpu {
                     }
                 }
             }
-             0xFF6A => self.obpi | 0x40,
-             0xFF6B => {
+            0xFF6A => self.obpi | 0x40,
+            0xFF6B => {
                 if self.current_mode() == PpuMode::PixelTransfer {
                     0xFF
                 } else {

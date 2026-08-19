@@ -64,11 +64,7 @@ struct Channel {
 impl Channel {
     /// Maximum length counter value: 256 for the wave channel, 64 otherwise.
     fn max_len(ch: usize) -> u16 {
-        if ch == 2 {
-            256
-        } else {
-            64
-        }
+        if ch == 2 { 256 } else { 64 }
     }
 
     fn clock_length(&mut self, _ch: usize) {
@@ -87,7 +83,7 @@ const MASKS: [u8; 0x17] = [
     0xFF, 0x3F, 0x00, 0xFF, 0xBF, // FF15-FF19 (NR2x)
     0x7F, 0xFF, 0x9F, 0xFF, 0xBF, // FF1A-FF1E (NR3x)
     0xFF, 0xFF, 0x00, 0x00, 0xBF, // FF1F-FF23 (NR4x)
-    0x00, 0x00, 0x70,             // FF24-FF26 (NR50, NR51, NR52)
+    0x00, 0x00, 0x70, // FF24-FF26 (NR50, NR51, NR52)
 ];
 
 impl GbcApu {
@@ -174,7 +170,7 @@ impl GbcApu {
             0x00, 0x00, 0x00, 0x00, 0x00, // NR2x
             0x00, 0x00, 0x00, 0x00, 0x00, // NR3x
             0x00, 0x00, 0x00, 0x00, 0x00, // NR4x (FF1F unused, NR41-44)
-            0x77, 0xF3, 0x81,             // NR50, NR51, NR52
+            0x77, 0xF3, 0x81, // NR50, NR51, NR52
         ];
         self.channels[0].active = true;
     }
@@ -235,8 +231,7 @@ impl GbcApu {
             if ch == 0 {
                 // Reload the frequency sweep shadow registers. NR13 is
                 // write-only (mask 0xFF) so its value lives in sweep.freq.
-                self.sweep.freq =
-                    (self.sweep.freq & 0x00FF) | ((value as u16 & 0x07) << 8);
+                self.sweep.freq = (self.sweep.freq & 0x00FF) | ((value as u16 & 0x07) << 8);
                 self.sweep.period = (self.regs[0] >> 4) & 7;
                 self.sweep.shift = self.regs[0] & 7;
                 self.sweep.negate = self.regs[0] & 8 != 0;
@@ -318,8 +313,7 @@ impl GbcApu {
                         // channels. On DMG the NRx1 length registers and the
                         // length counters survive the power cycle.
                         let len_regs = [self.regs[1], self.regs[6], self.regs[11], self.regs[16]];
-                        let lengths: [u16; 4] =
-                            std::array::from_fn(|i| self.channels[i].length);
+                        let lengths: [u16; 4] = std::array::from_fn(|i| self.channels[i].length);
                         self.regs.fill(0);
                         self.channels.fill(Channel::default());
                         self.sweep = Sweep::default();
@@ -440,4 +434,3 @@ mod tests {
         assert_eq!(apu.read_register(0xFF31), 0xAB);
     }
 }
-
