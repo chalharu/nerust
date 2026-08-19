@@ -1434,7 +1434,9 @@ impl Mode3Pipeline {
                 || (self.fetcher.stage == FetchStage::Sleep
                     && self.output_stall == 2
                     && matches!((self.bg_fifo.len(), object_x), (8, Some(8)) | (7, Some(9)))));
-        let defer_high = if self.cgb_revision_d || cgb_c_sprite_phase {
+        let defer_high = if !self.cgb_mode {
+            self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0
+        } else if self.cgb_revision_d || cgb_c_sprite_phase {
             (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
                 || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
         } else {
@@ -2127,5 +2129,26 @@ mod tests {
         assert_eq!(pipeline.window_trigger_at, None);
         assert!(pipeline.window_triggered);
         assert!(!pipeline.window_can_retrigger);
+    }
+
+    #[test]
+    fn dmg_scx_high_bits_are_immediate_during_push() {
+        let mut pipeline = Mode3Pipeline::new(
+            registers(),
+            8,
+            0,
+            false,
+            Vec::new(),
+            false,
+            false,
+            true,
+            0,
+        );
+        pipeline.fetcher.stage = FetchStage::Push;
+        pipeline.bg_fifo.push_back(BgPixel::default());
+        pipeline.write_scx(0x20);
+
+        assert_eq!(pipeline.registers.scx, 0x20);
+        assert_eq!(pipeline.pending_scx_high, None);
     }
 }
