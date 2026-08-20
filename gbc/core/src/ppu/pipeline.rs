@@ -189,6 +189,9 @@ pub(super) struct Mode3Pipeline {
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
+    bgp_edge_active: bool,
+    bgp_edge_x: u8,
+    bgp_edge_value: u8,
     pending_obp: Option<(u8, u8, u8)>,
     pending_obj_size: Option<(u8, u8)>,
     relatch_obj_size_high: bool,
@@ -271,6 +274,9 @@ impl Mode3Pipeline {
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
+            bgp_edge_active: false,
+            bgp_edge_x: 0,
+            bgp_edge_value: 0xE4,
             pending_obp: None,
             pending_obj_size: None,
             relatch_obj_size_high: false,
@@ -454,11 +460,14 @@ impl Mode3Pipeline {
             self.force_bg_low_pixels -= 1;
         }
         let obj = self.obj_line[x as usize];
-        let color = self.compose_pixel(bg, obj, bg_palette, obj_palette);
+        let color = self.compose_pixel(bg, obj, bg_palette, obj_palette, x);
+        if self.bgp_edge_active && self.bgp_edge_x == x {
+            self.bgp_edge_active = false;
+        }
         let candidates = std::array::from_fn(|candidate| {
             let mut candidate_bg = bg;
             candidate_bg.color = candidate as u8;
-            self.compose_pixel(candidate_bg, obj, bg_palette, obj_palette)
+            self.compose_pixel(candidate_bg, obj, bg_palette, obj_palette, x)
         });
         self.last_output = Some((x, bg.color, candidates));
         self.pixel_x += 1;
@@ -1081,10 +1090,15 @@ impl Mode3Pipeline {
         obj: Option<ObjPixel>,
         bg_palette: &[u16; 32],
         obj_palette: &[u16; 32],
+        pixel_x: u8,
     ) -> u32 {
         let bg_enabled = self.cgb_game || self.registers.lcdc & 0x01 != 0;
         let bg_color = if bg_enabled { bg.color } else { 0 };
-        let mut pixel = self.bg_pixel(bg_color, bg.palette, bg_palette);
+        let mut pixel = if !self.cgb_mode && !self.cgb_game {
+            self.bg_pixel_dmg(bg_color, pixel_x)
+        } else {
+            self.bg_pixel(bg_color, bg.palette, bg_palette)
+        };
         if self.registers.lcdc & 0x02 == 0 {
             return pixel;
         }
@@ -1105,8 +1119,18 @@ impl Mode3Pipeline {
             let shade = (self.registers.bgp >> (color * 2)) & 3;
             Self::cgb_color(palettes[usize::from(shade)])
         } else {
-            Self::dmg_color((self.registers.bgp >> (color * 2)) & 3)
+            let bgp = self.registers.bgp;
+            Self::dmg_color((bgp >> (color * 2)) & 3)
         }
+    }
+
+    fn bg_pixel_dmg(&self, color: u8, pixel_x: u8) -> u32 {
+        let bgp = if self.bgp_edge_active && self.bgp_edge_x == pixel_x {
+            self.bgp_edge_value
+        } else {
+            self.registers.bgp
+        };
+        Self::dmg_color((bgp >> (color * 2)) & 3)
     }
 
     fn obj_pixel(&self, pixel: ObjPixel, palettes: &[u16; 32]) -> u32 {
@@ -1511,6 +1535,13 @@ impl Mode3Pipeline {
                 1
             };
             self.pending_bgp = Some((delay, value));
+        } else if !self.cgb_mode {
+            let old_bgp = self.registers.bgp;
+            let edge_value = if self.pixel_x == 0 { value } else { old_bgp | value };
+            self.registers.bgp = value;
+            self.bgp_edge_active = true;
+            self.bgp_edge_x = self.pixel_x;
+            self.bgp_edge_value = edge_value;
         } else {
             self.registers.bgp = value;
             self.pending_bgp = None;
