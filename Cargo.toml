@@ -1,5 +1,5 @@
 [workspace]
-default-members = [".", "nes/core"]
+default-members = [".", "nes/core", "gbc/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
@@ -9,6 +9,10 @@ members = [
   "gui/settings",
   "gui/shell",
   "gui/viewmodel",
+  "gbc/core",
+  "gbc/device",
+  "gbc/factory",
+  "gbc/settings",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -55,6 +59,7 @@ nerust_core_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
+nerust_gbc_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
@@ -67,7 +72,8 @@ nerust_tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [features]
-default = ["nes", "wgpu"]
+default = ["nes", "gbc", "wgpu"]
+gbc = ["nerust_gbc_factory"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
@@ -132,6 +138,10 @@ muda = { default-features = false, features = ["gtk"], version = "=0.19.3" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
 nerust_emu_thread = { path = "traits/emu-thread" }
+nerust_gbc_core = { path = "gbc/core" }
+nerust_gbc_device = { path = "gbc/device" }
+nerust_gbc_factory = { path = "gbc/factory" }
+nerust_gbc_settings = { path = "gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
