@@ -1537,7 +1537,12 @@ impl Mode3Pipeline {
             self.pending_bgp = Some((delay, value));
         } else if !self.cgb_mode {
             let old_bgp = self.registers.bgp;
-            let edge_value = if self.pixel_x == 0 { value } else { old_bgp | value };
+            let waiting_on_obj = self.output_stall != 0 || self.sprite_fetch.is_some();
+            let edge_value = if self.pixel_x == 0 || waiting_on_obj {
+                value
+            } else {
+                old_bgp | value
+            };
             self.registers.bgp = value;
             self.bgp_edge_active = true;
             self.bgp_edge_x = self.pixel_x;
