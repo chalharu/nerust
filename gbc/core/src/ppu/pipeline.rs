@@ -1212,7 +1212,9 @@ impl Mode3Pipeline {
                 .sprite_fetch
                 .as_ref()
                 .is_some_and(|fetch| fetch.dot == 2);
-        let obj_size_delay = if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
+        let obj_size_delay = if !self.cgb_mode {
+            None
+        } else if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
             self.sprite_fetch
                 .as_ref()
                 .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
