@@ -1182,7 +1182,7 @@ impl Mode3Pipeline {
                 } else if self.cgb_mode {
                     self.pending_scy = Some((3, value));
                 } else {
-                    self.pending_scy = Some((2, value));
+                    self.pending_scy = Some((1, value));
                 }
             }
             0xFF43 => self.write_scx(value),
