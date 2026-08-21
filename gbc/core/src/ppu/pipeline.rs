@@ -1369,7 +1369,8 @@ impl Mode3Pipeline {
         let collided = self.detect_tile_select_collision(old_tile_select, new_tile_select);
         self.pending_tile_select_write = (!collided).then_some((old_tile_select, new_tile_select));
         self.apply_cgb_c_tile_select_glitches(old_tile_select, new_tile_select);
-        self.pending_tile_select = Some((3, value & 0x10));
+        let tile_sel_delay = if self.cgb_mode { 3 } else { 2 };
+        self.pending_tile_select = Some((tile_sel_delay, value & 0x10));
     }
 
     fn apply_window_tile_select(&mut self, old: u8, new: u8) {
