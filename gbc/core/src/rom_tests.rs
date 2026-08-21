@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::cartridge::Cartridge;
 use crate::cpu_core::Lr35902Cpu;
-use crate::memory::GbcMemoryBus;
+use crate::memory::{CpuStepper, GbcMemoryBus};
 
 fn load_rom(subpath: &str) -> Cartridge {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -141,10 +141,9 @@ fn cpu_instrs_01_special() {
 }
 
 #[test]
-#[ignore = "needs PPU STAT register for LCD interrupt"]
 fn cpu_instrs_02_interrupts() {
     assert_passed(
-        &run_rom("cpu_instrs/individual/02-interrupts.gb", 10_000_000),
+        &run_rom("cpu_instrs/individual/02-interrupts.gb", 25_000_000),
         "02-interrupts",
     );
 }
@@ -226,5 +225,94 @@ fn instr_timing() {
     assert_passed(
         &run_rom("instr_timing/instr_timing.gb", 25_000_000),
         "instr_timing",
+    );
+}
+
+#[test]
+#[ignore = "frame buffer hash verification not yet implemented; renders reference image via PPU"]
+fn dmg_acid2() {
+    let output = run_rom("mattcurrie_dmg-acid2/dmg-acid2.gb", 10_000_000);
+    // dmg-acid2 does not output via serial; verification requires frame buffer hash
+    // Currently just verify the ROM runs without panicking
+    assert!(
+        output.is_empty() || output.contains("Passed"),
+        "dmg-acid2 should not produce serial output"
+    );
+}
+
+#[test]
+fn halt_bug() {
+    assert_passed(&run_rom_mem("halt_bug.gb", 10_000_000), "halt_bug");
+}
+
+#[test]
+#[ignore = "OAM DMA bug not implemented"]
+fn oam_bug_1_lcd_sync() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/1-lcd_sync.gb", 10_000_000),
+        "oam_bug/1-lcd_sync",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_2_causes() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/2-causes.gb", 10_000_000),
+        "oam_bug_2",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_3_non_causes() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/3-non_causes.gb", 10_000_000),
+        "oam_bug_3",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_4_scanline_timing() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/4-scanline_timing.gb", 10_000_000),
+        "oam_bug_4",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_5_timing_bug() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/5-timing_bug.gb", 10_000_000),
+        "oam_bug_5",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_6_timing_no_bug() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/6-timing_no_bug.gb", 10_000_000),
+        "oam_bug_6",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_7_timing_effect() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/7-timing_effect.gb", 10_000_000),
+        "oam_bug_7",
+    );
+}
+
+#[test]
+#[ignore = "OAM DMA corruption bug not implemented"]
+fn oam_bug_8_instr_effect() {
+    assert_passed(
+        &run_rom_mem("oam_bug/rom_singles/8-instr_effect.gb", 10_000_000),
+        "oam_bug_8",
     );
 }

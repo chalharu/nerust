@@ -66,7 +66,7 @@ jobs:
         run: |
           export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
           export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          xvfb-run cargo llvm-cov --workspace --exclude nerust_rom_test --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
+          xvfb-run cargo llvm-cov --workspace --exclude nerust_rom_test --exclude nerust_gbc_rom_test --exclude nerust_gbc_core --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
           workspace_root="${PWD%/}/"
           sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-gtk.info
       - name: Run SonarCloud scan

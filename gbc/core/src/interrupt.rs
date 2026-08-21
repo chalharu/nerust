@@ -31,6 +31,10 @@ pub struct InterruptController {
     ie: u8,
     if_: u8,
     halted: HaltState,
+    /// HALT bug: when HALT executes with IME=0 and a pending interrupt,
+    /// the next opcode fetch does not increment PC. This flag persists
+    /// through the halt-wake cycle and is cleared after one fetch.
+    halt_bug_pending: bool,
 }
 
 impl InterruptController {
@@ -40,6 +44,7 @@ impl InterruptController {
             ie: 0,
             if_: 0xE1,
             halted: HaltState::Running,
+            halt_bug_pending: false,
         }
     }
 
@@ -49,6 +54,11 @@ impl InterruptController {
 
     pub fn acknowledge(&mut self) -> Option<InterruptKind> {
         if !self.ime {
+            // IME=0: still wake from halt if an interrupt is pending
+            let pending = self.ie & self.if_ & 0x1F;
+            if pending != 0 && matches!(self.halted, HaltState::Halted { .. }) {
+                self.halted = HaltState::Running;
+            }
             return None;
         }
 
@@ -58,6 +68,7 @@ impl InterruptController {
         }
 
         self.ime = false;
+        self.halted = HaltState::Running;
 
         let n = fired.trailing_zeros();
         let kind = match n {
@@ -69,8 +80,21 @@ impl InterruptController {
             _ => return None,
         };
 
-        self.if_ &= !kind.bit();
+        // The IF bit is NOT cleared here. The interrupt dispatch phase
+        // re-evaluates IE & IF after pushing PC (the push can write to the
+        // IE/IF registers), which may cancel or change the dispatch
+        // (mooneye ie_push).
         Some(kind)
+    }
+
+    /// Raw IF value (bits 0-4 only).
+    pub fn read_if_raw(&self) -> u8 {
+        self.if_ & 0x1F
+    }
+
+    /// Clear a single IF bit.
+    pub fn clear_if_bit(&mut self, bit: u8) {
+        self.if_ &= !(1 << bit);
     }
 
     pub fn interrupt_pending(&self) -> bool {
@@ -78,8 +102,10 @@ impl InterruptController {
     }
 
     pub fn halt(&mut self) {
-        let bug = !self.ime && (self.ie & self.if_ & 0x1F) != 0;
-        self.halted = HaltState::Halted { bug_triggered: bug };
+        self.halt_bug_pending = !self.ime && (self.ie & self.if_ & 0x1F) != 0;
+        self.halted = HaltState::Halted {
+            bug_triggered: self.halt_bug_pending,
+        };
     }
 
     pub fn stop(&mut self) {
@@ -120,12 +146,11 @@ impl InterruptController {
     }
 
     pub fn is_halt_bug_active(&self) -> bool {
-        matches!(
-            self.halted,
-            HaltState::Halted {
-                bug_triggered: true
-            }
-        )
+        self.halt_bug_pending
+    }
+
+    pub fn clear_halt_bug(&mut self) {
+        self.halt_bug_pending = false;
     }
 
     pub fn set_ime(&mut self, v: bool) {
@@ -181,7 +206,9 @@ mod tests {
         let kind = ic.acknowledge().expect("should ack");
         assert_eq!(kind, InterruptKind::VBlank);
         assert!(!ic.get_ime());
-        assert_eq!(ic.if_ & 0x01, 0x00);
+        // IF bit is NOT cleared by acknowledge; the interrupt dispatch phase
+        // clears it after re-evaluating IE & IF (mooneye ie_push).
+        assert_eq!(ic.if_ & 0x01, 0x01);
     }
 
     #[test]
@@ -194,7 +221,8 @@ mod tests {
 
         let kind = ic.acknowledge().expect("should ack");
         assert_eq!(kind, InterruptKind::VBlank);
-        assert_eq!(ic.if_, 0xE0 | 0x04); // Timer still pending
+        // Both bits still pending until the dispatch phase clears one.
+        assert_eq!(ic.if_, 0xE0 | 0x05);
     }
 
     #[test]

@@ -70,10 +70,22 @@ pub struct Mbc1 {
     banking_mode: bool,
     battery: bool,
     rom_bank_mask: u8,
+    /// 8 Mbit MBC1 multicart: the ROM is laid out as several games, and the
+    /// bank registers select game + bank with a different bit layout
+    /// (bank1 low 4 bits select the bank, bank2 selects the game via << 4).
+    multicart: bool,
 }
 
 impl Mbc1 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
+        Self::with_multicart(rom, ram, battery, false)
+    }
+
+    pub fn new_multicart(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
+        Self::with_multicart(rom, ram, battery, true)
+    }
+
+    fn with_multicart(rom: Vec<u8>, ram: Vec<u8>, battery: bool, multicart: bool) -> Self {
         let rom_bank_mask = Self::bank_mask(rom.len() / 0x4000);
         Self {
             rom,
@@ -84,6 +96,7 @@ impl Mbc1 {
             banking_mode: false,
             battery,
             rom_bank_mask,
+            multicart,
         }
     }
 
@@ -91,26 +104,30 @@ impl Mbc1 {
         bank_count.saturating_sub(1) as u8
     }
 
-    fn rom_bank_effective(&self) -> usize {
+    /// Lower (bank 0 / $0000-$3FFF) and upper (banked / $4000-$7FFF) ROM bank
+    /// numbers, following the MBC1 mode and (for 8 Mbit multicarts) the
+    /// multicart bank bit layout.
+    fn bank_layout(&self) -> (usize, usize) {
         let bank = if self.rom_bank == 0 { 1 } else { self.rom_bank };
-        let bank_count = self.rom.len() / 0x4000;
-        let upper = if bank_count > 32 {
-            (self.ram_bank as usize) << 5
+        let (upper_bits, lower_bits) = if self.multicart {
+            ((self.ram_bank as usize) << 4, (bank as usize) & 0x0F)
         } else {
-            0
+            ((self.ram_bank as usize) << 5, bank as usize)
         };
-        (upper | (bank as usize)) & self.rom_bank_mask as usize
+        let lower_bank = if self.banking_mode { upper_bits } else { 0 };
+        (lower_bank, upper_bits | lower_bits)
+    }
+
+    fn rom_bank_effective(&self) -> usize {
+        let (_, upper_bank) = self.bank_layout();
+        upper_bank & self.rom_bank_mask as usize
     }
 }
 
 impl Mbc for Mbc1 {
     fn read_rom0(&self, addr: u16) -> u8 {
-        let bank = if self.banking_mode {
-            (self.ram_bank as usize) << 5
-        } else {
-            0
-        };
-        let offset = bank * 0x4000 + addr as usize;
+        let (lower_bank, _) = self.bank_layout();
+        let offset = (lower_bank & self.rom_bank_mask as usize) * 0x4000 + addr as usize;
         self.rom.get(offset).copied().unwrap_or(0xFF)
     }
 
@@ -146,8 +163,12 @@ impl Mbc for Mbc1 {
         } else {
             0
         };
-        let offset = bank * 0x2000 + (addr as usize - 0xA000);
-        self.ram.get(offset).copied().unwrap_or(0xFF)
+        // Mask the banked address into the physical RAM size: cartridges with
+        // a small RAM chip only wire the low address lines, so RAM bank bits
+        // beyond the chip size alias back to the start of the chip.
+        let mask = self.ram.len() - 1;
+        let offset = ((bank * 0x2000) | (addr as usize - 0xA000)) & mask;
+        self.ram[offset]
     }
 
     fn write_ram(&mut self, addr: u16, value: u8) {
@@ -159,10 +180,9 @@ impl Mbc for Mbc1 {
         } else {
             0
         };
-        let offset = bank * 0x2000 + (addr as usize - 0xA000);
-        if let Some(cell) = self.ram.get_mut(offset) {
-            *cell = value;
-        }
+        let mask = self.ram.len() - 1;
+        let offset = ((bank * 0x2000) | (addr as usize - 0xA000)) & mask;
+        self.ram[offset] = value;
     }
 
     fn has_battery(&self) -> bool {
@@ -206,6 +226,224 @@ impl Mbc for Mbc1 {
     }
 }
 
+/// MBC5 (up to 8 MiB ROM and 128 KiB RAM).
+#[derive(Debug, Clone)]
+pub struct Mbc5 {
+    rom: Vec<u8>,
+    ram: Vec<u8>,
+    ram_enabled: bool,
+    rom_bank: u16,
+    ram_bank: u8,
+    battery: bool,
+}
+
+impl Mbc5 {
+    pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
+        Self {
+            rom,
+            ram,
+            ram_enabled: false,
+            rom_bank: 1,
+            ram_bank: 0,
+            battery,
+        }
+    }
+}
+
+impl Mbc for Mbc5 {
+    fn read_rom0(&self, addr: u16) -> u8 {
+        self.rom.get(addr as usize).copied().unwrap_or(0xFF)
+    }
+
+    fn read_rom_n(&self, addr: u16) -> u8 {
+        let bank_count = self.rom.len() / 0x4000;
+        let bank = if bank_count > 0 {
+            (self.rom_bank as usize) & (bank_count - 1)
+        } else {
+            0
+        };
+        let offset = bank * 0x4000 + (addr as usize - 0x4000);
+        self.rom.get(offset).copied().unwrap_or(0xFF)
+    }
+
+    fn write_rom(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x0000..=0x1FFF => {
+                self.ram_enabled = (value & 0x0F) == 0x0A;
+            }
+            0x2000..=0x2FFF => {
+                self.rom_bank = (self.rom_bank & 0x100) | value as u16;
+            }
+            0x3000..=0x3FFF => {
+                self.rom_bank = (self.rom_bank & 0xFF) | ((value as u16 & 0x01) << 8);
+            }
+            0x4000..=0x5FFF => {
+                self.ram_bank = value & 0x0F;
+            }
+            _ => {}
+        }
+    }
+
+    fn read_ram(&self, addr: u16) -> u8 {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return 0xFF;
+        }
+        let offset = self.ram_bank as usize * 0x2000 + (addr as usize - 0xA000);
+        self.ram.get(offset).copied().unwrap_or(0xFF)
+    }
+
+    fn write_ram(&mut self, addr: u16, value: u8) {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return;
+        }
+        let offset = self.ram_bank as usize * 0x2000 + (addr as usize - 0xA000);
+        if let Some(cell) = self.ram.get_mut(offset) {
+            *cell = value;
+        }
+    }
+
+    fn has_battery(&self) -> bool {
+        self.battery
+    }
+
+    fn ram_data(&self) -> Option<&[u8]> {
+        if self.ram.is_empty() {
+            None
+        } else {
+            Some(&self.ram)
+        }
+    }
+
+    fn ram_restore(&mut self, data: &[u8]) {
+        if data.len() <= self.ram.len() {
+            self.ram[..data.len()].copy_from_slice(data);
+        }
+    }
+
+    fn serialize_state(&self) -> Vec<u8> {
+        vec![
+            self.ram_enabled as u8,
+            self.rom_bank as u8,
+            (self.rom_bank >> 8) as u8,
+            self.ram_bank,
+        ]
+    }
+
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+        if data.len() < 4 {
+            return Err("MBC5 state too short".into());
+        }
+        self.ram_enabled = data[0] != 0;
+        self.rom_bank = data[1] as u16 | ((data[2] as u16) << 8);
+        self.ram_bank = data[3] & 0x0F;
+        Ok(())
+    }
+}
+
+/// MBC2 (up to 256 KiB ROM, built-in 512-nibble RAM).
+#[derive(Debug, Clone)]
+pub struct Mbc2 {
+    rom: Vec<u8>,
+    ram: Vec<u8>,
+    ram_enabled: bool,
+    rom_bank: u8,
+    battery: bool,
+}
+
+impl Mbc2 {
+    pub fn new(rom: Vec<u8>, battery: bool) -> Self {
+        Self {
+            rom,
+            ram: vec![0; 0x200],
+            ram_enabled: false,
+            rom_bank: 1,
+            battery,
+        }
+    }
+}
+
+impl Mbc for Mbc2 {
+    fn read_rom0(&self, addr: u16) -> u8 {
+        self.rom.get(addr as usize).copied().unwrap_or(0xFF)
+    }
+
+    fn read_rom_n(&self, addr: u16) -> u8 {
+        let bank = if self.rom_bank == 0 {
+            1
+        } else {
+            self.rom_bank as usize
+        };
+        let bank_count = self.rom.len() / 0x4000;
+        let bank = if bank_count > 0 {
+            bank & (bank_count - 1)
+        } else {
+            0
+        };
+        let offset = bank * 0x4000 + (addr as usize - 0x4000);
+        self.rom.get(offset).copied().unwrap_or(0xFF)
+    }
+
+    fn write_rom(&mut self, addr: u16, value: u8) {
+        // MBC2 control registers only live at $0000-$3FFF; writes to
+        // $4000-$7FFF (no RAM banking) are ignored.
+        if addr >= 0x4000 {
+            return;
+        }
+        if addr & 0x0100 == 0 {
+            // RAM enable
+            self.ram_enabled = (value & 0x0F) == 0x0A;
+        } else {
+            // ROM bank select (lower 4 bits)
+            self.rom_bank = value & 0x0F;
+        }
+    }
+
+    fn read_ram(&self, addr: u16) -> u8 {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return 0xFF;
+        }
+        let idx = (addr as usize - 0xA000) & 0x1FF;
+        self.ram.get(idx).copied().unwrap_or(0xFF) | 0xF0
+    }
+
+    fn write_ram(&mut self, addr: u16, value: u8) {
+        if !self.ram_enabled || self.ram.is_empty() {
+            return;
+        }
+        let idx = (addr as usize - 0xA000) & 0x1FF;
+        if let Some(cell) = self.ram.get_mut(idx) {
+            *cell = value & 0x0F;
+        }
+    }
+
+    fn has_battery(&self) -> bool {
+        self.battery
+    }
+
+    fn ram_data(&self) -> Option<&[u8]> {
+        Some(&self.ram)
+    }
+
+    fn ram_restore(&mut self, data: &[u8]) {
+        if data.len() <= self.ram.len() {
+            self.ram[..data.len()].copy_from_slice(data);
+        }
+    }
+
+    fn serialize_state(&self) -> Vec<u8> {
+        vec![self.ram_enabled as u8, self.rom_bank]
+    }
+
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+        if data.len() < 2 {
+            return Err("MBC2 state too short".into());
+        }
+        self.ram_enabled = data[0] != 0;
+        self.rom_bank = data[1] & 0x0F;
+        Ok(())
+    }
+}
+
 /// Factory function to create the appropriate MBC from header + ROM data.
 pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
     match header.cartridge_type {
@@ -213,8 +451,39 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         crate::cartridge_header::CartridgeType::Mbc1
         | crate::cartridge_header::CartridgeType::Mbc1Ram
         | crate::cartridge_header::CartridgeType::Mbc1RamBattery => {
-            let ram = ram.unwrap_or_else(|| vec![0; header.ram_size.bytes]);
-            Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
+            let ram_size = if header.cartridge_type.has_ram() && header.ram_size.bytes == 0 {
+                0x2000
+            } else {
+                header.ram_size.bytes
+            };
+            let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
+            if header.multicart {
+                Box::new(Mbc1::new_multicart(
+                    rom,
+                    ram,
+                    header.cartridge_type.has_battery(),
+                ))
+            } else {
+                Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
+            }
+        }
+        crate::cartridge_header::CartridgeType::Mbc5
+        | crate::cartridge_header::CartridgeType::Mbc5Ram
+        | crate::cartridge_header::CartridgeType::Mbc5RamBattery
+        | crate::cartridge_header::CartridgeType::Mbc5Rumble
+        | crate::cartridge_header::CartridgeType::Mbc5RumbleRam
+        | crate::cartridge_header::CartridgeType::Mbc5RumbleRamBattery => {
+            let ram_size = if header.cartridge_type.has_ram() && header.ram_size.bytes == 0 {
+                0x2000
+            } else {
+                header.ram_size.bytes
+            };
+            let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
+            Box::new(Mbc5::new(rom, ram, header.cartridge_type.has_battery()))
+        }
+        crate::cartridge_header::CartridgeType::Mbc2
+        | crate::cartridge_header::CartridgeType::Mbc2Battery => {
+            Box::new(Mbc2::new(rom, header.cartridge_type.has_battery()))
         }
         _ => Box::new(RomOnly::new(rom)),
     }
@@ -265,6 +534,60 @@ mod tests {
         assert_eq!(mbc.read_ram(0xA000), 0xFF); // disabled
         mbc.write_rom(0x0000, 0x0A); // enable RAM
         assert_eq!(mbc.read_ram(0xA000), 0x77);
+    }
+
+    #[test]
+    fn mbc5_default_reads_bank_0_and_1() {
+        let mut rom = vec![0u8; 0x80000]; // 128 banks → 512 KiB
+        rom[0x0000] = 0xAA;
+        rom[0x4000] = 0xBB;
+        let mbc = Mbc5::new(rom, vec![0; 0x2000], false);
+        assert_eq!(mbc.read_rom0(0x0000), 0xAA);
+        assert_eq!(mbc.read_rom_n(0x4000), 0xBB);
+    }
+
+    #[test]
+    fn mbc5_low_bank_register_switches_bank() {
+        let mut rom = vec![0u8; 0x80000]; // 128 banks
+        rom[5 * 0x4000] = 0xCC;
+        let mut mbc = Mbc5::new(rom, vec![0; 0x2000], false);
+        mbc.write_rom(0x2000, 0x05); // select bank 5 (low 8 bits)
+        assert_eq!(mbc.read_rom_n(0x4000), 0xCC);
+    }
+
+    #[test]
+    fn mbc5_high_bank_bit_toggles_above_256() {
+        let mut rom = vec![0u8; 0x800000]; // 2048 banks → 8 MiB
+        rom[0x100 * 0x4000] = 0xDD; // bank 256
+        let mut mbc = Mbc5::new(rom, vec![0; 0x2000], false);
+        mbc.write_rom(0x2000, 0x00); // low bits = 0
+        mbc.write_rom(0x3000, 0x01); // high bit (bit 8) = 1 → bank 256
+        assert_eq!(mbc.read_rom_n(0x4000), 0xDD);
+    }
+
+    #[test]
+    fn mbc5_ram_read_requires_enable() {
+        let mut ram = vec![0u8; 0x2000];
+        ram[0] = 0x77;
+        let mut mbc = Mbc5::new(vec![0; 0x8000], ram, false);
+        assert_eq!(mbc.read_ram(0xA000), 0xFF); // disabled
+        mbc.write_rom(0x0000, 0x0A); // enable RAM
+        assert_eq!(mbc.read_ram(0xA000), 0x77);
+    }
+
+    #[test]
+    fn mbc1_ram_type_with_zero_size_gets_minimum_ram() {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0147] = 0x02;
+        rom[0x0148] = 0x00;
+        rom[0x0149] = 0x00;
+        let header = CartridgeHeader::parse(&rom).unwrap();
+        let mut mbc = create_mbc(&header, rom, None);
+
+        mbc.write_rom(0x0000, 0x0A);
+        mbc.write_ram(0xA000, 0x5A);
+
+        assert_eq!(mbc.read_ram(0xA000), 0x5A);
     }
 
     #[test]
