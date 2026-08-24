@@ -34,8 +34,10 @@ jobs:
       - name: Check if image exists
         id: check-image
         continue-on-error: true
+          GH_REPO: ${{ github.repository }}
+          IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
-          docker pull ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ steps.set-tag.outputs.tag }}
+          docker pull ghcr.io/${{ env.GH_REPO }}/ci-image-sonarcloud:${{ env.IMAGE_TAG }}
       - name: Build and push if not exists
         if: steps.check-image.outcome == 'failure'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
