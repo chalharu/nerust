@@ -428,8 +428,7 @@ suites:
   - name: Gekkio_mooneye-test-suite
     cases:
       - id: stat_lyc_onoff
-        description: Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD
-          on/off)
+        description: Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off)
         rom: acceptance/ppu/stat_lyc_onoff.gb
         models:
           - cgb_c
@@ -571,8 +570,7 @@ suites:
           - interrupt
           - timing
       - id: intr_2_mode0_timing_sprites
-        description: Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode
-          0 interrupt with sprites)
+        description: Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode 0 interrupt with sprites)
         rom: acceptance/ppu/intr_2_mode0_timing_sprites.gb
         models:
           - cgb_c
@@ -586,8 +584,7 @@ suites:
           - interrupt
           - timing
       - id: intr_2_oam_ok_timing
-        description: Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable
-          OAM)
+        description: Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable OAM)
         rom: acceptance/ppu/intr_2_oam_ok_timing.gb
         models:
           - cgb_c
@@ -634,8 +631,7 @@ suites:
         tags:
           - timing
       - id: boot_hwio_dmg0
-        description: Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG
-          0)
+        description: Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG 0)
         rom: acceptance/boot_hwio-dmg0.gb
         models:
           - dmg0
@@ -1414,8 +1410,7 @@ suites:
         tags:
           - timer
       - id: timer_tim00_div_trigger
-        description: Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge
-          trigger)
+        description: Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger)
         rom: acceptance/timer/tim00_div_trigger.gb
         models:
           - cgb_c
@@ -1427,8 +1422,7 @@ suites:
         tags:
           - timer
       - id: timer_tim01_div_trigger
-        description: Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge
-          trigger)
+        description: Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger)
         rom: acceptance/timer/tim01_div_trigger.gb
         models:
           - cgb_c
@@ -1440,8 +1434,7 @@ suites:
         tags:
           - timer
       - id: timer_tim10_div_trigger
-        description: Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge
-          trigger)
+        description: Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger)
         rom: acceptance/timer/tim10_div_trigger.gb
         models:
           - cgb_c
@@ -1453,8 +1446,7 @@ suites:
         tags:
           - timer
       - id: timer_tim11_div_trigger
-        description: Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge
-          trigger)
+        description: Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger)
         rom: acceptance/timer/tim11_div_trigger.gb
         models:
           - cgb_c
@@ -1478,8 +1470,7 @@ suites:
         tags:
           - timer
       - id: timer_tima_write_reloading
-        description: Mooneye Test Suite — timer/tima_write_reloading (TIMA write during
-          reload)
+        description: Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload)
         rom: acceptance/timer/tima_write_reloading.gb
         models:
           - cgb_c
@@ -1491,8 +1482,7 @@ suites:
         tags:
           - timer
       - id: timer_tma_write_reloading
-        description: Mooneye Test Suite — timer/tma_write_reloading (TMA write during
-          reload)
+        description: Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload)
         rom: acceptance/timer/tma_write_reloading.gb
         models:
           - cgb_c
@@ -1838,8 +1828,7 @@ suites:
         reference:
           cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_win_change2.png
       - id: m3_lcdc_win_en_change_multiple
-        description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB
-          D)
+        description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)
         rom: m3_lcdc_win_en_change_multiple.gb
         models:
           - dmg
