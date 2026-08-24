@@ -34,6 +34,7 @@ jobs:
       - name: Check if image exists
         id: check-image
         continue-on-error: true
+        env:
           GH_REPO: ${{ github.repository }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
