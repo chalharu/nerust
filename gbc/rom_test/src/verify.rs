@@ -260,7 +260,7 @@ pub fn verify_reference(
 
     // Drop alpha from the rendered frame for comparison.
     let mut frame_rgb = Vec::with_capacity(width as usize * height as usize * 3);
-    for px in frame.rgba.chunks_exact(4) {
+    for px in frame.rgba.as_chunks::<4>().0 {
         frame_rgb.extend_from_slice(&px[..3]);
     }
     if crc32(&frame_rgb) == crc32(&ref_rgb) {
@@ -277,8 +277,10 @@ pub fn verify_reference(
     let mut diff_count = 0usize;
     let mut first = None;
     for (i, (a, b)) in frame_rgb
-        .chunks_exact(3)
-        .zip(ref_rgb.chunks_exact(3))
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(ref_rgb.as_chunks::<3>().0.iter())
         .enumerate()
     {
         if a != b {

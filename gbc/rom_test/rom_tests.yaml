@@ -1,4 +1,3 @@
----
 rom_root: ../../roms/gbc
 expected_failures:
   - dmg_sound@dmg
