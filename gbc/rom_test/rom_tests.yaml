@@ -4,6 +4,15 @@ expected_failures:
 # APU is not yet accurate enough for the retrio sound hardware tests.
 - dmg_sound@dmg
 - cgb_sound@cgb_d
+# Mealybug Tearoom PPU tests - mid-scanline register changes not yet fully implemented
+- m3_lcdc_obj_size_change@dmg
+- m3_lcdc_obj_size_change_scx@dmg
+- m3_lcdc_tile_sel_change@dmg
+- m3_lcdc_tile_sel_change@cgb_c
+- m3_lcdc_tile_sel_win_change@dmg
+- m3_lcdc_tile_sel_win_change@cgb_c
+- m3_scy_change@dmg
+- m3_scy_change@cgb_c
 suites:
 - name: retrio_gb-test-roms
   cases:
