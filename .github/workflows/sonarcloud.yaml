@@ -10,6 +10,9 @@ jobs:
   prepare-image:
     name: Prepare image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     timeout-minutes: 10
     outputs:
       image_tag: "${{ steps.set-tag.outputs.tag }}"
