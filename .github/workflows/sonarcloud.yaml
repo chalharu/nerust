@@ -44,6 +44,7 @@ jobs:
           file: .github/workflows/docker/Dockerfile.sonarcloud
           push: true
           tags: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ steps.set-tag.outputs.tag }}
+          provenance: false
   sonarcloud:
     name: SonarCloud
     needs: prepare-image
