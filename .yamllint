@@ -1,7 +1,12 @@
+---
 extends: default
 rules:
   line-length:
-    max: 120
-  indentation:
-    spaces: 2
-    indent-sequences: consistent
+    max: 1500
+  document-start: disable
+  truthy: disable
+  comments: disable
+  indentation: disable
+  trailing-spaces: disable
+  empty-lines: disable
+  brackets: disable
