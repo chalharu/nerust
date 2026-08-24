@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{ffi::OsStr, path::PathBuf};
 
 use clap::{Parser, ValueEnum};
 
@@ -111,7 +111,7 @@ fn main() {
 
     let manifest_name = manifest_path
         .file_stem()
-        .and_then(|s| s.to_str())
+        .and_then(OsStr::to_str)
         .unwrap_or("rom_tests");
 
     let format = if cli.format == OutputFormat::Text && (cli.report || cli.open) {
