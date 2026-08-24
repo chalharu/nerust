@@ -1,18 +1,7 @@
----
 extends: default
 rules:
   line-length:
-    max: 5000
+    max: 120
   indentation:
     spaces: 2
     indent-sequences: consistent
-  document-start:
-    present: true
-  truthy:
-    allowed-values:
-    - 'true'
-    - 'false'
-    - 'yes'
-    - 'no'
-    - 'on'
-    - 'off'
