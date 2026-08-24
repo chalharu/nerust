@@ -63,14 +63,16 @@ pub fn decode_png_rgb(data: &[u8]) -> Result<(u32, u32, Vec<u8>), RomTestError> 
         // Grayscale + alpha: drop alpha.
         n if n == pixels * 2 => {
             let mut out = Vec::with_capacity(pixels * 3);
-            for px in buf.chunks_exact(2) {
+            for px in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[px[0], px[0], px[0]]);
             }
             out
         }
         // RGB or RGBA (drop alpha).
         n if n == pixels * 4 => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|px| px[..3].to_vec())
             .collect(),
         _ => buf,
