@@ -1217,7 +1217,13 @@ impl Mode3Pipeline {
         let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
         self.registers.lcdc = (value & !preserve) | (old & preserve);
 
-        self.dispatch_lcdc_changes(changed, value, old_written, obj_size_delay, defer_obj_size_set);
+        self.dispatch_lcdc_changes(
+            changed,
+            value,
+            old_written,
+            obj_size_delay,
+            defer_obj_size_set,
+        );
     }
 
     fn defer_obj_size_active(&self) -> bool {

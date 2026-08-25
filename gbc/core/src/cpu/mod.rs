@@ -105,12 +105,7 @@ impl Lr35902Cpu {
         }
     }
 
-    fn step_execute_opcode(
-        &mut self,
-        handler: HandlerFn,
-        step: u8,
-        bus: &mut GbcMemoryBus,
-    ) {
+    fn step_execute_opcode(&mut self, handler: HandlerFn, step: u8, bus: &mut GbcMemoryBus) {
         match handler(self, bus, step) {
             StepResult::Exit => {
                 self.set_phase(Phase::FetchOpcode);
