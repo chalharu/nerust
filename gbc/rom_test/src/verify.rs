@@ -94,6 +94,23 @@ pub struct VerifySpec {
 }
 
 impl VerifySpec {
+    pub fn has_serial_hash(&self) -> bool {
+        self.serial
+            .as_ref()
+            .is_some_and(|serial| serial.hash.is_some())
+    }
+
+    pub fn serial_hash_matches(&self, output: &[u8]) -> bool {
+        let Some(hash) = self.serial.as_ref().and_then(|serial| serial.hash.as_ref()) else {
+            return false;
+        };
+        let actual = match hash.algo() {
+            HashAlgo::Crc32 => format!("{:08X}", crc32(output)),
+            HashAlgo::Sha256 => sha256_hex(output),
+        };
+        actual.eq_ignore_ascii_case(&normalize_hex(hash.value()))
+    }
+
     /// Validate that all declared hex values parse and fit their targets.
     /// Called at manifest load time so configuration errors fail fast
     /// instead of surfacing per cell at run time.
@@ -321,7 +338,7 @@ fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, RomTestError> {
         .collect()
 }
 
-fn parse_hex(s: &str) -> Result<u64, RomTestError> {
+pub(crate) fn parse_hex(s: &str) -> Result<u64, RomTestError> {
     let s = s.trim_start_matches("0x").trim_start_matches("0X");
     u64::from_str_radix(s, 16)
         .map_err(|_| RomTestError::InvalidManifest(format!("invalid hex value: {}", s)))
@@ -456,5 +473,19 @@ mod tests {
             ..VerifySpec::default()
         };
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn serial_hash_matches_only_complete_output() {
+        let complete = b"Passed";
+        let spec = VerifySpec {
+            serial: Some(SerialVerify {
+                hash: Some(Hash::Plain(format!("{:08X}", crc32(complete)))),
+                ..SerialVerify::default()
+            }),
+            ..VerifySpec::default()
+        };
+        assert!(!spec.serial_hash_matches(b"Pass"));
+        assert!(spec.serial_hash_matches(complete));
     }
 }

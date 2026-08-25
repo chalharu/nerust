@@ -8,6 +8,21 @@ expected_failures:
   - m3_lcdc_tile_sel_win_change@cgb_c
   - m3_scy_change@dmg
   - m3_scy_change@cgb_c
+completion_profiles:
+  serial_hash:
+    poll_interval: 256
+    stages:
+      - serial_hash: true
+  signed_memory_status:
+    poll_interval: 256
+    stages:
+      - memory:
+          - {address: '0xA001', value: '0xDE'}
+          - {address: '0xA002', value: '0xB0'}
+          - {address: '0xA003', value: '0x61'}
+          - {address: '0xA000', value: '0x80'}
+      - memory:
+          - {address: '0xA000', not_value: '0x80'}
 suites:
   - name: retrio_gb-test-roms
     cases:
@@ -17,6 +32,7 @@ suites:
         models:
           - dmg
         cycles: 60000000
+        completion: serial_hash
         verify:
           serial:
             hash: 483E4D0E
@@ -28,6 +44,7 @@ suites:
         models:
           - dmg
         cycles: 3000000
+        completion: serial_hash
         verify:
           serial:
             hash: 2B25B1A8
@@ -39,6 +56,7 @@ suites:
         models:
           - dmg
         cycles: 600000
+        completion: serial_hash
         verify:
           serial:
             hash: D56D47C8
@@ -51,6 +69,7 @@ suites:
         models:
           - dmg
         cycles: 3000000
+        completion: serial_hash
         verify:
           serial:
             hash: 80207C1D
@@ -62,6 +81,7 @@ suites:
         models:
           - dmg
         cycles: 3500000
+        completion: serial_hash
         verify:
           serial:
             hash: 2CEED1BE
@@ -73,6 +93,7 @@ suites:
         models:
           - dmg
         cycles: 4500000
+        completion: serial_hash
         verify:
           serial:
             hash: 25328ED0
@@ -84,6 +105,7 @@ suites:
         models:
           - dmg
         cycles: 800000
+        completion: serial_hash
         verify:
           serial:
             hash: CFC3176B
@@ -95,6 +117,7 @@ suites:
         models:
           - dmg
         cycles: 1000000
+        completion: serial_hash
         verify:
           serial:
             hash: B7D8A077
@@ -106,6 +129,7 @@ suites:
         models:
           - dmg
         cycles: 800000
+        completion: serial_hash
         verify:
           serial:
             hash: 2CA5A744
@@ -117,6 +141,7 @@ suites:
         models:
           - dmg
         cycles: 10500000
+        completion: serial_hash
         verify:
           serial:
             hash: DE6AFDDD
@@ -128,6 +153,7 @@ suites:
         models:
           - dmg
         cycles: 16000000
+        completion: serial_hash
         verify:
           serial:
             hash: F81CB006
@@ -139,6 +165,7 @@ suites:
         models:
           - dmg
         cycles: 20000000
+        completion: serial_hash
         verify:
           serial:
             hash: 05A6D948
@@ -150,6 +177,7 @@ suites:
         models:
           - dmg
         cycles: 800000
+        completion: serial_hash
         verify:
           serial:
             hash: EB56FABB
@@ -162,6 +190,7 @@ suites:
         models:
           - dmg
         cycles: 600000
+        completion: serial_hash
         verify:
           serial:
             hash: 7A15AF07
@@ -174,6 +203,7 @@ suites:
         models:
           - dmg
         cycles: 600000
+        completion: serial_hash
         verify:
           serial:
             hash: E5881150
@@ -186,6 +216,7 @@ suites:
         models:
           - dmg
         cycles: 700000
+        completion: serial_hash
         verify:
           serial:
             hash: D2B4F231
@@ -198,6 +229,7 @@ suites:
         models:
           - dmg
         cycles: 1800000
+        completion: serial_hash
         verify:
           serial:
             hash: A2165D86
@@ -269,7 +301,8 @@ suites:
         rom: interrupt_time/interrupt_time.gb
         models:
           - cgb_d
-        cycles: 2000000
+        cycles: 700000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -282,7 +315,8 @@ suites:
         rom: halt_bug.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 2500000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -295,7 +329,8 @@ suites:
         rom: oam_bug/oam_bug.gb
         models:
           - dmg
-        cycles: 300000000
+        cycles: 25000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -308,7 +343,8 @@ suites:
         rom: oam_bug/rom_singles/1-lcd_sync.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 700000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -320,7 +356,8 @@ suites:
         rom: oam_bug/rom_singles/2-causes.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 2200000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -332,7 +369,8 @@ suites:
         rom: oam_bug/rom_singles/3-non_causes.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 2200000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -344,7 +382,8 @@ suites:
         rom: oam_bug/rom_singles/4-scanline_timing.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 1300000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -356,7 +395,8 @@ suites:
         rom: oam_bug/rom_singles/5-timing_bug.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 1300000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -368,7 +408,8 @@ suites:
         rom: oam_bug/rom_singles/6-timing_no_bug.gb
         models:
           - dmg
-        cycles: 3000000
+        cycles: 2000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -380,7 +421,8 @@ suites:
         rom: oam_bug/rom_singles/7-timing_effect.gb
         models:
           - dmg
-        cycles: 30000000
+        cycles: 28000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -392,7 +434,8 @@ suites:
         rom: oam_bug/rom_singles/8-instr_effect.gb
         models:
           - dmg
-        cycles: 30000000
+        cycles: 8000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -404,7 +447,8 @@ suites:
         rom: dmg_sound/dmg_sound.gb
         models:
           - dmg
-        cycles: 60000000
+        cycles: 45000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -416,7 +460,8 @@ suites:
         rom: cgb_sound/cgb_sound.gb
         models:
           - cgb_d
-        cycles: 60000000
+        cycles: 45000000
+        completion: signed_memory_status
         verify:
           memory:
             - address: '0xA000'
@@ -427,168 +472,192 @@ suites:
         description: DMG sound registers
         rom: dmg_sound/rom_singles/01-registers.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1100000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_02_length_counter
         description: DMG sound length counter
         rom: dmg_sound/rom_singles/02-len ctr.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 12000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_03_trigger
         description: DMG sound trigger
         rom: dmg_sound/rom_singles/03-trigger.gb
         models: [dmg]
-        cycles: 60000000
+        cycles: 22000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_04_sweep
         description: DMG sound sweep
         rom: dmg_sound/rom_singles/04-sweep.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1600000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_05_sweep_details
         description: DMG sound sweep details
         rom: dmg_sound/rom_singles/05-sweep details.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1600000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_06_overflow_on_trigger
         description: DMG sound sweep overflow on trigger
         rom: dmg_sound/rom_singles/06-overflow on trigger.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1200000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_07_length_sweep_period_sync
         description: DMG sound length and sweep period synchronization
         rom: dmg_sound/rom_singles/07-len sweep period sync.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 800000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_08_length_counter_during_power
         description: DMG sound length counter during power changes
         rom: dmg_sound/rom_singles/08-len ctr during power.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1800000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_09_wave_read_while_on
         description: DMG wave RAM reads during playback
         rom: dmg_sound/rom_singles/09-wave read while on.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 800000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_10_wave_trigger_while_on
         description: DMG wave trigger during playback
         rom: dmg_sound/rom_singles/10-wave trigger while on.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 5000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_11_registers_after_power
         description: DMG sound registers after power changes
         rom: dmg_sound/rom_singles/11-regs after power.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 1000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_12_wave_write_while_on
         description: DMG wave RAM writes during playback
         rom: dmg_sound/rom_singles/12-wave write while on.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 5000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_01_registers
         description: CGB sound registers
         rom: cgb_sound/rom_singles/01-registers.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 1100000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_02_length_counter
         description: CGB sound length counter
         rom: cgb_sound/rom_singles/02-len ctr.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 12000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_03_trigger
         description: CGB sound trigger
         rom: cgb_sound/rom_singles/03-trigger.gb
         models: [cgb_d]
-        cycles: 60000000
+        cycles: 22000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_04_sweep
         description: CGB sound sweep
         rom: cgb_sound/rom_singles/04-sweep.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 1600000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_05_sweep_details
         description: CGB sound sweep details
         rom: cgb_sound/rom_singles/05-sweep details.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 1600000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_06_overflow_on_trigger
         description: CGB sound sweep overflow on trigger
         rom: cgb_sound/rom_singles/06-overflow on trigger.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 1200000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_07_length_sweep_period_sync
         description: CGB sound length and sweep period synchronization
         rom: cgb_sound/rom_singles/07-len sweep period sync.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 800000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_08_length_counter_during_power
         description: CGB sound length counter during power changes
         rom: cgb_sound/rom_singles/08-len ctr during power.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 3200000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_09_wave_read_while_on
         description: CGB wave RAM reads during playback
         rom: cgb_sound/rom_singles/09-wave read while on.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 800000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_10_wave_trigger_while_on
         description: CGB wave trigger during playback
         rom: cgb_sound/rom_singles/10-wave trigger while on.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 5000000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_11_registers_after_power
         description: CGB sound registers after power changes
         rom: cgb_sound/rom_singles/11-regs after power.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 1200000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_12_wave
         description: CGB wave channel behavior
         rom: cgb_sound/rom_singles/12-wave.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 600000
+        completion: signed_memory_status
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
   - name: Gekkio_mooneye-test-suite
