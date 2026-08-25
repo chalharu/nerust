@@ -123,6 +123,9 @@ impl GbcApu {
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
             self.dot_counter += 1;
+            // Square channels: clocked at 1,048,576 Hz (master/4)
+            // Pan Docs: "The pulse channels' period dividers are clocked
+            // at 1048576 Hz, once per four dots"
             if self.dot_counter.is_multiple_of(4) {
                 self.ch1.step();
                 self.ch2.step();
@@ -133,9 +136,11 @@ impl GbcApu {
             if self.dot_counter.is_multiple_of(2) {
                 self.ch3.step();
             }
-            // Noise channel: clocked at 262,144 Hz (master/16) via DIVISOR_TABLE
-            // The DIVISOR_TABLE already accounts for the prescaler
-            self.ch4.step();
+            // Noise channel: clocked at 1,048,576 Hz (master/4)
+            // DIVISOR_TABLE values are calibrated for this clock rate
+            if self.dot_counter.is_multiple_of(4) {
+                self.ch4.step();
+            }
 
             // 3. Sample generation (44,100 Hz)
             self.sample_accumulator += SAMPLE_RATE;
@@ -209,6 +214,15 @@ impl GbcApu {
     /// Flush the output buffer (called once per frame).
     pub fn flush_samples(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.output_buffer)
+    }
+
+    /// Reset the DIV-APU frame sequencer counter.
+    /// Called when the CPU writes to the DIV register ($FF04).
+    /// In real hardware, the frame sequencer shares the same 16-bit counter
+    /// as the DIV register, so writing to DIV resets both.
+    pub fn reset_div_apu(&mut self) {
+        self.div_apu_counter = 0;
+        self.div_divider = 0;
     }
 
     /// Set whether the hardware is a CGB.
@@ -333,7 +347,7 @@ impl GbcApu {
             // Clear wave RAM buffer
             self.ch3.clear_buffer();
         } else if !self.powered && powered {
-            self.div_divider = 1;
+            self.div_divider = 0;
             self.div_apu_counter = 0;
         }
         self.powered = powered;
