@@ -174,8 +174,7 @@ impl Square1 {
             // Update frequency
             self.sweep.shadow = new_freq;
             self.frequency = new_freq;
-            self.timer
-                .set_period(2048u16.wrapping_sub(new_freq));
+            self.timer.set_period(2048u16.wrapping_sub(new_freq));
             self.sweep.negate_used = self.sweep.negate;
 
             // Second overflow check
@@ -239,7 +238,9 @@ impl Square1 {
         }
 
         // Length glitch: extra clocking when enabling length
-        if length_enable && !self.length.enabled() && self.sweep.countdown & 1 == 1
+        if length_enable
+            && !self.length.enabled()
+            && self.sweep.countdown & 1 == 1
             && self.length.counter() > 0
         {
             // Note: actual behavior depends on CGB revision
