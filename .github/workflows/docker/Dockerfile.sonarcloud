@@ -15,7 +15,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libasound2-dev \
     libcubeb-dev \
     libudev-dev \
-    xvfb xauth \
+    xvfb xauth gnupg \
     && rm -rf /var/lib/apt/lists/* \
     && rustup component add rustfmt clippy llvm-tools-preview \
     && rm -rf /usr/local/cargo/registry/cache/* \
