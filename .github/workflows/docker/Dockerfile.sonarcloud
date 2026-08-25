@@ -1,9 +1,9 @@
-# trivy:ignore:DS-0002 (CI-only image that requires root privileges for test execution)
-# trivy:ignore:DS-0026 (CI-only image, no long-running service to healthcheck)
 
 FROM rust:1.98.0-slim AS builder
 RUN cargo install cargo-llvm-cov --locked --version=0.8.7
 
+# trivy:ignore:DS-0002 (CI-only image that requires root privileges for test execution)
+# trivy:ignore:DS-0026 (CI-only image, no long-running service to healthcheck)
 FROM rust:1.98.0-slim
 
 # hadolint ignore=DL3008
