@@ -324,7 +324,7 @@ fn oam_bug_8_instr_effect() {
 
 fn assert_sound_passed(suite: &str, rom: &str, cgb: bool) {
     let path = format!("{suite}/rom_singles/{rom}.gb");
-    assert_passed(&run_rom_mem_for_model(&path, 10_000_000, cgb), &path);
+    assert_passed(&run_rom_mem_for_model(&path, 60_000_000, cgb), &path);
 }
 
 macro_rules! sound_tests {

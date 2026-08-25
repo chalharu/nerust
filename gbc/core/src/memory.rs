@@ -243,17 +243,23 @@ impl GbcMemoryBus {
                 }
             }
             0xFF04 => {
-                let div_bit4_was_set = self.timer.write(addr, value);
-                // DIV write resets the frame sequencer counter
-                // (shares the same 16-bit counter as DIV in real hardware)
-                // If bit 4 was 1, a falling edge occurs and DIV-APU increments
-                self.apu.reset_div_apu(div_bit4_was_set);
+                let apu_div_bit_was_set = self.timer.apu_div_bit(self.double_speed);
+                self.timer.write(addr, value);
+                if apu_div_bit_was_set {
+                    self.apu.clock_div_apu();
+                }
             }
             0xFF05..=0xFF07 => {
                 self.timer.write(addr, value);
             }
             0xFF0F => self.interrupt.write_if(value),
-            0xFF10..=0xFF3F => self.apu.write_register(addr, value),
+            0xFF10..=0xFF3F => {
+                if addr == 0xFF26 {
+                    self.apu
+                        .set_div_apu_bit(self.timer.apu_div_bit(self.double_speed));
+                }
+                self.apu.write_register(addr, value);
+            }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
             0xFF4F | 0xFF6C if self.cgb_mode => self.enqueue_ppu_write(addr, value),
             0xFF46 => self.dma.start(value),
@@ -318,9 +324,13 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
         // Timer must be stepped before APU to ensure proper synchronization
+        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
+        }
+        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.apu.clock_div_apu();
         }
         self.apu.step(video);
         if t1 == 3 && self.serial.step() {
@@ -398,9 +408,13 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
+        }
+        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.apu.clock_div_apu();
         }
     }
 

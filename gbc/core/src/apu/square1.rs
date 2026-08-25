@@ -133,16 +133,13 @@ impl Square1 {
         // Reload sweep
         self.sweep.shadow = self.frequency;
         self.sweep.period &= 7;
-        self.sweep.countdown = if self.sweep.period != 0 {
-            self.sweep.period ^ 7
-        } else {
-            0
-        };
+        self.sweep.countdown = self.sweep.period ^ 7;
         self.sweep.enabled = self.sweep.period != 0 || self.sweep.shift != 0;
         self.sweep.negate_used = false;
         // Overflow check on trigger if shift != 0
         if self.sweep.shift != 0 {
             let (_new_freq, delta) = self.sweep.calculate(self.frequency);
+            self.sweep.negate_used = self.sweep.negate;
             if self.sweep.would_overflow(self.frequency, delta) {
                 self.active = false;
             }
@@ -152,7 +149,7 @@ impl Square1 {
     /// Clock the frequency sweep at 128 Hz.
     /// Returns the new frequency if it changed, or None if channel was disabled.
     pub fn clock_sweep(&mut self) -> Option<u16> {
-        if !self.sweep.enabled || self.sweep.period == 0 {
+        if !self.sweep.enabled {
             return None;
         }
 
@@ -161,6 +158,11 @@ impl Square1 {
             return None;
         }
 
+        if self.sweep.period == 0 {
+            return None;
+        }
+
+        self.sweep.negate_used |= self.sweep.negate;
         let (new_freq, delta) = self.sweep.calculate(self.sweep.shadow);
 
         if self.sweep.shift == 0 {
@@ -178,8 +180,6 @@ impl Square1 {
             self.sweep.shadow = new_freq;
             self.frequency = new_freq;
             self.timer.set_period(2048u16.wrapping_sub(new_freq));
-            self.sweep.negate_used = self.sweep.negate;
-
             // Second overflow check
             let (_, delta2) = self.sweep.calculate(new_freq);
             if self.sweep.would_overflow(new_freq, delta2) {
@@ -228,8 +228,6 @@ impl Square1 {
     /// Pan Docs: Length glitch occurs when writing to NRx4 when the
     /// DIV-APU next step is one that doesn't clock the length timer.
     pub fn write_nr14(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
-        let was_active = self.active;
-
         // Update frequency high bits
         self.frequency = (self.frequency & 0xFF) | ((value as u16 & 0x07) << 8);
         self.timer.set_period(2048u16.wrapping_sub(self.frequency));
@@ -248,10 +246,9 @@ impl Square1 {
         // 2. The DIV-APU next step won't clock length (next_div_lsb == true)
         // 3. Length counter is non-zero
         if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
-            self.length.clock();
-            if self.length.counter() == 0 && !was_active {
+            self.length.set_enabled(true);
+            if self.length.clock() {
                 if value & 0x80 != 0 {
-                    // Triggered, so reload
                     self.length.set_counter(self.length.max() - 1);
                 } else {
                     self.active = false;

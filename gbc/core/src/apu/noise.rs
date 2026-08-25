@@ -113,7 +113,7 @@ impl Noise {
 
     /// Handle NR41 write: load length counter.
     pub fn write_nr41(&mut self, value: u8) {
-        self.length.load(value);
+        self.length.load(value & 0x3F);
     }
 
     /// Handle NR42 write: update volume and DAC.
@@ -138,8 +138,6 @@ impl Noise {
 
     /// Handle NR44 write: trigger, length enable.
     pub fn write_nr44(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
-        let was_active = self.active;
-
         // Length enable
         let length_enable = value & 0x40 != 0;
 
@@ -150,8 +148,8 @@ impl Noise {
 
         // Length glitch
         if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
-            self.length.clock();
-            if self.length.counter() == 0 && !was_active {
+            self.length.set_enabled(true);
+            if self.length.clock() {
                 if value & 0x80 != 0 {
                     self.length.set_counter(self.length.max() - 1);
                 } else {
