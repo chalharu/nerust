@@ -209,26 +209,31 @@ impl GbcMemoryBus {
             0x0000..=0x7FFF => self.cartridge.write_rom(addr, value),
             0x8000..=0x9FFF => self.ppu.write_vram(addr, value),
             0xA000..=0xBFFF => self.cartridge.write_ram(addr, value),
-            0xC000..=0xDFFF => {
-                // The retrio gb-test-roms run their own code from a copy in
-                // WRAM at $C000. Their test-harness text output is appended
-                // to cartridge SRAM at $A004 by a routine copied to $C3E7;
-                // when the output exceeds 8KB the cursor overflows into
-                // $C000+ and would corrupt the running code. Route those
-                // text-output writes to a scratch area instead.
-                if (0xC000..=0xCBFF).contains(&addr) && (0xC3E7..=0xC400).contains(&self.current_pc)
-                {
-                    self.text_scratch[(addr - 0xC000) as usize] = value;
-                } else {
-                    self.wram[addr as usize & 0x1FFF] = value;
-                }
-            }
+            0xC000..=0xDFFF => self.write_wram(addr, value),
             0xE000..=0xFDFF => self.write(addr - 0x2000, value),
             0xFE00..=0xFE9F => self.ppu.write_oam((addr & 0xFF) as u8, value),
+            0xFF00..=0xFFFF => self.write_io(addr, value),
+            _ => {}
+        }
+    }
+
+    fn write_wram(&mut self, addr: u16, value: u8) {
+        // The retrio gb-test-roms run their own code from a copy in
+        // WRAM at $C000. Their test-harness text output is appended
+        // to cartridge SRAM at $A004 by a routine copied to $C3E7;
+        // when the output exceeds 8KB the cursor overflows into
+        // $C000+ and would corrupt the running code. Route those
+        // text-output writes to a scratch area instead.
+        if (0xC000..=0xCBFF).contains(&addr) && (0xC3E7..=0xC400).contains(&self.current_pc) {
+            self.text_scratch[(addr - 0xC000) as usize] = value;
+        } else {
+            self.wram[addr as usize & 0x1FFF] = value;
+        }
+    }
+
+    fn write_io(&mut self, addr: u16, value: u8) {
+        match addr {
             0xFF00 => {
-                // TODO: GbcJoypad device will manage select bits and
-                // filter logic (future phase). Currently only stores
-                // bits 4-5 directly.
                 self.joypad = (self.joypad & 0x30) | (value & 0x30);
             }
             0xFF01 => self.serial.write_sb(value),
@@ -240,36 +245,12 @@ impl GbcMemoryBus {
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
-                if self.cpu_step_active {
-                    self.pending_ppu_writes
-                        .push_back(PpuWriteEvent { addr, value });
-                } else {
-                    self.ppu.write_register(addr, value);
-                }
-            }
-            0xFF4F | 0xFF6C if self.cgb_mode => {
-                if self.cpu_step_active {
-                    self.pending_ppu_writes
-                        .push_back(PpuWriteEvent { addr, value });
-                } else {
-                    self.ppu.write_register(addr, value);
-                }
-            }
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
+            0xFF4F | 0xFF6C if self.cgb_mode => self.enqueue_ppu_write(addr, value),
             0xFF46 => self.dma.start(value),
             0xFF4D if self.cgb_mode => self.write_key1(value),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
-            0xFF55 if self.cgb_mode => {
-                // HDMA requires a valid VRAM destination ($8000-$9FFF). With
-                // an invalid destination the transfer does not start and
-                // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
-                if self.hdma.dst & 0xE000 == 0x8000 {
-                    self.hdma.start(value);
-                    if !self.hdma.hblank_mode {
-                        self.transfer_hdma_block();
-                    }
-                }
-            }
+            0xFF55 if self.cgb_mode => self.write_hdma5(value),
             0xFF50 => {
                 if value & 0x01 != 0 {
                     self.boot_rom_mapped = false;
@@ -278,18 +259,37 @@ impl GbcMemoryBus {
             }
             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
             0xFF70 if self.cgb_mode => {
-                // Writing 0 to SVBK is ignored on the CGB (the bank is
-                // unchanged); unused_hwio-C reads $FF after a $00 write.
                 if value & 0x07 != 0 {
                     self.wram_bank = value & 0x07;
                 }
             }
             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
-            0xFF74 | 0xFF76 | 0xFF77 => {} // read-only/unimplemented
+            0xFF74 | 0xFF76 | 0xFF77 => {}
             0xFF75 if self.cgb_mode => self.hwio_72_75[3] = value,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = value,
             0xFFFF => self.interrupt.write_ie(value),
             _ => {}
+        }
+    }
+
+    fn enqueue_ppu_write(&mut self, addr: u16, value: u8) {
+        if self.cpu_step_active {
+            self.pending_ppu_writes
+                .push_back(PpuWriteEvent { addr, value });
+        } else {
+            self.ppu.write_register(addr, value);
+        }
+    }
+
+    fn write_hdma5(&mut self, value: u8) {
+        // HDMA requires a valid VRAM destination ($8000-$9FFF). With
+        // an invalid destination the transfer does not start and
+        // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
+        if self.hdma.dst & 0xE000 == 0x8000 {
+            self.hdma.start(value);
+            if !self.hdma.hblank_mode {
+                self.transfer_hdma_block();
+            }
         }
     }
 

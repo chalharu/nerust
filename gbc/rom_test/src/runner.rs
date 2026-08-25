@@ -1,4 +1,4 @@
-use std::{path::Path, time::Instant};
+use std::{path::{Path, PathBuf}, time::Instant};
 
 use nerust_gbc_core::{
     cartridge::Cartridge, cartridge_header::CartridgeHeader, cpu_core::Lr35902Cpu,
@@ -80,6 +80,31 @@ fn run_cell(
     artifacts_dir: Option<&Path>,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
+    let (rom_path, rom_bytes, header) = load_rom(cell, rom_root)?;
+    let font_bank1 = extract_font_bank1(&rom_bytes);
+    let mut bus = setup_bus(cell, &header, rom_bytes, &font_bank1);
+    let mut cpu = setup_cpu(cell, &header);
+
+    step_cycles(&mut bus, &mut cpu, cell.cycles());
+    dump_text_if_requested(&bus);
+    let rendered = render_frame(&bus)?;
+
+    if let Some(dir) = artifacts_dir {
+        let name = format!("{}.png", cell.id());
+        save_screenshot(&rendered.png, dir, "screenshots", &name)?;
+        acc.screenshot = Some(name);
+    }
+
+    verify_reference_if_present(cell, rom_root, &rendered, artifacts_dir, acc)?;
+    verify_outputs(cell, &bus, rendered.crc, acc)?;
+
+    Ok(())
+}
+
+fn load_rom(
+    cell: &MatrixCell<'_>,
+    rom_root: &Path,
+) -> Result<(PathBuf, Vec<u8>, CartridgeHeader), RomTestError> {
     let rom_path = cell.rom_path(rom_root);
     if !rom_path.exists() {
         return Err(RomTestError::InvalidManifest(format!(
@@ -87,51 +112,55 @@ fn run_cell(
             rom_path.display()
         )));
     }
-
     let rom_bytes = std::fs::read(&rom_path)?;
     let header = CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
         RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
     })?;
-    // Extract font bank 1 data before moving rom_bytes
-    let font_bank1: Vec<u8> = if rom_bytes.len() > 0x4000 {
+    Ok((rom_path, rom_bytes, header))
+}
+
+fn extract_font_bank1(rom_bytes: &[u8]) -> Vec<u8> {
+    if rom_bytes.len() > 0x4000 {
         rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
     } else {
         Vec::new()
-    };
-    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(&header, rom_bytes, None);
+    }
+}
 
+fn setup_bus(
+    cell: &MatrixCell<'_>,
+    header: &CartridgeHeader,
+    rom_bytes: Vec<u8>,
+    font_bank1: &[u8],
+) -> GbcMemoryBus {
+    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(header, rom_bytes, None);
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
     bus.set_cartridge(Cartridge::new(mbc));
     if !font_bank1.is_empty() {
-        bus.load_font_tiles(&font_bank1);
+        bus.load_font_tiles(font_bank1);
     }
 
-    // CGB mode depends on HARDWARE (declared model), not effective model.
-    // A CGB running a DMG-only ROM still applies boot ROM palettes.
     let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
     let rom_is_cgb = header.cgb_flag & 0x80 != 0;
     bus.set_cgb_mode(hw_is_cgb);
     bus.set_cgb_revision_d(matches!(cell.model, GbcModel::CgbD | GbcModel::Agb));
-    // CGB-only rendering features (bg_priority, master priority, etc.)
-    // only activate when the GAME is CGB-native, not just the hardware.
     bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
-    // The boot ROM is skipped; seed the timer counter with the value the
-    // boot ROM would have left for this hardware model (boot_div expects it).
     match cell.model {
         GbcModel::Dmg0 => bus.set_boot_counter(0x182F),
         GbcModel::Dmg => bus.set_boot_counter(0xABCB),
         GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
     }
     if matches!(cell.model, GbcModel::Dmg0) {
-        // DMG-0's boot ROM ends ~66220 T-cycles into a frame (boot_hwio-dmg0
-        // reads LY=$01, STAT=$83 at the register dump); the other models'
-        // boot durations align with a fresh frame start.
         bus.set_ppu_frame_phase(66220);
     }
     bus.set_post_boot_io(hw_is_cgb);
-    // The harness skips the boot ROM. Native CGB games see KEY1's speed bits;
-    // CGB hardware running a DMG-compatible game reads $FF (boot_hwio-C).
     bus.set_post_boot_key1(hw_is_cgb && rom_is_cgb);
+    bus
+}
+
+fn setup_cpu(cell: &MatrixCell<'_>, header: &CartridgeHeader) -> Lr35902Cpu {
+    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
+    let rom_is_cgb = header.cgb_flag & 0x80 != 0;
     let mut cpu = match cell.model {
         GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
         GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
@@ -141,72 +170,83 @@ fn run_cell(
         GbcModel::Agb => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Agb),
     };
     if hw_is_cgb && !rom_is_cgb {
-        // A CGB running a DMG-compatible game (cgb_flag bit 7 clear) gets the
-        // "CGB in DMG mode" post-boot registers (D=$00, E=$08, HL=$007C).
         cpu.set_cgb_dmg_mode_registers();
     }
     cpu.registers_mut().set_pc(0x0100);
+    cpu
+}
 
-    step_cycles(&mut bus, &mut cpu, cell.cycles());
-    if std::env::var("DUMP_TEXT").is_ok() {
-        let toa = bus.read(0xD883) as u16 | ((bus.read(0xD884) as u16) << 8);
-        let mut text = Vec::new();
-        for a in 0xA004u16..0xC000 {
-            let b = bus.read(a);
-            if b == 0 {
-                break;
-            }
-            text.push(b);
-        }
-        eprintln!(
-            "TEXT_DUMP a000={:02x} toa={:04x} len={} str={}",
-            bus.read(0xA000),
-            toa,
-            text.len(),
-            String::from_utf8_lossy(&text)
-        );
-        if let Ok(p) = std::env::var("DUMP_TEXT_FILE") {
-            std::fs::write(p, &text).ok();
-        }
+fn dump_text_if_requested(bus: &GbcMemoryBus) {
+    if std::env::var("DUMP_TEXT").is_err() {
+        return;
     }
-    let rendered = render_frame(&bus)?;
-    if let Some(dir) = artifacts_dir {
-        let name = format!("{}.png", cell.id());
-        save_screenshot(&rendered.png, dir, "screenshots", &name)?;
-        acc.screenshot = Some(name);
+    let toa = bus.read(0xD883) as u16 | ((bus.read(0xD884) as u16) << 8);
+    let mut text = Vec::new();
+    for a in 0xA004u16..0xC000 {
+        let b = bus.read(a);
+        if b == 0 {
+            break;
+        }
+        text.push(b);
     }
+    eprintln!(
+        "TEXT_DUMP a000={:02x} toa={:04x} len={} str={}",
+        bus.read(0xA000),
+        toa,
+        text.len(),
+        String::from_utf8_lossy(&text)
+    );
+    if let Ok(p) = std::env::var("DUMP_TEXT_FILE") {
+        std::fs::write(p, &text).ok();
+    }
+}
 
-    if let Some(ref_path) = cell.reference_path(rom_root) {
-        if !ref_path.exists() {
-            return Err(RomTestError::InvalidManifest(format!(
-                "reference image not found: {}",
-                ref_path.display()
-            )));
-        }
-        let ref_png = std::fs::read(&ref_path)?;
-        let diff_png = verify::verify_reference(
-            &verify::FramePixels {
-                rgba: &rendered.rgba,
-                width: rendered.width as u32,
-                height: rendered.height as u32,
-            },
-            &ref_png,
-            &ref_path.display().to_string(),
-            &mut acc.checks,
-        )?;
-        if let (Some(png), Some(dir)) = (diff_png, artifacts_dir) {
-            let name = format!("{}_diff.png", cell.id());
-            save_screenshot(&png, dir, "diffs", &name)?;
-            acc.diff_image = Some(name);
-        }
+fn verify_reference_if_present(
+    cell: &MatrixCell<'_>,
+    rom_root: &Path,
+    rendered: &RenderedFrame,
+    artifacts_dir: Option<&Path>,
+    acc: &mut CaseAccumulator,
+) -> Result<(), RomTestError> {
+    let Some(ref_path) = cell.reference_path(rom_root) else {
+        return Ok(());
+    };
+    if !ref_path.exists() {
+        return Err(RomTestError::InvalidManifest(format!(
+            "reference image not found: {}",
+            ref_path.display()
+        )));
     }
+    let ref_png = std::fs::read(&ref_path)?;
+    let diff_png = verify::verify_reference(
+        &verify::FramePixels {
+            rgba: &rendered.rgba,
+            width: rendered.width as u32,
+            height: rendered.height as u32,
+        },
+        &ref_png,
+        &ref_path.display().to_string(),
+        &mut acc.checks,
+    )?;
+    if let (Some(png), Some(dir)) = (diff_png, artifacts_dir) {
+        let name = format!("{}_diff.png", cell.id());
+        save_screenshot(&png, dir, "diffs", &name)?;
+        acc.diff_image = Some(name);
+    }
+    Ok(())
+}
 
+fn verify_outputs(
+    cell: &MatrixCell<'_>,
+    bus: &GbcMemoryBus,
+    crc: u32,
+    acc: &mut CaseAccumulator,
+) -> Result<(), RomTestError> {
     let serial_output = bus.serial_output();
     cell.verify()
         .verify_serial(serial_output, &mut acc.checks)?;
-    cell.verify().verify_frame(rendered.crc, &mut acc.checks);
-    cell.verify().verify_memory(&bus, &mut acc.checks)?;
-
+    cell.verify().verify_frame(crc, &mut acc.checks);
+    cell.verify().verify_memory(bus, &mut acc.checks)?;
     Ok(())
 }
 
