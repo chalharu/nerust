@@ -69,7 +69,12 @@ mod tests {
             SRGB_TO_LINEAR_LUT.len() * std::mem::size_of::<f32>()
         );
 
-        for (index, chunk) in SRGB_TO_LINEAR_LUT_BYTES.chunks_exact(4).enumerate() {
+        for (index, chunk) in SRGB_TO_LINEAR_LUT_BYTES
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .enumerate()
+        {
             assert_eq!(chunk, &SRGB_TO_LINEAR_LUT[index].to_le_bytes());
         }
     }

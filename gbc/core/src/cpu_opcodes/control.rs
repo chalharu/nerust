@@ -196,25 +196,18 @@ impl<const C: u8> CpuStepState for CallCond<C> {
 // ── RET (4 M-cycles) ───────────────────────────────────────
 
 fn ret_finish(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, set_ime: bool) -> StepResult {
-    if set_ime {
-        bus.set_ime(true);
-    }
     let v = bus.read(core.registers().sp());
     core.set_operand(1, v);
     let _t = core.registers().sp().wrapping_add(1);
     core.registers_mut().set_sp(_t);
     jump16(core);
-    StepResult::Exit
+    if set_ime {
+        bus.set_ime(true);
+    }
+    StepResult::Continue
 }
 
-fn ret_common(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-    if step == 0 {
-        return StepResult::Continue;
-    }
-    if step == 1 {
-        return StepResult::Continue;
-    }
-    debug_assert!(step == 2, "RET step > 2");
+fn ret_low_byte(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus) -> StepResult {
     let v = bus.read(core.registers().sp());
     core.set_operand(0, v);
     let _t = core.registers().sp().wrapping_add(1);
@@ -225,10 +218,17 @@ fn ret_common(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepRe
 pub(crate) struct Ret;
 impl CpuStepState for Ret {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step < 3 {
-            return ret_common(core, bus, step);
+        if step == 0 {
+            return StepResult::Continue;
         }
-        ret_finish(core, bus, false)
+        if step == 1 {
+            return ret_low_byte(core, bus);
+        }
+        if step == 2 {
+            return ret_finish(core, bus, false);
+        }
+        debug_assert!(step == 3, "RET step > 3");
+        StepResult::Exit
     }
 }
 
@@ -247,26 +247,30 @@ impl<const C: u8> CpuStepState for RetCond<C> {
             };
         }
         if step == 2 {
-            let v = bus.read(core.registers().sp());
-            core.set_operand(0, v);
-            let _t = core.registers().sp().wrapping_add(1);
-            core.registers_mut().set_sp(_t);
-            return StepResult::Continue;
+            return ret_low_byte(core, bus);
         }
         if step == 3 {
-            return StepResult::Continue;
+            return ret_finish(core, bus, false);
         }
-        ret_finish(core, bus, false)
+        debug_assert!(step == 4, "RET CC step > 4");
+        StepResult::Exit
     }
 }
 
 pub(crate) struct Reti;
 impl CpuStepState for Reti {
     fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
-        if step < 3 {
-            return ret_common(core, bus, step);
+        if step == 0 {
+            return StepResult::Continue;
         }
-        ret_finish(core, bus, true)
+        if step == 1 {
+            return ret_low_byte(core, bus);
+        }
+        if step == 2 {
+            return ret_finish(core, bus, true);
+        }
+        debug_assert!(step == 3, "RETI step > 3");
+        StepResult::Exit
     }
 }
 

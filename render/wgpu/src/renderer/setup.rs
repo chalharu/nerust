@@ -506,20 +506,13 @@ pub(super) fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]
     let width = NTSC_TEXTURE_WIDTH;
     let height = texture.len() / (width as usize * 4);
     let mut packed = Vec::with_capacity(texture.len());
-    let mut chunks = texture.chunks_exact(4);
+    let chunks = texture.as_chunks::<4>();
     assert!(
-        chunks.remainder().is_empty(),
+        chunks.1.is_empty(),
         "packed NTSC texture must be a multiple of 4 bytes"
     );
-    for chunk in &mut chunks {
-        packed.extend_from_slice(
-            &u32::from_be_bytes(
-                chunk
-                    .try_into()
-                    .expect("NTSC texture chunk must be 4 bytes"),
-            )
-            .to_le_bytes(),
-        );
+    for chunk in chunks.0.iter() {
+        packed.extend_from_slice(&u32::from_be_bytes(*chunk).to_le_bytes());
     }
 
     (
