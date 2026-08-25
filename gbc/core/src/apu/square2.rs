@@ -67,7 +67,7 @@ impl Square2 {
     }
 
     /// Handle trigger event.
-    pub fn trigger(&mut self) {
+    pub fn trigger(&mut self, envelope_extra_tick: bool) {
         if self.length.counter() == 0 {
             self.length.reload_at_zero();
             self.length.set_enabled(false);
@@ -77,8 +77,8 @@ impl Square2 {
         }
         // Reload frequency from registers
         self.timer.set_counter(self.timer.period());
-        // Reload envelope
-        self.envelope.reload_timer(false);
+        // Reload envelope with extra tick if DIV-APU next step clocks envelope
+        self.envelope.reload_timer(envelope_extra_tick);
     }
 
     /// Handle NR21 write: update duty and length.
@@ -100,7 +100,7 @@ impl Square2 {
     }
 
     /// Handle NR24 write: update frequency high bits, trigger, length enable.
-    pub fn write_nr24(&mut self, value: u8) {
+    pub fn write_nr24(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
         let was_active = self.active;
 
         // Update frequency high bits
@@ -112,11 +112,11 @@ impl Square2 {
 
         // Trigger
         if value & 0x80 != 0 {
-            self.trigger();
+            self.trigger(envelope_extra_tick);
         }
 
         // Length glitch
-        if length_enable && !self.length.enabled() && self.length.counter() > 0 {
+        if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
             self.length.clock();
             if self.length.counter() == 0 && !was_active {
                 if value & 0x80 != 0 {
