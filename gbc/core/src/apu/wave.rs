@@ -52,12 +52,19 @@ impl Wave {
     }
 
     /// Get the digital output (0-15).
+    /// NR32 bits 6-5 control output level:
+    /// 00 = mute, 01 = 100%, 10 = 50%, 11 = 25%
     pub fn output(&self) -> u8 {
         if !self.dac_enabled {
             return 0;
         }
-        // Output the buffered sample, shifted by volume control
-        self.sample_buffer >> self.volume_shift
+        match self.volume_shift {
+            0 => 0,                       // 00: Mute
+            1 => self.sample_buffer,      // 01: 100% (no shift)
+            2 => self.sample_buffer >> 1, // 10: 50% (shift right 1)
+            3 => self.sample_buffer >> 2, // 11: 25% (shift right 2)
+            _ => unreachable!(),
+        }
     }
 
     /// Read a 4-bit sample from Wave RAM.
@@ -118,7 +125,7 @@ impl Wave {
     }
 
     /// Handle NR34 write: update frequency high bits, trigger, length enable.
-    pub fn write_nr34(&mut self, value: u8) {
+    pub fn write_nr34(&mut self, value: u8, next_div_lsb: bool) {
         let was_active = self.active;
 
         // Update frequency high bits
@@ -134,7 +141,7 @@ impl Wave {
         }
 
         // Length glitch
-        if length_enable && !self.length.enabled() && self.length.counter() > 0 {
+        if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
             self.length.clock();
             if self.length.counter() == 0 && !was_active {
                 if value & 0x80 != 0 {
@@ -196,13 +203,17 @@ mod tests {
         let mut ch = Wave::new();
         ch.dac_enabled = true;
         ch.sample_buffer = 0x0F;
-        ch.volume_shift = 0; // 100%
+
+        ch.volume_shift = 0; // 00: Mute
+        assert_eq!(ch.output(), 0);
+
+        ch.volume_shift = 1; // 01: 100%
         assert_eq!(ch.output(), 0x0F);
 
-        ch.volume_shift = 1; // 50%
+        ch.volume_shift = 2; // 10: 50%
         assert_eq!(ch.output(), 0x07);
 
-        ch.volume_shift = 2; // 25%
+        ch.volume_shift = 3; // 11: 25%
         assert_eq!(ch.output(), 0x03);
     }
 }

@@ -43,8 +43,10 @@ impl Noise {
     }
 
     /// Step the channel timer.
+    /// Pan Docs: "Using a noise channel clock shift of 14 or 15 results
+    /// in the LFSR receiving no clocks."
     pub fn step(&mut self) {
-        if self.timer.step() {
+        if self.timer.step() && self.clock_shift < 14 {
             self.clock_lfsr();
         }
     }
@@ -77,7 +79,13 @@ impl Noise {
     /// Calculate the timer period from NR43.
     /// frequency = 262144 / (divisor * 2^shift)
     /// Divisor 0 is treated as 0.5.
+    /// Pan Docs: "shift being equal to 14 or 15 stops the channel from
+    /// being clocked entirely."
     fn calculate_timer_period(&self) -> u16 {
+        // clock_shift >= 14: LFSR is not clocked, use max period
+        if self.clock_shift >= 14 {
+            return u16::MAX;
+        }
         let divisor = if self.divisor_index == 0 {
             8 // 0.5 * 16
         } else {
@@ -87,7 +95,7 @@ impl Noise {
     }
 
     /// Handle trigger event.
-    pub fn trigger(&mut self) {
+    pub fn trigger(&mut self, envelope_extra_tick: bool) {
         if self.length.counter() == 0 {
             self.length.reload_at_zero();
             self.length.set_enabled(false);
@@ -97,8 +105,8 @@ impl Noise {
         }
         // Reload timer
         self.timer.set_period(self.calculate_timer_period());
-        // Reload envelope
-        self.envelope.reload_timer(false);
+        // Reload envelope with extra tick if DIV-APU next step clocks envelope
+        self.envelope.reload_timer(envelope_extra_tick);
         // Reset LFSR
         self.lfsr = 0x7FFF;
     }
@@ -129,7 +137,7 @@ impl Noise {
     }
 
     /// Handle NR44 write: trigger, length enable.
-    pub fn write_nr44(&mut self, value: u8) {
+    pub fn write_nr44(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
         let was_active = self.active;
 
         // Length enable
@@ -137,11 +145,11 @@ impl Noise {
 
         // Trigger
         if value & 0x80 != 0 {
-            self.trigger();
+            self.trigger(envelope_extra_tick);
         }
 
         // Length glitch
-        if length_enable && !self.length.enabled() && self.length.counter() > 0 {
+        if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
             self.length.clock();
             if self.length.counter() == 0 && !was_active {
                 if value & 0x80 != 0 {
@@ -197,5 +205,24 @@ mod tests {
         ch.envelope.reload_timer(false);
         ch.lfsr = 0x7FFF; // bit 0 = 1
         assert_eq!(ch.output(), 15);
+    }
+
+    #[test]
+    fn noise_clock_shift_14_or_15_stops_lfsr() {
+        let mut ch = Noise::new();
+        ch.active = true;
+        ch.dac_enabled = true;
+        ch.envelope.reload_volume(0xF0);
+        ch.envelope.reload_timer(false);
+
+        // Set clock_shift to 14
+        ch.clock_shift = 14;
+        ch.timer.set_period(ch.calculate_timer_period());
+        assert_eq!(ch.timer.period(), u16::MAX);
+
+        // LFSR should not change when clock_shift >= 14
+        let initial_lfsr = ch.lfsr;
+        ch.step(); // timer overflow, but LFSR not clocked
+        assert_eq!(ch.lfsr, initial_lfsr);
     }
 }

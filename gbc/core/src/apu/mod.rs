@@ -158,6 +158,16 @@ impl GbcApu {
         self.ch4.envelope.clock();
     }
 
+    /// Check if the next DIV-APU tick would clock the envelope.
+    /// Pan Docs: "If a channel is triggered when the DIV-APU next step
+    /// will clock the volume envelope, the envelope's timer is reloaded
+    /// with one greater than it would have been."
+    fn should_envelope_extra_tick(&self) -> bool {
+        // Envelope clock occurs when div_divider & 7 == 7
+        // The next tick will clock envelope if current state + 1 & 7 == 7
+        (self.div_divider + 1) & 7 == 0
+    }
+
     /// Generate one audio sample at 44,100 Hz.
     fn generate_sample(&mut self) -> f32 {
         let ch1 = self.ch1.output();
@@ -310,6 +320,14 @@ impl GbcApu {
 
     /// Dispatch register write to appropriate channel.
     fn dispatch_register_write(&mut self, idx: usize, value: u8) {
+        // Pan Docs: Length glitch occurs when writing to NRx4 when the
+        // DIV-APU next step is one that doesn't clock the length timer.
+        // This means the DIV LSB is 1 (next step won't clock length).
+        let next_div_lsb = self.div_divider & 1 == 1;
+        // Pan Docs: If a channel is triggered when the DIV-APU next step
+        // will clock the volume envelope, the envelope's timer is reloaded
+        // with one greater than it would have been.
+        let envelope_extra_tick = self.should_envelope_extra_tick();
         match idx {
             // NR10
             0 => self.ch1.write_nr10(value),
@@ -320,7 +338,9 @@ impl GbcApu {
             // NR13
             3 => self.ch1.write_nr13(value),
             // NR14
-            4 => self.ch1.write_nr14(value),
+            4 => self
+                .ch1
+                .write_nr14(value, next_div_lsb, envelope_extra_tick),
             // NR21
             6 => self.ch2.write_nr21(value),
             // NR22
@@ -328,7 +348,9 @@ impl GbcApu {
             // NR23
             8 => self.ch2.write_nr23(value),
             // NR24
-            9 => self.ch2.write_nr24(value),
+            9 => self
+                .ch2
+                .write_nr24(value, next_div_lsb, envelope_extra_tick),
             // NR30
             10 => self.ch3.write_nr30(value),
             // NR31
@@ -338,7 +360,7 @@ impl GbcApu {
             // NR33
             13 => self.ch3.write_nr33(value),
             // NR34
-            14 => self.ch3.write_nr34(value),
+            14 => self.ch3.write_nr34(value, next_div_lsb),
             // NR41
             16 => self.ch4.write_nr41(value),
             // NR42
@@ -346,7 +368,9 @@ impl GbcApu {
             // NR43
             18 => self.ch4.write_nr43(value),
             // NR44
-            19 => self.ch4.write_nr44(value),
+            19 => self
+                .ch4
+                .write_nr44(value, next_div_lsb, envelope_extra_tick),
             // NR50
             20 => self.mixer.write_nr50(value),
             // NR51

@@ -115,7 +115,10 @@ impl Square1 {
     }
 
     /// Handle trigger event.
-    pub fn trigger(&mut self) {
+    /// Pan Docs: If a channel is triggered when the DIV-APU next step
+    /// will clock the volume envelope, the envelope's timer is reloaded
+    /// with one greater than it would have been.
+    pub fn trigger(&mut self, envelope_extra_tick: bool) {
         if self.length.counter() == 0 {
             self.length.reload_at_zero();
             self.length.set_enabled(false);
@@ -125,8 +128,8 @@ impl Square1 {
         }
         // Reload frequency from registers
         self.timer.set_counter(self.timer.period());
-        // Reload envelope
-        self.envelope.reload_timer(false);
+        // Reload envelope with extra tick if DIV-APU next step clocks envelope
+        self.envelope.reload_timer(envelope_extra_tick);
         // Reload sweep
         self.sweep.shadow = self.frequency;
         self.sweep.period &= 7;
@@ -222,7 +225,9 @@ impl Square1 {
     }
 
     /// Handle NR14 write: update frequency high bits, trigger, length enable.
-    pub fn write_nr14(&mut self, value: u8) {
+    /// Pan Docs: Length glitch occurs when writing to NRx4 when the
+    /// DIV-APU next step is one that doesn't clock the length timer.
+    pub fn write_nr14(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
         let was_active = self.active;
 
         // Update frequency high bits
@@ -234,18 +239,15 @@ impl Square1 {
 
         // Trigger
         if value & 0x80 != 0 {
-            self.trigger();
+            self.trigger(envelope_extra_tick);
         }
 
         // Length glitch: extra clocking when enabling length
-        if length_enable
-            && !self.length.enabled()
-            && self.sweep.countdown & 1 == 1
-            && self.length.counter() > 0
-        {
-            // Note: actual behavior depends on CGB revision
-            // CGB-02: always decrement
-            // CGB-04+: only if length was previously disabled
+        // The glitch fires when:
+        // 1. Length is being enabled (length_enable && !previously_enabled)
+        // 2. The DIV-APU next step won't clock length (next_div_lsb == true)
+        // 3. Length counter is non-zero
+        if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
             self.length.clock();
             if self.length.counter() == 0 && !was_active {
                 if value & 0x80 != 0 {
