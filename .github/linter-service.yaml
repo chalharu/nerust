@@ -1,3 +1,6 @@
+global:
+  exclude_paths:
+    - "roms/**"
 linters:
   cargo-coupling:
     min_grade: C

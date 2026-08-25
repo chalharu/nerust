@@ -1,6 +1,6 @@
 use crate::cpu_core::Lr35902Cpu;
 use crate::cpu_core::Phase;
-use crate::memory::GbcMemoryBus;
+use crate::memory::{CpuStepper, GbcMemoryBus};
 
 const BASE: u16 = 0xC000;
 
@@ -49,6 +49,70 @@ fn exec_n(rom: &[u8], n: usize) -> Lr35902Cpu {
         step_until_done(&mut cpu, &mut bus);
     }
     cpu
+}
+
+#[test]
+fn ei_enables_ime_after_following_instruction() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x00]);
+
+    step_until_done(&mut cpu, &mut bus);
+    assert!(!bus.ime_enabled());
+
+    step_until_done(&mut cpu, &mut bus);
+    assert!(bus.ime_enabled());
+}
+
+#[test]
+fn di_cancels_pending_ei() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0xF3]);
+
+    step_until_done(&mut cpu, &mut bus);
+    step_until_done(&mut cpu, &mut bus);
+
+    assert!(!bus.ime_enabled());
+}
+
+#[test]
+fn interrupt_dispatch_pushes_pc_on_m3_and_m4() {
+    let (mut cpu, mut bus) = setup(&[0x00]);
+    cpu.registers_mut().set_sp(0xFFFE);
+    bus.write(0xFFFF, 0x01);
+    bus.write(0xFF0F, 0x01);
+    bus.set_ime(true);
+
+    cpu.step(&mut bus);
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 1, .. }
+    ));
+    assert_eq!(cpu.registers().sp(), 0xFFFE);
+
+    cpu.step(&mut bus);
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 2, .. }
+    ));
+    assert_eq!(cpu.registers().sp(), 0xFFFE);
+
+    cpu.step(&mut bus);
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 3, .. }
+    ));
+    assert_eq!(cpu.registers().sp(), 0xFFFD);
+    assert_eq!(bus.read(0xFFFD), (BASE >> 8) as u8);
+
+    cpu.step(&mut bus);
+    assert!(matches!(
+        cpu.phase(),
+        Phase::InterruptDispatch { step: 4, .. }
+    ));
+    assert_eq!(cpu.registers().sp(), 0xFFFC);
+    assert_eq!(bus.read(0xFFFC), BASE as u8);
+
+    cpu.step(&mut bus);
+    assert!(matches!(cpu.phase(), Phase::FetchOpcode));
+    assert_eq!(cpu.registers().pc(), 0x0040);
 }
 
 // ── M-cycle measurement ────────────────────────────────
@@ -452,4 +516,20 @@ fn ld_a_a16_takes_16_t_cycles() {
         }
     }
     assert_eq!(n, 16, "LD A,(a16) should take 16 T-cycles (4 M-cycles)");
+}
+
+#[test]
+fn ei_then_halt_enables_ime_for_halt() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x76]); // EI, HALT
+    cpu.registers_mut().set_pc(BASE);
+    // Execute EI.
+    step_until_done(&mut cpu, &mut bus);
+    assert!(!bus.ime_enabled(), "IME not enabled immediately after EI");
+    // Execute HALT; the delayed IME from EI applies during HALT.
+    step_until_done(&mut cpu, &mut bus);
+    assert!(
+        bus.ime_enabled(),
+        "IME must be enabled during HALT after EI"
+    );
+    assert!(bus.is_halted_or_stopped(), "HALT should halt the CPU");
 }

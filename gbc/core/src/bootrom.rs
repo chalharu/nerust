@@ -43,6 +43,11 @@ pub fn post_bios_state(is_cgb: bool) -> PostBiosState {
     };
     if is_cgb {
         state.a = 0x11;
+        state.c = 0x00;
+        state.d = 0xFF;
+        state.e = 0x56;
+        state.h = 0x00;
+        state.l = 0x00;
     }
     state
 }

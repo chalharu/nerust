@@ -1501,7 +1501,9 @@ mod persistence_tests {
         let hex = hex.trim();
         assert_eq!(hex.len() % 2, 0, "fixture hex length must be even");
         hex.as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|chunk| {
                 let text = std::str::from_utf8(chunk).expect("fixture hex should be valid utf-8");
                 u8::from_str_radix(text, 16).expect("fixture hex should decode")

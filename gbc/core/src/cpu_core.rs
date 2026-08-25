@@ -1,6 +1,17 @@
 use crate::cpu_registers::CpuRegisters;
-use crate::interrupt::InterruptKind;
 use crate::memory::GbcMemoryBus;
+
+/// Game Boy model variant for post-boot register initialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GbcModel {
+    /// Original DMG-0 (early revision): distinct post-boot registers.
+    Dmg0,
+    /// Common DMG-CPU / MGB revision.
+    Dmg,
+    Cgb,
+    Agb,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StepResult {
@@ -13,13 +24,29 @@ pub(crate) type HandlerFn = fn(&mut Lr35902Cpu, &mut GbcMemoryBus, u8) -> StepRe
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Phase {
     FetchOpcode,
-    ExecuteOpcode { handler: HandlerFn, step: u8 },
+    ExecuteOpcode {
+        handler: HandlerFn,
+        step: u8,
+    },
+    /// Real hardware takes 5 M-cycles to acknowledge and dispatch
+    /// an interrupt (push PC, set PC to handler vector). The dispatch
+    /// re-evaluates IE & IF after pushing PC (the push can write to the
+    /// IE/IF registers, cancelling or changing the dispatch — mooneye ie_push).
+    InterruptDispatch {
+        step: u8,
+        /// IE snapshot taken after the high-byte PC push.
+        pending_ie: u8,
+        /// IF value used for the dispatch decision (old IF if the low-byte
+        /// push targets the IF register).
+        pending_if: u8,
+    },
 }
 
 pub struct Lr35902Cpu {
     registers: CpuRegisters,
     phase: Phase,
     ime_delayed: bool,
+    ime_enable_armed: bool,
     opcode: u8,
     operands: [u8; 2],
     operand_count: u8,
@@ -31,10 +58,78 @@ impl Lr35902Cpu {
             registers: CpuRegisters::new(),
             phase: Phase::FetchOpcode,
             ime_delayed: false,
+            ime_enable_armed: false,
             opcode: 0,
             operands: [0; 2],
             operand_count: 0,
         }
+    }
+
+    /// Create CPU with post-boot register values for a specific model.
+    pub fn with_model(model: GbcModel) -> Self {
+        let mut cpu = Self::new();
+        match model {
+            GbcModel::Dmg0 => {
+                // DMG-0 post-boot register values (F=$00, B=$FF, E=$C1,
+                // H=$84, L=$03).
+                cpu.registers.set_a(0x01);
+                cpu.registers.set_f(0x00);
+                cpu.registers.set_b(0xFF);
+                cpu.registers.set_c(0x13);
+                cpu.registers.set_d(0x00);
+                cpu.registers.set_e(0xC1);
+                cpu.registers.set_h(0x84);
+                cpu.registers.set_l(0x03);
+            }
+            GbcModel::Dmg => {
+                // Common DMG-CPU / MGB post-boot register values
+                // (F=$B0, B=$00, E=$D8, H=$01, L=$4D).
+                cpu.registers.set_a(0x01);
+                cpu.registers.set_f(0xB0);
+                cpu.registers.set_b(0x00);
+                cpu.registers.set_c(0x13);
+                cpu.registers.set_d(0x00);
+                cpu.registers.set_e(0xD8);
+                cpu.registers.set_h(0x01);
+                cpu.registers.set_l(0x4D);
+            }
+            GbcModel::Cgb => {
+                // CGB post-boot (CGB-native game): A=$11, F=$80, D=$FF,
+                // E=$56, L=$0D.
+                cpu.registers.set_a(0x11);
+                cpu.registers.set_f(0x80);
+                cpu.registers.set_b(0x00);
+                cpu.registers.set_c(0x00);
+                cpu.registers.set_d(0xFF);
+                cpu.registers.set_e(0x56);
+                cpu.registers.set_h(0x00);
+                cpu.registers.set_l(0x0D);
+            }
+            GbcModel::Agb => {
+                // AGB (GBA GBC mode): A=$11, F=$00, B=$01, L=$0D
+                cpu.registers.set_a(0x11);
+                cpu.registers.set_f(0x00);
+                cpu.registers.set_b(0x01);
+                cpu.registers.set_c(0x00);
+                cpu.registers.set_d(0xFF);
+                cpu.registers.set_e(0x56);
+                cpu.registers.set_h(0x00);
+                cpu.registers.set_l(0x0D);
+            }
+        }
+        cpu.registers.set_sp(0xFFFE);
+        cpu.registers.set_pc(0x0100);
+        cpu
+    }
+
+    /// Override the CGB post-boot registers for a DMG-compatible game
+    /// (cgb_flag bit 7 clear): the CGB boot ROM initialises D=$00, E=$08 and
+    /// HL=$007C (or $991A) instead of the CGB-native D=$FF, E=$56, L=$0D.
+    pub fn set_cgb_dmg_mode_registers(&mut self) {
+        self.registers.set_d(0x00);
+        self.registers.set_e(0x08);
+        self.registers.set_h(0x00);
+        self.registers.set_l(0x7C);
     }
 
     #[inline]
@@ -54,11 +149,27 @@ impl Lr35902Cpu {
         self.ime_delayed = v;
     }
     #[inline]
-    pub(crate) fn registers(&self) -> &CpuRegisters {
+    pub(crate) fn arm_delayed_ime(&mut self) {
+        if self.ime_delayed {
+            self.ime_delayed = false;
+            self.ime_enable_armed = true;
+        }
+    }
+    #[inline]
+    pub(crate) fn take_armed_ime(&mut self) -> bool {
+        std::mem::take(&mut self.ime_enable_armed)
+    }
+    #[inline]
+    pub(crate) fn cancel_delayed_ime(&mut self) {
+        self.ime_delayed = false;
+        self.ime_enable_armed = false;
+    }
+    #[inline]
+    pub fn registers(&self) -> &CpuRegisters {
         &self.registers
     }
     #[inline]
-    pub(crate) fn registers_mut(&mut self) -> &mut CpuRegisters {
+    pub fn registers_mut(&mut self) -> &mut CpuRegisters {
         &mut self.registers
     }
     #[inline]
@@ -97,19 +208,4 @@ impl Default for Lr35902Cpu {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Push PC to stack and jump to interrupt vector.
-pub(crate) fn dispatch_interrupt(
-    regs: &mut CpuRegisters,
-    kind: InterruptKind,
-    bus: &mut GbcMemoryBus,
-) {
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), (regs.pc() >> 8) as u8);
-    let sp = regs.sp();
-    regs.set_sp(sp.wrapping_sub(1));
-    bus.write(regs.sp(), regs.pc() as u8);
-    regs.set_pc(kind.vector());
 }

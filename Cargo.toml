@@ -13,6 +13,7 @@ members = [
   "gbc/device",
   "gbc/factory",
   "gbc/settings",
+  "gbc/rom_test",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -183,6 +184,7 @@ objc2-app-kit = { default-features = false, features = [
 objc2-quartz-core = { default-features = false, features = [
   "objc2-core-foundation",
 ], version = "=0.3.2" }
+open = { version = "=5.4.0" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
@@ -193,6 +195,7 @@ serde-saphyr = { version = "=0.0.29" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.151" }
+sha2 = { version = "=0.10.9" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }

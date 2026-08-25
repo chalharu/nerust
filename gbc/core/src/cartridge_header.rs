@@ -144,9 +144,33 @@ pub struct CartridgeHeader {
     pub ram_size: RamSize,
     pub cgb_flag: u8,
     pub checksum_valid: bool,
+    /// True for 8 Mbit MBC1 multicarts (multiple games with a menu).
+    pub multicart: bool,
 }
 
 const HEADER_OFFSET: usize = 0x0100;
+
+/// The standard Nintendo logo ($0104-$0133).
+const NINTENDO_LOGO: [u8; 0x30] = [
+    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+];
+
+/// Only 8 Mbit MBC1 multicarts exist. A multicart has at least two games plus
+/// a menu, so at least three of the four 2 Mbit pages carry a valid logo.
+fn is_mbc1_multicart(rom: &[u8]) -> bool {
+    if rom.len() != 0x100000 {
+        return false;
+    }
+    (0..4)
+        .filter(|&page| {
+            let start = page * 0x40000 + HEADER_OFFSET + 0x04;
+            rom.get(start..start + 0x30) == Some(&NINTENDO_LOGO)
+        })
+        .count()
+        >= 3
+}
 
 impl CartridgeHeader {
     pub fn parse(rom: &[u8]) -> Option<Self> {
@@ -162,6 +186,7 @@ impl CartridgeHeader {
         let cgb_flag = hdr[0x43];
 
         let checksum_valid = Self::compute_checksum(hdr);
+        let multicart = is_mbc1_multicart(rom);
 
         Some(Self {
             cartridge_type,
@@ -169,6 +194,7 @@ impl CartridgeHeader {
             ram_size,
             cgb_flag,
             checksum_valid,
+            multicart,
         })
     }
 
