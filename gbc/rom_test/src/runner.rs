@@ -1,11 +1,9 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{path::Path, time::Instant};
 
 use nerust_gbc_core::{
-    cartridge::Cartridge, cartridge_header::CartridgeHeader, cpu_core::Lr35902Cpu,
+    cpu_core::Lr35902Cpu,
     memory::GbcMemoryBus,
+    system::{GbcSystem, HardwareModel},
 };
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
@@ -83,10 +81,11 @@ fn run_cell(
     artifacts_dir: Option<&Path>,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
-    let (_rom_path, rom_bytes, header) = load_rom(cell, rom_root)?;
-    let font_bank1 = extract_font_bank1(&rom_bytes);
-    let mut bus = setup_bus(cell, &header, rom_bytes, &font_bank1);
-    let mut cpu = setup_cpu(cell, &header);
+    let (rom_path, rom_bytes) = load_rom(cell, rom_root)?;
+    let GbcSystem { mut cpu, mut bus } =
+        GbcSystem::from_rom_without_boot_rom(core_model(cell.model), rom_bytes).ok_or_else(
+            || RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display())),
+        )?;
 
     step_cycles(&mut bus, &mut cpu, cell.cycles());
     dump_text_if_requested(&bus);
@@ -107,7 +106,7 @@ fn run_cell(
 fn load_rom(
     cell: &MatrixCell<'_>,
     rom_root: &Path,
-) -> Result<(PathBuf, Vec<u8>, CartridgeHeader), RomTestError> {
+) -> Result<(std::path::PathBuf, Vec<u8>), RomTestError> {
     let rom_path = cell.rom_path(rom_root);
     if !rom_path.exists() {
         return Err(RomTestError::InvalidManifest(format!(
@@ -116,67 +115,17 @@ fn load_rom(
         )));
     }
     let rom_bytes = std::fs::read(&rom_path)?;
-    let header = CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
-        RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
-    })?;
-    Ok((rom_path, rom_bytes, header))
+    Ok((rom_path, rom_bytes))
 }
 
-fn extract_font_bank1(rom_bytes: &[u8]) -> Vec<u8> {
-    if rom_bytes.len() > 0x4000 {
-        rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
-    } else {
-        Vec::new()
+fn core_model(model: GbcModel) -> HardwareModel {
+    match model {
+        GbcModel::Dmg0 => HardwareModel::Dmg0,
+        GbcModel::Dmg => HardwareModel::Dmg,
+        GbcModel::CgbC => HardwareModel::CgbC,
+        GbcModel::CgbD => HardwareModel::CgbD,
+        GbcModel::Agb => HardwareModel::Agb,
     }
-}
-
-fn setup_bus(
-    cell: &MatrixCell<'_>,
-    header: &CartridgeHeader,
-    rom_bytes: Vec<u8>,
-    font_bank1: &[u8],
-) -> GbcMemoryBus {
-    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(header, rom_bytes, None);
-    let mut bus = GbcMemoryBus::new([0; 0x100], false);
-    bus.set_cartridge(Cartridge::new(mbc));
-    if !font_bank1.is_empty() {
-        bus.load_font_tiles(font_bank1);
-    }
-
-    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
-    let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-    bus.set_cgb_mode(hw_is_cgb);
-    bus.set_cgb_revision_d(matches!(cell.model, GbcModel::CgbD | GbcModel::Agb));
-    bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
-    match cell.model {
-        GbcModel::Dmg0 => bus.set_boot_counter(0x182F),
-        GbcModel::Dmg => bus.set_boot_counter(0xABCB),
-        GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
-    }
-    if matches!(cell.model, GbcModel::Dmg0) {
-        bus.set_ppu_frame_phase(66220);
-    }
-    bus.set_post_boot_io(hw_is_cgb);
-    bus.set_post_boot_key1(hw_is_cgb && rom_is_cgb);
-    bus
-}
-
-fn setup_cpu(cell: &MatrixCell<'_>, header: &CartridgeHeader) -> Lr35902Cpu {
-    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
-    let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-    let mut cpu = match cell.model {
-        GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
-        GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
-        GbcModel::CgbC | GbcModel::CgbD => {
-            Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Cgb)
-        }
-        GbcModel::Agb => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Agb),
-    };
-    if hw_is_cgb && !rom_is_cgb {
-        cpu.set_cgb_dmg_mode_registers();
-    }
-    cpu.registers_mut().set_pc(0x0100);
-    cpu
 }
 
 fn dump_text_if_requested(bus: &GbcMemoryBus) {
