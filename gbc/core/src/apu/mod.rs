@@ -55,6 +55,9 @@ pub struct GbcApu {
     // DIV-APU counter
     div_apu_counter: u32,
     div_divider: u8,
+    /// Dot counter for Square/Wave channel timer prescaler.
+    /// Square/Wave channels are clocked at 1,048,576 Hz (master/4).
+    dot_counter: u32,
 
     // Downsampling
     sample_accumulator: u32,
@@ -81,6 +84,7 @@ impl GbcApu {
 
             div_apu_counter: 0,
             div_divider: 0,
+            dot_counter: 0,
 
             sample_accumulator: 0,
             output_buffer: Vec::new(),
@@ -115,9 +119,17 @@ impl GbcApu {
             }
 
             // 2. Channel timers
-            self.ch1.step();
-            self.ch2.step();
-            self.ch3.step();
+            // Square/Wave channels: clocked at 1,048,576 Hz (master/4)
+            // Pan Docs: "The pulse channels' period dividers are clocked
+            // at 1048576 Hz, once per four dots"
+            self.dot_counter += 1;
+            if self.dot_counter.is_multiple_of(4) {
+                self.ch1.step();
+                self.ch2.step();
+                self.ch3.step();
+            }
+            // Noise channel: clocked at 262,144 Hz (master/16) via DIVISOR_TABLE
+            // The DIVISOR_TABLE already accounts for the prescaler
             self.ch4.step();
 
             // 3. Sample generation (44,100 Hz)
@@ -298,6 +310,7 @@ impl GbcApu {
             self.mixer = Mixer::new();
             self.div_divider = 0;
             self.div_apu_counter = 0;
+            self.dot_counter = 0;
             // On DMG, length counters survive power cycle
             if !self.cgb {
                 self.regs[1] = len_regs[0];
