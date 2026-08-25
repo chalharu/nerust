@@ -259,7 +259,22 @@ impl GbcApu {
                 self.regs[idx] | MASKS[idx]
             }
             0xFF27..=0xFF2F => 0xFF,
-            0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
+            0xFF30..=0xFF3F => {
+                if self.ch3.active && self.powered {
+                    if self.cgb {
+                        // CGB: return byte at current playback position
+                        self.ch3.wave_ram[self.ch3.position as usize / 2]
+                    } else {
+                        // DMG: return $FF when CH3 is active
+                        // Pan Docs: "On monochrome consoles, wave RAM can
+                        // only be accessed on the same cycle that CH3 does.
+                        // Otherwise, reads return $FF"
+                        0xFF
+                    }
+                } else {
+                    self.wave_ram[(addr - 0xFF30) as usize]
+                }
+            }
             0xFF76 if self.cgb => {
                 // PCM12 (CGB only): CH1 low nibble, CH2 high nibble
                 (self.ch2.output() << 4) | self.ch1.output()
@@ -290,8 +305,22 @@ impl GbcApu {
                 }
             }
             0xFF30..=0xFF3F => {
-                self.wave_ram[(addr - 0xFF30) as usize] = value;
-                self.ch3.wave_ram[(addr - 0xFF30) as usize] = value;
+                if self.ch3.active && self.powered {
+                    if self.cgb {
+                        // CGB: write to current playback position
+                        let pos = self.ch3.position as usize / 2;
+                        self.wave_ram[pos] = value;
+                        self.ch3.wave_ram[pos] = value;
+                    } else {
+                        // DMG: writes are ignored when CH3 is active
+                        // Pan Docs: "On monochrome consoles, wave RAM can
+                        // only be accessed on the same cycle that CH3 does.
+                        // Otherwise, ... writes are ignored"
+                    }
+                } else {
+                    self.wave_ram[(addr - 0xFF30) as usize] = value;
+                    self.ch3.wave_ram[(addr - 0xFF30) as usize] = value;
+                }
             }
             _ => {}
         }
