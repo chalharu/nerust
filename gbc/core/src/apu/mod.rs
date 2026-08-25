@@ -115,6 +115,7 @@ impl GbcApu {
             // Wave channel: clocked at 2,097,152 Hz (master/2)
             // Pan Docs: "The wave channel's period divider is clocked
             // at 2097152 Hz, once per two dots"
+            self.ch3.begin_cycle();
             if self.dot_counter.is_multiple_of(2) {
                 self.ch3.step();
             }
@@ -256,7 +257,7 @@ impl GbcApu {
             0xFF27..=0xFF2F => 0xFF,
             0xFF30..=0xFF3F => {
                 if self.ch3.active && self.powered {
-                    if self.cgb {
+                    if self.cgb || self.ch3.wave_ram_accessible {
                         // CGB: return byte at current playback position
                         self.ch3.wave_ram[self.ch3.position as usize / 2]
                     } else {
@@ -301,7 +302,7 @@ impl GbcApu {
             }
             0xFF30..=0xFF3F => {
                 if self.ch3.active && self.powered {
-                    if self.cgb {
+                    if self.cgb || self.ch3.wave_ram_accessible {
                         // CGB: write to current playback position
                         let pos = self.ch3.position as usize / 2;
                         self.wave_ram[pos] = value;
@@ -355,6 +356,7 @@ impl GbcApu {
             self.ch1 = Square1::new();
             self.ch2 = Square2::new();
             self.ch3 = Wave::new();
+            self.ch3.wave_ram = self.wave_ram;
             self.ch4 = Noise::new();
             self.mixer = Mixer::new();
             self.div_divider = 0;
@@ -419,7 +421,10 @@ impl GbcApu {
             // NR33
             13 => self.ch3.write_nr33(value),
             // NR34
-            14 => self.ch3.write_nr34(value, next_div_lsb),
+            14 => {
+                self.ch3.write_nr34(value, next_div_lsb, self.cgb);
+                self.wave_ram = self.ch3.wave_ram;
+            }
             // NR41
             16 => self.ch4.write_nr41(value),
             // NR42

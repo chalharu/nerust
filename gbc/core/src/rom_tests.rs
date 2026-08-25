@@ -46,7 +46,7 @@ fn run_rom_mem_for_model(subpath: &str, cycles: usize, cgb: bool) -> String {
     }
     if bus.read(0xA001) == 0xDE && bus.read(0xA002) == 0xB0 && bus.read(0xA003) == 0x61 {
         let mut out = Vec::new();
-        for addr in 0xA004..0xA800 {
+        for addr in 0xA004..0xC000 {
             let c = bus.read(addr);
             if c == 0 {
                 break;
