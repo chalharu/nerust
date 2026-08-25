@@ -24,6 +24,8 @@ pub(crate) struct Wave {
     /// Sample buffer: holds the last sample read.
     /// NOT cleared on trigger, only when APU is turned off.
     pub sample_buffer: u8,
+    /// Whether CH3 read Wave RAM during the current T-cycle.
+    pub wave_ram_accessible: bool,
 }
 
 impl Wave {
@@ -38,17 +40,21 @@ impl Wave {
             active: false,
             frequency: 0,
             sample_buffer: 0,
+            wave_ram_accessible: false,
         }
     }
 
     /// Step the channel timer. Called at 2,097,152 Hz (master/2).
     pub fn step(&mut self) {
         if self.timer.step() {
-            // Read the sample at current position
-            self.sample_buffer = self.read_sample(self.position);
-            // Advance to next position
             self.position = (self.position + 1) & 31;
+            self.sample_buffer = self.read_sample(self.position);
+            self.wave_ram_accessible = true;
         }
+    }
+
+    pub fn begin_cycle(&mut self) {
+        self.wave_ram_accessible = false;
     }
 
     /// Get the digital output (0-15).
@@ -88,7 +94,8 @@ impl Wave {
             self.active = true;
         }
         // Reload frequency
-        self.timer.set_counter(self.timer.period());
+        self.timer
+            .set_counter(self.timer.period().saturating_add(3));
         // Position is reset to 0
         self.position = 0;
         // sample_buffer is NOT cleared (Pan Docs: "does not clear nor refresh this buffer")
@@ -121,20 +128,23 @@ impl Wave {
     /// Handle NR33 write: update frequency low byte.
     pub fn write_nr33(&mut self, value: u8) {
         self.frequency = (self.frequency & 0x700) | value as u16;
-        self.timer.set_period(2048u16.wrapping_sub(self.frequency));
+        self.timer.set_period(0x7FF - self.frequency);
     }
 
     /// Handle NR34 write: update frequency high bits, trigger, length enable.
-    pub fn write_nr34(&mut self, value: u8, next_div_lsb: bool) {
+    pub fn write_nr34(&mut self, value: u8, next_div_lsb: bool, cgb: bool) {
         // Update frequency high bits
         self.frequency = (self.frequency & 0xFF) | ((value as u16 & 0x07) << 8);
-        self.timer.set_period(2048u16.wrapping_sub(self.frequency));
+        self.timer.set_period(0x7FF - self.frequency);
 
         // Length enable
         let length_enable = value & 0x40 != 0;
 
         // Trigger
         if value & 0x80 != 0 {
+            if !cgb && self.active && self.timer.counter() == 0 {
+                self.corrupt_wave_ram();
+            }
             self.trigger();
         }
 
@@ -151,6 +161,16 @@ impl Wave {
         }
 
         self.length.set_enabled(length_enable);
+    }
+
+    fn corrupt_wave_ram(&mut self) {
+        let offset = ((self.position + 1) & 31) as usize / 2;
+        if offset < 4 {
+            self.wave_ram[0] = self.wave_ram[offset];
+        } else {
+            let start = offset & !3;
+            self.wave_ram.copy_within(start..start + 4, 0);
+        }
     }
 
     /// Read from Wave RAM.
