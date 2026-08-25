@@ -220,9 +220,14 @@ impl GbcApu {
     /// Called when the CPU writes to the DIV register ($FF04).
     /// In real hardware, the frame sequencer shares the same 16-bit counter
     /// as the DIV register, so writing to DIV resets both.
-    pub fn reset_div_apu(&mut self) {
+    /// If bit 4 of the old DIV value was 1, a falling edge occurs and
+    /// the DIV-APU counter is incremented before being reset.
+    pub fn reset_div_apu(&mut self, div_bit4_was_set: bool) {
+        if div_bit4_was_set {
+            // Falling edge of DIV bit 4: increment frame sequencer
+            self.div_divider = self.div_divider.wrapping_add(1);
+        }
         self.div_apu_counter = 0;
-        self.div_divider = 0;
     }
 
     /// Set whether the hardware is a CGB.
