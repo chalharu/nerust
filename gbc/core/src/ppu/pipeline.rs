@@ -487,20 +487,8 @@ impl Mode3Pipeline {
 
     fn advance_dot_writes(&mut self, advance_lcdc: bool) {
         if advance_lcdc {
-            if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
-                *countdown = countdown.saturating_sub(1);
-                if *countdown == 0 {
-                    self.registers.lcdc = (self.registers.lcdc & !1) | *value;
-                    self.pending_bg_enable = None;
-                }
-            }
-            if let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
-                *countdown = countdown.saturating_sub(1);
-                if *countdown == 0 {
-                    self.registers.lcdc = (self.registers.lcdc & !2) | *value;
-                    self.pending_obj_enable = None;
-                }
-            }
+            Self::tick_lcdc_pending(&mut self.pending_bg_enable, &mut self.registers.lcdc, 1);
+            Self::tick_lcdc_pending(&mut self.pending_obj_enable, &mut self.registers.lcdc, 2);
         }
         if let Some((countdown, value)) = self.pending_bgp.as_mut() {
             *countdown = countdown.saturating_sub(1);
@@ -509,6 +497,20 @@ impl Mode3Pipeline {
                 self.pending_bgp = None;
             }
         }
+        self.tick_pending_obp();
+    }
+
+    fn tick_lcdc_pending(pending: &mut Option<(u8, u8)>, lcdc: &mut u8, bit: u8) {
+        if let Some((countdown, value)) = pending.as_mut() {
+            *countdown = countdown.saturating_sub(1);
+            if *countdown == 0 {
+                *lcdc = (*lcdc & !bit) | *value;
+                *pending = None;
+            }
+        }
+    }
+
+    fn tick_pending_obp(&mut self) {
         if let Some((countdown, register, value)) = self.pending_obp.as_mut() {
             *countdown = countdown.saturating_sub(1);
             if *countdown == 0 {
@@ -1208,25 +1210,50 @@ impl Mode3Pipeline {
         let old_written = self.written_lcdc;
         self.written_lcdc = value;
         let changed = old_written ^ value;
-        let defer_obj_size_set = value & 4 != 0
-            && self.registers.scx == 0
-            && self
-                .sprite_fetch
-                .as_ref()
-                .is_some_and(|fetch| fetch.dot == 2);
-        let obj_size_delay = if !self.cgb_mode {
-            None
-        } else if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
-            self.sprite_fetch
-                .as_ref()
-                .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot))
-        } else {
-            None
-        };
+
+        let defer_obj_size_set = self.cgb_mode && value & 4 != 0 && self.defer_obj_size_active();
+        let obj_size_delay = self.compute_obj_size_delay(changed, value, defer_obj_size_set);
         let defer_obj_size = obj_size_delay.is_some();
         let preserve = 0x5B | if defer_obj_size { 4 } else { 0 };
         self.registers.lcdc = (value & !preserve) | (old & preserve);
 
+        self.dispatch_lcdc_changes(changed, value, old_written, obj_size_delay, defer_obj_size_set);
+    }
+
+    fn defer_obj_size_active(&self) -> bool {
+        self.registers.scx == 0
+            && self
+                .sprite_fetch
+                .as_ref()
+                .is_some_and(|fetch| fetch.dot == 2)
+    }
+
+    fn compute_obj_size_delay(
+        &self,
+        changed: u8,
+        value: u8,
+        defer_obj_size_set: bool,
+    ) -> Option<u8> {
+        if !self.cgb_mode {
+            return None;
+        }
+        if changed & 4 != 0 && (value & 4 == 0 || defer_obj_size_set) {
+            return self
+                .sprite_fetch
+                .as_ref()
+                .and_then(|fetch| (1..=2).contains(&fetch.dot).then(|| 3 - fetch.dot));
+        }
+        None
+    }
+
+    fn dispatch_lcdc_changes(
+        &mut self,
+        changed: u8,
+        value: u8,
+        old_written: u8,
+        obj_size_delay: Option<u8>,
+        defer_obj_size_set: bool,
+    ) {
         if changed & 1 != 0 {
             self.apply_bg_enable(value);
         }
