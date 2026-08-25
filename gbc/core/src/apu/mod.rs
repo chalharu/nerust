@@ -165,7 +165,7 @@ impl GbcApu {
     fn should_envelope_extra_tick(&self) -> bool {
         // Envelope clock occurs when div_divider & 7 == 7
         // The next tick will clock envelope if current state + 1 & 7 == 7
-        (self.div_divider + 1) & 7 == 0
+        (self.div_divider + 1) & 7 == 7
     }
 
     /// Generate one audio sample at 44,100 Hz.
