@@ -486,18 +486,20 @@ impl Mode3Pipeline {
     }
 
     fn advance_dot_writes(&mut self, advance_lcdc: bool) {
-        if advance_lcdc && let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
-            *countdown = countdown.saturating_sub(1);
-            if *countdown == 0 {
-                self.registers.lcdc = (self.registers.lcdc & !1) | *value;
-                self.pending_bg_enable = None;
+        if advance_lcdc {
+            if let Some((countdown, value)) = self.pending_bg_enable.as_mut() {
+                *countdown = countdown.saturating_sub(1);
+                if *countdown == 0 {
+                    self.registers.lcdc = (self.registers.lcdc & !1) | *value;
+                    self.pending_bg_enable = None;
+                }
             }
-        }
-        if advance_lcdc && let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
-            *countdown = countdown.saturating_sub(1);
-            if *countdown == 0 {
-                self.registers.lcdc = (self.registers.lcdc & !2) | *value;
-                self.pending_obj_enable = None;
+            if let Some((countdown, value)) = self.pending_obj_enable.as_mut() {
+                *countdown = countdown.saturating_sub(1);
+                if *countdown == 0 {
+                    self.registers.lcdc = (self.registers.lcdc & !2) | *value;
+                    self.pending_obj_enable = None;
+                }
             }
         }
         if let Some((countdown, value)) = self.pending_bgp.as_mut() {
@@ -1273,17 +1275,7 @@ impl Mode3Pipeline {
 
     fn apply_obj_enable(&mut self, value: u8) {
         let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
-        if !self.cgb_mode
-            && value & 2 == 0
-            && self
-                .sprite_fetch
-                .as_ref()
-                .is_some_and(|fetch| fetch.dot == 0)
-        {
-            self.sprite_fetch = None;
-            self.sprite_extra_dots = self.sprite_extra_dots.saturating_sub(self.output_stall);
-            self.output_stall = 0;
-        }
+        self.try_cancel_sprite_fetch_if_dmg_off(value);
         if !self.cgb_mode && value & 2 == 0 && self.pixel_x == 0 && object_x == Some(-6) {
             self.registers.lcdc &= !2;
             self.pending_obj_enable = None;
@@ -1294,6 +1286,20 @@ impl Mode3Pipeline {
             self.pending_obj_enable = None;
         } else {
             self.pending_obj_enable = Some((2, value & 2));
+        }
+    }
+
+    fn try_cancel_sprite_fetch_if_dmg_off(&mut self, value: u8) {
+        if !self.cgb_mode
+            && value & 2 == 0
+            && self
+                .sprite_fetch
+                .as_ref()
+                .is_some_and(|fetch| fetch.dot == 0)
+        {
+            self.sprite_fetch = None;
+            self.sprite_extra_dots = self.sprite_extra_dots.saturating_sub(self.output_stall);
+            self.output_stall = 0;
         }
     }
 
@@ -1347,20 +1353,24 @@ impl Mode3Pipeline {
             self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
             self.pending_map_select = None;
         } else {
-            let delay = if self.window_active && self.output_stall >= 8 {
-                self.output_stall.saturating_add(5)
-            } else if self.window_active && self.output_stall >= 2 {
-                4u8.max(self.output_stall)
-            } else if !self.cgb_mode && !self.window_active && object_x == Some(0) {
-                4
-            } else if !self.cgb_mode && !self.window_active && self.output_stall == 0 {
-                1
-            } else if self.cgb_mode {
-                4
-            } else {
-                2
-            };
-            self.pending_map_select = Some((delay, value & 0x48));
+            self.pending_map_select =
+                Some((self.compute_window_map_delay(object_x), value & 0x48));
+        }
+    }
+
+    fn compute_window_map_delay(&self, object_x: Option<i16>) -> u8 {
+        if self.window_active && self.output_stall >= 8 {
+            self.output_stall.saturating_add(5)
+        } else if self.window_active && self.output_stall >= 2 {
+            4u8.max(self.output_stall)
+        } else if !self.cgb_mode && !self.window_active && object_x == Some(0) {
+            4
+        } else if !self.cgb_mode && !self.window_active && self.output_stall == 0 {
+            1
+        } else if self.cgb_mode {
+            4
+        } else {
+            2
         }
     }
 
@@ -1454,33 +1464,41 @@ impl Mode3Pipeline {
 
     fn apply_window_disable(&mut self) {
         if self.window_active {
-            let fine = self.window_pixels & 7;
-            let window_x = i16::from(self.registers.wx) - 7;
-            let pixels_left = if !self.window_repositioned && fine == 0 && window_x > 0 {
-                0
-            } else {
-                8 - fine
-            };
-            self.window_disable_countdown = Some(
-                pixels_left
-                    + if self.window_repositioned || self.ly < 2 || window_x >= 9 {
-                        8
-                    } else {
-                        0
-                    },
-            );
+            self.apply_window_disable_active();
         } else {
-            let window_x = i16::from(self.registers.wx) - 7;
-            let distance = window_x - i16::from(self.pixel_x);
-            if (0..=7).contains(&distance) {
-                self.window_triggered = true;
-                self.window_can_retrigger = false;
-                if matches!(distance, 3 | 7) && window_x & 7 == 0 {
-                    self.window_zero_at = Some(window_x as u8);
-                }
-            } else if distance == 8 {
-                self.window_trigger_at = Some((window_x + 1) as u8);
+            self.apply_window_disable_inactive();
+        }
+    }
+
+    fn apply_window_disable_active(&mut self) {
+        let fine = self.window_pixels & 7;
+        let window_x = i16::from(self.registers.wx) - 7;
+        let pixels_left = if !self.window_repositioned && fine == 0 && window_x > 0 {
+            0
+        } else {
+            8 - fine
+        };
+        self.window_disable_countdown = Some(
+            pixels_left
+                + if self.window_repositioned || self.ly < 2 || window_x >= 9 {
+                    8
+                } else {
+                    0
+                },
+        );
+    }
+
+    fn apply_window_disable_inactive(&mut self) {
+        let window_x = i16::from(self.registers.wx) - 7;
+        let distance = window_x - i16::from(self.pixel_x);
+        if (0..=7).contains(&distance) {
+            self.window_triggered = true;
+            self.window_can_retrigger = false;
+            if matches!(distance, 3 | 7) && window_x & 7 == 0 {
+                self.window_zero_at = Some(window_x as u8);
             }
+        } else if distance == 8 {
+            self.window_trigger_at = Some((window_x + 1) as u8);
         }
     }
 
@@ -1488,24 +1506,7 @@ impl Mode3Pipeline {
         if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
             self.fine_discard = value & 7;
         }
-        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
-        let cgb_c_sprite_phase = self.cgb_mode
-            && !self.cgb_revision_d
-            && ((self.fetcher.stage == FetchStage::Push
-                && self.bg_fifo.len() == 2
-                && object_x == Some(0))
-                || (self.fetcher.stage == FetchStage::Sleep
-                    && self.output_stall == 2
-                    && matches!((self.bg_fifo.len(), object_x), (8, Some(8)) | (7, Some(9)))));
-        let defer_high = if !self.cgb_mode {
-            self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0
-        } else if self.cgb_revision_d || cgb_c_sprite_phase {
-            (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
-                || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
-        } else {
-            matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
-                || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
-        };
+        let defer_high = self.compute_scx_defer_high();
         if defer_high {
             self.pending_scx_high = Some(value & 0xF8);
             self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
@@ -1514,24 +1515,40 @@ impl Mode3Pipeline {
         }
     }
 
+    fn compute_scx_defer_high(&self) -> bool {
+        if !self.cgb_mode {
+            return self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0;
+        }
+        let cgb_c_sprite_phase = self.is_cgb_c_sprite_phase();
+        if self.cgb_revision_d || cgb_c_sprite_phase {
+            return (self.fetcher.stage == FetchStage::Push && self.bg_fifo.len() <= 1)
+                || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0);
+        }
+        matches!(self.fetcher.stage, FetchStage::Sleep | FetchStage::Push)
+            || (self.fetcher.stage == FetchStage::Tile && self.fetcher.stage_dot == 0)
+    }
+
+    fn is_cgb_c_sprite_phase(&self) -> bool {
+        let object_x = self.next_sprite.checked_sub(1).map(|i| self.sprites[i].x);
+        self.cgb_mode
+            && !self.cgb_revision_d
+            && ((self.fetcher.stage == FetchStage::Push
+                && self.bg_fifo.len() == 2
+                && object_x == Some(0))
+                || (self.fetcher.stage == FetchStage::Sleep
+                    && self.output_stall == 2
+                    && matches!((self.bg_fifo.len(), object_x), (8, Some(8)) | (7, Some(9)))))
+    }
+
     fn write_bgp(&mut self, value: u8) {
-        if self.ly != 0
-            && self.registers.wx == 0
-            && self.registers.scx & 7 == 0
-            && self.registers.lcdc & 0x20 != 0
-            && self.window_eligible
-            && !self.wx_written
-            && value != 0
-        {
+        if self.needs_bgp_window_delay(value) {
             let delay = if self.cgb_mode && !self.cgb_revision_d {
                 8
             } else {
                 7
             };
             self.pending_bgp = Some((delay, value));
-        } else if (self.cgb_mode && !self.cgb_revision_d)
-            || (self.ly == 0 && self.window_active && self.registers.wx == 0 && !self.wx_written)
-        {
+        } else if self.needs_bgp_cgb_delay(value) {
             let stable_line_zero_window =
                 self.ly == 0 && self.window_active && self.registers.wx == 0 && !self.wx_written;
             let delay = if self.cgb_mode && !self.cgb_revision_d && stable_line_zero_window {
@@ -1541,21 +1558,43 @@ impl Mode3Pipeline {
             };
             self.pending_bgp = Some((delay, value));
         } else if !self.cgb_mode {
-            let old_bgp = self.registers.bgp;
-            let waiting_on_obj = self.output_stall != 0 || self.sprite_fetch.is_some();
-            let edge_value = if self.pixel_x == 0 || waiting_on_obj {
-                value
-            } else {
-                old_bgp | value
-            };
-            self.registers.bgp = value;
-            self.bgp_edge_active = true;
-            self.bgp_edge_x = self.pixel_x;
-            self.bgp_edge_value = edge_value;
+            self.apply_dmg_bgp(value);
         } else {
             self.registers.bgp = value;
             self.pending_bgp = None;
         }
+    }
+
+    fn needs_bgp_window_delay(&self, value: u8) -> bool {
+        self.ly != 0
+            && self.registers.wx == 0
+            && self.registers.scx & 7 == 0
+            && self.registers.lcdc & 0x20 != 0
+            && self.window_eligible
+            && !self.wx_written
+            && value != 0
+    }
+
+    fn needs_bgp_cgb_delay(&self, _value: u8) -> bool {
+        (self.cgb_mode && !self.cgb_revision_d)
+            || (self.ly == 0
+                && self.window_active
+                && self.registers.wx == 0
+                && !self.wx_written)
+    }
+
+    fn apply_dmg_bgp(&mut self, value: u8) {
+        let old_bgp = self.registers.bgp;
+        let waiting_on_obj = self.output_stall != 0 || self.sprite_fetch.is_some();
+        let edge_value = if self.pixel_x == 0 || waiting_on_obj {
+            value
+        } else {
+            old_bgp | value
+        };
+        self.registers.bgp = value;
+        self.bgp_edge_active = true;
+        self.bgp_edge_x = self.pixel_x;
+        self.bgp_edge_value = edge_value;
     }
 
     fn write_wx(&mut self, value: u8) {

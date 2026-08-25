@@ -6,7 +6,7 @@ use crate::{
     dma::DmaController,
     hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
-    ppu::{GbcPpu, OamBugKind},
+    ppu::{GbcPpu, OamBugKind, PpuStepResult},
     serial::Serial,
     timer::Timer,
 };
@@ -360,10 +360,19 @@ impl GbcMemoryBus {
         let t1 = self.tick % 4;
 
         let video = 1u32;
-        let was_hblank = self.ppu.is_hblank();
         let ppu_res = self.ppu.step(video);
+        self.advance_ppu_interrupts(&ppu_res);
+        self.apu.step(video);
+        self.advance_timer();
+        self.advance_dma();
+        self.maybe_step_cpu(cpu, t1);
+        self.deliver_ppu_write_events();
+        ppu_res.frame_done
+    }
+
+    fn advance_ppu_interrupts(&mut self, ppu_res: &PpuStepResult) {
+        let was_hblank = self.ppu.is_hblank();
         let now_hblank = self.ppu.is_hblank();
-        // HDMA: transfer one block at the start of each HBlank period
         if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
             self.transfer_hdma_block();
         }
@@ -376,13 +385,16 @@ impl GbcMemoryBus {
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);
         }
-        self.apu.step(video);
-        // DIV/TIMA are driven by the CPU clock. They advance twice per PPU
-        // dot in CGB double-speed mode, while PPU/APU keep their normal rate.
+    }
+
+    fn advance_timer(&mut self) {
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
+    }
+
+    fn advance_dma(&mut self) {
         if self.dma.active() {
             self.dma_tcounter += 1;
             if self.dma_tcounter >= 4 {
@@ -393,8 +405,9 @@ impl GbcMemoryBus {
                 }
             }
         }
-        // CPU M-cycle cadence: every 4 steps normally, every 2 steps in
-        // double-speed mode (4 T-cycles = 1 M-cycle).
+    }
+
+    fn maybe_step_cpu(&mut self, cpu: &mut impl CpuStepper, t1: u32) {
         let cpu_runs = if self.double_speed {
             t1 == 1 || t1 == 3
         } else {
@@ -408,8 +421,6 @@ impl GbcMemoryBus {
                 self.interrupt.request(InterruptKind::Serial);
             }
         }
-        self.deliver_ppu_write_events();
-        ppu_res.frame_done
     }
 
     fn deliver_ppu_write_events(&mut self) {

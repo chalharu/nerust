@@ -95,24 +95,35 @@ impl RomManifest {
         let mut cells = Vec::new();
         for suite in &self.suites {
             for case in &suite.cases {
-                if !tags.is_empty() && !tags.iter().any(|tag| case.tags.contains(tag)) {
-                    continue;
-                }
                 for &model in &case.models {
-                    if !models.is_empty() && !models.contains(&model) {
-                        continue;
+                    if self.matches_filters(case, model, ids, models, tags) {
+                        cells.push(MatrixCell { suite, case, model });
                     }
-                    if !ids.is_empty() {
-                        let cell_id = format!("{}@{}", case.id, model.name());
-                        if !ids.iter().any(|id| *id == case.id || *id == cell_id) {
-                            continue;
-                        }
-                    }
-                    cells.push(MatrixCell { suite, case, model });
                 }
             }
         }
         cells
+    }
+
+    fn matches_filters(
+        &self,
+        case: &RomCase,
+        model: GbcModel,
+        ids: &[String],
+        models: &[GbcModel],
+        tags: &[String],
+    ) -> bool {
+        if !tags.is_empty() && !tags.iter().any(|tag| case.tags.contains(tag)) {
+            return false;
+        }
+        if !models.is_empty() && !models.contains(&model) {
+            return false;
+        }
+        if !ids.is_empty() {
+            let cell_id = format!("{}@{}", case.id, model.name());
+            return ids.iter().any(|id| *id == case.id || *id == cell_id);
+        }
+        true
     }
 }
 
