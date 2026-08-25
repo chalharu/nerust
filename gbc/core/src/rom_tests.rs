@@ -34,8 +34,9 @@ fn run_rom(subpath: &str, cycles: usize) -> String {
 }
 
 /// Run a ROM that outputs via memory at $A000+ (signature at $A001-$A003).
-fn run_rom_mem(subpath: &str, cycles: usize) -> String {
+fn run_rom_mem_for_model(subpath: &str, cycles: usize, cgb: bool) -> String {
     let mut bus = GbcMemoryBus::new([0; 0x100], false);
+    bus.set_cgb_mode(cgb);
     bus.set_cartridge(load_rom(subpath));
     let mut cpu = Lr35902Cpu::new();
     cpu.registers_mut().set_pc(0x0100);
@@ -55,6 +56,10 @@ fn run_rom_mem(subpath: &str, cycles: usize) -> String {
         return String::from_utf8_lossy(&out).into_owned();
     }
     String::new()
+}
+
+fn run_rom_mem(subpath: &str, cycles: usize) -> String {
+    run_rom_mem_for_model(subpath, cycles, false)
 }
 
 fn assert_passed(output: &str, name: &str) {
@@ -317,20 +322,46 @@ fn oam_bug_8_instr_effect() {
     );
 }
 
-// ── Sound tests (dmg_sound) ──────
-
-#[test]
-#[ignore = "requires cycle-accurate APU frame sequencer timing"]
-fn dmg_sound() {
-    let output = run_rom_mem("dmg_sound/dmg_sound.gb", 60_000_000);
-    assert!(!output.contains("Failed"), "dmg_sound failure:\n{output}");
+fn assert_sound_passed(suite: &str, rom: &str, cgb: bool) {
+    let path = format!("{suite}/rom_singles/{rom}.gb");
+    assert_passed(&run_rom_mem_for_model(&path, 10_000_000, cgb), &path);
 }
 
-// ── Sound tests (cgb_sound) ──────
+macro_rules! sound_tests {
+    ($module:ident, $suite:literal, $cgb:literal, $wave_test:literal) => {
+        mod $module {
+            use super::*;
 
-#[test]
-#[ignore = "requires cycle-accurate APU frame sequencer timing"]
-fn cgb_sound() {
-    let output = run_rom_mem("cgb_sound/cgb_sound.gb", 60_000_000);
-    assert!(!output.contains("Failed"), "cgb_sound failure:\n{output}");
+            #[test]
+            fn combined() {
+                let path = concat!($suite, "/", $suite, ".gb");
+                assert_passed(&run_rom_mem_for_model(path, 60_000_000, $cgb), path);
+            }
+
+            macro_rules! sound_test {
+                ($name:ident, $rom:literal) => {
+                    #[test]
+                    fn $name() {
+                        assert_sound_passed($suite, $rom, $cgb);
+                    }
+                };
+            }
+
+            sound_test!(registers, "01-registers");
+            sound_test!(length_counter, "02-len ctr");
+            sound_test!(trigger, "03-trigger");
+            sound_test!(sweep, "04-sweep");
+            sound_test!(sweep_details, "05-sweep details");
+            sound_test!(overflow_on_trigger, "06-overflow on trigger");
+            sound_test!(length_sweep_period_sync, "07-len sweep period sync");
+            sound_test!(length_counter_during_power, "08-len ctr during power");
+            sound_test!(wave_read_while_on, "09-wave read while on");
+            sound_test!(wave_trigger_while_on, "10-wave trigger while on");
+            sound_test!(registers_after_power, "11-regs after power");
+            sound_test!(wave_write_while_on, $wave_test);
+        }
+    };
 }
+
+sound_tests!(dmg_sound, "dmg_sound", false, "12-wave write while on");
+sound_tests!(cgb_sound, "cgb_sound", true, "12-wave");
