@@ -316,3 +316,21 @@ fn oam_bug_8_instr_effect() {
         "oam_bug_8",
     );
 }
+
+// ── Sound tests (dmg_sound) ──────
+
+#[test]
+#[ignore = "requires cycle-accurate APU frame sequencer timing"]
+fn dmg_sound() {
+    let output = run_rom_mem("dmg_sound/dmg_sound.gb", 60_000_000);
+    assert!(!output.contains("Failed"), "dmg_sound failure:\n{output}");
+}
+
+// ── Sound tests (cgb_sound) ──────
+
+#[test]
+#[ignore = "requires cycle-accurate APU frame sequencer timing"]
+fn cgb_sound() {
+    let output = run_rom_mem("cgb_sound/cgb_sound.gb", 60_000_000);
+    assert!(!output.contains("Failed"), "cgb_sound failure:\n{output}");
+}

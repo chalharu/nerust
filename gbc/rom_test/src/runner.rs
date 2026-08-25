@@ -83,7 +83,7 @@ fn run_cell(
     artifacts_dir: Option<&Path>,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
-    let (rom_path, rom_bytes, header) = load_rom(cell, rom_root)?;
+    let (_rom_path, rom_bytes, header) = load_rom(cell, rom_root)?;
     let font_bank1 = extract_font_bank1(&rom_bytes);
     let mut bus = setup_bus(cell, &header, rom_bytes, &font_bank1);
     let mut cpu = setup_cpu(cell, &header);
