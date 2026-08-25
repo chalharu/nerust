@@ -182,7 +182,7 @@ impl GbcApu {
     fn should_envelope_extra_tick(&self) -> bool {
         // Envelope clock occurs when div_divider & 7 == 7
         // The next tick will clock envelope if current state + 1 & 7 == 7
-        (self.div_divider + 1) & 7 == 7
+        self.div_divider.wrapping_add(1) & 7 == 7
     }
 
     /// Generate one audio sample at 44,100 Hz.
@@ -305,8 +305,14 @@ impl GbcApu {
     fn handle_power_change(&mut self, value: u8) {
         let powered = value & 0x80 != 0;
         if self.powered && !powered {
-            // Powering off clears registers and stops channels
-            let len_regs = [self.regs[1], self.regs[6], self.regs[11], self.regs[16]];
+            // Powering off clears registers and stops channels.
+            // Save internal length counter values before clearing.
+            let lengths = [
+                self.ch1.length.counter(),
+                self.ch2.length.counter(),
+                self.ch3.length.counter(),
+                self.ch4.length.counter(),
+            ];
             self.regs.fill(0);
             self.ch1 = Square1::new();
             self.ch2 = Square2::new();
@@ -316,16 +322,13 @@ impl GbcApu {
             self.div_divider = 0;
             self.div_apu_counter = 0;
             self.dot_counter = 0;
-            // On DMG, length counters survive power cycle
+            // On DMG, internal length counters survive power cycle
+            // (but register values are cleared like all other registers)
             if !self.cgb {
-                self.regs[1] = len_regs[0];
-                self.regs[6] = len_regs[1];
-                self.regs[11] = len_regs[2];
-                self.regs[16] = len_regs[3];
-                self.ch1.length.load(len_regs[0]);
-                self.ch2.length.load(len_regs[1]);
-                self.ch3.length.load(len_regs[2]);
-                self.ch4.length.load(len_regs[3]);
+                self.ch1.length.set_counter(lengths[0]);
+                self.ch2.length.set_counter(lengths[1]);
+                self.ch3.length.set_counter(lengths[2]);
+                self.ch4.length.set_counter(lengths[3]);
             }
             // Clear wave RAM buffer
             self.ch3.clear_buffer();
@@ -398,22 +401,20 @@ impl GbcApu {
     }
 
     /// Handle DMG off-write behavior (NRx1 length registers remain writable).
+    /// On DMG, writing to NRx1 while the APU is off only updates the
+    /// internal length counter, not the register value.
     fn handle_dmg_off_write(&mut self, idx: usize, value: u8) {
         match idx {
             1 => {
-                self.regs[idx] = value & !MASKS[idx];
                 self.ch1.length.load(value & 0x3F);
             }
             6 => {
-                self.regs[idx] = value & !MASKS[idx];
                 self.ch2.length.load(value & 0x3F);
             }
             11 => {
-                self.regs[idx] = value & !MASKS[idx];
                 self.ch3.length.load(value);
             }
             16 => {
-                self.regs[idx] = value & !MASKS[idx];
                 self.ch4.length.load(value);
             }
             _ => {}
