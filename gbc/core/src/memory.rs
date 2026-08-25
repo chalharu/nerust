@@ -243,12 +243,15 @@ impl GbcMemoryBus {
                 }
             }
             0xFF04 => {
-                self.timer.write(addr, value);
+                let div_bit4_was_set = self.timer.write(addr, value);
                 // DIV write resets the frame sequencer counter
                 // (shares the same 16-bit counter as DIV in real hardware)
-                self.apu.reset_div_apu();
+                // If bit 4 was 1, a falling edge occurs and DIV-APU increments
+                self.apu.reset_div_apu(div_bit4_was_set);
             }
-            0xFF05..=0xFF07 => self.timer.write(addr, value),
+            0xFF05..=0xFF07 => {
+                self.timer.write(addr, value);
+            }
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
@@ -314,13 +317,12 @@ impl GbcMemoryBus {
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);
         }
-        self.apu.step(video);
-        // DIV/TIMA are driven by the CPU clock. They advance twice per PPU
-        // dot in CGB double-speed mode, while PPU/APU keep their normal rate.
+        // Timer must be stepped before APU to ensure proper synchronization
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
+        self.apu.step(video);
         if t1 == 3 && self.serial.step() {
             self.interrupt.request(InterruptKind::Serial);
         }
@@ -368,8 +370,10 @@ impl GbcMemoryBus {
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
         self.advance_ppu_interrupts(&ppu_res);
-        self.apu.step(video);
+        // Timer must be stepped before APU to ensure proper synchronization
+        // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
+        self.apu.step(video);
         self.advance_dma();
         self.maybe_step_cpu(cpu, t1);
         self.deliver_ppu_write_events();

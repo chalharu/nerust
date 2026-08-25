@@ -140,28 +140,34 @@ impl Timer {
         }
     }
 
-    pub fn write(&mut self, addr: u16, value: u8) {
+    pub fn write(&mut self, addr: u16, value: u8) -> bool {
         match addr {
             0xFF04 => {
+                let old_div = self.div;
                 self.set_div(0);
+                // Return whether bit 4 was 1 (falling edge for APU)
+                old_div & 0x10 != 0
             }
             0xFF05 => {
                 if self.reload_state != ReloadState::Reloaded {
                     self.tima = value;
                 }
+                false
             }
             0xFF06 => {
                 self.tma = value;
                 if self.reload_state != ReloadState::Running {
                     self.tima = value;
                 }
+                false
             }
             0xFF07 => {
                 let old_tac = self.tac;
                 self.tac = value | 0xF8;
                 self.emulate_timer_glitch(old_tac, value);
+                false
             }
-            _ => {}
+            _ => false,
         }
     }
 
