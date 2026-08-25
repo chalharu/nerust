@@ -5,14 +5,15 @@ use nerust_gbc_rom_test::{manifest::RomManifest, runner::run_manifest};
 #[test]
 fn rom_manifest_is_well_formed() {
     let manifest = manifest();
-    let case_count = manifest
+    let cell_count = manifest
         .suites
         .iter()
-        .map(|suite| suite.cases.len())
+        .flat_map(|suite| &suite.cases)
+        .map(|case| case.models.len())
         .sum::<usize>();
     assert_eq!(
-        GENERATED_ROM_CASE_COUNT, case_count,
-        "generated test count should match the manifest case count"
+        GENERATED_ROM_CELL_COUNT, cell_count,
+        "generated test count should match the manifest matrix cell count"
     );
 }
 
@@ -24,12 +25,13 @@ fn manifest() -> &'static RomManifest {
     })
 }
 
-fn run_generated_manifest_case(case_id: &str) {
+fn run_generated_manifest_cell(case_id: &str, model: &str) {
     let manifest = manifest();
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("rom_tests.yaml");
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
-    let cells = manifest.select(&[case_id.to_string()], &[], &[]);
-    assert!(!cells.is_empty(), "ROM case `{case_id}` should exist");
+    let cell_id = format!("{case_id}@{model}");
+    let cells = manifest.select(std::slice::from_ref(&cell_id), &[], &[]);
+    assert_eq!(cells.len(), 1, "ROM cell `{cell_id}` should exist");
 
     let results = run_manifest(&rom_root, &cells, None, &manifest.expected_failures);
     let mut failures = String::new();
