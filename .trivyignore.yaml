@@ -1,0 +1,7 @@
+vulnerabilities:
+  - id: DS-0002
+    paths:
+      - ".github/workflows/docker/Dockerfile.sonarcloud" # CI-only image that requires root privileges for test execution
+  - id: DS-0026
+    paths:
+      - ".github/workflows/docker/Dockerfile.sonarcloud" # CI-only image, no long-running service to healthcheck
