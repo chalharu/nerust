@@ -119,13 +119,18 @@ impl GbcApu {
             }
 
             // 2. Channel timers
-            // Square/Wave channels: clocked at 1,048,576 Hz (master/4)
+            // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
             self.dot_counter += 1;
             if self.dot_counter.is_multiple_of(4) {
                 self.ch1.step();
                 self.ch2.step();
+            }
+            // Wave channel: clocked at 2,097,152 Hz (master/2)
+            // Pan Docs: "The wave channel's period divider is clocked
+            // at 2097152 Hz, once per two dots"
+            if self.dot_counter.is_multiple_of(2) {
                 self.ch3.step();
             }
             // Noise channel: clocked at 262,144 Hz (master/16) via DIVISOR_TABLE
