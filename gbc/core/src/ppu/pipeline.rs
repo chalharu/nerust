@@ -1353,8 +1353,7 @@ impl Mode3Pipeline {
             self.registers.lcdc = (self.registers.lcdc & !0x40) | (value & 0x40);
             self.pending_map_select = None;
         } else {
-            self.pending_map_select =
-                Some((self.compute_window_map_delay(object_x), value & 0x48));
+            self.pending_map_select = Some((self.compute_window_map_delay(object_x), value & 0x48));
         }
     }
 
@@ -1577,10 +1576,7 @@ impl Mode3Pipeline {
 
     fn needs_bgp_cgb_delay(&self, _value: u8) -> bool {
         (self.cgb_mode && !self.cgb_revision_d)
-            || (self.ly == 0
-                && self.window_active
-                && self.registers.wx == 0
-                && !self.wx_written)
+            || (self.ly == 0 && self.window_active && self.registers.wx == 0 && !self.wx_written)
     }
 
     fn apply_dmg_bgp(&mut self, value: u8) {
