@@ -1,4 +1,7 @@
-use std::{path::{Path, PathBuf}, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use nerust_gbc_core::{
     cartridge::Cartridge, cartridge_header::CartridgeHeader, cpu_core::Lr35902Cpu,
