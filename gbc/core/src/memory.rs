@@ -242,7 +242,13 @@ impl GbcMemoryBus {
                     self.interrupt.request(InterruptKind::Serial);
                 }
             }
-            0xFF04..=0xFF07 => self.timer.write(addr, value),
+            0xFF04 => {
+                self.timer.write(addr, value);
+                // DIV write resets the frame sequencer counter
+                // (shares the same 16-bit counter as DIV in real hardware)
+                self.apu.reset_div_apu();
+            }
+            0xFF05..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt.write_if(value),
             0xFF10..=0xFF3F => self.apu.write_register(addr, value),
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
