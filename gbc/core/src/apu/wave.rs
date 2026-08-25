@@ -126,8 +126,6 @@ impl Wave {
 
     /// Handle NR34 write: update frequency high bits, trigger, length enable.
     pub fn write_nr34(&mut self, value: u8, next_div_lsb: bool) {
-        let was_active = self.active;
-
         // Update frequency high bits
         self.frequency = (self.frequency & 0xFF) | ((value as u16 & 0x07) << 8);
         self.timer.set_period(2048u16.wrapping_sub(self.frequency));
@@ -142,8 +140,8 @@ impl Wave {
 
         // Length glitch
         if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
-            self.length.clock();
-            if self.length.counter() == 0 && !was_active {
+            self.length.set_enabled(true);
+            if self.length.clock() {
                 if value & 0x80 != 0 {
                     self.length.set_counter(self.length.max() - 1);
                 } else {

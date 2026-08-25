@@ -416,7 +416,7 @@ suites:
         rom: cgb_sound/cgb_sound.gb
         models:
           - cgb_d
-        cycles: 3000000
+        cycles: 60000000
         verify:
           memory:
             - address: '0xA000'
@@ -441,7 +441,7 @@ suites:
         description: DMG sound trigger
         rom: dmg_sound/rom_singles/03-trigger.gb
         models: [dmg]
-        cycles: 10000000
+        cycles: 60000000
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: dmg_sound_04_sweep
@@ -525,7 +525,7 @@ suites:
         description: CGB sound trigger
         rom: cgb_sound/rom_singles/03-trigger.gb
         models: [cgb_d]
-        cycles: 10000000
+        cycles: 60000000
         verify: {memory: [{address: '0xA000', value: '0x00'}]}
         tags: [apu]
       - id: cgb_sound_04_sweep

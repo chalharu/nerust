@@ -53,8 +53,9 @@ pub struct GbcApu {
     hpf_right: HighPassFilter,
 
     // DIV-APU counter
-    div_apu_counter: u32,
     div_divider: u8,
+    div_bit: bool,
+    skip_div_event: bool,
     /// Dot counter for Square/Wave channel timer prescaler.
     /// Square/Wave channels are clocked at 1,048,576 Hz (master/4).
     dot_counter: u32,
@@ -82,8 +83,9 @@ impl GbcApu {
             hpf_left: HighPassFilter::new(false, SAMPLE_RATE),
             hpf_right: HighPassFilter::new(false, SAMPLE_RATE),
 
-            div_apu_counter: 0,
             div_divider: 0,
+            div_bit: false,
+            skip_div_event: false,
             dot_counter: 0,
 
             sample_accumulator: 0,
@@ -93,32 +95,12 @@ impl GbcApu {
 
     /// Step the APU by the given number of T-cycles.
     pub fn step(&mut self, cycles: u32) {
-        if !self.powered {
-            return;
-        }
-
         for _ in 0..cycles {
-            // 1. DIV-APU update (512 Hz)
-            self.div_apu_counter += 1;
-            if self.div_apu_counter >= 8192 {
-                self.div_apu_counter -= 8192;
-                self.div_divider = self.div_divider.wrapping_add(1);
-
-                // Length clock (256 Hz)
-                if self.div_divider & 1 == 1 {
-                    self.clock_length();
-                }
-                // Sweep clock (128 Hz)
-                if self.div_divider & 3 == 3 {
-                    self.clock_sweep();
-                }
-                // Envelope clock (64 Hz)
-                if self.div_divider & 7 == 7 {
-                    self.clock_envelope();
-                }
+            if !self.powered {
+                continue;
             }
 
-            // 2. Channel timers
+            // 1. Channel timers
             // Square channels: clocked at 1,048,576 Hz (master/4)
             // Pan Docs: "The pulse channels' period dividers are clocked
             // at 1048576 Hz, once per four dots"
@@ -142,7 +124,7 @@ impl GbcApu {
                 self.ch4.step();
             }
 
-            // 3. Sample generation (44,100 Hz)
+            // 2. Sample generation (44,100 Hz)
             self.sample_accumulator += SAMPLE_RATE;
             if self.sample_accumulator >= MASTER_CLOCK {
                 self.sample_accumulator -= MASTER_CLOCK;
@@ -180,14 +162,36 @@ impl GbcApu {
         self.ch4.envelope.clock();
     }
 
+    pub fn clock_div_apu(&mut self) {
+        if !self.powered {
+            return;
+        }
+        if self.skip_div_event {
+            self.skip_div_event = false;
+            return;
+        }
+        self.div_divider = (self.div_divider + 1) & 7;
+        if self.div_divider & 7 == 7 {
+            self.clock_envelope();
+        }
+        if self.div_divider & 1 == 1 {
+            self.clock_length();
+        }
+        if self.div_divider & 3 == 3 {
+            self.clock_sweep();
+        }
+    }
+
+    pub fn set_div_apu_bit(&mut self, value: bool) {
+        self.div_bit = value;
+    }
+
     /// Check if the next DIV-APU tick would clock the envelope.
     /// Pan Docs: "If a channel is triggered when the DIV-APU next step
     /// will clock the volume envelope, the envelope's timer is reloaded
     /// with one greater than it would have been."
     fn should_envelope_extra_tick(&self) -> bool {
-        // Envelope clock occurs when div_divider & 7 == 7
-        // The next tick will clock envelope if current state + 1 & 7 == 7
-        self.div_divider.wrapping_add(1) & 7 == 7
+        self.div_divider == 6
     }
 
     /// Generate one audio sample at 44,100 Hz.
@@ -214,20 +218,6 @@ impl GbcApu {
     /// Flush the output buffer (called once per frame).
     pub fn flush_samples(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.output_buffer)
-    }
-
-    /// Reset the DIV-APU frame sequencer counter.
-    /// Called when the CPU writes to the DIV register ($FF04).
-    /// In real hardware, the frame sequencer shares the same 16-bit counter
-    /// as the DIV register, so writing to DIV resets both.
-    /// If bit 4 of the old DIV value was 1, a falling edge occurs and
-    /// the DIV-APU counter is incremented before being reset.
-    pub fn reset_div_apu(&mut self, div_bit4_was_set: bool) {
-        if div_bit4_was_set {
-            // Falling edge of DIV bit 4: increment frame sequencer
-            self.div_divider = self.div_divider.wrapping_add(1);
-        }
-        self.div_apu_counter = 0;
     }
 
     /// Set whether the hardware is a CGB.
@@ -368,7 +358,7 @@ impl GbcApu {
             self.ch4 = Noise::new();
             self.mixer = Mixer::new();
             self.div_divider = 0;
-            self.div_apu_counter = 0;
+            self.skip_div_event = false;
             self.dot_counter = 0;
             // On DMG, internal length counters survive power cycle
             // (but register values are cleared like all other registers)
@@ -380,9 +370,9 @@ impl GbcApu {
             }
             // Clear wave RAM buffer
             self.ch3.clear_buffer();
-        } else if !self.powered && powered {
-            self.div_divider = 0;
-            self.div_apu_counter = 0;
+        } else if !self.powered && powered && self.div_bit {
+            self.div_divider = 1;
+            self.skip_div_event = true;
         }
         self.powered = powered;
     }
@@ -463,7 +453,7 @@ impl GbcApu {
                 self.ch3.length.load(value);
             }
             16 => {
-                self.ch4.length.load(value);
+                self.ch4.length.load(value & 0x3F);
             }
             _ => {}
         }
