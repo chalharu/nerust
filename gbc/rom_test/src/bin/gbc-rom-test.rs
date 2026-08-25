@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 
 use nerust_gbc_rom_test::{
     manifest::{GbcModel, RomManifest},
-    report::{Summary, write_html_report, write_json},
+    report::{CaseResult, Summary, write_html_report, write_json},
     runner::run_manifest,
 };
 
@@ -120,9 +120,24 @@ fn main() {
         cli.format
     };
 
+    print_results(&results, format, manifest_name);
+
+    let summary = Summary::of(&results);
+    print_summary(&summary, format);
+
+    if cli.open {
+        open_report_if_available(manifest_name, &results);
+    }
+
+    if summary.unexpected > 0 {
+        std::process::exit(1);
+    }
+}
+
+fn print_results(results: &[CaseResult], format: OutputFormat, manifest_name: &str) {
     match format {
         OutputFormat::Text => {
-            for result in &results {
+            for result in results {
                 if result.passed {
                     println!("{} ... ok", result.id);
                 } else if result.expected_failure {
@@ -137,14 +152,15 @@ fn main() {
             }
         }
         OutputFormat::Json => {
-            println!("{}", write_json(manifest_name, &results));
+            println!("{}", write_json(manifest_name, results));
         }
         OutputFormat::Html => {
-            let _ = write_html_report(None, manifest_name, &results);
+            let _ = write_html_report(None, manifest_name, results);
         }
     }
+}
 
-    let summary = Summary::of(&results);
+fn print_summary(summary: &Summary, format: OutputFormat) {
     let summary_line = if summary.expected_failures > 0 {
         format!(
             "{} passed, {} failed ({} expected, {} unexpected)",
@@ -158,17 +174,13 @@ fn main() {
     } else {
         println!("\n{}", summary_line);
     }
+}
 
-    if cli.open
-        && let Ok(outcome) = write_html_report(None, manifest_name, &results)
-    {
+fn open_report_if_available(manifest_name: &str, results: &[CaseResult]) {
+    if let Ok(outcome) = write_html_report(None, manifest_name, results) {
         let path = &outcome.report_path;
         if open::that(path).is_ok() {
             eprintln!("Opened report: {}", path.display());
         }
-    }
-
-    if summary.unexpected > 0 {
-        std::process::exit(1);
     }
 }

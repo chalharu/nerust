@@ -170,17 +170,7 @@ impl GbcPpu {
         self.frame_complete = false;
 
         if self.lcdc & 0x80 == 0 {
-            self.ly = 0;
-            self.mode_clock = 0;
-            self.mode3_pipeline = None;
-            // LCD off: STAT mode bits read as 00 (HBlank); the LYC
-            // coincidence bit (bit2) is latched and retained.
-            self.stat &= !0x03;
-            return PpuStepResult {
-                frame_done: false,
-                lcd_stat: false,
-                vblank: false,
-            };
+            return self.step_lcd_off();
         }
 
         let mut lcd_stat = false;
@@ -188,32 +178,7 @@ impl GbcPpu {
 
         for _ in 0..cycles {
             if self.lcd_on_delay > 0 {
-                // PPU is powering on: STAT mode bits stay at 00, but the
-                // LYC comparison clock starts immediately (LY=0 was latched
-                // by the LCDC write) so a coincident LY==LYC can fire the
-                // STAT interrupt right away.
-                self.lcd_on_delay -= 1;
-                self.stat &= !0x03;
-                self.refresh_lyc_flag();
-                // The LCD-on forced pulse (stat_forced) only applies once
-                // the PPU actually starts the first line.
-                let signal = self.stat_signal_level();
-                if signal && !self.stat_signal {
-                    lcd_stat = true;
-                }
-                self.stat_signal = signal;
-                if self.lcd_on_delay == 0 {
-                    // The first line starts at mode 2 (OAM search), so the
-                    // mode-2 STAT condition is active right away. Raise the
-                    // mode bits and evaluate once more at the handoff.
-                    self.stat = (self.stat & 0xFC) | PpuMode::OamSearch as u8;
-                    self.refresh_lyc_flag();
-                    let signal = self.stat_signal_level();
-                    if signal && !self.stat_signal {
-                        lcd_stat = true;
-                    }
-                    self.stat_signal = signal;
-                }
+                self.step_lcd_powering_on(&mut lcd_stat);
                 continue;
             }
             self.step_dot(&mut lcd_stat, &mut vblank);
@@ -222,6 +187,49 @@ impl GbcPpu {
             frame_done: self.frame_complete,
             lcd_stat,
             vblank,
+        }
+    }
+
+    fn step_lcd_off(&mut self) -> PpuStepResult {
+        self.ly = 0;
+        self.mode_clock = 0;
+        self.mode3_pipeline = None;
+        // LCD off: STAT mode bits read as 00 (HBlank); the LYC
+        // coincidence bit (bit2) is latched and retained.
+        self.stat &= !0x03;
+        PpuStepResult {
+            frame_done: false,
+            lcd_stat: false,
+            vblank: false,
+        }
+    }
+
+    fn step_lcd_powering_on(&mut self, lcd_stat: &mut bool) {
+        // PPU is powering on: STAT mode bits stay at 00, but the
+        // LYC comparison clock starts immediately (LY=0 was latched
+        // by the LCDC write) so a coincident LY==LYC can fire the
+        // STAT interrupt right away.
+        self.lcd_on_delay -= 1;
+        self.stat &= !0x03;
+        self.refresh_lyc_flag();
+        // The LCD-on forced pulse (stat_forced) only applies once
+        // the PPU actually starts the first line.
+        let signal = self.stat_signal_level();
+        if signal && !self.stat_signal {
+            *lcd_stat = true;
+        }
+        self.stat_signal = signal;
+        if self.lcd_on_delay == 0 {
+            // The first line starts at mode 2 (OAM search), so the
+            // mode-2 STAT condition is active right away. Raise the
+            // mode bits and evaluate once more at the handoff.
+            self.stat = (self.stat & 0xFC) | PpuMode::OamSearch as u8;
+            self.refresh_lyc_flag();
+            let signal = self.stat_signal_level();
+            if signal && !self.stat_signal {
+                *lcd_stat = true;
+            }
+            self.stat_signal = signal;
         }
     }
 
@@ -259,27 +267,29 @@ impl GbcPpu {
         }
         match self.mode_for_interrupt() {
             PpuMode::HBlank => self.stat & 0x08 != 0,
-            PpuMode::VBlank => {
-                // The mode-1 condition is level-active for all of VBlank
-                // (starting 4 T-cycles into line 144).
-                if self.stat & 0x10 != 0 {
-                    return true;
-                }
-                // The mode-2 (OAM) condition pulses during VBlank: low for
-                // the first few T-cycles of each line, then high.
-                if self.stat & 0x20 != 0 {
-                    let rise = if self.ly == VBLANK_START {
-                        if self.cgb_mode { 0 } else { 4 }
-                    } else {
-                        Self::vblank_oam_pulse_rise()
-                    };
-                    return self.mode_clock >= rise;
-                }
-                false
-            }
+            PpuMode::VBlank => self.stat_signal_vblank(),
             PpuMode::OamSearch => self.stat & 0x20 != 0,
             PpuMode::PixelTransfer => false,
         }
+    }
+
+    fn stat_signal_vblank(&self) -> bool {
+        // The mode-1 condition is level-active for all of VBlank
+        // (starting 4 T-cycles into line 144).
+        if self.stat & 0x10 != 0 {
+            return true;
+        }
+        // The mode-2 (OAM) condition pulses during VBlank: low for
+        // the first few T-cycles of each line, then high.
+        if self.stat & 0x20 != 0 {
+            let rise = if self.ly == VBLANK_START {
+                if self.cgb_mode { 0 } else { 4 }
+            } else {
+                Self::vblank_oam_pulse_rise()
+            };
+            return self.mode_clock >= rise;
+        }
+        false
     }
 
     /// The internal mode driving the STAT interrupt signal. HBlank extends
@@ -399,7 +409,10 @@ impl GbcPpu {
         if current_mode == PpuMode::PixelTransfer {
             self.stat_forced = false;
         }
-        // Track the OAM row being scanned during mode 2 for the DMG OAM bug.
+        self.track_oam_row();
+    }
+
+    fn track_oam_row(&mut self) {
         if self.cgb_mode {
             self.accessed_oam_row = 0xFF;
         } else if self.lcdc & 0x80 != 0

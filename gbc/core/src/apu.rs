@@ -220,39 +220,51 @@ impl GbcApu {
     fn write_nrx4(&mut self, ch: usize, value: u8) {
         let was_active = self.channels[ch].active;
         if value & 0x80 != 0 {
-            // Trigger.
-            if self.channels[ch].length == 0 {
-                self.channels[ch].length = Channel::max_len(ch);
-                self.channels[ch].length_enabled = false;
-            }
-            if self.dac_enabled(ch) && !was_active {
-                self.channels[ch].active = true;
-            }
-            if ch == 0 {
-                // Reload the frequency sweep shadow registers. NR13 is
-                // write-only (mask 0xFF) so its value lives in sweep.freq.
-                self.sweep.freq = (self.sweep.freq & 0x00FF) | ((value as u16 & 0x07) << 8);
-                self.sweep.period = (self.regs[0] >> 4) & 7;
-                self.sweep.shift = self.regs[0] & 7;
-                self.sweep.negate = self.regs[0] & 8 != 0;
-                self.sweep.shadow = self.sweep.freq;
-                self.sweep.addend = self.sweep.freq >> self.sweep.shift;
-                self.sweep.countdown = (self.sweep.period ^ 7) & 7;
-                self.sweep.enabled = (self.sweep.period | self.sweep.shift) != 0;
-                // APU bug: if the shift is non-zero, the overflow check also
-                // occurs on trigger.
-                if self.sweep.shift != 0 {
-                    let overflow = if self.sweep.negate {
-                        self.sweep.freq < self.sweep.addend
-                    } else {
-                        self.sweep.freq + self.sweep.addend > 0x7FF
-                    };
-                    if overflow {
-                        self.channels[0].active = false;
-                    }
-                }
+            self.handle_trigger(ch, value, was_active);
+        }
+        self.handle_length_glitch(ch, value);
+        self.channels[ch].length_enabled = value & 0x40 != 0;
+    }
+
+    fn handle_trigger(&mut self, ch: usize, value: u8, was_active: bool) {
+        if self.channels[ch].length == 0 {
+            self.channels[ch].length = Channel::max_len(ch);
+            self.channels[ch].length_enabled = false;
+        }
+        if self.dac_enabled(ch) && !was_active {
+            self.channels[ch].active = true;
+        }
+        if ch == 0 {
+            self.reload_sweep(value);
+        }
+    }
+
+    fn reload_sweep(&mut self, value: u8) {
+        // Reload the frequency sweep shadow registers. NR13 is
+        // write-only (mask 0xFF) so its value lives in sweep.freq.
+        self.sweep.freq = (self.sweep.freq & 0x00FF) | ((value as u16 & 0x07) << 8);
+        self.sweep.period = (self.regs[0] >> 4) & 7;
+        self.sweep.shift = self.regs[0] & 7;
+        self.sweep.negate = self.regs[0] & 8 != 0;
+        self.sweep.shadow = self.sweep.freq;
+        self.sweep.addend = self.sweep.freq >> self.sweep.shift;
+        self.sweep.countdown = (self.sweep.period ^ 7) & 7;
+        self.sweep.enabled = (self.sweep.period | self.sweep.shift) != 0;
+        // APU bug: if the shift is non-zero, the overflow check also
+        // occurs on trigger.
+        if self.sweep.shift != 0 {
+            let overflow = if self.sweep.negate {
+                self.sweep.freq < self.sweep.addend
+            } else {
+                self.sweep.freq + self.sweep.addend > 0x7FF
+            };
+            if overflow {
+                self.channels[0].active = false;
             }
         }
+    }
+
+    fn handle_length_glitch(&mut self, ch: usize, value: u8) {
         // APU glitch: enabling the length timer while the DIV-divider's LSB
         // is 1 (first half of the length period) ticks the length once.
         if value & 0x40 != 0
@@ -269,7 +281,18 @@ impl GbcApu {
                 }
             }
         }
-        self.channels[ch].length_enabled = value & 0x40 != 0;
+    }
+
+    fn read_nr52(&self) -> u8 {
+        // NR52: bits 4-6 always 1, bit 7 = power, bits 0-3 =
+        // channel activity.
+        let mut v = 0x70 | (if self.powered { 0x80 } else { 0 });
+        for ch in 0..4 {
+            if self.channels[ch].active {
+                v |= 1 << ch;
+            }
+        }
+        v
     }
 
     pub fn read_register(&self, addr: u16) -> u8 {
@@ -277,21 +300,13 @@ impl GbcApu {
             0xFF10..=0xFF26 => {
                 let idx = (addr - 0xFF10) as usize;
                 if addr == 0xFF26 {
-                    // NR52: bits 4-6 always 1, bit 7 = power, bits 0-3 =
-                    // channel activity.
-                    let mut v = 0x70 | (if self.powered { 0x80 } else { 0 });
-                    for ch in 0..4 {
-                        if self.channels[ch].active {
-                            v |= 1 << ch;
-                        }
-                    }
-                    v
-                } else if !self.powered {
-                    // Power off: registers read as their mask (values reset).
-                    MASKS[idx]
-                } else {
-                    self.regs[idx] | MASKS[idx]
+                    return self.read_nr52();
                 }
+                if !self.powered {
+                    // Power off: registers read as their mask (values reset).
+                    return MASKS[idx];
+                }
+                self.regs[idx] | MASKS[idx]
             }
             0xFF27..=0xFF2F => 0xFF,
             0xFF30..=0xFF3F => self.wave_ram[(addr - 0xFF30) as usize],
@@ -304,78 +319,86 @@ impl GbcApu {
             0xFF10..=0xFF26 => {
                 let idx = (addr - 0xFF10) as usize;
                 if addr == 0xFF26 {
-                    // NR52: bit 7 controls power. Turning power off resets
-                    // all registers and ignores further writes until power is
-                    // restored.
-                    let powered = value & 0x80 != 0;
-                    if self.powered && !powered {
-                        // Powering off clears every register and stops all
-                        // channels. On DMG the NRx1 length registers and the
-                        // length counters survive the power cycle.
-                        let len_regs = [self.regs[1], self.regs[6], self.regs[11], self.regs[16]];
-                        let lengths: [u16; 4] = std::array::from_fn(|i| self.channels[i].length);
-                        self.regs.fill(0);
-                        self.channels.fill(Channel::default());
-                        self.sweep = Sweep::default();
-                        self.div_divider = 0;
-                        self.apu_dot_clock = 0;
-                        if !self.cgb {
-                            for (i, reg_idx) in [1usize, 6, 11, 16].into_iter().enumerate() {
-                                self.regs[reg_idx] = len_regs[i];
-                                self.channels[i].length = lengths[i];
-                            }
-                        }
-                    } else if !self.powered && powered {
-                        self.div_divider = 1;
-                        self.apu_dot_clock = 0;
-                    }
-                    self.powered = powered;
+                    self.handle_power_change(value);
                     self.regs[idx] = value & 0x8F;
                 } else if self.powered {
                     self.regs[idx] = value & !MASKS[idx];
-                    match idx {
-                        0 => {
-                            // NR10: sweep config. The sweep timer is reloaded
-                            // from the new period (mooneye 04-sweep expects
-                            // this to take effect on the NR10 write).
-                            self.sweep.period = (self.regs[0] >> 4) & 7;
-                            self.sweep.shift = self.regs[0] & 7;
-                            self.sweep.negate = self.regs[0] & 8 != 0;
-                            if self.sweep.period != 0 {
-                                self.sweep.countdown = (self.sweep.period ^ 7) & 7;
-                            }
-                        }
-                        3 => {
-                            // NR13: CH1 frequency low byte.
-                            self.sweep.freq = (self.sweep.freq & 0x700) | value as u16;
-                        }
-                        1 | 6 | 16 => self.write_length(idx / 5, value), // NR11/NR21/NR41
-                        11 => self.write_length(2, value),               // NR31
-                        2 | 7 => self.write_dac(idx / 5, value),         // NR12/NR22
-                        17 => self.write_dac(3, value),                  // NR42
-                        10 => self.write_wave_dac(value),                // NR30
-                        4 | 9 | 14 | 19 => self.write_nrx4(idx / 5, value), // NR14/NR24/NR34/NR44
-                        _ => {}
-                    }
+                    self.dispatch_register_write(idx, value);
                 } else if !self.cgb {
-                    // On DMG the NRx1 length registers remain writable while
-                    // the APU is off; every other register is read-only.
-                    match idx {
-                        1 | 6 | 16 => {
-                            self.regs[idx] = value & !MASKS[idx];
-                            self.write_length(idx / 5, value);
-                        }
-                        11 => {
-                            self.regs[idx] = value & !MASKS[idx];
-                            self.write_length(2, value);
-                        }
-                        _ => {}
-                    }
+                    self.handle_dmg_off_write(idx, value);
                 }
-                // else: power off, writes ignored.
             }
             0xFF30..=0xFF3F => {
                 self.wave_ram[(addr - 0xFF30) as usize] = value;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_power_change(&mut self, value: u8) {
+        let powered = value & 0x80 != 0;
+        if self.powered && !powered {
+            // Powering off clears every register and stops all
+            // channels. On DMG the NRx1 length registers and the
+            // length counters survive the power cycle.
+            let len_regs = [self.regs[1], self.regs[6], self.regs[11], self.regs[16]];
+            let lengths: [u16; 4] = std::array::from_fn(|i| self.channels[i].length);
+            self.regs.fill(0);
+            self.channels.fill(Channel::default());
+            self.sweep = Sweep::default();
+            self.div_divider = 0;
+            self.apu_dot_clock = 0;
+            if !self.cgb {
+                for (i, reg_idx) in [1usize, 6, 11, 16].into_iter().enumerate() {
+                    self.regs[reg_idx] = len_regs[i];
+                    self.channels[i].length = lengths[i];
+                }
+            }
+        } else if !self.powered && powered {
+            self.div_divider = 1;
+            self.apu_dot_clock = 0;
+        }
+        self.powered = powered;
+    }
+
+    fn dispatch_register_write(&mut self, idx: usize, value: u8) {
+        match idx {
+            0 => {
+                // NR10: sweep config. The sweep timer is reloaded
+                // from the new period (mooneye 04-sweep expects
+                // this to take effect on the NR10 write).
+                self.sweep.period = (self.regs[0] >> 4) & 7;
+                self.sweep.shift = self.regs[0] & 7;
+                self.sweep.negate = self.regs[0] & 8 != 0;
+                if self.sweep.period != 0 {
+                    self.sweep.countdown = (self.sweep.period ^ 7) & 7;
+                }
+            }
+            3 => {
+                // NR13: CH1 frequency low byte.
+                self.sweep.freq = (self.sweep.freq & 0x700) | value as u16;
+            }
+            1 | 6 | 16 => self.write_length(idx / 5, value), // NR11/NR21/NR41
+            11 => self.write_length(2, value),               // NR31
+            2 | 7 => self.write_dac(idx / 5, value),         // NR12/NR22
+            17 => self.write_dac(3, value),                  // NR42
+            10 => self.write_wave_dac(value),                // NR30
+            4 | 9 | 14 | 19 => self.write_nrx4(idx / 5, value), // NR14/NR24/NR34/NR44
+            _ => {}
+        }
+    }
+
+    fn handle_dmg_off_write(&mut self, idx: usize, value: u8) {
+        // On DMG the NRx1 length registers remain writable while
+        // the APU is off; every other register is read-only.
+        match idx {
+            1 | 6 | 16 => {
+                self.regs[idx] = value & !MASKS[idx];
+                self.write_length(idx / 5, value);
+            }
+            11 => {
+                self.regs[idx] = value & !MASKS[idx];
+                self.write_length(2, value);
             }
             _ => {}
         }
