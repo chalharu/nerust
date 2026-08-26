@@ -44,6 +44,13 @@ impl RomManifest {
                 "manifest must define at least one suite".to_string(),
             ));
         }
+
+        self.validate_expected_failures()?;
+        self.validate_completion_profiles()?;
+        self.validate_suites()
+    }
+
+    fn validate_expected_failures(&self) -> Result<(), RomTestError> {
         let cell_ids: BTreeSet<String> = self
             .suites
             .iter()
@@ -62,45 +69,63 @@ impl RomManifest {
                 )));
             }
         }
+        Ok(())
+    }
+
+    fn validate_completion_profiles(&self) -> Result<(), RomTestError> {
         for (name, completion) in &self.completion_profiles {
             completion.validate(name)?;
         }
+        Ok(())
+    }
+
+    fn validate_suites(&self) -> Result<(), RomTestError> {
         let mut ids = BTreeSet::new();
         for suite in &self.suites {
-            if suite.name.is_empty() {
-                return Err(RomTestError::InvalidManifest(
-                    "suite name must not be empty".to_string(),
-                ));
+            self.validate_suite(suite, &mut ids)?;
+        }
+        Ok(())
+    }
+
+    fn validate_suite(
+        &self,
+        suite: &RomSuite,
+        ids: &mut BTreeSet<String>,
+    ) -> Result<(), RomTestError> {
+        if suite.name.is_empty() {
+            return Err(RomTestError::InvalidManifest(
+                "suite name must not be empty".to_string(),
+            ));
+        }
+        for case in &suite.cases {
+            if !ids.insert(case.id.clone()) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "duplicate case id `{}`",
+                    case.id
+                )));
             }
-            for case in &suite.cases {
-                if !ids.insert(case.id.clone()) {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "duplicate case id `{}`",
-                        case.id
-                    )));
-                }
-                case.validate()?;
-                if let Some(completion) = &case.completion
-                    && !self.completion_profiles.contains_key(completion)
-                {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "case `{}` references unknown completion profile `{completion}`",
-                        case.id
-                    )));
-                }
-                if let Some(completion) = &case.completion
-                    && self.completion_profiles[completion]
-                        .stages
-                        .iter()
-                        .any(|stage| stage.serial_hash)
-                    && !case.verify.has_serial_hash()
-                {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "case `{}` uses serial hash completion without a serial hash verification",
-                        case.id
-                    )));
-                }
-            }
+            case.validate()?;
+            self.validate_case_completion(case)?;
+        }
+        Ok(())
+    }
+
+    fn validate_case_completion(&self, case: &RomCase) -> Result<(), RomTestError> {
+        let Some(name) = &case.completion else {
+            return Ok(());
+        };
+        let completion = self.completion_profiles.get(name).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "case `{}` references unknown completion profile `{name}`",
+                case.id
+            ))
+        })?;
+        if completion.stages.iter().any(|stage| stage.serial_hash) && !case.verify.has_serial_hash()
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` uses serial hash completion without a serial hash verification",
+                case.id
+            )));
         }
         Ok(())
     }
