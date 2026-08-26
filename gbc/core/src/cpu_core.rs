@@ -1,6 +1,28 @@
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbcMemoryBus;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CpuState {
+    registers: CpuRegisters,
+    phase: CpuPhaseState,
+    ime_delayed: bool,
+    ime_enable_armed: bool,
+    opcode: u8,
+    operands: [u8; 2],
+    operand_count: u8,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+enum CpuPhaseState {
+    FetchOpcode,
+    ExecuteOpcode { step: u8 },
+    InterruptDispatch {
+        step: u8,
+        pending_ie: u8,
+        pending_if: u8,
+    },
+}
+
 /// Game Boy model variant for post-boot register initialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -53,6 +75,70 @@ pub struct Lr35902Cpu {
 }
 
 impl Lr35902Cpu {
+    pub(crate) fn export_state(&self) -> CpuState {
+        let phase = match self.phase {
+            Phase::FetchOpcode => CpuPhaseState::FetchOpcode,
+            Phase::ExecuteOpcode { step, .. } => CpuPhaseState::ExecuteOpcode { step },
+            Phase::InterruptDispatch {
+                step,
+                pending_ie,
+                pending_if,
+            } => CpuPhaseState::InterruptDispatch {
+                step,
+                pending_ie,
+                pending_if,
+            },
+        };
+        CpuState {
+            registers: self.registers,
+            phase,
+            ime_delayed: self.ime_delayed,
+            ime_enable_armed: self.ime_enable_armed,
+            opcode: self.opcode,
+            operands: self.operands,
+            operand_count: self.operand_count,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: CpuState) -> Result<(), String> {
+        state.registers.validate()?;
+        if state.operand_count > 2 {
+            return Err("CPU operand count exceeds two bytes".into());
+        }
+        let phase = match state.phase {
+            CpuPhaseState::FetchOpcode => Phase::FetchOpcode,
+            CpuPhaseState::ExecuteOpcode { step } => {
+                if !(1..=8).contains(&step) {
+                    return Err(format!("invalid CPU opcode step: {step}"));
+                }
+                let handler = crate::cpu_opcodes::handler_table()[state.opcode as usize];
+                Phase::ExecuteOpcode { handler, step }
+            }
+            CpuPhaseState::InterruptDispatch {
+                step,
+                pending_ie,
+                pending_if,
+            } => {
+                if !(1..=4).contains(&step) {
+                    return Err(format!("invalid CPU interrupt dispatch step: {step}"));
+                }
+                Phase::InterruptDispatch {
+                    step,
+                    pending_ie,
+                    pending_if,
+                }
+            }
+        };
+        self.registers = state.registers;
+        self.phase = phase;
+        self.ime_delayed = state.ime_delayed;
+        self.ime_enable_armed = state.ime_enable_armed;
+        self.opcode = state.opcode;
+        self.operands = state.operands;
+        self.operand_count = state.operand_count;
+        Ok(())
+    }
+
     pub fn new() -> Self {
         Self {
             registers: CpuRegisters::new(),
@@ -207,5 +293,43 @@ impl Lr35902Cpu {
 impl Default for Lr35902Cpu {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn state_round_trip_rebuilds_opcode_handler() {
+        let mut source = Lr35902Cpu::new();
+        source.opcode = 0xCD;
+        source.operands = [0x34, 0x12];
+        source.operand_count = 2;
+        source.phase = Phase::ExecuteOpcode {
+            handler: crate::cpu_opcodes::handler_table()[0xCD],
+            step: 2,
+        };
+        let bytes = rmp_serde::to_vec_named(&source.export_state()).unwrap();
+        let state: CpuState = rmp_serde::from_slice(&bytes).unwrap();
+        let mut restored = Lr35902Cpu::new();
+        restored.import_state(state).unwrap();
+
+        assert_eq!(restored.opcode, 0xCD);
+        assert_eq!(restored.operands, [0x34, 0x12]);
+        assert!(matches!(
+            restored.phase,
+            Phase::ExecuteOpcode { step: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn state_rejects_invalid_execute_step_without_mutation() {
+        let mut target = Lr35902Cpu::new();
+        let before = target.registers;
+        let mut state = target.export_state();
+        state.phase = CpuPhaseState::ExecuteOpcode { step: 0 };
+        assert!(target.import_state(state).is_err());
+        assert_eq!(target.registers, before);
     }
 }
