@@ -1,5 +1,7 @@
 use super::{Mbc, MbcKind};
 
+const MACHINE_STATE_SCHEMA_VERSION: u32 = 1;
+
 /// MBC5 (up to 8 MiB ROM and 128 KiB RAM).
 #[derive(Debug, Clone)]
 pub struct Mbc5 {
@@ -9,6 +11,16 @@ pub struct Mbc5 {
     rom_bank: u16,
     ram_bank: u8,
     battery: bool,
+    rumble: bool,
+    rumble_enabled: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Mbc5MachineState {
+    schema_version: u32,
+    ram_enabled: bool,
+    rom_bank: u16,
+    ram_bank: u8,
     rumble: bool,
     rumble_enabled: bool,
 }
@@ -102,23 +114,44 @@ impl Mbc for Mbc5 {
     }
 
     fn serialize_state(&self) -> Vec<u8> {
-        vec![
-            self.ram_enabled as u8,
-            self.rom_bank as u8,
-            (self.rom_bank >> 8) as u8,
-            self.ram_bank,
-            self.rumble_enabled as u8,
-        ]
+        rmp_serde::to_vec_named(&Mbc5MachineState {
+            schema_version: MACHINE_STATE_SCHEMA_VERSION,
+            ram_enabled: self.ram_enabled,
+            rom_bank: self.rom_bank,
+            ram_bank: self.ram_bank,
+            rumble: self.rumble,
+            rumble_enabled: self.rumble_enabled,
+        })
+        .expect("MBC5 machine state should serialize")
     }
 
     fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 5 {
-            return Err("MBC5 state too short".into());
+        let state: Mbc5MachineState =
+            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
+        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported MBC5 machine state version: {}",
+                state.schema_version
+            ));
         }
-        self.ram_enabled = data[0] != 0;
-        self.rom_bank = data[1] as u16 | ((data[2] as u16) << 8);
-        self.ram_bank = data[3] & if self.rumble { 0x07 } else { 0x0F };
-        self.rumble_enabled = self.rumble && data[4] != 0;
+        if state.rumble != self.rumble {
+            return Err("MBC5 machine rumble capability mismatch".into());
+        }
+        if state.rom_bank > 0x1FF {
+            return Err("MBC5 machine ROM bank out of range".into());
+        }
+        let ram_bank_mask = if self.rumble { 0x07 } else { 0x0F };
+        if state.ram_bank > ram_bank_mask {
+            return Err("MBC5 machine RAM bank out of range".into());
+        }
+        if state.rumble_enabled && !self.rumble {
+            return Err("MBC5 machine rumble state is unsupported".into());
+        }
+
+        self.ram_enabled = state.ram_enabled;
+        self.rom_bank = state.rom_bank;
+        self.ram_bank = state.ram_bank;
+        self.rumble_enabled = state.rumble_enabled;
         Ok(())
     }
 }
@@ -244,5 +277,28 @@ mod tests {
         assert_eq!(restored.rom_bank, 0x134);
         assert_eq!(restored.ram_bank, 3);
         assert!(restored.rumble_enabled);
+    }
+
+    #[test]
+    fn runtime_state_rejects_rumble_capability_mismatch_without_partial_restore() {
+        let source = Mbc5::new(vec![0; 0x8000], vec![], false, true);
+        let state = source.serialize_state();
+        let mut target = Mbc5::new(vec![0; 0x8000], vec![], false, false);
+        target.write_rom(0x2000, 7);
+
+        assert!(target.deserialize_state(&state).is_err());
+        assert_eq!(target.rom_bank, 7);
+    }
+
+    #[test]
+    fn runtime_state_rejects_unknown_schema_version() {
+        let source = Mbc5::new(vec![0; 0x8000], vec![], false, false);
+        let mut state: Mbc5MachineState =
+            rmp_serde::from_slice(&source.serialize_state()).expect("decode state");
+        state.schema_version += 1;
+        let bytes = rmp_serde::to_vec_named(&state).expect("encode state");
+        let mut target = Mbc5::new(vec![0; 0x8000], vec![], false, false);
+
+        assert!(target.deserialize_state(&bytes).is_err());
     }
 }
