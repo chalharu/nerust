@@ -17,14 +17,14 @@ const TAC_TRIGGER_BITS: [u16; 4] = [0x0200, 0x0008, 0x0020, 0x0080];
 /// When TIMA overflows, it reads 0 for 4 T-cycles (RELOADING), then the
 /// TMA value becomes visible (RELOADED) and the timer interrupt flag is
 /// requested. After another 4 T-cycles it returns to normal (RUNNING).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum ReloadState {
     Running,
     Reloading,
     Reloaded,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Timer {
     /// 16-bit system counter. Upper 8 bits readable as DIV ($FF04).
     div: u16,
