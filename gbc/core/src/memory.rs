@@ -7,10 +7,36 @@ use crate::{
     dma::DmaController,
     hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
-    ppu::{GbcPpu, OamBugKind, PpuStepResult},
+    ppu::{GbcPpu, OamBugKind, PpuState, PpuStepResult},
     serial::Serial,
     timer::Timer,
 };
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct MemoryState {
+    wram: Vec<u8>,
+    wram_bank: u8,
+    hram: Vec<u8>,
+    boot_rom_mapped: bool,
+    ppu: PpuState,
+    apu: GbcApu,
+    interrupt: InterruptController,
+    timer: Timer,
+    dma: DmaController,
+    serial: Serial,
+    joypad_select: u8,
+    joypad_input: u8,
+    hwio_72_75: [u8; 4],
+    double_speed: bool,
+    speed_switch_pending: bool,
+    key1_boot_value: bool,
+    hdma: HdmaController,
+    cgb_mode: bool,
+    tick: u32,
+    ppu_ds_toggle: bool,
+    dma_tcounter: u8,
+    cartridge: Vec<u8>,
+}
 
 const WRAM_SIZE: usize = 0x8000;
 const HRAM_SIZE: usize = 0x7F;
@@ -97,6 +123,78 @@ pub struct GbcMemoryBus {
 }
 
 impl GbcMemoryBus {
+    pub(crate) fn export_state(&self) -> Result<MemoryState, String> {
+        if self.cpu_step_active || !self.pending_ppu_writes.is_empty() {
+            return Err("memory state can only be saved between CPU steps".into());
+        }
+        Ok(MemoryState {
+            wram: self.wram.to_vec(),
+            wram_bank: self.wram_bank,
+            hram: self.hram.to_vec(),
+            boot_rom_mapped: self.boot_rom_mapped,
+            ppu: self.ppu.export_state()?,
+            apu: self.apu.export_state()?,
+            interrupt: self.interrupt.clone(),
+            timer: self.timer.clone(),
+            dma: self.dma.clone(),
+            serial: self.serial.clone(),
+            joypad_select: self.joypad_select,
+            joypad_input: self.joypad_input,
+            hwio_72_75: self.hwio_72_75,
+            double_speed: self.double_speed,
+            speed_switch_pending: self.speed_switch_pending,
+            key1_boot_value: self.key1_boot_value,
+            hdma: self.hdma.clone(),
+            cgb_mode: self.cgb_mode,
+            tick: self.tick,
+            ppu_ds_toggle: self.ppu_ds_toggle,
+            dma_tcounter: self.dma_tcounter,
+            cartridge: self.cartridge.serialize_mbc_state(),
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: MemoryState) -> Result<(), String> {
+        if state.wram.len() != WRAM_SIZE
+            || state.hram.len() != HRAM_SIZE
+            || state.joypad_select & !0x30 != 0
+            || state.dma_tcounter >= 4
+        {
+            return Err("memory state value out of range".into());
+        }
+        let mut ppu = GbcPpu::default();
+        ppu.import_state(state.ppu)?;
+        let mut apu = GbcApu::default();
+        apu.import_state(state.apu)?;
+        self.cartridge.deserialize_mbc_state(&state.cartridge)?;
+
+        self.wram.copy_from_slice(&state.wram);
+        self.wram_bank = state.wram_bank;
+        self.hram.copy_from_slice(&state.hram);
+        self.boot_rom_mapped = state.boot_rom_mapped;
+        self.ppu = ppu;
+        self.apu = apu;
+        self.interrupt = state.interrupt;
+        self.timer = state.timer;
+        self.dma = state.dma;
+        self.serial = state.serial;
+        self.joypad_select = state.joypad_select;
+        self.joypad_input = state.joypad_input;
+        self.hwio_72_75 = state.hwio_72_75;
+        self.double_speed = state.double_speed;
+        self.speed_switch_pending = state.speed_switch_pending;
+        self.key1_boot_value = state.key1_boot_value;
+        self.hdma = state.hdma;
+        self.cgb_mode = state.cgb_mode;
+        self.tick = state.tick;
+        self.ppu_ds_toggle = state.ppu_ds_toggle;
+        self.dma_tcounter = state.dma_tcounter;
+        self.cpu_step_active = false;
+        self.pending_ppu_writes.clear();
+        self.current_pc = 0;
+        self.text_scratch.fill(0);
+        Ok(())
+    }
+
     pub fn new(boot_rom: [u8; 0x100], boot_rom_mapped: bool) -> Self {
         Self {
             cartridge: Cartridge::default(),
@@ -151,9 +249,7 @@ impl GbcMemoryBus {
         match addr {
             0xFE00..=0xFE9F => self.ppu.read_oam((addr & 0xFF) as u8),
             0xFEA0..=0xFEFF => 0x00,
-            0xFF00 => {
-                0xC0 | self.joypad_select | self.joypad_visible_buttons()
-            }
+            0xFF00 => 0xC0 | self.joypad_select | self.joypad_visible_buttons(),
             0xFF01 => self.serial.read_sb(),
             0xFF02 => self.serial.read_sc(),
             0xFF04..=0xFF07 => self.timer.read(addr),

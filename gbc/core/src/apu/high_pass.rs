@@ -6,7 +6,7 @@
 /// Reference: Pan Docs - Audio Details (HPF section)
 /// Charge factor formula: 0.999958^(4194304/rate) for DMG
 ///                       0.998943^(4194304/rate) for CGB
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct HighPassFilter {
     capacitor: f64,
     charge_factor: f64,

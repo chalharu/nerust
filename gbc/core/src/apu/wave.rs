@@ -4,7 +4,7 @@ use super::{length_counter::LengthCounter, timer::Timer};
 ///
 /// Plays arbitrary waveforms from 16 bytes of Wave RAM (32 x 4-bit samples).
 /// The sample rate is determined by the frequency register.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Wave {
     pub timer: Timer,
     pub length: LengthCounter,

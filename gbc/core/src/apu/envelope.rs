@@ -3,7 +3,7 @@
 /// Ticks at 64 Hz. Period=0 is treated as 8 (Obscure Behavior).
 /// When the timer expires, the volume is increased or decreased
 /// depending on the add_mode flag.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Envelope {
     /// Current output volume (0-15).
     volume: u8,

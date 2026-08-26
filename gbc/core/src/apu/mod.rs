@@ -31,7 +31,7 @@ const MASKS: [u8; 0x17] = [
 ];
 
 /// GBC Audio Processing Unit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GbcApu {
     /// Stored values for FF10-FF26.
     regs: [u8; 0x17],
@@ -63,10 +63,27 @@ pub struct GbcApu {
 
     // Downsampling
     sample_accumulator: u32,
+    #[serde(skip)]
     output_buffer: Vec<f32>,
 }
 
 impl GbcApu {
+    pub(crate) fn export_state(&self) -> Result<Self, String> {
+        if !self.output_buffer.is_empty() {
+            return Err("APU output buffer must be flushed before saving state".into());
+        }
+        Ok(self.clone())
+    }
+
+    pub(crate) fn import_state(&mut self, mut state: Self) -> Result<(), String> {
+        if state.sample_accumulator >= MASTER_CLOCK {
+            return Err("APU sample accumulator out of range".into());
+        }
+        state.output_buffer.clear();
+        *self = state;
+        Ok(())
+    }
+
     /// Create a new APU instance.
     pub fn new() -> Self {
         Self {
