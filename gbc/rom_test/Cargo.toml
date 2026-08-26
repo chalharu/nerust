@@ -6,6 +6,10 @@ name = "nerust_gbc_rom_test"
 rust-version.workspace = true
 version.workspace = true
 
+[build-dependencies]
+serde = { features = ["derive"], workspace = true }
+serde-saphyr.workspace = true
+
 [dependencies]
 clap.workspace = true
 crc.workspace = true

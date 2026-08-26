@@ -1,17 +1,15 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{path::Path, time::Instant};
 
 use nerust_gbc_core::{
-    cartridge::Cartridge, cartridge_header::CartridgeHeader, cpu_core::Lr35902Cpu,
+    cpu_core::Lr35902Cpu,
     memory::GbcMemoryBus,
+    system::{GbcSystem, HardwareModel},
 };
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use super::{
     error::RomTestError,
-    manifest::{GbcModel, MatrixCell},
+    manifest::{CompletionSpec, CompletionStage, GbcModel, MatrixCell, MemoryCompletion},
     media,
     report::CaseResult,
     verify::{self, CheckResult},
@@ -83,13 +81,19 @@ fn run_cell(
     artifacts_dir: Option<&Path>,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
-    let (rom_path, rom_bytes, header) = load_rom(cell, rom_root)?;
-    let font_bank1 = extract_font_bank1(&rom_bytes);
-    let mut bus = setup_bus(cell, &header, rom_bytes, &font_bank1);
-    let mut cpu = setup_cpu(cell, &header);
+    let (rom_path, rom_bytes) = load_rom(cell, rom_root)?;
+    let GbcSystem { mut cpu, mut bus } =
+        GbcSystem::from_rom_without_boot_rom(core_model(cell.model), rom_bytes).ok_or_else(
+            || RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display())),
+        )?;
 
-    step_cycles(&mut bus, &mut cpu, cell.cycles());
-    dump_text_if_requested(&bus);
+    step_cycles(
+        &mut bus,
+        &mut cpu,
+        cell.cycles(),
+        cell.completion(),
+        cell.verify(),
+    );
     let rendered = render_frame(&bus)?;
 
     if let Some(dir) = artifacts_dir {
@@ -107,7 +111,7 @@ fn run_cell(
 fn load_rom(
     cell: &MatrixCell<'_>,
     rom_root: &Path,
-) -> Result<(PathBuf, Vec<u8>, CartridgeHeader), RomTestError> {
+) -> Result<(std::path::PathBuf, Vec<u8>), RomTestError> {
     let rom_path = cell.rom_path(rom_root);
     if !rom_path.exists() {
         return Err(RomTestError::InvalidManifest(format!(
@@ -116,91 +120,16 @@ fn load_rom(
         )));
     }
     let rom_bytes = std::fs::read(&rom_path)?;
-    let header = CartridgeHeader::parse(&rom_bytes).ok_or_else(|| {
-        RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
-    })?;
-    Ok((rom_path, rom_bytes, header))
+    Ok((rom_path, rom_bytes))
 }
 
-fn extract_font_bank1(rom_bytes: &[u8]) -> Vec<u8> {
-    if rom_bytes.len() > 0x4000 {
-        rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec()
-    } else {
-        Vec::new()
-    }
-}
-
-fn setup_bus(
-    cell: &MatrixCell<'_>,
-    header: &CartridgeHeader,
-    rom_bytes: Vec<u8>,
-    font_bank1: &[u8],
-) -> GbcMemoryBus {
-    let mbc = nerust_gbc_core::cartridge_mbc::create_mbc(header, rom_bytes, None);
-    let mut bus = GbcMemoryBus::new([0; 0x100], false);
-    bus.set_cartridge(Cartridge::new(mbc));
-    if !font_bank1.is_empty() {
-        bus.load_font_tiles(font_bank1);
-    }
-
-    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
-    let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-    bus.set_cgb_mode(hw_is_cgb);
-    bus.set_cgb_revision_d(matches!(cell.model, GbcModel::CgbD | GbcModel::Agb));
-    bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
-    match cell.model {
-        GbcModel::Dmg0 => bus.set_boot_counter(0x182F),
-        GbcModel::Dmg => bus.set_boot_counter(0xABCB),
-        GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb => bus.set_boot_counter(0x2677),
-    }
-    if matches!(cell.model, GbcModel::Dmg0) {
-        bus.set_ppu_frame_phase(66220);
-    }
-    bus.set_post_boot_io(hw_is_cgb);
-    bus.set_post_boot_key1(hw_is_cgb && rom_is_cgb);
-    bus
-}
-
-fn setup_cpu(cell: &MatrixCell<'_>, header: &CartridgeHeader) -> Lr35902Cpu {
-    let hw_is_cgb = matches!(cell.model, GbcModel::CgbC | GbcModel::CgbD | GbcModel::Agb);
-    let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-    let mut cpu = match cell.model {
-        GbcModel::Dmg0 => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg0),
-        GbcModel::Dmg => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Dmg),
-        GbcModel::CgbC | GbcModel::CgbD => {
-            Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Cgb)
-        }
-        GbcModel::Agb => Lr35902Cpu::with_model(nerust_gbc_core::cpu_core::GbcModel::Agb),
-    };
-    if hw_is_cgb && !rom_is_cgb {
-        cpu.set_cgb_dmg_mode_registers();
-    }
-    cpu.registers_mut().set_pc(0x0100);
-    cpu
-}
-
-fn dump_text_if_requested(bus: &GbcMemoryBus) {
-    if std::env::var("DUMP_TEXT").is_err() {
-        return;
-    }
-    let toa = bus.read(0xD883) as u16 | ((bus.read(0xD884) as u16) << 8);
-    let mut text = Vec::new();
-    for a in 0xA004u16..0xC000 {
-        let b = bus.read(a);
-        if b == 0 {
-            break;
-        }
-        text.push(b);
-    }
-    eprintln!(
-        "TEXT_DUMP a000={:02x} toa={:04x} len={} str={}",
-        bus.read(0xA000),
-        toa,
-        text.len(),
-        String::from_utf8_lossy(&text)
-    );
-    if let Ok(p) = std::env::var("DUMP_TEXT_FILE") {
-        std::fs::write(p, &text).ok();
+fn core_model(model: GbcModel) -> HardwareModel {
+    match model {
+        GbcModel::Dmg0 => HardwareModel::Dmg0,
+        GbcModel::Dmg => HardwareModel::Dmg,
+        GbcModel::CgbC => HardwareModel::CgbC,
+        GbcModel::CgbD => HardwareModel::CgbD,
+        GbcModel::Agb => HardwareModel::Agb,
     }
 }
 
@@ -288,13 +217,71 @@ fn render_frame(bus: &GbcMemoryBus) -> Result<RenderedFrame, RomTestError> {
     })
 }
 
-fn step_cycles(bus: &mut GbcMemoryBus, cpu: &mut Lr35902Cpu, cycles: usize) {
-    for _ in 0..cycles {
+fn step_cycles(
+    bus: &mut GbcMemoryBus,
+    cpu: &mut Lr35902Cpu,
+    cycles: usize,
+    completion: Option<&CompletionSpec>,
+    verify: &crate::verify::VerifySpec,
+) {
+    let mut tracker = CompletionTracker::default();
+    for cycle in 0..cycles {
         // T-cycle synchronized: CPU + PPU advance at 1 T-cycle per call.
         // 4 calls = 1 M-cycle for CPU, 4 T-cycles for PPU.
         for _ in 0..4 {
             bus.step_tcycle(cpu);
         }
+        if let Some(spec) = completion
+            && cycle.is_multiple_of(spec.poll_interval)
+        {
+            let stage = &spec.stages[tracker.stage];
+            if tracker.observe(stage_matches(stage, bus, verify), spec.stages.len()) {
+                return;
+            }
+        }
+    }
+}
+
+fn stage_matches(
+    stage: &CompletionStage,
+    bus: &GbcMemoryBus,
+    verify: &crate::verify::VerifySpec,
+) -> bool {
+    stage
+        .memory
+        .iter()
+        .all(|condition| memory_matches(condition, bus))
+        && (!stage.serial_hash || verify.serial_hash_matches(bus.serial_output()))
+}
+
+fn memory_matches(condition: &MemoryCompletion, bus: &GbcMemoryBus) -> bool {
+    let Ok(address) = crate::verify::parse_hex(&condition.address).and_then(|value| {
+        u16::try_from(value).map_err(|_| {
+            RomTestError::InvalidManifest("completion address out of range".to_string())
+        })
+    }) else {
+        return false;
+    };
+    let actual = bus.read(address);
+    if let Some(value) = &condition.value {
+        return crate::verify::parse_hex(value).is_ok_and(|value| actual as u64 == value);
+    }
+    condition.not_value.as_ref().is_some_and(|value| {
+        crate::verify::parse_hex(value).is_ok_and(|value| actual as u64 != value)
+    })
+}
+
+#[derive(Default)]
+struct CompletionTracker {
+    stage: usize,
+}
+
+impl CompletionTracker {
+    fn observe(&mut self, matches: bool, stage_count: usize) -> bool {
+        if matches {
+            self.stage += 1;
+        }
+        self.stage == stage_count
     }
 }
 
@@ -308,4 +295,24 @@ fn save_screenshot(
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(name), png_data)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CompletionTracker;
+
+    #[test]
+    fn completion_tracker_requires_each_stage_in_order() {
+        let mut completion = CompletionTracker::default();
+        assert!(!completion.observe(false, 2));
+        assert!(!completion.observe(true, 2));
+        assert!(completion.observe(true, 2));
+    }
+
+    #[test]
+    fn completion_tracker_waits_while_stage_does_not_match() {
+        let mut completion = CompletionTracker::default();
+        assert!(!completion.observe(false, 1));
+        assert!(completion.observe(true, 1));
+    }
 }

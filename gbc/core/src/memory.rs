@@ -242,9 +242,24 @@ impl GbcMemoryBus {
                     self.interrupt.request(InterruptKind::Serial);
                 }
             }
-            0xFF04..=0xFF07 => self.timer.write(addr, value),
+            0xFF04 => {
+                let apu_div_bit_was_set = self.timer.apu_div_bit(self.double_speed);
+                self.timer.write(addr, value);
+                if apu_div_bit_was_set {
+                    self.apu.clock_div_apu();
+                }
+            }
+            0xFF05..=0xFF07 => {
+                self.timer.write(addr, value);
+            }
             0xFF0F => self.interrupt.write_if(value),
-            0xFF10..=0xFF3F => self.apu.write_register(addr, value),
+            0xFF10..=0xFF3F => {
+                if addr == 0xFF26 {
+                    self.apu
+                        .set_div_apu_bit(self.timer.apu_div_bit(self.double_speed));
+                }
+                self.apu.write_register(addr, value);
+            }
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
             0xFF4F | 0xFF6C if self.cgb_mode => self.enqueue_ppu_write(addr, value),
             0xFF46 => self.dma.start(value),
@@ -308,13 +323,16 @@ impl GbcMemoryBus {
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);
         }
-        self.apu.step(video);
-        // DIV/TIMA are driven by the CPU clock. They advance twice per PPU
-        // dot in CGB double-speed mode, while PPU/APU keep their normal rate.
+        // Timer must be stepped before APU to ensure proper synchronization
+        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
         }
+        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.apu.clock_div_apu();
+        }
+        self.apu.step(video);
         if t1 == 3 && self.serial.step() {
             self.interrupt.request(InterruptKind::Serial);
         }
@@ -362,8 +380,10 @@ impl GbcMemoryBus {
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
         self.advance_ppu_interrupts(&ppu_res);
-        self.apu.step(video);
+        // Timer must be stepped before APU to ensure proper synchronization
+        // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
+        self.apu.step(video);
         self.advance_dma();
         self.maybe_step_cpu(cpu, t1);
         self.deliver_ppu_write_events();
@@ -388,9 +408,13 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
             self.interrupt.request(InterruptKind::Timer);
+        }
+        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.apu.clock_div_apu();
         }
     }
 

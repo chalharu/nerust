@@ -28,7 +28,6 @@ pub(crate) mod ppu;
 pub mod rom_identity;
 #[allow(dead_code)]
 pub(crate) mod serial;
+pub mod system;
 #[allow(dead_code)]
 pub(crate) mod timer;
-
-mod rom_tests;

@@ -1,6 +1,8 @@
 
 FROM rust:1.98.0-slim AS builder
-RUN cargo install cargo-llvm-cov --locked --version=0.8.7
+RUN cargo install cargo-llvm-cov --locked --version=0.8.7 \
+    && cargo install cargo-nextest --locked --version=0.9.143 \
+    --no-default-features --features=default-no-update
 
 FROM rust:1.98.0-slim
 
@@ -31,3 +33,4 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     && rm -rf /usr/local/cargo/registry/index/*
 
 COPY --from=builder /usr/local/cargo/bin/cargo-llvm-cov /usr/local/cargo/bin/cargo-llvm-cov
+COPY --from=builder /usr/local/cargo/bin/cargo-nextest /usr/local/cargo/bin/cargo-nextest
