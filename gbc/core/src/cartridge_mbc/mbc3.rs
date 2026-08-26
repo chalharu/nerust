@@ -41,7 +41,8 @@ impl Mbc3 {
     }
 
     fn ram_offset(&self, addr: u16) -> Option<usize> {
-        if self.ram.is_empty() || self.ram_rtc_select > 3 {
+        let selector_count = if self.ram.len() > 0x8000 { 8 } else { 4 };
+        if self.ram.is_empty() || usize::from(self.ram_rtc_select) >= selector_count {
             return None;
         }
         Some(
@@ -308,6 +309,30 @@ mod tests {
         let mut mbc = Mbc3::new(vec![0; 0x8000], vec![0; 0x8000], false, true);
         enable(&mut mbc);
         mbc.write_rom(0x4000, 0x04);
+
+        assert_eq!(mbc.read_ram(0xA000), 0xFF);
+    }
+
+    #[test]
+    fn mbc30_selects_all_eight_ram_banks() {
+        let mut mbc = Mbc3::new(vec![0; 0x8000], vec![0; 0x10000], true, true);
+        mbc.write_rom(0x0000, 0x0A);
+
+        for bank in 0..8 {
+            mbc.write_rom(0x4000, bank);
+            mbc.write_ram(0xA000, 0x80 | bank);
+        }
+        for bank in 0..8 {
+            mbc.write_rom(0x4000, bank);
+            assert_eq!(mbc.read_ram(0xA000), 0x80 | bank);
+        }
+    }
+
+    #[test]
+    fn regular_mbc3_rejects_ram_banks_above_capacity() {
+        let mut mbc = Mbc3::new(vec![0; 0x8000], vec![0; 0x8000], true, true);
+        mbc.write_rom(0x0000, 0x0A);
+        mbc.write_rom(0x4000, 4);
 
         assert_eq!(mbc.read_ram(0xA000), 0xFF);
     }
