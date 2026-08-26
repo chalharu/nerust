@@ -468,7 +468,12 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
                 header.ram_size.bytes
             };
             let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
-            Box::new(Mbc5::new(rom, ram, header.cartridge_type.has_battery()))
+            Box::new(Mbc5::new(
+                rom,
+                ram,
+                header.cartridge_type.has_battery(),
+                header.cartridge_type.has_rumble(),
+            ))
         }
         crate::cartridge_header::CartridgeType::Mbc2
         | crate::cartridge_header::CartridgeType::Mbc2Battery => {
