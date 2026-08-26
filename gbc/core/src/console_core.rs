@@ -285,6 +285,7 @@ mod tests {
         rom[0x0147] = 0;
         rom[0x0148] = 0;
         rom[0x0149] = 0;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 
