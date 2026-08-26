@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use crate::cartridge_mbc::Mbc;
 
 /// Top-level cartridge struct wrapping the ROM data and MBC.
@@ -6,11 +8,13 @@ use crate::cartridge_mbc::Mbc;
 #[derive(Debug)]
 pub struct Cartridge {
     mbc: Box<dyn Mbc>,
+    has_rtc: bool,
 }
 
 impl Cartridge {
     pub fn new(mbc: Box<dyn Mbc>) -> Self {
-        Self { mbc }
+        let has_rtc = mbc.has_rtc();
+        Self { mbc, has_rtc }
     }
 
     pub fn read_rom(&self, addr: u16) -> u8 {
@@ -52,6 +56,26 @@ impl Cartridge {
     pub fn deserialize_mbc_state(&mut self, data: &[u8]) -> Result<(), String> {
         self.mbc.deserialize_state(data)
     }
+
+    pub fn step_clock(&mut self) {
+        if self.has_rtc {
+            self.mbc.step_clock();
+        }
+    }
+
+    pub fn sync_rtc(&mut self, now: SystemTime) {
+        if self.has_rtc {
+            self.mbc.sync_rtc(now);
+        }
+    }
+
+    pub fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+        self.mbc.export_persistent_state(now)
+    }
+
+    pub fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
+        self.mbc.import_persistent_state(data)
+    }
 }
 
 impl Default for Cartridge {
@@ -65,6 +89,8 @@ impl Default for Cartridge {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
 
     #[test]
@@ -147,5 +173,26 @@ mod tests {
         // Enable RAM to verify data was restored
         cart.write_rom(0x0000, 0x0A);
         assert_eq!(cart.read_ram(0xA000), 0xAA);
+    }
+
+    #[test]
+    fn rtc_clock_delegates_for_clocked_cartridge() {
+        let mut cart = Cartridge::new(Box::new(crate::cartridge_mbc::Mbc3::new(
+            vec![0; 0x8000],
+            vec![],
+            true,
+            true,
+        )));
+        cart.write_rom(0x0000, 0x0A);
+        cart.write_rom(0x4000, 0x08);
+
+        for _ in 0..4_194_304 {
+            cart.step_clock();
+        }
+        cart.write_rom(0x6000, 0);
+        cart.write_rom(0x6000, 1);
+
+        assert_eq!(cart.read_ram(0xA000), 1);
+        assert!(cart.export_persistent_state(SystemTime::UNIX_EPOCH).is_ok());
     }
 }

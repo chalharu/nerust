@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::time::SystemTime;
 
 use crate::{
     apu::GbcApu,
@@ -314,6 +315,7 @@ impl GbcMemoryBus {
     /// that step PPU directly without a CPU context.
     pub fn step_devices_tcycle(&mut self) -> bool {
         self.tick = self.tick.wrapping_add(1);
+        self.advance_cartridge_clock();
         let t1 = self.tick % 4;
         let video = 1u32;
         let ppu_res = self.ppu.step(video);
@@ -375,6 +377,7 @@ impl GbcMemoryBus {
     /// Returns true if a PPU frame completed.
     pub fn step_tcycle(&mut self, cpu: &mut impl CpuStepper) -> bool {
         self.tick = self.tick.wrapping_add(1);
+        self.advance_cartridge_clock();
         let t1 = self.tick % 4;
 
         let video = 1u32;
@@ -405,6 +408,10 @@ impl GbcMemoryBus {
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);
         }
+    }
+
+    fn advance_cartridge_clock(&mut self) {
+        self.cartridge.step_clock();
     }
 
     fn advance_timer(&mut self) {
@@ -457,6 +464,18 @@ impl GbcMemoryBus {
 
     pub fn serial_output(&self) -> &[u8] {
         self.serial.output()
+    }
+
+    pub fn sync_cartridge_rtc(&mut self, now: SystemTime) {
+        self.cartridge.sync_rtc(now);
+    }
+
+    pub fn export_cartridge_save(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+        self.cartridge.export_persistent_state(now)
+    }
+
+    pub fn import_cartridge_save(&mut self, data: &[u8]) -> Result<(), String> {
+        self.cartridge.import_persistent_state(data)
     }
 
     pub fn set_joypad(&mut self, state: u8) {
@@ -704,6 +723,16 @@ impl Default for GbcMemoryBus {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use crate::{
+        cartridge::Cartridge,
+        cartridge_mbc::{Mbc, MbcKind},
+    };
+
     use super::*;
 
     fn bus() -> GbcMemoryBus {
@@ -727,6 +756,41 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ClockCountingMbc {
+        clocks: Arc<AtomicUsize>,
+    }
+
+    impl Mbc for ClockCountingMbc {
+        fn kind(&self) -> MbcKind {
+            MbcKind::Mbc3
+        }
+
+        fn read_rom0(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn read_rom_n(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn has_rtc(&self) -> bool {
+            true
+        }
+
+        fn step_clock(&mut self) {
+            self.clocks.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn serialize_state(&self) -> Vec<u8> {
+            Vec::new()
+        }
+
+        fn deserialize_state(&mut self, _data: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     fn cpu_steps(cycles: u32, double_speed: bool) -> u32 {
         let mut bus = if double_speed { cgb_bus() } else { bus() };
         if double_speed {
@@ -740,6 +804,51 @@ mod tests {
             }
         }
         cpu.steps
+    }
+
+    fn bus_with_clock_counter() -> (GbcMemoryBus, Arc<AtomicUsize>) {
+        let clocks = Arc::new(AtomicUsize::new(0));
+        let mut bus = bus();
+        bus.set_cartridge(Cartridge::new(Box::new(ClockCountingMbc {
+            clocks: Arc::clone(&clocks),
+        })));
+        (bus, clocks)
+    }
+
+    #[test]
+    fn device_step_advances_cartridge_clock_once() {
+        let (mut bus, clocks) = bus_with_clock_counter();
+
+        bus.step_devices_tcycle();
+
+        assert_eq!(clocks.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn full_step_advances_cartridge_clock_once() {
+        let (mut bus, clocks) = bus_with_clock_counter();
+        let mut cpu = CountingCpu { steps: 0 };
+
+        bus.step_tcycle(&mut cpu);
+
+        assert_eq!(clocks.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn double_speed_does_not_double_cartridge_clock() {
+        let clocks = Arc::new(AtomicUsize::new(0));
+        let mut bus = cgb_bus();
+        bus.set_cartridge(Cartridge::new(Box::new(ClockCountingMbc {
+            clocks: Arc::clone(&clocks),
+        })));
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        let mut cpu = CountingCpu { steps: 0 };
+
+        bus.step_tcycle(&mut cpu);
+
+        assert!(bus.is_double_speed());
+        assert_eq!(clocks.load(Ordering::Relaxed), 1);
     }
 
     #[test]
