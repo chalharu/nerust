@@ -6,13 +6,18 @@ use std::{
 
 use serde::Deserialize;
 
-use super::{error::RomTestError, verify::VerifySpec};
+use super::{
+    error::RomTestError,
+    verify::{VerifySpec, parse_hex},
+};
 
 /// Top-level ROM test manifest.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RomManifest {
     pub rom_root: PathBuf,
     pub suites: Vec<RomSuite>,
+    #[serde(default)]
+    pub completion_profiles: BTreeMap<String, CompletionSpec>,
     /// Cell ids (`case@model`) whose failure is a known emulator gap and
     /// therefore not counted as a suite failure. A cell in this list that
     /// PASSES is an unexpected pass (the manifest entry should be removed).
@@ -39,6 +44,13 @@ impl RomManifest {
                 "manifest must define at least one suite".to_string(),
             ));
         }
+
+        self.validate_expected_failures()?;
+        self.validate_completion_profiles()?;
+        self.validate_suites()
+    }
+
+    fn validate_expected_failures(&self) -> Result<(), RomTestError> {
         let cell_ids: BTreeSet<String> = self
             .suites
             .iter()
@@ -57,22 +69,63 @@ impl RomManifest {
                 )));
             }
         }
+        Ok(())
+    }
+
+    fn validate_completion_profiles(&self) -> Result<(), RomTestError> {
+        for (name, completion) in &self.completion_profiles {
+            completion.validate(name)?;
+        }
+        Ok(())
+    }
+
+    fn validate_suites(&self) -> Result<(), RomTestError> {
         let mut ids = BTreeSet::new();
         for suite in &self.suites {
-            if suite.name.is_empty() {
-                return Err(RomTestError::InvalidManifest(
-                    "suite name must not be empty".to_string(),
-                ));
+            self.validate_suite(suite, &mut ids)?;
+        }
+        Ok(())
+    }
+
+    fn validate_suite(
+        &self,
+        suite: &RomSuite,
+        ids: &mut BTreeSet<String>,
+    ) -> Result<(), RomTestError> {
+        if suite.name.is_empty() {
+            return Err(RomTestError::InvalidManifest(
+                "suite name must not be empty".to_string(),
+            ));
+        }
+        for case in &suite.cases {
+            if !ids.insert(case.id.clone()) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "duplicate case id `{}`",
+                    case.id
+                )));
             }
-            for case in &suite.cases {
-                if !ids.insert(case.id.clone()) {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "duplicate case id `{}`",
-                        case.id
-                    )));
-                }
-                case.validate()?;
-            }
+            case.validate()?;
+            self.validate_case_completion(case)?;
+        }
+        Ok(())
+    }
+
+    fn validate_case_completion(&self, case: &RomCase) -> Result<(), RomTestError> {
+        let Some(name) = &case.completion else {
+            return Ok(());
+        };
+        let completion = self.completion_profiles.get(name).ok_or_else(|| {
+            RomTestError::InvalidManifest(format!(
+                "case `{}` references unknown completion profile `{name}`",
+                case.id
+            ))
+        })?;
+        if completion.stages.iter().any(|stage| stage.serial_hash) && !case.verify.has_serial_hash()
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` uses serial hash completion without a serial hash verification",
+                case.id
+            )));
         }
         Ok(())
     }
@@ -97,7 +150,15 @@ impl RomManifest {
             for case in &suite.cases {
                 for &model in &case.models {
                     if self.matches_filters(case, model, ids, models, tags) {
-                        cells.push(MatrixCell { suite, case, model });
+                        cells.push(MatrixCell {
+                            suite,
+                            case,
+                            model,
+                            completion: case
+                                .completion
+                                .as_ref()
+                                .and_then(|name| self.completion_profiles.get(name)),
+                        });
                     }
                 }
             }
@@ -157,6 +218,72 @@ impl GbcModel {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompletionSpec {
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: usize,
+    pub stages: Vec<CompletionStage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompletionStage {
+    #[serde(default)]
+    pub memory: Vec<MemoryCompletion>,
+    #[serde(default)]
+    pub serial_hash: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryCompletion {
+    pub address: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub not_value: Option<String>,
+}
+
+impl CompletionSpec {
+    fn validate(&self, name: &str) -> Result<(), RomTestError> {
+        if self.poll_interval == 0 || self.stages.is_empty() {
+            return Err(RomTestError::InvalidManifest(format!(
+                "completion profile `{name}` must have a positive poll interval and at least one stage"
+            )));
+        }
+        for stage in &self.stages {
+            if stage.memory.is_empty() && !stage.serial_hash {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "completion profile `{name}` has an empty stage"
+                )));
+            }
+            for condition in &stage.memory {
+                let address = parse_hex(&condition.address)?;
+                if address > u16::MAX as u64
+                    || condition.value.is_some() == condition.not_value.is_some()
+                {
+                    return Err(RomTestError::InvalidManifest(format!(
+                        "completion profile `{name}` has an invalid memory condition"
+                    )));
+                }
+                let value = condition
+                    .value
+                    .as_ref()
+                    .or(condition.not_value.as_ref())
+                    .unwrap();
+                if parse_hex(value)? > u8::MAX as u64 {
+                    return Err(RomTestError::InvalidManifest(format!(
+                        "completion profile `{name}` has an out-of-range memory value"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+const fn default_poll_interval() -> usize {
+    256
+}
+
 /// Reference image specification: a single path applied to every model, or
 /// a per-model map. Paths are relative to the suite directory.
 #[derive(Debug, Clone, Deserialize)]
@@ -185,6 +312,8 @@ pub struct RomCase {
     pub models: Vec<GbcModel>,
     /// Number of M-cycles to run before verifying.
     pub cycles: usize,
+    #[serde(default)]
+    pub completion: Option<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -229,6 +358,7 @@ pub struct MatrixCell<'a> {
     pub suite: &'a RomSuite,
     pub case: &'a RomCase,
     pub model: GbcModel,
+    completion: Option<&'a CompletionSpec>,
 }
 
 impl MatrixCell<'_> {
@@ -255,6 +385,10 @@ impl MatrixCell<'_> {
 
     pub fn verify(&self) -> &VerifySpec {
         &self.case.verify
+    }
+
+    pub fn completion(&self) -> Option<&CompletionSpec> {
+        self.completion
     }
 
     pub fn cycles(&self) -> usize {
