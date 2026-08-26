@@ -143,10 +143,11 @@ impl Mbc3Rtc {
     }
 
     pub fn write_latch(&mut self, value: u8) {
-        if self.previous_latch_write == 0 && value == 1 {
+        let latch_bit = value & 1;
+        if self.previous_latch_write == 0 && latch_bit == 1 {
             self.latched = self.live;
         }
-        self.previous_latch_write = value;
+        self.previous_latch_write = latch_bit;
     }
 
     pub fn step_clock(&mut self) {
@@ -296,6 +297,17 @@ mod tests {
 
         latch(&mut rtc);
         assert_eq!(rtc.read_latched(0x08), 1);
+    }
+
+    #[test]
+    fn latch_ignores_upper_write_bits() {
+        let mut rtc = Mbc3Rtc::new();
+        rtc.write_live(0x08, 7);
+
+        rtc.write_latch(0xFE);
+        rtc.write_latch(0xFF);
+
+        assert_eq!(rtc.read_latched(0x08), 7);
     }
 
     #[test]
