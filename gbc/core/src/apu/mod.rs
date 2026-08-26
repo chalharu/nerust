@@ -1,3 +1,4 @@
+pub(crate) mod channel;
 pub(crate) mod envelope;
 pub(crate) mod high_pass;
 pub(crate) mod length_counter;
