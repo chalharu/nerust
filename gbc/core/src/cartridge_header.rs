@@ -64,7 +64,6 @@ impl CartridgeType {
                 | Self::Mbc1RamBattery
                 | Self::Mbc2
                 | Self::Mbc2Battery
-                | Self::Mbc3TimerBattery
                 | Self::Mbc3TimerRamBattery
                 | Self::Mbc3Ram
                 | Self::Mbc3RamBattery
@@ -73,6 +72,17 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRam
                 | Self::Mbc5RumbleRamBattery
         )
+    }
+
+    pub fn has_rumble(self) -> bool {
+        matches!(
+            self,
+            Self::Mbc5Rumble | Self::Mbc5RumbleRam | Self::Mbc5RumbleRamBattery
+        )
+    }
+
+    pub fn has_rtc(self) -> bool {
+        matches!(self, Self::Mbc3TimerBattery | Self::Mbc3TimerRamBattery)
     }
 }
 
@@ -321,6 +331,19 @@ mod tests {
     fn cartridge_type_has_battery() {
         assert!(CartridgeType::Mbc1RamBattery.has_battery());
         assert!(!CartridgeType::Mbc1Ram.has_battery());
+    }
+
+    #[test]
+    fn cartridge_type_has_rumble() {
+        assert!(CartridgeType::Mbc5RumbleRam.has_rumble());
+        assert!(!CartridgeType::Mbc5Ram.has_rumble());
+    }
+
+    #[test]
+    fn timer_only_mbc3_has_rtc_but_no_ram() {
+        assert!(CartridgeType::Mbc3TimerBattery.has_rtc());
+        assert!(!CartridgeType::Mbc3TimerBattery.has_ram());
+        assert!(CartridgeType::Mbc3TimerBattery.has_battery());
     }
 
     #[test]
