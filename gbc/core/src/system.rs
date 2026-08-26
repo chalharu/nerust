@@ -6,14 +6,7 @@ use crate::{
     memory::GbcMemoryBus,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HardwareModel {
-    Dmg0,
-    Dmg,
-    CgbC,
-    CgbD,
-    Agb,
-}
+pub use nerust_gbc_settings::HardwareModel;
 
 pub struct GbcSystem {
     pub cpu: Lr35902Cpu,

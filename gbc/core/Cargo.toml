@@ -11,6 +11,7 @@ bitflags.workspace = true
 crc.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
+nerust_gbc_settings.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_serialize.workspace = true

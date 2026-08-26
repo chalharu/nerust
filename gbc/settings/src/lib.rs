@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GbcSystemSettingsSection {
+    pub hardware_model: HardwareModel,
     pub rtc_sync: RtcSyncMode,
 }
 
@@ -13,6 +14,44 @@ pub struct GbcSystemSettingsSection {
 #[serde(default)]
 pub struct GbcSettings {
     pub system: GbcSystemSettingsSection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HardwareModel {
+    Dmg0,
+    Dmg,
+    CgbC,
+    #[default]
+    CgbD,
+    Agb,
+}
+
+impl std::fmt::Display for HardwareModel {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Dmg0 => "dmg0",
+            Self::Dmg => "dmg",
+            Self::CgbC => "cgb_c",
+            Self::CgbD => "cgb_d",
+            Self::Agb => "agb",
+        })
+    }
+}
+
+impl std::str::FromStr for HardwareModel {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "dmg0" => Ok(Self::Dmg0),
+            "dmg" => Ok(Self::Dmg),
+            "cgb-c" | "cgb_c" => Ok(Self::CgbC),
+            "cgb-d" | "cgb_d" => Ok(Self::CgbD),
+            "agb" => Ok(Self::Agb),
+            _ => Err(format!("unknown GBC hardware model: {value}")),
+        }
+    }
 }
 
 /// RTC (Real-Time Clock) synchronization mode.
@@ -32,8 +71,9 @@ impl GbcSettings {
 
 #[typetag::serde]
 impl SystemSettings for GbcSettings {
-    fn requires_live_session_rebuild(&self, _next: &dyn SystemSettings) -> bool {
-        false
+    fn requires_live_session_rebuild(&self, next: &dyn SystemSettings) -> bool {
+        next.downcast_ref::<GbcSettings>()
+            .is_some_and(|other| self.system.hardware_model != other.system.hardware_model)
     }
 }
 
@@ -46,6 +86,7 @@ mod tests {
     fn test_settings() -> GbcSettings {
         GbcSettings {
             system: GbcSystemSettingsSection {
+                hardware_model: HardwareModel::Dmg,
                 rtc_sync: RtcSyncMode::SystemTime,
             },
         }
@@ -54,6 +95,7 @@ mod tests {
     #[test]
     fn default_has_rtc_disabled() {
         let s = GbcSettings::default();
+        assert_eq!(s.system.hardware_model, HardwareModel::CgbD);
         assert_eq!(s.system.rtc_sync, RtcSyncMode::Off);
     }
 
@@ -65,7 +107,7 @@ mod tests {
             .downcast_ref::<GbcSettings>()
             .expect("cloned should downcast");
 
-        assert_eq!(cloned_gbc.system.rtc_sync, RtcSyncMode::SystemTime);
+        assert_eq!(cloned_gbc, &test_settings());
     }
 
     #[test]
@@ -82,5 +124,21 @@ mod tests {
         b.system.rtc_sync = RtcSyncMode::Off;
 
         assert!(!a.requires_live_session_rebuild(&b));
+    }
+
+    #[test]
+    fn requires_live_session_rebuild_detects_hardware_model_change() {
+        let a = test_settings();
+        let mut b = a.clone();
+        b.system.hardware_model = HardwareModel::Agb;
+
+        assert!(a.requires_live_session_rebuild(&b));
+    }
+
+    #[test]
+    fn hardware_model_parses_cli_and_choice_ids() {
+        assert_eq!("cgb-d".parse(), Ok(HardwareModel::CgbD));
+        assert_eq!("cgb_d".parse(), Ok(HardwareModel::CgbD));
+        assert!("unknown".parse::<HardwareModel>().is_err());
     }
 }
