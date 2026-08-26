@@ -15,7 +15,9 @@ pub(crate) struct CpuState {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 enum CpuPhaseState {
     FetchOpcode,
-    ExecuteOpcode { step: u8 },
+    ExecuteOpcode {
+        step: u8,
+    },
     InterruptDispatch {
         step: u8,
         pending_ie: u8,
