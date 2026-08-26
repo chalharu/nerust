@@ -65,25 +65,25 @@ pub(crate) fn apply_gbc_settings_choice(
         .ok_or(FactoryError::InvalidSettings)?;
     match (field, choice) {
         (GbcSettingField::SystemHardwareModel, GbcSettingChoice::Dmg0) => {
-            settings.system.hardware_model = HardwareModel::Dmg0;
+            settings.core.hardware_model = HardwareModel::Dmg0;
         }
         (GbcSettingField::SystemHardwareModel, GbcSettingChoice::Dmg) => {
-            settings.system.hardware_model = HardwareModel::Dmg;
+            settings.core.hardware_model = HardwareModel::Dmg;
         }
         (GbcSettingField::SystemHardwareModel, GbcSettingChoice::CgbC) => {
-            settings.system.hardware_model = HardwareModel::CgbC;
+            settings.core.hardware_model = HardwareModel::CgbC;
         }
         (GbcSettingField::SystemHardwareModel, GbcSettingChoice::CgbD) => {
-            settings.system.hardware_model = HardwareModel::CgbD;
+            settings.core.hardware_model = HardwareModel::CgbD;
         }
         (GbcSettingField::SystemHardwareModel, GbcSettingChoice::Agb) => {
-            settings.system.hardware_model = HardwareModel::Agb;
+            settings.core.hardware_model = HardwareModel::Agb;
         }
         (GbcSettingField::SystemRtcSync, GbcSettingChoice::Off) => {
-            settings.system.rtc_sync = RtcSyncMode::Off;
+            settings.core.rtc_sync = RtcSyncMode::Off;
         }
         (GbcSettingField::SystemRtcSync, GbcSettingChoice::SystemTime) => {
-            settings.system.rtc_sync = RtcSyncMode::SystemTime;
+            settings.core.rtc_sync = RtcSyncMode::SystemTime;
         }
         _ => return Err(FactoryError::InvalidChoice(choice_id.as_str().to_string())),
     }
@@ -102,7 +102,7 @@ pub(crate) fn resolve_gbc_load_request(
     let options = options
         .into_inner::<GbcLoadOptions>()
         .map_err(|_| FactoryError::Resolve("failed to downcast GBC load options".to_string()))?;
-    let rtc_sync = match settings.system.rtc_sync {
+    let rtc_sync = match settings.core.rtc_sync {
         RtcSyncMode::Off => RtcSyncPolicy::Off,
         RtcSyncMode::SystemTime => RtcSyncPolicy::SystemTime,
     };
@@ -110,7 +110,7 @@ pub(crate) fn resolve_gbc_load_request(
         options: GbcCoreOptions {
             hardware_model: options
                 .hardware_model
-                .unwrap_or(settings.system.hardware_model),
+                .unwrap_or(settings.core.hardware_model),
             rtc_sync,
         }
         .into(),
@@ -153,7 +153,7 @@ mod tests {
             .unwrap()
             .downcast_ref::<GbcSettings>()
             .unwrap();
-        assert_eq!(settings.system.hardware_model, HardwareModel::Agb);
+        assert_eq!(settings.core.hardware_model, HardwareModel::Agb);
 
         assert!(
             apply_gbc_settings_choice(
@@ -173,7 +173,7 @@ mod tests {
             .unwrap()
             .downcast_mut::<GbcSettings>()
             .unwrap()
-            .system
+            .core
             .hardware_model = HardwareModel::Dmg;
         let resolved = resolve_gbc_load_request(
             &view,
