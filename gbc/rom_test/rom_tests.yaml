@@ -1904,7 +1904,7 @@ suites:
         models:
           - dmg
           - cgb_d
-        cycles: 40000000
+        cycles: 24000000
         completion: serial_hash
         verify:
           serial:
