@@ -1898,6 +1898,21 @@ suites:
           - timing
   - name: mattcurrie_mealybug-tearoom-tests
     cases:
+      - id: mbc3_rtc
+        description: Mealybug Tearoom Tests — MBC3 real-time clock
+        rom: mbc3_rtc.gb
+        models:
+          - dmg
+          - cgb_d
+        cycles: 40000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: D00F4031
+        tags:
+          - mbc
+          - rtc
+          - timing
       - id: m2_win_en_toggle
         description: Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)
         rom: m2_win_en_toggle.gb
