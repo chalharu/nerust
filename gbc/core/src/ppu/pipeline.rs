@@ -1146,7 +1146,9 @@ impl Mode3Pipeline {
             } else {
                 self.registers.obp1
             };
-            Self::cgb_color(palettes[usize::from((palette >> (pixel.color * 2)) & 3)])
+            let palette_base = usize::from(pixel.palette) * 4;
+            let shade = usize::from((palette >> (pixel.color * 2)) & 3);
+            Self::cgb_color(palettes[palette_base + shade])
         } else {
             let palette = if pixel.palette == 0 {
                 self.registers.obp0
@@ -1762,6 +1764,24 @@ mod tests {
         }
         assert_eq!(pixels, 160);
         assert!(pipeline.complete());
+    }
+
+    #[test]
+    fn dmg_compatibility_sprites_use_separate_obj_palettes() {
+        let pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, false, true, 0);
+        let mut palettes = [0; 32];
+        palettes[1] = 0x001F;
+        palettes[5] = 0x03E0;
+        let pixel = |palette| ObjPixel {
+            color: 1,
+            palette,
+            behind_bg: false,
+            priority_key: 0,
+        };
+
+        assert_eq!(pipeline.obj_pixel(pixel(0), &palettes), 0xFF00_00FF);
+        assert_eq!(pipeline.obj_pixel(pixel(1), &palettes), 0x00FF_00FF);
     }
 
     #[test]

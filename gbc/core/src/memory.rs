@@ -687,6 +687,13 @@ impl GbcMemoryBus {
         self.ppu.raw_set_key0(if enabled { 0x80 } else { 0x04 });
     }
 
+    pub(crate) fn set_dmg_compatibility_palettes(
+        &mut self,
+        palettes: crate::compatibility_palette::CompatibilityPalettes,
+    ) {
+        self.ppu.set_dmg_compatibility_palettes(palettes);
+    }
+
     pub fn is_dma_active(&self) -> bool {
         self.dma.active()
     }
