@@ -72,6 +72,9 @@ impl RtcRegisters {
             return;
         }
 
+        // Preserve hardware wrapping for values written outside the normal
+        // 60/60/24 ranges. Register widths bound this normalization to at
+        // most 29,044 iterations; the remaining elapsed time is added below.
         while seconds > 0 && (self.seconds > 59 || self.minutes > 59 || self.hours > 23) {
             self.increment_second();
             seconds -= 1;
@@ -84,7 +87,7 @@ impl RtcRegisters {
             + u64::from(self.hours) * 3_600
             + u64::from(self.minutes) * 60
             + u64::from(self.seconds);
-        let total = current + seconds;
+        let total = current.saturating_add(seconds);
         let total_days = total / 86_400;
         if total_days >= 512 {
             self.day_carry = true;
@@ -349,6 +352,24 @@ mod tests {
 
         assert_eq!(rtc.read_latched(0x09), 0);
         assert_eq!(rtc.read_latched(0x0A), 0);
+    }
+
+    #[test]
+    fn maximum_out_of_range_registers_normalize_before_bulk_advance() {
+        let mut registers = RtcRegisters {
+            seconds: 0x3C,
+            minutes: 0x3C,
+            hours: 0x18,
+            ..RtcRegisters::default()
+        };
+
+        registers.advance_seconds(u64::MAX);
+
+        assert!(registers.seconds < 60);
+        assert!(registers.minutes < 60);
+        assert!(registers.hours < 24);
+        assert!(registers.days < 512);
+        assert!(registers.day_carry);
     }
 
     #[test]

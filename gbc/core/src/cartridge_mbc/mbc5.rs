@@ -51,11 +51,10 @@ impl Mbc for Mbc5 {
 
     fn read_rom_n(&self, addr: u16) -> u8 {
         let bank_count = self.rom.len() / 0x4000;
-        let bank = if bank_count > 0 {
-            (self.rom_bank as usize) & (bank_count - 1)
-        } else {
-            0
-        };
+        if bank_count == 0 {
+            return 0xFF;
+        }
+        let bank = (self.rom_bank as usize) & (bank_count - 1);
         let offset = bank * 0x4000 + (addr as usize - 0x4000);
         self.rom.get(offset).copied().unwrap_or(0xFF)
     }
@@ -209,6 +208,13 @@ mod tests {
         mbc.write_rom(0x2000, 0);
 
         assert_eq!(mbc.read_rom_n(0x4000), 0xAA);
+    }
+
+    #[test]
+    fn empty_rom_reads_open_bus() {
+        let mbc = Mbc5::new(vec![], vec![], false, false);
+
+        assert_eq!(mbc.read_rom_n(0x4000), 0xFF);
     }
 
     #[test]
