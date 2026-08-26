@@ -212,9 +212,50 @@ mod tests {
         sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
-    use nerust_input_traits::InputStateBuffer;
+    use nerust_core_traits::CoreOptions;
+    use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
+
+    #[derive(Debug, Clone)]
+    struct OtherOptions;
+
+    impl CoreOptions for OtherOptions {}
+
+    #[derive(Debug)]
+    struct OtherInput;
+
+    impl InputStateBuffer for OtherInput {
+        fn set(&mut self, field: usize, _value: InputValue) -> Result<(), BufferError> {
+            Err(BufferError::FieldNotFound { field })
+        }
+
+        fn clear(&mut self) {}
+
+        fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
+    }
+
+    #[derive(Debug, Default)]
+    struct AudioState {
+        volume: f32,
+        samples: usize,
+    }
+
+    struct TestAudio(Arc<Mutex<AudioState>>);
+
+    impl AudioBackend for TestAudio {
+        fn start(&mut self) {}
+
+        fn pause(&mut self) {}
+
+        fn push(&mut self, _sample: f32) {
+            self.0.lock().unwrap().samples += 1;
+        }
+
+        fn set_volume(&mut self, volume: f32) {
+            self.0.lock().unwrap().volume = volume;
+        }
+    }
 
     fn input() -> EmuInput {
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
@@ -223,6 +264,16 @@ mod tests {
             shared,
             Arc::new(AtomicBool::new(false)),
             Box::new(|| Box::<GbcInputBuffer>::default()),
+        )
+    }
+
+    fn wrong_input() -> EmuInput {
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::new(OtherInput)));
+        EmuInput::new(
+            shared,
+            Arc::new(AtomicBool::new(false)),
+            Box::new(|| Box::new(OtherInput)),
         )
     }
 
@@ -252,14 +303,28 @@ mod tests {
         }
     }
 
+    fn config_with_options(options: impl CoreOptions + 'static) -> CoreConfig {
+        CoreConfig {
+            core_options: Some(Box::new(options)),
+            ..config()
+        }
+    }
+
     #[test]
     fn load_render_and_state_round_trip() {
         let mut core =
             GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
         core.load(&rom(), &config()).unwrap();
-        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        let mut frame = FrameBuffer::with_capacity(
+            160,
+            144,
+            PixelFormat::PaletteIndex {
+                palette: vec![0; 4].into_boxed_slice(),
+            },
+        );
         core.render_frame(&mut frame).unwrap();
         assert_eq!((frame.width(), frame.height()), (160, 144));
+        assert_eq!(frame.format(), &PixelFormat::Rgba);
 
         let state = core.save_state().unwrap();
         core.load_state(&state).unwrap();
@@ -286,5 +351,63 @@ mod tests {
         let identity_before = target.identity().unwrap();
         assert!(target.load_state(&state).is_err());
         assert_eq!(target.identity().unwrap(), identity_before);
+    }
+
+    #[test]
+    fn lifecycle_capabilities_and_volume_delegate() {
+        let audio_state = Arc::new(Mutex::new(AudioState::default()));
+        let mut core =
+            GbcConsoleCore::new_empty(Box::new(TestAudio(Arc::clone(&audio_state))), input());
+        let capabilities = core.capabilities();
+        assert_eq!(capabilities.video_signal, VideoSignalKind::Lcd);
+        assert_eq!(capabilities.output_formats, vec![PixelFormat::Rgba]);
+
+        core.set_volume(0.25);
+        assert_eq!(audio_state.lock().unwrap().volume, 0.25);
+        assert!(!core.paused());
+        core.set_paused(true);
+        assert!(core.paused());
+        core.reset();
+
+        core.load(&rom(), &config()).unwrap();
+        core.set_paused(true);
+        core.reset();
+        assert!(core.identity().is_ok());
+        core.unload();
+        assert!(!core.paused());
+        assert!(matches!(core.identity(), Err(CoreError::NoRomLoaded)));
+    }
+
+    #[test]
+    fn rejects_invalid_rom_options_and_input_type() {
+        let mut core =
+            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        assert!(matches!(
+            core.load(&[], &config()),
+            Err(CoreError::RomParse(_))
+        ));
+        assert!(matches!(
+            core.load(&rom(), &config_with_options(OtherOptions)),
+            Err(CoreError::InvalidCoreOptions)
+        ));
+
+        let mut core = GbcConsoleCore::new_empty(
+            Box::new(nerust_core_traits::audio::NullAudio),
+            wrong_input(),
+        );
+        core.load(&rom(), &config()).unwrap();
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        assert!(matches!(
+            core.render_frame(&mut frame),
+            Err(CoreError::Core(_))
+        ));
+    }
+
+    #[test]
+    fn non_battery_rom_has_no_mapper_save() {
+        let mut core =
+            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        core.load(&rom(), &config()).unwrap();
+        assert!(core.mapper_save().unwrap().is_none());
     }
 }
