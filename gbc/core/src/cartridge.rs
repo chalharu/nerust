@@ -69,6 +69,10 @@ impl Cartridge {
         }
     }
 
+    pub fn reset_runtime(&mut self) {
+        self.mbc.reset_runtime();
+    }
+
     pub fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
         self.mbc.export_persistent_state(now)
     }

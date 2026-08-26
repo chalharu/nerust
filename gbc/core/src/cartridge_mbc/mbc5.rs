@@ -23,6 +23,8 @@ struct Mbc5MachineState {
     ram_bank: u8,
     rumble: bool,
     rumble_enabled: bool,
+    #[serde(with = "serde_bytes")]
+    ram: Vec<u8>,
 }
 
 impl Mbc5 {
@@ -112,6 +114,13 @@ impl Mbc for Mbc5 {
         }
     }
 
+    fn reset_runtime(&mut self) {
+        self.ram_enabled = false;
+        self.rom_bank = 1;
+        self.ram_bank = 0;
+        self.rumble_enabled = false;
+    }
+
     fn serialize_state(&self) -> Vec<u8> {
         rmp_serde::to_vec_named(&Mbc5MachineState {
             schema_version: MACHINE_STATE_SCHEMA_VERSION,
@@ -120,6 +129,7 @@ impl Mbc for Mbc5 {
             ram_bank: self.ram_bank,
             rumble: self.rumble,
             rumble_enabled: self.rumble_enabled,
+            ram: self.ram.clone(),
         })
         .expect("MBC5 machine state should serialize")
     }
@@ -146,11 +156,15 @@ impl Mbc for Mbc5 {
         if state.rumble_enabled && !self.rumble {
             return Err("MBC5 machine rumble state is unsupported".into());
         }
+        if state.ram.len() != self.ram.len() {
+            return Err("MBC5 machine RAM length mismatch".into());
+        }
 
         self.ram_enabled = state.ram_enabled;
         self.rom_bank = state.rom_bank;
         self.ram_bank = state.ram_bank;
         self.rumble_enabled = state.rumble_enabled;
+        self.ram = state.ram;
         Ok(())
     }
 }
@@ -306,5 +320,34 @@ mod tests {
         let mut target = Mbc5::new(vec![0; 0x8000], vec![], false, false);
 
         assert!(target.deserialize_state(&bytes).is_err());
+    }
+
+    #[test]
+    fn machine_state_restores_ram_contents() {
+        let mut source = Mbc5::new(vec![0; 0x8000], vec![0; 0x2000], false, false);
+        source.write_rom(0x0000, 0x0A);
+        source.write_ram(0xA000, 0x5A);
+        let state = source.serialize_state();
+
+        let mut restored = Mbc5::new(vec![0; 0x8000], vec![0; 0x2000], false, false);
+        restored.deserialize_state(&state).unwrap();
+        assert_eq!(restored.read_ram(0xA000), 0x5A);
+    }
+
+    #[test]
+    fn reset_runtime_preserves_ram_and_resets_banks() {
+        let mut mbc = Mbc5::new(vec![0; 0x10000], vec![0; 0x4000], false, false);
+        mbc.write_rom(0x0000, 0x0A);
+        mbc.write_rom(0x2000, 0x02);
+        mbc.write_rom(0x4000, 0x01);
+        mbc.write_ram(0xA000, 0xA5);
+
+        mbc.reset_runtime();
+        assert!(!mbc.ram_enabled);
+        assert_eq!(mbc.rom_bank, 1);
+        assert_eq!(mbc.ram_bank, 0);
+        mbc.write_rom(0x0000, 0x0A);
+        mbc.write_rom(0x4000, 0x01);
+        assert_eq!(mbc.read_ram(0xA000), 0xA5);
     }
 }

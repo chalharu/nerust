@@ -145,6 +145,15 @@ impl Mbc for Mbc3 {
         }
     }
 
+    fn reset_runtime(&mut self) {
+        self.ram_rtc_enabled = false;
+        self.rom_bank = 1;
+        self.ram_rtc_select = 0;
+        if let Some(rtc) = &mut self.rtc {
+            rtc.reset_runtime();
+        }
+    }
+
     fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
         if !self.battery {
             return Ok(None);

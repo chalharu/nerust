@@ -83,6 +83,12 @@ impl GbcApu {
         {
             return Err("APU sample accumulator out of range".into());
         }
+        if state.sample_rate != self.sample_rate {
+            return Err(format!(
+                "APU sample rate mismatch: expected {}, got {}",
+                self.sample_rate, state.sample_rate
+            ));
+        }
         state.output_buffer.clear();
         *self = state;
         Ok(())
