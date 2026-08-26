@@ -74,6 +74,13 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
         )
     }
+
+    pub fn has_rumble(self) -> bool {
+        matches!(
+            self,
+            Self::Mbc5Rumble | Self::Mbc5RumbleRam | Self::Mbc5RumbleRamBattery
+        )
+    }
 }
 
 /// ROM size byte ($0148).
@@ -321,6 +328,12 @@ mod tests {
     fn cartridge_type_has_battery() {
         assert!(CartridgeType::Mbc1RamBattery.has_battery());
         assert!(!CartridgeType::Mbc1Ram.has_battery());
+    }
+
+    #[test]
+    fn cartridge_type_has_rumble() {
+        assert!(CartridgeType::Mbc5RumbleRam.has_rumble());
+        assert!(!CartridgeType::Mbc5Ram.has_rumble());
     }
 
     #[test]
