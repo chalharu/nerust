@@ -19,7 +19,7 @@ use wave::Wave;
 /// Master clock frequency (1x speed).
 const MASTER_CLOCK: u32 = 4_194_304;
 /// Output sample rate.
-const SAMPLE_RATE: u32 = 44_100;
+const DEFAULT_SAMPLE_RATE: u32 = 44_100;
 
 /// Read mask for each register FF10-FF26: bits that always read as 1.
 const MASKS: [u8; 0x17] = [
@@ -63,6 +63,7 @@ pub struct GbcApu {
 
     // Downsampling
     sample_accumulator: u32,
+    sample_rate: u32,
     #[serde(skip)]
     output_buffer: Vec<f32>,
 }
@@ -76,7 +77,10 @@ impl GbcApu {
     }
 
     pub(crate) fn import_state(&mut self, mut state: Self) -> Result<(), String> {
-        if state.sample_accumulator >= MASTER_CLOCK {
+        if state.sample_accumulator >= MASTER_CLOCK
+            || state.sample_rate == 0
+            || state.sample_rate > MASTER_CLOCK
+        {
             return Err("APU sample accumulator out of range".into());
         }
         state.output_buffer.clear();
@@ -98,8 +102,8 @@ impl GbcApu {
             ch4: Noise::new(),
 
             mixer: Mixer::new(),
-            hpf_left: HighPassFilter::new(false, SAMPLE_RATE),
-            hpf_right: HighPassFilter::new(false, SAMPLE_RATE),
+            hpf_left: HighPassFilter::new(false, DEFAULT_SAMPLE_RATE),
+            hpf_right: HighPassFilter::new(false, DEFAULT_SAMPLE_RATE),
 
             div_divider: 0,
             div_bit: false,
@@ -107,6 +111,7 @@ impl GbcApu {
             dot_counter: 0,
 
             sample_accumulator: 0,
+            sample_rate: DEFAULT_SAMPLE_RATE,
             output_buffer: Vec::new(),
         }
     }
@@ -144,7 +149,7 @@ impl GbcApu {
             }
 
             // 2. Sample generation (44,100 Hz)
-            self.sample_accumulator += SAMPLE_RATE;
+            self.sample_accumulator += self.sample_rate;
             if self.sample_accumulator >= MASTER_CLOCK {
                 self.sample_accumulator -= MASTER_CLOCK;
                 let sample = self.generate_sample();
@@ -242,8 +247,15 @@ impl GbcApu {
     /// Set whether the hardware is a CGB.
     pub fn set_cgb(&mut self, cgb: bool) {
         self.cgb = cgb;
-        self.hpf_left = HighPassFilter::new(cgb, SAMPLE_RATE);
-        self.hpf_right = HighPassFilter::new(cgb, SAMPLE_RATE);
+        self.hpf_left = HighPassFilter::new(cgb, self.sample_rate);
+        self.hpf_right = HighPassFilter::new(cgb, self.sample_rate);
+    }
+
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+        self.sample_rate = sample_rate.clamp(1, MASTER_CLOCK);
+        self.sample_accumulator = 0;
+        self.hpf_left = HighPassFilter::new(self.cgb, self.sample_rate);
+        self.hpf_right = HighPassFilter::new(self.cgb, self.sample_rate);
     }
 
     /// Apply the post-boot register values.
