@@ -128,6 +128,7 @@ mod tests {
         rom[0x0148] = 0;
         rom[0x0149] = ram_size;
         rom[0x2000] = marker;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     cartridge::Cartridge,
-    cartridge_header::CartridgeHeader,
+    cartridge_header::{CartridgeHeader, is_supported_rom},
     cartridge_mbc,
     cpu_core::{GbcModel, Lr35902Cpu},
     memory::GbcMemoryBus,
@@ -24,6 +24,9 @@ impl GbcSystem {
     pub fn from_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
         let header = CartridgeHeader::parse(&rom_bytes)?;
         let rom_is_cgb = header.cgb_flag & 0x80 != 0;
+        if !is_supported_rom(&rom_bytes) {
+            return None;
+        }
         let font_bank1 = if rom_bytes.len() > 0x4000 {
             Some(rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec())
         } else {
@@ -82,6 +85,7 @@ mod tests {
         rom[0x0148] = 0;
         rom[0x0149] = 0;
         rom[0x014B] = 0x33;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 
