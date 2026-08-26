@@ -7,10 +7,36 @@ use crate::{
     dma::DmaController,
     hdma::HdmaController,
     interrupt::{InterruptController, InterruptKind},
-    ppu::{GbcPpu, OamBugKind, PpuStepResult},
+    ppu::{GbcPpu, OamBugKind, PpuState, PpuStepResult},
     serial::Serial,
     timer::Timer,
 };
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct MemoryState {
+    wram: Vec<u8>,
+    wram_bank: u8,
+    hram: Vec<u8>,
+    boot_rom_mapped: bool,
+    ppu: PpuState,
+    apu: GbcApu,
+    interrupt: InterruptController,
+    timer: Timer,
+    dma: DmaController,
+    serial: Serial,
+    joypad_select: u8,
+    joypad_input: u8,
+    hwio_72_75: [u8; 4],
+    double_speed: bool,
+    speed_switch_pending: bool,
+    key1_boot_value: bool,
+    hdma: HdmaController,
+    cgb_mode: bool,
+    tick: u32,
+    ppu_ds_toggle: bool,
+    dma_tcounter: u8,
+    cartridge: Vec<u8>,
+}
 
 const WRAM_SIZE: usize = 0x8000;
 const HRAM_SIZE: usize = 0x7F;
@@ -56,7 +82,8 @@ pub struct GbcMemoryBus {
     timer: Timer,
     dma: DmaController,
     serial: Serial,
-    joypad: u8,
+    joypad_select: u8,
+    joypad_input: u8,
     /// CGB $FF72-$FF75: unused-ish IO that retains written values
     /// (readable/writable on real CGB hardware).
     hwio_72_75: [u8; 4],
@@ -96,6 +123,78 @@ pub struct GbcMemoryBus {
 }
 
 impl GbcMemoryBus {
+    pub(crate) fn export_state(&self) -> Result<MemoryState, String> {
+        if self.cpu_step_active || !self.pending_ppu_writes.is_empty() {
+            return Err("memory state can only be saved between CPU steps".into());
+        }
+        Ok(MemoryState {
+            wram: self.wram.to_vec(),
+            wram_bank: self.wram_bank,
+            hram: self.hram.to_vec(),
+            boot_rom_mapped: self.boot_rom_mapped,
+            ppu: self.ppu.export_state()?,
+            apu: self.apu.export_state()?,
+            interrupt: self.interrupt.clone(),
+            timer: self.timer.clone(),
+            dma: self.dma.clone(),
+            serial: self.serial.clone(),
+            joypad_select: self.joypad_select,
+            joypad_input: self.joypad_input,
+            hwio_72_75: self.hwio_72_75,
+            double_speed: self.double_speed,
+            speed_switch_pending: self.speed_switch_pending,
+            key1_boot_value: self.key1_boot_value,
+            hdma: self.hdma.clone(),
+            cgb_mode: self.cgb_mode,
+            tick: self.tick,
+            ppu_ds_toggle: self.ppu_ds_toggle,
+            dma_tcounter: self.dma_tcounter,
+            cartridge: self.cartridge.serialize_mbc_state(),
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: MemoryState) -> Result<(), String> {
+        if state.wram.len() != WRAM_SIZE
+            || state.hram.len() != HRAM_SIZE
+            || state.joypad_select & !0x30 != 0
+            || state.dma_tcounter >= 4
+        {
+            return Err("memory state value out of range".into());
+        }
+        let mut ppu = GbcPpu::default();
+        ppu.import_state(state.ppu)?;
+        let mut apu = self.apu.clone();
+        apu.import_state(state.apu)?;
+        self.cartridge.deserialize_mbc_state(&state.cartridge)?;
+
+        self.wram.copy_from_slice(&state.wram);
+        self.wram_bank = state.wram_bank;
+        self.hram.copy_from_slice(&state.hram);
+        self.boot_rom_mapped = state.boot_rom_mapped;
+        self.ppu = ppu;
+        self.apu = apu;
+        self.interrupt = state.interrupt;
+        self.timer = state.timer;
+        self.dma = state.dma;
+        self.serial = state.serial;
+        self.joypad_select = state.joypad_select;
+        self.joypad_input = state.joypad_input;
+        self.hwio_72_75 = state.hwio_72_75;
+        self.double_speed = state.double_speed;
+        self.speed_switch_pending = state.speed_switch_pending;
+        self.key1_boot_value = state.key1_boot_value;
+        self.hdma = state.hdma;
+        self.cgb_mode = state.cgb_mode;
+        self.tick = state.tick;
+        self.ppu_ds_toggle = state.ppu_ds_toggle;
+        self.dma_tcounter = state.dma_tcounter;
+        self.cpu_step_active = false;
+        self.pending_ppu_writes.clear();
+        self.current_pc = 0;
+        self.text_scratch.fill(0);
+        Ok(())
+    }
+
     pub fn new(boot_rom: [u8; 0x100], boot_rom_mapped: bool) -> Self {
         Self {
             cartridge: Cartridge::default(),
@@ -111,7 +210,8 @@ impl GbcMemoryBus {
             timer: Timer::new(),
             dma: DmaController::new(),
             serial: Serial::new(),
-            joypad: 0xFF,
+            joypad_select: 0x30,
+            joypad_input: 0xFF,
             hwio_72_75: [0x00; 4],
 
             double_speed: false,
@@ -134,6 +234,10 @@ impl GbcMemoryBus {
         self.cartridge = cartridge;
     }
 
+    pub(crate) fn take_cartridge(&mut self) -> Cartridge {
+        std::mem::take(&mut self.cartridge)
+    }
+
     pub fn set_current_pc(&mut self, pc: u16) {
         self.current_pc = pc;
     }
@@ -149,13 +253,7 @@ impl GbcMemoryBus {
         match addr {
             0xFE00..=0xFE9F => self.ppu.read_oam((addr & 0xFF) as u8),
             0xFEA0..=0xFEFF => 0x00,
-            0xFF00 => {
-                // TODO: filter lower nibble by select bits (4-5).
-                // When bit4=0, return d-pad state; when bit5=0, return
-                // button state; when both=1, return $F.
-                // GbcJoypad device will handle this logic (future phase).
-                self.joypad | 0xC0
-            }
+            0xFF00 => 0xC0 | self.joypad_select | self.joypad_visible_buttons(),
             0xFF01 => self.serial.read_sb(),
             0xFF02 => self.serial.read_sc(),
             0xFF04..=0xFF07 => self.timer.read(addr),
@@ -235,7 +333,9 @@ impl GbcMemoryBus {
     fn write_io(&mut self, addr: u16, value: u8) {
         match addr {
             0xFF00 => {
-                self.joypad = (self.joypad & 0x30) | (value & 0x30);
+                let before = self.joypad_visible_buttons();
+                self.joypad_select = value & 0x30;
+                self.request_joypad_edge(before);
             }
             0xFF01 => self.serial.write_sb(value),
             0xFF02 => {
@@ -479,7 +579,29 @@ impl GbcMemoryBus {
     }
 
     pub fn set_joypad(&mut self, state: u8) {
-        self.joypad = state;
+        let before = self.joypad_visible_buttons();
+        self.joypad_input = state;
+        self.request_joypad_edge(before);
+        let all_groups = (state & 0x0F) & (state >> 4);
+        self.interrupt.wake_by_joypad(all_groups);
+    }
+
+    fn joypad_visible_buttons(&self) -> u8 {
+        let mut visible = 0x0F;
+        if self.joypad_select & 0x10 == 0 {
+            visible &= self.joypad_input >> 4;
+        }
+        if self.joypad_select & 0x20 == 0 {
+            visible &= self.joypad_input;
+        }
+        visible & 0x0F
+    }
+
+    fn request_joypad_edge(&mut self, before: u8) {
+        let falling_edges = before & !self.joypad_visible_buttons();
+        if falling_edges != 0 {
+            self.interrupt.request(InterruptKind::Joypad);
+        }
     }
 
     /// Apply KEY1's post-boot visibility for the effective game mode.
@@ -495,7 +617,8 @@ impl GbcMemoryBus {
     pub fn set_post_boot_io(&mut self, cgb: bool) {
         self.apu.set_post_boot_state();
         // P1 reads $CF on DMG (both joypad directions selected), $FF on CGB.
-        self.joypad = if cgb { 0xFF } else { 0x0F };
+        self.joypad_select = if cgb { 0x30 } else { 0x00 };
+        self.joypad_input = 0xFF;
         self.interrupt.write_if(0x01); // VBlank pending from the boot frame
         self.dma.set_register(0xFF);
         if cgb {
@@ -512,6 +635,10 @@ impl GbcMemoryBus {
 
     pub fn flush_audio(&mut self) -> Vec<f32> {
         self.apu.flush_samples()
+    }
+
+    pub fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.apu.set_sample_rate(sample_rate);
     }
 
     pub fn render_frame(&self, fb: &mut nerust_render_traits::FrameBuffer) {
@@ -963,8 +1090,48 @@ mod tests {
     #[test]
     fn set_joypad_changes_read_value() {
         let mut bus = bus();
+        bus.write(0xFF00, 0x20);
         bus.set_joypad(0x00);
-        assert_eq!(bus.read(0xFF00), 0xC0);
+        assert_eq!(bus.read(0xFF00), 0xE0);
+    }
+
+    #[test]
+    fn joypad_selects_button_and_direction_groups() {
+        let mut bus = bus();
+        // A and Down pressed.
+        bus.set_joypad(0x7E);
+
+        bus.write(0xFF00, 0x10);
+        assert_eq!(bus.read(0xFF00), 0xDE);
+        bus.write(0xFF00, 0x20);
+        assert_eq!(bus.read(0xFF00), 0xE7);
+        bus.write(0xFF00, 0x00);
+        assert_eq!(bus.read(0xFF00), 0xC6);
+        bus.write(0xFF00, 0x30);
+        assert_eq!(bus.read(0xFF00), 0xFF);
+    }
+
+    #[test]
+    fn joypad_falling_edge_requests_interrupt_once() {
+        let mut bus = bus();
+        bus.write(0xFF0F, 0);
+        bus.write(0xFF00, 0x10);
+        bus.set_joypad(0xFE);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Joypad.bit(), 0x10);
+
+        bus.write(0xFF0F, 0);
+        bus.set_joypad(0xFE);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Joypad.bit(), 0);
+    }
+
+    #[test]
+    fn joypad_press_wakes_stopped_cpu_even_when_group_unselected() {
+        let mut bus = bus();
+        bus.stop();
+        assert!(bus.is_halted_or_stopped());
+
+        bus.set_joypad(0x7F);
+        assert!(!bus.is_halted_or_stopped());
     }
 
     #[test]

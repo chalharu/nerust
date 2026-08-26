@@ -8,7 +8,7 @@ const DIVISOR_TABLE: [u16; 8] = [8, 16, 32, 48, 64, 80, 96, 112];
 ///
 /// Uses a 15-bit LFSR (Linear Feedback Shift Register) to generate
 /// pseudo-random noise.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Noise {
     pub timer: Timer,
     pub length: LengthCounter,

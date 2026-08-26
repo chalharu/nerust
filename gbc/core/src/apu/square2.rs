@@ -1,7 +1,7 @@
 use super::{channel, envelope::Envelope, length_counter::LengthCounter, timer::Timer};
 
 /// CH2: Pulse channel (no sweep).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Square2 {
     pub timer: Timer,
     pub length: LengthCounter,

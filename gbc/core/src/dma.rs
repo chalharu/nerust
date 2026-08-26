@@ -10,7 +10,7 @@
 ///   (warm-up), so OAM is still accessible on that M-cycle.
 /// - Bytes are transferred while the pointer is in 0x00..=0x9F. When it
 ///   reaches 0xA0 the DMA completes (pointer -> 0xA1) on the next M-cycle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DmaController {
     /// Internal destination pointer. 0xA1 means inactive.
     dest: u8,
