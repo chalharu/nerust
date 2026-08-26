@@ -44,18 +44,18 @@ impl RtcRegisters {
     }
 
     fn increment_second(&mut self) {
-        if self.seconds < 59 {
-            self.seconds += 1;
+        if self.seconds != 59 {
+            self.seconds = self.seconds.wrapping_add(1) & 0x3F;
             return;
         }
         self.seconds = 0;
-        if self.minutes < 59 {
-            self.minutes += 1;
+        if self.minutes != 59 {
+            self.minutes = self.minutes.wrapping_add(1) & 0x3F;
             return;
         }
         self.minutes = 0;
-        if self.hours < 23 {
-            self.hours += 1;
+        if self.hours != 23 {
+            self.hours = self.hours.wrapping_add(1) & 0x1F;
             return;
         }
         self.hours = 0;
@@ -137,6 +137,9 @@ impl Mbc3Rtc {
 
     pub fn write_live(&mut self, register: u8, value: u8) {
         self.live.write(register, value);
+        if register == 0x08 {
+            self.subsecond_clocks = 0;
+        }
     }
 
     pub fn write_latch(&mut self, value: u8) {
@@ -308,6 +311,32 @@ mod tests {
         assert_eq!(rtc.read_latched(0x0A), 0x1F);
         assert_eq!(rtc.read_latched(0x0B), 0xFF);
         assert_eq!(rtc.read_latched(0x0C), 0xC1);
+    }
+
+    #[test]
+    fn seconds_write_resets_subsecond_but_minutes_write_does_not() {
+        let mut rtc = Mbc3Rtc::new();
+        rtc.subsecond_clocks = 123;
+
+        rtc.write_live(0x09, 1);
+        assert_eq!(rtc.subsecond_clocks, 123);
+        rtc.write_live(0x08, 1);
+
+        assert_eq!(rtc.subsecond_clocks, 0);
+    }
+
+    #[test]
+    fn out_of_range_minutes_wrap_without_carrying_hours() {
+        let mut rtc = Mbc3Rtc::new();
+        rtc.write_live(0x09, 0x3F);
+        rtc.write_live(0x08, 59);
+        rtc.subsecond_clocks = RTC_CLOCKS_PER_SECOND - 1;
+
+        rtc.step_clock();
+        latch(&mut rtc);
+
+        assert_eq!(rtc.read_latched(0x09), 0);
+        assert_eq!(rtc.read_latched(0x0A), 0);
     }
 
     #[test]
