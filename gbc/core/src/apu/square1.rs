@@ -1,7 +1,7 @@
 use super::{channel, envelope::Envelope, length_counter::LengthCounter, timer::Timer};
 
 /// CH1 sweep state.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Sweep {
     /// Shadow frequency register.
     shadow: u16,
@@ -46,7 +46,7 @@ impl Sweep {
 }
 
 /// CH1: Pulse channel with frequency sweep.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Square1 {
     pub timer: Timer,
     pub length: LengthCounter,

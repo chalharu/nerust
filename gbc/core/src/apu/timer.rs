@@ -2,7 +2,7 @@
 ///
 /// Counts down from `period` to 0, then reloads and signals a tick.
 /// Used by all channels to clock their respective circuits.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Timer {
     period: u16,
     counter: u16,

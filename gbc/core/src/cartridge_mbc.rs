@@ -174,6 +174,16 @@ pub struct Mbc1 {
     multicart: bool,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Mbc1MachineState {
+    schema_version: u32,
+    ram_enabled: bool,
+    rom_bank: u8,
+    ram_bank: u8,
+    banking_mode: bool,
+    ram: Vec<u8>,
+}
+
 impl Mbc1 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
         Self::with_multicart(rom, ram, battery, false)
@@ -306,24 +316,34 @@ impl Mbc for Mbc1 {
     }
 
     fn serialize_state(&self) -> Vec<u8> {
-        vec![
-            self.ram_enabled as u8,
-            self.rom_bank,
-            self.ram_bank,
-            self.banking_mode as u8,
-            u8::try_from(self.ram.len()).unwrap_or(0),
-            0,
-        ]
+        rmp_serde::to_vec_named(&Mbc1MachineState {
+            schema_version: 1,
+            ram_enabled: self.ram_enabled,
+            rom_bank: self.rom_bank,
+            ram_bank: self.ram_bank,
+            banking_mode: self.banking_mode,
+            ram: self.ram.clone(),
+        })
+        .expect("MBC1 machine state should serialize")
     }
 
     fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 6 {
-            return Err("MBC1 state too short".into());
+        let state: Mbc1MachineState =
+            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
+        if state.schema_version != 1 {
+            return Err(format!(
+                "unsupported MBC1 machine state version: {}",
+                state.schema_version
+            ));
         }
-        self.ram_enabled = data[0] != 0;
-        self.rom_bank = data[1];
-        self.ram_bank = data[2] & 0x03;
-        self.banking_mode = data[3] != 0;
+        if state.ram.len() != self.ram.len() {
+            return Err("MBC1 machine state RAM length mismatch".into());
+        }
+        self.ram_enabled = state.ram_enabled;
+        self.rom_bank = state.rom_bank;
+        self.ram_bank = state.ram_bank & 0x03;
+        self.banking_mode = state.banking_mode;
+        self.ram = state.ram;
         Ok(())
     }
 }
@@ -336,6 +356,14 @@ pub struct Mbc2 {
     ram_enabled: bool,
     rom_bank: u8,
     battery: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Mbc2MachineState {
+    schema_version: u32,
+    ram_enabled: bool,
+    rom_bank: u8,
+    ram: Vec<u8>,
 }
 
 impl Mbc2 {
@@ -423,15 +451,30 @@ impl Mbc for Mbc2 {
     }
 
     fn serialize_state(&self) -> Vec<u8> {
-        vec![self.ram_enabled as u8, self.rom_bank]
+        rmp_serde::to_vec_named(&Mbc2MachineState {
+            schema_version: 1,
+            ram_enabled: self.ram_enabled,
+            rom_bank: self.rom_bank,
+            ram: self.ram.clone(),
+        })
+        .expect("MBC2 machine state should serialize")
     }
 
     fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() < 2 {
-            return Err("MBC2 state too short".into());
+        let state: Mbc2MachineState =
+            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
+        if state.schema_version != 1 {
+            return Err(format!(
+                "unsupported MBC2 machine state version: {}",
+                state.schema_version
+            ));
         }
-        self.ram_enabled = data[0] != 0;
-        self.rom_bank = data[1] & 0x0F;
+        if state.ram.len() != self.ram.len() || state.ram.iter().any(|value| value & 0xF0 != 0) {
+            return Err("invalid MBC2 machine state RAM".into());
+        }
+        self.ram_enabled = state.ram_enabled;
+        self.rom_bank = state.rom_bank & 0x0F;
+        self.ram = state.ram;
         Ok(())
     }
 }
@@ -659,9 +702,12 @@ mod tests {
 
         let mut rom_set = vec![0u8; 0x20000];
         rom_set[3 * 0x4000] = 0xFF;
-        let mut mbc2 = Mbc1::new(rom_set, vec![], false);
+        let mut mbc2 = Mbc1::new(rom_set, vec![0; 0x2000], false);
         mbc2.deserialize_state(&state).expect("deserialize 2");
         assert_eq!(mbc2.read_rom_n(0x4000), 0xFF);
+
+        let mut incompatible = Mbc1::new(vec![0; 0x20000], vec![], false);
+        assert!(incompatible.deserialize_state(&state).is_err());
     }
 
     #[test]
