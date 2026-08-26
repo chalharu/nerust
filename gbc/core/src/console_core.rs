@@ -57,7 +57,7 @@ impl GbcConsoleCore {
         if identity.rom_len < identity.declared_rom_len {
             return Err(CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)));
         }
-        let mut system = GbcSystem::from_rom_without_boot_rom(options.hardware_model, rom.to_vec())
+        let mut system = GbcSystem::from_rom(options.hardware_model, rom.to_vec())
             .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
         system.bus.set_audio_sample_rate(sample_rate);
         Ok(LoadedGbc {

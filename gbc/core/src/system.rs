@@ -21,7 +21,7 @@ pub struct GbcSystem {
 }
 
 impl GbcSystem {
-    pub fn from_rom_without_boot_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
+    pub fn from_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
         let header = CartridgeHeader::parse(&rom_bytes)?;
         let rom_is_cgb = header.cgb_flag & 0x80 != 0;
         let font_bank1 = if rom_bytes.len() > 0x4000 {
@@ -35,7 +35,7 @@ impl GbcSystem {
             model,
             HardwareModel::CgbC | HardwareModel::CgbD | HardwareModel::Agb
         );
-        let mut bus = GbcMemoryBus::new([0; 0x100], false);
+        let mut bus = GbcMemoryBus::new();
         bus.set_cartridge(Cartridge::new(mbc));
         if let Some(font) = font_bank1 {
             bus.load_font_tiles(&font);
@@ -87,21 +87,19 @@ mod tests {
 
     #[test]
     fn rejects_rom_without_header() {
-        assert!(GbcSystem::from_rom_without_boot_rom(HardwareModel::Dmg, vec![]).is_none());
+        assert!(GbcSystem::from_rom(HardwareModel::Dmg, vec![]).is_none());
     }
 
     #[test]
     fn initializes_dmg_post_boot_counter() {
-        let system =
-            GbcSystem::from_rom_without_boot_rom(HardwareModel::Dmg, minimal_rom(false)).unwrap();
+        let system = GbcSystem::from_rom(HardwareModel::Dmg, minimal_rom(false)).unwrap();
         assert_eq!(system.bus.read(0xFF04), 0xAB);
         assert_eq!(system.cpu.registers().pc(), 0x0100);
     }
 
     #[test]
     fn initializes_cgb_dmg_compatibility_registers() {
-        let system =
-            GbcSystem::from_rom_without_boot_rom(HardwareModel::CgbD, minimal_rom(false)).unwrap();
+        let system = GbcSystem::from_rom(HardwareModel::CgbD, minimal_rom(false)).unwrap();
         let registers = system.cpu.registers();
         assert_eq!(registers.d(), 0x00);
         assert_eq!(registers.e(), 0x08);

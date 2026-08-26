@@ -23,7 +23,7 @@ fn step_until_done(cpu: &mut Lr35902Cpu, bus: &mut GbcMemoryBus) {
 }
 
 fn setup(rom: &[u8]) -> (Lr35902Cpu, GbcMemoryBus) {
-    let mut bus = GbcMemoryBus::new([0; 0x100], false);
+    let mut bus = GbcMemoryBus::new();
     for (i, &b) in rom.iter().enumerate() {
         bus.write(BASE + i as u16, b);
     }
