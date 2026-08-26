@@ -7,6 +7,7 @@ pub mod cartridge;
 pub mod cartridge_header;
 #[allow(dead_code)]
 pub mod cartridge_mbc;
+pub mod console_core;
 pub mod core_options;
 #[allow(dead_code)]
 pub(crate) mod cpu;
@@ -20,11 +21,13 @@ pub(crate) mod cpu_registers;
 pub(crate) mod dma;
 #[allow(dead_code)]
 pub(crate) mod hdma;
-#[allow(dead_code)]
-pub(crate) mod interrupt;
 pub mod input_types;
 #[allow(dead_code)]
+pub(crate) mod interrupt;
+#[allow(dead_code)]
 pub mod memory;
+mod persistence;
+mod persistence_error;
 #[allow(dead_code)]
 pub(crate) mod ppu;
 pub mod rom_identity;

@@ -234,6 +234,10 @@ impl GbcMemoryBus {
         self.cartridge = cartridge;
     }
 
+    pub(crate) fn take_cartridge(&mut self) -> Cartridge {
+        std::mem::take(&mut self.cartridge)
+    }
+
     pub fn set_current_pc(&mut self, pc: u16) {
         self.current_pc = pc;
     }
@@ -631,6 +635,10 @@ impl GbcMemoryBus {
 
     pub fn flush_audio(&mut self) -> Vec<f32> {
         self.apu.flush_samples()
+    }
+
+    pub fn set_audio_sample_rate(&mut self, sample_rate: u32) {
+        self.apu.set_sample_rate(sample_rate);
     }
 
     pub fn render_frame(&self, fb: &mut nerust_render_traits::FrameBuffer) {
