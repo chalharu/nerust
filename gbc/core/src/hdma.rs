@@ -61,9 +61,9 @@ impl HdmaController {
     pub fn write_register(&mut self, addr: u16, value: u8) {
         match addr {
             0xFF51 => self.src = (self.src & 0x00FF) | ((value as u16) << 8),
-            0xFF52 => self.src = (self.src & 0xFF00) | (value as u16),
-            0xFF53 => self.dst = (self.dst & 0x00FF) | ((value as u16) << 8),
-            0xFF54 => self.dst = (self.dst & 0xFF00) | (value as u16),
+            0xFF52 => self.src = (self.src & 0xFF00) | u16::from(value & 0xF0),
+            0xFF53 => self.dst = 0x8000 | (u16::from(value & 0x1F) << 8) | (self.dst & 0x00FF),
+            0xFF54 => self.dst = (self.dst & 0xFF00) | u16::from(value & 0xF0),
             _ => {}
         }
     }
@@ -168,5 +168,17 @@ mod tests {
     fn completed_read_status_returns_0xff() {
         let hdma = HdmaController::new();
         assert_eq!(hdma.read_status(), 0xFF);
+    }
+
+    #[test]
+    fn address_registers_apply_hardware_masks() {
+        let mut hdma = HdmaController::new();
+        hdma.write_register(0xFF51, 0x12);
+        hdma.write_register(0xFF52, 0x3F);
+        hdma.write_register(0xFF53, 0xE5);
+        hdma.write_register(0xFF54, 0x6F);
+
+        assert_eq!(hdma.src, 0x1230);
+        assert_eq!(hdma.dst, 0x8560);
     }
 }

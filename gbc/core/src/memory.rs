@@ -377,12 +377,16 @@ impl GbcMemoryBus {
     }
 
     fn write_hdma5(&mut self, value: u8) {
-        // HDMA requires a valid VRAM destination ($8000-$9FFF). With
-        // an invalid destination the transfer does not start and
-        // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
-        if self.hdma.dst & 0xE000 == 0x8000 {
-            self.hdma.start(value);
-            if !self.hdma.hblank_mode {
+        if self.hdma.active && self.hdma.hblank_mode && value & 0x80 == 0 {
+            self.hdma.cancel();
+            return;
+        }
+        if self.hdma.dst & 0xE000 != 0x8000 {
+            return;
+        }
+        self.hdma.start(value);
+        if !self.hdma.hblank_mode {
+            while self.hdma.should_transfer_gdma() {
                 self.transfer_hdma_block();
             }
         }
@@ -460,8 +464,9 @@ impl GbcMemoryBus {
         let t1 = self.tick % 4;
 
         let video = 1u32;
+        let was_hblank = self.ppu.is_hblank();
         let ppu_res = self.ppu.step(video);
-        self.advance_ppu_interrupts(&ppu_res);
+        self.advance_ppu_interrupts(was_hblank, &ppu_res);
         // Timer must be stepped before APU to ensure proper synchronization
         // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
@@ -472,8 +477,7 @@ impl GbcMemoryBus {
         ppu_res.frame_done
     }
 
-    fn advance_ppu_interrupts(&mut self, ppu_res: &PpuStepResult) {
-        let was_hblank = self.ppu.is_hblank();
+    fn advance_ppu_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
         let now_hblank = self.ppu.is_hblank();
         if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
             self.transfer_hdma_block();
@@ -987,6 +991,62 @@ mod tests {
         let mut bus = bus();
         bus.write(0xFF46, 0xC0);
         assert!(bus.dma.active());
+    }
+
+    #[test]
+    fn gdma_transfers_every_requested_block() {
+        let mut bus = cgb_bus();
+        for offset in 0..32u16 {
+            bus.write(0xC000 + offset, offset as u8);
+        }
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+
+        bus.write(0xFF55, 0x01);
+
+        assert_eq!(bus.read(0xFF55), 0xFF);
+        for offset in 0..32u16 {
+            assert_eq!(bus.ppu.read_vram(0x8000 + offset), offset as u8);
+        }
+    }
+
+    #[test]
+    fn hdma_transfers_one_block_on_hblank_entry() {
+        let mut bus = cgb_bus();
+        for offset in 0..16u16 {
+            bus.write(0xC000 + offset, 0x80 | offset as u8);
+        }
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+        bus.write(0xFF55, 0x80);
+        let mut cpu = CountingCpu { steps: 0 };
+
+        for _ in 0..456 {
+            bus.step_tcycle(&mut cpu);
+        }
+
+        assert_eq!(bus.read(0xFF55), 0xFF);
+        for offset in 0..16u16 {
+            assert_eq!(bus.ppu.read_vram(0x8000 + offset), 0x80 | offset as u8);
+        }
+    }
+
+    #[test]
+    fn writing_gdma_mode_cancels_active_hdma() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+        bus.write(0xFF55, 0x83);
+
+        bus.write(0xFF55, 0x00);
+
+        assert_eq!(bus.read(0xFF55), 0x83);
     }
 
     #[test]
