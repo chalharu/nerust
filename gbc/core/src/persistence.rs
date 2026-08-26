@@ -53,8 +53,10 @@ pub(crate) fn import_machine_state(
         return Err(GbcPersistenceError::OptionsMismatch);
     }
     let mut cpu = crate::cpu_core::Lr35902Cpu::new();
-    cpu.import_state(payload.cpu)
-        .map_err(GbcPersistenceError::InvalidState)?;
+    cpu.import_state(payload.cpu, |opcode| {
+        crate::cpu_opcodes::handler_table()[usize::from(opcode)]
+    })
+    .map_err(GbcPersistenceError::InvalidState)?;
     system
         .bus
         .import_state(payload.memory)
@@ -103,5 +105,131 @@ fn validate_version(version: u32) -> Result<(), GbcPersistenceError> {
         Ok(())
     } else {
         Err(GbcPersistenceError::UnsupportedVersion(version))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::UNIX_EPOCH;
+
+    use crate::{
+        core_options::RtcSyncPolicy,
+        system::{GbcSystem, HardwareModel},
+    };
+
+    use super::*;
+
+    fn rom(cartridge_type: u8, ram_size: u8, marker: u8) -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0100] = 0x18;
+        rom[0x0101] = 0xFE;
+        rom[0x0143] = 0x80;
+        rom[0x0147] = cartridge_type;
+        rom[0x0148] = 0;
+        rom[0x0149] = ram_size;
+        rom[0x2000] = marker;
+        rom
+    }
+
+    fn options(model: HardwareModel) -> GbcCoreOptions {
+        GbcCoreOptions {
+            hardware_model: model,
+            rtc_sync: RtcSyncPolicy::Off,
+        }
+    }
+
+    fn system(rom: &[u8], model: HardwareModel) -> GbcSystem {
+        GbcSystem::from_rom_without_boot_rom(model, rom.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn machine_state_round_trip_and_validation_errors() {
+        let rom_bytes = rom(0, 0, 0);
+        let identity = GbcRomIdentity::from_rom(&rom_bytes).unwrap();
+        let core_options = options(HardwareModel::CgbD);
+        let source = system(&rom_bytes, HardwareModel::CgbD);
+        let bytes = export_machine_state(&source, identity, core_options).unwrap();
+        let mut target = system(&rom_bytes, HardwareModel::CgbD);
+        import_machine_state(&mut target, &bytes, identity, core_options).unwrap();
+
+        let wrong_options = options(HardwareModel::Dmg);
+        assert!(matches!(
+            import_machine_state(&mut target, &bytes, identity, wrong_options),
+            Err(GbcPersistenceError::OptionsMismatch)
+        ));
+        let other_identity = GbcRomIdentity::from_rom(&rom(0, 0, 1)).unwrap();
+        assert!(matches!(
+            import_machine_state(&mut target, &bytes, other_identity, core_options),
+            Err(GbcPersistenceError::RomIdentityMismatch)
+        ));
+        assert!(matches!(
+            import_machine_state(&mut target, b"not msgpack", identity, core_options),
+            Err(GbcPersistenceError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn machine_state_rejects_unknown_version() {
+        let rom = rom(0, 0, 0);
+        let identity = GbcRomIdentity::from_rom(&rom).unwrap();
+        let options = options(HardwareModel::CgbD);
+        let source = system(&rom, HardwareModel::CgbD);
+        let bytes = export_machine_state(&source, identity, options).unwrap();
+        let mut payload: MachineStatePayload = rmp_serde::from_slice(&bytes).unwrap();
+        payload.schema_version += 1;
+        let bytes = rmp_serde::to_vec_named(&payload).unwrap();
+        let mut target = system(&rom, HardwareModel::CgbD);
+        assert!(matches!(
+            import_machine_state(&mut target, &bytes, identity, options),
+            Err(GbcPersistenceError::UnsupportedVersion(2))
+        ));
+    }
+
+    #[test]
+    fn mapper_save_handles_absent_battery_and_identity_mismatch() {
+        let plain_rom = rom(0, 0, 0);
+        let plain_identity = GbcRomIdentity::from_rom(&plain_rom).unwrap();
+        let plain = system(&plain_rom, HardwareModel::CgbD);
+        assert!(
+            export_mapper_save(&plain, plain_identity, UNIX_EPOCH)
+                .unwrap()
+                .is_none()
+        );
+
+        let battery_rom = rom(0x03, 0x02, 0);
+        let battery_identity = GbcRomIdentity::from_rom(&battery_rom).unwrap();
+        let source = system(&battery_rom, HardwareModel::CgbD);
+        let bytes = export_mapper_save(&source, battery_identity, UNIX_EPOCH)
+            .unwrap()
+            .unwrap();
+        let mut target = system(&battery_rom, HardwareModel::CgbD);
+        import_mapper_save(&mut target, &bytes, battery_identity).unwrap();
+
+        assert!(matches!(
+            import_mapper_save(&mut target, &bytes, plain_identity),
+            Err(GbcPersistenceError::RomIdentityMismatch)
+        ));
+    }
+
+    #[test]
+    fn mapper_save_rejects_unknown_version_and_invalid_bytes() {
+        let rom = rom(0x03, 0x02, 0);
+        let identity = GbcRomIdentity::from_rom(&rom).unwrap();
+        let source = system(&rom, HardwareModel::CgbD);
+        let bytes = export_mapper_save(&source, identity, UNIX_EPOCH)
+            .unwrap()
+            .unwrap();
+        let mut payload: MapperSavePayload = rmp_serde::from_slice(&bytes).unwrap();
+        payload.schema_version += 1;
+        let bytes = rmp_serde::to_vec_named(&payload).unwrap();
+        let mut target = system(&rom, HardwareModel::CgbD);
+        assert!(matches!(
+            import_mapper_save(&mut target, &bytes, identity),
+            Err(GbcPersistenceError::UnsupportedVersion(2))
+        ));
+        assert!(matches!(
+            import_mapper_save(&mut target, b"invalid", identity),
+            Err(GbcPersistenceError::Decode(_))
+        ));
     }
 }

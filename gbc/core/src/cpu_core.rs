@@ -102,7 +102,11 @@ impl Lr35902Cpu {
         }
     }
 
-    pub(crate) fn import_state(&mut self, state: CpuState) -> Result<(), String> {
+    pub(crate) fn import_state(
+        &mut self,
+        state: CpuState,
+        resolve_handler: impl FnOnce(u8) -> HandlerFn,
+    ) -> Result<(), String> {
         state.registers.validate()?;
         if state.operand_count > 2 {
             return Err("CPU operand count exceeds two bytes".into());
@@ -113,7 +117,7 @@ impl Lr35902Cpu {
                 if !(1..=8).contains(&step) {
                     return Err(format!("invalid CPU opcode step: {step}"));
                 }
-                let handler = crate::cpu_opcodes::handler_table()[state.opcode as usize];
+                let handler = resolve_handler(state.opcode);
                 Phase::ExecuteOpcode { handler, step }
             }
             CpuPhaseState::InterruptDispatch {
@@ -302,6 +306,10 @@ impl Default for Lr35902Cpu {
 mod persistence_tests {
     use super::*;
 
+    fn test_handler(_cpu: &mut Lr35902Cpu, _bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+        StepResult::Exit
+    }
+
     #[test]
     fn state_round_trip_rebuilds_opcode_handler() {
         let mut source = Lr35902Cpu::new();
@@ -309,13 +317,13 @@ mod persistence_tests {
         source.operands = [0x34, 0x12];
         source.operand_count = 2;
         source.phase = Phase::ExecuteOpcode {
-            handler: crate::cpu_opcodes::handler_table()[0xCD],
+            handler: test_handler,
             step: 2,
         };
         let bytes = rmp_serde::to_vec_named(&source.export_state()).unwrap();
         let state: CpuState = rmp_serde::from_slice(&bytes).unwrap();
         let mut restored = Lr35902Cpu::new();
-        restored.import_state(state).unwrap();
+        restored.import_state(state, |_| test_handler).unwrap();
 
         assert_eq!(restored.opcode, 0xCD);
         assert_eq!(restored.operands, [0x34, 0x12]);
@@ -331,7 +339,47 @@ mod persistence_tests {
         let before = target.registers;
         let mut state = target.export_state();
         state.phase = CpuPhaseState::ExecuteOpcode { step: 0 };
-        assert!(target.import_state(state).is_err());
+        assert!(target.import_state(state, |_| test_handler).is_err());
         assert_eq!(target.registers, before);
+    }
+
+    #[test]
+    fn state_rejects_invalid_operand_count() {
+        let mut target = Lr35902Cpu::new();
+        let mut state = target.export_state();
+        state.operand_count = 3;
+        assert!(target.import_state(state, |_| test_handler).is_err());
+    }
+
+    #[test]
+    fn state_restores_interrupt_dispatch_phase() {
+        let mut target = Lr35902Cpu::new();
+        let mut state = target.export_state();
+        state.phase = CpuPhaseState::InterruptDispatch {
+            step: 3,
+            pending_ie: 0x1F,
+            pending_if: 0x04,
+        };
+        target.import_state(state, |_| test_handler).unwrap();
+        assert!(matches!(
+            target.phase,
+            Phase::InterruptDispatch {
+                step: 3,
+                pending_ie: 0x1F,
+                pending_if: 0x04
+            }
+        ));
+    }
+
+    #[test]
+    fn state_rejects_invalid_interrupt_dispatch_step() {
+        let mut target = Lr35902Cpu::new();
+        let mut state = target.export_state();
+        state.phase = CpuPhaseState::InterruptDispatch {
+            step: 5,
+            pending_ie: 0,
+            pending_if: 0,
+        };
+        assert!(target.import_state(state, |_| test_handler).is_err());
     }
 }
