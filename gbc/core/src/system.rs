@@ -25,6 +25,8 @@ impl GbcSystem {
         } else {
             None
         };
+        let compatibility_palettes =
+            (!rom_is_cgb).then(|| crate::compatibility_palette::select(&rom_bytes));
         let mbc = cartridge_mbc::create_mbc(&header, rom_bytes, None);
 
         let hw_is_cgb = matches!(
@@ -39,6 +41,9 @@ impl GbcSystem {
         bus.set_cgb_mode(hw_is_cgb);
         bus.set_cgb_revision_d(matches!(model, HardwareModel::CgbD | HardwareModel::Agb));
         bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
+        if hw_is_cgb && let Some(palettes) = compatibility_palettes {
+            bus.set_dmg_compatibility_palettes(palettes);
+        }
         bus.set_boot_counter(match model {
             HardwareModel::Dmg0 => 0x182F,
             HardwareModel::Dmg => 0xABCB,

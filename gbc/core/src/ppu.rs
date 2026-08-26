@@ -842,6 +842,15 @@ impl GbcPpu {
         }
     }
 
+    pub(crate) fn set_dmg_compatibility_palettes(
+        &mut self,
+        palettes: crate::compatibility_palette::CompatibilityPalettes,
+    ) {
+        self.bg_palette[..4].copy_from_slice(&palettes.bg);
+        self.obj_palette[..4].copy_from_slice(&palettes.obj0);
+        self.obj_palette[4..8].copy_from_slice(&palettes.obj1);
+    }
+
     /// Seed the PPU's frame phase (LY / T-cycle offset into the line) at
     /// power-on. The boot ROM runs with the LCD enabled, so by the time the
     /// game code starts the PPU is mid-frame; its exact position depends on
