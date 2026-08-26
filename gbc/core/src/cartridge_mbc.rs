@@ -93,6 +93,8 @@ pub trait Mbc: std::fmt::Debug + Send {
     fn step_clock(&mut self) {}
     fn sync_rtc(&mut self, now: SystemTime) {}
 
+    fn reset_runtime(&mut self) {}
+
     fn export_persistent_state(&self, _now: SystemTime) -> Result<Option<Vec<u8>>, String> {
         if !self.has_battery() {
             return Ok(None);
@@ -315,6 +317,13 @@ impl Mbc for Mbc1 {
         }
     }
 
+    fn reset_runtime(&mut self) {
+        self.ram_enabled = false;
+        self.rom_bank = 1;
+        self.ram_bank = 0;
+        self.banking_mode = false;
+    }
+
     fn serialize_state(&self) -> Vec<u8> {
         rmp_serde::to_vec_named(&Mbc1MachineState {
             schema_version: 1,
@@ -448,6 +457,11 @@ impl Mbc for Mbc2 {
         if data.len() <= self.ram.len() {
             self.ram[..data.len()].copy_from_slice(data);
         }
+    }
+
+    fn reset_runtime(&mut self) {
+        self.ram_enabled = false;
+        self.rom_bank = 1;
     }
 
     fn serialize_state(&self) -> Vec<u8> {

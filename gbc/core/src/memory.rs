@@ -163,7 +163,7 @@ impl GbcMemoryBus {
         }
         let mut ppu = GbcPpu::default();
         ppu.import_state(state.ppu)?;
-        let mut apu = GbcApu::default();
+        let mut apu = self.apu.clone();
         apu.import_state(state.apu)?;
         self.cartridge.deserialize_mbc_state(&state.cartridge)?;
 

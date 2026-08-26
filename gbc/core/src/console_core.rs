@@ -142,10 +142,9 @@ impl ConsoleCore for GbcConsoleCore {
             log::error!("failed to rebuild validated GBC ROM during reset");
             return;
         };
-        reset
-            .system
-            .bus
-            .set_cartridge(current.system.bus.take_cartridge());
+        let mut cartridge = current.system.bus.take_cartridge();
+        cartridge.reset_runtime();
+        reset.system.bus.set_cartridge(cartridge);
         current.system = reset.system;
     }
 
@@ -238,6 +237,12 @@ mod tests {
         rom
     }
 
+    fn distinct_rom() -> Vec<u8> {
+        let mut value = rom();
+        value[0x2000] = 1;
+        value
+    }
+
     fn config() -> CoreConfig {
         CoreConfig {
             region: None,
@@ -266,5 +271,20 @@ mod tests {
         let core =
             GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
         assert!(matches!(core.save_state(), Err(CoreError::NoRomLoaded)));
+    }
+
+    #[test]
+    fn rejects_machine_state_from_another_rom() {
+        let mut source =
+            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        source.load(&rom(), &config()).unwrap();
+        let state = source.save_state().unwrap();
+
+        let mut target =
+            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        target.load(&distinct_rom(), &config()).unwrap();
+        let identity_before = target.identity().unwrap();
+        assert!(target.load_state(&state).is_err());
+        assert_eq!(target.identity().unwrap(), identity_before);
     }
 }
