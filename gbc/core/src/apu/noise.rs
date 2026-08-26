@@ -1,4 +1,4 @@
-use super::{envelope::Envelope, length_counter::LengthCounter, timer::Timer};
+use super::{channel, envelope::Envelope, length_counter::LengthCounter, timer::Timer};
 
 /// Divisor lookup table for the noise channel timer.
 /// Index 0 is treated as 0.5 (represented as 8 = 0.5 * 16).
@@ -96,13 +96,7 @@ impl Noise {
 
     /// Handle trigger event.
     pub fn trigger(&mut self, envelope_extra_tick: bool) {
-        if self.length.counter() == 0 {
-            self.length.reload_at_zero();
-            self.length.set_enabled(false);
-        }
-        if self.dac_enabled && !self.active {
-            self.active = true;
-        }
+        channel::prepare_trigger(&mut self.length, self.dac_enabled, &mut self.active);
         // Reload timer
         self.timer.set_period(self.calculate_timer_period());
         // Reload envelope with extra tick if DIV-APU next step clocks envelope
@@ -118,11 +112,12 @@ impl Noise {
 
     /// Handle NR42 write: update volume and DAC.
     pub fn write_nr42(&mut self, value: u8) {
-        self.envelope.reload_volume(value);
-        self.dac_enabled = value & 0xF8 != 0;
-        if !self.dac_enabled {
-            self.active = false;
-        }
+        channel::write_envelope(
+            value,
+            &mut self.envelope,
+            &mut self.dac_enabled,
+            &mut self.active,
+        );
     }
 
     /// Handle NR43 write: update frequency and randomness.
@@ -138,27 +133,11 @@ impl Noise {
 
     /// Handle NR44 write: trigger, length enable.
     pub fn write_nr44(&mut self, value: u8, next_div_lsb: bool, envelope_extra_tick: bool) {
-        // Length enable
-        let length_enable = value & 0x40 != 0;
-
         // Trigger
         if value & 0x80 != 0 {
             self.trigger(envelope_extra_tick);
         }
-
-        // Length glitch
-        if length_enable && !self.length.enabled() && next_div_lsb && self.length.counter() > 0 {
-            self.length.set_enabled(true);
-            if self.length.clock() {
-                if value & 0x80 != 0 {
-                    self.length.set_counter(self.length.max() - 1);
-                } else {
-                    self.active = false;
-                }
-            }
-        }
-
-        self.length.set_enabled(length_enable);
+        channel::apply_length_control(value, next_div_lsb, &mut self.length, &mut self.active);
     }
 }
 
