@@ -121,6 +121,9 @@ impl Mbc for Mbc3 {
     }
 
     fn ram_restore(&mut self, data: &[u8]) {
+        // Legacy raw-RAM API: partial restores are allowed, oversized input
+        // is ignored. New callers should use import_persistent_state(), which
+        // validates the exact RAM length and RTC capability.
         if data.len() <= self.ram.len() {
             self.ram[..data.len()].copy_from_slice(data);
         }
@@ -298,6 +301,15 @@ mod tests {
         mbc.write_rom(0x4000, 0x04);
 
         assert_eq!(mbc.read_ram(0xA000), 0xFF);
+    }
+
+    #[test]
+    fn oversized_legacy_ram_restore_leaves_ram_unchanged() {
+        let mut mbc = Mbc3::new(vec![0; 0x8000], vec![0x11; 4], true, false);
+
+        mbc.ram_restore(&[0x22; 5]);
+
+        assert_eq!(mbc.ram, vec![0x11; 4]);
     }
 
     #[test]
