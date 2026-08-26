@@ -7,6 +7,7 @@ pub mod cartridge;
 pub mod cartridge_header;
 #[allow(dead_code)]
 pub mod cartridge_mbc;
+pub mod core_options;
 #[allow(dead_code)]
 pub(crate) mod cpu;
 #[allow(dead_code)]
@@ -21,6 +22,7 @@ pub(crate) mod dma;
 pub(crate) mod hdma;
 #[allow(dead_code)]
 pub(crate) mod interrupt;
+pub mod input_types;
 #[allow(dead_code)]
 pub mod memory;
 #[allow(dead_code)]

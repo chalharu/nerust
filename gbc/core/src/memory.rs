@@ -56,7 +56,8 @@ pub struct GbcMemoryBus {
     timer: Timer,
     dma: DmaController,
     serial: Serial,
-    joypad: u8,
+    joypad_select: u8,
+    joypad_input: u8,
     /// CGB $FF72-$FF75: unused-ish IO that retains written values
     /// (readable/writable on real CGB hardware).
     hwio_72_75: [u8; 4],
@@ -111,7 +112,8 @@ impl GbcMemoryBus {
             timer: Timer::new(),
             dma: DmaController::new(),
             serial: Serial::new(),
-            joypad: 0xFF,
+            joypad_select: 0x30,
+            joypad_input: 0xFF,
             hwio_72_75: [0x00; 4],
 
             double_speed: false,
@@ -150,11 +152,7 @@ impl GbcMemoryBus {
             0xFE00..=0xFE9F => self.ppu.read_oam((addr & 0xFF) as u8),
             0xFEA0..=0xFEFF => 0x00,
             0xFF00 => {
-                // TODO: filter lower nibble by select bits (4-5).
-                // When bit4=0, return d-pad state; when bit5=0, return
-                // button state; when both=1, return $F.
-                // GbcJoypad device will handle this logic (future phase).
-                self.joypad | 0xC0
+                0xC0 | self.joypad_select | self.joypad_visible_buttons()
             }
             0xFF01 => self.serial.read_sb(),
             0xFF02 => self.serial.read_sc(),
@@ -235,7 +233,9 @@ impl GbcMemoryBus {
     fn write_io(&mut self, addr: u16, value: u8) {
         match addr {
             0xFF00 => {
-                self.joypad = (self.joypad & 0x30) | (value & 0x30);
+                let before = self.joypad_visible_buttons();
+                self.joypad_select = value & 0x30;
+                self.request_joypad_edge(before);
             }
             0xFF01 => self.serial.write_sb(value),
             0xFF02 => {
@@ -479,7 +479,29 @@ impl GbcMemoryBus {
     }
 
     pub fn set_joypad(&mut self, state: u8) {
-        self.joypad = state;
+        let before = self.joypad_visible_buttons();
+        self.joypad_input = state;
+        self.request_joypad_edge(before);
+        let all_groups = (state & 0x0F) & (state >> 4);
+        self.interrupt.wake_by_joypad(all_groups);
+    }
+
+    fn joypad_visible_buttons(&self) -> u8 {
+        let mut visible = 0x0F;
+        if self.joypad_select & 0x10 == 0 {
+            visible &= self.joypad_input >> 4;
+        }
+        if self.joypad_select & 0x20 == 0 {
+            visible &= self.joypad_input;
+        }
+        visible & 0x0F
+    }
+
+    fn request_joypad_edge(&mut self, before: u8) {
+        let falling_edges = before & !self.joypad_visible_buttons();
+        if falling_edges != 0 {
+            self.interrupt.request(InterruptKind::Joypad);
+        }
     }
 
     /// Apply KEY1's post-boot visibility for the effective game mode.
@@ -495,7 +517,8 @@ impl GbcMemoryBus {
     pub fn set_post_boot_io(&mut self, cgb: bool) {
         self.apu.set_post_boot_state();
         // P1 reads $CF on DMG (both joypad directions selected), $FF on CGB.
-        self.joypad = if cgb { 0xFF } else { 0x0F };
+        self.joypad_select = if cgb { 0x30 } else { 0x00 };
+        self.joypad_input = 0xFF;
         self.interrupt.write_if(0x01); // VBlank pending from the boot frame
         self.dma.set_register(0xFF);
         if cgb {
@@ -963,8 +986,48 @@ mod tests {
     #[test]
     fn set_joypad_changes_read_value() {
         let mut bus = bus();
+        bus.write(0xFF00, 0x20);
         bus.set_joypad(0x00);
-        assert_eq!(bus.read(0xFF00), 0xC0);
+        assert_eq!(bus.read(0xFF00), 0xE0);
+    }
+
+    #[test]
+    fn joypad_selects_button_and_direction_groups() {
+        let mut bus = bus();
+        // A and Down pressed.
+        bus.set_joypad(0x7E);
+
+        bus.write(0xFF00, 0x10);
+        assert_eq!(bus.read(0xFF00), 0xDE);
+        bus.write(0xFF00, 0x20);
+        assert_eq!(bus.read(0xFF00), 0xE7);
+        bus.write(0xFF00, 0x00);
+        assert_eq!(bus.read(0xFF00), 0xC6);
+        bus.write(0xFF00, 0x30);
+        assert_eq!(bus.read(0xFF00), 0xFF);
+    }
+
+    #[test]
+    fn joypad_falling_edge_requests_interrupt_once() {
+        let mut bus = bus();
+        bus.write(0xFF0F, 0);
+        bus.write(0xFF00, 0x10);
+        bus.set_joypad(0xFE);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Joypad.bit(), 0x10);
+
+        bus.write(0xFF0F, 0);
+        bus.set_joypad(0xFE);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Joypad.bit(), 0);
+    }
+
+    #[test]
+    fn joypad_press_wakes_stopped_cpu_even_when_group_unselected() {
+        let mut bus = bus();
+        bus.stop();
+        assert!(bus.is_halted_or_stopped());
+
+        bus.set_joypad(0x7F);
+        assert!(!bus.is_halted_or_stopped());
     }
 
     #[test]
