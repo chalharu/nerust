@@ -2,7 +2,7 @@
 ///
 /// Flags (F register): bit 7=Z, bit 6=N, bit 5=H, bit 4=C.
 /// Bits 3-0 are always 0 on read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CpuRegisters {
     a: u8,
     f: u8,
@@ -17,6 +17,13 @@ pub struct CpuRegisters {
 }
 
 impl CpuRegisters {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.f & 0x0F != 0 {
+            return Err("CPU F register lower nibble must be zero".into());
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         Self {
             a: 0x01,

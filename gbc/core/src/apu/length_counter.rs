@@ -2,7 +2,7 @@
 ///
 /// Counts down from the loaded value. When it reaches 0 and is enabled,
 /// the channel is turned off.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LengthCounter {
     max: u16,
     counter: u16,

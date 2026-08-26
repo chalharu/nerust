@@ -174,6 +174,11 @@ impl Mbc3Rtc {
         }
     }
 
+    pub fn reset_runtime(&mut self) {
+        self.latched = self.live;
+        self.previous_latch_write = 0xFF;
+    }
+
     pub fn encode_persistent(&self, now: SystemTime) -> Result<Vec<u8>, String> {
         rmp_serde::to_vec_named(&RtcPersistentState {
             live: self.live,

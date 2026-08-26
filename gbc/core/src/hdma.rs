@@ -2,7 +2,7 @@
 ///
 /// GDMA: triggered by bit 7 = 0 in $FF55. Transfers all blocks immediately.
 /// HDMA: triggered by bit 7 = 1. Transfers 16 bytes per HBlank period.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HdmaController {
     pub src: u16,
     pub dst: u16,

@@ -3,7 +3,7 @@
 /// Combines the outputs of the four channels according to NR50 and NR51.
 /// NR50 controls master volume for left/right outputs.
 /// NR51 controls which channels are connected to each output.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Mixer {
     /// NR50: Master volume (FF24)
     /// bits 6-4: left volume (0-7, treated as 1-8)

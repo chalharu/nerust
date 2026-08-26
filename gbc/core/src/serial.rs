@@ -4,12 +4,14 @@
 /// reads return 0xFF. A master transfer takes a fixed number of M-cycles
 /// (8 bits at 8192 Hz = 1024 M-cycles) before it completes, clears SC bit 7
 /// and requests the Serial interrupt. Outgoing characters are buffered.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Serial {
     sb: u8,
     sc: u8,
     /// Remaining M-cycles of an in-progress transfer, plus the byte to send.
     transfer: Option<(u32, u8)>,
     /// Characters transmitted via serial (captured for test harness).
+    #[serde(skip)]
     output: Vec<u8>,
 }
 

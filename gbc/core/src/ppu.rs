@@ -31,6 +31,35 @@ pub struct PpuStepResult {
     pub vblank: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PpuState {
+    registers: [u8; 18],
+    vram: Vec<u8>,
+    oam: Vec<u8>,
+    bg_palette: Vec<u16>,
+    obj_palette: Vec<u16>,
+    mode_clock: u32,
+    frame_complete: bool,
+    frame_buffer: Vec<u32>,
+    window_line: u8,
+    window_eligible: bool,
+    prev_lyc_coincide: bool,
+    cgb_mode: bool,
+    cgb_game: bool,
+    cgb_revision_d: bool,
+    stat_signal: bool,
+    stat_forced: bool,
+    vblank_if_countdown: u8,
+    lcd_on_delay: u32,
+    lcd_on_hblank_extra: u32,
+    ly_for_comparison: i16,
+    lcd_on_short_line: bool,
+    mode3_scx_penalty: u32,
+    mode3_sprite_penalty: u32,
+    wx_written_during_oam: bool,
+    accessed_oam_row: u8,
+}
+
 pub struct GbcPpu {
     lcdc: u8,
     stat: u8,
@@ -166,6 +195,107 @@ impl Default for GbcPpu {
 }
 
 impl GbcPpu {
+    pub(crate) fn export_state(&self) -> Result<PpuState, String> {
+        if self.mode3_pipeline.is_some() {
+            return Err("PPU state can only be saved at a frame boundary".into());
+        }
+        Ok(PpuState {
+            registers: [
+                self.lcdc, self.stat, self.scy, self.scx, self.ly, self.lyc, self.wy, self.wx,
+                self.bgp, self.obp0, self.obp1, self.vbk, self.bgpi, self.bgpd, self.obpi,
+                self.obpd, self.opri, self.key0,
+            ],
+            vram: self.vram.to_vec(),
+            oam: self.oam.to_vec(),
+            bg_palette: self.bg_palette.to_vec(),
+            obj_palette: self.obj_palette.to_vec(),
+            mode_clock: self.mode_clock,
+            frame_complete: self.frame_complete,
+            frame_buffer: self.frame_buffer.to_vec(),
+            window_line: self.window_line,
+            window_eligible: self.window_eligible,
+            prev_lyc_coincide: self.prev_lyc_coincide,
+            cgb_mode: self.cgb_mode,
+            cgb_game: self.cgb_game,
+            cgb_revision_d: self.cgb_revision_d,
+            stat_signal: self.stat_signal,
+            stat_forced: self.stat_forced,
+            vblank_if_countdown: self.vblank_if_countdown,
+            lcd_on_delay: self.lcd_on_delay,
+            lcd_on_hblank_extra: self.lcd_on_hblank_extra,
+            ly_for_comparison: self.ly_for_comparison,
+            lcd_on_short_line: self.lcd_on_short_line,
+            mode3_scx_penalty: self.mode3_scx_penalty,
+            mode3_sprite_penalty: self.mode3_sprite_penalty,
+            wx_written_during_oam: self.wx_written_during_oam,
+            accessed_oam_row: self.accessed_oam_row,
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: PpuState) -> Result<(), String> {
+        if state.vram.len() != 0x4000
+            || state.oam.len() != 160
+            || state.bg_palette.len() != 32
+            || state.obj_palette.len() != 32
+            || state.frame_buffer.len() != 160 * 144
+        {
+            return Err("PPU state buffer length mismatch".into());
+        }
+        if state.registers[4] >= SCANLINES_PER_FRAME
+            || state.mode_clock >= T_CYCLES_PER_SCANLINE
+            || state.registers[11] > 1
+        {
+            return Err("PPU timing or bank state out of range".into());
+        }
+        let mut candidate = Self::default();
+        [
+            candidate.lcdc,
+            candidate.stat,
+            candidate.scy,
+            candidate.scx,
+            candidate.ly,
+            candidate.lyc,
+            candidate.wy,
+            candidate.wx,
+            candidate.bgp,
+            candidate.obp0,
+            candidate.obp1,
+            candidate.vbk,
+            candidate.bgpi,
+            candidate.bgpd,
+            candidate.obpi,
+            candidate.obpd,
+            candidate.opri,
+            candidate.key0,
+        ] = state.registers;
+        candidate.vram.copy_from_slice(&state.vram);
+        candidate.oam.copy_from_slice(&state.oam);
+        candidate.bg_palette.copy_from_slice(&state.bg_palette);
+        candidate.obj_palette.copy_from_slice(&state.obj_palette);
+        candidate.mode_clock = state.mode_clock;
+        candidate.frame_complete = state.frame_complete;
+        candidate.frame_buffer.copy_from_slice(&state.frame_buffer);
+        candidate.window_line = state.window_line;
+        candidate.window_eligible = state.window_eligible;
+        candidate.prev_lyc_coincide = state.prev_lyc_coincide;
+        candidate.cgb_mode = state.cgb_mode;
+        candidate.cgb_game = state.cgb_game;
+        candidate.cgb_revision_d = state.cgb_revision_d;
+        candidate.stat_signal = state.stat_signal;
+        candidate.stat_forced = state.stat_forced;
+        candidate.vblank_if_countdown = state.vblank_if_countdown;
+        candidate.lcd_on_delay = state.lcd_on_delay;
+        candidate.lcd_on_hblank_extra = state.lcd_on_hblank_extra;
+        candidate.ly_for_comparison = state.ly_for_comparison;
+        candidate.lcd_on_short_line = state.lcd_on_short_line;
+        candidate.mode3_scx_penalty = state.mode3_scx_penalty;
+        candidate.mode3_sprite_penalty = state.mode3_sprite_penalty;
+        candidate.wx_written_during_oam = state.wx_written_during_oam;
+        candidate.accessed_oam_row = state.accessed_oam_row;
+        *self = candidate;
+        Ok(())
+    }
+
     pub fn step(&mut self, cycles: u32) -> PpuStepResult {
         self.frame_complete = false;
 

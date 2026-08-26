@@ -19,13 +19,14 @@ impl InterruptKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum HaltState {
     Running,
     Halted { bug_triggered: bool },
     Stopped,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InterruptController {
     ime: bool,
     ie: u8,
