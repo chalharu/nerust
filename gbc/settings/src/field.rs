@@ -18,10 +18,8 @@ pub enum GbcSettingField {
 impl GbcSettingField {
     pub fn current_choice(&self, s: &GbcSettings) -> SystemSettingsChoiceId {
         let id = match self {
-            Self::SystemHardwareModel => {
-                GbcSettingChoice::from(s.system.hardware_model).to_string()
-            }
-            Self::SystemRtcSync => GbcSettingChoice::from(s.system.rtc_sync).to_string(),
+            Self::SystemHardwareModel => GbcSettingChoice::from(s.core.hardware_model).to_string(),
+            Self::SystemRtcSync => GbcSettingChoice::from(s.core.rtc_sync).to_string(),
         };
         SystemSettingsChoiceId(std::borrow::Cow::Owned(id))
     }
@@ -180,7 +178,7 @@ mod tests {
     #[test]
     fn current_choice_matches_hardware_model() {
         let mut settings = GbcSettings::default();
-        settings.system.hardware_model = HardwareModel::Agb;
+        settings.core.hardware_model = HardwareModel::Agb;
         let choice = GbcSettingField::SystemHardwareModel.current_choice(&settings);
         assert_eq!(choice.as_str(), "agb");
     }

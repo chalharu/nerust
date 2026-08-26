@@ -3008,6 +3008,7 @@ dependencies = [
  "nerust_core_traits",
  "nerust_settings_traits",
  "serde",
+ "serde-value",
  "strum",
  "typetag",
 ]

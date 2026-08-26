@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct GbcSystemSettingsSection {
+pub struct GbcCoreSettings {
     pub hardware_model: HardwareModel,
     pub rtc_sync: RtcSyncMode,
 }
@@ -13,7 +13,7 @@ pub struct GbcSystemSettingsSection {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GbcSettings {
-    pub system: GbcSystemSettingsSection,
+    pub core: GbcCoreSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -65,7 +65,7 @@ pub enum RtcSyncMode {
 
 impl GbcSettings {
     pub fn set_rtc_sync(&mut self, v: RtcSyncMode) {
-        self.system.rtc_sync = v;
+        self.core.rtc_sync = v;
     }
 }
 
@@ -73,7 +73,7 @@ impl GbcSettings {
 impl SystemSettings for GbcSettings {
     fn requires_live_session_rebuild(&self, next: &dyn SystemSettings) -> bool {
         next.downcast_ref::<GbcSettings>()
-            .is_some_and(|other| self.system.hardware_model != other.system.hardware_model)
+            .is_some_and(|other| self.core.hardware_model != other.core.hardware_model)
     }
 }
 
@@ -85,7 +85,7 @@ mod tests {
 
     fn test_settings() -> GbcSettings {
         GbcSettings {
-            system: GbcSystemSettingsSection {
+            core: GbcCoreSettings {
                 hardware_model: HardwareModel::Dmg,
                 rtc_sync: RtcSyncMode::SystemTime,
             },
@@ -95,8 +95,8 @@ mod tests {
     #[test]
     fn default_has_rtc_disabled() {
         let s = GbcSettings::default();
-        assert_eq!(s.system.hardware_model, HardwareModel::CgbD);
-        assert_eq!(s.system.rtc_sync, RtcSyncMode::Off);
+        assert_eq!(s.core.hardware_model, HardwareModel::CgbD);
+        assert_eq!(s.core.rtc_sync, RtcSyncMode::Off);
     }
 
     #[test]
@@ -114,14 +114,14 @@ mod tests {
     fn set_rtc_sync_updates_field() {
         let mut s = GbcSettings::default();
         s.set_rtc_sync(RtcSyncMode::SystemTime);
-        assert_eq!(s.system.rtc_sync, RtcSyncMode::SystemTime);
+        assert_eq!(s.core.rtc_sync, RtcSyncMode::SystemTime);
     }
 
     #[test]
     fn requires_live_session_rebuild_ignores_rtc_change() {
         let a: GbcSettings = test_settings();
         let mut b = a.clone();
-        b.system.rtc_sync = RtcSyncMode::Off;
+        b.core.rtc_sync = RtcSyncMode::Off;
 
         assert!(!a.requires_live_session_rebuild(&b));
     }
@@ -130,7 +130,7 @@ mod tests {
     fn requires_live_session_rebuild_detects_hardware_model_change() {
         let a = test_settings();
         let mut b = a.clone();
-        b.system.hardware_model = HardwareModel::Agb;
+        b.core.hardware_model = HardwareModel::Agb;
 
         assert!(a.requires_live_session_rebuild(&b));
     }
@@ -140,5 +140,11 @@ mod tests {
         assert_eq!("cgb-d".parse(), Ok(HardwareModel::CgbD));
         assert_eq!("cgb_d".parse(), Ok(HardwareModel::CgbD));
         assert!("unknown".parse::<HardwareModel>().is_err());
+    }
+
+    #[test]
+    fn typetag_serialization_does_not_conflict_with_fields() {
+        let settings: Box<dyn SystemSettings> = Box::new(test_settings());
+        assert!(serde_value::to_value(&settings).is_ok());
     }
 }
