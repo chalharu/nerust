@@ -2,8 +2,11 @@ use std::time::SystemTime;
 
 use crate::cartridge_header::CartridgeHeader;
 
+mod mbc3;
 mod mbc5;
+mod rtc;
 
+pub use mbc3::Mbc3;
 pub use mbc5::Mbc5;
 
 const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
@@ -475,11 +478,23 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
                 header.cartridge_type.has_rumble(),
             ))
         }
+        crate::cartridge_header::CartridgeType::Mbc3TimerBattery
+        | crate::cartridge_header::CartridgeType::Mbc3TimerRamBattery
+        | crate::cartridge_header::CartridgeType::Mbc3
+        | crate::cartridge_header::CartridgeType::Mbc3Ram
+        | crate::cartridge_header::CartridgeType::Mbc3RamBattery => {
+            let ram = ram.unwrap_or_else(|| vec![0; header.ram_size.bytes]);
+            Box::new(Mbc3::new(
+                rom,
+                ram,
+                header.cartridge_type.has_battery(),
+                header.cartridge_type.has_rtc(),
+            ))
+        }
         crate::cartridge_header::CartridgeType::Mbc2
         | crate::cartridge_header::CartridgeType::Mbc2Battery => {
             Box::new(Mbc2::new(rom, header.cartridge_type.has_battery()))
         }
-        _ => Box::new(RomOnly::new(rom)),
     }
 }
 
@@ -543,6 +558,33 @@ mod tests {
         mbc.write_ram(0xA000, 0x5A);
 
         assert_eq!(mbc.read_ram(0xA000), 0x5A);
+    }
+
+    #[test]
+    fn mbc3_cartridge_types_have_expected_capabilities() {
+        let cases = [
+            (0x0F, 0x00, true, true, false),
+            (0x10, 0x02, true, true, true),
+            (0x11, 0x00, false, false, false),
+            (0x12, 0x02, false, false, true),
+            (0x13, 0x02, false, true, true),
+        ];
+        for (cartridge_type, ram_size, has_rtc, has_battery, has_ram) in cases {
+            let mut rom = vec![0; 0x8000];
+            rom[0x0147] = cartridge_type;
+            rom[0x0148] = 0x00;
+            rom[0x0149] = ram_size;
+            let header = CartridgeHeader::parse(&rom).expect("header");
+            let mbc = create_mbc(&header, rom, None);
+
+            assert_eq!(mbc.has_rtc(), has_rtc, "type {cartridge_type:#04X}");
+            assert_eq!(mbc.has_battery(), has_battery, "type {cartridge_type:#04X}");
+            assert_eq!(
+                mbc.ram_data().is_some(),
+                has_ram,
+                "type {cartridge_type:#04X}"
+            );
+        }
     }
 
     #[test]
