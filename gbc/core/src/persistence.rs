@@ -139,7 +139,7 @@ mod tests {
     }
 
     fn system(rom: &[u8], model: HardwareModel) -> GbcSystem {
-        GbcSystem::from_rom_without_boot_rom(model, rom.to_vec()).unwrap()
+        GbcSystem::from_rom(model, rom.to_vec()).unwrap()
     }
 
     #[test]
