@@ -37,6 +37,10 @@ impl CoreFactory for GbcFactory {
         "Game Boy Color"
     }
 
+    fn supported_extensions(&self) -> &'static [&'static str] {
+        &["gb", "gbc"]
+    }
+
     fn probe_media(&self, media: &MediaObject) -> bool {
         nerust_gbc_core::cartridge_header::is_supported_rom(&media.bytes)
     }
@@ -157,6 +161,11 @@ mod tests {
 
         assert!(GbcFactory.probe_media(&MediaObject::new(None, rom)));
         assert!(!GbcFactory.probe_media(&MediaObject::new(None, b"NES\x1a".to_vec())));
+    }
+
+    #[test]
+    fn reports_gb_and_gbc_file_extensions() {
+        assert_eq!(GbcFactory.supported_extensions(), &["gb", "gbc"]);
     }
 
     #[test]
