@@ -83,6 +83,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
@@ -358,6 +359,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            requestId = null,
             ownedByTest = true,
         )
     }
@@ -423,17 +425,28 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
-    fun showSettingsDialog(
-        keys: Array<String>,
-        labels: Array<String>,
-        choiceStrings: Array<String>,
-        currentIndices: Array<String>,
-    ) {
+    fun showSettingsDialog(payload: String) {
+        val document = JSONObject(payload)
+        require(document.getInt("schemaVersion") == SETTINGS_SCHEMA_VERSION) {
+            "Unsupported settings schema"
+        }
+        val requestId = document.getLong("requestId")
+        val fields = document.getJSONArray("fields")
+        val keys = Array(fields.length()) { fields.getJSONObject(it).getString("key") }
+        val labels = Array(fields.length()) { fields.getJSONObject(it).getString("label") }
+        val choiceStrings =
+            Array(fields.length()) { index ->
+                val options = fields.getJSONObject(index).getJSONArray("options")
+                (0 until options.length()).joinToString("\t") { options.getString(it) }
+            }
+        val currentIndices =
+            Array(fields.length()) { fields.getJSONObject(it).getInt("value").toString() }
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            requestId = requestId,
             ownedByTest = false,
         )
     }
@@ -443,6 +456,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         labels: Array<String>,
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
+        requestId: Long?,
         ownedByTest: Boolean,
     ) {
         val settings =
@@ -483,7 +497,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 onDismissRequest = dismiss,
                 onSave = { selections ->
                     resultSent = true
-                    onSettingsDialogResult(selections.joinToString(","))
+                    if (requestId != null) {
+                        val values = JSONObject()
+                        keys.forEachIndexed { index, key -> values.put(key, selections[index]) }
+                        val result =
+                            JSONObject()
+                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
+                                .put("requestId", requestId)
+                                .put("values", values)
+                        onSettingsDialogResult(result.toString())
+                    }
                     dismiss()
                 },
             )
@@ -972,6 +995,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     companion object {
         private const val TAG = "Nerust"
+        private const val SETTINGS_SCHEMA_VERSION = 1
 
         init {
             // Load the native library via the app classloader so the JVM can
