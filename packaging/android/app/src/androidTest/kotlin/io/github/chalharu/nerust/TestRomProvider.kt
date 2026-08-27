@@ -23,7 +23,7 @@ class TestRomProvider : ContentProvider() {
     ): Cursor {
         val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         return MatrixCursor(columns).apply {
-            val values = columns.map { column ->
+            val values: Array<Any?> = columns.map { column ->
                 when (column) {
                     OpenableColumns.DISPLAY_NAME -> "phase15-test.gbc"
                     OpenableColumns.SIZE -> TEST_ROM_SIZE
