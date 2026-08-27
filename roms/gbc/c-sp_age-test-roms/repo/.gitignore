@@ -1,0 +1,14 @@
+# system
+.DS_Store
+
+# IDE
+.idea
+# Visual Studio Code: keep common workspace settings
+# (e.g. rgbds-z80 capitalization & includes)
+.vscode/**
+!.vscode/settings.json
+
+# build artifacts
+.dep
+.obj
+build
