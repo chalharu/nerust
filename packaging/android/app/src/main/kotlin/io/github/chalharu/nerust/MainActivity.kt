@@ -13,8 +13,11 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -139,10 +142,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
     private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
+    private val restoreControllerOverlayRunnable = Runnable {
+        controllerOverlayHiddenUntil = 0L
+        scheduleChromeAttach()
+    }
     private var chromeAttachAttempts = 0
     private var chromeAttachEnabled = false
     private var controlsOverlayPopup: PopupWindow? = null
     private var controlsOverlayView: View? = null
+    private var controllerOverlayHiddenUntil = 0L
     private var drawerChromePopup: PopupWindow? = null
     private var drawerChromeContainer: FrameLayout? = null
     private var drawerEdgeHandleView: View? = null
@@ -201,6 +209,41 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val source = event.source
+        val isController =
+            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
+                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        if (!isController) {
+            return super.dispatchKeyEvent(event)
+        }
+        val key =
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_A -> "button1"
+                KeyEvent.KEYCODE_BUTTON_B -> "button2"
+                KeyEvent.KEYCODE_BUTTON_START -> "start"
+                KeyEvent.KEYCODE_BUTTON_SELECT -> "select"
+                KeyEvent.KEYCODE_DPAD_UP -> "up"
+                KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+                else -> return super.dispatchKeyEvent(event)
+            }
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        if (pressed && event.repeatCount > 0) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) {
+            return true
+        }
+        if (pressed) {
+            hideControlsForControllerInput()
+        }
+        onMenuAction("controller:$key:${if (pressed) 1 else 0}")
+        return true
+    }
+
     override fun onPause() {
         if (activeActivityForTest === this) {
             activeActivityForTest = null
@@ -208,6 +251,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         Log.i(TAG, "onPause")
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
+        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
@@ -571,6 +615,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
+        if (SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil) {
+            return true
+        }
         val existing = controlsOverlayPopup
         if (existing?.isShowing == true && controlsOverlayView != null) {
             return true
@@ -599,6 +646,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         controlsOverlayPopup = null
         controlsOverlayView = null
         return false
+    }
+
+    private fun hideControlsForControllerInput() {
+        controllerOverlayHiddenUntil = SystemClock.elapsedRealtime() + CONTROLLER_OVERLAY_HIDE_MS
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        window.decorView.postDelayed(restoreControllerOverlayRunnable, CONTROLLER_OVERLAY_HIDE_MS)
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {
@@ -1011,6 +1067,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
+        private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
@@ -1368,7 +1425,7 @@ private class ControlsOverlayView(context: Context) : View(context) {
             return
         }
 
-        portraitControlsLayout(viewWidth, viewHeight).forEach { zone ->
+        controlsLayout(viewWidth, viewHeight).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
@@ -1484,33 +1541,27 @@ private class DrawerEdgeSwipeHandleView(
     override fun performClick(): Boolean = super.performClick()
 }
 
-internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
-    // Move controls slightly lower so the game viewport sits higher on-screen.
-    val controlTop = height * 0.54f
+internal fun controlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
+    val portrait = height >= width
+    val base = min(width, height)
+    val controlTop = if (portrait) height * 0.54f else 0f
     val controlHeight = height - controlTop
-    val dpadLeft = width * 0.08f
-    val dpadSize = width * 0.28f
+    val dpadLeft = base * 0.08f
+    val dpadSize = base * 0.28f
     val dpadCenterX = dpadLeft + dpadSize * 0.5f
-    val dpadCenterY = controlTop + controlHeight * 0.58f
+    val dpadCenterY = if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f
     val dpadArm = dpadSize * 0.28f
     val dpadExtent = dpadSize * 0.42f
-    val actionSize = width * 0.14f
-    val actionGap = width * 0.04f
-    val actionLeft = width * 0.64f
+    val actionSize = base * 0.14f
+    val actionGap = base * 0.04f
+    val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
     val actionTop = dpadCenterY - actionSize * 0.5f
-    val centerButtonWidth = width * 0.10f
-    val centerButtonHeight = height * 0.038f
-    val centerGap = width * 0.03f
+    val centerButtonWidth = base * 0.10f
+    val centerButtonHeight = base * 0.068f
+    val centerGap = base * 0.03f
     val centerRowWidth = centerButtonWidth * 2f + centerGap
-    val centerLeftBound = dpadLeft + dpadSize + width * 0.03f
-    val centerRightBound = actionLeft - width * 0.03f
-    val centeredStart = (centerLeftBound + centerRightBound - centerRowWidth) * 0.5f
-    val centerStartX =
-        centeredStart.coerceIn(
-            centerLeftBound,
-            max(centerLeftBound, centerRightBound - centerRowWidth),
-        )
-    val centerTop = controlTop + controlHeight * 0.16f
+    val centerStartX = (width - centerRowWidth) * 0.5f
+    val centerTop = if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f
 
     return listOf(
         OverlayZoneSpec(
