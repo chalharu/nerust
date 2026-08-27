@@ -191,6 +191,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var composeDialogOwnedByTest = false
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
+    @Volatile private var lastLoadedSystemForTest: String? = null
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -521,6 +522,17 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dispatchMenuAction(action)
     }
 
+    fun loadRomUriForTest(uri: String) {
+        lastLoadedSystemForTest = null
+        onFilePickerResult(uri)
+    }
+
+    fun lastLoadedSystemForTest(): String? = lastLoadedSystemForTest
+
+    fun notifyRomLoaded(systemId: String) {
+        lastLoadedSystemForTest = systemId
+    }
+
     fun openDrawerForTest() {
         showDrawerOverlay()
     }
@@ -566,17 +578,26 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "Unsupported settings schema"
         }
         val requestId = document.getLong("requestId")
-        val fields = document.getJSONArray("fields")
-        val keys = Array(fields.length()) { fields.getJSONObject(it).getString("key") }
-        val labels = Array(fields.length()) { fields.getJSONObject(it).getString("label") }
-        val sections = Array(fields.length()) { fields.getJSONObject(it).getString("section") }
+        val sectionDocuments = document.getJSONArray("sections")
+        val fieldDocuments = mutableListOf<Pair<String, JSONObject>>()
+        for (sectionIndex in 0 until sectionDocuments.length()) {
+            val section = sectionDocuments.getJSONObject(sectionIndex)
+            val sectionId = section.getString("id")
+            val fields = section.getJSONArray("fields")
+            for (fieldIndex in 0 until fields.length()) {
+                fieldDocuments += sectionId to fields.getJSONObject(fieldIndex)
+            }
+        }
+        val keys = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("key") }
+        val labels = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("label") }
+        val sections = Array(fieldDocuments.size) { fieldDocuments[it].first }
         val choiceStrings =
-            Array(fields.length()) { index ->
-                val options = fields.getJSONObject(index).getJSONArray("options")
+            Array(fieldDocuments.size) { index ->
+                val options = fieldDocuments[index].second.getJSONArray("options")
                 (0 until options.length()).joinToString("\t") { options.getString(it) }
             }
         val currentIndices =
-            Array(fields.length()) { fields.getJSONObject(it).getInt("value").toString() }
+            Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,

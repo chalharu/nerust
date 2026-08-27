@@ -41,7 +41,22 @@ impl AndroidStorageBackend {
         decode_document_tree_path(path)
     }
 
+    fn validate_relative_path(path: &str) -> Result<(), PersistenceError> {
+        if path.is_empty()
+            || path.starts_with('/')
+            || path.split('/').any(|segment| {
+                segment.is_empty() || segment == "." || segment == ".." || segment.contains('\\')
+            })
+        {
+            return Err(PersistenceError::Validation(
+                "invalid Android SAF relative path".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn read(&self, uri: &str, relative: &str) -> Result<Option<Vec<u8>>, PersistenceError> {
+        Self::validate_relative_path(relative)?;
         let value = self.call_string("readSafFile", uri, relative, None)?;
         value
             .map(|value| STANDARD.decode(value).map_err(Self::io_error))
@@ -49,6 +64,7 @@ impl AndroidStorageBackend {
     }
 
     fn write(&self, uri: &str, relative: &str, bytes: &[u8]) -> Result<(), PersistenceError> {
+        Self::validate_relative_path(relative)?;
         let encoded = STANDARD.encode(bytes);
         let result = self.call_string("writeSafFile", uri, relative, Some(&encoded))?;
         if result.as_deref() == Some("ok") {
@@ -59,6 +75,7 @@ impl AndroidStorageBackend {
     }
 
     fn delete(&self, uri: &str, relative: &str) -> Result<(), PersistenceError> {
+        Self::validate_relative_path(relative)?;
         let result = self.call_string("deleteSafFile", uri, relative, None)?;
         if matches!(result.as_deref(), Some("ok") | Some("missing")) {
             Ok(())
@@ -68,6 +85,7 @@ impl AndroidStorageBackend {
     }
 
     fn list(&self, uri: &str, relative: &str) -> Result<Vec<String>, PersistenceError> {
+        Self::validate_relative_path(relative)?;
         let value = self
             .call_string("listSafFiles", uri, relative, None)?
             .unwrap_or_else(|| "[]".to_string());
@@ -281,5 +299,25 @@ impl MapperSaveBackend for AndroidStorageBackend {
         let recovery = format!("{relative}.recovery");
         self.write(&uri, &recovery, data)?;
         Ok(PathBuf::from(format!("{}.recovery", path.display())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AndroidStorageBackend;
+
+    #[test]
+    fn relative_path_validation_rejects_traversal_and_empty_segments() {
+        assert!(AndroidStorageBackend::validate_relative_path("gbc/id/states").is_ok());
+        for invalid in [
+            "",
+            "/root",
+            "../save",
+            "gbc//save",
+            "gbc/./save",
+            "gbc\\save",
+        ] {
+            assert!(AndroidStorageBackend::validate_relative_path(invalid).is_err());
+        }
     }
 }

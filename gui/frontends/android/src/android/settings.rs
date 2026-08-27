@@ -72,6 +72,14 @@ struct AndroidSystemChoice {
 }
 
 impl AndroidSettings {
+    pub(crate) fn prioritize_system(&mut self, active: Option<&dyn SystemId>) {
+        let Some(active) = active else {
+            return;
+        };
+        self.system_choices
+            .sort_by_key(|choice| choice.system_id.as_ref() != active);
+    }
+
     /// Extract Android-relevant fields from the full settings snapshot.
     pub(crate) fn from_snapshot(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> Self {
         let language = snapshot.shared.general.language;
@@ -378,36 +386,41 @@ impl AndroidSettings {
         let labels = self.dialog_labels();
         let choices = self.dialog_choices();
         let indices = self.current_indices();
-        let fields: Vec<_> = keys
-            .iter()
-            .enumerate()
-            .map(|(index, key)| {
-                let section = if key.starts_with("system.") {
-                    key.split('.').take(2).collect::<Vec<_>>().join(".")
-                } else if key.starts_with("controls.") {
-                    "controls".to_string()
-                } else if key.starts_with("storage.") {
-                    "storage".to_string()
-                } else if key == "vsync" {
-                    "video".to_string()
-                } else {
-                    "audio".to_string()
-                };
-                serde_json::json!({
+        let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+        for (index, key) in keys.iter().enumerate() {
+            let section = if key.starts_with("system.") {
+                key.split('.').take(2).collect::<Vec<_>>().join(".")
+            } else if key.starts_with("controls.") {
+                "controls".to_string()
+            } else if key.starts_with("storage.") {
+                "storage".to_string()
+            } else if key == "vsync" {
+                "video".to_string()
+            } else {
+                "audio".to_string()
+            };
+            let field = serde_json::json!({
                     "key": key,
-                    "section": section,
                     "label": labels[index],
                     "kind": "choice",
                     "value": indices[index].parse::<usize>().unwrap_or_default(),
                     "options": choices[index].split('\t').collect::<Vec<_>>(),
                     "enabled": true,
-                })
-            })
+            });
+            if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
+                fields.push(field);
+            } else {
+                sections.push((section, vec![field]));
+            }
+        }
+        let sections: Vec<_> = sections
+            .into_iter()
+            .map(|(id, fields)| serde_json::json!({ "id": id, "fields": fields }))
             .collect();
         serde_json::json!({
             "schemaVersion": SETTINGS_SCHEMA_VERSION,
             "requestId": request_id,
-            "fields": fields,
+            "sections": sections,
         })
         .to_string()
     }
@@ -885,11 +898,13 @@ mod tests {
 
         assert_eq!(payload["schemaVersion"], 1);
         assert_eq!(payload["requestId"], 42);
-        assert_eq!(payload["fields"][0]["key"], "audio_muted");
-        let keys: Vec<_> = payload["fields"]
+        assert_eq!(payload["sections"][0]["id"], "audio");
+        assert_eq!(payload["sections"][0]["fields"][0]["key"], "audio_muted");
+        let keys: Vec<_> = payload["sections"]
             .as_array()
             .unwrap()
             .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap())
             .map(|field| field["key"].as_str().unwrap())
             .collect();
         assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
