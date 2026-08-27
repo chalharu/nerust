@@ -1,12 +1,38 @@
 use std::sync::OnceLock;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StereoSample {
+    pub left: f32,
+    pub right: f32,
+}
+
+impl StereoSample {
+    pub const SILENCE: Self = Self::new(0.0, 0.0);
+
+    pub const fn new(left: f32, right: f32) -> Self {
+        Self { left, right }
+    }
+
+    pub const fn mono(sample: f32) -> Self {
+        Self::new(sample, sample)
+    }
+
+    pub fn downmix(self) -> f32 {
+        (self.left + self.right) * 0.5
+    }
+
+    pub fn scale(self, gain: f32) -> Self {
+        Self::new(self.left * gain, self.right * gain)
+    }
+}
+
 pub trait AudioBackend: Send {
     fn start(&mut self);
     fn pause(&mut self);
     fn sample_rate(&self) -> u32 {
         48_000
     }
-    fn push(&mut self, sample: f32);
+    fn push(&mut self, sample: StereoSample);
 
     /// 再生音量を 0.0〜1.0 の範囲で設定する。
     ///
@@ -97,7 +123,7 @@ pub struct NullAudio;
 impl AudioBackend for NullAudio {
     fn start(&mut self) {}
     fn pause(&mut self) {}
-    fn push(&mut self, _sample: f32) {}
+    fn push(&mut self, _sample: StereoSample) {}
 }
 
 /// ゲイン適用ラッパー。`AudioBackend` に gain を乗算してから渡す。
@@ -127,11 +153,49 @@ impl AudioBackend for GainBackend {
         self.inner.sample_rate()
     }
 
-    fn push(&mut self, sample: f32) {
-        self.inner.push(sample * self.gain);
+    fn push(&mut self, sample: StereoSample) {
+        self.inner.push(sample.scale(self.gain));
     }
 
     fn set_volume(&mut self, volume: f32) {
         self.gain = volume;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    struct Capture(Arc<Mutex<Vec<StereoSample>>>);
+
+    impl AudioBackend for Capture {
+        fn start(&mut self) {}
+        fn pause(&mut self) {}
+        fn push(&mut self, sample: StereoSample) {
+            self.0.lock().unwrap().push(sample);
+        }
+    }
+
+    #[test]
+    fn stereo_sample_helpers_preserve_channels() {
+        assert_eq!(StereoSample::mono(0.25), StereoSample::new(0.25, 0.25));
+        assert_eq!(StereoSample::new(0.25, 0.75).downmix(), 0.5);
+        assert_eq!(
+            StereoSample::new(0.25, -0.5).scale(0.5),
+            StereoSample::new(0.125, -0.25)
+        );
+    }
+
+    #[test]
+    fn gain_backend_scales_channels_independently() {
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let mut backend = GainBackend::new(Box::new(Capture(Arc::clone(&samples))), 0.5);
+        backend.push(StereoSample::new(0.8, -0.4));
+        assert_eq!(
+            samples.lock().unwrap().as_slice(),
+            &[StereoSample::new(0.4, -0.2)]
+        );
     }
 }

@@ -6,14 +6,14 @@ use std::{
     },
 };
 
-use cubeb::{MonoFrame, SampleFormat, StreamParamsBuilder};
+use cubeb::{SampleFormat, StereoFrame, StreamParamsBuilder};
 use flume::{Sender, TrySendError, bounded};
 use log::{info, warn};
-use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
+use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory, StereoSample};
 
 pub struct CubebAudio {
-    stream: ManuallyDrop<cubeb::Stream<MonoFrame<f32>>>,
-    data_sender: Sender<f32>,
+    stream: ManuallyDrop<cubeb::Stream<StereoFrame<f32>>>,
+    data_sender: Sender<StereoSample>,
     playing: Arc<AtomicBool>,
     sample_rate: u32,
     ctx: ManuallyDrop<cubeb::Context>,
@@ -46,32 +46,30 @@ impl CubebAudio {
         let params = StreamParamsBuilder::new()
             .format(SampleFormat::Float32LE)
             .rate(sample_rate)
-            .channels(1)
-            .layout(cubeb::ChannelLayout::UNDEFINED)
+            .channels(2)
+            .layout(cubeb::ChannelLayout::STEREO)
             .prefs(cubeb::StreamPrefs::NONE)
             .take();
 
         let playing = Arc::new(AtomicBool::new(true));
         let playing_clone = playing.clone();
 
-        let (sender, receiver) = bounded::<f32>(sample_rate as usize);
+        let (sender, receiver) = bounded::<StereoSample>(sample_rate as usize);
 
-        let mut builder = cubeb::StreamBuilder::<MonoFrame<f32>>::new();
+        let mut builder = cubeb::StreamBuilder::<StereoFrame<f32>>::new();
         builder
             .name("output")
             .default_output(&params)
             .latency(latency_frames)
             .data_callback(
-                move |_input: &[MonoFrame<f32>], output: &mut [MonoFrame<f32>]| -> isize {
+                move |_input: &[StereoFrame<f32>], output: &mut [StereoFrame<f32>]| -> isize {
                     if !playing_clone.load(Ordering::Relaxed) {
                         return 0;
                     }
-                    let mut last = 0.0f32;
                     for frame in output.iter_mut() {
-                        if let Ok(sample) = receiver.try_recv() {
-                            last = sample;
-                        }
-                        frame.m = last;
+                        let sample = receiver.try_recv().unwrap_or(StereoSample::SILENCE);
+                        frame.l = sample.left;
+                        frame.r = sample.right;
                     }
                     output.len() as isize
                 },
@@ -118,7 +116,7 @@ impl AudioBackend for CubebAudio {
         self.sample_rate
     }
 
-    fn push(&mut self, sample: f32) {
+    fn push(&mut self, sample: StereoSample) {
         match self.data_sender.try_send(sample) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {
