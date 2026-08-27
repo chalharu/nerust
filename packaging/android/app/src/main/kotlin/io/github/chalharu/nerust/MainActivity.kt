@@ -446,12 +446,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun resolveSafDirectory(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
         var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
         for (segment in relativePath.split('/').filter(String::isNotBlank)) {
-            val next = current.findFile(segment)?.takeIf(DocumentFile::isDirectory)
-                ?: if (create) current.createDirectory(segment) else null
-            current = next ?: return null
+            current = resolveSafChildDirectory(current, segment, create) ?: return null
         }
         return current
     }
+
+    private fun resolveSafChildDirectory(
+        parent: DocumentFile,
+        name: String,
+        create: Boolean,
+    ): DocumentFile? =
+        parent.findFile(name)?.takeIf(DocumentFile::isDirectory)
+            ?: if (create) parent.createDirectory(name) else null
 
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -659,17 +665,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
-                if (!resultSent) {
-                    if (requestId != null) {
-                        onSettingsDialogResult(
-                            JSONObject()
-                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
-                                .put("requestId", requestId)
-                                .put("dismissed", true)
-                                .put("values", JSONObject())
-                                .toString(),
-                        )
-                    }
+                if (!resultSent && requestId != null) {
+                    onSettingsDialogResult(
+                        JSONObject()
+                            .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
+                            .put("requestId", requestId)
+                            .put("dismissed", true)
+                            .put("values", JSONObject())
+                            .toString(),
+                    )
                 }
             },
         ) { dismiss ->
@@ -1361,15 +1365,7 @@ private fun NerustSettingsDialogCard(
     onDismissRequest: () -> Unit,
     onSave: (List<Int>) -> Unit,
 ) {
-    val selections =
-        remember(settings, initialSelections) {
-            mutableStateListOf<Int>().apply {
-                settings.forEachIndexed { index, setting ->
-                    val maxIndex = max(0, setting.choices.lastIndex)
-                    add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
-                }
-            }
-        }
+    val selections = rememberSettingsSelections(settings, initialSelections)
     var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -1447,6 +1443,19 @@ private fun NerustSettingsDialogCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun rememberSettingsSelections(
+    settings: List<AndroidSetting>,
+    initialSelections: List<Int>,
+) = remember(settings, initialSelections) {
+    mutableStateListOf<Int>().apply {
+        settings.forEachIndexed { index, setting ->
+            val maxIndex = max(0, setting.choices.lastIndex)
+            add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
         }
     }
 }

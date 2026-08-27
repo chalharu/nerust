@@ -25,6 +25,36 @@ pub struct WindowSize {
 }
 
 impl SessionHandle {
+    fn apply_runtime_settings(
+        &mut self,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_assignments: Option<&InputAssignments>,
+        previous_assignments: &InputAssignments,
+        needs_rebuild: bool,
+        audio_volume_changed: bool,
+    ) -> Result<(), SessionError> {
+        if needs_rebuild {
+            self.rebuild_for_settings(
+                next_settings,
+                next_assignments.unwrap_or(previous_assignments),
+            )?;
+        } else if audio_volume_changed {
+            let volume =
+                f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
+            let volume = if next_settings.local.audio.muted {
+                0.0
+            } else {
+                volume
+            };
+            if let Some(ref mut core) = self.emu_core
+                && let Err(error) = core.set_volume(volume)
+            {
+                log::warn!("set_volume failed: {error}");
+            }
+        }
+        Ok(())
+    }
+
     pub fn metrics(&self) -> ConsoleMetrics {
         self.emu_core
             .as_ref()
@@ -98,23 +128,13 @@ impl SessionHandle {
             self.persistence.flush_mapper_save(core)?;
         }
 
-        if needs_rebuild {
-            let assignments = next_assignments.as_ref().unwrap_or(&previous_assignments);
-            self.rebuild_for_settings(&next_settings, assignments)?;
-        } else if plan.audio_volume_changed {
-            let volume =
-                f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
-            let volume = if next_settings.local.audio.muted {
-                0.0
-            } else {
-                volume
-            };
-            if let Some(ref mut core) = self.emu_core
-                && let Err(e) = core.set_volume(volume)
-            {
-                log::warn!("set_volume failed: {e}");
-            }
-        }
+        self.apply_runtime_settings(
+            &next_settings,
+            next_assignments.as_ref(),
+            &previous_assignments,
+            needs_rebuild,
+            plan.audio_volume_changed,
+        )?;
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
             if needs_rebuild
