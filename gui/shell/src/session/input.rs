@@ -1,8 +1,9 @@
 use std::{collections::HashMap, hash::Hash};
 
+use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
-    AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
+    AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
 use nerust_keyboard::Key;
 use nerust_settings_core::factory::settings_view;
@@ -47,6 +48,43 @@ fn rebuild_input_map<B: InputBinding>(
 }
 
 impl SessionHandle {
+    pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
+        let mut controls = Vec::new();
+        for (attachment_id, profile) in &self.current_assignments.slots {
+            let Some(profile) = profile else {
+                continue;
+            };
+            let group = profile
+                .port_sets()
+                .iter()
+                .position(|set| set.ports.contains(attachment_id))
+                .and_then(|index| profile.port_groups().get(index));
+            let Some(group) = group else {
+                continue;
+            };
+            for info in *group {
+                let role = match info.abstract_key {
+                    Some(AbstractKey::DpadUp) => TouchControlRole::DpadUp,
+                    Some(AbstractKey::DpadDown) => TouchControlRole::DpadDown,
+                    Some(AbstractKey::DpadLeft) => TouchControlRole::DpadLeft,
+                    Some(AbstractKey::DpadRight) => TouchControlRole::DpadRight,
+                    Some(AbstractKey::Button1) => TouchControlRole::FaceButton1,
+                    Some(AbstractKey::Button2) => TouchControlRole::FaceButton2,
+                    Some(AbstractKey::Start) => TouchControlRole::Start,
+                    Some(AbstractKey::Select) => TouchControlRole::Select,
+                    _ => continue,
+                };
+                controls.push(TouchControl {
+                    attachment_id: *attachment_id,
+                    control_id: info.id,
+                    role,
+                    label: info.label.to_string(),
+                });
+            }
+        }
+        TouchOverlayModel { revision, controls }
+    }
+
     /// Reassign controllers and rebuild the core.
     pub fn reassign_controllers(
         &mut self,

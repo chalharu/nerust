@@ -16,7 +16,7 @@ use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::load::MediaObject,
-    touch::{TouchOverlayAction, TouchPoint},
+    touch::{TouchControl, TouchControlRole, TouchOverlayAction, TouchPoint, TouchRect},
 };
 use nerust_gui_runtime::{
     settings::{
@@ -34,7 +34,7 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
 };
-use nerust_nes_controller::touch::{PortraitTouchOverlay, TouchTarget, actions_for_target};
+use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent};
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
@@ -160,6 +160,106 @@ fn show_toast(app: &AndroidApp, message: &str) {
     });
 }
 
+#[derive(Debug)]
+struct TouchZone {
+    control: TouchControl,
+    bounds: TouchRect,
+}
+
+#[derive(Debug)]
+struct ProfileTouchOverlay {
+    zones: Vec<TouchZone>,
+}
+
+impl ProfileTouchOverlay {
+    fn new(width: f32, height: f32, controls: Vec<TouchControl>) -> Self {
+        let control_top = height * 0.54;
+        let control_height = height - control_top;
+        let dpad_left = width * 0.08;
+        let dpad_size = width * 0.28;
+        let dpad_center_x = dpad_left + dpad_size * 0.50;
+        let dpad_center_y = control_top + control_height * 0.58;
+        let dpad_arm = dpad_size * 0.28;
+        let dpad_extent = dpad_size * 0.42;
+        let action_size = width * 0.14;
+        let action_gap = width * 0.04;
+        let action_left = width * 0.64;
+        let action_top = dpad_center_y - action_size * 0.50;
+        let center_width = width * 0.10;
+        let center_height = height * 0.038;
+        let center_gap = width * 0.03;
+        let center_left = width * 0.43;
+        let center_top = control_top + control_height * 0.16;
+
+        let bounds_for = |role| match role {
+            TouchControlRole::DpadUp => TouchRect {
+                x: dpad_center_x - dpad_arm * 0.5,
+                y: dpad_center_y - dpad_extent,
+                width: dpad_arm,
+                height: dpad_extent - dpad_arm * 0.5,
+            },
+            TouchControlRole::DpadDown => TouchRect {
+                x: dpad_center_x - dpad_arm * 0.5,
+                y: dpad_center_y + dpad_arm * 0.5,
+                width: dpad_arm,
+                height: dpad_extent - dpad_arm * 0.5,
+            },
+            TouchControlRole::DpadLeft => TouchRect {
+                x: dpad_center_x - dpad_extent,
+                y: dpad_center_y - dpad_arm * 0.5,
+                width: dpad_extent - dpad_arm * 0.5,
+                height: dpad_arm,
+            },
+            TouchControlRole::DpadRight => TouchRect {
+                x: dpad_center_x + dpad_arm * 0.5,
+                y: dpad_center_y - dpad_arm * 0.5,
+                width: dpad_extent - dpad_arm * 0.5,
+                height: dpad_arm,
+            },
+            TouchControlRole::FaceButton2 => TouchRect {
+                x: action_left,
+                y: action_top,
+                width: action_size,
+                height: action_size,
+            },
+            TouchControlRole::FaceButton1 => TouchRect {
+                x: action_left + action_size + action_gap,
+                y: action_top,
+                width: action_size,
+                height: action_size,
+            },
+            TouchControlRole::Select => TouchRect {
+                x: center_left,
+                y: center_top,
+                width: center_width,
+                height: center_height,
+            },
+            TouchControlRole::Start => TouchRect {
+                x: center_left + center_width + center_gap,
+                y: center_top,
+                width: center_width,
+                height: center_height,
+            },
+        };
+        Self {
+            zones: controls
+                .into_iter()
+                .map(|control| TouchZone {
+                    bounds: bounds_for(control.role),
+                    control,
+                })
+                .collect(),
+        }
+    }
+
+    fn hit_test(&self, point: TouchPoint) -> Option<(AttachmentId, DigitalControlId)> {
+        self.zones
+            .iter()
+            .find(|zone| zone.bounds.contains(point))
+            .map(|zone| (zone.control.attachment_id, zone.control.control_id))
+    }
+}
+
 struct AndroidFrontend {
     app: AndroidApp,
     session: SessionHandle,
@@ -169,8 +269,9 @@ struct AndroidFrontend {
     window_id: Option<WindowId>,
     renderer: Option<Box<dyn GpuRenderer>>,
     gpu_factory: Rc<dyn GpuFactory>,
-    overlay: Option<PortraitTouchOverlay>,
-    active_touches: HashMap<u64, TouchTarget>,
+    overlay: Option<ProfileTouchOverlay>,
+    active_touches: HashMap<u64, (AttachmentId, DigitalControlId)>,
+    overlay_revision: u64,
     is_resumed: bool,
     foreground_resume_pending: bool,
     foreground_retry_attempts: u32,
@@ -239,6 +340,7 @@ impl AndroidFrontend {
             gpu_factory,
             overlay: None,
             active_touches: HashMap::new(),
+            overlay_revision: 0,
             is_resumed: false,
             foreground_resume_pending: false,
             foreground_retry_attempts: 0,
@@ -873,9 +975,12 @@ impl AndroidFrontend {
             return;
         };
         let size = window.inner_size();
-        self.overlay = Some(PortraitTouchOverlay::new(
+        self.overlay_revision = self.overlay_revision.wrapping_add(1);
+        let model = self.session.touch_overlay_model(self.overlay_revision);
+        self.overlay = Some(ProfileTouchOverlay::new(
             size.width as f32,
             size.height as f32,
+            model.controls,
         ));
     }
 
@@ -939,17 +1044,25 @@ impl AndroidFrontend {
         }
     }
 
-    fn sync_touch_target(&mut self, touch_id: u64, next_target: Option<TouchTarget>) {
+    fn sync_touch_target(
+        &mut self,
+        touch_id: u64,
+        next_target: Option<(AttachmentId, DigitalControlId)>,
+    ) {
         let previous = self.active_touches.get(&touch_id).copied();
         if previous == next_target {
             return;
         }
         if let Some(previous) = previous {
-            self.apply_touch_actions(actions_for_target(previous, false));
+            self.apply_touch_actions(vec![TouchOverlayAction::Input(
+                DigitalInputEvent::released(previous.0, previous.1),
+            )]);
             self.active_touches.remove(&touch_id);
         }
         if let Some(next) = next_target {
-            self.apply_touch_actions(actions_for_target(next, true));
+            self.apply_touch_actions(vec![TouchOverlayAction::Input(DigitalInputEvent::pressed(
+                next.0, next.1,
+            ))]);
             self.active_touches.insert(touch_id, next);
         }
     }
