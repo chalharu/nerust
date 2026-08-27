@@ -487,7 +487,8 @@ impl GbcPpu {
                 .mode3_pipeline
                 .as_ref()
                 .map_or(self.mode3_sprite_penalty, |p| {
-                    u32::from(p.sprite_extra_dots()).max(self.mode3_sprite_penalty)
+                    u32::from(p.sprite_extra_dots().saturating_add(p.window_extra_dots()))
+                        .max(self.mode3_sprite_penalty)
                 })
     }
 
