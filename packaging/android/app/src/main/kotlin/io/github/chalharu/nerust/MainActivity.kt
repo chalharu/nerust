@@ -433,9 +433,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun resolveSafDirectory(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
         var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
         for (segment in relativePath.split('/').filter(String::isNotBlank)) {
-            current = current.findFile(segment)?.takeIf(DocumentFile::isDirectory)
+            val next = current.findFile(segment)?.takeIf(DocumentFile::isDirectory)
                 ?: if (create) current.createDirectory(segment) else null
-                ?: return null
+            current = next ?: return null
         }
         return current
     }
