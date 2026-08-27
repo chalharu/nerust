@@ -1,6 +1,7 @@
 use std::{mem, sync::Mutex};
 
 use jni::objects::{JObject, JString};
+use nerust_input_traits::AbstractKey;
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
 use super::settings;
@@ -16,6 +17,7 @@ const ACTION_UNLOAD: &str = "unload";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
+    ControllerInput { key: AbstractKey, pressed: bool },
     Exit,
     LoadState,
     OpenRom,
@@ -49,6 +51,26 @@ pub(crate) fn take_actions() -> Vec<MenuAction> {
 }
 
 fn decode_action(raw: &str) -> Option<MenuAction> {
+    if let Some(payload) = raw.strip_prefix("controller:") {
+        let (key, pressed) = payload.split_once(':')?;
+        let key = match key {
+            "button1" => AbstractKey::Button1,
+            "button2" => AbstractKey::Button2,
+            "start" => AbstractKey::Start,
+            "select" => AbstractKey::Select,
+            "up" => AbstractKey::DpadUp,
+            "down" => AbstractKey::DpadDown,
+            "left" => AbstractKey::DpadLeft,
+            "right" => AbstractKey::DpadRight,
+            _ => return None,
+        };
+        let pressed = match pressed {
+            "1" => true,
+            "0" => false,
+            _ => return None,
+        };
+        return Some(MenuAction::ControllerInput { key, pressed });
+    }
     match raw {
         ACTION_EXIT => Some(MenuAction::Exit),
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
@@ -157,5 +179,17 @@ mod tests {
     #[test]
     fn decode_action_rejects_unknown_ids() {
         assert_eq!(decode_action("mystery"), None);
+    }
+
+    #[test]
+    fn decode_action_maps_controller_input() {
+        assert_eq!(
+            decode_action("controller:button1:1"),
+            Some(MenuAction::ControllerInput {
+                key: nerust_input_traits::AbstractKey::Button1,
+                pressed: true,
+            })
+        );
+        assert_eq!(decode_action("controller:unknown:1"), None);
     }
 }

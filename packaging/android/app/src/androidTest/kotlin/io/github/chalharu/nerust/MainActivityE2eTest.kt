@@ -183,7 +183,7 @@ class MainActivityE2eTest {
 
     @Test
     fun portraitControlsOverlayMatchesExpectedArrangement() {
-        val zones = portraitControlsLayout(1080f, 1920f).associateBy { it.label }
+        val zones = controlsLayout(1080f, 1920f).associateBy { it.label }
         val up = requireNotNull(zones["UP"])
         val down = requireNotNull(zones["DOWN"])
         val left = requireNotNull(zones["LEFT"])
@@ -205,6 +205,21 @@ class MainActivityE2eTest {
         assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
         assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
         assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
+    }
+
+    @Test
+    fun landscapeControlsStayInsideSafeScreenBounds() {
+        val width = 1920f
+        val height = 1080f
+        val zones = controlsLayout(width, height)
+        assertEquals(8, zones.size)
+        zones.forEach { zone ->
+            assertTrue(zone.x >= 0f && zone.y >= 0f)
+            assertTrue(zone.x + zone.width <= width)
+            assertTrue(zone.y + zone.height <= height)
+        }
+        val byLabel = zones.associateBy { it.label }
+        assertTrue(requireNotNull(byLabel["RIGHT"]).x < requireNotNull(byLabel["B"]).x)
     }
 
     private fun assertChromeViewAvailable(

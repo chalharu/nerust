@@ -34,7 +34,7 @@ use nerust_gui_shell::{
         commands::{SessionCommand, SessionCommandOutcome},
     },
 };
-use nerust_input_traits::{AttachmentId, DigitalControlId, DigitalInputEvent};
+use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
 use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
@@ -173,23 +173,38 @@ struct ProfileTouchOverlay {
 
 impl ProfileTouchOverlay {
     fn new(width: f32, height: f32, controls: Vec<TouchControl>) -> Self {
-        let control_top = height * 0.54;
+        let portrait = height >= width;
+        let base = width.min(height);
+        let control_top = if portrait { height * 0.54 } else { 0.0 };
         let control_height = height - control_top;
-        let dpad_left = width * 0.08;
-        let dpad_size = width * 0.28;
+        let dpad_left = base * 0.08;
+        let dpad_size = base * 0.28;
         let dpad_center_x = dpad_left + dpad_size * 0.50;
-        let dpad_center_y = control_top + control_height * 0.58;
+        let dpad_center_y = if portrait {
+            control_top + control_height * 0.58
+        } else {
+            height * 0.65
+        };
         let dpad_arm = dpad_size * 0.28;
         let dpad_extent = dpad_size * 0.42;
-        let action_size = width * 0.14;
-        let action_gap = width * 0.04;
-        let action_left = width * 0.64;
+        let action_size = base * 0.14;
+        let action_gap = base * 0.04;
+        let action_left = if portrait {
+            width * 0.64
+        } else {
+            width - base * 0.08 - action_size * 2.0 - action_gap
+        };
         let action_top = dpad_center_y - action_size * 0.50;
-        let center_width = width * 0.10;
-        let center_height = height * 0.038;
-        let center_gap = width * 0.03;
-        let center_left = width * 0.43;
-        let center_top = control_top + control_height * 0.16;
+        let center_width = base * 0.10;
+        let center_height = base * 0.068;
+        let center_gap = base * 0.03;
+        let center_row_width = center_width * 2.0 + center_gap;
+        let center_left = (width - center_row_width) * 0.5;
+        let center_top = if portrait {
+            control_top + control_height * 0.16
+        } else {
+            height * 0.82
+        };
 
         let bounds_for = |role| match role {
             TouchControlRole::DpadUp => TouchRect {
@@ -620,6 +635,9 @@ impl AndroidFrontend {
     fn handle_menu_action(&mut self, action: MenuAction) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
+            MenuAction::ControllerInput { key, pressed } => {
+                self.apply_physical_controller_input(key, pressed);
+            }
             MenuAction::Exit => {
                 if self.session.loaded() {
                     self.session.clear_hidden_lifecycle_state();
@@ -666,6 +684,34 @@ impl AndroidFrontend {
             MenuAction::SaveState => self.save_active_slot(),
             MenuAction::TogglePause => self.toggle_pause(),
         }
+    }
+
+    fn apply_physical_controller_input(&mut self, key: AbstractKey, pressed: bool) {
+        let role = match key {
+            AbstractKey::Button1 => TouchControlRole::FaceButton1,
+            AbstractKey::Button2 => TouchControlRole::FaceButton2,
+            AbstractKey::Start => TouchControlRole::Start,
+            AbstractKey::Select => TouchControlRole::Select,
+            AbstractKey::DpadUp => TouchControlRole::DpadUp,
+            AbstractKey::DpadDown => TouchControlRole::DpadDown,
+            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
+            AbstractKey::DpadRight => TouchControlRole::DpadRight,
+            _ => return,
+        };
+        let model = self.session.touch_overlay_model(self.overlay_revision);
+        let Some(control) = model
+            .controls
+            .into_iter()
+            .find(|control| control.role == role)
+        else {
+            return;
+        };
+        let event = if pressed {
+            DigitalInputEvent::pressed(control.attachment_id, control.control_id)
+        } else {
+            DigitalInputEvent::released(control.attachment_id, control.control_id)
+        };
+        self.session.apply_input_event(event);
     }
 
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
