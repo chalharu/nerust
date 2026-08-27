@@ -109,7 +109,12 @@ private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 private data class DrawerAction(val label: String, val action: String)
 
-private data class AndroidSetting(val key: String, val label: String, val choices: List<String>)
+private data class AndroidSetting(
+    val key: String,
+    val section: String,
+    val label: String,
+    val choices: List<String>,
+)
 
 internal data class OverlayZoneSpec(
     val x: Float,
@@ -151,6 +156,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var controlsOverlayPopup: PopupWindow? = null
     private var controlsOverlayView: View? = null
     private var controllerOverlayHiddenUntil = 0L
+    private var controlsVisibility = "auto"
+    private var controlsOpacityPercent = 65
+    private var controlsScalePercent = 100
+    private var controlsVerticalOffsetPercent = 0
+    private var controlsHaptics = true
     private var drawerChromePopup: PopupWindow? = null
     private var drawerChromeContainer: FrameLayout? = null
     private var drawerEdgeHandleView: View? = null
@@ -300,6 +310,24 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     fun startRomPicker() {
         Log.i(TAG, "startRomPicker")
         startActivityForResult(createRomPickerIntent(), ROM_PICKER_REQUEST_CODE)
+    }
+
+    fun configureControlsOverlay(
+        visibility: String,
+        opacityPercent: Int,
+        scalePercent: Int,
+        verticalOffsetPercent: Int,
+        haptics: Boolean,
+    ) {
+        controlsVisibility = visibility
+        controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
+        controlsScalePercent = scalePercent.coerceIn(50, 150)
+        controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
+        controlsHaptics = haptics
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        scheduleChromeAttach()
     }
 
     @Suppress("DEPRECATION")
@@ -478,6 +506,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         val fields = document.getJSONArray("fields")
         val keys = Array(fields.length()) { fields.getJSONObject(it).getString("key") }
         val labels = Array(fields.length()) { fields.getJSONObject(it).getString("label") }
+        val sections = Array(fields.length()) { fields.getJSONObject(it).getString("section") }
         val choiceStrings =
             Array(fields.length()) { index ->
                 val options = fields.getJSONObject(index).getJSONArray("options")
@@ -490,6 +519,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            sections = sections,
             requestId = requestId,
             ownedByTest = false,
         )
@@ -500,6 +530,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         labels: Array<String>,
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
+        sections: Array<String> = emptyArray(),
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
@@ -507,6 +538,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             labels.indices.map { index ->
                 AndroidSetting(
                     key = keys.getOrNull(index) ?: "setting_$index",
+                    section = sections.getOrNull(index) ?: "general",
                     label = labels[index],
                     choices =
                         choiceStrings
@@ -527,7 +559,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         showComposeDialog(
             dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
-            presentation = DIALOG_PRESENTATION_CARD,
+            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
@@ -624,7 +656,10 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
-        if (SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil) {
+        if (
+            controlsVisibility == "hidden" ||
+                controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+        ) {
             return true
         }
         val existing = controlsOverlayPopup
@@ -658,6 +693,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun hideControlsForControllerInput() {
+        if (controlsVisibility != "auto") {
+            return
+        }
         controllerOverlayHiddenUntil = SystemClock.elapsedRealtime() + CONTROLLER_OVERLAY_HIDE_MS
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
@@ -711,7 +749,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun createControlsOverlay(): View =
-        ControlsOverlayView(this).apply {
+        ControlsOverlayView(
+            this,
+            controlsOpacityPercent,
+            controlsScalePercent,
+            controlsVerticalOffsetPercent,
+        ).apply {
             tag = CONTROLS_OVERLAY_TAG
             layoutParams =
                 FrameLayout.LayoutParams(
@@ -1281,8 +1324,11 @@ private fun NerustSettingsDialogCard(
         }
     var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
 
-    NerustDialogHost {
-        Box(contentAlignment = Alignment.Center) {
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier.padding(WindowInsets.safeDrawing.asPaddingValues()),
+            contentAlignment = Alignment.Center,
+        ) {
             NerustDialogCard(
                 title = "Settings",
                 buttons = {
@@ -1301,6 +1347,13 @@ private fun NerustSettingsDialogCard(
                             .heightIn(max = 360.dp),
                 ) {
                     itemsIndexed(settings) { index, setting ->
+                        if (index == 0 || settings[index - 1].section != setting.section) {
+                            Text(
+                                text = setting.section.replaceFirstChar(Char::uppercase),
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                            )
+                        }
                         val selectedValue = setting.choices.getOrElse(selections[index]) { "?" }
                         DialogSettingButton(
                             label = setting.label,
@@ -1402,27 +1455,33 @@ private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> 
     }
 }
 
-private class ControlsOverlayView(context: Context) : View(context) {
+private class ControlsOverlayView(
+    context: Context,
+    opacityPercent: Int,
+    private val scalePercent: Int,
+    private val verticalOffsetPercent: Int,
+) : View(context) {
+    private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(48, 255, 255, 255)
+            color = Color.argb((48 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
     private val strokePaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 255, 255, 255)
+            color = Color.argb((160 * opacity).toInt(), 255, 255, 255)
             strokeWidth = 2f
             style = Paint.Style.STROKE
         }
     private val textPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(220, 255, 255, 255)
+            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
     private val arrowPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(220, 255, 255, 255)
+            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
 
@@ -1434,7 +1493,7 @@ private class ControlsOverlayView(context: Context) : View(context) {
             return
         }
 
-        controlsLayout(viewWidth, viewHeight).forEach { zone ->
+        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
@@ -1550,27 +1609,36 @@ private class DrawerEdgeSwipeHandleView(
     override fun performClick(): Boolean = super.performClick()
 }
 
-internal fun controlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
+internal fun controlsLayout(
+    width: Float,
+    height: Float,
+    scalePercent: Int = 100,
+    verticalOffsetPercent: Int = 0,
+): List<OverlayZoneSpec> {
     val portrait = height >= width
     val base = min(width, height)
+    val scale = scalePercent.coerceIn(50, 150) / 100f
+    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
     val controlTop = if (portrait) height * 0.54f else 0f
     val controlHeight = height - controlTop
     val dpadLeft = base * 0.08f
-    val dpadSize = base * 0.28f
+    val dpadSize = base * 0.28f * scale
     val dpadCenterX = dpadLeft + dpadSize * 0.5f
-    val dpadCenterY = if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f
+    val dpadCenterY =
+        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
     val dpadArm = dpadSize * 0.28f
     val dpadExtent = dpadSize * 0.42f
-    val actionSize = base * 0.14f
+    val actionSize = base * 0.14f * scale
     val actionGap = base * 0.04f
     val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
     val actionTop = dpadCenterY - actionSize * 0.5f
-    val centerButtonWidth = base * 0.10f
-    val centerButtonHeight = base * 0.068f
+    val centerButtonWidth = base * 0.10f * scale
+    val centerButtonHeight = base * 0.068f * scale
     val centerGap = base * 0.03f
     val centerRowWidth = centerButtonWidth * 2f + centerGap
     val centerStartX = (width - centerRowWidth) * 0.5f
-    val centerTop = if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f
+    val centerTop =
+        (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
 
     return listOf(
         OverlayZoneSpec(

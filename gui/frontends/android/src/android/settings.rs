@@ -15,6 +15,7 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_settings::{local::TouchOverlayVisibility, shared::StoragePolicy};
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
@@ -28,6 +29,10 @@ const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
 const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
+const OVERLAY_SCALE_MIN: u8 = 50;
+const OVERLAY_SCALE_MAX: u8 = 150;
+const OVERLAY_OFFSET_MIN: i8 = -30;
+const OVERLAY_OFFSET_MAX: i8 = 30;
 const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
@@ -46,6 +51,12 @@ pub(crate) struct AndroidSettings {
     pub latency_ms: u16,
     pub sample_rate: u32,
     pub vsync: bool,
+    pub storage_policy: StoragePolicy,
+    pub overlay_visibility: TouchOverlayVisibility,
+    pub overlay_opacity_percent: u8,
+    pub overlay_scale_percent: u8,
+    pub overlay_vertical_offset_percent: i8,
+    pub overlay_haptics: bool,
     system_choices: Vec<AndroidSystemChoice>,
 }
 
@@ -100,6 +111,12 @@ impl AndroidSettings {
             latency_ms: snapshot.local.audio.latency_ms,
             sample_rate: snapshot.local.audio.sample_rate,
             vsync: snapshot.local.video.presentation.vsync,
+            storage_policy: snapshot.shared.persistence.storage_policy,
+            overlay_visibility: snapshot.local.touch_overlay.visibility,
+            overlay_opacity_percent: snapshot.local.touch_overlay.opacity_percent,
+            overlay_scale_percent: snapshot.local.touch_overlay.scale_percent,
+            overlay_vertical_offset_percent: snapshot.local.touch_overlay.vertical_offset_percent,
+            overlay_haptics: snapshot.local.touch_overlay.haptics,
             system_choices,
         }
     }
@@ -117,6 +134,12 @@ impl AndroidSettings {
         snapshot.local.audio.latency_ms = self.latency_ms;
         snapshot.local.audio.sample_rate = self.sample_rate;
         snapshot.local.video.presentation.vsync = self.vsync;
+        snapshot.shared.persistence.storage_policy = self.storage_policy;
+        snapshot.local.touch_overlay.visibility = self.overlay_visibility;
+        snapshot.local.touch_overlay.opacity_percent = self.overlay_opacity_percent;
+        snapshot.local.touch_overlay.scale_percent = self.overlay_scale_percent;
+        snapshot.local.touch_overlay.vertical_offset_percent = self.overlay_vertical_offset_percent;
+        snapshot.local.touch_overlay.haptics = self.overlay_haptics;
 
         for choice in &self.system_choices {
             let factory = registry
@@ -144,6 +167,12 @@ impl AndroidSettings {
             "latency_ms".to_string(),
             "sample_rate".to_string(),
             "vsync".to_string(),
+            "storage.policy".to_string(),
+            "controls.overlay.visibility".to_string(),
+            "controls.overlay.opacity".to_string(),
+            "controls.overlay.scale".to_string(),
+            "controls.overlay.vertical_offset".to_string(),
+            "controls.overlay.haptics".to_string(),
         ];
         keys.extend(
             self.system_choices
@@ -161,6 +190,12 @@ impl AndroidSettings {
             "Audio Latency (ms)".to_string(),
             "Sample Rate (Hz)".to_string(),
             "VSync".to_string(),
+            "Save Location".to_string(),
+            "Touch Overlay".to_string(),
+            "Overlay Opacity".to_string(),
+            "Overlay Scale".to_string(),
+            "Overlay Vertical Position".to_string(),
+            "Overlay Haptics".to_string(),
         ];
         labels.extend(
             self.system_choices
@@ -173,6 +208,16 @@ impl AndroidSettings {
     /// Tab-separated choice labels, one string per setting, in key order.
     pub(crate) fn dialog_choices(&self) -> Vec<String> {
         let mut choices = vec![
+            "Off\tOn".to_string(),
+            "Next to ROM\tApp Storage\tCustom Directory".to_string(),
+            "Always\tAuto\tHidden".to_string(),
+            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
+            join_tab_labels(
+                (OVERLAY_SCALE_MIN..=OVERLAY_SCALE_MAX).map(|value| format!("{value}%")),
+            ),
+            join_tab_labels(
+                (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX).map(|value| format!("{value}%")),
+            ),
             "Off\tOn".to_string(),
             join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
             join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
@@ -206,6 +251,33 @@ impl AndroidSettings {
             latency_idx.to_string(),
             sample_rate_idx.to_string(),
             (self.vsync as usize).to_string(),
+            match self.storage_policy {
+                StoragePolicy::Sidecar => 0,
+                StoragePolicy::AppSharedData => 1,
+                StoragePolicy::CustomDirectory => 2,
+            }
+            .to_string(),
+            match self.overlay_visibility {
+                TouchOverlayVisibility::Always => 0,
+                TouchOverlayVisibility::Auto => 1,
+                TouchOverlayVisibility::Hidden => 2,
+            }
+            .to_string(),
+            usize::from(self.overlay_opacity_percent.min(100)).to_string(),
+            usize::from(
+                self.overlay_scale_percent
+                    .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
+                    - OVERLAY_SCALE_MIN,
+            )
+            .to_string(),
+            i16::from(
+                self.overlay_vertical_offset_percent
+                    .clamp(OVERLAY_OFFSET_MIN, OVERLAY_OFFSET_MAX),
+            )
+            .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
+            .unwrap_or_default()
+            .to_string(),
+            (self.overlay_haptics as usize).to_string(),
         ];
         indices.extend(self.system_choices.iter().map(|choice| {
             choice
@@ -250,8 +322,36 @@ impl AndroidSettings {
             1 => true,
             _ => return None,
         };
+        let storage_policy = match indices[5] {
+            0 => StoragePolicy::Sidecar,
+            1 => StoragePolicy::AppSharedData,
+            2 => StoragePolicy::CustomDirectory,
+            _ => return None,
+        };
+        let overlay_visibility = match indices[6] {
+            0 => TouchOverlayVisibility::Always,
+            1 => TouchOverlayVisibility::Auto,
+            2 => TouchOverlayVisibility::Hidden,
+            _ => return None,
+        };
+        let overlay_opacity_percent = u8::try_from(indices[7])
+            .ok()
+            .filter(|value| *value <= 100)?;
+        let overlay_scale_percent = u8::try_from(indices[8])
+            .ok()
+            .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
+            + OVERLAY_SCALE_MIN;
+        let overlay_vertical_offset_percent = i8::try_from(indices[9])
+            .ok()
+            .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
+            + OVERLAY_OFFSET_MIN;
+        let overlay_haptics = match indices[10] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[5..]) {
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[11..]) {
             choice.selected = choice.options.get(*selected_index)?.0.clone();
         }
 
@@ -261,6 +361,12 @@ impl AndroidSettings {
             latency_ms,
             sample_rate,
             vsync,
+            storage_policy,
+            overlay_visibility,
+            overlay_opacity_percent,
+            overlay_scale_percent,
+            overlay_vertical_offset_percent,
+            overlay_haptics,
             system_choices,
         })
     }
@@ -274,8 +380,20 @@ impl AndroidSettings {
             .iter()
             .enumerate()
             .map(|(index, key)| {
+                let section = if key.starts_with("system.") {
+                    key.split('.').take(2).collect::<Vec<_>>().join(".")
+                } else if key.starts_with("controls.") {
+                    "controls".to_string()
+                } else if key.starts_with("storage.") {
+                    "storage".to_string()
+                } else if key == "vsync" {
+                    "video".to_string()
+                } else {
+                    "audio".to_string()
+                };
                 serde_json::json!({
                     "key": key,
+                    "section": section,
                     "label": labels[index],
                     "kind": "choice",
                     "value": indices[index].parse::<usize>().unwrap_or_default(),
@@ -704,8 +822,11 @@ mod tests {
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
-        assert_eq!(&indices[..7], ["0", "100", "40", "1", "1", "1", "0"]);
-        assert_eq!(indices.len(), 9);
+        assert_eq!(
+            &indices[..11],
+            ["0", "100", "40", "1", "1", "0", "1", "65", "50", "30", "1"]
+        );
+        assert_eq!(indices.len(), 15);
     }
 
     #[test]

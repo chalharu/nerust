@@ -160,6 +160,36 @@ fn show_toast(app: &AndroidApp, message: &str) {
     });
 }
 
+fn configure_controls_overlay(
+    app: &AndroidApp,
+    settings: &nerust_gui_settings::local::TouchOverlaySettings,
+) {
+    let visibility = match settings.visibility {
+        nerust_gui_settings::local::TouchOverlayVisibility::Always => "always",
+        nerust_gui_settings::local::TouchOverlayVisibility::Auto => "auto",
+        nerust_gui_settings::local::TouchOverlayVisibility::Hidden => "hidden",
+    };
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+        let visibility = env.new_string(visibility)?;
+        env.call_method(
+            &activity,
+            jni_str!("configureControlsOverlay"),
+            jni_sig!("(Ljava/lang/String;IIIZ)V"),
+            &[
+                jni::objects::JValue::Object(visibility.as_ref()),
+                jni::objects::JValue::Int(i32::from(settings.opacity_percent)),
+                jni::objects::JValue::Int(i32::from(settings.scale_percent)),
+                jni::objects::JValue::Int(i32::from(settings.vertical_offset_percent)),
+                jni::objects::JValue::Bool(settings.haptics),
+            ],
+        )?;
+        Ok(())
+    });
+}
+
 #[derive(Debug)]
 struct TouchZone {
     control: TouchControl,
@@ -172,22 +202,30 @@ struct ProfileTouchOverlay {
 }
 
 impl ProfileTouchOverlay {
-    fn new(width: f32, height: f32, controls: Vec<TouchControl>) -> Self {
+    fn new(
+        width: f32,
+        height: f32,
+        controls: Vec<TouchControl>,
+        scale_percent: u8,
+        vertical_offset_percent: i8,
+    ) -> Self {
         let portrait = height >= width;
         let base = width.min(height);
+        let scale = f32::from(scale_percent.clamp(50, 150)) / 100.0;
+        let vertical_offset = height * f32::from(vertical_offset_percent.clamp(-30, 30)) / 100.0;
         let control_top = if portrait { height * 0.54 } else { 0.0 };
         let control_height = height - control_top;
         let dpad_left = base * 0.08;
-        let dpad_size = base * 0.28;
+        let dpad_size = base * 0.28 * scale;
         let dpad_center_x = dpad_left + dpad_size * 0.50;
         let dpad_center_y = if portrait {
             control_top + control_height * 0.58
         } else {
             height * 0.65
-        };
+        } + vertical_offset;
         let dpad_arm = dpad_size * 0.28;
         let dpad_extent = dpad_size * 0.42;
-        let action_size = base * 0.14;
+        let action_size = base * 0.14 * scale;
         let action_gap = base * 0.04;
         let action_left = if portrait {
             width * 0.64
@@ -195,8 +233,8 @@ impl ProfileTouchOverlay {
             width - base * 0.08 - action_size * 2.0 - action_gap
         };
         let action_top = dpad_center_y - action_size * 0.50;
-        let center_width = base * 0.10;
-        let center_height = base * 0.068;
+        let center_width = base * 0.10 * scale;
+        let center_height = base * 0.068 * scale;
         let center_gap = base * 0.03;
         let center_row_width = center_width * 2.0 + center_gap;
         let center_left = (width - center_row_width) * 0.5;
@@ -204,7 +242,7 @@ impl ProfileTouchOverlay {
             control_top + control_height * 0.16
         } else {
             height * 0.82
-        };
+        } + vertical_offset;
 
         let bounds_for = |role| match role {
             TouchControlRole::DpadUp => TouchRect {
@@ -1023,13 +1061,23 @@ impl AndroidFrontend {
             return;
         };
         let size = window.inner_size();
+        let overlay_settings = &self.session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = self.session.touch_overlay_model(self.overlay_revision);
-        self.overlay = Some(ProfileTouchOverlay::new(
-            size.width as f32,
-            size.height as f32,
-            model.controls,
-        ));
+        self.overlay = if overlay_settings.visibility
+            == nerust_gui_settings::local::TouchOverlayVisibility::Hidden
+        {
+            None
+        } else {
+            Some(ProfileTouchOverlay::new(
+                size.width as f32,
+                size.height as f32,
+                model.controls,
+                overlay_settings.scale_percent,
+                overlay_settings.vertical_offset_percent,
+            ))
+        };
+        configure_controls_overlay(&self.app, overlay_settings);
     }
 
     fn render(&mut self) {
