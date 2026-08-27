@@ -5,7 +5,7 @@ mod settings;
 mod storage;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::c_void,
     path::PathBuf,
     rc::Rc,
@@ -332,6 +332,7 @@ struct AndroidFrontend {
     overlay: Option<ProfileTouchOverlay>,
     active_touches: HashMap<u64, (AttachmentId, DigitalControlId)>,
     overlay_revision: u64,
+    physical_pressed: HashSet<(i32, AbstractKey)>,
     is_resumed: bool,
     foreground_resume_pending: bool,
     foreground_retry_attempts: u32,
@@ -407,6 +408,7 @@ impl AndroidFrontend {
             overlay: None,
             active_touches: HashMap::new(),
             overlay_revision: 0,
+            physical_pressed: HashSet::new(),
             is_resumed: false,
             foreground_resume_pending: false,
             foreground_retry_attempts: 0,
@@ -506,6 +508,7 @@ impl AndroidFrontend {
 
         self.session.clear_input();
         self.active_touches.clear();
+        self.physical_pressed.clear();
         nerust_gui_shell::load::RomLoadTarget::set_active_system(
             &mut self.session,
             system_id.as_ref(),
@@ -661,6 +664,7 @@ impl AndroidFrontend {
         }
         self.session.clear_input();
         self.active_touches.clear();
+        self.physical_pressed.clear();
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
             self.session.clear_hidden_lifecycle_state();
@@ -684,6 +688,7 @@ impl AndroidFrontend {
         self.renderer = None;
         self.overlay = None;
         self.active_touches.clear();
+        self.physical_pressed.clear();
         self.shell.needs_redraw = true;
     }
 
@@ -727,8 +732,12 @@ impl AndroidFrontend {
     fn handle_menu_action(&mut self, action: MenuAction) {
         log::info!("AndroidFrontend::handle_menu_action: {:?}", action);
         match action {
-            MenuAction::ControllerInput { key, pressed } => {
-                self.apply_physical_controller_input(key, pressed);
+            MenuAction::ControllerInput {
+                device_id,
+                key,
+                pressed,
+            } => {
+                self.apply_physical_controller_input(device_id, key, pressed);
             }
             MenuAction::Exit => {
                 if self.session.loaded() {
@@ -778,7 +787,19 @@ impl AndroidFrontend {
         }
     }
 
-    fn apply_physical_controller_input(&mut self, key: AbstractKey, pressed: bool) {
+    fn apply_physical_controller_input(&mut self, device_id: i32, key: AbstractKey, pressed: bool) {
+        let changed = if pressed {
+            self.physical_pressed.insert((device_id, key))
+        } else {
+            self.physical_pressed.remove(&(device_id, key))
+        };
+        if !changed {
+            return;
+        }
+        let effective_pressed = self
+            .physical_pressed
+            .iter()
+            .any(|(_, pressed_key)| *pressed_key == key);
         let role = match key {
             AbstractKey::Button1 => TouchControlRole::FaceButton1,
             AbstractKey::Button2 => TouchControlRole::FaceButton2,
@@ -798,7 +819,7 @@ impl AndroidFrontend {
         else {
             return;
         };
-        let event = if pressed {
+        let event = if effective_pressed {
             DigitalInputEvent::pressed(control.attachment_id, control.control_id)
         } else {
             DigitalInputEvent::released(control.attachment_id, control.control_id)
@@ -1369,6 +1390,7 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
                 self.session.clear_input();
+                self.physical_pressed.clear();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);

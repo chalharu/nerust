@@ -17,7 +17,11 @@ const ACTION_UNLOAD: &str = "unload";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
-    ControllerInput { key: AbstractKey, pressed: bool },
+    ControllerInput {
+        device_id: i32,
+        key: AbstractKey,
+        pressed: bool,
+    },
     Exit,
     LoadState,
     OpenRom,
@@ -52,7 +56,13 @@ pub(crate) fn take_actions() -> Vec<MenuAction> {
 
 fn decode_action(raw: &str) -> Option<MenuAction> {
     if let Some(payload) = raw.strip_prefix("controller:") {
-        let (key, pressed) = payload.split_once(':')?;
+        let mut parts = payload.split(':');
+        let device_id = parts.next()?.parse().ok()?;
+        let key = parts.next()?;
+        let pressed = parts.next()?;
+        if parts.next().is_some() {
+            return None;
+        }
         let key = match key {
             "button1" => AbstractKey::Button1,
             "button2" => AbstractKey::Button2,
@@ -69,7 +79,11 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
             "0" => false,
             _ => return None,
         };
-        return Some(MenuAction::ControllerInput { key, pressed });
+        return Some(MenuAction::ControllerInput {
+            device_id,
+            key,
+            pressed,
+        });
     }
     match raw {
         ACTION_EXIT => Some(MenuAction::Exit),
@@ -184,12 +198,13 @@ mod tests {
     #[test]
     fn decode_action_maps_controller_input() {
         assert_eq!(
-            decode_action("controller:button1:1"),
+            decode_action("controller:7:button1:1"),
             Some(MenuAction::ControllerInput {
+                device_id: 7,
                 key: nerust_input_traits::AbstractKey::Button1,
                 pressed: true,
             })
         );
-        assert_eq!(decode_action("controller:unknown:1"), None);
+        assert_eq!(decode_action("controller:7:unknown:1"), None);
     }
 }
