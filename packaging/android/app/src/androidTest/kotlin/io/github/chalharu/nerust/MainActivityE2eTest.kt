@@ -169,6 +169,32 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun appLaunchesAfterTermination() {
+        assertDrawerHandleAvailable(launchActivity())
+    }
+
+    @Suppress("DEPRECATION")
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun backTerminatesApplicationProcess() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.onBackPressed()
+        }
+        SystemClock.sleep(STARTUP_TIMEOUT_MS)
+        fail("Back should terminate the application process")
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun exitTerminatesApplicationProcess() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest("exit")
+        }
+        SystemClock.sleep(STARTUP_TIMEOUT_MS)
+        fail("Exit should terminate the application process")
+    }
+
     private fun launchActivity(): MainActivity {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val launchIntent =

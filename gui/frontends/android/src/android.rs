@@ -92,6 +92,12 @@ pub(crate) fn register_main_activity_natives(
                 settings::Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult
                     as *mut c_void,
             ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onActivityDestroyed"),
+                jni_str!("()V"),
+                bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
+                    as *mut c_void,
+            ),
         ]
     };
     unsafe { env.register_native_methods(class, &methods) }
@@ -784,20 +790,11 @@ impl AndroidFrontend {
                     }
                 }
                 self.session.flush_before_exit();
-                // Finish the activity and kill the process so the next launch
-                // starts with a clean slate (swipe-kill semantics).
                 let vm = unsafe { jni::JavaVM::from_raw(self.app.vm_as_ptr() as _) };
                 let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
                     let activity_raw = self.app.activity_as_ptr() as jni::sys::jobject;
                     let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
                     let _ = env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[]);
-                    let system = env.find_class(jni_str!("java/lang/System"))?;
-                    let _ = env.call_static_method(
-                        &system,
-                        jni_str!("exit"),
-                        jni_sig!("(I)V"),
-                        &[jni::objects::JValue::Int(0)],
-                    );
                     Ok(())
                 });
             }
@@ -1488,6 +1485,12 @@ impl ApplicationHandler for AndroidFrontend {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if bridge::take_exit_request() {
+            self.session.flush_before_exit();
+            self.release_window_resources();
+            event_loop.exit();
+            return;
+        }
         let now = Instant::now();
         self.try_resume_foreground(event_loop);
         if let Some(result) = picker::take_result() {
