@@ -560,11 +560,11 @@ impl GbcPpu {
     fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
-            // The fetcher pays the raw SCX fine-scroll delay, but the CPU
-            // observes the mode-3→0 boundary on 4-T-cycle bus phases. Round
-            // the STAT/access boundary up to 0/4/8 T-cycles (mooneye
-            // hblank_ly_scx_timing-GS).
-            self.mode3_scx_penalty = u32::from((self.scx & 7).div_ceil(4) * 4);
+            self.mode3_scx_penalty = if self.lcdc & 0x02 != 0 {
+                u32::from(self.scx & 7)
+            } else {
+                u32::from((self.scx & 7).div_ceil(4) * 4)
+            };
             self.mode3_sprite_penalty = 0;
             let mut pipeline = Mode3Pipeline::new(
                 Registers {
@@ -1529,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn dmg_scx_quantizes_cpu_visible_hblank_boundary() {
+    fn dmg_scx_quantizes_cpu_visible_hblank_boundary_without_sprites() {
         let expected = [0, 4, 4, 4, 4, 8, 8, 8];
         for (scx, expected_penalty) in expected.into_iter().enumerate() {
             let mut p = ppu();
@@ -1537,6 +1537,18 @@ mod tests {
             p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
             p.start_pipeline_if_needed();
             assert_eq!(p.mode3_scx_penalty, expected_penalty, "SCX={scx}");
+        }
+    }
+
+    #[test]
+    fn dmg_scx_uses_raw_fine_scroll_when_objects_are_enabled() {
+        for scx in 0..8 {
+            let mut p = ppu();
+            p.lcdc |= 0x02;
+            p.scx = scx;
+            p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+            p.start_pipeline_if_needed();
+            assert_eq!(p.mode3_scx_penalty, u32::from(scx), "SCX={scx}");
         }
     }
 

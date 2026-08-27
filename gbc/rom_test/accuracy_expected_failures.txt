@@ -210,12 +210,6 @@ gbmicro_poweron_vram_025@dmg
 gbmicro_poweron_vram_069@dmg
 gbmicro_poweron_vram_139@dmg
 gbmicro_poweron_vram_183@dmg
-gbmicro_ppu_sprite0_scx1_b@dmg
-gbmicro_ppu_sprite0_scx2_b@dmg
-gbmicro_ppu_sprite0_scx3_b@dmg
-gbmicro_ppu_sprite0_scx5_b@dmg
-gbmicro_ppu_sprite0_scx6_b@dmg
-gbmicro_ppu_sprite0_scx7_b@dmg
 gbmicro_stat_write_glitch_l0_a@dmg
 gbmicro_stat_write_glitch_l0_b@dmg
 gbmicro_stat_write_glitch_l1_b@dmg
