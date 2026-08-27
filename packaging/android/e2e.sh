@@ -33,9 +33,25 @@ trap dump_logcat_on_failure EXIT
 run_instrumentation() {
     local tests="$1"
     local output
-    output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}")"
+    output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
-    grep -Eq '^OK \([0-9]+ tests?\)$' <<< "${output}"
+    if grep -Eq '^OK \([0-9]+ tests?\)$' <<< "${output}"; then
+        return 0
+    fi
+    grep -q 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.' <<< "${output}" &&
+        grep -q 'INSTRUMENTATION_STATUS_CODE: 0' <<< "${output}" &&
+        ! grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"
+}
+
+expect_process_termination() {
+    local test="$1"
+    local output
+    output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
+    printf '%s\n' "${output}"
+    if grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"; then
+        return 1
+    fi
+    ! adb shell pidof "${APP_PACKAGE}" >/dev/null
 }
 
 rm -rf "${JNI_LIBS_DIR}"
@@ -60,4 +76,8 @@ adb install "${TEST_APK}"
 run_instrumentation "${TEST_CLASS}#appLoadsGbcAndSupportsDrawerDialogsAndMenuActions"
 adb shell am force-stop "${APP_PACKAGE}"
 run_instrumentation "${TEST_CLASS}#gbcDocumentUriRestoresAfterProcessRestart"
+expect_process_termination "${TEST_CLASS}#backTerminatesApplicationProcess"
+run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
+expect_process_termination "${TEST_CLASS}#exitTerminatesApplicationProcess"
+run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
 run_instrumentation "${TEST_CLASS}#runtimeMeetsMinimumSupportedApi,${TEST_CLASS}#romPickerIntentUsesSafPersistableReadAccess,${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWriteAccess,${TEST_CLASS}#portraitControlsOverlayMatchesExpectedArrangement,${TEST_CLASS}#landscapeControlsStayInsideSafeScreenBounds"

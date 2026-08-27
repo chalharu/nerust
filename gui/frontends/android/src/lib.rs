@@ -91,6 +91,7 @@ pub fn android_main(app: AndroidApp) {
     })) {
         Ok(Ok(())) => {
             log::info!("android_main: exited cleanly");
+            std::process::exit(0);
         }
         Ok(Err(error)) => {
             log::error!("android_main: frontend failed: {error:#}");

@@ -364,6 +364,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
+        onActivityDestroyed()
         super.onDestroy()
     }
 
@@ -1212,6 +1213,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private external fun onDirectoryPickerResult(uri: String?)
 
     private external fun onSettingsDialogResult(result: String?)
+
+    private external fun onActivityDestroyed()
 
     companion object {
         private const val TAG = "Nerust"
