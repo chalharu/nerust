@@ -17,7 +17,6 @@ pub(crate) struct MemoryState {
     wram: Vec<u8>,
     wram_bank: u8,
     hram: Vec<u8>,
-    boot_rom_mapped: bool,
     ppu: PpuState,
     apu: GbcApu,
     interrupt: InterruptController,
@@ -29,7 +28,7 @@ pub(crate) struct MemoryState {
     hwio_72_75: [u8; 4],
     double_speed: bool,
     speed_switch_pending: bool,
-    key1_boot_value: bool,
+    key1_dmg_compat_value: bool,
     hdma: HdmaController,
     cgb_mode: bool,
     tick: u32,
@@ -73,8 +72,6 @@ pub struct GbcMemoryBus {
     wram: Box<[u8; WRAM_SIZE]>,
     wram_bank: u8,
     hram: [u8; HRAM_SIZE],
-    boot_rom: [u8; 0x100],
-    boot_rom_mapped: bool,
 
     ppu: GbcPpu,
     apu: GbcApu,
@@ -90,9 +87,9 @@ pub struct GbcMemoryBus {
 
     double_speed: bool,
     speed_switch_pending: bool,
-    /// KEY1 reads $FF before the boot ROM finishes (i.e. while the harness
-    /// has not written $FF50). After boot it reports speed/pending bits.
-    key1_boot_value: bool,
+    /// KEY1 reads $FF in CGB DMG-compatibility mode; native CGB games read
+    /// the speed and pending-switch bits.
+    key1_dmg_compat_value: bool,
 
     hdma: HdmaController,
 
@@ -131,7 +128,6 @@ impl GbcMemoryBus {
             wram: self.wram.to_vec(),
             wram_bank: self.wram_bank,
             hram: self.hram.to_vec(),
-            boot_rom_mapped: self.boot_rom_mapped,
             ppu: self.ppu.export_state()?,
             apu: self.apu.export_state()?,
             interrupt: self.interrupt.clone(),
@@ -143,7 +139,7 @@ impl GbcMemoryBus {
             hwio_72_75: self.hwio_72_75,
             double_speed: self.double_speed,
             speed_switch_pending: self.speed_switch_pending,
-            key1_boot_value: self.key1_boot_value,
+            key1_dmg_compat_value: self.key1_dmg_compat_value,
             hdma: self.hdma.clone(),
             cgb_mode: self.cgb_mode,
             tick: self.tick,
@@ -170,7 +166,6 @@ impl GbcMemoryBus {
         self.wram.copy_from_slice(&state.wram);
         self.wram_bank = state.wram_bank;
         self.hram.copy_from_slice(&state.hram);
-        self.boot_rom_mapped = state.boot_rom_mapped;
         self.ppu = ppu;
         self.apu = apu;
         self.interrupt = state.interrupt;
@@ -182,7 +177,7 @@ impl GbcMemoryBus {
         self.hwio_72_75 = state.hwio_72_75;
         self.double_speed = state.double_speed;
         self.speed_switch_pending = state.speed_switch_pending;
-        self.key1_boot_value = state.key1_boot_value;
+        self.key1_dmg_compat_value = state.key1_dmg_compat_value;
         self.hdma = state.hdma;
         self.cgb_mode = state.cgb_mode;
         self.tick = state.tick;
@@ -195,14 +190,12 @@ impl GbcMemoryBus {
         Ok(())
     }
 
-    pub fn new(boot_rom: [u8; 0x100], boot_rom_mapped: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             cartridge: Cartridge::default(),
             wram: Box::new([0; WRAM_SIZE]),
             wram_bank: 1,
             hram: [0; HRAM_SIZE],
-            boot_rom,
-            boot_rom_mapped,
 
             ppu: GbcPpu::default(),
             apu: GbcApu::default(),
@@ -216,7 +209,7 @@ impl GbcMemoryBus {
 
             double_speed: false,
             speed_switch_pending: false,
-            key1_boot_value: true,
+            key1_dmg_compat_value: true,
 
             hdma: HdmaController::new(),
             cgb_mode: false,
@@ -262,13 +255,6 @@ impl GbcMemoryBus {
             0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
             0xFF4F | 0xFF6C if self.cgb_mode => self.ppu.read_register(addr),
             0xFF46 => self.dma.read_register(),
-            0xFF50 => {
-                if self.boot_rom_mapped {
-                    0xFE
-                } else {
-                    0xFF
-                }
-            }
             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.read_palette(addr),
             0xFF4D if self.cgb_mode => self.read_key1(),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
@@ -284,11 +270,10 @@ impl GbcMemoryBus {
         }
     }
 
-    /// Cartridge, VRAM, WRAM, HRAM, and boot ROM — shared between
+    /// Cartridge, VRAM, WRAM, and HRAM — shared between
     /// `read()` (CPU access) and `read_raw()` (DMA access).
     fn read_storage(&self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
             0x0000..=0x7FFF => self.cartridge.read_rom(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cartridge.read_ram(addr),
@@ -367,12 +352,6 @@ impl GbcMemoryBus {
             0xFF4D if self.cgb_mode => self.write_key1(value),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
             0xFF55 if self.cgb_mode => self.write_hdma5(value),
-            0xFF50 => {
-                if value & 0x01 != 0 {
-                    self.boot_rom_mapped = false;
-                    self.key1_boot_value = false;
-                }
-            }
             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
             0xFF70 if self.cgb_mode => {
                 if value & 0x07 != 0 {
@@ -398,12 +377,16 @@ impl GbcMemoryBus {
     }
 
     fn write_hdma5(&mut self, value: u8) {
-        // HDMA requires a valid VRAM destination ($8000-$9FFF). With
-        // an invalid destination the transfer does not start and
-        // HDMA5 stays $FF (idle), e.g. after boot FF51-54 read $FF.
-        if self.hdma.dst & 0xE000 == 0x8000 {
-            self.hdma.start(value);
-            if !self.hdma.hblank_mode {
+        if self.hdma.active && self.hdma.hblank_mode && value & 0x80 == 0 {
+            self.hdma.cancel();
+            return;
+        }
+        if self.hdma.dst & 0xE000 != 0x8000 {
+            return;
+        }
+        self.hdma.start(value);
+        if !self.hdma.hblank_mode {
+            while self.hdma.should_transfer_gdma() {
                 self.transfer_hdma_block();
             }
         }
@@ -481,8 +464,9 @@ impl GbcMemoryBus {
         let t1 = self.tick % 4;
 
         let video = 1u32;
+        let was_hblank = self.ppu.is_hblank();
         let ppu_res = self.ppu.step(video);
-        self.advance_ppu_interrupts(&ppu_res);
+        self.advance_ppu_interrupts(was_hblank, &ppu_res);
         // Timer must be stepped before APU to ensure proper synchronization
         // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
@@ -493,8 +477,7 @@ impl GbcMemoryBus {
         ppu_res.frame_done
     }
 
-    fn advance_ppu_interrupts(&mut self, ppu_res: &PpuStepResult) {
-        let was_hblank = self.ppu.is_hblank();
+    fn advance_ppu_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
         let now_hblank = self.ppu.is_hblank();
         if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
             self.transfer_hdma_block();
@@ -608,7 +591,7 @@ impl GbcMemoryBus {
     /// Native CGB games can read the speed/switch bits, while a CGB running
     /// a DMG-compatible game reads $FF (mooneye boot_hwio-C).
     pub fn set_post_boot_key1(&mut self, cgb_game: bool) {
-        self.key1_boot_value = !cgb_game;
+        self.key1_dmg_compat_value = !cgb_game;
     }
 
     /// Apply the post-boot IO state the boot ROM leaves behind (mooneye
@@ -706,6 +689,13 @@ impl GbcMemoryBus {
         // KEY0: bit 2 = DMG emulation mode, blocks CGB palette register writes
         // opri is not changed here (preserves initialization value)
         self.ppu.raw_set_key0(if enabled { 0x80 } else { 0x04 });
+    }
+
+    pub(crate) fn set_dmg_compatibility_palettes(
+        &mut self,
+        palettes: crate::compatibility_palette::CompatibilityPalettes,
+    ) {
+        self.ppu.set_dmg_compatibility_palettes(palettes);
     }
 
     pub fn is_dma_active(&self) -> bool {
@@ -823,10 +813,9 @@ impl GbcMemoryBus {
 
     fn read_key1(&self) -> u8 {
         // KEY1 ($FF4D): bit 7 reads the current CPU speed (1 = double),
-        // bit 0 the armed speed-switch flag. Before the boot ROM finishes
-        // ($FF50 write) the register reads as $FF (mooneye boot_hwio-C);
-        // afterwards unused bits read as 1 ($7E baseline).
-        if self.key1_boot_value {
+        // bit 0 the armed speed-switch flag. CGB DMG-compatibility mode reads
+        // $FF (mooneye boot_hwio-C); native CGB mode uses a $7E baseline.
+        if self.key1_dmg_compat_value {
             0xFF
         } else {
             0x7E | (u8::from(self.double_speed) << 7) | u8::from(self.speed_switch_pending)
@@ -844,7 +833,7 @@ impl GbcMemoryBus {
 
 impl Default for GbcMemoryBus {
     fn default() -> Self {
-        Self::new([0; 0x100], false)
+        Self::new()
     }
 }
 
@@ -863,7 +852,7 @@ mod tests {
     use super::*;
 
     fn bus() -> GbcMemoryBus {
-        GbcMemoryBus::new([0; 0x100], false)
+        GbcMemoryBus::new()
     }
 
     fn cgb_bus() -> GbcMemoryBus {
@@ -1005,19 +994,59 @@ mod tests {
     }
 
     #[test]
-    fn write_boot_rom_disable_unmaps() {
-        let mut bus = GbcMemoryBus::new([0x00; 0x100], true);
-        assert!(bus.boot_rom_mapped);
-        bus.write(0xFF50, 0x01);
-        assert!(!bus.boot_rom_mapped);
+    fn gdma_transfers_every_requested_block() {
+        let mut bus = cgb_bus();
+        for offset in 0..32u16 {
+            bus.write(0xC000 + offset, offset as u8);
+        }
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+
+        bus.write(0xFF55, 0x01);
+
+        assert_eq!(bus.read(0xFF55), 0xFF);
+        for offset in 0..32u16 {
+            assert_eq!(bus.ppu.read_vram(0x8000 + offset), offset as u8);
+        }
     }
 
     #[test]
-    fn boot_rom_mapped_reads_from_rom_area() {
-        let mut rom = [0u8; 0x100];
-        rom[0x42] = 0xAB;
-        let bus = GbcMemoryBus::new(rom, true);
-        assert_eq!(bus.read(0x0042), 0xAB);
+    fn hdma_transfers_one_block_on_hblank_entry() {
+        let mut bus = cgb_bus();
+        for offset in 0..16u16 {
+            bus.write(0xC000 + offset, 0x80 | offset as u8);
+        }
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+        bus.write(0xFF55, 0x80);
+        let mut cpu = CountingCpu { steps: 0 };
+
+        for _ in 0..456 {
+            bus.step_tcycle(&mut cpu);
+        }
+
+        assert_eq!(bus.read(0xFF55), 0xFF);
+        for offset in 0..16u16 {
+            assert_eq!(bus.ppu.read_vram(0x8000 + offset), 0x80 | offset as u8);
+        }
+    }
+
+    #[test]
+    fn writing_gdma_mode_cancels_active_hdma() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF51, 0xC0);
+        bus.write(0xFF52, 0x00);
+        bus.write(0xFF53, 0x00);
+        bus.write(0xFF54, 0x00);
+        bus.write(0xFF55, 0x83);
+
+        bus.write(0xFF55, 0x00);
+
+        assert_eq!(bus.read(0xFF55), 0x83);
     }
 
     #[test]
@@ -1080,8 +1109,8 @@ mod tests {
     }
 
     #[test]
-    fn boot_rom_unmapped_reads_cartridge() {
-        let bus = GbcMemoryBus::new([0xFF; 0x100], false);
+    fn rom_area_reads_cartridge() {
+        let bus = GbcMemoryBus::new();
         assert_eq!(bus.read(0x0000), 0x00); // default cartridge ROM is zeroed
     }
 
@@ -1255,16 +1284,8 @@ mod tests {
         assert_eq!(bus.read(0xFF70), 0xF9);
     }
 
-    // ── FF50 boot ROM disable ─────────────────────────────
-
     #[test]
-    fn read_ff50_boot_rom_mapped_returns_fe() {
-        let bus = GbcMemoryBus::new([0; 0x100], true);
-        assert_eq!(bus.read(0xFF50), 0xFE);
-    }
-
-    #[test]
-    fn read_ff50_boot_rom_unmapped_returns_ff() {
+    fn read_ff50_returns_unmapped_value() {
         assert_eq!(bus().read(0xFF50), 0xFF);
     }
 
@@ -1359,7 +1380,7 @@ mod tests {
     // ── Default impl ──────────────────────────────────────
 
     #[test]
-    fn default_bus_creates_with_zero_bootrom() {
+    fn default_bus_is_running() {
         let bus = GbcMemoryBus::default();
         assert!(!bus.is_halted_or_stopped());
     }

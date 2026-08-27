@@ -38,26 +38,28 @@ fn align_copy_bytes_per_row(bytes_per_row: u32, alignment: u32) -> u32 {
 
 pub(crate) fn pack_frame_rows(
     source: &[u8],
+    source_bytes_per_row: usize,
     height: usize,
     destination: &mut [u8],
     layout: FrameUploadLayout,
 ) {
     let copy_bytes_per_row = layout.copy_bytes_per_row as usize;
     let upload_bytes_per_row = layout.upload_bytes_per_row as usize;
-    debug_assert_eq!(source.len(), copy_bytes_per_row * height);
+    debug_assert!(source_bytes_per_row >= copy_bytes_per_row);
+    debug_assert_eq!(source.len(), source_bytes_per_row * height);
     debug_assert!(destination.len() >= upload_bytes_per_row * height);
 
-    if copy_bytes_per_row == upload_bytes_per_row {
+    if source_bytes_per_row == upload_bytes_per_row {
         destination[..source.len()].copy_from_slice(source);
         return;
     }
 
     for (source_row, destination_row) in source
-        .chunks_exact(copy_bytes_per_row)
+        .chunks_exact(source_bytes_per_row)
         .zip(destination.chunks_exact_mut(upload_bytes_per_row))
         .take(height)
     {
-        destination_row[..copy_bytes_per_row].copy_from_slice(source_row);
+        destination_row[..copy_bytes_per_row].copy_from_slice(&source_row[..copy_bytes_per_row]);
     }
 }
 
@@ -118,10 +120,32 @@ mod tests {
         ];
         let mut destination = [0_u8; 32];
 
-        pack_frame_rows(&source, 2, &mut destination, layout);
+        pack_frame_rows(&source, 8, 2, &mut destination, layout);
 
         assert_eq!(&destination[0..8], &source[0..8]);
         assert_eq!(&destination[16..24], &source[8..16]);
+        assert_eq!(&destination[8..16], &[0; 8]);
+        assert_eq!(&destination[24..32], &[0; 8]);
+    }
+
+    #[test]
+    fn pack_frame_rows_removes_source_padding() {
+        let layout = FrameUploadLayout {
+            bytes_per_pixel: 4,
+            copy_bytes_per_row: 8,
+            upload_bytes_per_row: 16,
+            buffer_size: 32,
+        };
+        let source = [
+            1_u8, 2, 3, 4, 5, 6, 7, 8, 99, 99, 99, 99, //
+            9, 10, 11, 12, 13, 14, 15, 16, 88, 88, 88, 88,
+        ];
+        let mut destination = [0_u8; 32];
+
+        pack_frame_rows(&source, 12, 2, &mut destination, layout);
+
+        assert_eq!(&destination[0..8], &source[0..8]);
+        assert_eq!(&destination[16..24], &source[12..20]);
         assert_eq!(&destination[8..16], &[0; 8]);
         assert_eq!(&destination[24..32], &[0; 8]);
     }

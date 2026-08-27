@@ -360,14 +360,17 @@ impl HostState {
     }
 
     fn open_rom_dialog(&mut self) -> bool {
-        FileDialog::new()
-            .set_title(text(
-                self.session.settings_snapshot().shared.general.language,
-                UiText::Open,
-            ))
-            .add_filter("NES ROM", &["nes"])
-            .pick_file()
-            .is_some_and(|path| self.load_path(&path))
+        let mut dialog = FileDialog::new().set_title(text(
+            self.session.settings_snapshot().shared.general.language,
+            UiText::Open,
+        ));
+        for factory in self.ctx.registry.all() {
+            let extensions = factory.supported_extensions();
+            if !extensions.is_empty() {
+                dialog = dialog.add_filter(format!("{} ROM", factory.display_name()), extensions);
+            }
+        }
+        dialog.pick_file().is_some_and(|path| self.load_path(&path))
     }
 
     fn after_rom_load(&mut self) {

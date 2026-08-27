@@ -842,6 +842,15 @@ impl GbcPpu {
         }
     }
 
+    pub(crate) fn set_dmg_compatibility_palettes(
+        &mut self,
+        palettes: crate::compatibility_palette::CompatibilityPalettes,
+    ) {
+        self.bg_palette[..4].copy_from_slice(&palettes.bg);
+        self.obj_palette[..4].copy_from_slice(&palettes.obj0);
+        self.obj_palette[4..8].copy_from_slice(&palettes.obj1);
+    }
+
     /// Seed the PPU's frame phase (LY / T-cycle offset into the line) at
     /// power-on. The boot ROM runs with the LCD enabled, so by the time the
     /// game code starts the PPU is mid-frame; its exact position depends on
@@ -1170,10 +1179,13 @@ impl GbcPpu {
         }
         let idx = (self.bgpi & 0x3F) as usize;
         let auto_inc = self.bgpi & 0x80 != 0;
-        if idx & 1 == 0 {
-            self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
-        } else {
-            self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+        if self.current_mode() != PpuMode::PixelTransfer {
+            if idx & 1 == 0 {
+                self.bg_palette[idx >> 1] = (self.bg_palette[idx >> 1] & 0xFF00) | value as u16;
+            } else {
+                self.bg_palette[idx >> 1] =
+                    (self.bg_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+            }
         }
         if auto_inc {
             self.bgpi = (self.bgpi & 0x80) | ((self.bgpi + 1) & 0x3F);
@@ -1186,11 +1198,13 @@ impl GbcPpu {
         }
         let idx = (self.obpi & 0x3F) as usize;
         let auto_inc = self.obpi & 0x80 != 0;
-        if idx & 1 == 0 {
-            self.obj_palette[idx >> 1] = (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
-        } else {
-            self.obj_palette[idx >> 1] =
-                (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+        if self.current_mode() != PpuMode::PixelTransfer {
+            if idx & 1 == 0 {
+                self.obj_palette[idx >> 1] = (self.obj_palette[idx >> 1] & 0xFF00) | value as u16;
+            } else {
+                self.obj_palette[idx >> 1] =
+                    (self.obj_palette[idx >> 1] & 0x00FF) | (value as u16) << 8;
+            }
         }
         if auto_inc {
             self.obpi = (self.obpi & 0x80) | ((self.obpi + 1) & 0x3F);
@@ -1401,6 +1415,46 @@ mod tests {
         p.write_register(0xFF49, 0xE7);
         assert_eq!(p.read_register(0xFF48), 0xDB);
         assert_eq!(p.read_register(0xFF49), 0xE7);
+    }
+
+    #[test]
+    fn cgb_palette_data_writes_are_ignored_during_mode_3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.raw_set_key0(0x80);
+        p.bg_palette[0] = 0x1234;
+        p.obj_palette[31] = 0x5678;
+        p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+
+        p.write_register(0xFF68, 0x80);
+        p.write_register(0xFF69, 0xAB);
+        p.write_register(0xFF6A, 0xBF);
+        p.write_register(0xFF6B, 0xCD);
+
+        assert_eq!(p.bg_palette[0], 0x1234);
+        assert_eq!(p.obj_palette[31], 0x5678);
+        assert_eq!(p.read_register(0xFF68), 0xC1);
+        assert_eq!(p.read_register(0xFF6A), 0xC0);
+    }
+
+    #[test]
+    fn cgb_palette_data_writes_succeed_outside_mode_3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.raw_set_key0(0x80);
+        p.bg_palette[0] = 0x1234;
+        p.obj_palette[31] = 0x5678;
+        p.mode_clock = 300;
+
+        p.write_register(0xFF68, 0x81);
+        p.write_register(0xFF69, 0xAB);
+        p.write_register(0xFF6A, 0xBF);
+        p.write_register(0xFF6B, 0xCD);
+
+        assert_eq!(p.bg_palette[0], 0xAB34);
+        assert_eq!(p.obj_palette[31], 0xCD78);
+        assert_eq!(p.read_register(0xFF68), 0xC2);
+        assert_eq!(p.read_register(0xFF6A), 0xC0);
     }
 
     #[test]

@@ -1,19 +1,12 @@
 use crate::{
     cartridge::Cartridge,
-    cartridge_header::CartridgeHeader,
+    cartridge_header::{CartridgeHeader, is_supported_rom},
     cartridge_mbc,
     cpu_core::{GbcModel, Lr35902Cpu},
     memory::GbcMemoryBus,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum HardwareModel {
-    Dmg0,
-    Dmg,
-    CgbC,
-    CgbD,
-    Agb,
-}
+pub use nerust_gbc_settings::HardwareModel;
 
 pub struct GbcSystem {
     pub cpu: Lr35902Cpu,
@@ -21,21 +14,26 @@ pub struct GbcSystem {
 }
 
 impl GbcSystem {
-    pub fn from_rom_without_boot_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
+    pub fn from_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
         let header = CartridgeHeader::parse(&rom_bytes)?;
         let rom_is_cgb = header.cgb_flag & 0x80 != 0;
+        if !is_supported_rom(&rom_bytes) {
+            return None;
+        }
         let font_bank1 = if rom_bytes.len() > 0x4000 {
             Some(rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec())
         } else {
             None
         };
+        let compatibility_palettes =
+            (!rom_is_cgb).then(|| crate::compatibility_palette::select(&rom_bytes));
         let mbc = cartridge_mbc::create_mbc(&header, rom_bytes, None);
 
         let hw_is_cgb = matches!(
             model,
             HardwareModel::CgbC | HardwareModel::CgbD | HardwareModel::Agb
         );
-        let mut bus = GbcMemoryBus::new([0; 0x100], false);
+        let mut bus = GbcMemoryBus::new();
         bus.set_cartridge(Cartridge::new(mbc));
         if let Some(font) = font_bank1 {
             bus.load_font_tiles(&font);
@@ -43,6 +41,9 @@ impl GbcSystem {
         bus.set_cgb_mode(hw_is_cgb);
         bus.set_cgb_revision_d(matches!(model, HardwareModel::CgbD | HardwareModel::Agb));
         bus.set_cgb_game(hw_is_cgb && rom_is_cgb);
+        if hw_is_cgb && let Some(palettes) = compatibility_palettes {
+            bus.set_dmg_compatibility_palettes(palettes);
+        }
         bus.set_boot_counter(match model {
             HardwareModel::Dmg0 => 0x182F,
             HardwareModel::Dmg => 0xABCB,
@@ -82,26 +83,25 @@ mod tests {
         rom[0x0148] = 0;
         rom[0x0149] = 0;
         rom[0x014B] = 0x33;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 
     #[test]
     fn rejects_rom_without_header() {
-        assert!(GbcSystem::from_rom_without_boot_rom(HardwareModel::Dmg, vec![]).is_none());
+        assert!(GbcSystem::from_rom(HardwareModel::Dmg, vec![]).is_none());
     }
 
     #[test]
     fn initializes_dmg_post_boot_counter() {
-        let system =
-            GbcSystem::from_rom_without_boot_rom(HardwareModel::Dmg, minimal_rom(false)).unwrap();
+        let system = GbcSystem::from_rom(HardwareModel::Dmg, minimal_rom(false)).unwrap();
         assert_eq!(system.bus.read(0xFF04), 0xAB);
         assert_eq!(system.cpu.registers().pc(), 0x0100);
     }
 
     #[test]
     fn initializes_cgb_dmg_compatibility_registers() {
-        let system =
-            GbcSystem::from_rom_without_boot_rom(HardwareModel::CgbD, minimal_rom(false)).unwrap();
+        let system = GbcSystem::from_rom(HardwareModel::CgbD, minimal_rom(false)).unwrap();
         let registers = system.cpu.registers();
         assert_eq!(registers.d(), 0x00);
         assert_eq!(registers.e(), 0x08);
