@@ -1,5 +1,6 @@
 mod menu;
 mod picker;
+mod saf;
 mod settings;
 mod storage;
 
@@ -76,6 +77,12 @@ pub(crate) fn register_main_activity_natives(
                 jni_str!("onMenuAction"),
                 jni_str!("(Ljava/lang/String;)V"),
                 menu::Java_io_github_chalharu_nerust_MainActivity_onMenuAction as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onDirectoryPickerResult"),
+                jni_str!("(Ljava/lang/String;)V"),
+                picker::Java_io_github_chalharu_nerust_MainActivity_onDirectoryPickerResult
+                    as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("onSettingsDialogResult"),
@@ -332,6 +339,7 @@ struct AndroidFrontend {
     last_foreground_error: Option<String>,
     lifecycle_auto_paused: bool,
     lifecycle_restore_pending: bool,
+    pending_storage_settings: Option<SettingsSnapshot>,
 }
 
 impl AndroidFrontend {
@@ -366,6 +374,11 @@ impl AndroidFrontend {
             log::error!("fatal: session creation failed — settings I/O may be corrupted: {e}");
             std::process::abort();
         });
+        session.set_persistence_backends(
+            Box::new(saf::AndroidStorageBackend::new(app.clone())),
+            Box::new(saf::AndroidStorageBackend::new(app.clone())),
+            Box::new(saf::AndroidStorageBackend::new(app.clone())),
+        );
         if !storage.storage_policy_migration_completed() {
             let mut next = session.settings_snapshot().clone();
             if next.shared.persistence.storage_policy == StoragePolicy::Sidecar {
@@ -401,6 +414,7 @@ impl AndroidFrontend {
             last_foreground_error: None,
             lifecycle_auto_paused: false,
             lifecycle_restore_pending: restore_pending,
+            pending_storage_settings: None,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -546,14 +560,32 @@ impl AndroidFrontend {
     }
 
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
-        let RomPickerResult::Selected(uri) = result else {
-            log::info!("handle_picker_result: ROM picker dismissed");
-            return;
-        };
-        log::info!("handle_picker_result: picker returned URI {uri}");
-        if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
-            log::error!("{error}");
-            show_toast(&self.app, &error);
+        match result {
+            RomPickerResult::Selected(uri) => {
+                log::info!("handle_picker_result: picker returned URI {uri}");
+                if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
+                    log::error!("{error}");
+                    show_toast(&self.app, &error);
+                }
+            }
+            RomPickerResult::TreeSelected(uri) => {
+                let Some(mut next) = self.pending_storage_settings.take() else {
+                    log::warn!("ignoring unexpected Android directory picker result");
+                    return;
+                };
+                next.shared.persistence.storage_document_tree_uri = Some(uri);
+                match self.apply_settings(next) {
+                    Ok(_) => self.request_redraw(),
+                    Err(error) => {
+                        log::error!("failed to apply Android storage directory: {error}");
+                        show_toast(&self.app, "Selected directory could not be used");
+                    }
+                }
+            }
+            RomPickerResult::Cancelled => {
+                self.pending_storage_settings = None;
+                log::info!("handle_picker_result: picker dismissed");
+            }
         }
     }
 
@@ -575,6 +607,26 @@ impl AndroidFrontend {
         if let Err(error) = android_settings.apply_to_snapshot(&mut next, self.session.registry()) {
             log::error!("failed to update Android system settings: {error}");
             return;
+        }
+        if android_settings.storage_policy != StoragePolicy::AppSharedData
+            && next.shared.persistence.storage_document_tree_uri.is_none()
+        {
+            self.pending_storage_settings = Some(next);
+            match picker::request_open_document_tree(&self.app) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.pending_storage_settings = None;
+                    log::warn!("Android directory picker is already open");
+                }
+                Err(error) => {
+                    self.pending_storage_settings = None;
+                    log::error!("{error}");
+                }
+            }
+            return;
+        }
+        if android_settings.storage_policy == StoragePolicy::AppSharedData {
+            next.shared.persistence.storage_document_tree_uri = None;
         }
         match self.apply_settings(next) {
             Ok(result) => {

@@ -15,6 +15,7 @@ name = "main"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger.workspace = true
+base64.workspace = true
 jni.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
@@ -25,6 +26,7 @@ nerust_gbc_factory.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_factory.workspace = true
 nerust_nes_settings.workspace = true
+nerust_persistence.workspace = true
 nerust_render_traits.workspace = true
 nerust_render_wgpu.workspace = true
 nerust_settings_core.workspace = true

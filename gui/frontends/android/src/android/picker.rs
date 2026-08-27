@@ -19,6 +19,7 @@ const ROM_PICKER_BUFFER_CAPACITY: usize = 8 * 1024;
 pub(crate) enum RomPickerResult {
     Cancelled,
     Selected(String),
+    TreeSelected(String),
 }
 
 static PICKER_RESULT: Mutex<Option<RomPickerResult>> = Mutex::new(None);
@@ -51,6 +52,22 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = start_picker_on_java_main_thread(&callback_app) {
+            log::error!("{error}");
+            PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+            wake_main_thread();
+        }
+    }));
+    Ok(true)
+}
+
+pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, String> {
+    if PICKER_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        return Ok(false);
+    }
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        if let Err(error) = start_tree_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
             PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
             wake_main_thread();
@@ -252,6 +269,22 @@ fn start_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
     .map_err(|error| format!("failed to launch Android ROM picker: {error:?}"))
 }
 
+fn start_tree_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
+    vm.attach_current_thread(|env| {
+        let activity_raw = app.activity_as_ptr() as jobject;
+        let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+        env.call_method(
+            activity.as_ref(),
+            jni_str!("startDirectoryPicker"),
+            jni_sig!("()V"),
+            &[],
+        )?;
+        Ok::<(), jni::errors::Error>(())
+    })
+    .map_err(|error| format!("failed to launch Android directory picker: {error:?}"))
+}
+
 fn publish_result(result: RomPickerResult) {
     *PICKER_RESULT.lock().expect("picker result mutex poisoned") = Some(result);
     PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
@@ -294,5 +327,30 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onFilePickerR
             log::error!("Android ROM picker callback panicked");
             publish_result(RomPickerResult::Cancelled);
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onDirectoryPickerResult(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    uri: JString<'_>,
+) {
+    match env
+        .with_env(|env| -> jni::errors::Result<RomPickerResult> {
+            if uri.is_null() {
+                Ok(RomPickerResult::Cancelled)
+            } else {
+                Ok(RomPickerResult::TreeSelected(uri.try_to_string(env)?))
+            }
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(result) => publish_result(result),
+        jni::Outcome::Err(error) => {
+            log::error!("failed to decode Android directory picker result: {error:?}");
+            publish_result(RomPickerResult::Cancelled);
+        }
+        jni::Outcome::Panic(_) => publish_result(RomPickerResult::Cancelled),
     }
 }

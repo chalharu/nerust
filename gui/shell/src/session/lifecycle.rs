@@ -92,6 +92,12 @@ impl SessionHandle {
             .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
         let needs_rebuild = plan.session_rebuild_required || assignments_changed;
 
+        if plan.persistence_changed
+            && let Some(ref core) = self.emu_core
+        {
+            self.persistence.flush_mapper_save(core)?;
+        }
+
         if needs_rebuild {
             let assignments = next_assignments.as_ref().unwrap_or(&previous_assignments);
             self.rebuild_for_settings(&next_settings, assignments)?;
@@ -124,6 +130,13 @@ impl SessionHandle {
         }
 
         self.settings_snapshot = next_settings;
+        if plan.persistence_changed && self.loaded() {
+            let rom_path = self
+                .loaded_media
+                .as_ref()
+                .and_then(|media| media.media.native_path().map(Path::to_path_buf));
+            self.setup_persistence(rom_path.as_deref(), false);
+        }
         self.pressed_keys.clear();
         self.clear_input();
         self.rebuild_key_field_map();

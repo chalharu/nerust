@@ -5,6 +5,7 @@ import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.net.Uri
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -15,6 +16,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.util.Base64
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -78,6 +80,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.documentfile.provider.DocumentFile
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
@@ -312,6 +315,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         startActivityForResult(createRomPickerIntent(), ROM_PICKER_REQUEST_CODE)
     }
 
+    @Suppress("DEPRECATION")
+    fun startDirectoryPicker() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            )
+        }
+        startActivityForResult(intent, DIRECTORY_PICKER_REQUEST_CODE)
+    }
+
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
@@ -330,21 +345,71 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         scheduleChromeAttach()
     }
 
+    fun readSafFile(treeUri: String, relativePath: String): String? {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
+        return contentResolver.openInputStream(file.uri)?.use { input ->
+            Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
+        }
+    }
+
+    fun writeSafFile(treeUri: String, relativePath: String, encoded: String): String {
+        val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
+        val bytes = Base64.decode(encoded, Base64.NO_WRAP)
+        contentResolver.openOutputStream(file.uri, "rwt")?.use { it.write(bytes) } ?: return "error"
+        return "ok"
+    }
+
+    fun deleteSafFile(treeUri: String, relativePath: String): String {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return "missing"
+        return if (file.delete()) "ok" else "error"
+    }
+
+    fun listSafFiles(treeUri: String, relativePath: String): String {
+        val directory = resolveSafDirectory(treeUri, relativePath, create = false)
+            ?: return "[]"
+        return org.json.JSONArray(directory.listFiles().mapNotNull(DocumentFile::getName)).toString()
+    }
+
+    private fun resolveSafDocument(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
+        val segments = relativePath.split('/').filter(String::isNotBlank)
+        val fileName = segments.lastOrNull() ?: return null
+        val directory = resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
+            ?: return null
+        return directory.findFile(fileName)
+            ?: if (create) directory.createFile("application/octet-stream", fileName) else null
+    }
+
+    private fun resolveSafDirectory(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
+        var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
+        for (segment in relativePath.split('/').filter(String::isNotBlank)) {
+            current = current.findFile(segment)?.takeIf(DocumentFile::isDirectory)
+                ?: if (create) current.createDirectory(segment) else null
+                ?: return null
+        }
+        return current
+    }
+
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != ROM_PICKER_REQUEST_CODE) {
+        if (requestCode != ROM_PICKER_REQUEST_CODE && requestCode != DIRECTORY_PICKER_REQUEST_CODE) {
             return
         }
         Log.i(TAG, "onActivityResult: requestCode=$requestCode resultCode=$resultCode uri=${data?.data}")
 
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri != null) {
+            val requestedFlags =
+                if (requestCode == DIRECTORY_PICKER_REQUEST_CODE) {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                } else {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
             val takeFlags =
                 data?.flags
-                    ?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    ?.and(requestedFlags)
                     ?.takeIf { it != 0 }
-                    ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    ?: requestedFlags
             try {
                 contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (error: SecurityException) {
@@ -352,7 +417,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             }
         }
 
-        onFilePickerResult(uri?.toString())
+        if (requestCode == DIRECTORY_PICKER_REQUEST_CODE) {
+            onDirectoryPickerResult(uri?.toString())
+        } else {
+            onFilePickerResult(uri?.toString())
+        }
     }
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
@@ -1097,6 +1166,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private external fun onMenuAction(action: String)
 
+    private external fun onDirectoryPickerResult(uri: String?)
+
     private external fun onRomLibrarySelected(id: String?)
 
     private external fun onSettingsDialogResult(result: String?)
@@ -1121,6 +1192,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
         private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
+        private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
         private const val IMPORT_ACTION_ID = "__import__"
         @Volatile
