@@ -2908,6 +2908,8 @@ dependencies = [
  "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
+ "serde",
+ "serde_json",
  "winit",
 ]
 
