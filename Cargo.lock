@@ -2896,6 +2896,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_gbc_factory",
+ "nerust_gbc_settings",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",

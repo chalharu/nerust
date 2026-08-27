@@ -580,6 +580,8 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::factory::CoreFactory;
+    use nerust_gbc_factory::GbcFactory;
+    use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
@@ -595,6 +597,10 @@ mod tests {
             NesFactory.system_id(),
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
+        shared.systems.insert(
+            GbcFactory.system_id(),
+            Box::new(GbcSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -603,7 +609,7 @@ mod tests {
     }
 
     fn registry() -> SystemRegistry {
-        SystemRegistry::new(vec![Arc::new(NesFactory)])
+        SystemRegistry::new(vec![Arc::new(NesFactory), Arc::new(GbcFactory)])
     }
 
     fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
@@ -699,7 +705,8 @@ mod tests {
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
-        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1", "0"]);
+        assert_eq!(&indices[..7], ["0", "100", "40", "1", "1", "1", "0"]);
+        assert_eq!(indices.len(), 9);
     }
 
     #[test]
@@ -812,6 +819,13 @@ mod tests {
         assert_eq!(payload["schemaVersion"], 1);
         assert_eq!(payload["requestId"], 42);
         assert_eq!(payload["fields"][0]["key"], "audio_muted");
+        let keys: Vec<_> = payload["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["key"].as_str().unwrap())
+            .collect();
+        assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
     }
 
     #[test]
