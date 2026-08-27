@@ -259,7 +259,7 @@ impl GbcMemoryBus {
             0xFF4D if self.cgb_mode => self.read_key1(),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
             0xFF55 if self.cgb_mode => self.hdma.read_status(),
-            0xFF70 if self.cgb_mode => self.wram_bank | 0xF8,
+            0xFF70 if self.cgb_mode && !self.key1_dmg_compat_value => self.wram_bank | 0xF8,
             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
             0xFF74 => 0xFF,
             0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
@@ -277,9 +277,23 @@ impl GbcMemoryBus {
             0x0000..=0x7FFF => self.cartridge.read_rom(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cartridge.read_ram(addr),
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
+            0xC000..=0xDFFF => self.wram[self.wram_offset(addr)],
             0xE000..=0xFDFF => self.read_storage(addr - 0x2000),
             _ => 0xFF,
+        }
+    }
+
+    fn wram_offset(&self, addr: u16) -> usize {
+        if addr < 0xD000 {
+            usize::from(addr - 0xC000)
+        } else {
+            let bank = if self.wram_bank == 0xFF {
+                1
+            } else {
+                (self.wram_bank & 0x07).max(1)
+            };
+            let bank = usize::from(bank);
+            bank * 0x1000 + usize::from(addr - 0xD000)
         }
     }
 
@@ -311,7 +325,8 @@ impl GbcMemoryBus {
         if (0xC000..=0xCBFF).contains(&addr) && (0xC3E7..=0xC400).contains(&self.current_pc) {
             self.text_scratch[(addr - 0xC000) as usize] = value;
         } else {
-            self.wram[addr as usize & 0x1FFF] = value;
+            let offset = self.wram_offset(addr);
+            self.wram[offset] = value;
         }
     }
 
@@ -353,9 +368,12 @@ impl GbcMemoryBus {
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
             0xFF55 if self.cgb_mode => self.write_hdma5(value),
             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
-            0xFF70 if self.cgb_mode => {
-                if value & 0x07 != 0 {
-                    self.wram_bank = value & 0x07;
+            0xFF70 if self.cgb_mode && !self.key1_dmg_compat_value => {
+                let bank = value & 0x07;
+                if bank != 0 {
+                    self.wram_bank = bank;
+                } else if self.wram_bank != 0xFF {
+                    self.wram_bank = 1;
                 }
             }
             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
@@ -858,6 +876,7 @@ mod tests {
     fn cgb_bus() -> GbcMemoryBus {
         let mut bus = bus();
         bus.set_cgb_mode(true);
+        bus.set_post_boot_key1(true);
         bus
     }
 
@@ -1237,7 +1256,8 @@ mod tests {
         // Before the boot ROM finishes ($FF50 write) it reads $FF even on
         // CGB; afterwards bit 7 = current speed, bit 0 = armed switch.
         assert_eq!(bus().read(0xFF4D), 0xFF);
-        let mut cgb = cgb_bus();
+        let mut cgb = bus();
+        cgb.set_cgb_mode(true);
         assert_eq!(cgb.read(0xFF4D), 0xFF);
         cgb.set_post_boot_key1(true);
         assert_eq!(cgb.read(0xFF4D), 0x7E);
@@ -1278,10 +1298,60 @@ mod tests {
 
     #[test]
     fn write_wram_bank_0_clamps_to_1() {
-        // Writing 0 to SVBK leaves the bank unchanged (never selects bank 0).
+        // Bank 0 aliases bank 1 because the switchable area has no bank 0.
         let mut bus = cgb_bus();
         bus.write(0xFF70, 0x00);
         assert_eq!(bus.read(0xFF70), 0xF9);
+    }
+
+    #[test]
+    fn switchable_wram_banks_are_isolated() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF70, 1);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+        bus.write(0xD123, 0x22);
+
+        assert_eq!(bus.read(0xD123), 0x22);
+        bus.write(0xFF70, 1);
+        assert_eq!(bus.read(0xD123), 0x11);
+    }
+
+    #[test]
+    fn fixed_wram_and_banked_echo_follow_hardware_mapping() {
+        let mut bus = cgb_bus();
+        bus.write(0xC123, 0xC0);
+        bus.write(0xFF70, 3);
+        bus.write(0xD123, 0x33);
+        assert_eq!(bus.read(0xC123), 0xC0);
+        assert_eq!(bus.read(0xF123), 0x33);
+
+        bus.write(0xFF70, 4);
+        assert_eq!(bus.read(0xC123), 0xC0);
+        assert_eq!(bus.read(0xF123), 0x00);
+    }
+
+    #[test]
+    fn post_boot_svbk_readback_uses_effective_bank_one() {
+        let mut bus = cgb_bus();
+        bus.set_post_boot_io(true);
+        assert_eq!(bus.read(0xFF70), 0xFF);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+        bus.write(0xD123, 0x22);
+        bus.write(0xFF70, 1);
+        assert_eq!(bus.read(0xD123), 0x11);
+    }
+
+    #[test]
+    fn svbk_is_unmapped_in_cgb_dmg_compatibility_mode() {
+        let mut bus = cgb_bus();
+        bus.set_post_boot_key1(false);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+
+        assert_eq!(bus.read(0xFF70), 0xFF);
+        assert_eq!(bus.read(0xD123), 0x11);
     }
 
     #[test]
