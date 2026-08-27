@@ -1,3 +1,4 @@
+mod bridge;
 mod menu;
 mod picker;
 mod saf;
@@ -110,9 +111,7 @@ pub(crate) fn run(
         log::warn!("native re-registration skipped (expected on native thread): {error:?}");
     }
 
-    picker::bind_app(&app);
-    menu::bind_app(&app);
-    settings::bind_app(&app);
+    bridge::bind_app(&app);
     let frontend_app = app.clone();
     let storage_root = app
         .internal_data_path()
@@ -1366,9 +1365,7 @@ impl ApplicationHandler for AndroidFrontend {
         self.foreground_retry_at = None;
         self.last_foreground_error = None;
         self.save_lifecycle_state();
-        picker::reset();
-        menu::reset();
-        settings::reset();
+        bridge::reset_transient();
         self.release_window_resources();
     }
 

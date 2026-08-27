@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Mutex};
+use std::collections::BTreeMap;
 
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
@@ -18,7 +18,9 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{local::TouchOverlayVisibility, shared::StoragePolicy};
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+use winit::platform::android::activity::AndroidApp;
+
+use super::bridge;
 
 // ---------------------------------------------------------------------------
 // Choice constants
@@ -460,43 +462,21 @@ pub(crate) enum SettingsDialogResult {
     Applied(BTreeMap<String, usize>),
 }
 
-/// JNI bridge state: bundled into one struct to avoid multiple statics.
-struct SettingsBridge {
-    result: Option<SettingsDialogResult>,
-    waker: Option<AndroidAppWaker>,
-    next_request_id: u64,
-    pending_request_id: Option<u64>,
-    cached: Option<AndroidSettings>,
-}
-
-impl SettingsBridge {
-    const fn empty() -> Self {
-        Self {
-            result: None,
-            waker: None,
-            next_request_id: 1,
-            pending_request_id: None,
-            cached: None,
-        }
-    }
-}
-
-static SETTINGS: Mutex<SettingsBridge> = Mutex::new(SettingsBridge::empty());
-
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    SETTINGS.lock().expect("settings mutex poisoned").cached = Some(current.clone());
+    bridge::with_state(|state| state.settings_cache = Some(current.clone()));
 }
 
 fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    if guard.pending_request_id.is_some() {
-        return None;
-    }
-    let request_id = guard.next_request_id;
-    guard.next_request_id = guard.next_request_id.wrapping_add(1).max(1);
-    guard.pending_request_id = Some(request_id);
-    Some((request_id, current.dialog_payload(request_id)))
+    bridge::with_state(|state| {
+        if state.pending_settings_request_id.is_some() {
+            return None;
+        }
+        let request_id = state.next_settings_request_id;
+        state.next_settings_request_id = state.next_settings_request_id.wrapping_add(1).max(1);
+        state.pending_settings_request_id = Some(request_id);
+        Some((request_id, current.dialog_payload(request_id)))
+    })
 }
 
 /// Show the settings dialog synchronously from a JNI callback running on the
@@ -505,44 +485,24 @@ pub(crate) fn show_settings_dialog_sync(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
 ) -> Result<bool, String> {
-    let current = SETTINGS
-        .lock()
-        .expect("settings mutex poisoned")
-        .cached
-        .clone()
+    let current = bridge::with_state(|state| state.settings_cache.clone())
         .ok_or_else(|| "Android settings cache is empty".to_string())?;
     let Some((request_id, payload)) = begin_request(&current) else {
         return Ok(false);
     };
     if let Err(error) = show_settings_with_env(env, activity, &payload) {
-        let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-        if guard.pending_request_id == Some(request_id) {
-            guard.pending_request_id = None;
-        }
+        bridge::with_state(|state| {
+            if state.pending_settings_request_id == Some(request_id) {
+                state.pending_settings_request_id = None;
+            }
+        });
         return Err(error);
     }
     Ok(true)
 }
 
-pub(crate) fn bind_app(app: &AndroidApp) {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    guard.waker = Some(app.create_waker());
-    guard.result = None;
-    guard.pending_request_id = None;
-}
-
-pub(crate) fn reset() {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    guard.result = None;
-    guard.pending_request_id = None;
-}
-
 pub(crate) fn take_result() -> Option<SettingsDialogResult> {
-    SETTINGS
-        .lock()
-        .expect("settings mutex poisoned")
-        .result
-        .take()
+    bridge::with_state(|state| state.settings_result.take())
 }
 
 /// Request that the Android side show the settings dialog.
@@ -561,12 +521,12 @@ pub(crate) fn request_show_settings_dialog(
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
             log::error!("{error}");
-            let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-            if guard.pending_request_id == Some(request_id) {
-                guard.pending_request_id = None;
-            }
-            drop(guard);
-            wake_main_thread();
+            bridge::with_state(|state| {
+                if state.pending_settings_request_id == Some(request_id) {
+                    state.pending_settings_request_id = None;
+                }
+            });
+            bridge::wake();
         }
     }));
     Ok(true)
@@ -610,26 +570,19 @@ fn show_settings_with_env_inner(
 }
 
 fn publish_result(request_id: u64, result: SettingsDialogResult) {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    if guard.pending_request_id != Some(request_id) {
+    let accepted = bridge::with_state(|state| {
+        if state.pending_settings_request_id != Some(request_id) {
+            return false;
+        }
+        state.settings_result = Some(result);
+        state.pending_settings_request_id = None;
+        true
+    });
+    if !accepted {
         log::warn!("ignoring stale Android settings result for request {request_id}");
         return;
     }
-    guard.result = Some(result);
-    guard.pending_request_id = None;
-    drop(guard);
-    wake_main_thread();
-}
-
-fn wake_main_thread() {
-    if let Some(waker) = SETTINGS
-        .lock()
-        .expect("settings mutex poisoned")
-        .waker
-        .clone()
-    {
-        waker.wake();
-    }
+    bridge::wake();
 }
 
 // ---------------------------------------------------------------------------
@@ -673,17 +626,11 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
         jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
-            SETTINGS
-                .lock()
-                .expect("settings mutex poisoned")
-                .pending_request_id = None;
+            bridge::with_state(|state| state.pending_settings_request_id = None);
         }
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            SETTINGS
-                .lock()
-                .expect("settings mutex poisoned")
-                .pending_request_id = None;
+            bridge::with_state(|state| state.pending_settings_request_id = None);
         }
     }
 }
