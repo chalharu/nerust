@@ -314,6 +314,9 @@ impl AndroidSettings {
 struct SettingsResultPayload {
     schema_version: u32,
     request_id: u64,
+    #[serde(default)]
+    dismissed: bool,
+    #[serde(default)]
     values: BTreeMap<String, usize>,
 }
 
@@ -535,25 +538,21 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
         .into_outcome()
     {
         jni::Outcome::Ok(Some(raw)) => match serde_json::from_str::<SettingsResultPayload>(&raw) {
-            Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => publish_result(
-                payload.request_id,
-                SettingsDialogResult::Applied(payload.values),
-            ),
+            Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => {
+                let result = if payload.dismissed {
+                    SettingsDialogResult::Dismissed
+                } else {
+                    SettingsDialogResult::Applied(payload.values)
+                };
+                publish_result(payload.request_id, result);
+            }
             Ok(payload) => log::error!(
                 "unsupported Android settings result schema {}",
                 payload.schema_version
             ),
             Err(error) => log::error!("failed to parse Android settings result: {error}"),
         },
-        jni::Outcome::Ok(None) => {
-            let request_id = SETTINGS
-                .lock()
-                .expect("settings mutex poisoned")
-                .pending_request_id;
-            if let Some(request_id) = request_id {
-                publish_result(request_id, SettingsDialogResult::Dismissed);
-            }
-        }
+        jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
             SETTINGS
