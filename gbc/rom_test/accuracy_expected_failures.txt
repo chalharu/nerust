@@ -1,4 +1,12 @@
-# Generated from GBMicrotest and AGE ROM matrix results.
+# Verified emulator gaps from GBMicrotest and AGE ROM matrix results.
+#
+# Model policy:
+# - GBMicrotest's README states the ROMs were verified on DMG-CPU-08 hardware;
+#   these @dmg entries are real accuracy gaps, not expected model rejection.
+# - AGE ROM suffixes encode their supported revisions. rom_tests.yaml maps
+#   dmgC -> dmg, cgbBC -> cgb_c/cgb_d, cgbE -> cgb_d, and ncm -> CGB DMG mode.
+# - Diagnostic GBMicrotest ROMs that never publish the FF82 pass/fail protocol
+#   are excluded by the manifest rather than listed as expected failures.
 age_ei-halt-dmgC-cgbBCE@cgb_c
 age_ei-halt-dmgC-cgbBCE@cgb_d
 age_ei-halt-dmgC-cgbBCE@dmg
