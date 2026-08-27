@@ -1,5 +1,6 @@
 package io.github.chalharu.nerust
 
+import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
@@ -14,6 +15,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.hardware.input.InputManager
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -26,6 +28,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.window.OnBackInvokedDispatcher
 import android.widget.FrameLayout
 import android.widget.PopupWindow
 import androidx.compose.foundation.clickable
@@ -206,6 +209,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         Log.i(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                ::handleBackNavigation,
+            )
+        }
         volumeControlStream = AudioManager.STREAM_MUSIC
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         scheduleChromeAttach()
@@ -352,13 +361,17 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated upstream in Activity; NativeActivity cannot use OnBackPressedDispatcher")
+    private fun handleBackNavigation() {
+        if (!removeDrawerOverlay()) {
+            finish()
+        }
+    }
+
+    @Deprecated("Used on Android 12 and earlier; API 33+ uses OnBackInvokedDispatcher")
+    @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (removeDrawerOverlay()) {
-            return
-        }
-        super.onBackPressed()
+        handleBackNavigation()
     }
 
     @Suppress("DEPRECATION")
@@ -523,6 +536,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     fun loadRomUriForTest(uri: String) {
         lastLoadedSystemForTest = null
+        Log.i(TAG, "loadRomUriForTest: submitting URI $uri")
         onFilePickerResult(uri)
     }
 
@@ -1476,6 +1490,7 @@ private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> 
     }
 }
 
+@SuppressLint("ViewConstructor")
 private class ControlsOverlayView(
     context: Context,
     opacityPercent: Int,
@@ -1519,6 +1534,7 @@ private class ControlsOverlayView(
         }
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean = false
 
     private fun drawZone(
@@ -1581,6 +1597,7 @@ private class ControlsOverlayView(
     }
 }
 
+@SuppressLint("ViewConstructor")
 private class DrawerEdgeSwipeHandleView(
     context: Context,
     private val onDrawerOpen: () -> Unit,
