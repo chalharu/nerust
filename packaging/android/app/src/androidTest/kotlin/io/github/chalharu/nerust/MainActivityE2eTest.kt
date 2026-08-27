@@ -2,6 +2,7 @@ package io.github.chalharu.nerust
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,6 +21,11 @@ import java.util.concurrent.atomic.AtomicReference
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
+    @Test
+    fun runtimeMeetsMinimumSupportedApi() {
+        assertTrue("Android API 28 or newer is required", Build.VERSION.SDK_INT >= 28)
+    }
+
     @Test
     fun romPickerIntentUsesSafPersistableReadAccess() {
         val intent = MainActivity.createRomPickerIntentForTest()

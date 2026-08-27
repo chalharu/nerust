@@ -33,3 +33,6 @@ nerust_sound_cpal.workspace = true
 serde = { features = ["derive"], workspace = true }
 serde_json.workspace = true
 winit = { features = ["android-native-activity"], workspace = true }
+
+[dev-dependencies]
+nerust_gbc_settings.workspace = true
