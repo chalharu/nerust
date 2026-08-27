@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    audio::{AudioBackend, StereoSample},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -103,7 +104,7 @@ impl ConsoleCore for GbcConsoleCore {
             }
         }
         for sample in loaded.system.bus.flush_audio() {
-            self.audio.push(sample);
+            self.audio.push(StereoSample::mono(sample));
         }
         if frame_slot.format() != &PixelFormat::Rgba {
             frame_slot.set_format(PixelFormat::Rgba);
@@ -248,7 +249,7 @@ mod tests {
 
         fn pause(&mut self) {}
 
-        fn push(&mut self, _sample: f32) {
+        fn push(&mut self, _sample: StereoSample) {
             self.0.lock().unwrap().samples += 1;
         }
 

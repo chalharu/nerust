@@ -9,7 +9,7 @@
 //!   select a different backend or surface the problem.
 //! * Call [`AudioBackend::start`] / [`AudioBackend::pause`] to mirror the app
 //!   lifecycle (foreground / background).
-//! * Feed samples via [`AudioBackend::push`]; the NES APU calls this at the rate
+//! * Feed stereo frames via [`AudioBackend::push`]; cores call this at the rate
 //!   returned by [`AudioBackend::sample_rate`].
 
 use std::sync::{
@@ -19,14 +19,26 @@ use std::sync::{
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory};
+use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory, StereoSample};
+
+fn write_device_frame(frame: &mut [f32], sample: StereoSample) {
+    match frame {
+        [] => {}
+        [mono] => *mono = sample.downmix(),
+        [left, right, rest @ ..] => {
+            *left = sample.left;
+            *right = sample.right;
+            rest.fill(0.0);
+        }
+    }
+}
 
 /// CPAL-based audio backend.
 ///
 /// Implements [`AudioBackend`] for use with any consumer that accepts the trait.
 pub struct CpalAudio {
     stream: cpal::Stream,
-    data_sender: SyncSender<f32>,
+    data_sender: SyncSender<StereoSample>,
     playing: Arc<AtomicBool>,
     needs_clear: Arc<AtomicBool>,
     sample_rate: u32,
@@ -61,7 +73,7 @@ impl CpalAudio {
             .max(1) as u32;
         let queue_capacity = usize::try_from(requested_frames.max(sample_rate / 10))
             .expect("queue capacity fits into usize");
-        let (data_sender, data_receiver) = sync_channel::<f32>(queue_capacity);
+        let (data_sender, data_receiver) = sync_channel::<StereoSample>(queue_capacity);
         let mut stream_config = supported_config.config();
         stream_config.sample_rate = sample_rate;
         match supported_config.buffer_size() {
@@ -93,13 +105,11 @@ impl CpalAudio {
                     let active = callback_playing.load(Ordering::Acquire);
                     for frame in output.chunks_mut(channels as usize) {
                         let sample = if active {
-                            data_receiver.try_recv().unwrap_or(0.0)
+                            data_receiver.try_recv().unwrap_or(StereoSample::SILENCE)
                         } else {
-                            0.0
+                            StereoSample::SILENCE
                         };
-                        for ch in frame.iter_mut() {
-                            *ch = sample;
-                        }
+                        write_device_frame(frame, sample);
                     }
                 },
                 |err| log::error!("cpal audio stream error: {err}"),
@@ -134,7 +144,7 @@ impl AudioBackend for CpalAudio {
         }
     }
 
-    fn push(&mut self, data: f32) {
+    fn push(&mut self, data: StereoSample) {
         match self.data_sender.try_send(data) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {
@@ -197,5 +207,27 @@ impl AudioBackendFactory for CpalFactory {
         CpalAudio::new(sample_rate, latency)
             .ok()
             .map(|a| Box::new(a) as Box<dyn AudioBackend>)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_stereo_to_device_channel_layouts() {
+        let sample = StereoSample::new(0.25, 0.75);
+
+        let mut mono = [0.0];
+        write_device_frame(&mut mono, sample);
+        assert_eq!(mono, [0.5]);
+
+        let mut stereo = [0.0; 2];
+        write_device_frame(&mut stereo, sample);
+        assert_eq!(stereo, [0.25, 0.75]);
+
+        let mut surround = [1.0; 6];
+        write_device_frame(&mut surround, sample);
+        assert_eq!(surround, [0.25, 0.75, 0.0, 0.0, 0.0, 0.0]);
     }
 }

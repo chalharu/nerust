@@ -11,7 +11,7 @@ mod pulse;
 pub(crate) mod timer;
 mod triangle;
 
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_input_traits::OpenBusReadResult;
 
 use self::{
@@ -293,7 +293,9 @@ impl Core {
         expansion_audio_output: f32,
         expansion_audio_inverted: bool,
     ) {
-        mixer.push(self.output(expansion_audio_output, expansion_audio_inverted));
+        mixer.push(StereoSample::mono(
+            self.output(expansion_audio_output, expansion_audio_inverted),
+        ));
         // let output = self.output();
         // let filtered = self.filter.step(output);
         // speaker.push(((filtered * 65535.0) as i32 - 32768) as i16);
@@ -445,7 +447,7 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::audio::AudioBackend;
+    use nerust_core_traits::audio::{AudioBackend, StereoSample};
 
     use super::Core;
     use crate::{cpu::Core as Cpu, interrupt::Interrupt};
@@ -473,8 +475,9 @@ mod tests {
     impl AudioBackend for CapturingMixer {
         fn start(&mut self) {}
         fn pause(&mut self) {}
-        fn push(&mut self, data: f32) {
-            self.samples.push(data);
+        fn push(&mut self, data: StereoSample) {
+            assert_eq!(data.left.to_bits(), data.right.to_bits());
+            self.samples.push(data.left);
         }
 
         fn sample_rate(&self) -> u32 {
