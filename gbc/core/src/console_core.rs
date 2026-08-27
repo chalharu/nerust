@@ -212,7 +212,7 @@ mod tests {
         sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
-    use nerust_core_traits::CoreOptions;
+    use nerust_core_traits::{CoreOptions, audio::StereoSample};
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
@@ -238,7 +238,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct AudioState {
         volume: f32,
-        samples: usize,
+        samples: Vec<StereoSample>,
     }
 
     struct TestAudio(Arc<Mutex<AudioState>>);
@@ -248,8 +248,8 @@ mod tests {
 
         fn pause(&mut self) {}
 
-        fn push(&mut self, _sample: f32) {
-            self.0.lock().unwrap().samples += 1;
+        fn push(&mut self, sample: StereoSample) {
+            self.0.lock().unwrap().samples.push(sample);
         }
 
         fn set_volume(&mut self, volume: f32) {
@@ -330,6 +330,25 @@ mod tests {
         let state = core.save_state().unwrap();
         core.load_state(&state).unwrap();
         assert!(!core.identity().unwrap().identity_bytes.is_empty());
+    }
+
+    #[test]
+    fn render_frame_delivers_finite_stereo_samples() {
+        let audio_state = Arc::new(Mutex::new(AudioState::default()));
+        let mut core =
+            GbcConsoleCore::new_empty(Box::new(TestAudio(Arc::clone(&audio_state))), input());
+        core.load(&rom(), &config()).unwrap();
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        core.render_frame(&mut frame).unwrap();
+
+        let state = audio_state.lock().unwrap();
+        assert!(!state.samples.is_empty());
+        assert!(
+            state
+                .samples
+                .iter()
+                .all(|sample| sample.left.is_finite() && sample.right.is_finite())
+        );
     }
 
     #[test]

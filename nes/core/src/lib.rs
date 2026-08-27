@@ -24,7 +24,7 @@ pub mod rom_identity;
 pub mod rom_parse;
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_input_traits::{ControllerHub, OpenBusReadResult};
 use nerust_render_traits::FrameBuffer;
 use nerust_sound_filter::{
@@ -151,10 +151,11 @@ impl AudioBackend for ApuAdapter<'_> {
         self.inner.pause();
     }
 
-    fn push(&mut self, data: f32) {
-        if let Some(r) = self.state.resampler.step(data) {
+    fn push(&mut self, data: StereoSample) {
+        debug_assert_eq!(data.left.to_bits(), data.right.to_bits());
+        if let Some(r) = self.state.resampler.step(data.left) {
             let sample = self.state.filter.step(r * 2.0 - 1.0);
-            self.inner.push(sample);
+            self.inner.push(StereoSample::mono(sample));
         }
     }
 
@@ -919,7 +920,7 @@ mod scheduler_tests {
     impl AudioBackend for CountingMixer {
         fn start(&mut self) {}
         fn pause(&mut self) {}
-        fn push(&mut self, _data: f32) {
+        fn push(&mut self, _data: StereoSample) {
             self.samples += 1;
         }
     }
@@ -941,8 +942,9 @@ mod scheduler_tests {
     impl AudioBackend for RecordingMixer {
         fn start(&mut self) {}
         fn pause(&mut self) {}
-        fn push(&mut self, data: f32) {
-            self.samples.push(data);
+        fn push(&mut self, data: StereoSample) {
+            assert_eq!(data.left.to_bits(), data.right.to_bits());
+            self.samples.push(data.left);
         }
 
         fn sample_rate(&self) -> u32 {
