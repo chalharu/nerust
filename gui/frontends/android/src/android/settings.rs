@@ -1,11 +1,11 @@
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
 /// Only the fields that make sense on a mobile/touch device are exposed.
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
-use jni::objects::{JObject, JObjectArray, JString, JValue};
+use jni::objects::{JObject, JString, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use nerust_core_traits::{
     factory::{
@@ -28,6 +28,7 @@ const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
 const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
+const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -263,6 +264,57 @@ impl AndroidSettings {
             system_choices,
         })
     }
+
+    pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
+        let keys = self.dialog_keys();
+        let labels = self.dialog_labels();
+        let choices = self.dialog_choices();
+        let indices = self.current_indices();
+        let fields: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                serde_json::json!({
+                    "key": key,
+                    "label": labels[index],
+                    "kind": "choice",
+                    "value": indices[index].parse::<usize>().unwrap_or_default(),
+                    "options": choices[index].split('\t').collect::<Vec<_>>(),
+                    "enabled": true,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "schemaVersion": SETTINGS_SCHEMA_VERSION,
+            "requestId": request_id,
+            "fields": fields,
+        })
+        .to_string()
+    }
+
+    pub(crate) fn from_keyed_indices(
+        values: &BTreeMap<String, usize>,
+        current: &Self,
+    ) -> Option<Self> {
+        let keys = current.dialog_keys();
+        if values.len() != keys.len() || keys.iter().any(|key| !values.contains_key(key)) {
+            return None;
+        }
+        let raw = keys
+            .iter()
+            .map(|key| values.get(key).map(usize::to_string))
+            .collect::<Option<Vec<_>>>()?
+            .join(",");
+        Self::from_choice_indices(&raw, current)
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsResultPayload {
+    schema_version: u32,
+    request_id: u64,
+    values: BTreeMap<String, usize>,
 }
 
 fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
@@ -283,16 +335,17 @@ fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
 pub(crate) enum SettingsDialogResult {
     /// The user dismissed the dialog without saving.
     Dismissed,
-    /// The user saved settings; the value encodes the comma-separated indices.
-    Applied(String),
+    /// The user saved settings; values are keyed by stable setting ID.
+    Applied(BTreeMap<String, usize>),
 }
 
 /// JNI bridge state: bundled into one struct to avoid multiple statics.
 struct SettingsBridge {
     result: Option<SettingsDialogResult>,
     waker: Option<AndroidAppWaker>,
-    in_flight: bool,
-    cached: CachedSettingsData,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
+    cached: Option<AndroidSettings>,
 }
 
 impl SettingsBridge {
@@ -300,44 +353,29 @@ impl SettingsBridge {
         Self {
             result: None,
             waker: None,
-            in_flight: false,
-            cached: CachedSettingsData::empty(),
+            next_request_id: 1,
+            pending_request_id: None,
+            cached: None,
         }
     }
 }
 
 static SETTINGS: Mutex<SettingsBridge> = Mutex::new(SettingsBridge::empty());
 
-struct CachedSettingsData {
-    keys: Vec<String>,
-    labels: Vec<String>,
-    choices: Vec<String>,
-    current_indices: Vec<String>,
-}
-
-impl CachedSettingsData {
-    const fn empty() -> Self {
-        Self {
-            keys: Vec::new(),
-            labels: Vec::new(),
-            choices: Vec::new(),
-            current_indices: Vec::new(),
-        }
-    }
-}
-
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    let keys = current.dialog_keys();
-    let labels = current.dialog_labels();
-    let choices = current.dialog_choices();
-    let current_indices = current.current_indices();
-    SETTINGS.lock().expect("settings mutex poisoned").cached = CachedSettingsData {
-        keys,
-        labels,
-        choices,
-        current_indices,
-    };
+    SETTINGS.lock().expect("settings mutex poisoned").cached = Some(current.clone());
+}
+
+fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
+    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    if guard.pending_request_id.is_some() {
+        return None;
+    }
+    let request_id = guard.next_request_id;
+    guard.next_request_id = guard.next_request_id.wrapping_add(1).max(1);
+    guard.pending_request_id = Some(request_id);
+    Some((request_id, current.dialog_payload(request_id)))
 }
 
 /// Show the settings dialog synchronously from a JNI callback running on the
@@ -346,21 +384,20 @@ pub(crate) fn show_settings_dialog_sync(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
 ) -> Result<bool, String> {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    if guard.in_flight {
+    let current = SETTINGS
+        .lock()
+        .expect("settings mutex poisoned")
+        .cached
+        .clone()
+        .ok_or_else(|| "Android settings cache is empty".to_string())?;
+    let Some((request_id, payload)) = begin_request(&current) else {
         return Ok(false);
-    }
-    guard.in_flight = true;
-    let keys = guard.cached.keys.clone();
-    let labels = guard.cached.labels.clone();
-    let choices = guard.cached.choices.clone();
-    let current_indices = guard.cached.current_indices.clone();
-    drop(guard);
-
-    if let Err(error) =
-        show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices)
-    {
-        SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
+    };
+    if let Err(error) = show_settings_with_env(env, activity, &payload) {
+        let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+        if guard.pending_request_id == Some(request_id) {
+            guard.pending_request_id = None;
+        }
         return Err(error);
     }
     Ok(true)
@@ -370,13 +407,13 @@ pub(crate) fn bind_app(app: &AndroidApp) {
     let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
     guard.waker = Some(app.create_waker());
     guard.result = None;
-    guard.in_flight = false;
+    guard.pending_request_id = None;
 }
 
 pub(crate) fn reset() {
     let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
     guard.result = None;
-    guard.in_flight = false;
+    guard.pending_request_id = None;
 }
 
 pub(crate) fn take_result() -> Option<SettingsDialogResult> {
@@ -394,56 +431,32 @@ pub(crate) fn request_show_settings_dialog(
     app: &AndroidApp,
     current: &AndroidSettings,
 ) -> Result<bool, String> {
-    {
-        let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-        if guard.in_flight {
-            return Ok(false);
-        }
-        guard.in_flight = true;
-    }
-
-    let keys = current.dialog_keys();
-    let labels = current.dialog_labels();
-    let choices = current.dialog_choices();
-    let current_indices = current.current_indices();
+    let Some((request_id, payload)) = begin_request(current) else {
+        return Ok(false);
+    };
 
     let app = app.clone();
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = show_settings_on_java_main_thread(
-            &callback_app,
-            &keys,
-            &labels,
-            &choices,
-            &current_indices,
-        ) {
+        if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
             log::error!("{error}");
-            SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
+            let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+            if guard.pending_request_id == Some(request_id) {
+                guard.pending_request_id = None;
+            }
+            drop(guard);
             wake_main_thread();
         }
     }));
     Ok(true)
 }
 
-fn show_settings_on_java_main_thread(
-    app: &AndroidApp,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
-) -> Result<(), String> {
+fn show_settings_on_java_main_thread(app: &AndroidApp, payload: &str) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     vm.attach_current_thread(|env| {
         let activity_raw = app.activity_as_ptr() as jobject;
         let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-        show_settings_with_env_inner(
-            env,
-            activity.as_ref(),
-            keys,
-            labels,
-            choices,
-            current_indices,
-        )
+        show_settings_with_env_inner(env, activity.as_ref(), payload)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
 }
@@ -451,14 +464,10 @@ fn show_settings_on_java_main_thread(
 fn show_settings_with_env(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
+    payload: &str,
 ) -> Result<(), String> {
-    let n = keys.len();
-    env.with_local_frame(4 + n * 4 + 8, |env| {
-        show_settings_with_env_inner(env, activity, keys, labels, choices, current_indices)
+    env.with_local_frame(8, |env| {
+        show_settings_with_env_inner(env, activity, payload)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
 }
@@ -466,45 +475,27 @@ fn show_settings_with_env(
 fn show_settings_with_env_inner(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
+    payload: &str,
 ) -> Result<(), jni::errors::Error> {
-    let string_class = env.find_class(jni_str!("java/lang/String"))?;
-
-    let mut make_string_array = |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
-        let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
-        for (i, s) in items.iter().enumerate() {
-            let js = env.new_string(s.as_str())?;
-            arr.set_element(env, i, &js)?;
-        }
-        Ok(arr)
-    };
-
-    let keys_arr = make_string_array(keys)?;
-    let labels_arr = make_string_array(labels)?;
-    let choices_arr = make_string_array(choices)?;
-    let current_arr = make_string_array(current_indices)?;
+    let payload = env.new_string(payload)?;
 
     env.call_method(
         activity,
         jni_str!("showSettingsDialog"),
-        jni_sig!("([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"),
-        &[
-            JValue::Object(keys_arr.as_ref()),
-            JValue::Object(labels_arr.as_ref()),
-            JValue::Object(choices_arr.as_ref()),
-            JValue::Object(current_arr.as_ref()),
-        ],
+        jni_sig!("(Ljava/lang/String;)V"),
+        &[JValue::Object(payload.as_ref())],
     )?;
     Ok(())
 }
 
-fn publish_result(result: SettingsDialogResult) {
+fn publish_result(request_id: u64, result: SettingsDialogResult) {
     let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
+    if guard.pending_request_id != Some(request_id) {
+        log::warn!("ignoring stale Android settings result for request {request_id}");
+        return;
+    }
     guard.result = Some(result);
-    guard.in_flight = false;
+    guard.pending_request_id = None;
     drop(guard);
     wake_main_thread();
 }
@@ -525,7 +516,7 @@ fn wake_main_thread() {
 // ---------------------------------------------------------------------------
 //
 // * `result == null`  → dialog was dismissed
-// * `result` is a comma-separated string of choice indices, e.g. "0,4,1,1,1,1"
+// * `result` is a versioned JSON object containing request ID and keyed values.
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
@@ -534,24 +525,48 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     result: JString<'_>,
 ) {
     match env
-        .with_env(|env| -> jni::errors::Result<SettingsDialogResult> {
+        .with_env(|env| -> jni::errors::Result<Option<String>> {
             if result.is_null() {
-                Ok(SettingsDialogResult::Dismissed)
+                Ok(None)
             } else {
-                let result = result.try_to_string(env)?;
-                Ok(SettingsDialogResult::Applied(result))
+                Ok(Some(result.try_to_string(env)?))
             }
         })
         .into_outcome()
     {
-        jni::Outcome::Ok(r) => publish_result(r),
+        jni::Outcome::Ok(Some(raw)) => match serde_json::from_str::<SettingsResultPayload>(&raw) {
+            Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => publish_result(
+                payload.request_id,
+                SettingsDialogResult::Applied(payload.values),
+            ),
+            Ok(payload) => log::error!(
+                "unsupported Android settings result schema {}",
+                payload.schema_version
+            ),
+            Err(error) => log::error!("failed to parse Android settings result: {error}"),
+        },
+        jni::Outcome::Ok(None) => {
+            let request_id = SETTINGS
+                .lock()
+                .expect("settings mutex poisoned")
+                .pending_request_id;
+            if let Some(request_id) = request_id {
+                publish_result(request_id, SettingsDialogResult::Dismissed);
+            }
+        }
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
-            publish_result(SettingsDialogResult::Dismissed);
+            SETTINGS
+                .lock()
+                .expect("settings mutex poisoned")
+                .pending_request_id = None;
         }
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            publish_result(SettingsDialogResult::Dismissed);
+            SETTINGS
+                .lock()
+                .expect("settings mutex poisoned")
+                .pending_request_id = None;
         }
     }
 }
@@ -786,5 +801,36 @@ mod tests {
         assert_eq!(android.dialog_labels().len(), n);
         assert_eq!(android.dialog_choices().len(), n);
         assert_eq!(android.current_indices().len(), n);
+    }
+
+    #[test]
+    fn dialog_payload_contains_schema_request_and_stable_keys() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let payload: serde_json::Value = serde_json::from_str(&android.dialog_payload(42)).unwrap();
+
+        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["requestId"], 42);
+        assert_eq!(payload["fields"][0]["key"], "audio_muted");
+    }
+
+    #[test]
+    fn keyed_indices_do_not_depend_on_map_order() {
+        let registry = registry();
+        let current = android_settings(&default_snapshot(), &registry);
+        let mut values = BTreeMap::new();
+        for (key, value) in current
+            .dialog_keys()
+            .into_iter()
+            .zip(current.current_indices())
+            .rev()
+        {
+            values.insert(key, value.parse().unwrap());
+        }
+
+        assert_eq!(
+            AndroidSettings::from_keyed_indices(&values, &current),
+            Some(current)
+        );
     }
 }

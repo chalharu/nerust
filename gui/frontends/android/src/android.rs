@@ -401,7 +401,7 @@ impl AndroidFrontend {
     }
 
     fn handle_settings_result(&mut self, result: SettingsDialogResult) {
-        let SettingsDialogResult::Applied(raw) = result else {
+        let SettingsDialogResult::Applied(values) = result else {
             log::info!("handle_settings_result: settings dialog dismissed");
             return;
         };
@@ -410,8 +410,8 @@ impl AndroidFrontend {
             self.session.settings_snapshot(),
             self.session.registry(),
         );
-        let Some(android_settings) = AndroidSettings::from_choice_indices(&raw, &current) else {
-            log::error!("Android settings dialog returned an unrecognisable result: {raw:?}");
+        let Some(android_settings) = AndroidSettings::from_keyed_indices(&values, &current) else {
+            log::error!("Android settings dialog returned invalid keyed values");
             return;
         };
         let mut next = self.session.settings_snapshot().clone();
