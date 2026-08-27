@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use jni::{
     JavaVM, jni_sig, jni_str,
     objects::{JObject, JString, JValue},
@@ -6,25 +8,42 @@ use jni::{
 };
 use winit::platform::android::activity::AndroidApp;
 
-use crate::{android::bridge, import_metadata};
+use crate::{
+    android::{bridge, messages::RomPickerResult},
+    import_metadata,
+};
 
 const ROM_PICKER_BUFFER_CAPACITY: usize = 8 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RomPickerResult {
-    Cancelled,
-    Selected(String),
-    TreeSelected(String),
+struct PickerState {
+    result: Option<RomPickerResult>,
+    in_flight: bool,
+}
+
+static PICKER_STATE: Mutex<PickerState> = Mutex::new(PickerState {
+    result: None,
+    in_flight: false,
+});
+
+fn with_state<T>(operation: impl FnOnce(&mut PickerState) -> T) -> T {
+    operation(&mut PICKER_STATE.lock().expect("picker state mutex poisoned"))
 }
 
 pub(crate) fn take_result() -> Option<RomPickerResult> {
-    bridge::with_state(|state| state.picker_result.take())
+    with_state(|state| state.result.take())
+}
+
+pub(crate) fn reset_transient() {
+    with_state(|state| {
+        state.result = None;
+        state.in_flight = false;
+    });
 }
 
 pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
-    if bridge::with_state(|state| {
-        let busy = state.picker_in_flight;
-        state.picker_in_flight = true;
+    if with_state(|state| {
+        let busy = state.in_flight;
+        state.in_flight = true;
         busy
     }) {
         return Ok(false);
@@ -34,7 +53,7 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = start_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
-            bridge::with_state(|state| state.picker_in_flight = false);
+            with_state(|state| state.in_flight = false);
             bridge::wake();
         }
     }));
@@ -42,9 +61,9 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
 }
 
 pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, String> {
-    if bridge::with_state(|state| {
-        let busy = state.picker_in_flight;
-        state.picker_in_flight = true;
+    if with_state(|state| {
+        let busy = state.in_flight;
+        state.in_flight = true;
         busy
     }) {
         return Ok(false);
@@ -54,7 +73,7 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = start_tree_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
-            bridge::with_state(|state| state.picker_in_flight = false);
+            with_state(|state| state.in_flight = false);
             bridge::wake();
         }
     }));
@@ -271,9 +290,9 @@ fn start_tree_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String>
 }
 
 fn publish_result(result: RomPickerResult) {
-    bridge::with_state(|state| {
-        state.picker_result = Some(result);
-        state.picker_in_flight = false;
+    with_state(|state| {
+        state.result = Some(result);
+        state.in_flight = false;
     });
     bridge::wake();
 }

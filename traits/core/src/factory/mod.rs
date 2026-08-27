@@ -9,16 +9,12 @@ use nerust_input_traits::{
 };
 use thiserror::Error;
 
-use crate::{
-    audio::AudioBackend,
-    factory::{
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
+use crate::{audio::AudioBackend, identity::SystemId};
+
+use self::{
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
 };
 
 #[derive(Debug, Error)]

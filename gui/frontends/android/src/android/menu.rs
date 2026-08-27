@@ -1,7 +1,7 @@
 use jni::objects::{JObject, JString};
 use nerust_input_traits::AbstractKey;
 
-use super::{bridge, settings};
+use super::{bridge, messages::MenuAction, settings};
 
 const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
@@ -11,23 +11,6 @@ const ACTION_RESET: &str = "reset";
 const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 const ACTION_UNLOAD: &str = "unload";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuAction {
-    ControllerInput {
-        device_id: i32,
-        key: AbstractKey,
-        pressed: bool,
-    },
-    Exit,
-    LoadState,
-    OpenRom,
-    OpenSettings,
-    Reset,
-    SaveState,
-    TogglePause,
-    Unload,
-}
 
 pub(crate) fn take_actions() -> Vec<MenuAction> {
     bridge::with_state(|state| state.menu_actions.drain(..).collect())
