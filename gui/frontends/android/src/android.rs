@@ -626,6 +626,7 @@ impl AndroidFrontend {
             self.session.settings_snapshot(),
             self.session.registry(),
         );
+        let previous_storage_policy = current.storage_policy;
         let Some(android_settings) = AndroidSettings::from_keyed_indices(&values, &current) else {
             log::error!("Android settings dialog returned invalid keyed values");
             return;
@@ -636,7 +637,8 @@ impl AndroidFrontend {
             return;
         }
         if android_settings.storage_policy != StoragePolicy::AppSharedData
-            && next.shared.persistence.storage_document_tree_uri.is_none()
+            && (android_settings.storage_policy != previous_storage_policy
+                || next.shared.persistence.storage_document_tree_uri.is_none())
         {
             self.pending_storage_settings = Some(next);
             match picker::request_open_document_tree(&self.app) {
