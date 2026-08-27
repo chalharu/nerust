@@ -17,7 +17,9 @@ use jni::{
     JavaVM,
     sys::{JNI_VERSION_1_6, jint},
 };
-use nerust_core_traits::{audio::AudioBackendRegistry, factory::CoreFactory};
+use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_gbc_factory::GbcFactory;
+use nerust_gui_shell::registry::SystemRegistry;
 use nerust_nes_factory::NesFactory;
 use nerust_render_traits::renderer::GpuFactory;
 use winit::platform::android::activity::AndroidApp;
@@ -44,8 +46,11 @@ fn init_android_logging() {
     });
 }
 
-fn create_core_factory() -> Arc<dyn CoreFactory> {
-    Arc::new(NesFactory)
+fn create_system_registry() -> Arc<SystemRegistry> {
+    Arc::new(SystemRegistry::new(vec![
+        Arc::new(NesFactory),
+        Arc::new(GbcFactory),
+    ]))
 }
 
 fn create_audio_registry() -> Arc<AudioBackendRegistry> {
@@ -79,10 +84,10 @@ pub fn android_main(app: AndroidApp) {
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
     match panic::catch_unwind(AssertUnwindSafe(|| {
-        let core_factory = create_core_factory();
+        let system_registry = create_system_registry();
         let audio_registry = create_audio_registry();
         let gpu_factory = create_gpu_factory();
-        android::run(app, core_factory, audio_registry, gpu_factory)
+        android::run(app, system_registry, audio_registry, gpu_factory)
     })) {
         Ok(Ok(())) => {
             log::info!("android_main: exited cleanly");
@@ -120,4 +125,65 @@ pub unsafe extern "system" fn JNI_OnLoad(
         log::info!("JNI_OnLoad: native registration complete");
     }
     JNI_VERSION_1_6
+}
+
+#[cfg(test)]
+mod tests {
+    use nerust_core_traits::factory::load::MediaObject;
+
+    use super::*;
+
+    fn minimal_gbc_rom() -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0104..0x0134].copy_from_slice(&[
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C,
+            0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6,
+            0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
+            0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+        ]);
+        let mut checksum = 0u8;
+        for byte in &rom[0x0134..=0x014C] {
+            checksum = checksum.wrapping_sub(*byte).wrapping_sub(1);
+        }
+        rom[0x014D] = checksum;
+        rom
+    }
+
+    #[test]
+    fn registry_contains_nes_and_gbc_factories() {
+        let registry = create_system_registry();
+        let ids: Vec<_> = registry
+            .all()
+            .iter()
+            .map(|factory| factory.system_id().to_string())
+            .collect();
+
+        assert_eq!(ids, ["nes", "gbc"]);
+    }
+
+    #[test]
+    fn registry_dispatches_nes_and_gbc_media() {
+        let registry = create_system_registry();
+        let nes = MediaObject::new(None, b"NES\x1a".to_vec());
+        let gbc = MediaObject::new(None, minimal_gbc_rom());
+
+        assert_eq!(
+            registry
+                .detect(&nes)
+                .unwrap()
+                .expect("NES factory")
+                .system_id()
+                .to_string(),
+            "nes"
+        );
+        assert_eq!(
+            registry
+                .detect(&gbc)
+                .unwrap()
+                .expect("GBC factory")
+                .system_id()
+                .to_string(),
+            "gbc"
+        );
+    }
 }

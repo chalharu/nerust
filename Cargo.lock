@@ -2895,6 +2895,7 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
+ "nerust_gbc_factory",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",

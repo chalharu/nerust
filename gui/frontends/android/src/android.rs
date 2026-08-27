@@ -16,7 +16,7 @@ use std::{
 use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
-    factory::{CoreFactory, load::MediaObject},
+    factory::load::MediaObject,
     touch::{TouchOverlayAction, TouchPoint},
 };
 use nerust_gui_runtime::{
@@ -97,7 +97,7 @@ pub(crate) fn register_main_activity_natives(
 
 pub(crate) fn run(
     app: AndroidApp,
-    core_factory: Arc<dyn CoreFactory>,
+    system_registry: Arc<SystemRegistry>,
     audio_registry: Arc<AudioBackendRegistry>,
     gpu_factory: Rc<dyn GpuFactory>,
 ) -> Result<(), String> {
@@ -134,7 +134,7 @@ pub(crate) fn run(
         frontend_app,
         storage,
         storage_root.join("nerust"),
-        core_factory,
+        system_registry,
         audio_registry,
         gpu_factory,
     );
@@ -193,7 +193,7 @@ impl AndroidFrontend {
         app: AndroidApp,
         storage: AndroidStorage,
         settings_root: PathBuf,
-        core_factory: Arc<dyn CoreFactory>,
+        system_registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
         gpu_factory: Rc<dyn GpuFactory>,
     ) -> Self {
@@ -212,7 +212,7 @@ impl AndroidFrontend {
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
         let session = SessionHandle::new_with_settings_paths(
             capabilities,
-            Arc::new(SystemRegistry::new(vec![core_factory])),
+            system_registry,
             audio_registry,
             settings_paths,
         )
