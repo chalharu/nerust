@@ -83,6 +83,12 @@ impl RomManifest {
                             pattern.glob, suite.name
                         ))
                     })?;
+                    if pattern.exclude_globs.iter().any(|exclude| {
+                        glob::Pattern::new(exclude)
+                            .is_ok_and(|pattern| pattern.matches_path(relative))
+                    }) {
+                        continue;
+                    }
                     let stem = relative
                         .file_stem()
                         .and_then(|stem| stem.to_str())
@@ -280,6 +286,8 @@ pub struct RomSuite {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RomCasePattern {
     pub glob: String,
+    #[serde(default)]
+    pub exclude_globs: Vec<String>,
     #[serde(default)]
     pub id_prefix: String,
     pub models: Vec<GbcModel>,

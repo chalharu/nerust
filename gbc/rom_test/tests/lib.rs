@@ -10,7 +10,7 @@ fn rom_manifest_is_well_formed() {
         .iter()
         .find(|suite| suite.name == "aappleby_gbmicrotest")
         .expect("GBMicrotest suite should be registered");
-    assert_eq!(gbmicro.cases.len(), 513);
+    assert_eq!(gbmicro.cases.len(), 482);
     let age = manifest
         .suites
         .iter()

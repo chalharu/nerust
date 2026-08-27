@@ -27,6 +27,8 @@ struct Case {
 struct CasePattern {
     glob: String,
     #[serde(default)]
+    exclude_globs: Vec<String>,
+    #[serde(default)]
     id_prefix: String,
     models: Vec<String>,
 }
@@ -56,6 +58,15 @@ fn main() {
                     .expect("ROM case glob should be valid")
                 {
                     let path = path.expect("ROM case glob should be readable");
+                    let relative = path
+                        .strip_prefix(&suite_dir)
+                        .expect("ROM case glob should stay inside suite");
+                    if pattern.exclude_globs.iter().any(|exclude| {
+                        glob::Pattern::new(exclude)
+                            .is_ok_and(|pattern| pattern.matches_path(relative))
+                    }) {
+                        continue;
+                    }
                     if !matched_paths.insert(path.clone()) {
                         continue;
                     }

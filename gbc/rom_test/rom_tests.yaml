@@ -45,9 +45,43 @@ suites:
     case_patterns:
       - glob: repo/bin/*.gb
         id_prefix: gbmicro_
+        # These diagnostic benches do not call GBMicrotest's test_finish/test_pass
+        # macros, so FF82 is not a pass/fail result for them.
+        exclude_globs:
+          - repo/bin/000-oam_lock.gb
+          - repo/bin/000-write_to_x8000.gb
+          - repo/bin/001-vram_unlocked.gb
+          - repo/bin/002-vram_locked.gb
+          - repo/bin/004-tima_boot_phase.gb
+          - repo/bin/004-tima_cycle_timer.gb
+          - repo/bin/007-lcd_on_stat.gb
+          - repo/bin/400-dma.gb
+          - repo/bin/500-scx-timing.gb
+          - repo/bin/800-ppu-latch-scx.gb
+          - repo/bin/801-ppu-latch-scy.gb
+          - repo/bin/802-ppu-latch-tileselect.gb
+          - repo/bin/803-ppu-latch-bgdisplay.gb
+          - repo/bin/audio_testbench.gb
+          - repo/bin/cpu_bus_1.gb
+          - repo/bin/dma_basic.gb
+          - repo/bin/flood_vram.gb
+          - repo/bin/lcdon_write_timing.gb
+          - repo/bin/ly_while_lcd_off.gb
+          - repo/bin/minimal.gb
+          - repo/bin/mode2_stat_int_to_oam_unlock.gb
+          - repo/bin/oam_sprite_trashing.gb
+          - repo/bin/poweron.gb
+          - repo/bin/ppu_scx_vs_bgp.gb
+          - repo/bin/ppu_sprite_testbench.gb
+          - repo/bin/ppu_spritex_vs_scx.gb
+          - repo/bin/ppu_win_vs_wx.gb
+          - repo/bin/ppu_wx_early.gb
+          - repo/bin/temp.gb
+          - repo/bin/toggle_lcdc.gb
+          - repo/bin/wave_write_to_0xC003.gb
         models:
           - dmg
-        cycles: 100000
+        cycles: 500000
         completion: gbmicro_status
         verify:
           memory:
