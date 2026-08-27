@@ -103,6 +103,7 @@ version = "0.1.0-dev"
 
 [workspace.dependencies]
 android_logger = { version = "=0.15.1" }
+base64 = { version = "=0.22.1" }
 bitflags = { features = ["serde"], version = "=2.13.1" }
 clap = { features = ["derive"], version = "=4.6.4" }
 cpal = { version = "=0.18.1" }

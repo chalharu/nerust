@@ -376,6 +376,16 @@ impl SessionHandle {
         &self.settings
     }
 
+    pub fn set_persistence_backends(
+        &mut self,
+        slot_backend: Box<dyn persistence::SlotBackend>,
+        autosave_backend: Box<dyn persistence::AutoSaveBackend>,
+        mapper_backend: Box<dyn persistence::MapperSaveBackend>,
+    ) {
+        self.persistence =
+            PersistenceManager::with_all_backends(slot_backend, autosave_backend, mapper_backend);
+    }
+
     #[cfg(test)]
     pub(crate) fn set_settings(&mut self, settings: SettingsManager) {
         self.settings = settings;
