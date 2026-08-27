@@ -186,6 +186,8 @@ pub(super) struct Mode3Pipeline {
     /// Extra mode-3 dots added by sprite fetches (extend the pixel transfer
     /// period beyond the base 172 dots).
     sprite_extra_dots: u8,
+    /// Six-dot fetcher restart paid when the window becomes active.
+    window_extra_dots: u8,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
@@ -271,6 +273,7 @@ impl Mode3Pipeline {
             sprite_fetch: None,
             output_stall: 0,
             sprite_extra_dots: 0,
+            window_extra_dots: 0,
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
@@ -866,6 +869,7 @@ impl Mode3Pipeline {
                 self.window_line = self.window_line.wrapping_add(1);
             }
             self.window_active = true;
+            self.window_extra_dots = self.window_extra_dots.saturating_add(6);
             self.window_trigger_at = None;
             self.window_comparator_seen = true;
             self.window_seen = true;
@@ -1672,6 +1676,10 @@ impl Mode3Pipeline {
         self.sprite_extra_dots
     }
 
+    pub(super) fn window_extra_dots(&self) -> u8 {
+        self.window_extra_dots
+    }
+
     pub(super) fn unstarted_visible_sprite_pending(&self) -> bool {
         self.next_sprite < self.sprites.len() && self.sprites[self.next_sprite].x < 160
     }
@@ -2091,6 +2099,22 @@ mod tests {
         assert!(pipeline.emit_output_pixel(&[0; 32], &[0; 32]).is_some());
         assert_eq!(pipeline.bg_fifo.len(), 1);
         assert_eq!(pipeline.window_zero_at, None);
+    }
+
+    #[test]
+    fn window_activation_adds_six_mode3_dots() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, true, Vec::new(), false, false, false, 0);
+        pipeline.window_eligible = true;
+        pipeline.registers.lcdc |= 0x20;
+        pipeline.registers.wy = 0;
+        pipeline.registers.wx = 7;
+        pipeline.pixel_x = 0;
+
+        pipeline.try_activate_window();
+
+        assert!(pipeline.window_active);
+        assert_eq!(pipeline.window_extra_dots(), 6);
     }
 
     #[test]
