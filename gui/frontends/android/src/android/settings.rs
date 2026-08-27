@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Mutex};
 
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
@@ -20,7 +20,7 @@ use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::AndroidApp;
 
-use super::bridge;
+use super::{bridge, messages::SettingsDialogResult};
 
 // ---------------------------------------------------------------------------
 // Choice constants
@@ -467,27 +467,41 @@ fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
 // State machine (mirrors the library / picker pattern)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SettingsDialogResult {
-    /// The user dismissed the dialog without saving.
-    Dismissed,
-    /// The user saved settings; values are keyed by stable setting ID.
-    Applied(BTreeMap<String, usize>),
+struct SettingsBridgeState {
+    result: Option<SettingsDialogResult>,
+    cache: Option<AndroidSettings>,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
+}
+
+static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeState {
+    result: None,
+    cache: None,
+    next_request_id: 1,
+    pending_request_id: None,
+});
+
+fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
+    operation(
+        &mut SETTINGS_STATE
+            .lock()
+            .expect("settings bridge mutex poisoned"),
+    )
 }
 
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    bridge::with_state(|state| state.settings_cache = Some(current.clone()));
+    with_state(|state| state.cache = Some(current.clone()));
 }
 
 fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
-    bridge::with_state(|state| {
-        if state.pending_settings_request_id.is_some() {
+    with_state(|state| {
+        if state.pending_request_id.is_some() {
             return None;
         }
-        let request_id = state.next_settings_request_id;
-        state.next_settings_request_id = state.next_settings_request_id.wrapping_add(1).max(1);
-        state.pending_settings_request_id = Some(request_id);
+        let request_id = state.next_request_id;
+        state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
+        state.pending_request_id = Some(request_id);
         Some((request_id, current.dialog_payload(request_id)))
     })
 }
@@ -498,15 +512,15 @@ pub(crate) fn show_settings_dialog_sync(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
 ) -> Result<bool, String> {
-    let current = bridge::with_state(|state| state.settings_cache.clone())
+    let current = with_state(|state| state.cache.clone())
         .ok_or_else(|| "Android settings cache is empty".to_string())?;
     let Some((request_id, payload)) = begin_request(&current) else {
         return Ok(false);
     };
     if let Err(error) = show_settings_with_env(env, activity, &payload) {
-        bridge::with_state(|state| {
-            if state.pending_settings_request_id == Some(request_id) {
-                state.pending_settings_request_id = None;
+        with_state(|state| {
+            if state.pending_request_id == Some(request_id) {
+                state.pending_request_id = None;
             }
         });
         return Err(error);
@@ -515,7 +529,14 @@ pub(crate) fn show_settings_dialog_sync(
 }
 
 pub(crate) fn take_result() -> Option<SettingsDialogResult> {
-    bridge::with_state(|state| state.settings_result.take())
+    with_state(|state| state.result.take())
+}
+
+pub(crate) fn reset_transient() {
+    with_state(|state| {
+        state.result = None;
+        state.pending_request_id = None;
+    });
 }
 
 /// Request that the Android side show the settings dialog.
@@ -534,9 +555,9 @@ pub(crate) fn request_show_settings_dialog(
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
             log::error!("{error}");
-            bridge::with_state(|state| {
-                if state.pending_settings_request_id == Some(request_id) {
-                    state.pending_settings_request_id = None;
+            with_state(|state| {
+                if state.pending_request_id == Some(request_id) {
+                    state.pending_request_id = None;
                 }
             });
             bridge::wake();
@@ -583,12 +604,12 @@ fn show_settings_with_env_inner(
 }
 
 fn publish_result(request_id: u64, result: SettingsDialogResult) {
-    let accepted = bridge::with_state(|state| {
-        if state.pending_settings_request_id != Some(request_id) {
+    let accepted = with_state(|state| {
+        if state.pending_request_id != Some(request_id) {
             return false;
         }
-        state.settings_result = Some(result);
-        state.pending_settings_request_id = None;
+        state.result = Some(result);
+        state.pending_request_id = None;
         true
     });
     if !accepted {
@@ -639,11 +660,11 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
         jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
-            bridge::with_state(|state| state.pending_settings_request_id = None);
+            with_state(|state| state.pending_request_id = None);
         }
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            bridge::with_state(|state| state.pending_settings_request_id = None);
+            with_state(|state| state.pending_request_id = None);
         }
     }
 }

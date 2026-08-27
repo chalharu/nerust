@@ -1,5 +1,6 @@
 mod bridge;
 mod menu;
+mod messages;
 mod picker;
 mod saf;
 mod settings;
@@ -53,9 +54,8 @@ use winit::{
 };
 
 use self::{
-    menu::MenuAction,
-    picker::RomPickerResult,
-    settings::{AndroidSettings, SettingsDialogResult},
+    messages::{MenuAction, RomPickerResult, SettingsDialogResult},
+    settings::AndroidSettings,
     storage::{AndroidStorage, LastMediaReference},
 };
 
@@ -1442,6 +1442,8 @@ impl ApplicationHandler for AndroidFrontend {
         self.last_foreground_error = None;
         self.save_lifecycle_state();
         bridge::reset_transient();
+        picker::reset_transient();
+        settings::reset_transient();
         self.release_window_resources();
     }
 
