@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, sync::Mutex};
 
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+use winit::event_loop::EventLoopProxy;
 
 use super::{
     menu::MenuAction,
@@ -9,7 +9,7 @@ use super::{
 };
 
 pub(super) struct AndroidBridgeState {
-    pub(super) waker: Option<AndroidAppWaker>,
+    pub(super) event_loop_proxy: Option<EventLoopProxy<()>>,
     pub(super) picker_result: Option<RomPickerResult>,
     pub(super) picker_in_flight: bool,
     pub(super) menu_actions: VecDeque<MenuAction>,
@@ -22,7 +22,7 @@ pub(super) struct AndroidBridgeState {
 impl AndroidBridgeState {
     const fn empty() -> Self {
         Self {
-            waker: None,
+            event_loop_proxy: None,
             picker_result: None,
             picker_in_flight: false,
             menu_actions: VecDeque::new(),
@@ -36,9 +36,9 @@ impl AndroidBridgeState {
 
 static ANDROID_BRIDGE: Mutex<AndroidBridgeState> = Mutex::new(AndroidBridgeState::empty());
 
-pub(super) fn bind_app(app: &AndroidApp) {
+pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
     with_state(|state| {
-        state.waker = Some(app.create_waker());
+        state.event_loop_proxy = Some(event_loop_proxy);
         state.picker_result = None;
         state.picker_in_flight = false;
         state.menu_actions.clear();
@@ -66,8 +66,8 @@ pub(super) fn with_state<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T
 }
 
 pub(super) fn wake() {
-    let waker = with_state(|state| state.waker.clone());
-    if let Some(waker) = waker {
-        waker.wake();
+    let event_loop_proxy = with_state(|state| state.event_loop_proxy.clone());
+    if let Some(event_loop_proxy) = event_loop_proxy {
+        let _ = event_loop_proxy.send_event(());
     }
 }

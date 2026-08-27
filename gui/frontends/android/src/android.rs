@@ -112,7 +112,6 @@ pub(crate) fn run(
         log::warn!("native re-registration skipped (expected on native thread): {error:?}");
     }
 
-    bridge::bind_app(&app);
     let frontend_app = app.clone();
     let storage_root = app
         .internal_data_path()
@@ -127,6 +126,7 @@ pub(crate) fn run(
     let event_loop = builder
         .build()
         .map_err(|error| format!("failed to build Android event loop: {error}"))?;
+    bridge::bind_event_loop(event_loop.create_proxy());
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let mut state = AndroidFrontend::new(

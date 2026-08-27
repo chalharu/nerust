@@ -295,7 +295,10 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onFilePickerR
         })
         .into_outcome()
     {
-        jni::Outcome::Ok(result) => publish_result(result),
+        jni::Outcome::Ok(result) => {
+            log::info!("received Android ROM picker result: {result:?}");
+            publish_result(result);
+        }
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android ROM picker result: {error:?}");
             publish_result(RomPickerResult::Cancelled);
