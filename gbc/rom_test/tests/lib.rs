@@ -5,6 +5,18 @@ use nerust_gbc_rom_test::{manifest::RomManifest, runner::run_manifest};
 #[test]
 fn rom_manifest_is_well_formed() {
     let manifest = manifest();
+    let gbmicro = manifest
+        .suites
+        .iter()
+        .find(|suite| suite.name == "aappleby_gbmicrotest")
+        .expect("GBMicrotest suite should be registered");
+    assert_eq!(gbmicro.cases.len(), 513);
+    let age = manifest
+        .suites
+        .iter()
+        .find(|suite| suite.name == "c-sp_age-test-roms")
+        .expect("AGE suite should be registered");
+    assert_eq!(age.cases.len(), 47);
     let cell_count = manifest
         .suites
         .iter()

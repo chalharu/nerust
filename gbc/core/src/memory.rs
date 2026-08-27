@@ -270,6 +270,14 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Read observable state for diagnostics without CPU bus access locks.
+    pub fn debug_read(&self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0x9FFF => self.ppu.debug_read_vram(addr),
+            _ => self.read(addr),
+        }
+    }
+
     /// Cartridge, VRAM, WRAM, and HRAM — shared between
     /// `read()` (CPU access) and `read_raw()` (DMA access).
     fn read_storage(&self, addr: u16) -> u8 {
