@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use nerust_gbc_core::memory::GbcMemoryBus;
+use nerust_gbc_core::{cpu_registers::CpuRegisters, memory::GbcMemoryBus};
 
 use super::{error::RomTestError, media};
+
+type RegisterEntry<'a> = (&'static str, Option<&'a str>, fn(&CpuRegisters) -> u8);
 
 /// Outcome of one declared verification check.
 #[derive(Debug, Clone, Serialize)]
@@ -18,6 +20,93 @@ pub struct CheckResult {
 pub struct MemoryEntry {
     pub address: String, // hex, e.g. "0xC000"
     pub value: String,   // hex, e.g. "0x42"
+}
+
+/// Repeated expected byte values, optionally arranged in strided rows.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryRegion {
+    pub start: String,
+    pub length: usize,
+    pub value: String,
+    #[serde(default)]
+    pub row_length: Option<usize>,
+    #[serde(default)]
+    pub stride: Option<usize>,
+}
+
+/// Expected values for the 8-bit CPU registers used by test ROM protocols.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RegisterVerify {
+    #[serde(default)]
+    pub b: Option<String>,
+    #[serde(default)]
+    pub c: Option<String>,
+    #[serde(default)]
+    pub d: Option<String>,
+    #[serde(default)]
+    pub e: Option<String>,
+    #[serde(default)]
+    pub h: Option<String>,
+    #[serde(default)]
+    pub l: Option<String>,
+}
+
+impl RegisterVerify {
+    pub fn is_empty(&self) -> bool {
+        self.entries().iter().all(|(_, value, _)| value.is_none())
+    }
+
+    pub fn validate(&self) -> Result<(), RomTestError> {
+        for (name, value, _) in self.entries() {
+            if value.is_some_and(|value| parse_hex(value).is_err()) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "invalid CPU register {name} value"
+                )));
+            }
+            if value.is_some_and(|value| parse_hex(value).is_ok_and(|value| value > u8::MAX as u64))
+            {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "CPU register {name} value is out of range"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn matches(&self, registers: &CpuRegisters) -> bool {
+        self.entries().into_iter().all(|(_, expected, actual)| {
+            expected.is_none_or(|expected| {
+                parse_hex(expected).is_ok_and(|expected| actual(registers) as u64 == expected)
+            })
+        })
+    }
+
+    fn entries(&self) -> [RegisterEntry<'_>; 6] {
+        [
+            ("B", self.b.as_deref(), CpuRegisters::b),
+            ("C", self.c.as_deref(), CpuRegisters::c),
+            ("D", self.d.as_deref(), CpuRegisters::d),
+            ("E", self.e.as_deref(), CpuRegisters::e),
+            ("H", self.h.as_deref(), CpuRegisters::h),
+            ("L", self.l.as_deref(), CpuRegisters::l),
+        ]
+    }
+
+    fn verify(&self, registers: &CpuRegisters, checks: &mut Vec<CheckResult>) {
+        for (name, expected, actual) in self.entries() {
+            let Some(expected) = expected else {
+                continue;
+            };
+            let expected = parse_hex(expected).expect("register values are validated") as u8;
+            let actual = actual(registers);
+            checks.push(CheckResult {
+                name: format!("register.{name}"),
+                expected: format!("${expected:02X}"),
+                actual: format!("${actual:02X}"),
+                passed: actual == expected,
+            });
+        }
+    }
 }
 
 /// Hash algorithm used for a digest check.
@@ -91,6 +180,10 @@ pub struct VerifySpec {
     pub frame: Option<FrameVerify>,
     #[serde(default)]
     pub memory: Vec<MemoryEntry>,
+    #[serde(default)]
+    pub memory_regions: Vec<MemoryRegion>,
+    #[serde(default)]
+    pub registers: RegisterVerify,
 }
 
 impl VerifySpec {
@@ -142,6 +235,26 @@ impl VerifySpec {
                 )));
             }
         }
+        for region in &self.memory_regions {
+            let start = parse_hex(&region.start)?;
+            let value = parse_hex(&region.value)?;
+            let row_length = region.row_length.unwrap_or(region.length);
+            let stride = region.stride.unwrap_or(row_length);
+            if region.length == 0 || row_length == 0 || stride < row_length {
+                return Err(RomTestError::InvalidManifest(
+                    "memory region dimensions must be positive and stride must cover a row"
+                        .to_string(),
+                ));
+            }
+            let rows = region.length.div_ceil(row_length);
+            let last = start + ((rows - 1) * stride + (region.length - 1) % row_length) as u64;
+            if last > u16::MAX as u64 || value > u8::MAX as u64 {
+                return Err(RomTestError::InvalidManifest(
+                    "memory region exceeds the address or byte value range".to_string(),
+                ));
+            }
+        }
+        self.registers.validate()?;
         Ok(())
     }
 
@@ -230,7 +343,7 @@ impl VerifySpec {
         for entry in &self.memory {
             let addr = parse_hex(&entry.address)? as u16;
             let expected = parse_hex(&entry.value)? as u8;
-            let actual = bus.read(addr);
+            let actual = bus.debug_read(addr);
             checks.push(CheckResult {
                 name: format!("memory@${:04X}", addr),
                 expected: format!("${:02X}", expected),
@@ -238,7 +351,31 @@ impl VerifySpec {
                 passed: actual == expected,
             });
         }
+        for region in &self.memory_regions {
+            let start = parse_hex(&region.start)? as usize;
+            let expected = parse_hex(&region.value)? as u8;
+            let row_length = region.row_length.unwrap_or(region.length);
+            let stride = region.stride.unwrap_or(row_length);
+            let mismatch = (0..region.length).find_map(|index| {
+                let address = start + index / row_length * stride + index % row_length;
+                let actual = bus.debug_read(address as u16);
+                (actual != expected).then_some((address, actual))
+            });
+            checks.push(CheckResult {
+                name: format!("memory_region@${start:04X}"),
+                expected: format!("{} bytes of ${expected:02X}", region.length),
+                actual: mismatch.map_or_else(
+                    || "all bytes matched".to_string(),
+                    |(address, actual)| format!("${actual:02X} at ${address:04X}"),
+                ),
+                passed: mismatch.is_none(),
+            });
+        }
         Ok(())
+    }
+
+    pub fn verify_registers(&self, registers: &CpuRegisters, checks: &mut Vec<CheckResult>) {
+        self.registers.verify(registers, checks);
     }
 }
 

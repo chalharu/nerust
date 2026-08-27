@@ -903,6 +903,15 @@ impl GbcPpu {
         self.vram[idx as usize]
     }
 
+    pub fn debug_read_vram(&self, addr: u16) -> u8 {
+        let idx = if self.vbk == 0 {
+            addr & 0x1FFF
+        } else {
+            0x2000 + (addr & 0x1FFF)
+        };
+        self.vram[idx as usize]
+    }
+
     pub fn write_vram(&mut self, addr: u16, value: u8) {
         if !self.cgb_mode
             && self.lcdc & 0x80 != 0

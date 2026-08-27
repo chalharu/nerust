@@ -93,6 +93,7 @@ fn run_cell(
         cell.cycles(),
         cell.completion(),
         cell.verify(),
+        &cell.case.inputs,
     );
     let rendered = render_frame(&bus)?;
 
@@ -103,7 +104,7 @@ fn run_cell(
     }
 
     verify_reference_if_present(cell, rom_root, &rendered, artifacts_dir, acc)?;
-    verify_outputs(cell, &bus, rendered.crc, acc)?;
+    verify_outputs(cell, &bus, &cpu, rendered.crc, acc)?;
 
     Ok(())
 }
@@ -171,6 +172,7 @@ fn verify_reference_if_present(
 fn verify_outputs(
     cell: &MatrixCell<'_>,
     bus: &GbcMemoryBus,
+    cpu: &Lr35902Cpu,
     crc: u32,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
@@ -179,6 +181,8 @@ fn verify_outputs(
         .verify_serial(serial_output, &mut acc.checks)?;
     cell.verify().verify_frame(crc, &mut acc.checks);
     cell.verify().verify_memory(bus, &mut acc.checks)?;
+    cell.verify()
+        .verify_registers(cpu.registers(), &mut acc.checks);
     Ok(())
 }
 
@@ -223,9 +227,22 @@ fn step_cycles(
     cycles: usize,
     completion: Option<&CompletionSpec>,
     verify: &crate::verify::VerifySpec,
+    inputs: &[crate::manifest::InputEvent],
 ) {
     let mut tracker = CompletionTracker::default();
+    let mut next_input = 0;
     for cycle in 0..cycles {
+        if inputs
+            .get(next_input)
+            .is_some_and(|event| event.cycle == cycle)
+        {
+            let buttons = inputs[next_input]
+                .buttons
+                .iter()
+                .fold(0xFF, |state, button| state & !button.mask());
+            bus.set_joypad(buttons);
+            next_input += 1;
+        }
         // T-cycle synchronized: CPU + PPU advance at 1 T-cycle per call.
         // 4 calls = 1 M-cycle for CPU, 4 T-cycles for PPU.
         for _ in 0..4 {
@@ -235,7 +252,7 @@ fn step_cycles(
             && cycle.is_multiple_of(spec.poll_interval)
         {
             let stage = &spec.stages[tracker.stage];
-            if tracker.observe(stage_matches(stage, bus, verify), spec.stages.len()) {
+            if tracker.observe(stage_matches(stage, bus, cpu, verify), spec.stages.len()) {
                 return;
             }
         }
@@ -245,6 +262,7 @@ fn step_cycles(
 fn stage_matches(
     stage: &CompletionStage,
     bus: &GbcMemoryBus,
+    cpu: &Lr35902Cpu,
     verify: &crate::verify::VerifySpec,
 ) -> bool {
     stage
@@ -252,6 +270,7 @@ fn stage_matches(
         .iter()
         .all(|condition| memory_matches(condition, bus))
         && (!stage.serial_hash || verify.serial_hash_matches(bus.serial_output()))
+        && stage.registers.matches(cpu.registers())
 }
 
 fn memory_matches(condition: &MemoryCompletion, bus: &GbcMemoryBus) -> bool {
@@ -262,7 +281,7 @@ fn memory_matches(condition: &MemoryCompletion, bus: &GbcMemoryBus) -> bool {
     }) else {
         return false;
     };
-    let actual = bus.read(address);
+    let actual = bus.debug_read(address);
     if let Some(value) = &condition.value {
         return crate::verify::parse_hex(value).is_ok_and(|value| actual as u64 == value);
     }
