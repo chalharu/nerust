@@ -144,4 +144,15 @@ mod tests {
         assert!((l - 1.0).abs() < f32::EPSILON);
         assert!((r - 0.5).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn mixer_routes_ch1_left_and_ch2_right_simultaneously() {
+        let mixer = Mixer {
+            nr50: 0x77,
+            nr51: 0x12, // CH1 left, CH2 right
+        };
+        let (l, r) = mixer.mix(15, 5, 0, 0);
+        assert!((l - 0.25).abs() < f32::EPSILON);
+        assert!((r - (5.0 / 60.0)).abs() < f32::EPSILON);
+    }
 }
