@@ -219,6 +219,14 @@ impl AndroidSettings {
     pub(crate) fn dialog_choices(&self) -> Vec<String> {
         let mut choices = vec![
             "Off\tOn".to_string(),
+            join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
+            join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
+            join_tab_labels(
+                SAMPLE_RATE_CHOICES
+                    .iter()
+                    .map(|value| format!("{value} Hz")),
+            ),
+            "Off\tOn".to_string(),
             "Next to ROM\tApp Storage\tCustom Directory".to_string(),
             "Always\tAuto\tHidden".to_string(),
             join_tab_labels((0..=100).map(|value| format!("{value}%"))),
@@ -227,14 +235,6 @@ impl AndroidSettings {
             ),
             join_tab_labels(
                 (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX).map(|value| format!("{value}%")),
-            ),
-            "Off\tOn".to_string(),
-            join_tab_labels((VOLUME_MIN..=VOLUME_MAX).map(|value| format!("{value}%"))),
-            join_tab_labels((LATENCY_MIN..=LATENCY_MAX).map(|value| format!("{value} ms"))),
-            join_tab_labels(
-                SAMPLE_RATE_CHOICES
-                    .iter()
-                    .map(|value| format!("{value} Hz")),
             ),
             "Off\tOn".to_string(),
         ];
@@ -921,13 +921,28 @@ mod tests {
         assert_eq!(payload["requestId"], 42);
         assert_eq!(payload["sections"][0]["id"], "audio");
         assert_eq!(payload["sections"][0]["fields"][0]["key"], "audio_muted");
-        let keys: Vec<_> = payload["sections"]
+        let fields: Vec<_> = payload["sections"]
             .as_array()
             .unwrap()
             .iter()
             .flat_map(|section| section["fields"].as_array().unwrap())
+            .collect();
+        let keys: Vec<_> = fields
+            .iter()
             .map(|field| field["key"].as_str().unwrap())
             .collect();
+        let volume = fields
+            .iter()
+            .find(|field| field["key"] == "master_volume")
+            .unwrap();
+        assert_eq!(volume["options"][0], "0%");
+        assert_eq!(volume["options"][100], "100%");
+        let storage = fields
+            .iter()
+            .find(|field| field["key"] == "storage.policy")
+            .unwrap();
+        assert_eq!(storage["options"][0], "Next to ROM");
+        assert_eq!(storage["options"][1], "App Storage");
         assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
     }
 
