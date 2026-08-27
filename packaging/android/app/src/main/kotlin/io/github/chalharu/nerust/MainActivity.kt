@@ -90,7 +90,7 @@ private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
 private const val MENU_ACTION_EXIT = "exit"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
-private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+private const val MENU_ACTION_OPEN_ROM = "open_rom"
 private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
 private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
@@ -116,7 +116,7 @@ internal data class OverlayZoneSpec(
 )
 
 private val DRAWER_ACTIONS = listOf(
-    DrawerAction("ROM Library", MENU_ACTION_OPEN_LIBRARY),
+    DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
     DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
     DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
     DrawerAction("Save State", MENU_ACTION_SAVE_STATE),

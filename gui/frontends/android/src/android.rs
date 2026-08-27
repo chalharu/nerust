@@ -1,4 +1,3 @@
-mod library;
 mod menu;
 mod picker;
 mod settings;
@@ -26,6 +25,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
+use nerust_gui_settings::shared::StoragePolicy;
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
@@ -50,11 +50,10 @@ use winit::{
 };
 
 use self::{
-    library::LibraryDialogResult,
     menu::MenuAction,
     picker::RomPickerResult,
     settings::{AndroidSettings, SettingsDialogResult},
-    storage::AndroidStorage,
+    storage::{AndroidStorage, LastMediaReference},
 };
 
 const FOREGROUND_RETRY_BASE_DELAY: Duration = Duration::from_millis(250);
@@ -77,12 +76,6 @@ pub(crate) fn register_main_activity_natives(
                 jni_str!("onMenuAction"),
                 jni_str!("(Ljava/lang/String;)V"),
                 menu::Java_io_github_chalharu_nerust_MainActivity_onMenuAction as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("onRomLibrarySelected"),
-                jni_str!("(Ljava/lang/String;)V"),
-                library::Java_io_github_chalharu_nerust_MainActivity_onRomLibrarySelected
-                    as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("onSettingsDialogResult"),
@@ -111,7 +104,6 @@ pub(crate) fn run(
     }
 
     picker::bind_app(&app);
-    library::bind_app(&app);
     menu::bind_app(&app);
     settings::bind_app(&app);
     let frontend_app = app.clone();
@@ -210,7 +202,7 @@ impl AndroidFrontend {
         };
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
-        let session = SessionHandle::new_with_settings_paths(
+        let mut session = SessionHandle::new_with_settings_paths(
             capabilities,
             system_registry,
             audio_registry,
@@ -220,6 +212,21 @@ impl AndroidFrontend {
             log::error!("fatal: session creation failed — settings I/O may be corrupted: {e}");
             std::process::abort();
         });
+        if !storage.storage_policy_migration_completed() {
+            let mut next = session.settings_snapshot().clone();
+            if next.shared.persistence.storage_policy == StoragePolicy::Sidecar {
+                next.shared.persistence.storage_policy = StoragePolicy::AppSharedData;
+                if let Err(error) = session.apply_settings(next) {
+                    log::error!(
+                        "failed to migrate Android persistence to app shared data: {error}"
+                    );
+                } else if let Err(error) = storage.complete_storage_policy_migration() {
+                    log::warn!("{error}");
+                }
+            } else if let Err(error) = storage.complete_storage_policy_migration() {
+                log::warn!("{error}");
+            }
+        }
         let restore_pending = storage.has_restore_pending();
         let frontend = Self {
             app,
@@ -253,16 +260,11 @@ impl AndroidFrontend {
     /// Update the cached library entries and settings so synchronous JNI
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
     fn refresh_dialog_caches(&self) {
-        library::update_cached_entries(self.storage.rom_library.entries());
         let current = AndroidSettings::from_snapshot(
             self.session.settings_snapshot(),
             self.session.registry(),
         );
         settings::update_cached_settings(&current);
-    }
-
-    fn load_from_library(&mut self, event_loop: &ActiveEventLoop, id: &str) -> Result<(), String> {
-        self.load_from_library_with_autosave(event_loop, id, false)
     }
 
     fn load_from_library_with_autosave(
@@ -283,6 +285,36 @@ impl AndroidFrontend {
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
 
+        self.load_media(event_loop, media, None, restore_hidden_state)
+    }
+
+    fn load_document_uri(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        reference: LastMediaReference,
+        restore_hidden_state: bool,
+    ) -> Result<(), String> {
+        log::info!(
+            "load_document_uri: loading '{}' from {} restore_hidden_state={restore_hidden_state}",
+            reference.display_name,
+            reference.uri
+        );
+        let bytes = picker::read_uri_bytes(&self.app, &reference.uri)?;
+        let media = MediaObject::from_document_uri(
+            reference.uri.clone(),
+            reference.display_name.clone(),
+            bytes,
+        );
+        self.load_media(event_loop, media, Some(reference), restore_hidden_state)
+    }
+
+    fn load_media(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        media: MediaObject,
+        document_reference: Option<LastMediaReference>,
+        restore_hidden_state: bool,
+    ) -> Result<(), String> {
         let (factory, system_id) = {
             let f = self
                 .session
@@ -293,6 +325,15 @@ impl AndroidFrontend {
             let id = f.system_id();
             (f.clone(), id)
         };
+
+        if let Some(reference) = document_reference.as_ref()
+            && reference.system_id != system_id.to_string()
+        {
+            return Err(format!(
+                "last media system mismatch: expected {}, detected {system_id}",
+                reference.system_id
+            ));
+        }
 
         nerust_gui_shell::load::RomLoadTarget::set_active_system(
             &mut self.session,
@@ -310,118 +351,41 @@ impl AndroidFrontend {
         );
         let resolved = factory
             .resolve_load_request(&view, options)
-            .map_err(|e| format!("failed to start ROM {id} from library: {e}"))?;
+            .map_err(|e| format!("failed to resolve ROM load request: {e}"))?;
 
         if let Err(error) = self.session.load_resolved(media, resolved) {
-            return Err(format!("failed to start ROM {id} from library: {error}"));
+            return Err(format!("failed to start ROM: {error}"));
         }
-        self.finish_rom_load(event_loop, id, restore_hidden_state);
-        log::info!("load_from_library_with_autosave: session ready for id={id}");
+        if let Some(reference) = document_reference.as_ref()
+            && let Err(error) = self.storage.save_last_media_reference(reference)
+        {
+            log::warn!("{error}");
+        }
+        self.finish_rom_load(event_loop, restore_hidden_state);
+        log::info!("load_media: session ready for system={system_id}");
         Ok(())
     }
 
-    fn handle_library_result(&mut self, event_loop: &ActiveEventLoop, result: LibraryDialogResult) {
-        match result {
-            LibraryDialogResult::Dismissed => {}
-            LibraryDialogResult::Selected(id) => {
-                if let Err(error) = self.load_from_library(event_loop, &id) {
-                    log::error!("{error}");
-                }
-            }
-            LibraryDialogResult::ImportRequested => {
-                match picker::request_open_document(&self.app) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        log::warn!("Android ROM picker request ignored while it is already open");
-                    }
-                    Err(error) => {
-                        log::error!("{error}");
-                    }
-                }
-            }
-        }
-    }
-
-    fn import_rom_from_uri(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        uri: &str,
-    ) -> Result<(), String> {
-        log::info!("import_rom_from_uri: importing URI {uri}");
-        let bytes = picker::read_uri_bytes(&self.app, uri)?;
+    fn open_rom_from_uri(&mut self, event_loop: &ActiveEventLoop, uri: &str) -> Result<(), String> {
+        log::info!("open_rom_from_uri: opening URI {uri}");
         let (display_name, extension) = picker::infer_import_metadata(&self.app, uri);
-        log::info!(
-            "import_rom_from_uri: read '{}' ({} bytes)",
-            display_name,
-            bytes.len()
-        );
-        let entry = self
-            .storage
-            .rom_library
-            .import_bytes(&display_name, &extension, &bytes)
-            .map_err(|error| format!("failed to import Android ROM into library: {error}"))?;
-        let path = self
-            .storage
-            .rom_library
-            .rom_path(&entry.id)
-            .ok_or_else(|| {
-                format!(
-                    "imported Android ROM {} is missing its stored file",
-                    entry.id
-                )
-            })?;
-        let media = MediaObject::new(Some(path), bytes);
-
-        let (factory, system_id) = {
-            let f = self
-                .session
-                .registry()
-                .detect(&media)
-                .map_err(|e| format!("failed to detect ROM system: {e}"))?
-                .ok_or_else(|| "unsupported ROM format".to_string())?;
-            let id = f.system_id();
-            (f.clone(), id)
+        let file_name = if extension.is_empty() {
+            display_name
+        } else {
+            format!("{display_name}.{extension}")
         };
-
-        nerust_gui_shell::load::RomLoadTarget::set_active_system(
-            &mut self.session,
-            system_id.as_ref(),
-        )
-        .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
-
-        let options = self
+        let bytes = picker::read_uri_bytes(&self.app, uri)?;
+        let media = MediaObject::from_document_uri(uri, &file_name, bytes);
+        let detected_system = self
             .session
-            .default_load_options()
-            .ok_or_else(|| "no active system".to_string())?;
-        let view = nerust_settings_core::factory::settings_view(
-            self.session.settings_snapshot(),
-            system_id.as_ref(),
-        );
-        let resolved = factory.resolve_load_request(&view, options).map_err(|e| {
-            format!(
-                "failed to load imported Android ROM {}: {e}",
-                entry.display_name
-            )
-        })?;
-        if let Err(error) = self.session.load_resolved(media, resolved) {
-            if let Err(remove_error) = self.storage.rom_library.remove(&entry.id) {
-                log::error!(
-                    "failed to roll back Android ROM import {} after load error: {remove_error}",
-                    entry.id
-                );
-            }
-            return Err(format!(
-                "failed to load imported Android ROM {}: {error}",
-                entry.display_name
-            ));
-        }
-        self.finish_rom_load(event_loop, &entry.id, false);
-        log::info!(
-            "import_rom_from_uri: imported '{}' as id={}",
-            entry.display_name,
-            entry.id
-        );
-        Ok(())
+            .registry()
+            .detect(&media)
+            .map_err(|error| format!("failed to detect ROM system: {error}"))?
+            .ok_or_else(|| "unsupported ROM format".to_string())?
+            .system_id()
+            .to_string();
+        let reference = LastMediaReference::new(uri.to_string(), file_name, detected_system);
+        self.load_media(event_loop, media, Some(reference), false)
     }
 
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
@@ -430,8 +394,9 @@ impl AndroidFrontend {
             return;
         };
         log::info!("handle_picker_result: picker returned URI {uri}");
-        if let Err(error) = self.import_rom_from_uri(event_loop, &uri) {
+        if let Err(error) = self.open_rom_from_uri(event_loop, &uri) {
             log::error!("{error}");
+            show_toast(&self.app, &error);
         }
     }
 
@@ -522,11 +487,11 @@ impl AndroidFrontend {
         }
     }
 
-    fn request_library_dialog(&mut self) {
-        match library::request_show_library(&self.app, self.storage.rom_library.entries()) {
+    fn request_open_rom(&mut self) {
+        match picker::request_open_document(&self.app) {
             Ok(true) => {}
             Ok(false) => {
-                log::warn!("Android ROM library dialog ignored while it is already open");
+                log::warn!("Android ROM picker request ignored while it is already open");
             }
             Err(error) => {
                 log::error!("{error}");
@@ -593,7 +558,7 @@ impl AndroidFrontend {
                     show_toast(&self.app, "No save state to load");
                 }
             }
-            MenuAction::OpenLibrary => self.request_library_dialog(),
+            MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
             MenuAction::Reset => self.reset(),
             MenuAction::SaveState => self.save_active_slot(),
@@ -698,20 +663,12 @@ impl AndroidFrontend {
         }
     }
 
-    fn finish_rom_load(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        id: &str,
-        restore_hidden_state: bool,
-    ) {
-        if let Err(error) = self.storage.save_last_rom_id(id) {
-            log::warn!("{error}");
-        }
+    fn finish_rom_load(&mut self, event_loop: &ActiveEventLoop, restore_hidden_state: bool) {
         if restore_hidden_state {
-            log::info!("finish_rom_load: restoring hidden lifecycle state for id={id}");
+            log::info!("finish_rom_load: restoring hidden lifecycle state");
             self.session.load_hidden_lifecycle_state();
         } else {
-            log::info!("finish_rom_load: clearing hidden lifecycle state for id={id}");
+            log::info!("finish_rom_load: clearing hidden lifecycle state");
             self.session.clear_hidden_lifecycle_state();
         }
         self.lifecycle_auto_paused = false;
@@ -809,41 +766,80 @@ impl AndroidFrontend {
                     log::info!(
                         "try_resume_foreground: lifecycle_restore_pending=true; attempting to load last ROM and restore hidden lifecycle state"
                     );
-                    match self.storage.load_last_rom_id() {
-                        Ok(Some(id)) => {
-                            if self.storage.rom_library.rom_path(&id).is_none() {
-                                log::warn!("try_resume_foreground: stored ROM id={id} is missing");
-                                self.session.clear_hidden_lifecycle_state();
-                                self.storage.clear_restore_pending();
-                                self.lifecycle_restore_pending = false;
-                            } else {
-                                match self.load_from_library_with_autosave(event_loop, &id, true) {
-                                    Ok(()) => {
-                                        log::info!(
-                                            "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
-                                        );
-                                        // finish_rom_load will handle resume and clearing pending flags.
-                                    }
-                                    Err(error) => {
-                                        log::warn!(
-                                            "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
-                                        );
-                                        self.session.clear_hidden_lifecycle_state();
-                                        self.storage.clear_restore_pending();
-                                        self.lifecycle_restore_pending = false;
-                                    }
+                    match self.storage.load_last_media_reference() {
+                        Ok(Some(reference)) => {
+                            match self.load_document_uri(event_loop, reference, true) {
+                                Ok(()) => {
+                                    log::info!(
+                                        "try_resume_foreground: loaded last document URI for lifecycle restore"
+                                    );
+                                }
+                                Err(error) => {
+                                    log::warn!(
+                                        "try_resume_foreground: failed to load last document URI for lifecycle restore: {error}"
+                                    );
+                                    show_toast(
+                                        &self.app,
+                                        "Previous ROM is unavailable; open it again",
+                                    );
+                                    self.session.clear_hidden_lifecycle_state();
+                                    self.storage.clear_restore_pending();
+                                    self.lifecycle_restore_pending = false;
                                 }
                             }
                         }
-                        Ok(None) => {
-                            log::info!("try_resume_foreground: no last ROM recorded");
-                            self.session.clear_hidden_lifecycle_state();
-                            self.storage.clear_restore_pending();
-                            self.lifecycle_restore_pending = false;
-                        }
+                        Ok(None) => match self.storage.load_last_rom_id() {
+                            Ok(Some(id)) => {
+                                if self.storage.rom_library.rom_path(&id).is_none() {
+                                    log::warn!(
+                                        "try_resume_foreground: stored ROM id={id} is missing"
+                                    );
+                                    self.session.clear_hidden_lifecycle_state();
+                                    self.storage.clear_restore_pending();
+                                    self.lifecycle_restore_pending = false;
+                                } else {
+                                    match self
+                                        .load_from_library_with_autosave(event_loop, &id, true)
+                                    {
+                                        Ok(()) => {
+                                            log::info!(
+                                                "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
+                                            );
+                                            // finish_rom_load will handle resume and clearing pending flags.
+                                        }
+                                        Err(error) => {
+                                            log::warn!(
+                                                "try_resume_foreground: failed to load last ROM id={id} for lifecycle restore: {error}"
+                                            );
+                                            self.session.clear_hidden_lifecycle_state();
+                                            self.storage.clear_restore_pending();
+                                            self.lifecycle_restore_pending = false;
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                log::info!("try_resume_foreground: no last ROM recorded");
+                                self.session.clear_hidden_lifecycle_state();
+                                self.storage.clear_restore_pending();
+                                self.lifecycle_restore_pending = false;
+                            }
+                            Err(error) => {
+                                log::warn!(
+                                    "try_resume_foreground: failed to read last ROM id: {error}"
+                                );
+                                self.session.clear_hidden_lifecycle_state();
+                                self.storage.clear_restore_pending();
+                                self.lifecycle_restore_pending = false;
+                            }
+                        },
                         Err(error) => {
                             log::warn!(
-                                "try_resume_foreground: failed to read last ROM id: {error}"
+                                "try_resume_foreground: failed to read last media reference: {error}"
+                            );
+                            show_toast(
+                                &self.app,
+                                "Previous ROM reference is invalid; open it again",
                             );
                             self.session.clear_hidden_lifecycle_state();
                             self.storage.clear_restore_pending();
@@ -1089,7 +1085,6 @@ impl ApplicationHandler for AndroidFrontend {
         self.last_foreground_error = None;
         self.save_lifecycle_state();
         picker::reset();
-        library::reset();
         menu::reset();
         settings::reset();
         self.release_window_resources();
@@ -1131,9 +1126,6 @@ impl ApplicationHandler for AndroidFrontend {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         self.try_resume_foreground(event_loop);
-        if let Some(result) = library::take_result() {
-            self.handle_library_result(event_loop, result);
-        }
         if let Some(result) = picker::take_result() {
             self.handle_picker_result(event_loop, result);
         }

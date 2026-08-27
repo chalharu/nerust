@@ -77,41 +77,6 @@ class MainActivityE2eTest {
         }
 
         runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
-            activity.showRomLibraryDialogForTest(
-                arrayOf("Super Mario Bros.", "Metroid"),
-                arrayOf("mario", "metroid"),
-            )
-        }
-
-        assertChromeViewAvailable(
-            activity,
-            ROM_LIBRARY_DIALOG_TAG,
-            DIALOG_TIMEOUT_MS,
-            "ROM library dialog should be attached after requesting it",
-        )
-
-        runOnActivityThread(activity) {
-            val dialogRoot =
-                requireNotNull(activity.findChromeViewForTest(ROM_LIBRARY_DIALOG_TAG)) {
-                    "ROM library dialog root should be available"
-                }
-            assertEquals(
-                "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
-                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
-            )
-            assertEquals(
-                DIALOG_PRESENTATION_FULL_SCREEN,
-                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
-            )
-            activity.dismissComposeDialogForTest()
-        }
-
-        runOnActivityThread(activity) {
-            activity.resetChromeStateForTest()
-        }
-
-        runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
             activity.showSettingsDialogForTest(
                 arrayOf("video_filter", "touch_overlay"),
@@ -147,12 +112,6 @@ class MainActivityE2eTest {
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
-        exerciseMenuAction(
-            activity,
-            MENU_ACTION_OPEN_LIBRARY,
-            ROM_LIBRARY_DIALOG_TAG,
-            "ROM library dialog should be attached after dispatching open_library",
-        )
         exerciseMenuAction(
             activity,
             MENU_ACTION_OPEN_SETTINGS,
@@ -340,8 +299,7 @@ class MainActivityE2eTest {
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
-            "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
-        const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+            "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val POLL_INTERVAL_MS = 50L

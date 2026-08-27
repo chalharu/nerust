@@ -174,9 +174,9 @@ impl SessionHandle {
             media: media.clone(),
         });
 
-        self.setup_persistence(media.path.as_deref(), true);
+        self.setup_persistence(media.native_path(), true);
 
-        self.remember_last_successful_rom_directory(media.path.as_deref());
+        self.remember_last_successful_rom_directory(media.native_path());
         Ok(())
     }
 
@@ -387,7 +387,7 @@ impl SessionHandle {
             let rom_path = self
                 .loaded_media
                 .as_ref()
-                .and_then(|m| m.media.path.clone());
+                .and_then(|m| m.media.native_path().map(Path::to_path_buf));
             let rom_path_deref = rom_path.as_deref();
             self.setup_persistence(rom_path_deref, !restored_runtime_state);
             if was_paused && let Some(ref mut core) = self.emu_core {
