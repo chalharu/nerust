@@ -616,7 +616,7 @@ impl GbcMemoryBus {
         }
     }
 
-    pub fn flush_audio(&mut self) -> Vec<f32> {
+    pub fn flush_audio(&mut self) -> Vec<nerust_core_traits::audio::StereoSample> {
         self.apu.flush_samples()
     }
 
