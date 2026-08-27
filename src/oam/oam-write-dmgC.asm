@@ -1,0 +1,10 @@
+; Verified:
+;   2021-10-21 fail: CPU CGB E - CPU-CGB-06
+;   2022-03-16 fail: CPU CGB C - CPU-CGB-04
+;   2021-10-21 fail: CPU CGB B - CPU-CGB-02
+;   2021-10-21 pass: DMG-CPU C (blob) - DMG-CPU-08
+;
+INCLUDE "hardware.inc"
+DEF CART_COMPATIBILITY EQU CART_COMPATIBLE_DMG_GBC
+DEF DMG_C EQU 1
+INCLUDE "oam/oam-write.inc"
