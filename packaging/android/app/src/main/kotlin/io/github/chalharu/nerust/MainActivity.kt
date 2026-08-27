@@ -122,6 +122,12 @@ private data class AndroidSetting(
     val choices: List<String>,
 )
 
+private data class AndroidSettingsSection(
+    val id: String,
+    val label: String,
+    val settingIndices: List<Int>,
+)
+
 internal data class OverlayZoneSpec(
     val x: Float,
     val y: Float,
@@ -570,12 +576,14 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         labels: Array<String>,
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
+        sections: Array<String> = emptyArray(),
     ) {
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            sections = sections,
             requestId = null,
             ownedByTest = true,
         )
@@ -697,6 +705,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 },
             )
         }
+        composeDialogRootView?.setTag(
+            R.id.nerust_settings_hierarchy_probe,
+            buildSettingsSections(settings).joinToString("\n") { section ->
+                "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
+            },
+        )
     }
 
     private fun scheduleChromeAttach() {
@@ -1366,62 +1380,63 @@ private fun NerustSettingsDialogCard(
     onSave: (List<Int>) -> Unit,
 ) {
     val selections = rememberSettingsSelections(settings, initialSelections)
+    val sections = remember(settings) { buildSettingsSections(settings) }
+    var activeSectionId by remember { mutableStateOf<String?>(null) }
     var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier.padding(WindowInsets.safeDrawing.asPaddingValues()),
-            contentAlignment = Alignment.Center,
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
         ) {
-            NerustDialogCard(
-                title = "Settings",
-                buttons = {
-                    TextButton(onClick = onDismissRequest) {
-                        Text("Cancel")
-                    }
-                    TextButton(onClick = { onSave(selections.toList()) }) {
-                        Text("Save")
+            val activeSection = sections.find { it.id == activeSectionId }
+            SettingsNavigationHeader(
+                title = activeSettingIndex?.let { settings[it].label }
+                    ?: activeSection?.label
+                    ?: "Settings",
+                subtitle = when {
+                    activeSettingIndex != null -> "Choose a value"
+                    activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
+                    else -> "Choose a category"
+                },
+                canNavigateBack = activeSection != null || activeSettingIndex != null,
+                onNavigateBack = {
+                    if (activeSettingIndex != null) {
+                        activeSettingIndex = null
+                    } else {
+                        activeSectionId = null
                     }
                 },
-            ) {
-                LazyColumn(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp),
-                ) {
-                    itemsIndexed(settings) { index, setting ->
-                        if (index == 0 || settings[index - 1].section != setting.section) {
-                            Text(
-                                text = setting.section.replaceFirstChar(Char::uppercase),
-                                style = MaterialTheme.typography.titleSmall,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                            )
-                        }
-                        val selectedValue = setting.choices.getOrElse(selections[index]) { "?" }
-                        DialogSettingButton(
-                            label = setting.label,
-                            value = selectedValue,
-                            key = setting.key,
-                        ) {
-                            activeSettingIndex = index
-                        }
-                        if (index < settings.lastIndex) {
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
+                onDismissRequest = onDismissRequest,
+                onSave = { onSave(selections.toList()) },
+            )
+            HorizontalDivider()
 
-            activeSettingIndex?.let { settingIndex ->
-                SettingsChoiceDialog(
-                    setting = settings[settingIndex],
-                    selectedIndex = selections[settingIndex],
-                    onDismissRequest = { activeSettingIndex = null },
-                    onSelect = { choiceIndex ->
-                        selections[settingIndex] = choiceIndex
-                        activeSettingIndex = null
-                    },
+            when {
+                activeSettingIndex != null -> {
+                    val settingIndex = requireNotNull(activeSettingIndex)
+                    SettingsChoiceList(
+                        setting = settings[settingIndex],
+                        selectedIndex = selections[settingIndex],
+                        onSelect = { choiceIndex ->
+                            selections[settingIndex] = choiceIndex
+                            activeSettingIndex = null
+                        },
+                    )
+                }
+                activeSection != null -> SettingsSectionList(
+                    section = activeSection,
+                    settings = settings,
+                    selections = selections,
+                    onSettingClick = { activeSettingIndex = it },
+                )
+                else -> SettingsCategoryList(
+                    sections = sections,
+                    settings = settings,
+                    selections = selections,
+                    onSectionClick = { activeSectionId = it },
                 )
             }
         }
@@ -1429,40 +1444,149 @@ private fun NerustSettingsDialogCard(
 }
 
 @Composable
-private fun SettingsChoiceDialog(
-    setting: AndroidSetting,
-    selectedIndex: Int,
+private fun SettingsNavigationHeader(
+    title: String,
+    subtitle: String,
+    canNavigateBack: Boolean,
+    onNavigateBack: () -> Unit,
     onDismissRequest: () -> Unit,
-    onSelect: (Int) -> Unit,
+    onSave: () -> Unit,
 ) {
-    NerustDialogCard(
-        title = setting.label,
-        buttons = {
-            TextButton(onClick = onDismissRequest) {
-                Text("Cancel")
-            }
-        },
-    ) {
-        LazyColumn(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 320.dp),
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
-                DialogChoiceButton(
-                    label = choiceLabel,
-                    selected = selectedIndex == choiceIndex,
-                ) {
-                    onSelect(choiceIndex)
-                }
-                if (choiceIndex < setting.choices.lastIndex) {
-                    HorizontalDivider()
-                }
+            if (canNavigateBack) {
+                TextButton(onClick = onNavigateBack) { Text("Back") }
+            } else {
+                TextButton(onClick = onDismissRequest) { Text("Cancel") }
             }
+            TextButton(onClick = onSave) { Text("Save") }
+        }
+        Text(text = title, style = MaterialTheme.typography.headlineSmall)
+        Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun SettingsCategoryList(
+    sections: List<AndroidSettingsSection>,
+    settings: List<AndroidSetting>,
+    selections: List<Int>,
+    onSectionClick: (String) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(sections) { index, section ->
+            val summary = section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
+                val setting = settings[settingIndex]
+                val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+                "${setting.label}: $value"
+            }
+            SettingsNavigationRow(
+                title = section.label,
+                value = settingsCountLabel(section.settingIndices.size),
+                supportingText = summary,
+                semanticsLabel = "${section.label}: ${settingsCountLabel(section.settingIndices.size)}",
+                onClick = { onSectionClick(section.id) },
+            )
+            if (index < sections.lastIndex) HorizontalDivider()
         }
     }
 }
+
+@Composable
+private fun SettingsSectionList(
+    section: AndroidSettingsSection,
+    settings: List<AndroidSetting>,
+    selections: List<Int>,
+    onSettingClick: (Int) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(section.settingIndices) { index, settingIndex ->
+            val setting = settings[settingIndex]
+            val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+            SettingsNavigationRow(
+                title = setting.label,
+                value = value,
+                semanticsLabel = "${setting.key}: ${setting.label}: $value",
+                onClick = { onSettingClick(settingIndex) },
+            )
+            if (index < section.settingIndices.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsChoiceList(
+    setting: AndroidSetting,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
+            DialogChoiceButton(
+                label = choiceLabel,
+                selected = selectedIndex == choiceIndex,
+            ) {
+                onSelect(choiceIndex)
+            }
+            if (choiceIndex < setting.choices.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsNavigationRow(
+    title: String,
+    value: String,
+    semanticsLabel: String,
+    supportingText: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+                .semantics { contentDescription = semanticsLabel },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            supportingText?.takeIf(String::isNotBlank)?.let {
+                Text(text = it, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(text = value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun buildSettingsSections(settings: List<AndroidSetting>): List<AndroidSettingsSection> =
+    settings
+        .withIndex()
+        .groupBy({ it.value.section }, { it.index })
+        .map { (id, indices) ->
+            AndroidSettingsSection(id, settingsSectionLabel(id), indices)
+        }
+
+private fun settingsSectionLabel(id: String): String =
+    when (id) {
+        "audio" -> "Audio"
+        "video" -> "Video"
+        "controls" -> "Controls"
+        "storage" -> "Storage"
+        "system.nes" -> "Nintendo Entertainment System"
+        "system.gbc" -> "Game Boy Color"
+        "general" -> "General"
+        else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
+    }
+
+private fun settingsCountLabel(count: Int): String =
+    "$count ${if (count == 1) "setting" else "settings"}"
 
 @Composable
 private fun rememberSettingsSelections(

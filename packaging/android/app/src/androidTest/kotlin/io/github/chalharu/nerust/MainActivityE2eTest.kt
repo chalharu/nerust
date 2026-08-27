@@ -108,6 +108,7 @@ class MainActivityE2eTest {
                 arrayOf("Video Filter", "Touch Overlay"),
                 arrayOf("CRT\tLCD", "On\tOff"),
                 arrayOf("1", "0"),
+                arrayOf("video", "controls"),
             )
         }
 
@@ -131,6 +132,10 @@ class MainActivityE2eTest {
                 DIALOG_PRESENTATION_FULL_SCREEN,
                 dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
             )
+            assertEquals(
+                "Video: 1 setting\nControls: 1 setting",
+                dialogRoot.getTag(R.id.nerust_settings_hierarchy_probe),
+            )
             activity.dismissComposeDialogForTest()
         }
 
@@ -143,6 +148,15 @@ class MainActivityE2eTest {
             SETTINGS_DIALOG_TAG,
             "Settings dialog should be attached after dispatching open_settings",
         )
+
+        runOnActivityThread(activity) {
+            activity.moveTaskToBack(true)
+        }
+        assertTrue(
+            "MainActivity should suspend before process restart",
+            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
+        )
+        SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -348,6 +362,7 @@ class MainActivityE2eTest {
             "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
+        const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
