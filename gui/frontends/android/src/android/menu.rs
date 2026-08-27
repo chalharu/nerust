@@ -1,10 +1,7 @@
-use std::{mem, sync::Mutex};
-
 use jni::objects::{JObject, JString};
 use nerust_input_traits::AbstractKey;
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
 
-use super::settings;
+use super::{bridge, settings};
 
 const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
@@ -32,26 +29,8 @@ pub(crate) enum MenuAction {
     Unload,
 }
 
-static MENU_ACTIONS: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
-static MENU_WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
-
-pub(crate) fn bind_app(app: &AndroidApp) {
-    *MENU_WAKER.lock().expect("menu waker mutex poisoned") = Some(app.create_waker());
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .clear();
-}
-
-pub(crate) fn reset() {
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .clear();
-}
-
 pub(crate) fn take_actions() -> Vec<MenuAction> {
-    mem::take(&mut *MENU_ACTIONS.lock().expect("menu actions mutex poisoned"))
+    bridge::with_state(|state| state.menu_actions.drain(..).collect())
 }
 
 fn decode_action(raw: &str) -> Option<MenuAction> {
@@ -100,21 +79,8 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
 
 fn publish_action(action: MenuAction) {
     log::info!("Android menu: published action: {:?}", action);
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .push(action);
-    wake_main_thread();
-}
-
-fn wake_main_thread() {
-    if let Some(waker) = MENU_WAKER
-        .lock()
-        .expect("menu waker mutex poisoned")
-        .clone()
-    {
-        waker.wake();
-    }
+    bridge::with_state(|state| state.menu_actions.push_back(action));
+    bridge::wake();
 }
 
 #[unsafe(no_mangle)]

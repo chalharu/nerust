@@ -1,17 +1,12 @@
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-
 use jni::{
     JavaVM, jni_sig, jni_str,
     objects::{JObject, JString, JValue},
     refs::Global,
     sys::jobject,
 };
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+use winit::platform::android::activity::AndroidApp;
 
-use crate::import_metadata;
+use crate::{android::bridge, import_metadata};
 
 const ROM_PICKER_BUFFER_CAPACITY: usize = 8 * 1024;
 
@@ -22,30 +17,16 @@ pub(crate) enum RomPickerResult {
     TreeSelected(String),
 }
 
-static PICKER_RESULT: Mutex<Option<RomPickerResult>> = Mutex::new(None);
-static PICKER_WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
-static PICKER_REQUEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
-
-pub(crate) fn bind_app(app: &AndroidApp) {
-    *PICKER_WAKER.lock().expect("picker waker mutex poisoned") = Some(app.create_waker());
-    *PICKER_RESULT.lock().expect("picker result mutex poisoned") = None;
-    PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
-}
-
-pub(crate) fn reset() {
-    *PICKER_RESULT.lock().expect("picker result mutex poisoned") = None;
-    PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
-}
-
 pub(crate) fn take_result() -> Option<RomPickerResult> {
-    PICKER_RESULT
-        .lock()
-        .expect("picker result mutex poisoned")
-        .take()
+    bridge::with_state(|state| state.picker_result.take())
 }
 
 pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
-    if PICKER_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+    if bridge::with_state(|state| {
+        let busy = state.picker_in_flight;
+        state.picker_in_flight = true;
+        busy
+    }) {
         return Ok(false);
     }
     let app = app.clone();
@@ -53,15 +34,19 @@ pub(crate) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = start_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
-            PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
-            wake_main_thread();
+            bridge::with_state(|state| state.picker_in_flight = false);
+            bridge::wake();
         }
     }));
     Ok(true)
 }
 
 pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, String> {
-    if PICKER_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+    if bridge::with_state(|state| {
+        let busy = state.picker_in_flight;
+        state.picker_in_flight = true;
+        busy
+    }) {
         return Ok(false);
     }
     let app = app.clone();
@@ -69,8 +54,8 @@ pub(crate) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
     app.run_on_java_main_thread(Box::new(move || {
         if let Err(error) = start_tree_picker_on_java_main_thread(&callback_app) {
             log::error!("{error}");
-            PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
-            wake_main_thread();
+            bridge::with_state(|state| state.picker_in_flight = false);
+            bridge::wake();
         }
     }));
     Ok(true)
@@ -286,19 +271,11 @@ fn start_tree_picker_on_java_main_thread(app: &AndroidApp) -> Result<(), String>
 }
 
 fn publish_result(result: RomPickerResult) {
-    *PICKER_RESULT.lock().expect("picker result mutex poisoned") = Some(result);
-    PICKER_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
-    wake_main_thread();
-}
-
-fn wake_main_thread() {
-    if let Some(waker) = PICKER_WAKER
-        .lock()
-        .expect("picker waker mutex poisoned")
-        .clone()
-    {
-        waker.wake();
-    }
+    bridge::with_state(|state| {
+        state.picker_result = Some(result);
+        state.picker_in_flight = false;
+    });
+    bridge::wake();
 }
 
 #[unsafe(no_mangle)]
