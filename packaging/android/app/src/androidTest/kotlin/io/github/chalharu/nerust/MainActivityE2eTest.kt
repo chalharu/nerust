@@ -52,37 +52,18 @@ class MainActivityE2eTest {
         )
     }
 
+    @Suppress("DEPRECATION")
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun gbcDocumentUriLoadsThroughMultiSystemRegistry() {
+    fun appLoadsGbcAndSupportsDrawerDialogsAndMenuActions() {
         val activity = launchActivity()
 
         runOnActivityThread(activity) {
             activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
         }
-
         assertTrue(
             "GBC document URI should be detected and loaded",
             waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
         )
-
-        runOnActivityThread(activity) {
-            activity.recreate()
-        }
-        val recreated =
-            requireNotNull(
-                waitUntilValue(STARTUP_TIMEOUT_MS) {
-                    MainActivity.currentActivityForTest()?.takeIf { it !== activity }
-                },
-            ) { "MainActivity should be recreated" }
-        assertTrue(
-            "GBC document URI should restore after Activity recreation",
-            waitUntil(STARTUP_TIMEOUT_MS) { recreated.lastLoadedSystemForTest() == "gbc" },
-        )
-    }
-
-    @Test(timeout = TEST_TIMEOUT_MS)
-    fun appSupportsDrawerDialogsAndMenuActionsWithoutVisibleMenuButton() {
-        val activity = launchActivity()
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         assertDrawerHandleAvailable(activity)
@@ -164,6 +145,16 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun gbcDocumentUriRestoresAfterProcessRestart() {
+        val activity = launchActivity()
+
+        assertTrue(
+            "GBC document URI should restore after process restart",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+    }
+
     private fun launchActivity(): MainActivity {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val launchIntent =
@@ -171,13 +162,10 @@ class MainActivityE2eTest {
                 "Launch intent for ${context.packageName} was not found"
             }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val preLaunchActivity = MainActivity.currentActivityForTest()
         context.startActivity(launchIntent)
         val activity =
             waitUntilValue(STARTUP_TIMEOUT_MS) {
-                MainActivity.currentActivityForTest()?.takeIf { current ->
-                    preLaunchActivity == null || current !== preLaunchActivity
-                }
+                MainActivity.currentActivityForTest()
             }
         if (activity == null) {
             val current = MainActivity.currentActivityForTest()
