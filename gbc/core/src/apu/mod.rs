@@ -11,6 +11,7 @@ pub(crate) mod wave;
 
 use high_pass::HighPassFilter;
 use mixer::Mixer;
+use nerust_core_traits::audio::StereoSample;
 use noise::Noise;
 use square1::Square1;
 use square2::Square2;
@@ -65,7 +66,7 @@ pub struct GbcApu {
     sample_accumulator: u32,
     sample_rate: u32,
     #[serde(skip)]
-    output_buffer: Vec<f32>,
+    output_buffer: Vec<StereoSample>,
 }
 
 impl GbcApu {
@@ -225,7 +226,7 @@ impl GbcApu {
     }
 
     /// Generate one audio sample at 44,100 Hz.
-    fn generate_sample(&mut self) -> f32 {
+    fn generate_sample(&mut self) -> StereoSample {
         let ch1 = self.ch1.output();
         let ch2 = self.ch2.output();
         let ch3 = self.ch3.output();
@@ -241,12 +242,11 @@ impl GbcApu {
         let left = self.hpf_left.step(left as f64, dacs_enabled) as f32;
         let right = self.hpf_right.step(right as f64, dacs_enabled) as f32;
 
-        // Mono output (average of left and right)
-        (left + right) / 2.0
+        StereoSample::new(left, right)
     }
 
     /// Flush the output buffer (called once per frame).
-    pub fn flush_samples(&mut self) -> Vec<f32> {
+    pub fn flush_samples(&mut self) -> Vec<StereoSample> {
         std::mem::take(&mut self.output_buffer)
     }
 
@@ -573,5 +573,37 @@ mod tests {
 
         let samples = apu.flush_samples();
         assert!(!samples.is_empty());
+        assert!(
+            samples
+                .iter()
+                .all(|sample| sample.left.is_finite() && sample.right.is_finite())
+        );
+    }
+
+    fn routed_ch1_samples(nr51: u8) -> Vec<StereoSample> {
+        let mut apu = GbcApu::new();
+        apu.write_register(0xFF26, 0x80);
+        apu.write_register(0xFF24, 0x77);
+        apu.write_register(0xFF25, nr51);
+        apu.write_register(0xFF12, 0xF0);
+        apu.write_register(0xFF11, 0x80);
+        apu.write_register(0xFF13, 0x00);
+        apu.write_register(0xFF14, 0x87);
+        apu.step(70_224);
+        apu.flush_samples()
+    }
+
+    #[test]
+    fn nr51_routes_ch1_to_left_only() {
+        let samples = routed_ch1_samples(0x10);
+        assert!(samples.iter().any(|sample| sample.left.abs() > 0.001));
+        assert!(samples.iter().all(|sample| sample.right == 0.0));
+    }
+
+    #[test]
+    fn nr51_routes_ch1_to_right_only() {
+        let samples = routed_ch1_samples(0x01);
+        assert!(samples.iter().all(|sample| sample.left == 0.0));
+        assert!(samples.iter().any(|sample| sample.right.abs() > 0.001));
     }
 }
