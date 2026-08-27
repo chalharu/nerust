@@ -7,13 +7,17 @@ use std::{
 };
 
 use cubeb::{SampleFormat, StereoFrame, StreamParamsBuilder};
-use flume::{Sender, TrySendError, bounded};
+use flume::{Receiver, Sender, TrySendError, bounded};
 use log::{info, warn};
 use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory, StereoSample};
 
 fn write_stereo_frame(frame: &mut StereoFrame<f32>, sample: StereoSample) {
     frame.l = sample.left;
     frame.r = sample.right;
+}
+
+fn receive_sample(receiver: &Receiver<StereoSample>) -> StereoSample {
+    receiver.try_recv().unwrap_or(StereoSample::SILENCE)
 }
 
 pub struct CubebAudio {
@@ -72,7 +76,7 @@ impl CubebAudio {
                         return 0;
                     }
                     for frame in output.iter_mut() {
-                        let sample = receiver.try_recv().unwrap_or(StereoSample::SILENCE);
+                        let sample = receive_sample(&receiver);
                         write_stereo_frame(frame, sample);
                     }
                     output.len() as isize
@@ -159,5 +163,15 @@ mod tests {
         write_stereo_frame(&mut frame, StereoSample::new(0.25, 0.75));
         assert_eq!(frame.l, 0.25);
         assert_eq!(frame.r, 0.75);
+    }
+
+    #[test]
+    fn underrun_outputs_silence_instead_of_holding_last_sample() {
+        let (sender, receiver) = bounded(1);
+        let sample = StereoSample::new(0.25, 0.75);
+        sender.send(sample).unwrap();
+
+        assert_eq!(receive_sample(&receiver), sample);
+        assert_eq!(receive_sample(&receiver), StereoSample::SILENCE);
     }
 }
