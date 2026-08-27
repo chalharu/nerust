@@ -41,6 +41,7 @@ use nerust_render_traits::{
     SurfaceSize,
     renderer::{GpuFactory, GpuRenderer, RenderResult, RendererConfig},
 };
+use sha2::{Digest, Sha256};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -174,26 +175,38 @@ fn configure_controls_overlay(
         nerust_gui_settings::local::TouchOverlayVisibility::Always => "always",
         nerust_gui_settings::local::TouchOverlayVisibility::Auto => "auto",
         nerust_gui_settings::local::TouchOverlayVisibility::Hidden => "hidden",
-    };
-    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
-        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
-        let visibility = env.new_string(visibility)?;
-        env.call_method(
-            &activity,
-            jni_str!("configureControlsOverlay"),
-            jni_sig!("(Ljava/lang/String;IIIZ)V"),
-            &[
-                jni::objects::JValue::Object(visibility.as_ref()),
-                jni::objects::JValue::Int(i32::from(settings.opacity_percent)),
-                jni::objects::JValue::Int(i32::from(settings.scale_percent)),
-                jni::objects::JValue::Int(i32::from(settings.vertical_offset_percent)),
-                jni::objects::JValue::Bool(settings.haptics),
-            ],
-        )?;
-        Ok(())
-    });
+    }
+    .to_string();
+    let opacity = i32::from(settings.opacity_percent);
+    let scale = i32::from(settings.scale_percent);
+    let offset = i32::from(settings.vertical_offset_percent);
+    let haptics = settings.haptics;
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            let visibility = env.new_string(&visibility)?;
+            env.call_method(
+                &activity,
+                jni_str!("configureControlsOverlay"),
+                jni_sig!("(Ljava/lang/String;IIIZ)V"),
+                &[
+                    jni::objects::JValue::Object(visibility.as_ref()),
+                    jni::objects::JValue::Int(opacity),
+                    jni::objects::JValue::Int(scale),
+                    jni::objects::JValue::Int(offset),
+                    jni::objects::JValue::Bool(haptics),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to configure Android controls overlay: {error:?}");
+        }
+    }));
 }
 
 #[derive(Debug)]
@@ -340,6 +353,7 @@ struct AndroidFrontend {
     lifecycle_auto_paused: bool,
     lifecycle_restore_pending: bool,
     pending_storage_settings: Option<SettingsSnapshot>,
+    pending_legacy_digest: Option<[u8; 32]>,
 }
 
 impl AndroidFrontend {
@@ -416,6 +430,7 @@ impl AndroidFrontend {
             lifecycle_auto_paused: false,
             lifecycle_restore_pending: restore_pending,
             pending_storage_settings: None,
+            pending_legacy_digest: None,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -452,10 +467,13 @@ impl AndroidFrontend {
             .load_bytes(id)
             .map_err(|error| format!("failed to load ROM from library: {error}"))?
             .ok_or_else(|| format!("ROM {id} was not found in the library"))?;
+        let legacy_digest: [u8; 32] = Sha256::digest(&bytes).into();
         let path = self.storage.rom_library.rom_path(id);
         let media = MediaObject::new(path, bytes);
 
-        self.load_media(event_loop, media, None, restore_hidden_state)
+        self.load_media(event_loop, media, None, restore_hidden_state)?;
+        self.pending_legacy_digest = Some(legacy_digest);
+        Ok(())
     }
 
     fn load_document_uri(
@@ -548,6 +566,11 @@ impl AndroidFrontend {
             format!("{display_name}.{extension}")
         };
         let bytes = picker::read_uri_bytes(&self.app, uri)?;
+        if let Some(expected) = self.pending_legacy_digest
+            && <[u8; 32]>::from(Sha256::digest(&bytes)) != expected
+        {
+            return Err("selected ROM does not match the legacy library entry".to_string());
+        }
         let media = MediaObject::from_document_uri(uri, &file_name, bytes);
         let detected_system = self
             .session
@@ -558,7 +581,9 @@ impl AndroidFrontend {
             .system_id()
             .to_string();
         let reference = LastMediaReference::new(uri.to_string(), file_name, detected_system);
-        self.load_media(event_loop, media, Some(reference), false)
+        self.load_media(event_loop, media, Some(reference), false)?;
+        self.pending_legacy_digest = None;
+        Ok(())
     }
 
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
@@ -1064,6 +1089,10 @@ impl AndroidFrontend {
                                         Ok(()) => {
                                             log::info!(
                                                 "try_resume_foreground: loaded last ROM id={id} for lifecycle restore"
+                                            );
+                                            show_toast(
+                                                &self.app,
+                                                "Legacy ROM restored; use Open ROM to reconnect its document",
                                             );
                                             // finish_rom_load will handle resume and clearing pending flags.
                                         }
