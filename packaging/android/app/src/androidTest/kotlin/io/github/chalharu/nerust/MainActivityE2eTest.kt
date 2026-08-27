@@ -42,6 +42,16 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test
+    fun directoryPickerIntentUsesPersistableReadWriteAccess() {
+        val intent = MainActivity.createDirectoryPickerIntentForTest()
+
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, intent.action)
+        assertTrue(
+            intent.flags and DIRECTORY_PICKER_REQUIRED_FLAGS == DIRECTORY_PICKER_REQUIRED_FLAGS,
+        )
+    }
+
     @Test(timeout = TEST_TIMEOUT_MS)
     fun appSupportsDrawerDialogsAndMenuActionsWithoutVisibleMenuButton() {
         val activity = launchActivity()
@@ -326,6 +336,10 @@ class MainActivityE2eTest {
         const val POLL_INTERVAL_MS = 50L
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        const val DIRECTORY_PICKER_REQUIRED_FLAGS =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L

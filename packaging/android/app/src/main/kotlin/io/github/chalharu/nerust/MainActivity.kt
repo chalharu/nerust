@@ -146,6 +146,15 @@ private fun createRomPickerIntent(): Intent =
         type = "*/*"
     }
 
+private fun createDirectoryPickerIntent(): Intent =
+    Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+        addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+    }
+
 class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner,
     InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -360,14 +369,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     @Suppress("DEPRECATION")
     fun startDirectoryPicker() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
-            )
-        }
-        startActivityForResult(intent, DIRECTORY_PICKER_REQUEST_CODE)
+        startActivityForResult(createDirectoryPickerIntent(), DIRECTORY_PICKER_REQUEST_CODE)
     }
 
     fun configureControlsOverlay(
@@ -552,12 +554,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     /**
      * Show a modal Android settings dialog.
      *
-     * Presents an Android-relevant subset of settings. Each setting is backed
-     * by a tab-separated list of choices; the current selection is identified
-     * by index. Tapping a row in the list opens a choice picker rendered in
-     * Compose. Tapping "Save" calls [onSettingsDialogResult] with a
-     * comma-separated string of the final choice indices. Cancel/dismiss calls
-     * it with `null`.
+    * Presents the versioned settings JSON supplied by Rust. Tapping a row opens
+    * a Compose choice picker. Save and dismiss return request-scoped JSON with
+    * values keyed by stable setting IDs.
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
@@ -1188,6 +1187,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private var activeActivityForTest: MainActivity? = null
 
         fun createRomPickerIntentForTest(): Intent = createRomPickerIntent()
+
+        fun createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
 
         fun currentActivityForTest(): MainActivity? =
             activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
