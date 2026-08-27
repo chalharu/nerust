@@ -324,7 +324,6 @@ class MainActivityE2eTest {
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val POLL_INTERVAL_MS = 50L
-        const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
