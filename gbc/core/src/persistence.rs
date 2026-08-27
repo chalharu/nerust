@@ -128,6 +128,7 @@ mod tests {
         rom[0x0148] = 0;
         rom[0x0149] = ram_size;
         rom[0x2000] = marker;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 
@@ -139,7 +140,7 @@ mod tests {
     }
 
     fn system(rom: &[u8], model: HardwareModel) -> GbcSystem {
-        GbcSystem::from_rom_without_boot_rom(model, rom.to_vec()).unwrap()
+        GbcSystem::from_rom(model, rom.to_vec()).unwrap()
     }
 
     #[test]

@@ -55,6 +55,12 @@ pub trait CoreFactory: Send + Sync {
 
     fn display_name(&self) -> &'static str;
 
+    /// File extensions shown by frontend media pickers.
+    /// Media acceptance must still be decided by [`Self::probe_media`].
+    fn supported_extensions(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     fn probe_media(&self, media: &MediaObject) -> bool;
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel;

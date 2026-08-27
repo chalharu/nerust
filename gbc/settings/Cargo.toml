@@ -16,3 +16,6 @@ nerust_settings_traits.workspace = true
 serde = { features = ["derive"], workspace = true }
 strum.workspace = true
 typetag.workspace = true
+
+[dev-dependencies]
+serde-value.workspace = true

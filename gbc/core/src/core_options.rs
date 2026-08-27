@@ -1,6 +1,5 @@
 use nerust_core_traits::CoreOptions;
-
-use crate::system::HardwareModel;
+use nerust_gbc_settings::HardwareModel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RtcSyncPolicy {

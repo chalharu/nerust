@@ -1,12 +1,12 @@
 #[allow(dead_code)]
 pub(crate) mod apu;
-pub mod bootrom;
 #[allow(dead_code)]
 pub mod cartridge;
 #[allow(dead_code)]
 pub mod cartridge_header;
 #[allow(dead_code)]
 pub mod cartridge_mbc;
+mod compatibility_palette;
 pub mod console_core;
 pub mod core_options;
 #[allow(dead_code)]

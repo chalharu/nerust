@@ -82,10 +82,10 @@ fn run_cell(
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
     let (rom_path, rom_bytes) = load_rom(cell, rom_root)?;
-    let GbcSystem { mut cpu, mut bus } =
-        GbcSystem::from_rom_without_boot_rom(core_model(cell.model), rom_bytes).ok_or_else(
-            || RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display())),
-        )?;
+    let GbcSystem { mut cpu, mut bus } = GbcSystem::from_rom(core_model(cell.model), rom_bytes)
+        .ok_or_else(|| {
+            RomTestError::InvalidManifest(format!("invalid ROM header: {}", rom_path.display()))
+        })?;
 
     step_cycles(
         &mut bus,

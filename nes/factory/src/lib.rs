@@ -34,6 +34,10 @@ impl CoreFactory for NesFactory {
         "NES"
     }
 
+    fn supported_extensions(&self) -> &'static [&'static str] {
+        &["nes"]
+    }
+
     fn create_core_and_adapter_with_assignments(
         &self,
         view: &FactorySettingsView,
@@ -208,4 +212,16 @@ pub fn create_test_core_and_adapter(
 ) -> Result<CoreParts, FactoryError> {
     let factory = NesFactory;
     factory.create_core_and_adapter(view, speaker)
+}
+
+#[cfg(test)]
+mod media_tests {
+    use nerust_core_traits::factory::CoreFactory;
+
+    use super::NesFactory;
+
+    #[test]
+    fn reports_nes_file_extension() {
+        assert_eq!(NesFactory.supported_extensions(), &["nes"]);
+    }
 }

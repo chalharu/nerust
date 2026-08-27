@@ -5,16 +5,12 @@ use nerust_core_traits::factory::descriptor::{
 };
 use strum::{Display, EnumIter, EnumString};
 
-use crate::{DmgPalette, GbcSettings, RtcSyncMode};
+use crate::{GbcSettings, HardwareModel, RtcSyncMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
 pub enum GbcSettingField {
-    #[strum(serialize = "video.dmg_palette")]
-    VideoDmgPalette,
-    #[strum(serialize = "video.interframe_blending")]
-    VideoInterframeBlending,
-    #[strum(serialize = "system.boot_rom_enabled")]
-    SystemBootRomEnabled,
+    #[strum(serialize = "system.hardware_model")]
+    SystemHardwareModel,
     #[strum(serialize = "system.rtc_sync")]
     SystemRtcSync,
 }
@@ -22,23 +18,15 @@ pub enum GbcSettingField {
 impl GbcSettingField {
     pub fn current_choice(&self, s: &GbcSettings) -> SystemSettingsChoiceId {
         let id = match self {
-            Self::VideoDmgPalette => GbcSettingChoice::from(s.video.dmg_palette).to_string(),
-            Self::VideoInterframeBlending => {
-                GbcSettingChoice::from_bool(s.video.interframe_blending).to_string()
-            }
-            Self::SystemBootRomEnabled => {
-                GbcSettingChoice::from_bool(s.system.boot_rom_enabled).to_string()
-            }
-            Self::SystemRtcSync => GbcSettingChoice::from(s.system.rtc_sync).to_string(),
+            Self::SystemHardwareModel => GbcSettingChoice::from(s.core.hardware_model).to_string(),
+            Self::SystemRtcSync => GbcSettingChoice::from(s.core.rtc_sync).to_string(),
         };
         SystemSettingsChoiceId(std::borrow::Cow::Owned(id))
     }
 
     pub fn options(&self) -> Arc<[SystemSettingsChoiceOption]> {
         let list = match self {
-            Self::VideoDmgPalette => dmg_palette_options(),
-            Self::VideoInterframeBlending => bool_options(),
-            Self::SystemBootRomEnabled => bool_options(),
+            Self::SystemHardwareModel => hardware_model_options(),
             Self::SystemRtcSync => rtc_sync_options(),
         };
         Arc::from(list)
@@ -46,9 +34,7 @@ impl GbcSettingField {
 
     pub fn label_id(&self) -> &'static str {
         match self {
-            Self::VideoDmgPalette => "gbc.video.dmg_palette",
-            Self::VideoInterframeBlending => "gbc.video.interframe_blending",
-            Self::SystemBootRomEnabled => "gbc.system.boot_rom_enabled",
+            Self::SystemHardwareModel => "gbc.system.hardware_model",
             Self::SystemRtcSync => "gbc.system.rtc_sync",
         }
     }
@@ -60,18 +46,16 @@ impl GbcSettingField {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, Display)]
 pub enum GbcSettingChoice {
-    #[strum(serialize = "greyscale")]
-    Greyscale,
-    #[strum(serialize = "green_tint")]
-    GreenTint,
-    #[strum(serialize = "brown_tint")]
-    BrownTint,
-    #[strum(serialize = "pastel_mix")]
-    PastelMix,
-    #[strum(serialize = "inverted")]
-    Inverted,
-    #[strum(serialize = "on")]
-    On,
+    #[strum(serialize = "dmg0")]
+    Dmg0,
+    #[strum(serialize = "dmg")]
+    Dmg,
+    #[strum(serialize = "cgb_c")]
+    CgbC,
+    #[strum(serialize = "cgb_d")]
+    CgbD,
+    #[strum(serialize = "agb")]
+    Agb,
     #[strum(serialize = "off")]
     Off,
     #[strum(serialize = "system_time")]
@@ -81,30 +65,25 @@ pub enum GbcSettingChoice {
 impl GbcSettingChoice {
     pub fn label_id(&self) -> &'static str {
         match self {
-            Self::Greyscale => "gbc.palette.greyscale",
-            Self::GreenTint => "gbc.palette.green_tint",
-            Self::BrownTint => "gbc.palette.brown_tint",
-            Self::PastelMix => "gbc.palette.pastel_mix",
-            Self::Inverted => "gbc.palette.inverted",
-            Self::On => "gbc.boolean.on",
-            Self::Off => "gbc.boolean.off",
+            Self::Dmg0 => "gbc.hardware.dmg0",
+            Self::Dmg => "gbc.hardware.dmg",
+            Self::CgbC => "gbc.hardware.cgb_c",
+            Self::CgbD => "gbc.hardware.cgb_d",
+            Self::Agb => "gbc.hardware.agb",
+            Self::Off => "gbc.rtc_sync.off",
             Self::SystemTime => "gbc.rtc_sync.system_time",
         }
     }
-
-    fn from_bool(v: bool) -> Self {
-        if v { Self::On } else { Self::Off }
-    }
 }
 
-impl From<DmgPalette> for GbcSettingChoice {
-    fn from(v: DmgPalette) -> Self {
-        match v {
-            DmgPalette::Greyscale => Self::Greyscale,
-            DmgPalette::GreenTint => Self::GreenTint,
-            DmgPalette::BrownTint => Self::BrownTint,
-            DmgPalette::PastelMix => Self::PastelMix,
-            DmgPalette::Inverted => Self::Inverted,
+impl From<HardwareModel> for GbcSettingChoice {
+    fn from(value: HardwareModel) -> Self {
+        match value {
+            HardwareModel::Dmg0 => Self::Dmg0,
+            HardwareModel::Dmg => Self::Dmg,
+            HardwareModel::CgbC => Self::CgbC,
+            HardwareModel::CgbD => Self::CgbD,
+            HardwareModel::Agb => Self::Agb,
         }
     }
 }
@@ -128,13 +107,9 @@ fn build_choice_options(choices: &[GbcSettingChoice]) -> Vec<SystemSettingsChoic
         .collect()
 }
 
-fn dmg_palette_options() -> Vec<SystemSettingsChoiceOption> {
+fn hardware_model_options() -> Vec<SystemSettingsChoiceOption> {
     use GbcSettingChoice::*;
-    build_choice_options(&[Greyscale, GreenTint, BrownTint, PastelMix, Inverted])
-}
-
-fn bool_options() -> Vec<SystemSettingsChoiceOption> {
-    build_choice_options(&[GbcSettingChoice::On, GbcSettingChoice::Off])
+    build_choice_options(&[Dmg0, Dmg, CgbC, CgbD, Agb])
 }
 
 fn rtc_sync_options() -> Vec<SystemSettingsChoiceOption> {
@@ -160,12 +135,11 @@ mod tests {
     #[test]
     fn choice_ids_are_unique() {
         let all = [
-            GbcSettingChoice::Greyscale,
-            GbcSettingChoice::GreenTint,
-            GbcSettingChoice::BrownTint,
-            GbcSettingChoice::PastelMix,
-            GbcSettingChoice::Inverted,
-            GbcSettingChoice::On,
+            GbcSettingChoice::Dmg0,
+            GbcSettingChoice::Dmg,
+            GbcSettingChoice::CgbC,
+            GbcSettingChoice::CgbD,
+            GbcSettingChoice::Agb,
             GbcSettingChoice::Off,
             GbcSettingChoice::SystemTime,
         ];
@@ -186,28 +160,6 @@ mod tests {
     }
 
     #[test]
-    fn current_choice_matches_palette_setting() {
-        let s = GbcSettings::default();
-        let c = GbcSettingField::VideoDmgPalette.current_choice(&s);
-        assert_eq!(c.as_str(), "greyscale");
-    }
-
-    #[test]
-    fn current_choice_matches_blending_setting() {
-        let mut s = GbcSettings::default();
-        s.set_interframe_blending(true);
-        let c = GbcSettingField::VideoInterframeBlending.current_choice(&s);
-        assert_eq!(c.as_str(), "on");
-    }
-
-    #[test]
-    fn current_choice_matches_boot_rom_off_by_default() {
-        let s = GbcSettings::default();
-        let c = GbcSettingField::SystemBootRomEnabled.current_choice(&s);
-        assert_eq!(c.as_str(), "off");
-    }
-
-    #[test]
     fn options_returns_non_empty_for_each_field() {
         for field in GbcSettingField::iter() {
             let opts = field.options();
@@ -224,27 +176,11 @@ mod tests {
     }
 
     #[test]
-    fn from_bool_true_is_on() {
-        assert_eq!(GbcSettingChoice::from_bool(true).to_string(), "on");
-    }
-
-    #[test]
-    fn from_bool_false_is_off() {
-        assert_eq!(GbcSettingChoice::from_bool(false).to_string(), "off");
-    }
-
-    #[test]
-    fn from_dmg_palette_maps_all_variants() {
-        let pairs = [
-            (DmgPalette::Greyscale, "greyscale"),
-            (DmgPalette::GreenTint, "green_tint"),
-            (DmgPalette::BrownTint, "brown_tint"),
-            (DmgPalette::PastelMix, "pastel_mix"),
-            (DmgPalette::Inverted, "inverted"),
-        ];
-        for (palette, expected) in pairs {
-            assert_eq!(GbcSettingChoice::from(palette).to_string(), expected);
-        }
+    fn current_choice_matches_hardware_model() {
+        let mut settings = GbcSettings::default();
+        settings.core.hardware_model = HardwareModel::Agb;
+        let choice = GbcSettingField::SystemHardwareModel.current_choice(&settings);
+        assert_eq!(choice.as_str(), "agb");
     }
 
     #[test]

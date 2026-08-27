@@ -326,6 +326,18 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
+        for factory in self.state().borrow().session.registry().all() {
+            let extensions = factory.supported_extensions();
+            if extensions.is_empty() {
+                continue;
+            }
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some(&format!("{} ROM", factory.display_name())));
+            for extension in extensions {
+                filter.add_pattern(&format!("*.{extension}"));
+            }
+            file_chooser_native.add_filter(&filter);
+        }
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
             if response == gtk::ResponseType::Accept
