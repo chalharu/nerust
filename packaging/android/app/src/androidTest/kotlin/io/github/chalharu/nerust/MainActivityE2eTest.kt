@@ -64,6 +64,20 @@ class MainActivityE2eTest {
             "GBC document URI should be detected and loaded",
             waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
         )
+
+        runOnActivityThread(activity) {
+            activity.recreate()
+        }
+        val recreated =
+            requireNotNull(
+                waitUntilValue(STARTUP_TIMEOUT_MS) {
+                    MainActivity.currentActivityForTest()?.takeIf { it !== activity }
+                },
+            ) { "MainActivity should be recreated" }
+        assertTrue(
+            "GBC document URI should restore after Activity recreation",
+            waitUntil(STARTUP_TIMEOUT_MS) { recreated.lastLoadedSystemForTest() == "gbc" },
+        )
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -337,7 +351,6 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
-        const val DIALOG_PRESENTATION_CARD = "card"
         const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
