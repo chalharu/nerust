@@ -65,6 +65,15 @@ class MainActivityE2eTest {
             waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
         )
 
+        val stateFilesBefore = stateSlotFiles()
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest("save_state")
+        }
+        assertTrue(
+            "GBC Save State should create a state archive",
+            waitUntil(DIALOG_TIMEOUT_MS) { (stateSlotFiles() - stateFilesBefore).isNotEmpty() },
+        )
+
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         assertDrawerHandleAvailable(activity)
 
@@ -366,6 +375,15 @@ class MainActivityE2eTest {
             SystemClock.sleep(POLL_INTERVAL_MS)
         }
         return condition()
+    }
+
+    private fun stateSlotFiles(): Set<String> {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return context.filesDir
+            .walkTopDown()
+            .filter { it.isFile && it.extension == "state" }
+            .map { it.absolutePath }
+            .toSet()
     }
 
     private fun <T> waitUntilValue(timeoutMs: Long, supplier: () -> T?): T? {
