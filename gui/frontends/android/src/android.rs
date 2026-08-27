@@ -548,12 +548,18 @@ impl AndroidFrontend {
         if let Err(error) = self.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM: {error}"));
         }
-        if let Some(reference) = document_reference.as_ref()
-            && let Err(error) = self.storage.save_last_media_reference(reference)
-        {
-            log::warn!("{error}");
-        }
+        let restore_document_on_restart = document_reference.as_ref().is_some_and(|reference| {
+            if let Err(error) = self.storage.save_last_media_reference(reference) {
+                log::warn!("{error}");
+                false
+            } else {
+                true
+            }
+        });
         self.finish_rom_load(event_loop, restore_hidden_state);
+        if restore_document_on_restart {
+            self.storage.touch_restore_pending();
+        }
         notify_rom_loaded(&self.app, &system_id.to_string());
         log::info!("load_media: session ready for system={system_id}");
         Ok(())
