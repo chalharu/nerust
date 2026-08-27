@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use clap::{Arg, ArgAction, Command};
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_input_traits::{ControllerCollection, ControllerHub as _};
 use nerust_nes_core::{Core, rom_parse};
 use nerust_nes_device::famicom_set::{FamicomPadP1, FamicomPadP2};
@@ -380,7 +380,7 @@ impl PerfMixer {
 impl AudioBackend for PerfMixer {
     fn start(&mut self) {}
     fn pause(&mut self) {}
-    fn push(&mut self, _data: f32) {}
+    fn push(&mut self, _data: StereoSample) {}
 
     fn sample_rate(&self) -> u32 {
         self.sample_rate

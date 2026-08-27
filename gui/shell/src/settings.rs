@@ -44,7 +44,7 @@ pub fn scaling_factor(mode: ScalingMode) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::audio::{AudioBackend, NullAudio};
+    use nerust_core_traits::audio::{AudioBackend, NullAudio, StereoSample};
     use nerust_gui_settings::local::ScalingMode;
 
     use super::scaling_factor;
@@ -54,7 +54,7 @@ mod tests {
         let mut speaker = NullAudio;
 
         AudioBackend::start(&mut speaker);
-        AudioBackend::push(&mut speaker, 0.5);
+        AudioBackend::push(&mut speaker, StereoSample::mono(0.5));
         AudioBackend::pause(&mut speaker);
 
         assert_eq!(AudioBackend::sample_rate(&speaker), 48_000);

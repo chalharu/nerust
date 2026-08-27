@@ -122,4 +122,37 @@ mod tests {
         assert!((l - 1.0).abs() < f32::EPSILON);
         assert_eq!(r, 0.0);
     }
+
+    #[test]
+    fn mixer_right_only() {
+        let mixer = Mixer {
+            nr50: 0x77,
+            nr51: 0x0F, // all channels right only
+        };
+        let (l, r) = mixer.mix(15, 15, 15, 15);
+        assert_eq!(l, 0.0);
+        assert!((r - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn mixer_applies_left_and_right_volume_independently() {
+        let mixer = Mixer {
+            nr50: 0x73, // left 8/8, right 4/8
+            nr51: 0xFF,
+        };
+        let (l, r) = mixer.mix(15, 15, 15, 15);
+        assert!((l - 1.0).abs() < f32::EPSILON);
+        assert!((r - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn mixer_routes_ch1_left_and_ch2_right_simultaneously() {
+        let mixer = Mixer {
+            nr50: 0x77,
+            nr51: 0x12, // CH1 left, CH2 right
+        };
+        let (l, r) = mixer.mix(15, 5, 0, 0);
+        assert!((l - 0.25).abs() < f32::EPSILON);
+        assert!((r - (5.0 / 60.0)).abs() < f32::EPSILON);
+    }
 }
