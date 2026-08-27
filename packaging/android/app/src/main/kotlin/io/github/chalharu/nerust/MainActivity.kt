@@ -108,7 +108,6 @@ private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
-private const val DIALOG_PRESENTATION_CARD = "card"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 private data class DrawerAction(val label: String, val action: String)
