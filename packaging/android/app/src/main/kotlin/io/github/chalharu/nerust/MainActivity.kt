@@ -13,6 +13,7 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.hardware.input.InputManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -145,10 +146,12 @@ private fun createRomPickerIntent(): Intent =
         type = "*/*"
     }
 
-class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
+class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner,
+    InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
+    private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
     private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
     private val restoreControllerOverlayRunnable = Runnable {
         controllerOverlayHiddenUntil = 0L
@@ -211,6 +214,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         activeActivityForTest = this
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
         scheduleChromeAttach()
     }
 
@@ -250,11 +254,48 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) {
             return true
         }
-        if (pressed) {
-            hideControlsForControllerInput()
-        }
-        onMenuAction("controller:$key:${if (pressed) 1 else 0}")
+        updateControllerInput(event.deviceId, key, pressed)
         return true
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
+            return super.onGenericMotionEvent(event)
+        }
+        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        updateControllerInput(event.deviceId, "left", horizontal < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "right", horizontal > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "up", vertical < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "down", vertical > CONTROLLER_AXIS_THRESHOLD)
+        return true
+    }
+
+    private fun updateControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+        val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
+        val changed = if (pressed) keys.add(key) else keys.remove(key)
+        if (!changed) return
+        if (pressed) hideControlsForControllerInput()
+        onMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
+        if (keys.isEmpty()) controllerPressed.remove(deviceId)
+    }
+
+    private fun releaseController(deviceId: Int) {
+        controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
+            onMenuAction("controller:$deviceId:$key:0")
+        }
+    }
+
+    private fun releaseAllControllers() {
+        controllerPressed.keys.toList().forEach(::releaseController)
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) = Unit
+
+    override fun onInputDeviceChanged(deviceId: Int) = Unit
+
+    override fun onInputDeviceRemoved(deviceId: Int) {
+        releaseController(deviceId)
     }
 
     override fun onPause() {
@@ -263,6 +304,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
         Log.i(TAG, "onPause")
         chromeAttachEnabled = false
+        releaseAllControllers()
+        (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         removePendingChromeAttachCallbacks()
         window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
@@ -1191,6 +1234,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
         private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
+        private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
         // Must match `android/library.rs::IMPORT_ACTION_ID`.
