@@ -53,6 +53,20 @@ class MainActivityE2eTest {
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
+    fun gbcDocumentUriLoadsThroughMultiSystemRegistry() {
+        val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
+        }
+
+        assertTrue(
+            "GBC document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
     fun appSupportsDrawerDialogsAndMenuActionsWithoutVisibleMenuButton() {
         val activity = launchActivity()
 

@@ -445,10 +445,11 @@ impl AndroidFrontend {
     /// Update the cached library entries and settings so synchronous JNI
     /// callbacks (from onMenuAction) can show up-to-date dialogs.
     fn refresh_dialog_caches(&self) {
-        let current = AndroidSettings::from_snapshot(
+        let mut current = AndroidSettings::from_snapshot(
             self.session.settings_snapshot(),
             self.session.registry(),
         );
+        current.prioritize_system(self.session.active_system_id());
         settings::update_cached_settings(&current);
     }
 
@@ -553,6 +554,7 @@ impl AndroidFrontend {
             log::warn!("{error}");
         }
         self.finish_rom_load(event_loop, restore_hidden_state);
+        notify_rom_loaded(&self.app, &system_id.to_string());
         log::info!("load_media: session ready for system={system_id}");
         Ok(())
     }
@@ -622,10 +624,11 @@ impl AndroidFrontend {
             return;
         };
         log::info!("handle_settings_result: applying Android settings");
-        let current = AndroidSettings::from_snapshot(
+        let mut current = AndroidSettings::from_snapshot(
             self.session.settings_snapshot(),
             self.session.registry(),
         );
+        current.prioritize_system(self.session.active_system_id());
         let previous_storage_policy = current.storage_policy;
         let Some(android_settings) = AndroidSettings::from_keyed_indices(&values, &current) else {
             log::error!("Android settings dialog returned invalid keyed values");
@@ -740,10 +743,11 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let current = AndroidSettings::from_snapshot(
+        let mut current = AndroidSettings::from_snapshot(
             self.session.settings_snapshot(),
             self.session.registry(),
         );
+        current.prioritize_system(self.session.active_system_id());
         match settings::request_show_settings_dialog(&self.app, &current) {
             Ok(true) => {}
             Ok(false) => {
@@ -1303,6 +1307,22 @@ impl AndroidFrontend {
             }
         }
     }
+}
+
+fn notify_rom_loaded(app: &AndroidApp, system_id: &str) {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
+    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
+        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+        let system_id = env.new_string(system_id)?;
+        env.call_method(
+            &activity,
+            jni_str!("notifyRomLoaded"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[jni::objects::JValue::Object(system_id.as_ref())],
+        )?;
+        Ok(())
+    });
 }
 
 fn perform_control_haptic(app: &AndroidApp) {
