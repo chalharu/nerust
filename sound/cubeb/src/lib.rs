@@ -11,6 +11,11 @@ use flume::{Sender, TrySendError, bounded};
 use log::{info, warn};
 use nerust_core_traits::audio::{AudioBackend, AudioBackendFactory, StereoSample};
 
+fn write_stereo_frame(frame: &mut StereoFrame<f32>, sample: StereoSample) {
+    frame.l = sample.left;
+    frame.r = sample.right;
+}
+
 pub struct CubebAudio {
     stream: ManuallyDrop<cubeb::Stream<StereoFrame<f32>>>,
     data_sender: Sender<StereoSample>,
@@ -68,8 +73,7 @@ impl CubebAudio {
                     }
                     for frame in output.iter_mut() {
                         let sample = receiver.try_recv().unwrap_or(StereoSample::SILENCE);
-                        frame.l = sample.left;
-                        frame.r = sample.right;
+                        write_stereo_frame(frame, sample);
                     }
                     output.len() as isize
                 },
@@ -142,5 +146,18 @@ impl AudioBackendFactory for CubebFactory {
             .inspect_err(|e| warn!("cubeb backend build failed: {e}"))
             .ok()
             .map(|a| Box::new(a) as Box<dyn AudioBackend>)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_sample_to_stereo_frame_without_swapping_channels() {
+        let mut frame = StereoFrame { l: 0.0, r: 0.0 };
+        write_stereo_frame(&mut frame, StereoSample::new(0.25, 0.75));
+        assert_eq!(frame.l, 0.25);
+        assert_eq!(frame.r, 0.75);
     }
 }
