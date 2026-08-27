@@ -109,7 +109,7 @@ class MainActivityE2eTest {
                 dialogRoot.getTag(R.id.nerust_dialog_content_probe),
             )
             assertEquals(
-                DIALOG_PRESENTATION_CARD,
+                DIALOG_PRESENTATION_FULL_SCREEN,
                 dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
             )
             activity.dismissComposeDialogForTest()
