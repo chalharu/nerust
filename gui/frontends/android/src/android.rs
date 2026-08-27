@@ -1273,6 +1273,12 @@ impl AndroidFrontend {
         });
         match touch.phase {
             TouchPhase::Started | TouchPhase::Moved => {
+                if touch.phase == TouchPhase::Started
+                    && next_target.is_some()
+                    && self.session.settings_snapshot().local.touch_overlay.haptics
+                {
+                    perform_control_haptic(&self.app);
+                }
                 self.sync_touch_target(touch.id, next_target);
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -1295,6 +1301,25 @@ impl AndroidFrontend {
             }
         }
     }
+}
+
+fn perform_control_haptic(app: &AndroidApp) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            env.call_method(
+                &activity,
+                jni_str!("performControlHaptic"),
+                jni_sig!("()V"),
+                &[],
+            )?;
+            Ok(())
+        });
+    }));
 }
 
 impl FrontendSession for AndroidFrontend {

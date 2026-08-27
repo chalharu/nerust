@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.Base64
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -105,7 +106,6 @@ private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
-private const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
 private const val DIALOG_PRESENTATION_CARD = "card"
@@ -388,6 +388,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         scheduleChromeAttach()
     }
 
+    fun performControlHaptic() {
+        if (controlsHaptics) {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+    }
+
     fun readSafFile(treeUri: String, relativePath: String): String? {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
         return contentResolver.openInputStream(file.uri)?.use { input ->
@@ -477,7 +483,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 drawerEdgeHandleView.isShownInWindowForTest()
             DRAWER_OVERLAY_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
                 drawerOverlayView.isShownInWindowForTest()
-            ROM_LIBRARY_DIALOG_TAG,
             SETTINGS_DIALOG_TAG,
             ->
                 composeDialogTag == tag &&
@@ -492,7 +497,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             DRAWER_COMPOSE_TAG -> drawerComposeView
             DRAWER_EDGE_HANDLE_TAG -> drawerEdgeHandleView
             DRAWER_OVERLAY_TAG -> drawerOverlayView
-            ROM_LIBRARY_DIALOG_TAG,
             SETTINGS_DIALOG_TAG,
             ->
                 composeDialogRootView.takeIf { composeDialogTag == tag }
@@ -528,10 +532,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         removeDrawerOverlay()
     }
 
-    fun showRomLibraryDialogForTest(entryNames: Array<String>, entryIds: Array<String>) {
-        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = true)
-    }
-
     fun showSettingsDialogForTest(
         keys: Array<String>,
         labels: Array<String>,
@@ -548,54 +548,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         )
     }
 
-    /**
-     * Show a modal ROM library dialog.
-     *
-     * The first item is always "Import new ROM…"; the remaining items are the
-     * provided library entries in order. When the user makes a selection this
-     * method calls [onRomLibrarySelected] with the appropriate id and then
-     * returns control to Rust. On cancel/dismiss it calls
-     * [onRomLibrarySelected] with `null`.
-     *
-     * Called from the Rust JNI bridge on the Java main thread.
-     */
-    fun showRomLibraryDialog(entryNames: Array<String>, entryIds: Array<String>) {
-        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = false)
-    }
-
-    private fun showRomLibraryDialogInternal(
-        entryNames: Array<String>,
-        entryIds: Array<String>,
-        ownedByTest: Boolean,
-    ) {
-        var resultSent = false
-        showComposeDialog(
-            dialogTag = ROM_LIBRARY_DIALOG_TAG,
-            contentDescription = romLibraryContentDescription(entryNames.asList()),
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
-            ownedByTest = ownedByTest,
-            onDismiss = {
-                if (!resultSent) {
-                    onRomLibrarySelected(null)
-                }
-            },
-        ) { dismiss ->
-            NerustRomLibraryScreen(
-                entryNames = entryNames.asList(),
-                onDismissRequest = dismiss,
-                onImport = {
-                    resultSent = true
-                    onRomLibrarySelected(IMPORT_ACTION_ID)
-                    dismiss()
-                },
-                onSelectEntry = { index ->
-                    resultSent = true
-                    onRomLibrarySelected(entryIds[index])
-                    dismiss()
-                },
-            )
-        }
-    }
 
     /**
      * Show a modal Android settings dialog.
@@ -1177,9 +1129,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun drawerContentDescription(): String =
         (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
 
-    private fun romLibraryContentDescription(entryNames: List<String>): String =
-        (listOf("ROM Library", "Import new ROM…") + entryNames).joinToString("\n")
-
     private fun settingsContentDescription(
         settings: List<AndroidSetting>,
         selections: List<Int>,
@@ -1211,8 +1160,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private external fun onDirectoryPickerResult(uri: String?)
 
-    private external fun onRomLibrarySelected(id: String?)
-
     private external fun onSettingsDialogResult(result: String?)
 
     companion object {
@@ -1237,8 +1184,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
-        // Must match `android/library.rs::IMPORT_ACTION_ID`.
-        private const val IMPORT_ACTION_ID = "__import__"
         @Volatile
         private var activeActivityForTest: MainActivity? = null
 
@@ -1375,54 +1320,6 @@ private fun NerustDialogCard(
 }
 
 @Composable
-private fun NerustRomLibraryScreen(
-    entryNames: List<String>,
-    onDismissRequest: () -> Unit,
-    onImport: () -> Unit,
-    onSelectEntry: (Int) -> Unit,
-) {
-    NerustFullScreenDialogHost {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "ROM Library", style = MaterialTheme.typography.headlineSmall)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Import a new ROM or reopen one from your library.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            TextButton(onClick = onDismissRequest) {
-                Text("Close")
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-        ) {
-            item {
-                DialogListButton(label = "Import new ROM…", onClick = onImport)
-                if (entryNames.isNotEmpty()) {
-                    HorizontalDivider()
-                }
-            }
-            itemsIndexed(entryNames) { index, entryName ->
-                DialogListButton(label = entryName) { onSelectEntry(index) }
-                if (index < entryNames.lastIndex) {
-                    HorizontalDivider()
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun NerustSettingsDialogCard(
     settings: List<AndroidSetting>,
     initialSelections: List<Int>,
@@ -1516,19 +1413,6 @@ private fun NerustSettingsDialogCard(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DialogListButton(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .semantics { contentDescription = label },
-    ) {
-        Text(text = label, modifier = Modifier.fillMaxWidth())
     }
 }
 
