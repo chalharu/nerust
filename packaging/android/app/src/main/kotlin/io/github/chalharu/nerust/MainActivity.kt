@@ -1414,33 +1414,50 @@ private fun NerustSettingsDialogCard(
             }
 
             activeSettingIndex?.let { settingIndex ->
-                NerustDialogCard(
-                    title = settings[settingIndex].label,
-                    buttons = {
-                        TextButton(onClick = { activeSettingIndex = null }) {
-                            Text("Cancel")
-                        }
+                SettingsChoiceDialog(
+                    setting = settings[settingIndex],
+                    selectedIndex = selections[settingIndex],
+                    onDismissRequest = { activeSettingIndex = null },
+                    onSelect = { choiceIndex ->
+                        selections[settingIndex] = choiceIndex
+                        activeSettingIndex = null
                     },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsChoiceDialog(
+    setting: AndroidSetting,
+    selectedIndex: Int,
+    onDismissRequest: () -> Unit,
+    onSelect: (Int) -> Unit,
+) {
+    NerustDialogCard(
+        title = setting.label,
+        buttons = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Cancel")
+            }
+        },
+    ) {
+        LazyColumn(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp),
+        ) {
+            itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
+                DialogChoiceButton(
+                    label = choiceLabel,
+                    selected = selectedIndex == choiceIndex,
                 ) {
-                    LazyColumn(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 320.dp),
-                    ) {
-                        itemsIndexed(settings[settingIndex].choices) { choiceIndex, choiceLabel ->
-                            DialogChoiceButton(
-                                label = choiceLabel,
-                                selected = selections[settingIndex] == choiceIndex,
-                            ) {
-                                selections[settingIndex] = choiceIndex
-                                activeSettingIndex = null
-                            }
-                            if (choiceIndex < settings[settingIndex].choices.lastIndex) {
-                                HorizontalDivider()
-                            }
-                        }
-                    }
+                    onSelect(choiceIndex)
+                }
+                if (choiceIndex < setting.choices.lastIndex) {
+                    HorizontalDivider()
                 }
             }
         }

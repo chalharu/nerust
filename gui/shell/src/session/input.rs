@@ -355,6 +355,22 @@ mod tests {
     }
 
     #[test]
+    fn touch_overlay_uses_assigned_profile_controls() {
+        let mut session = crate::session::test_util::test_session();
+        let slot = AttachmentId::new("test.topology.slot");
+        session.current_assignments.slots = vec![(slot, Some(Rc::new(MockTopologyProfile)))];
+
+        let overlay = session.touch_overlay_model(42);
+
+        assert_eq!(overlay.revision, 42);
+        assert_eq!(overlay.controls.len(), 1);
+        assert_eq!(overlay.controls[0].attachment_id, slot);
+        assert_eq!(overlay.controls[0].control_id.as_str(), "test.topology.a");
+        assert_eq!(overlay.controls[0].role, TouchControlRole::FaceButton1);
+        assert_eq!(overlay.controls[0].label, "A");
+    }
+
+    #[test]
     fn device_kind_delegates_to_profile_method() {
         let profile = MockSinglePort;
         let kind = device_kind(&profile, 0);
