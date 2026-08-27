@@ -452,6 +452,8 @@ impl AndroidFrontend {
             ));
         }
 
+        self.session.clear_input();
+        self.active_touches.clear();
         nerust_gui_shell::load::RomLoadTarget::set_active_system(
             &mut self.session,
             system_id.as_ref(),
@@ -930,9 +932,9 @@ impl AndroidFrontend {
                                         &self.app,
                                         "Previous ROM is unavailable; open it again",
                                     );
-                                    self.session.clear_hidden_lifecycle_state();
-                                    self.storage.clear_restore_pending();
-                                    self.lifecycle_restore_pending = false;
+                                    log::info!(
+                                        "try_resume_foreground: preserving hidden state until the ROM URI is reconnected"
+                                    );
                                 }
                             }
                         }

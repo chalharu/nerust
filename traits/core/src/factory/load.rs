@@ -16,7 +16,6 @@ pub enum MediaLocation {
 pub struct MediaObject {
     pub bytes: Arc<[u8]>,
     pub location: Option<MediaLocation>,
-    pub path: Option<PathBuf>,
     pub extension: Option<String>,
 }
 
@@ -30,7 +29,6 @@ impl MediaObject {
         Self {
             bytes: Arc::from(data),
             location: path.clone().map(MediaLocation::NativePath),
-            path,
             extension,
         }
     }
@@ -51,7 +49,6 @@ impl MediaObject {
                 uri: uri.into(),
                 display_name,
             }),
-            path: None,
             extension,
         }
     }
@@ -86,7 +83,6 @@ mod media_tests {
         );
 
         assert_eq!(media.native_path(), None);
-        assert_eq!(media.path, None);
         assert_eq!(media.extension.as_deref(), Some("gbc"));
         assert_eq!(
             media.location,

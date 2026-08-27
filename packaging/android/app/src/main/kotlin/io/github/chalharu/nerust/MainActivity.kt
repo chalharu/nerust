@@ -531,7 +531,16 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             ownedByTest = ownedByTest,
             onDismiss = {
                 if (!resultSent) {
-                    onSettingsDialogResult(null)
+                    if (requestId != null) {
+                        onSettingsDialogResult(
+                            JSONObject()
+                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
+                                .put("requestId", requestId)
+                                .put("dismissed", true)
+                                .put("values", JSONObject())
+                                .toString(),
+                        )
+                    }
                 }
             },
         ) { dismiss ->
