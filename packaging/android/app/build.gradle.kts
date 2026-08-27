@@ -87,12 +87,13 @@ kotlin {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
+    val documentFileVersion = "1.0.0"
     val lifecycleVersion = "2.11.0"
 
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.documentfile:documentfile:1.0.0")
+    implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")
     implementation("androidx.lifecycle:lifecycle-viewmodel:$lifecycleVersion")
     implementation("androidx.savedstate:savedstate:1.5.0")
