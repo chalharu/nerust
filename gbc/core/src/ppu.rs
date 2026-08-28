@@ -525,6 +525,13 @@ impl GbcPpu {
                     let sprite = p.sprite_extra_dots();
                     let sprite_reload = if self.cgb_mode && self.double_speed && sprite != 0 {
                         2
+                    } else if self.cgb_mode
+                        && !self.double_speed
+                        && self.cgb_game
+                        && sprite != 0
+                        && p.sprite_count() == 1
+                    {
+                        4
                     } else {
                         0
                     };
