@@ -192,6 +192,7 @@ impl GbcMemoryBus {
         self.joypad_input = state.joypad_input;
         self.hwio_72_75 = state.hwio_72_75;
         self.double_speed = state.double_speed;
+        self.ppu.set_double_speed(state.double_speed);
         self.speed_switch_pending = state.speed_switch_pending;
         self.speed_switch_toggle_countdown = state.speed_switch_toggle_countdown;
         self.speed_switch_halt_countdown = state.speed_switch_halt_countdown;
@@ -622,6 +623,7 @@ impl GbcMemoryBus {
                 .saturating_sub(cpu_cycles);
             if self.speed_switch_toggle_countdown == 0 {
                 self.double_speed = !self.double_speed;
+                self.ppu.set_double_speed(self.double_speed);
             }
         }
         freeze_ppu
@@ -804,6 +806,7 @@ impl GbcMemoryBus {
                 self.speed_switch_toggle_countdown = if self.double_speed { 0 } else { 6 };
                 if self.double_speed {
                     self.double_speed = false;
+                    self.ppu.set_double_speed(false);
                 }
                 self.speed_switch_halt_countdown = if interrupt_pending { 0 } else { 0x20008 };
                 self.speed_switch_ppu_freeze = if interrupt_pending { 1 } else { 5 };
