@@ -47,6 +47,8 @@ pub(crate) struct PpuState {
     cgb_mode: bool,
     cgb_game: bool,
     cgb_revision_d: bool,
+    #[serde(default)]
+    double_speed: bool,
     stat_signal: bool,
     stat_forced: bool,
     vblank_if_countdown: u8,
@@ -101,6 +103,7 @@ pub struct GbcPpu {
     pub cgb_mode: bool,
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
     pub cgb_revision_d: bool,
+    double_speed: bool,
 
     /// Current level of the combined STAT interrupt signal. The LCD STAT
     /// interrupt (IF bit 1) is requested on a rising edge of this signal.
@@ -178,6 +181,7 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             cgb_revision_d: true,
+            double_speed: false,
             stat_signal: false,
             stat_forced: false,
             vblank_if_countdown: 0,
@@ -218,6 +222,7 @@ impl GbcPpu {
             cgb_mode: self.cgb_mode,
             cgb_game: self.cgb_game,
             cgb_revision_d: self.cgb_revision_d,
+            double_speed: self.double_speed,
             stat_signal: self.stat_signal,
             stat_forced: self.stat_forced,
             vblank_if_countdown: self.vblank_if_countdown,
@@ -281,6 +286,7 @@ impl GbcPpu {
         candidate.cgb_mode = state.cgb_mode;
         candidate.cgb_game = state.cgb_game;
         candidate.cgb_revision_d = state.cgb_revision_d;
+        candidate.double_speed = state.double_speed;
         candidate.stat_signal = state.stat_signal;
         candidate.stat_forced = state.stat_forced;
         candidate.vblank_if_countdown = state.vblank_if_countdown;
@@ -732,6 +738,10 @@ impl GbcPpu {
         self.key0 = value;
     }
 
+    pub(crate) fn set_double_speed(&mut self, enabled: bool) {
+        self.double_speed = enabled;
+    }
+
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
     pub fn is_hblank(&self) -> bool {
         self.current_mode() == PpuMode::HBlank
@@ -902,11 +912,27 @@ impl GbcPpu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
+        if std::env::var("TRACE_VRAM_READ").is_ok() {
+            eprintln!(
+                "VRAM_READ ly={} clock={} end={} short={}",
+                self.ly,
+                self.mode_clock,
+                self.mode3_end_clock(),
+                self.lcd_on_short_line
+            );
+        }
         let blocked = if self.cgb_mode {
             if self.lcd_on_short_line {
                 let fine_scroll = u32::from(self.scx & 7);
-                let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
-                (64..mode3_end).contains(&self.mode_clock)
+                let (mode3_start, mode3_end) = if self.double_speed {
+                    (60, 232 + fine_scroll)
+                } else {
+                    (64, 232 + (fine_scroll + 2) / 4 * 4)
+                };
+                (mode3_start..mode3_end).contains(&self.mode_clock)
+            } else if self.double_speed && self.ly < VBLANK_START {
+                self.current_mode() == PpuMode::PixelTransfer
+                    || self.mode_clock == self.mode3_end_clock() + 1
             } else {
                 self.current_mode() == PpuMode::PixelTransfer
             }
@@ -986,8 +1012,17 @@ impl GbcPpu {
         let blocked = if self.cgb_mode {
             if self.lcd_on_short_line {
                 let fine_scroll = u32::from(self.scx & 7);
-                let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
-                self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock)
+                let (mode3_start, mode3_end) = if self.double_speed {
+                    (58, 232 + fine_scroll)
+                } else {
+                    (60, 232 + (fine_scroll + 2) / 4 * 4)
+                };
+                self.mode_clock < 52 || (mode3_start..mode3_end).contains(&self.mode_clock)
+            } else if self.double_speed && self.ly < VBLANK_START {
+                matches!(
+                    self.current_mode(),
+                    PpuMode::OamSearch | PpuMode::PixelTransfer
+                ) || self.mode_clock == self.mode3_end_clock() + 1
             } else {
                 matches!(
                     self.current_mode(),
@@ -1352,6 +1387,7 @@ mod tests {
         p.cgb_mode = true;
         p.lcd_on_short_line = true;
         p.oam[0] = 0x42;
+        p.vram[0] = 0x24;
 
         p.mode_clock = 51;
         assert_eq!(p.read_oam(0), 0xFF);
@@ -1366,10 +1402,10 @@ mod tests {
         p.write_oam(0, 0x73);
         assert_eq!(p.oam[0], 0x73);
         p.scx = 2;
+        p.mode_clock = 232;
         p.write_oam(0, 0x37);
         assert_eq!(p.oam[0], 0x73);
 
-        p.vram[0] = 0x24;
         p.scx = 0;
         p.mode_clock = 60;
         assert_eq!(p.read_vram(0x8000), 0x24);
@@ -1379,6 +1415,23 @@ mod tests {
         assert_eq!(p.read_vram(0x8000), 0x24);
         p.scx = 2;
         assert_eq!(p.read_vram(0x8000), 0xFF);
+
+        p.double_speed = true;
+        p.scx = 1;
+        p.mode_clock = 58;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
+        p.mode_clock = 232;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
+        p.mode_clock = 233;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x37);
+
+        p.mode_clock = 60;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.mode_clock = 233;
+        assert_eq!(p.read_vram(0x8000), 0x24);
     }
 
     #[test]

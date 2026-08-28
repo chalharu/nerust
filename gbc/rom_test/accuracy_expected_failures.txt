@@ -28,8 +28,6 @@ age_m3_bg_scx_nocgb@cgb_d
 age_oam-read-dmgC-cgbBC@cgb_c
 age_oam-read-dmgC-cgbBC@dmg
 age_oam-read-ncmBC@cgb_c
-age_oam-write-cgbBCE@cgb_c
-age_oam-write-cgbBCE@cgb_d
 age_oam-write-dmgC@dmg
 age_spsw-ch2-lc-delay-cgbBCE@cgb_c
 age_spsw-ch2-lc-delay-cgbBCE@cgb_d
@@ -65,8 +63,6 @@ age_stat-mode-window-ds-cgbBCE@cgb_c
 age_stat-mode-window-ds-cgbBCE@cgb_d
 age_stat-mode-window-ncmBCE@cgb_c
 age_stat-mode-window-ncmBCE@cgb_d
-age_vram-read-cgbBCE@cgb_c
-age_vram-read-cgbBCE@cgb_d
 age_vram-read-dmgC@dmg
 gbmicro_halt_op_dupe_delay@dmg
 gbmicro_hblank_int_di_timing_b@dmg
