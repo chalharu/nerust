@@ -359,7 +359,7 @@ impl Mode3Pipeline {
     }
 
     fn deliver_register_writes(&mut self) {
-        if self.cgb_revision_d {
+        if self.cgb_d_tile_quirks() {
             if let Some(write) = self.pending_tile_select_write.take() {
                 self.active_tile_select_write = Some(write);
             }
@@ -557,7 +557,7 @@ impl Mode3Pipeline {
             .next_sprite
             .checked_sub(1)
             .map(|index| self.sprites[index].x);
-        let reload_low_only = self.cgb_revision_d
+        let reload_low_only = self.cgb_d_tile_quirks()
             && !self.window_active
             && last_sprite_x == Some(8)
             && self.fetcher.tile_y == 0
@@ -572,7 +572,7 @@ impl Mode3Pipeline {
             self.registers.lcdc = lcdc;
             self.active_tile_select_write = None;
         }
-        let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
+        let offscreen_tile_select = if self.cgb_d_tile_quirks() && !self.window_active {
             match (last_sprite_x, self.active_tile_select_write) {
                 (Some(x), Some((old, 0))) if x <= -7 && old != 0 => Some((old, false)),
                 (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
@@ -600,12 +600,12 @@ impl Mode3Pipeline {
     }
 
     fn fetch_data_low(&mut self, vram: &[u8; 0x4000]) {
-        let reset_glitch = !self.cgb_revision_d
+        let reset_glitch = !self.cgb_d_tile_quirks()
             && self
                 .active_tile_select_write
                 .is_some_and(|(old, new)| old != 0 && new == 0 && self.cgb_c_tile_write_persistent);
         self.fetcher.low = if self.active_tile_select_write.is_some_and(|(old, new)| {
-            old == 0 && new != 0 && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
+            old == 0 && new != 0 && (self.cgb_d_tile_quirks() || self.cgb_c_tile_write_persistent)
         }) {
             self.object_data_bus.unwrap_or(self.tile_data_bus)
         } else if self
@@ -637,10 +637,10 @@ impl Mode3Pipeline {
             Some((0, new)) if new != 0 => self.object_data_bus.unwrap_or(self.tile_data_bus),
             Some((old, 0)) if old != 0 => self.fetcher.tile_index,
             _ => match self.active_tile_select_write {
-                Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                Some((0, new)) if new != 0 && self.cgb_d_tile_quirks() => {
                     self.object_data_bus.unwrap_or(self.tile_data_bus)
                 }
-                Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
+                Some((old, 0)) if old != 0 && self.cgb_d_tile_quirks() => self.fetcher.low,
                 _ => vram[self.fetcher.data_address],
             },
         };
@@ -777,7 +777,7 @@ impl Mode3Pipeline {
     }
 
     fn prepare_tile_data_address(&mut self, high: bool) {
-        if !self.cgb_revision_d && !self.window_active {
+        if !self.cgb_d_tile_quirks() && !self.window_active {
             self.fetcher.tile_y = self.registers.scy.wrapping_add(self.ly) & 7;
             if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
                 self.fetcher.tile_y = 7 - self.fetcher.tile_y;
@@ -1423,8 +1423,12 @@ impl Mode3Pipeline {
         self.pending_tile_select = Some((tile_sel_delay, value & 0x10));
     }
 
+    fn cgb_d_tile_quirks(&self) -> bool {
+        self.cgb_revision_d && !self.sprites.is_empty()
+    }
+
     fn apply_window_tile_select(&mut self, old: u8, new: u8) {
-        if !(self.cgb_revision_d && self.window_active && old != 0 && new == 0) {
+        if !(self.cgb_d_tile_quirks() && self.window_active && old != 0 && new == 0) {
             return;
         }
         let object_x = self
@@ -1453,7 +1457,7 @@ impl Mode3Pipeline {
     }
 
     fn detect_tile_select_collision(&mut self, old: u8, new: u8) -> bool {
-        self.cgb_revision_d
+        self.cgb_d_tile_quirks()
             && match (old, new, self.last_bg_data_read) {
                 (0, new, Some(BgDataRead::Low)) if new != 0 => {
                     self.fetcher.low = self.tile_data_bus;
@@ -1472,11 +1476,11 @@ impl Mode3Pipeline {
     }
 
     fn apply_cgb_c_tile_select_glitches(&mut self, old: u8, new: u8) {
-        self.cgb_c_tile_write_persistent = !self.cgb_revision_d
+        self.cgb_c_tile_write_persistent = !self.cgb_d_tile_quirks()
             && self.fetcher.stage == FetchStage::Tile
             && self.fetcher.stage_dot == 0
             && (self.window_active || (old != 0 && new == 0));
-        if !self.cgb_revision_d
+        if !self.cgb_d_tile_quirks()
             && !self.window_active
             && old != 0
             && new == 0
@@ -1493,7 +1497,7 @@ impl Mode3Pipeline {
             self.force_bg_low = low;
             self.force_bg_low_pixels = 7;
         }
-        self.cgb_c_high_glitch = (!self.cgb_revision_d
+        self.cgb_c_high_glitch = (!self.cgb_d_tile_quirks()
             && self.fetcher.stage == FetchStage::DataLow
             && self.fetcher.stage_dot == 0
             && self.bg_fifo.len() == 5)
@@ -1943,6 +1947,30 @@ mod tests {
                 Some(expected_countdown)
             );
         }
+    }
+
+    #[test]
+    fn cgb_d_tile_write_persists_only_when_scanline_has_sprites() {
+        let mut no_sprites =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        no_sprites.pending_tile_select_write = Some((0, 0x10));
+        no_sprites.deliver_register_writes();
+        no_sprites.deliver_register_writes();
+        assert_eq!(no_sprites.active_tile_select_write, None);
+
+        let sprite = Sprite {
+            x: 0,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut with_sprite =
+            Mode3Pipeline::new(registers(), 0, 0, false, vec![sprite], true, true, true, 0);
+        with_sprite.pending_tile_select_write = Some((0, 0x10));
+        with_sprite.deliver_register_writes();
+        with_sprite.deliver_register_writes();
+        assert_eq!(with_sprite.active_tile_select_write, Some((0, 0x10)));
     }
 
     #[test]
