@@ -218,13 +218,4 @@ gbmicro_poweron_vram_025@dmg
 gbmicro_poweron_vram_069@dmg
 gbmicro_poweron_vram_139@dmg
 gbmicro_poweron_vram_183@dmg
-gbmicro_stat_write_glitch_l0_a@dmg
-gbmicro_stat_write_glitch_l0_b@dmg
-gbmicro_stat_write_glitch_l1_b@dmg
-gbmicro_stat_write_glitch_l1_c@dmg
-gbmicro_stat_write_glitch_l143_b@dmg
-gbmicro_stat_write_glitch_l143_c@dmg
-gbmicro_stat_write_glitch_l143_d@dmg
-gbmicro_stat_write_glitch_l154_a@dmg
-gbmicro_stat_write_glitch_l154_b@dmg
 gbmicro_stat_write_glitch_l154_d@dmg
