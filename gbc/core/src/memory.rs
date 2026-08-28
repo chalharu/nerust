@@ -622,6 +622,7 @@ impl GbcMemoryBus {
                 .speed_switch_toggle_countdown
                 .saturating_sub(cpu_cycles);
             if self.speed_switch_toggle_countdown == 0 {
+                self.timer.reset_div();
                 self.double_speed = !self.double_speed;
                 self.ppu.set_double_speed(self.double_speed);
             }
@@ -795,7 +796,6 @@ impl GbcMemoryBus {
     }
 
     pub fn stop(&mut self) {
-        self.timer.reset_div();
         if self.speed_switch_pending {
             // CGB speed switch: KEY1 bit 0 (prepare) was set before STOP.
             // The switch happens and execution continues (no halt). The
@@ -803,16 +803,13 @@ impl GbcMemoryBus {
             self.speed_switch_pending = false;
             if !self.interrupt.get_ime() {
                 let interrupt_pending = self.interrupt.enabled_interrupt_pending();
-                self.speed_switch_toggle_countdown = if self.double_speed { 0 } else { 6 };
-                if self.double_speed {
-                    self.double_speed = false;
-                    self.ppu.set_double_speed(false);
-                }
+                self.speed_switch_toggle_countdown = 6;
                 self.speed_switch_halt_countdown = if interrupt_pending { 0 } else { 0x20008 };
                 self.speed_switch_ppu_freeze = if interrupt_pending { 1 } else { 5 };
             }
             return;
         }
+        self.timer.reset_div();
         self.interrupt.stop();
     }
 
@@ -1496,6 +1493,26 @@ mod tests {
         assert!(!bus.is_halted_or_stopped());
         assert!(!bus.is_double_speed());
         finish_speed_switch(&mut bus);
+        assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn speed_switch_resets_div_at_toggle_edge() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF04, 0);
+        bus.step_devices(0x100);
+        assert_eq!(bus.read(0xFF04), 1);
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+
+        assert_eq!(bus.read(0xFF04), 1);
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..5 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert_eq!(bus.read(0xFF04), 1);
+        bus.step_tcycle(&mut cpu);
+        assert_eq!(bus.read(0xFF04), 0);
         assert!(bus.is_double_speed());
     }
 
