@@ -68,8 +68,6 @@ age_stat-mode-window-ncmBCE@cgb_d
 age_vram-read-cgbBCE@cgb_c
 age_vram-read-cgbBCE@cgb_d
 age_vram-read-dmgC@dmg
-age_vram-read-ncmBCE@cgb_c
-age_vram-read-ncmBCE@cgb_d
 gbmicro_halt_op_dupe_delay@dmg
 gbmicro_hblank_int_di_timing_b@dmg
 gbmicro_hblank_int_if_a@dmg

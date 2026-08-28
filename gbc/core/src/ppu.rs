@@ -903,7 +903,13 @@ impl GbcPpu {
 
     pub fn read_vram(&self, addr: u16) -> u8 {
         let blocked = if self.cgb_mode {
-            self.current_mode() == PpuMode::PixelTransfer
+            if self.lcd_on_short_line {
+                let fine_scroll = u32::from(self.scx & 7);
+                let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
+                (64..mode3_end).contains(&self.mode_clock)
+            } else {
+                self.current_mode() == PpuMode::PixelTransfer
+            }
         } else {
             self.ly < VBLANK_START
                 && self.mode_clock >= self.oam_search_cycles()
@@ -1362,6 +1368,17 @@ mod tests {
         p.scx = 2;
         p.write_oam(0, 0x37);
         assert_eq!(p.oam[0], 0x73);
+
+        p.vram[0] = 0x24;
+        p.scx = 0;
+        p.mode_clock = 60;
+        assert_eq!(p.read_vram(0x8000), 0x24);
+        p.mode_clock = 64;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.mode_clock = 232;
+        assert_eq!(p.read_vram(0x8000), 0x24);
+        p.scx = 2;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
     }
 
     #[test]
