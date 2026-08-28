@@ -854,7 +854,11 @@ impl GbcMemoryBus {
             self.speed_switch_pending = false;
             let interrupt_pending = self.interrupt.enabled_interrupt_pending();
             self.speed_switch_toggle_countdown = 6;
-            self.speed_switch_halt_countdown = if interrupt_pending { 8 } else { 0x20008 };
+            self.speed_switch_halt_countdown = if interrupt_pending {
+                if self.ppu.is_cgb_revision_d() { 8 } else { 4 }
+            } else {
+                0x20008
+            };
             self.speed_switch_ppu_freeze = if interrupt_pending {
                 1
             } else if self.double_speed {
@@ -1628,6 +1632,19 @@ mod tests {
             bus.step_tcycle(&mut cpu);
         }
         assert!(cpu.steps > 0);
+    }
+
+    #[test]
+    fn pending_interrupt_speed_switch_stall_depends_on_cgb_revision() {
+        for (revision_d, expected) in [(false, 4), (true, 8)] {
+            let mut bus = cgb_bus();
+            bus.set_cgb_revision_d(revision_d);
+            bus.write(0xFFFF, 0x04);
+            bus.write(0xFF0F, 0x04);
+            bus.write(0xFF4D, 0x01);
+            bus.stop();
+            assert_eq!(bus.speed_switch_halt_countdown, expected);
+        }
     }
 
     #[test]
