@@ -86,6 +86,11 @@ suites:
         verify:
           memory:
             - {address: '0xFF82', value: '0x01'}
+          memory_comparisons:
+            - actual_address: '0xFF80'
+              expected_address: '0xFF81'
+              name: gbmicro_result
+              when: {address: '0xFF82', not_value: '0x01'}
         tags:
           - accuracy
           - timing

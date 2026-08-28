@@ -34,6 +34,27 @@ pub struct MemoryRegion {
     pub stride: Option<usize>,
 }
 
+/// Compare two 8-bit memory locations. Useful for ROM protocols that publish
+/// an actual value and its expected counterpart separately.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryComparison {
+    pub actual_address: String,
+    pub expected_address: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub when: Option<MemoryCondition>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryCondition {
+    pub address: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub not_value: Option<String>,
+}
+
 /// Expected values for the 8-bit CPU registers used by test ROM protocols.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RegisterVerify {
@@ -183,6 +204,8 @@ pub struct VerifySpec {
     #[serde(default)]
     pub memory_regions: Vec<MemoryRegion>,
     #[serde(default)]
+    pub memory_comparisons: Vec<MemoryComparison>,
+    #[serde(default)]
     pub registers: RegisterVerify,
 }
 
@@ -252,6 +275,36 @@ impl VerifySpec {
                 return Err(RomTestError::InvalidManifest(
                     "memory region exceeds the address or byte value range".to_string(),
                 ));
+            }
+        }
+        for comparison in &self.memory_comparisons {
+            for address in [&comparison.actual_address, &comparison.expected_address] {
+                if parse_hex(address)? > u16::MAX as u64 {
+                    return Err(RomTestError::InvalidManifest(format!(
+                        "invalid memory comparison address: {address}"
+                    )));
+                }
+            }
+            if let Some(condition) = &comparison.when {
+                if condition.value.is_some() == condition.not_value.is_some() {
+                    return Err(RomTestError::InvalidManifest(
+                        "memory comparison condition requires exactly one of value/not_value"
+                            .to_string(),
+                    ));
+                }
+                let address = parse_hex(&condition.address)?;
+                let value = parse_hex(
+                    condition
+                        .value
+                        .as_deref()
+                        .or(condition.not_value.as_deref())
+                        .expect("condition value presence was validated"),
+                )?;
+                if address > u16::MAX as u64 || value > u8::MAX as u64 {
+                    return Err(RomTestError::InvalidManifest(
+                        "memory comparison condition is out of range".to_string(),
+                    ));
+                }
             }
         }
         self.registers.validate()?;
@@ -369,6 +422,39 @@ impl VerifySpec {
                     |(address, actual)| format!("${actual:02X} at ${address:04X}"),
                 ),
                 passed: mismatch.is_none(),
+            });
+        }
+        for comparison in &self.memory_comparisons {
+            if let Some(condition) = &comparison.when {
+                let address = parse_hex(&condition.address)? as u16;
+                let actual = bus.debug_read(address);
+                let matches = condition
+                    .value
+                    .as_deref()
+                    .map(|value| parse_hex(value).map(|value| actual == value as u8))
+                    .or_else(|| {
+                        condition
+                            .not_value
+                            .as_deref()
+                            .map(|value| parse_hex(value).map(|value| actual != value as u8))
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            let actual_address = parse_hex(&comparison.actual_address)? as u16;
+            let expected_address = parse_hex(&comparison.expected_address)? as u16;
+            let actual = bus.debug_read(actual_address);
+            let expected = bus.debug_read(expected_address);
+            checks.push(CheckResult {
+                name: comparison.name.clone().unwrap_or_else(|| {
+                    format!("memory@${actual_address:04X} == memory@${expected_address:04X}")
+                }),
+                expected: format!("${expected:02X}"),
+                actual: format!("${actual:02X}"),
+                passed: actual == expected,
             });
         }
         Ok(())
@@ -610,6 +696,60 @@ mod tests {
             ..VerifySpec::default()
         };
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn memory_comparison_validates_addresses_and_reports_values() {
+        let spec = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0xFF80".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: Some("rom_result".to_string()),
+                when: None,
+            }],
+            ..VerifySpec::default()
+        };
+        assert!(spec.validate().is_ok());
+
+        let mut bus = GbcMemoryBus::new();
+        bus.write(0xFF80, 0x12);
+        bus.write(0xFF81, 0x34);
+        let mut checks = Vec::new();
+        spec.verify_memory(&bus, &mut checks).unwrap();
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "rom_result");
+        assert_eq!(checks[0].actual, "$12");
+        assert_eq!(checks[0].expected, "$34");
+        assert!(!checks[0].passed);
+
+        let conditional = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0xFF80".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: None,
+                when: Some(MemoryCondition {
+                    address: "0xFF82".to_string(),
+                    value: Some("0xFF".to_string()),
+                    not_value: None,
+                }),
+            }],
+            ..VerifySpec::default()
+        };
+        checks.clear();
+        conditional.verify_memory(&bus, &mut checks).unwrap();
+        assert!(checks.is_empty());
+
+        let invalid = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0x10000".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: None,
+                when: None,
+            }],
+            ..VerifySpec::default()
+        };
+        assert!(invalid.validate().is_err());
     }
 
     #[test]
