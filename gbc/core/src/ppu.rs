@@ -978,10 +978,16 @@ impl GbcPpu {
 
     pub fn write_oam(&mut self, addr: u8, value: u8) {
         let blocked = if self.cgb_mode {
-            matches!(
-                self.current_mode(),
-                PpuMode::OamSearch | PpuMode::PixelTransfer
-            )
+            if self.lcd_on_short_line {
+                let fine_scroll = u32::from(self.scx & 7);
+                let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
+                self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock)
+            } else {
+                matches!(
+                    self.current_mode(),
+                    PpuMode::OamSearch | PpuMode::PixelTransfer
+                )
+            }
         } else {
             self.ly < VBLANK_START
                 && self.mode_clock > 0
@@ -1349,6 +1355,13 @@ mod tests {
         assert_eq!(p.read_oam(0), 0xFF);
         p.mode_clock = 232;
         assert_eq!(p.read_oam(0), 0x42);
+
+        p.scx = 1;
+        p.write_oam(0, 0x73);
+        assert_eq!(p.oam[0], 0x73);
+        p.scx = 2;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
     }
 
     #[test]
