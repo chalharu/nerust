@@ -4,8 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
+import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -76,6 +79,26 @@ class MainActivityE2eTest {
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         assertDrawerHandleAvailable(activity)
+
+        val downTime = SystemClock.uptimeMillis()
+        injectTouch(MotionEvent.ACTION_DOWN, 400f, 1300f, downTime, downTime)
+        injectTouch(MotionEvent.ACTION_MOVE, 520f, 1180f, downTime, downTime + 16)
+        val floatingState =
+            waitUntilValue(DIALOG_TIMEOUT_MS) {
+                floatingDpadState(activity)?.takeIf { it[0] == 1f }
+            }
+        assertArrayEquals(
+            floatArrayOf(1f, 400f, 1300f),
+            requireNotNull(floatingState).copyOfRange(0, 3),
+            0.01f,
+        )
+        assertTrue("Joystick knob should move right", floatingState[3] > floatingState[1])
+        assertTrue("Joystick knob should move up", floatingState[4] < floatingState[2])
+        injectTouch(MotionEvent.ACTION_UP, 520f, 1180f, downTime, downTime + 32)
+        assertTrue(
+            "Floating joystick should return to rest after touch release",
+            waitUntil(DIALOG_TIMEOUT_MS) { floatingDpadState(activity)?.get(0) == 0f },
+        )
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
@@ -265,26 +288,23 @@ class MainActivityE2eTest {
     @Test
     fun portraitControlsOverlayMatchesExpectedArrangement() {
         val zones = controlsLayout(1080f, 1920f).associateBy { it.label }
-        val up = requireNotNull(zones["UP"])
-        val down = requireNotNull(zones["DOWN"])
-        val left = requireNotNull(zones["LEFT"])
-        val right = requireNotNull(zones["RIGHT"])
+        val joystick = floatingJoystickLayout(1080f, 1920f)
         val select = requireNotNull(zones["SELECT"])
         val start = requireNotNull(zones["START"])
         val b = requireNotNull(zones["B"])
         val a = requireNotNull(zones["A"])
 
-        assertEquals(up.x, down.x, 0.01f)
-        assertEquals(up.width, down.width, 0.01f)
-        assertEquals(left.y, right.y, 0.01f)
-        assertEquals(left.height, right.height, 0.01f)
+        assertEquals(4, zones.size)
+        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
+        assertTrue(joystick.centerX - joystick.baseRadius >= 0f)
+        assertTrue(joystick.centerY + joystick.baseRadius <= 1920f)
         assertEquals(a.y, b.y, 0.01f)
         assertEquals(a.height, b.height, 0.01f)
-        assertTrue("B should sit to the right of the D-pad", b.x > right.x + right.width)
+        assertTrue("B should sit to the right of the joystick", b.x > joystick.activationBounds.right)
         assertTrue("A should sit to the right of B", a.x > b.x + b.width)
         assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
         assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
-        assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
+        assertTrue("Select should sit between the joystick and face buttons", select.x > joystick.centerX)
         assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
     }
 
@@ -293,14 +313,16 @@ class MainActivityE2eTest {
         val width = 1920f
         val height = 1080f
         val zones = controlsLayout(width, height)
-        assertEquals(8, zones.size)
+        val joystick = floatingJoystickLayout(width, height)
+        assertEquals(4, zones.size)
         zones.forEach { zone ->
             assertTrue(zone.x >= 0f && zone.y >= 0f)
             assertTrue(zone.x + zone.width <= width)
             assertTrue(zone.y + zone.height <= height)
         }
         val byLabel = zones.associateBy { it.label }
-        assertTrue(requireNotNull(byLabel["RIGHT"]).x < requireNotNull(byLabel["B"]).x)
+        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
+        assertTrue(joystick.activationBounds.right < requireNotNull(byLabel["B"]).x)
     }
 
     private fun assertChromeViewAvailable(
@@ -313,6 +335,24 @@ class MainActivityE2eTest {
             return
         }
         fail("$failureMessage; ${safeChromeDebugState(activity, tag)}")
+    }
+
+    private fun injectTouch(action: Int, x: Float, y: Float, downTime: Long, eventTime: Long) {
+        val event = MotionEvent.obtain(downTime, eventTime, action, x, y, 0)
+        try {
+            assertTrue(
+                "Touch event should be injected",
+                InstrumentationRegistry.getInstrumentation().uiAutomation.injectInputEvent(event, true),
+            )
+        } finally {
+            event.recycle()
+        }
+    }
+
+    private fun floatingDpadState(activity: MainActivity): FloatArray? {
+        val state = AtomicReference<FloatArray?>()
+        runOnActivityThread(activity) { state.set(activity.floatingDpadStateForTest()) }
+        return state.get()
     }
 
     private fun chromeViewIsShowing(activity: MainActivity, tag: String): Boolean {

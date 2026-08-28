@@ -3,24 +3,23 @@ package io.github.chalharu.nerust
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.NativeActivity
-import android.content.pm.ActivityInfo
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
-import android.net.Uri
+import android.content.pm.ActivityInfo
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.hardware.input.InputManager
+import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
-import android.util.Log
 import android.util.Base64
+import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.InputDevice
@@ -29,14 +28,14 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.window.OnBackInvokedDispatcher
 import android.widget.FrameLayout
 import android.widget.PopupWindow
+import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -79,6 +78,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -86,16 +86,15 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.documentfile.provider.DocumentFile
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
@@ -122,7 +121,10 @@ internal fun screenOrientationRequest(value: Int): Int? =
         else -> null
     }
 
-private data class DrawerAction(val label: String, val action: String)
+private data class DrawerAction(
+    val label: String,
+    val action: String,
+)
 
 private data class AndroidSetting(
     val key: String,
@@ -145,16 +147,25 @@ internal data class OverlayZoneSpec(
     val label: String,
 )
 
-private val DRAWER_ACTIONS = listOf(
-    DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
-    DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
-    DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
-    DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
-    DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
-    DrawerAction("Reset", MENU_ACTION_RESET),
-    DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
-    DrawerAction("Exit", MENU_ACTION_EXIT),
+internal data class FloatingJoystickSpec(
+    val centerX: Float,
+    val centerY: Float,
+    val baseRadius: Float,
+    val knobRadius: Float,
+    val activationBounds: RectF,
 )
+
+private val DRAWER_ACTIONS =
+    listOf(
+        DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
+        DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
+        DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
+        DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
+        DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
+        DrawerAction("Reset", MENU_ACTION_RESET),
+        DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
+        DrawerAction("Exit", MENU_ACTION_EXIT),
+    )
 
 private fun createRomPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -172,17 +183,22 @@ private fun createDirectoryPickerIntent(): Intent =
         )
     }
 
-class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner,
+class MainActivity :
+    NativeActivity(),
+    LifecycleOwner,
+    SavedStateRegistryOwner,
+    ViewModelStoreOwner,
     InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
     private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
-    private val restoreControllerOverlayRunnable = Runnable {
-        controllerOverlayHiddenUntil = 0L
-        scheduleChromeAttach()
-    }
+    private val restoreControllerOverlayRunnable =
+        Runnable {
+            controllerOverlayHiddenUntil = 0L
+            scheduleChromeAttach()
+        }
     private var chromeAttachAttempts = 0
     private var chromeAttachEnabled = false
     private var controlsOverlayPopup: PopupWindow? = null
@@ -208,6 +224,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var composeDialogOwnedByTest = false
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
+
     @Volatile private var lastLoadedSystemForTest: String? = null
 
     override val lifecycle: Lifecycle
@@ -304,7 +321,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         return true
     }
 
-    private fun updateControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+    private fun updateControllerInput(
+        deviceId: Int,
+        key: String,
+        pressed: Boolean,
+    ) {
         val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
@@ -425,41 +446,82 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
     }
 
-    fun readSafFile(treeUri: String, relativePath: String): String? {
+    fun updateFloatingDpad(
+        active: Boolean,
+        centerX: Float,
+        centerY: Float,
+        knobX: Float,
+        knobY: Float,
+    ) {
+        (controlsOverlayView as? ControlsOverlayView)?.updateFloatingDpad(
+            active,
+            centerX,
+            centerY,
+            knobX,
+            knobY,
+        )
+    }
+
+    fun floatingDpadStateForTest(): FloatArray? = (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
+
+    fun readSafFile(
+        treeUri: String,
+        relativePath: String,
+    ): String? {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
         return contentResolver.openInputStream(file.uri)?.use { input ->
             Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
         }
     }
 
-    fun writeSafFile(treeUri: String, relativePath: String, encoded: String): String {
+    fun writeSafFile(
+        treeUri: String,
+        relativePath: String,
+        encoded: String,
+    ): String {
         val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
         contentResolver.openOutputStream(file.uri, "rwt")?.use { it.write(bytes) } ?: return "error"
         return "ok"
     }
 
-    fun deleteSafFile(treeUri: String, relativePath: String): String {
+    fun deleteSafFile(
+        treeUri: String,
+        relativePath: String,
+    ): String {
         val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return "missing"
         return if (file.delete()) "ok" else "error"
     }
 
-    fun listSafFiles(treeUri: String, relativePath: String): String {
-        val directory = resolveSafDirectory(treeUri, relativePath, create = false)
-            ?: return "[]"
+    fun listSafFiles(
+        treeUri: String,
+        relativePath: String,
+    ): String {
+        val directory =
+            resolveSafDirectory(treeUri, relativePath, create = false)
+                ?: return "[]"
         return org.json.JSONArray(directory.listFiles().mapNotNull(DocumentFile::getName)).toString()
     }
 
-    private fun resolveSafDocument(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
+    private fun resolveSafDocument(
+        treeUri: String,
+        relativePath: String,
+        create: Boolean,
+    ): DocumentFile? {
         val segments = relativePath.split('/').filter(String::isNotBlank)
         val fileName = segments.lastOrNull() ?: return null
-        val directory = resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
-            ?: return null
+        val directory =
+            resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
+                ?: return null
         return directory.findFile(fileName)
             ?: if (create) directory.createFile("application/octet-stream", fileName) else null
     }
 
-    private fun resolveSafDirectory(treeUri: String, relativePath: String, create: Boolean): DocumentFile? {
+    private fun resolveSafDirectory(
+        treeUri: String,
+        relativePath: String,
+        create: Boolean,
+    ): DocumentFile? {
         var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
         for (segment in relativePath.split('/').filter(String::isNotBlank)) {
             current = resolveSafChildDirectory(current, segment, create) ?: return null
@@ -476,7 +538,11 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             ?: if (create) parent.createDirectory(name) else null
 
     @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != ROM_PICKER_REQUEST_CODE && requestCode != DIRECTORY_PICKER_REQUEST_CODE) {
             return
@@ -492,7 +558,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 }
             val takeFlags =
-                data?.flags
+                data
+                    ?.flags
                     ?.and(requestedFlags)
                     ?.takeIf { it != 0 }
                     ?: requestedFlags
@@ -512,32 +579,64 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
         when (tag) {
-            CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
-                controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                drawerComposeView.isShownInWindowForTest()
-            DRAWER_EDGE_HANDLE_TAG -> !drawerShowing && drawerChromePopup?.isShowing == true &&
-                drawerEdgeHandleView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                drawerOverlayView.isShownInWindowForTest()
+            CONTROLS_OVERLAY_TAG -> {
+                controlsOverlayPopup?.isShowing == true &&
+                    controlsOverlayView.isShownInWindowForTest()
+            }
+
+            DRAWER_COMPOSE_TAG -> {
+                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
+                    drawerComposeView.isShownInWindowForTest()
+            }
+
+            DRAWER_EDGE_HANDLE_TAG -> {
+                !drawerShowing && drawerChromePopup?.isShowing == true &&
+                    drawerEdgeHandleView.isShownInWindowForTest()
+            }
+
+            DRAWER_OVERLAY_TAG -> {
+                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
+                    drawerOverlayView.isShownInWindowForTest()
+            }
+
             SETTINGS_DIALOG_TAG,
-            ->
+            -> {
                 composeDialogTag == tag &&
                     composeDialog?.isShowing == true &&
                     composeDialogRootView.isShownInWindowForTest()
-            else -> window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
+            }
+
+            else -> {
+                window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
+            }
         }
 
     fun findChromeViewForTest(tag: String): View? =
         when (tag) {
-            CONTROLS_OVERLAY_TAG -> controlsOverlayView
-            DRAWER_COMPOSE_TAG -> drawerComposeView
-            DRAWER_EDGE_HANDLE_TAG -> drawerEdgeHandleView
-            DRAWER_OVERLAY_TAG -> drawerOverlayView
+            CONTROLS_OVERLAY_TAG -> {
+                controlsOverlayView
+            }
+
+            DRAWER_COMPOSE_TAG -> {
+                drawerComposeView
+            }
+
+            DRAWER_EDGE_HANDLE_TAG -> {
+                drawerEdgeHandleView
+            }
+
+            DRAWER_OVERLAY_TAG -> {
+                drawerOverlayView
+            }
+
             SETTINGS_DIALOG_TAG,
-            ->
+            -> {
                 composeDialogRootView.takeIf { composeDialogTag == tag }
-            else -> window.decorView.findViewWithTag(tag)
+            }
+
+            else -> {
+                window.decorView.findViewWithTag(tag)
+            }
         }
 
     fun chromeDebugStateForTest(tag: String): String =
@@ -599,13 +698,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         )
     }
 
-
     /**
      * Show a modal Android settings dialog.
      *
-    * Presents the versioned settings JSON supplied by Rust. Tapping a row opens
-    * a Compose choice picker. Save and dismiss return request-scoped JSON with
-    * values keyed by stable setting IDs.
+     * Presents the versioned settings JSON supplied by Rust. Tapping a row opens
+     * a Compose choice picker. Save and dismiss return request-scoped JSON with
+     * values keyed by stable setting IDs.
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
@@ -756,11 +854,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             )
             return
         }
-        val anchor = popupAnchor() ?: run {
-            Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
-            retryChromeAttach()
-            return
-        }
+        val anchor =
+            popupAnchor() ?: run {
+                Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
+                retryChromeAttach()
+                return
+            }
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
@@ -794,7 +893,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
         if (
             controlsVisibility == "hidden" ||
-                controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+            controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
         ) {
             return true
         }
@@ -916,11 +1015,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     private fun showDrawerOverlay() {
-        val anchor = popupAnchor() ?: run {
-            lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
-            Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
-            return
-        }
+        val anchor =
+            popupAnchor() ?: run {
+                lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
+                Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
+                return
+            }
         if (drawerShowing) {
             lastDrawerStateForTest = "already showing"
             Log.i(TAG, "showDrawerOverlay: already showing")
@@ -1108,8 +1208,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
     }
 
-    private fun popupAnchor(): View? =
-        window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
+    private fun popupAnchor(): View? = window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
 
     private fun showPopupAtLocation(
         popupName: String,
@@ -1134,7 +1233,13 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         }
 
-    private fun updatePopupWindow(popup: PopupWindow, x: Int, y: Int, width: Int, height: Int): Boolean =
+    private fun updatePopupWindow(
+        popup: PopupWindow,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+    ): Boolean =
         try {
             popup.width = width
             popup.height = height
@@ -1174,11 +1279,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
 
-    private fun Dialog?.debugDialogState(): String =
-        if (this == null) "null" else "showing=$isShowing"
+    private fun Dialog?.debugDialogState(): String = if (this == null) "null" else "showing=$isShowing"
 
-    private fun PopupWindow?.debugPopupState(): String =
-        if (this == null) "null" else "showing=$isShowing"
+    private fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
 
     private fun dismissChromePopups() {
         clearDrawerWindowReferences()
@@ -1195,11 +1298,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         controlsOverlayView = null
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(): String =
-        (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
+    private fun drawerContentDescription(): String = (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
 
     private fun settingsContentDescription(
         settings: List<AndroidSetting>,
@@ -1218,7 +1319,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         onMenuAction(action)
     }
 
-    private inner class ComposeOwnerFrameLayout(context: Context) : FrameLayout(context) {
+    private inner class ComposeOwnerFrameLayout(
+        context: Context,
+    ) : FrameLayout(context) {
         override fun onAttachedToWindow() {
             installComposeOwners(this)
             installComposeOwners(rootView)
@@ -1258,6 +1361,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
+
         @Volatile
         private var activeActivityForTest: MainActivity? = null
 
@@ -1265,8 +1369,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
         fun createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
 
-        fun currentActivityForTest(): MainActivity? =
-            activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
+        fun currentActivityForTest(): MainActivity? = activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
     }
 }
 
@@ -1331,7 +1434,10 @@ private fun NerustDrawerOverlay(
 }
 
 @Composable
-private fun DrawerActionItem(label: String, onClick: () -> Unit) {
+private fun DrawerActionItem(
+    label: String,
+    onClick: () -> Unit,
+) {
     NavigationDrawerItem(
         label = { Text(label) },
         selected = false,
@@ -1416,14 +1522,16 @@ private fun NerustSettingsDialogCard(
         ) {
             val activeSection = sections.find { it.id == activeSectionId }
             SettingsNavigationHeader(
-                title = activeSettingIndex?.let { settings[it].label }
-                    ?: activeSection?.label
-                    ?: "Settings",
-                subtitle = when {
-                    activeSettingIndex != null -> "Choose a value"
-                    activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
-                    else -> "Choose a category"
-                },
+                title =
+                    activeSettingIndex?.let { settings[it].label }
+                        ?: activeSection?.label
+                        ?: "Settings",
+                subtitle =
+                    when {
+                        activeSettingIndex != null -> "Choose a value"
+                        activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
+                        else -> "Choose a category"
+                    },
                 canNavigateBack = activeSection != null || activeSettingIndex != null,
                 onNavigateBack = {
                     if (activeSettingIndex != null) {
@@ -1449,18 +1557,24 @@ private fun NerustSettingsDialogCard(
                         },
                     )
                 }
-                activeSection != null -> SettingsSectionList(
-                    section = activeSection,
-                    settings = settings,
-                    selections = selections,
-                    onSettingClick = { activeSettingIndex = it },
-                )
-                else -> SettingsCategoryList(
-                    sections = sections,
-                    settings = settings,
-                    selections = selections,
-                    onSectionClick = { activeSectionId = it },
-                )
+
+                activeSection != null -> {
+                    SettingsSectionList(
+                        section = activeSection,
+                        settings = settings,
+                        selections = selections,
+                        onSettingClick = { activeSettingIndex = it },
+                    )
+                }
+
+                else -> {
+                    SettingsCategoryList(
+                        sections = sections,
+                        settings = settings,
+                        selections = selections,
+                        onSectionClick = { activeSectionId = it },
+                    )
+                }
             }
         }
     }
@@ -1502,11 +1616,12 @@ private fun SettingsCategoryList(
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(sections) { index, section ->
-            val summary = section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
-                val setting = settings[settingIndex]
-                val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
-                "${setting.label}: $value"
-            }
+            val summary =
+                section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
+                    val setting = settings[settingIndex]
+                    val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+                    "${setting.label}: $value"
+                }
             SettingsNavigationRow(
                 title = section.label,
                 value = settingsCountLabel(section.settingIndices.size),
@@ -1608,8 +1723,7 @@ private fun settingsSectionLabel(id: String): String =
         else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
     }
 
-private fun settingsCountLabel(count: Int): String =
-    "$count ${if (count == 1) "setting" else "settings"}"
+private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
 
 @Composable
 private fun rememberSettingsSelections(
@@ -1647,7 +1761,11 @@ private fun DialogSettingButton(
 }
 
 @Composable
-private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DialogChoiceButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier =
             Modifier
@@ -1688,11 +1806,40 @@ private class ControlsOverlayView(
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-    private val arrowPaint =
+    private val knobPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
+    private var floatingDpadActive = false
+    private var floatingDpadCenterX = 0f
+    private var floatingDpadCenterY = 0f
+    private var floatingDpadKnobX = 0f
+    private var floatingDpadKnobY = 0f
+
+    fun updateFloatingDpad(
+        active: Boolean,
+        centerX: Float,
+        centerY: Float,
+        knobX: Float,
+        knobY: Float,
+    ) {
+        floatingDpadActive = active
+        floatingDpadCenterX = centerX
+        floatingDpadCenterY = centerY
+        floatingDpadKnobX = knobX
+        floatingDpadKnobY = knobY
+        invalidate()
+    }
+
+    fun floatingDpadStateForTest(): FloatArray =
+        floatArrayOf(
+            if (floatingDpadActive) 1f else 0f,
+            floatingDpadCenterX,
+            floatingDpadCenterY,
+            floatingDpadKnobX,
+            floatingDpadKnobY,
+        )
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -1702,9 +1849,25 @@ private class ControlsOverlayView(
             return
         }
 
+        val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
+        drawFloatingJoystick(canvas, joystick)
         controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
+    }
+
+    private fun drawFloatingJoystick(
+        canvas: Canvas,
+        spec: FloatingJoystickSpec,
+    ) {
+        val centerX = if (floatingDpadActive) floatingDpadCenterX else spec.centerX
+        val centerY = if (floatingDpadActive) floatingDpadCenterY else spec.centerY
+        val knobX = if (floatingDpadActive) floatingDpadKnobX else centerX
+        val knobY = if (floatingDpadActive) floatingDpadKnobY else centerY
+        canvas.drawCircle(centerX, centerY, spec.baseRadius, fillPaint)
+        canvas.drawCircle(centerX, centerY, spec.baseRadius, strokePaint)
+        canvas.drawCircle(knobX, knobY, spec.knobRadius, knobPaint)
+        canvas.drawCircle(knobX, knobY, spec.knobRadius, strokePaint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1723,50 +1886,9 @@ private class ControlsOverlayView(
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
 
-        when (label) {
-            "UP" -> drawArrow(canvas, rect, Direction.UP)
-            "DOWN" -> drawArrow(canvas, rect, Direction.DOWN)
-            "LEFT" -> drawArrow(canvas, rect, Direction.LEFT)
-            "RIGHT" -> drawArrow(canvas, rect, Direction.RIGHT)
-            else -> {
-                textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
-                val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-                canvas.drawText(label, rect.centerX(), centerY, textPaint)
-            }
-        }
-    }
-
-    private enum class Direction { UP, DOWN, LEFT, RIGHT }
-
-    private fun drawArrow(canvas: Canvas, rect: RectF, direction: Direction) {
-        val size = min(rect.width(), rect.height()) * 0.45f
-        val cx = rect.centerX()
-        val cy = rect.centerY()
-        val path = Path()
-        when (direction) {
-            Direction.UP -> {
-                path.moveTo(cx, cy - size * 0.5f)
-                path.lineTo(cx - size * 0.5f, cy + size * 0.35f)
-                path.lineTo(cx + size * 0.5f, cy + size * 0.35f)
-            }
-            Direction.DOWN -> {
-                path.moveTo(cx, cy + size * 0.5f)
-                path.lineTo(cx - size * 0.5f, cy - size * 0.35f)
-                path.lineTo(cx + size * 0.5f, cy - size * 0.35f)
-            }
-            Direction.LEFT -> {
-                path.moveTo(cx - size * 0.5f, cy)
-                path.lineTo(cx + size * 0.35f, cy - size * 0.5f)
-                path.lineTo(cx + size * 0.35f, cy + size * 0.5f)
-            }
-            Direction.RIGHT -> {
-                path.moveTo(cx + size * 0.5f, cy)
-                path.lineTo(cx - size * 0.35f, cy - size * 0.5f)
-                path.lineTo(cx - size * 0.35f, cy + size * 0.5f)
-            }
-        }
-        path.close()
-        canvas.drawPath(path, arrowPaint)
+        textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
+        val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(label, rect.centerX(), centerY, textPaint)
     }
 }
 
@@ -1814,7 +1936,9 @@ private class DrawerEdgeSwipeHandleView(
                 true
             }
 
-            else -> super.onTouchEvent(event)
+            else -> {
+                super.onTouchEvent(event)
+            }
         }
 
     override fun performClick(): Boolean = super.performClick()
@@ -1832,17 +1956,11 @@ internal fun controlsLayout(
     val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
     val controlTop = if (portrait) height * 0.54f else 0f
     val controlHeight = height - controlTop
-    val dpadLeft = base * 0.08f
-    val dpadSize = base * 0.28f * scale
-    val dpadCenterX = dpadLeft + dpadSize * 0.5f
-    val dpadCenterY =
-        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
-    val dpadArm = dpadSize * 0.28f
-    val dpadExtent = dpadSize * 0.42f
+    val joystick = floatingJoystickLayout(width, height, scalePercent, verticalOffsetPercent)
     val actionSize = base * 0.14f * scale
     val actionGap = base * 0.04f
     val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
-    val actionTop = dpadCenterY - actionSize * 0.5f
+    val actionTop = joystick.centerY - actionSize * 0.5f
     val centerButtonWidth = base * 0.10f * scale
     val centerButtonHeight = base * 0.068f * scale
     val centerGap = base * 0.03f
@@ -1852,34 +1970,6 @@ internal fun controlsLayout(
         (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
 
     return listOf(
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadArm * 0.5f,
-            y = dpadCenterY - dpadExtent,
-            width = dpadArm,
-            height = dpadExtent - dpadArm * 0.5f,
-            label = "UP",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadArm * 0.5f,
-            y = dpadCenterY + dpadArm * 0.5f,
-            width = dpadArm,
-            height = dpadExtent - dpadArm * 0.5f,
-            label = "DOWN",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadExtent,
-            y = dpadCenterY - dpadArm * 0.5f,
-            width = dpadExtent - dpadArm * 0.5f,
-            height = dpadArm,
-            label = "LEFT",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX + dpadArm * 0.5f,
-            y = dpadCenterY - dpadArm * 0.5f,
-            width = dpadExtent - dpadArm * 0.5f,
-            height = dpadArm,
-            label = "RIGHT",
-        ),
         OverlayZoneSpec(
             x = actionLeft,
             y = actionTop,
@@ -1908,5 +1998,39 @@ internal fun controlsLayout(
             height = centerButtonHeight,
             label = "START",
         ),
+    )
+}
+
+internal fun floatingJoystickLayout(
+    width: Float,
+    height: Float,
+    scalePercent: Int = 100,
+    verticalOffsetPercent: Int = 0,
+): FloatingJoystickSpec {
+    val portrait = height >= width
+    val base = min(width, height)
+    val scale = scalePercent.coerceIn(50, 150) / 100f
+    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
+    val controlTop = if (portrait) height * 0.54f else 0f
+    val controlHeight = height - controlTop
+    val dpadSize = base * 0.28f * scale
+    val baseRadius = dpadSize * 0.42f
+    val centerX = base * 0.08f + dpadSize * 0.5f
+    val centerY =
+        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
+    val activationRight = if (portrait) width * 0.52f else width * 0.45f
+    val activationTop = if (portrait) controlTop else height * 0.25f
+    return FloatingJoystickSpec(
+        centerX = centerX,
+        centerY = centerY,
+        baseRadius = baseRadius,
+        knobRadius = baseRadius * 0.48f,
+        activationBounds =
+            RectF(
+                baseRadius,
+                activationTop + baseRadius,
+                activationRight - baseRadius,
+                height - baseRadius,
+            ),
     )
 }
