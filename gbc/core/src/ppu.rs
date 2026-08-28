@@ -59,6 +59,8 @@ pub(crate) struct PpuState {
     ly_for_comparison: i16,
     lcd_on_short_line: bool,
     #[serde(default)]
+    cgb_lcd_startup_lines: u8,
+    #[serde(default)]
     cgb_vblank_mode_carry: bool,
     mode3_scx_penalty: u32,
     mode3_sprite_penalty: u32,
@@ -135,6 +137,7 @@ pub struct GbcPpu {
     /// The first line after the LCD is turned on is shorter than a normal
     /// scanline (448 T-cycles; mode 2 is 76 and mode 0 is 4+8 shorter).
     lcd_on_short_line: bool,
+    cgb_lcd_startup_lines: u8,
     /// CGB-E keeps mode 1 visible for four dots after LY wraps to zero.
     cgb_vblank_mode_carry: bool,
 
@@ -197,6 +200,7 @@ impl Default for GbcPpu {
             lcd_on_hblank_extra: 0,
             ly_for_comparison: 0,
             lcd_on_short_line: false,
+            cgb_lcd_startup_lines: 0,
             cgb_vblank_mode_carry: false,
             mode3_scx_penalty: 0,
             mode3_sprite_penalty: 0,
@@ -240,6 +244,7 @@ impl GbcPpu {
             lcd_on_hblank_extra: self.lcd_on_hblank_extra,
             ly_for_comparison: self.ly_for_comparison,
             lcd_on_short_line: self.lcd_on_short_line,
+            cgb_lcd_startup_lines: self.cgb_lcd_startup_lines,
             cgb_vblank_mode_carry: self.cgb_vblank_mode_carry,
             mode3_scx_penalty: self.mode3_scx_penalty,
             mode3_sprite_penalty: self.mode3_sprite_penalty,
@@ -254,6 +259,7 @@ impl GbcPpu {
             || state.bg_palette.len() != 32
             || state.obj_palette.len() != 32
             || state.frame_buffer.len() != 160 * 144
+            || state.cgb_lcd_startup_lines > 4
         {
             return Err("PPU state buffer length mismatch".into());
         }
@@ -306,6 +312,7 @@ impl GbcPpu {
         candidate.lcd_on_hblank_extra = state.lcd_on_hblank_extra;
         candidate.ly_for_comparison = state.ly_for_comparison;
         candidate.lcd_on_short_line = state.lcd_on_short_line;
+        candidate.cgb_lcd_startup_lines = state.cgb_lcd_startup_lines;
         candidate.cgb_vblank_mode_carry = state.cgb_vblank_mode_carry;
         candidate.mode3_scx_penalty = state.mode3_scx_penalty;
         candidate.mode3_sprite_penalty = state.mode3_sprite_penalty;
@@ -692,6 +699,7 @@ impl GbcPpu {
             self.mode3_pipeline = None;
             self.wx_written_during_oam = false;
             self.lcd_on_short_line = false;
+            self.cgb_lcd_startup_lines = self.cgb_lcd_startup_lines.saturating_sub(1);
             self.ly = self.ly.wrapping_add(1);
             if !self.cgb_mode {
                 self.ly_for_comparison = -1;
@@ -786,14 +794,21 @@ impl GbcPpu {
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
         let line_start_window = if self.double_speed { 2 } else { 4 };
+        let startup_mode0_pulse = self.cgb_lcd_startup_lines != 0
+            && self.ly == 3
+            && if self.double_speed {
+                (40..42).contains(&self.mode_clock)
+            } else {
+                (68..72).contains(&self.mode_clock)
+            };
         if self.cgb_vblank_mode_carry
             && self.ly == 0
             && self.mode_clock < line_start_window
         {
             stat = (stat & 0xFC) | PpuMode::VBlank as u8;
         } else if self.cgb_mode
-            && self.ly == VBLANK_START
-            && self.mode_clock < line_start_window
+            && ((self.ly == VBLANK_START && self.mode_clock < line_start_window)
+                || startup_mode0_pulse)
         {
             stat &= 0xFC;
         } else if self.cgb_mode && self.lcd_on_short_line {
@@ -1341,6 +1356,7 @@ impl GbcPpu {
             // the LYC comparison clock is not running.
             self.lcd_on_delay = if self.cgb_mode { 20 } else { 77 };
             self.lcd_on_short_line = true;
+            self.cgb_lcd_startup_lines = if self.cgb_mode { 4 } else { 0 };
             self.ly_for_comparison = 0;
             self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
             // LY=0 at power-on. The comparison against LYC is evaluated on
@@ -1921,6 +1937,26 @@ mod tests {
         p.mode_clock = 0;
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
         p.mode_clock = 2;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn cgb_lcd_startup_exposes_speed_aware_mode0_pulse() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_lcd_startup_lines = 1;
+        p.ly = 3;
+        p.stat = (p.stat & 0xFC) | PpuMode::OamSearch as u8;
+
+        p.mode_clock = 68;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 72;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+
+        p.double_speed = true;
+        p.mode_clock = 40;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 42;
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
     }
 

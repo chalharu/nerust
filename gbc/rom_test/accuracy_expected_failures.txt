@@ -20,11 +20,7 @@ age_oam-read-ncmBC@cgb_c
 age_oam-write-dmgC@dmg
 age_spsw-interrupts-cgbBC@cgb_c
 age_spsw-tima-cgbBC@cgb_c
-age_stat-int-dmgC-cgbBCE@cgb_c
-age_stat-int-dmgC-cgbBCE@cgb_d
 age_stat-int-dmgC-cgbBCE@dmg
-age_stat-int-ncmBCE@cgb_c
-age_stat-int-ncmBCE@cgb_d
 age_stat-mode-dmgC-cgbBC@dmg
 age_stat-mode-ds-cgbBCE@cgb_c
 age_stat-mode-sprites-dmgC-cgbBCE@dmg
