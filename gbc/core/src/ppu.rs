@@ -56,6 +56,8 @@ pub(crate) struct PpuState {
     lcd_on_hblank_extra: u32,
     ly_for_comparison: i16,
     lcd_on_short_line: bool,
+    #[serde(default)]
+    cgb_vblank_mode_carry: bool,
     mode3_scx_penalty: u32,
     mode3_sprite_penalty: u32,
     wx_written_during_oam: bool,
@@ -130,6 +132,8 @@ pub struct GbcPpu {
     /// The first line after the LCD is turned on is shorter than a normal
     /// scanline (448 T-cycles; mode 2 is 76 and mode 0 is 4+8 shorter).
     lcd_on_short_line: bool,
+    /// CGB-E keeps mode 1 visible for four dots after LY wraps to zero.
+    cgb_vblank_mode_carry: bool,
 
     /// SCX fine-scroll penalty (SCX & 7) latched at the start of mode 3;
     /// extends the pixel transfer period.
@@ -189,6 +193,7 @@ impl Default for GbcPpu {
             lcd_on_hblank_extra: 0,
             ly_for_comparison: 0,
             lcd_on_short_line: false,
+            cgb_vblank_mode_carry: false,
             mode3_scx_penalty: 0,
             mode3_sprite_penalty: 0,
             wx_written_during_oam: false,
@@ -230,6 +235,7 @@ impl GbcPpu {
             lcd_on_hblank_extra: self.lcd_on_hblank_extra,
             ly_for_comparison: self.ly_for_comparison,
             lcd_on_short_line: self.lcd_on_short_line,
+            cgb_vblank_mode_carry: self.cgb_vblank_mode_carry,
             mode3_scx_penalty: self.mode3_scx_penalty,
             mode3_sprite_penalty: self.mode3_sprite_penalty,
             wx_written_during_oam: self.wx_written_during_oam,
@@ -294,6 +300,7 @@ impl GbcPpu {
         candidate.lcd_on_hblank_extra = state.lcd_on_hblank_extra;
         candidate.ly_for_comparison = state.ly_for_comparison;
         candidate.lcd_on_short_line = state.lcd_on_short_line;
+        candidate.cgb_vblank_mode_carry = state.cgb_vblank_mode_carry;
         candidate.mode3_scx_penalty = state.mode3_scx_penalty;
         candidate.mode3_sprite_penalty = state.mode3_sprite_penalty;
         candidate.wx_written_during_oam = state.wx_written_during_oam;
@@ -329,6 +336,7 @@ impl GbcPpu {
     fn step_lcd_off(&mut self) -> PpuStepResult {
         self.ly = 0;
         self.mode_clock = 0;
+        self.cgb_vblank_mode_carry = false;
         self.mode3_pipeline = None;
         // LCD off: STAT mode bits read as 00 (HBlank); the LYC
         // coincidence bit (bit2) is latched and retained.
@@ -648,6 +656,7 @@ impl GbcPpu {
                 self.ly = 0;
                 self.frame_complete = true;
                 self.window_line = 0;
+                self.cgb_vblank_mode_carry = self.cgb_revision_d;
             }
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
         }
@@ -705,7 +714,21 @@ impl GbcPpu {
     /// though the real mode has already advanced to OAM search.
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
-        if self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0 {
+        if self.cgb_vblank_mode_carry && self.ly == 0 && self.mode_clock < 4 {
+            stat = (stat & 0xFC) | PpuMode::VBlank as u8;
+        } else if self.cgb_mode && self.ly == VBLANK_START && self.mode_clock < 4 {
+            stat &= 0xFC;
+        } else if self.cgb_mode && self.lcd_on_short_line {
+            let fine_scroll = u32::from(self.scx & 7);
+            let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
+            if (52..60).contains(&self.mode_clock) || self.mode_clock >= mode3_end {
+                stat &= 0xFC;
+            } else if self.mode_clock >= 60 {
+                stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+            }
+        } else if (self.cgb_mode && self.ly < VBLANK_START && self.mode_clock < 4)
+            || (self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0)
+        {
             stat &= 0xFC;
         }
         stat
@@ -912,15 +935,6 @@ impl GbcPpu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if std::env::var("TRACE_VRAM_READ").is_ok() {
-            eprintln!(
-                "VRAM_READ ly={} clock={} end={} short={}",
-                self.ly,
-                self.mode_clock,
-                self.mode3_end_clock(),
-                self.lcd_on_short_line
-            );
-        }
         let blocked = if self.cgb_mode {
             if self.lcd_on_short_line {
                 let fine_scroll = u32::from(self.scx & 7);
@@ -1718,6 +1732,34 @@ mod tests {
         let mut p = ppu();
         let _ = p.step(260);
         assert_eq!(p.read_register(0xFF41) & 0x03, 0);
+    }
+
+    #[test]
+    fn cgb_short_line_stat_has_early_mode3_and_hblank() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.lcd_on_short_line = true;
+
+        p.mode_clock = 56;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 60;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.mode_clock = 232;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+    }
+
+    #[test]
+    fn cgb_e_stat_carries_vblank_mode_across_frame_wrap() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = SCANLINES_PER_FRAME - 1;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::VBlank as u8);
+        p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
     }
 
     #[test]
