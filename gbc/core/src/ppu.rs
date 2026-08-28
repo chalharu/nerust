@@ -536,14 +536,16 @@ impl GbcPpu {
             return 0;
         }
         if window_dots != 0 {
-            return 2 + u8::from(self.wx == 0 && self.scx & 7 != 0);
+            return if self.double_speed { 2 } else { 4 }
+                + u8::from(self.wx == 0 && self.scx & 7 != 0);
         }
         if self.window_eligible && (162..=167).contains(&self.wx) {
-            return match self.wx {
+            let penalty = match self.wx {
                 166 => 5,
                 167 => 2,
                 _ => 4,
             };
+            return penalty + if self.double_speed { 0 } else { 2 };
         }
         0
     }
@@ -1989,15 +1991,22 @@ mod tests {
 
         p.wx = 0;
         p.scx = 0;
-        assert_eq!(p.cgb_window_reload_penalty(6), 2);
+        assert_eq!(p.cgb_window_reload_penalty(6), 4);
         p.scx = 1;
-        assert_eq!(p.cgb_window_reload_penalty(6), 3);
+        assert_eq!(p.cgb_window_reload_penalty(6), 5);
 
         p.window_eligible = true;
         p.wx = 162;
-        assert_eq!(p.cgb_window_reload_penalty(0), 4);
+        assert_eq!(p.cgb_window_reload_penalty(0), 6);
         p.wx = 166;
-        assert_eq!(p.cgb_window_reload_penalty(0), 5);
+        assert_eq!(p.cgb_window_reload_penalty(0), 7);
+        p.wx = 167;
+        assert_eq!(p.cgb_window_reload_penalty(0), 4);
+
+        p.double_speed = true;
+        p.wx = 0;
+        p.scx = 0;
+        assert_eq!(p.cgb_window_reload_penalty(6), 2);
         p.wx = 167;
         assert_eq!(p.cgb_window_reload_penalty(0), 2);
     }
