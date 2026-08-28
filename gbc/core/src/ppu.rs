@@ -955,10 +955,17 @@ impl GbcPpu {
         // HBlank continuation) blocks reads.
         if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 {
             let blocked = if self.cgb_mode {
-                matches!(
-                    self.current_mode(),
-                    PpuMode::OamSearch | PpuMode::PixelTransfer
-                )
+                if self.lcd_on_short_line {
+                    let mode3_end = 232 + u32::from(self.scx & 7);
+                    self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock)
+                } else if self.cgb_revision_d && self.ly < VBLANK_START {
+                    self.mode_clock <= self.mode3_end_clock() + 1
+                } else {
+                    matches!(
+                        self.current_mode(),
+                        PpuMode::OamSearch | PpuMode::PixelTransfer
+                    )
+                }
             } else {
                 self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock()
             };
@@ -1325,6 +1332,36 @@ mod tests {
         p.mode_clock = p.oam_search_cycles() + 1;
         p.write_oam(0, 0x99);
         assert_eq!(p.oam[0], 0x42);
+    }
+
+    #[test]
+    fn cgb_short_line_has_oam_transition_hole_and_early_hblank() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.lcd_on_short_line = true;
+        p.oam[0] = 0x42;
+
+        p.mode_clock = 51;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = 52;
+        assert_eq!(p.read_oam(0), 0x42);
+        p.mode_clock = 60;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = 232;
+        assert_eq!(p.read_oam(0), 0x42);
+    }
+
+    #[test]
+    fn cgb_d_oam_read_lock_extends_one_dot_past_mode3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.oam[0] = 0x42;
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+
+        p.cgb_revision_d = false;
+        assert_eq!(p.read_oam(0), 0x42);
     }
 
     #[test]

@@ -29,7 +29,6 @@ age_oam-read-cgbE@cgb_d
 age_oam-read-dmgC-cgbBC@cgb_c
 age_oam-read-dmgC-cgbBC@dmg
 age_oam-read-ncmBC@cgb_c
-age_oam-read-ncmE@cgb_d
 age_oam-write-cgbBCE@cgb_c
 age_oam-write-cgbBCE@cgb_d
 age_oam-write-dmgC@dmg
