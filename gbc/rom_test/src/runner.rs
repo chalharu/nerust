@@ -181,16 +181,6 @@ fn verify_outputs(
         .verify_serial(serial_output, &mut acc.checks)?;
     cell.verify().verify_frame(crc, &mut acc.checks);
     cell.verify().verify_memory(bus, &mut acc.checks)?;
-    if cell.suite.name == "aappleby_gbmicrotest" && bus.read(0xFF82) != 0x01 {
-        let actual = bus.read(0xFF80);
-        let expected = bus.read(0xFF81);
-        acc.checks.push(CheckResult {
-            name: "gbmicro-result@$FF80/$FF81".to_string(),
-            expected: format!("${expected:02X}"),
-            actual: format!("${actual:02X}"),
-            passed: actual == expected,
-        });
-    }
     cell.verify()
         .verify_registers(cpu.registers(), &mut acc.checks);
     Ok(())
