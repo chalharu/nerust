@@ -49,6 +49,8 @@ pub(crate) struct PpuState {
     cgb_revision_d: bool,
     #[serde(default)]
     double_speed: bool,
+    #[serde(default)]
+    double_speed_odd_phase: bool,
     stat_signal: bool,
     stat_forced: bool,
     vblank_if_countdown: u8,
@@ -106,6 +108,7 @@ pub struct GbcPpu {
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
     pub cgb_revision_d: bool,
     double_speed: bool,
+    double_speed_odd_phase: bool,
 
     /// Current level of the combined STAT interrupt signal. The LCD STAT
     /// interrupt (IF bit 1) is requested on a rising edge of this signal.
@@ -186,6 +189,7 @@ impl Default for GbcPpu {
             cgb_game: false,
             cgb_revision_d: true,
             double_speed: false,
+            double_speed_odd_phase: false,
             stat_signal: false,
             stat_forced: false,
             vblank_if_countdown: 0,
@@ -228,6 +232,7 @@ impl GbcPpu {
             cgb_game: self.cgb_game,
             cgb_revision_d: self.cgb_revision_d,
             double_speed: self.double_speed,
+            double_speed_odd_phase: self.double_speed_odd_phase,
             stat_signal: self.stat_signal,
             stat_forced: self.stat_forced,
             vblank_if_countdown: self.vblank_if_countdown,
@@ -293,6 +298,7 @@ impl GbcPpu {
         candidate.cgb_game = state.cgb_game;
         candidate.cgb_revision_d = state.cgb_revision_d;
         candidate.double_speed = state.double_speed;
+        candidate.double_speed_odd_phase = state.double_speed_odd_phase;
         candidate.stat_signal = state.stat_signal;
         candidate.stat_forced = state.stat_forced;
         candidate.vblank_if_countdown = state.vblank_if_countdown;
@@ -749,7 +755,7 @@ impl GbcPpu {
         } else if self.cgb_mode
             && self.double_speed
             && self.ly < VBLANK_START
-            && self.scx & 1 != 0
+            && (self.scx & 1 != 0 || self.double_speed_odd_phase)
             && self.mode_clock == self.mode3_end_clock() + 1
         {
             stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
@@ -796,6 +802,10 @@ impl GbcPpu {
 
     pub(crate) fn set_double_speed(&mut self, enabled: bool) {
         self.double_speed = enabled;
+    }
+
+    pub(crate) fn set_double_speed_odd_phase(&mut self, enabled: bool) {
+        self.double_speed_odd_phase = enabled;
     }
 
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
@@ -1838,6 +1848,20 @@ mod tests {
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
         p.mode_clock = 2;
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn odd_double_speed_phase_carries_mode3_one_dot() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.double_speed_odd_phase = true;
+        p.scx = 0;
+        p.mode_clock = p.mode3_end_clock() + 1;
+
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.mode_clock += 1;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
     }
 
     #[test]
