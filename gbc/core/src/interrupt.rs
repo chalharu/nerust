@@ -102,6 +102,10 @@ impl InterruptController {
         self.ime && (self.ie & self.if_ & 0x1F) != 0
     }
 
+    pub fn enabled_interrupt_pending(&self) -> bool {
+        self.ie & self.if_ & 0x1F != 0
+    }
+
     pub fn halt(&mut self) {
         self.halt_bug_pending = !self.ime && (self.ie & self.if_ & 0x1F) != 0;
         self.halted = HaltState::Halted {

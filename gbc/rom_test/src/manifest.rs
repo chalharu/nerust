@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use super::{
     error::RomTestError,
-    verify::{VerifySpec, parse_hex},
+    verify::{RegisterVerify, VerifySpec, parse_hex},
 };
 
 /// Top-level ROM test manifest.
@@ -23,14 +23,98 @@ pub struct RomManifest {
     /// PASSES is an unexpected pass (the manifest entry should be removed).
     #[serde(default)]
     pub expected_failures: Vec<String>,
+    #[serde(default)]
+    expected_failure_files: Vec<PathBuf>,
 }
 
 impl RomManifest {
     pub fn load(path: &Path) -> Result<Self, RomTestError> {
         let yaml = fs::read_to_string(path)?;
-        let manifest: RomManifest = serde_saphyr::from_str(&yaml)?;
+        let mut manifest: RomManifest = serde_saphyr::from_str(&yaml)?;
+        manifest.expand_case_patterns(path)?;
+        manifest.load_expected_failure_files(path)?;
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    fn load_expected_failure_files(&mut self, manifest_path: &Path) -> Result<(), RomTestError> {
+        let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+        for relative_path in &self.expected_failure_files {
+            let source = fs::read_to_string(manifest_dir.join(relative_path))?;
+            self.expected_failures.extend(
+                source
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .map(str::to_string),
+            );
+        }
+        Ok(())
+    }
+
+    fn expand_case_patterns(&mut self, manifest_path: &Path) -> Result<(), RomTestError> {
+        let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+        let rom_root = manifest_dir.join(&self.rom_root);
+        for suite in &mut self.suites {
+            let suite_dir = rom_root.join(&suite.name);
+            let mut matched_paths = BTreeSet::new();
+            for pattern in &suite.case_patterns {
+                let absolute_pattern = suite_dir.join(&pattern.glob);
+                let absolute_pattern = absolute_pattern.to_string_lossy();
+                let paths = glob::glob(&absolute_pattern).map_err(|error| {
+                    RomTestError::InvalidManifest(format!(
+                        "invalid case glob `{}`: {error}",
+                        pattern.glob
+                    ))
+                })?;
+                for path in paths {
+                    let path = path.map_err(|error| {
+                        RomTestError::InvalidManifest(format!(
+                            "failed to expand case glob `{}`: {error}",
+                            pattern.glob
+                        ))
+                    })?;
+                    if !matched_paths.insert(path.clone()) {
+                        continue;
+                    }
+                    let relative = path.strip_prefix(&suite_dir).map_err(|_| {
+                        RomTestError::InvalidManifest(format!(
+                            "case glob `{}` matched outside suite `{}`",
+                            pattern.glob, suite.name
+                        ))
+                    })?;
+                    if pattern.exclude_globs.iter().any(|exclude| {
+                        glob::Pattern::new(exclude)
+                            .is_ok_and(|pattern| pattern.matches_path(relative))
+                    }) {
+                        continue;
+                    }
+                    let stem = relative
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| {
+                            RomTestError::InvalidManifest(format!(
+                                "case glob `{}` matched a path without a UTF-8 file stem",
+                                pattern.glob
+                            ))
+                        })?;
+                    suite.cases.push(RomCase {
+                        id: format!("{}{}", pattern.id_prefix, stem),
+                        rom: relative.to_string_lossy().into_owned(),
+                        models: pattern.models.clone(),
+                        cycles: pattern.cycles,
+                        completion: pattern.completion.clone(),
+                        description: stem.replace(['_', '-'], " "),
+                        verify: pattern.verify.clone(),
+                        reference: None,
+                        tags: pattern.tags.clone(),
+                        inputs: Vec::new(),
+                    });
+                }
+            }
+            suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
+        }
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), RomTestError> {
@@ -192,7 +276,28 @@ impl RomManifest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RomSuite {
     pub name: String,
+    #[serde(default)]
     pub cases: Vec<RomCase>,
+    #[serde(default)]
+    pub case_patterns: Vec<RomCasePattern>,
+}
+
+/// A group of ROM files sharing the same execution and verification settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RomCasePattern {
+    pub glob: String,
+    #[serde(default)]
+    pub exclude_globs: Vec<String>,
+    #[serde(default)]
+    pub id_prefix: String,
+    pub models: Vec<GbcModel>,
+    pub cycles: usize,
+    #[serde(default)]
+    pub completion: Option<String>,
+    #[serde(default)]
+    pub verify: VerifySpec,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// GBC hardware model targeted by a matrix cell.
@@ -231,6 +336,8 @@ pub struct CompletionStage {
     pub memory: Vec<MemoryCompletion>,
     #[serde(default)]
     pub serial_hash: bool,
+    #[serde(default)]
+    pub registers: RegisterVerify,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -250,7 +357,7 @@ impl CompletionSpec {
             )));
         }
         for stage in &self.stages {
-            if stage.memory.is_empty() && !stage.serial_hash {
+            if stage.memory.is_empty() && !stage.serial_hash && stage.registers.is_empty() {
                 return Err(RomTestError::InvalidManifest(format!(
                     "completion profile `{name}` has an empty stage"
                 )));
@@ -275,6 +382,7 @@ impl CompletionSpec {
                     )));
                 }
             }
+            stage.registers.validate()?;
         }
         Ok(())
     }
@@ -323,6 +431,8 @@ pub struct RomCase {
     pub reference: Option<Reference>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub inputs: Vec<InputEvent>,
 }
 
 impl RomCase {
@@ -345,10 +455,47 @@ impl RomCase {
                 self.id
             )));
         }
+        if self
+            .inputs
+            .windows(2)
+            .any(|events| events[0].cycle >= events[1].cycle)
+            || self.inputs.iter().any(|event| event.cycle >= self.cycles)
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` input events must be ordered within its cycle limit",
+                self.id
+            )));
+        }
         self.verify
             .validate()
             .map_err(|e| RomTestError::InvalidManifest(format!("case `{}`: {}", self.id, e)))?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InputEvent {
+    pub cycle: usize,
+    #[serde(default)]
+    pub buttons: Vec<GbcButton>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GbcButton {
+    A,
+    B,
+    Select,
+    Start,
+    Right,
+    Left,
+    Up,
+    Down,
+}
+
+impl GbcButton {
+    pub fn mask(self) -> u8 {
+        1 << self as u8
     }
 }
 

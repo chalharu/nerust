@@ -1,31 +1,41 @@
 package io.github.chalharu.nerust
 
+import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
+import android.content.pm.ActivityInfo
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.hardware.input.InputManager
+import android.media.AudioManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
+import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -68,6 +78,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -79,10 +90,11 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlinx.coroutines.launch
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
@@ -90,22 +102,42 @@ private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
 private const val MENU_ACTION_EXIT = "exit"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
-private const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+private const val MENU_ACTION_OPEN_ROM = "open_rom"
 private const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
 private const val MENU_ACTION_RESET = "reset"
 private const val MENU_ACTION_SAVE_STATE = "save_state"
 private const val MENU_ACTION_TOGGLE_PAUSE = "toggle_pause"
 private const val MENU_ACTION_UNLOAD = "unload"
 private const val MENU_BUTTON_TAG = "nerust-menu-button"
-private const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
-private const val DIALOG_PRESENTATION_CARD = "card"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
-private data class DrawerAction(val label: String, val action: String)
+internal fun screenOrientationRequest(value: Int): Int? =
+    when (value) {
+        0 -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        else -> null
+    }
 
-private data class AndroidSetting(val key: String, val label: String, val choices: List<String>)
+private data class DrawerAction(
+    val label: String,
+    val action: String,
+)
+
+private data class AndroidSetting(
+    val key: String,
+    val section: String,
+    val label: String,
+    val choices: List<String>,
+)
+
+private data class AndroidSettingsSection(
+    val id: String,
+    val label: String,
+    val settingIndices: List<Int>,
+)
 
 internal data class OverlayZoneSpec(
     val x: Float,
@@ -115,16 +147,25 @@ internal data class OverlayZoneSpec(
     val label: String,
 )
 
-private val DRAWER_ACTIONS = listOf(
-    DrawerAction("ROM Library", MENU_ACTION_OPEN_LIBRARY),
-    DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
-    DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
-    DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
-    DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
-    DrawerAction("Reset", MENU_ACTION_RESET),
-    DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
-    DrawerAction("Exit", MENU_ACTION_EXIT),
+internal data class FloatingJoystickSpec(
+    val centerX: Float,
+    val centerY: Float,
+    val baseRadius: Float,
+    val knobRadius: Float,
+    val activationBounds: RectF,
 )
+
+private val DRAWER_ACTIONS =
+    listOf(
+        DrawerAction("Open ROM", MENU_ACTION_OPEN_ROM),
+        DrawerAction("Settings", MENU_ACTION_OPEN_SETTINGS),
+        DrawerAction("Pause / Resume", MENU_ACTION_TOGGLE_PAUSE),
+        DrawerAction("Save State", MENU_ACTION_SAVE_STATE),
+        DrawerAction("Load State", MENU_ACTION_LOAD_STATE),
+        DrawerAction("Reset", MENU_ACTION_RESET),
+        DrawerAction("Unload ROM", MENU_ACTION_UNLOAD),
+        DrawerAction("Exit", MENU_ACTION_EXIT),
+    )
 
 private fun createRomPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -133,15 +174,41 @@ private fun createRomPickerIntent(): Intent =
         type = "*/*"
     }
 
-class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
+private fun createDirectoryPickerIntent(): Intent =
+    Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+        addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+    }
+
+class MainActivity :
+    NativeActivity(),
+    LifecycleOwner,
+    SavedStateRegistryOwner,
+    ViewModelStoreOwner,
+    InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
+    private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
     private val ensureChromeAttachedRunnable = Runnable { ensureChromeAttached() }
+    private val restoreControllerOverlayRunnable =
+        Runnable {
+            controllerOverlayHiddenUntil = 0L
+            scheduleChromeAttach()
+        }
     private var chromeAttachAttempts = 0
     private var chromeAttachEnabled = false
     private var controlsOverlayPopup: PopupWindow? = null
     private var controlsOverlayView: View? = null
+    private var controllerOverlayHiddenUntil = 0L
+    private var controlsVisibility = "auto"
+    private var controlsOpacityPercent = 65
+    private var controlsScalePercent = 100
+    private var controlsVerticalOffsetPercent = 0
+    private var controlsHaptics = true
     private var drawerChromePopup: PopupWindow? = null
     private var drawerChromeContainer: FrameLayout? = null
     private var drawerEdgeHandleView: View? = null
@@ -158,6 +225,8 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     private var lastDrawerStateForTest = "not requested"
     private var lastDialogStateForTest = "not requested"
 
+    @Volatile private var lastLoadedSystemForTest: String? = null
+
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
 
@@ -172,6 +241,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         Log.i(TAG, "onCreate: savedInstanceState=${savedInstanceState != null}")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                ::handleBackNavigation,
+            )
+        }
         volumeControlStream = AudioManager.STREAM_MUSIC
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         scheduleChromeAttach()
@@ -189,6 +264,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         activeActivityForTest = this
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
         scheduleChromeAttach()
     }
 
@@ -200,13 +276,92 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val source = event.source
+        val isController =
+            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
+                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        if (!isController) {
+            return super.dispatchKeyEvent(event)
+        }
+        val key =
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_A -> "button1"
+                KeyEvent.KEYCODE_BUTTON_B -> "button2"
+                KeyEvent.KEYCODE_BUTTON_START -> "start"
+                KeyEvent.KEYCODE_BUTTON_SELECT -> "select"
+                KeyEvent.KEYCODE_DPAD_UP -> "up"
+                KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+                else -> return super.dispatchKeyEvent(event)
+            }
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        if (pressed && event.repeatCount > 0) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) {
+            return true
+        }
+        updateControllerInput(event.deviceId, key, pressed)
+        return true
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
+            return super.onGenericMotionEvent(event)
+        }
+        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        updateControllerInput(event.deviceId, "left", horizontal < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "right", horizontal > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "up", vertical < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, "down", vertical > CONTROLLER_AXIS_THRESHOLD)
+        return true
+    }
+
+    private fun updateControllerInput(
+        deviceId: Int,
+        key: String,
+        pressed: Boolean,
+    ) {
+        val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
+        val changed = if (pressed) keys.add(key) else keys.remove(key)
+        if (!changed) return
+        if (pressed) hideControlsForControllerInput()
+        onMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
+        if (keys.isEmpty()) controllerPressed.remove(deviceId)
+    }
+
+    private fun releaseController(deviceId: Int) {
+        controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
+            onMenuAction("controller:$deviceId:$key:0")
+        }
+    }
+
+    private fun releaseAllControllers() {
+        controllerPressed.keys.toList().forEach(::releaseController)
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) = Unit
+
+    override fun onInputDeviceChanged(deviceId: Int) = Unit
+
+    override fun onInputDeviceRemoved(deviceId: Int) {
+        releaseController(deviceId)
+    }
+
     override fun onPause() {
         if (activeActivityForTest === this) {
             activeActivityForTest = null
         }
         Log.i(TAG, "onPause")
         chromeAttachEnabled = false
+        releaseAllControllers()
+        (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         removePendingChromeAttachCallbacks()
+        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
@@ -239,16 +394,21 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
+        onActivityDestroyed()
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated upstream in Activity; NativeActivity cannot use OnBackPressedDispatcher")
+    private fun handleBackNavigation() {
+        if (!removeDrawerOverlay()) {
+            finish()
+        }
+    }
+
+    @Deprecated("Used on Android 12 and earlier; API 33+ uses OnBackInvokedDispatcher")
+    @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (removeDrawerOverlay()) {
-            return
-        }
-        super.onBackPressed()
+        handleBackNavigation()
     }
 
     @Suppress("DEPRECATION")
@@ -258,20 +418,151 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    fun startDirectoryPicker() {
+        startActivityForResult(createDirectoryPickerIntent(), DIRECTORY_PICKER_REQUEST_CODE)
+    }
+
+    fun configureControlsOverlay(
+        visibility: String,
+        opacityPercent: Int,
+        scalePercent: Int,
+        verticalOffsetPercent: Int,
+        haptics: Boolean,
+    ) {
+        controlsVisibility = visibility
+        controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
+        controlsScalePercent = scalePercent.coerceIn(50, 150)
+        controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
+        controlsHaptics = haptics
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        scheduleChromeAttach()
+    }
+
+    fun performControlHaptic() {
+        if (controlsHaptics) {
+            window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        }
+    }
+
+    fun updateFloatingDpad(
+        active: Boolean,
+        centerX: Float,
+        centerY: Float,
+        knobX: Float,
+        knobY: Float,
+    ) {
+        (controlsOverlayView as? ControlsOverlayView)?.updateFloatingDpad(
+            active,
+            centerX,
+            centerY,
+            knobX,
+            knobY,
+        )
+    }
+
+    fun floatingDpadStateForTest(): FloatArray? = (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
+
+    fun readSafFile(
+        treeUri: String,
+        relativePath: String,
+    ): String? {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return null
+        return contentResolver.openInputStream(file.uri)?.use { input ->
+            Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
+        }
+    }
+
+    fun writeSafFile(
+        treeUri: String,
+        relativePath: String,
+        encoded: String,
+    ): String {
+        val file = resolveSafDocument(treeUri, relativePath, create = true) ?: return "error"
+        val bytes = Base64.decode(encoded, Base64.NO_WRAP)
+        contentResolver.openOutputStream(file.uri, "rwt")?.use { it.write(bytes) } ?: return "error"
+        return "ok"
+    }
+
+    fun deleteSafFile(
+        treeUri: String,
+        relativePath: String,
+    ): String {
+        val file = resolveSafDocument(treeUri, relativePath, create = false) ?: return "missing"
+        return if (file.delete()) "ok" else "error"
+    }
+
+    fun listSafFiles(
+        treeUri: String,
+        relativePath: String,
+    ): String {
+        val directory =
+            resolveSafDirectory(treeUri, relativePath, create = false)
+                ?: return "[]"
+        return org.json.JSONArray(directory.listFiles().mapNotNull(DocumentFile::getName)).toString()
+    }
+
+    private fun resolveSafDocument(
+        treeUri: String,
+        relativePath: String,
+        create: Boolean,
+    ): DocumentFile? {
+        val segments = relativePath.split('/').filter(String::isNotBlank)
+        val fileName = segments.lastOrNull() ?: return null
+        val directory =
+            resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
+                ?: return null
+        return directory.findFile(fileName)
+            ?: if (create) directory.createFile("application/octet-stream", fileName) else null
+    }
+
+    private fun resolveSafDirectory(
+        treeUri: String,
+        relativePath: String,
+        create: Boolean,
+    ): DocumentFile? {
+        var current = DocumentFile.fromTreeUri(this, Uri.parse(treeUri)) ?: return null
+        for (segment in relativePath.split('/').filter(String::isNotBlank)) {
+            current = resolveSafChildDirectory(current, segment, create) ?: return null
+        }
+        return current
+    }
+
+    private fun resolveSafChildDirectory(
+        parent: DocumentFile,
+        name: String,
+        create: Boolean,
+    ): DocumentFile? =
+        parent.findFile(name)?.takeIf(DocumentFile::isDirectory)
+            ?: if (create) parent.createDirectory(name) else null
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != ROM_PICKER_REQUEST_CODE) {
+        if (requestCode != ROM_PICKER_REQUEST_CODE && requestCode != DIRECTORY_PICKER_REQUEST_CODE) {
             return
         }
         Log.i(TAG, "onActivityResult: requestCode=$requestCode resultCode=$resultCode uri=${data?.data}")
 
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri != null) {
+            val requestedFlags =
+                if (requestCode == DIRECTORY_PICKER_REQUEST_CODE) {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                } else {
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
             val takeFlags =
-                data?.flags
-                    ?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                data
+                    ?.flags
+                    ?.and(requestedFlags)
                     ?.takeIf { it != 0 }
-                    ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    ?: requestedFlags
             try {
                 contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (error: SecurityException) {
@@ -279,39 +570,73 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             }
         }
 
-        onFilePickerResult(uri?.toString())
+        if (requestCode == DIRECTORY_PICKER_REQUEST_CODE) {
+            onDirectoryPickerResult(uri?.toString())
+        } else {
+            onFilePickerResult(uri?.toString())
+        }
     }
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
         when (tag) {
-            CONTROLS_OVERLAY_TAG -> controlsOverlayPopup?.isShowing == true &&
-                controlsOverlayView.isShownInWindowForTest()
-            DRAWER_COMPOSE_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                drawerComposeView.isShownInWindowForTest()
-            DRAWER_EDGE_HANDLE_TAG -> !drawerShowing && drawerChromePopup?.isShowing == true &&
-                drawerEdgeHandleView.isShownInWindowForTest()
-            DRAWER_OVERLAY_TAG -> drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                drawerOverlayView.isShownInWindowForTest()
-            ROM_LIBRARY_DIALOG_TAG,
+            CONTROLS_OVERLAY_TAG -> {
+                controlsOverlayPopup?.isShowing == true &&
+                    controlsOverlayView.isShownInWindowForTest()
+            }
+
+            DRAWER_COMPOSE_TAG -> {
+                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
+                    drawerComposeView.isShownInWindowForTest()
+            }
+
+            DRAWER_EDGE_HANDLE_TAG -> {
+                !drawerShowing && drawerChromePopup?.isShowing == true &&
+                    drawerEdgeHandleView.isShownInWindowForTest()
+            }
+
+            DRAWER_OVERLAY_TAG -> {
+                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
+                    drawerOverlayView.isShownInWindowForTest()
+            }
+
             SETTINGS_DIALOG_TAG,
-            ->
+            -> {
                 composeDialogTag == tag &&
                     composeDialog?.isShowing == true &&
                     composeDialogRootView.isShownInWindowForTest()
-            else -> window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
+            }
+
+            else -> {
+                window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
+            }
         }
 
     fun findChromeViewForTest(tag: String): View? =
         when (tag) {
-            CONTROLS_OVERLAY_TAG -> controlsOverlayView
-            DRAWER_COMPOSE_TAG -> drawerComposeView
-            DRAWER_EDGE_HANDLE_TAG -> drawerEdgeHandleView
-            DRAWER_OVERLAY_TAG -> drawerOverlayView
-            ROM_LIBRARY_DIALOG_TAG,
+            CONTROLS_OVERLAY_TAG -> {
+                controlsOverlayView
+            }
+
+            DRAWER_COMPOSE_TAG -> {
+                drawerComposeView
+            }
+
+            DRAWER_EDGE_HANDLE_TAG -> {
+                drawerEdgeHandleView
+            }
+
+            DRAWER_OVERLAY_TAG -> {
+                drawerOverlayView
+            }
+
             SETTINGS_DIALOG_TAG,
-            ->
+            -> {
                 composeDialogRootView.takeIf { composeDialogTag == tag }
-            else -> window.decorView.findViewWithTag(tag)
+            }
+
+            else -> {
+                window.decorView.findViewWithTag(tag)
+            }
         }
 
     fun chromeDebugStateForTest(tag: String): String =
@@ -330,6 +655,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         dispatchMenuAction(action)
     }
 
+    fun loadRomUriForTest(uri: String) {
+        lastLoadedSystemForTest = null
+        Log.i(TAG, "loadRomUriForTest: submitting URI $uri")
+        onFilePickerResult(uri)
+    }
+
+    fun lastLoadedSystemForTest(): String? = lastLoadedSystemForTest
+
+    fun notifyRomLoaded(systemId: String) {
+        lastLoadedSystemForTest = systemId
+    }
+
     fun openDrawerForTest() {
         showDrawerOverlay()
     }
@@ -343,99 +680,79 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         removeDrawerOverlay()
     }
 
-    fun showRomLibraryDialogForTest(entryNames: Array<String>, entryIds: Array<String>) {
-        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = true)
-    }
-
     fun showSettingsDialogForTest(
         keys: Array<String>,
         labels: Array<String>,
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
+        sections: Array<String> = emptyArray(),
     ) {
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            sections = sections,
+            requestId = null,
             ownedByTest = true,
         )
     }
 
     /**
-     * Show a modal ROM library dialog.
-     *
-     * The first item is always "Import new ROM…"; the remaining items are the
-     * provided library entries in order. When the user makes a selection this
-     * method calls [onRomLibrarySelected] with the appropriate id and then
-     * returns control to Rust. On cancel/dismiss it calls
-     * [onRomLibrarySelected] with `null`.
-     *
-     * Called from the Rust JNI bridge on the Java main thread.
-     */
-    fun showRomLibraryDialog(entryNames: Array<String>, entryIds: Array<String>) {
-        showRomLibraryDialogInternal(entryNames, entryIds, ownedByTest = false)
-    }
-
-    private fun showRomLibraryDialogInternal(
-        entryNames: Array<String>,
-        entryIds: Array<String>,
-        ownedByTest: Boolean,
-    ) {
-        var resultSent = false
-        showComposeDialog(
-            dialogTag = ROM_LIBRARY_DIALOG_TAG,
-            contentDescription = romLibraryContentDescription(entryNames.asList()),
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
-            ownedByTest = ownedByTest,
-            onDismiss = {
-                if (!resultSent) {
-                    onRomLibrarySelected(null)
-                }
-            },
-        ) { dismiss ->
-            NerustRomLibraryScreen(
-                entryNames = entryNames.asList(),
-                onDismissRequest = dismiss,
-                onImport = {
-                    resultSent = true
-                    onRomLibrarySelected(IMPORT_ACTION_ID)
-                    dismiss()
-                },
-                onSelectEntry = { index ->
-                    resultSent = true
-                    onRomLibrarySelected(entryIds[index])
-                    dismiss()
-                },
-            )
-        }
-    }
-
-    /**
      * Show a modal Android settings dialog.
      *
-     * Presents an Android-relevant subset of settings. Each setting is backed
-     * by a tab-separated list of choices; the current selection is identified
-     * by index. Tapping a row in the list opens a choice picker rendered in
-     * Compose. Tapping "Save" calls [onSettingsDialogResult] with a
-     * comma-separated string of the final choice indices. Cancel/dismiss calls
-     * it with `null`.
+     * Presents the versioned settings JSON supplied by Rust. Tapping a row opens
+     * a Compose choice picker. Save and dismiss return request-scoped JSON with
+     * values keyed by stable setting IDs.
      *
      * Called from the Rust JNI bridge on the Java main thread.
      */
-    fun showSettingsDialog(
-        keys: Array<String>,
-        labels: Array<String>,
-        choiceStrings: Array<String>,
-        currentIndices: Array<String>,
-    ) {
+    fun showSettingsDialog(payload: String) {
+        val document = JSONObject(payload)
+        require(document.getInt("schemaVersion") == SETTINGS_SCHEMA_VERSION) {
+            "Unsupported settings schema"
+        }
+        val requestId = document.getLong("requestId")
+        val sectionDocuments = document.getJSONArray("sections")
+        val fieldDocuments = mutableListOf<Pair<String, JSONObject>>()
+        for (sectionIndex in 0 until sectionDocuments.length()) {
+            val section = sectionDocuments.getJSONObject(sectionIndex)
+            val sectionId = section.getString("id")
+            val fields = section.getJSONArray("fields")
+            for (fieldIndex in 0 until fields.length()) {
+                fieldDocuments += sectionId to fields.getJSONObject(fieldIndex)
+            }
+        }
+        val keys = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("key") }
+        val labels = Array(fieldDocuments.size) { fieldDocuments[it].second.getString("label") }
+        val sections = Array(fieldDocuments.size) { fieldDocuments[it].first }
+        val choiceStrings =
+            Array(fieldDocuments.size) { index ->
+                val options = fieldDocuments[index].second.getJSONArray("options")
+                (0 until options.length()).joinToString("\t") { options.getString(it) }
+            }
+        val currentIndices =
+            Array(fieldDocuments.size) { fieldDocuments[it].second.getInt("value").toString() }
         showSettingsDialogInternal(
             keys = keys,
             labels = labels,
             choiceStrings = choiceStrings,
             currentIndices = currentIndices,
+            sections = sections,
+            requestId = requestId,
             ownedByTest = false,
         )
+    }
+
+    fun applyScreenOrientation(value: Int) {
+        val orientation = screenOrientationRequest(value)
+        if (orientation == null) {
+            Log.w(TAG, "Ignoring invalid screen orientation value: $value")
+            return
+        }
+        if (requestedOrientation != orientation) {
+            requestedOrientation = orientation
+        }
     }
 
     private fun showSettingsDialogInternal(
@@ -443,12 +760,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         labels: Array<String>,
         choiceStrings: Array<String>,
         currentIndices: Array<String>,
+        sections: Array<String> = emptyArray(),
+        requestId: Long?,
         ownedByTest: Boolean,
     ) {
         val settings =
             labels.indices.map { index ->
                 AndroidSetting(
                     key = keys.getOrNull(index) ?: "setting_$index",
+                    section = sections.getOrNull(index) ?: "general",
                     label = labels[index],
                     choices =
                         choiceStrings
@@ -469,11 +789,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         showComposeDialog(
             dialogTag = SETTINGS_DIALOG_TAG,
             contentDescription = settingsContentDescription(settings, initialSelections),
-            presentation = DIALOG_PRESENTATION_CARD,
+            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
-                if (!resultSent) {
-                    onSettingsDialogResult(null)
+                if (!resultSent && requestId != null) {
+                    onSettingsDialogResult(
+                        JSONObject()
+                            .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
+                            .put("requestId", requestId)
+                            .put("dismissed", true)
+                            .put("values", JSONObject())
+                            .toString(),
+                    )
                 }
             },
         ) { dismiss ->
@@ -483,11 +810,26 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
                 onDismissRequest = dismiss,
                 onSave = { selections ->
                     resultSent = true
-                    onSettingsDialogResult(selections.joinToString(","))
+                    if (requestId != null) {
+                        val values = JSONObject()
+                        keys.forEachIndexed { index, key -> values.put(key, selections[index]) }
+                        val result =
+                            JSONObject()
+                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
+                                .put("requestId", requestId)
+                                .put("values", values)
+                        onSettingsDialogResult(result.toString())
+                    }
                     dismiss()
                 },
             )
         }
+        composeDialogRootView?.setTag(
+            R.id.nerust_settings_hierarchy_probe,
+            buildSettingsSections(settings).joinToString("\n") { section ->
+                "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
+            },
+        )
     }
 
     private fun scheduleChromeAttach() {
@@ -512,11 +854,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             )
             return
         }
-        val anchor = popupAnchor() ?: run {
-            Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
-            retryChromeAttach()
-            return
-        }
+        val anchor =
+            popupAnchor() ?: run {
+                Log.i(TAG, "ensureChromeAttached: anchor unavailable decor=${window.decorView.debugViewState()}")
+                retryChromeAttach()
+                return
+            }
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
@@ -548,6 +891,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
+        if (
+            controlsVisibility == "hidden" ||
+            controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+        ) {
+            return true
+        }
         val existing = controlsOverlayPopup
         if (existing?.isShowing == true && controlsOverlayView != null) {
             return true
@@ -576,6 +925,18 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         controlsOverlayPopup = null
         controlsOverlayView = null
         return false
+    }
+
+    private fun hideControlsForControllerInput() {
+        if (controlsVisibility != "auto") {
+            return
+        }
+        controllerOverlayHiddenUntil = SystemClock.elapsedRealtime() + CONTROLLER_OVERLAY_HIDE_MS
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        window.decorView.postDelayed(restoreControllerOverlayRunnable, CONTROLLER_OVERLAY_HIDE_MS)
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {
@@ -623,7 +984,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
     }
 
     private fun createControlsOverlay(): View =
-        ControlsOverlayView(this).apply {
+        ControlsOverlayView(
+            this,
+            controlsOpacityPercent,
+            controlsScalePercent,
+            controlsVerticalOffsetPercent,
+        ).apply {
             tag = CONTROLS_OVERLAY_TAG
             layoutParams =
                 FrameLayout.LayoutParams(
@@ -649,11 +1015,12 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
 
     private fun showDrawerOverlay() {
-        val anchor = popupAnchor() ?: run {
-            lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
-            Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
-            return
-        }
+        val anchor =
+            popupAnchor() ?: run {
+                lastDrawerStateForTest = "anchor unavailable: decor=${window.decorView.debugViewState()}"
+                Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${window.decorView.debugViewState()}")
+                return
+            }
         if (drawerShowing) {
             lastDrawerStateForTest = "already showing"
             Log.i(TAG, "showDrawerOverlay: already showing")
@@ -841,8 +1208,7 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         }
     }
 
-    private fun popupAnchor(): View? =
-        window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
+    private fun popupAnchor(): View? = window.decorView.takeIf { it.isAttachedToWindow && it.windowToken != null }
 
     private fun showPopupAtLocation(
         popupName: String,
@@ -864,21 +1230,6 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             false
         } catch (error: IllegalStateException) {
             Log.w(TAG, "showPopupAtLocation: $popupName failed with illegal state", error)
-            false
-        }
-
-    private fun updatePopupWindow(popup: PopupWindow, x: Int, y: Int, width: Int, height: Int): Boolean =
-        try {
-            popup.width = width
-            popup.height = height
-            popup.update(x, y, width, height)
-            Log.i(TAG, "updatePopupWindow: updated popup to ($x,$y ${width}x$height)")
-            true
-        } catch (error: WindowManager.BadTokenException) {
-            Log.w(TAG, "updatePopupWindow: failed with bad token", error)
-            false
-        } catch (error: IllegalStateException) {
-            Log.w(TAG, "updatePopupWindow: failed with illegal state", error)
             false
         }
 
@@ -907,11 +1258,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
 
-    private fun Dialog?.debugDialogState(): String =
-        if (this == null) "null" else "showing=$isShowing"
+    private fun Dialog?.debugDialogState(): String = if (this == null) "null" else "showing=$isShowing"
 
-    private fun PopupWindow?.debugPopupState(): String =
-        if (this == null) "null" else "showing=$isShowing"
+    private fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
 
     private fun dismissChromePopups() {
         clearDrawerWindowReferences()
@@ -928,14 +1277,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         controlsOverlayView = null
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(): String =
-        (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
-
-    private fun romLibraryContentDescription(entryNames: List<String>): String =
-        (listOf("ROM Library", "Import new ROM…") + entryNames).joinToString("\n")
+    private fun drawerContentDescription(): String = (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
 
     private fun settingsContentDescription(
         settings: List<AndroidSetting>,
@@ -954,7 +1298,9 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         onMenuAction(action)
     }
 
-    private inner class ComposeOwnerFrameLayout(context: Context) : FrameLayout(context) {
+    private inner class ComposeOwnerFrameLayout(
+        context: Context,
+    ) : FrameLayout(context) {
         override fun onAttachedToWindow() {
             installComposeOwners(this)
             installComposeOwners(rootView)
@@ -966,12 +1312,15 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
 
     private external fun onMenuAction(action: String)
 
-    private external fun onRomLibrarySelected(id: String?)
+    private external fun onDirectoryPickerResult(uri: String?)
 
     private external fun onSettingsDialogResult(result: String?)
 
+    private external fun onActivityDestroyed()
+
     companion object {
         private const val TAG = "Nerust"
+        private const val SETTINGS_SCHEMA_VERSION = 1
 
         init {
             // Load the native library via the app classloader so the JVM can
@@ -987,16 +1336,19 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
         private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
         private const val MENU_CHROME_ATTACH_RETRY_DELAY_MS = 100L
         private const val MENU_CHROME_MAX_ATTACH_ATTEMPTS = 100
+        private const val CONTROLLER_OVERLAY_HIDE_MS = 5_000L
+        private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
-        // Must match `android/library.rs::IMPORT_ACTION_ID`.
-        private const val IMPORT_ACTION_ID = "__import__"
+        private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
+
         @Volatile
         private var activeActivityForTest: MainActivity? = null
 
         fun createRomPickerIntentForTest(): Intent = createRomPickerIntent()
 
-        fun currentActivityForTest(): MainActivity? =
-            activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
+        fun createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
+
+        fun currentActivityForTest(): MainActivity? = activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
     }
 }
 
@@ -1061,7 +1413,10 @@ private fun NerustDrawerOverlay(
 }
 
 @Composable
-private fun DrawerActionItem(label: String, onClick: () -> Unit) {
+private fun DrawerActionItem(
+    label: String,
+    onClick: () -> Unit,
+) {
     NavigationDrawerItem(
         label = { Text(label) },
         selected = false,
@@ -1126,134 +1481,78 @@ private fun NerustDialogCard(
 }
 
 @Composable
-private fun NerustRomLibraryScreen(
-    entryNames: List<String>,
-    onDismissRequest: () -> Unit,
-    onImport: () -> Unit,
-    onSelectEntry: (Int) -> Unit,
-) {
-    NerustFullScreenDialogHost {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "ROM Library", style = MaterialTheme.typography.headlineSmall)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Import a new ROM or reopen one from your library.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            TextButton(onClick = onDismissRequest) {
-                Text("Close")
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        LazyColumn(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-        ) {
-            item {
-                DialogListButton(label = "Import new ROM…", onClick = onImport)
-                if (entryNames.isNotEmpty()) {
-                    HorizontalDivider()
-                }
-            }
-            itemsIndexed(entryNames) { index, entryName ->
-                DialogListButton(label = entryName) { onSelectEntry(index) }
-                if (index < entryNames.lastIndex) {
-                    HorizontalDivider()
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun NerustSettingsDialogCard(
     settings: List<AndroidSetting>,
     initialSelections: List<Int>,
     onDismissRequest: () -> Unit,
     onSave: (List<Int>) -> Unit,
 ) {
-    val selections =
-        remember(settings, initialSelections) {
-            mutableStateListOf<Int>().apply {
-                settings.forEachIndexed { index, setting ->
-                    val maxIndex = max(0, setting.choices.lastIndex)
-                    add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
-                }
-            }
-        }
+    val selections = rememberSettingsSelections(settings, initialSelections)
+    val sections = remember(settings) { buildSettingsSections(settings) }
+    var activeSectionId by remember { mutableStateOf<String?>(null) }
     var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
 
-    NerustDialogHost {
-        Box(contentAlignment = Alignment.Center) {
-            NerustDialogCard(
-                title = "Settings",
-                buttons = {
-                    TextButton(onClick = onDismissRequest) {
-                        Text("Cancel")
-                    }
-                    TextButton(onClick = { onSave(selections.toList()) }) {
-                        Text("Save")
+    Surface(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
+        ) {
+            val activeSection = sections.find { it.id == activeSectionId }
+            SettingsNavigationHeader(
+                title =
+                    activeSettingIndex?.let { settings[it].label }
+                        ?: activeSection?.label
+                        ?: "Settings",
+                subtitle =
+                    when {
+                        activeSettingIndex != null -> "Choose a value"
+                        activeSection != null -> settingsCountLabel(activeSection.settingIndices.size)
+                        else -> "Choose a category"
+                    },
+                canNavigateBack = activeSection != null || activeSettingIndex != null,
+                onNavigateBack = {
+                    if (activeSettingIndex != null) {
+                        activeSettingIndex = null
+                    } else {
+                        activeSectionId = null
                     }
                 },
-            ) {
-                LazyColumn(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp),
-                ) {
-                    itemsIndexed(settings) { index, setting ->
-                        val selectedValue = setting.choices.getOrElse(selections[index]) { "?" }
-                        DialogSettingButton(
-                            label = setting.label,
-                            value = selectedValue,
-                            key = setting.key,
-                        ) {
-                            activeSettingIndex = index
-                        }
-                        if (index < settings.lastIndex) {
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
+                onDismissRequest = onDismissRequest,
+                onSave = { onSave(selections.toList()) },
+            )
+            HorizontalDivider()
 
-            activeSettingIndex?.let { settingIndex ->
-                NerustDialogCard(
-                    title = settings[settingIndex].label,
-                    buttons = {
-                        TextButton(onClick = { activeSettingIndex = null }) {
-                            Text("Cancel")
-                        }
-                    },
-                ) {
-                    LazyColumn(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 320.dp),
-                    ) {
-                        itemsIndexed(settings[settingIndex].choices) { choiceIndex, choiceLabel ->
-                            DialogChoiceButton(
-                                label = choiceLabel,
-                                selected = selections[settingIndex] == choiceIndex,
-                            ) {
-                                selections[settingIndex] = choiceIndex
-                                activeSettingIndex = null
-                            }
-                            if (choiceIndex < settings[settingIndex].choices.lastIndex) {
-                                HorizontalDivider()
-                            }
-                        }
-                    }
+            when {
+                activeSettingIndex != null -> {
+                    val settingIndex = requireNotNull(activeSettingIndex)
+                    SettingsChoiceList(
+                        setting = settings[settingIndex],
+                        selectedIndex = selections[settingIndex],
+                        onSelect = { choiceIndex ->
+                            selections[settingIndex] = choiceIndex
+                            activeSettingIndex = null
+                        },
+                    )
+                }
+
+                activeSection != null -> {
+                    SettingsSectionList(
+                        section = activeSection,
+                        settings = settings,
+                        selections = selections,
+                        onSettingClick = { activeSettingIndex = it },
+                    )
+                }
+
+                else -> {
+                    SettingsCategoryList(
+                        sections = sections,
+                        settings = settings,
+                        selections = selections,
+                        onSectionClick = { activeSectionId = it },
+                    )
                 }
             }
         }
@@ -1261,15 +1560,160 @@ private fun NerustSettingsDialogCard(
 }
 
 @Composable
-private fun DialogListButton(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
+private fun SettingsNavigationHeader(
+    title: String,
+    subtitle: String,
+    canNavigateBack: Boolean,
+    onNavigateBack: () -> Unit,
+    onDismissRequest: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (canNavigateBack) {
+                TextButton(onClick = onNavigateBack) { Text("Back") }
+            } else {
+                TextButton(onClick = onDismissRequest) { Text("Cancel") }
+            }
+            TextButton(onClick = onSave) { Text("Save") }
+        }
+        Text(text = title, style = MaterialTheme.typography.headlineSmall)
+        Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun SettingsCategoryList(
+    sections: List<AndroidSettingsSection>,
+    settings: List<AndroidSetting>,
+    selections: List<Int>,
+    onSectionClick: (String) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(sections) { index, section ->
+            val summary =
+                section.settingIndices.take(2).joinToString(" · ") { settingIndex ->
+                    val setting = settings[settingIndex]
+                    val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+                    "${setting.label}: $value"
+                }
+            SettingsNavigationRow(
+                title = section.label,
+                value = settingsCountLabel(section.settingIndices.size),
+                supportingText = summary,
+                semanticsLabel = "${section.label}: ${settingsCountLabel(section.settingIndices.size)}",
+                onClick = { onSectionClick(section.id) },
+            )
+            if (index < sections.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsSectionList(
+    section: AndroidSettingsSection,
+    settings: List<AndroidSetting>,
+    selections: List<Int>,
+    onSettingClick: (Int) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(section.settingIndices) { index, settingIndex ->
+            val setting = settings[settingIndex]
+            val value = setting.choices.getOrElse(selections[settingIndex]) { "?" }
+            SettingsNavigationRow(
+                title = setting.label,
+                value = value,
+                semanticsLabel = "${setting.key}: ${setting.label}: $value",
+                onClick = { onSettingClick(settingIndex) },
+            )
+            if (index < section.settingIndices.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsChoiceList(
+    setting: AndroidSetting,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
+            DialogChoiceButton(
+                label = choiceLabel,
+                selected = selectedIndex == choiceIndex,
+            ) {
+                onSelect(choiceIndex)
+            }
+            if (choiceIndex < setting.choices.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsNavigationRow(
+    title: String,
+    value: String,
+    semanticsLabel: String,
+    supportingText: String? = null,
+    onClick: () -> Unit,
+) {
+    Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .semantics { contentDescription = label },
+                .clickable(onClick = onClick)
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+                .semantics { contentDescription = semanticsLabel },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = label, modifier = Modifier.fillMaxWidth())
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            supportingText?.takeIf(String::isNotBlank)?.let {
+                Text(text = it, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(text = value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun buildSettingsSections(settings: List<AndroidSetting>): List<AndroidSettingsSection> =
+    settings
+        .withIndex()
+        .groupBy({ it.value.section }, { it.index })
+        .map { (id, indices) ->
+            AndroidSettingsSection(id, settingsSectionLabel(id), indices)
+        }
+
+private fun settingsSectionLabel(id: String): String =
+    when (id) {
+        "audio" -> "Audio"
+        "video" -> "Video"
+        "controls" -> "Controls"
+        "storage" -> "Storage"
+        "system.nes" -> "Nintendo Entertainment System"
+        "system.gbc" -> "Game Boy Color"
+        "general" -> "General"
+        else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
+    }
+
+private fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
+
+@Composable
+private fun rememberSettingsSelections(
+    settings: List<AndroidSetting>,
+    initialSelections: List<Int>,
+) = remember(settings, initialSelections) {
+    mutableStateListOf<Int>().apply {
+        settings.forEachIndexed { index, setting ->
+            val maxIndex = max(0, setting.choices.lastIndex)
+            add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
+        }
     }
 }
 
@@ -1296,7 +1740,11 @@ private fun DialogSettingButton(
 }
 
 @Composable
-private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DialogChoiceButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     Row(
         modifier =
             Modifier
@@ -1312,29 +1760,65 @@ private fun DialogChoiceButton(label: String, selected: Boolean, onClick: () -> 
     }
 }
 
-private class ControlsOverlayView(context: Context) : View(context) {
+@SuppressLint("ViewConstructor")
+private class ControlsOverlayView(
+    context: Context,
+    opacityPercent: Int,
+    private val scalePercent: Int,
+    private val verticalOffsetPercent: Int,
+) : View(context) {
+    private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(48, 255, 255, 255)
+            color = Color.argb((48 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
     private val strokePaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(160, 255, 255, 255)
+            color = Color.argb((160 * opacity).toInt(), 255, 255, 255)
             strokeWidth = 2f
             style = Paint.Style.STROKE
         }
     private val textPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(220, 255, 255, 255)
+            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-    private val arrowPaint =
+    private val knobPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(220, 255, 255, 255)
+            color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
+    private var floatingDpadActive = false
+    private var floatingDpadCenterX = 0f
+    private var floatingDpadCenterY = 0f
+    private var floatingDpadKnobX = 0f
+    private var floatingDpadKnobY = 0f
+
+    fun updateFloatingDpad(
+        active: Boolean,
+        centerX: Float,
+        centerY: Float,
+        knobX: Float,
+        knobY: Float,
+    ) {
+        floatingDpadActive = active
+        floatingDpadCenterX = centerX
+        floatingDpadCenterY = centerY
+        floatingDpadKnobX = knobX
+        floatingDpadKnobY = knobY
+        invalidate()
+    }
+
+    fun floatingDpadStateForTest(): FloatArray =
+        floatArrayOf(
+            if (floatingDpadActive) 1f else 0f,
+            floatingDpadCenterX,
+            floatingDpadCenterY,
+            floatingDpadKnobX,
+            floatingDpadKnobY,
+        )
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -1344,11 +1828,28 @@ private class ControlsOverlayView(context: Context) : View(context) {
             return
         }
 
-        portraitControlsLayout(viewWidth, viewHeight).forEach { zone ->
+        val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
+        drawFloatingJoystick(canvas, joystick)
+        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
 
+    private fun drawFloatingJoystick(
+        canvas: Canvas,
+        spec: FloatingJoystickSpec,
+    ) {
+        val centerX = if (floatingDpadActive) floatingDpadCenterX else spec.centerX
+        val centerY = if (floatingDpadActive) floatingDpadCenterY else spec.centerY
+        val knobX = if (floatingDpadActive) floatingDpadKnobX else centerX
+        val knobY = if (floatingDpadActive) floatingDpadKnobY else centerY
+        canvas.drawCircle(centerX, centerY, spec.baseRadius, fillPaint)
+        canvas.drawCircle(centerX, centerY, spec.baseRadius, strokePaint)
+        canvas.drawCircle(knobX, knobY, spec.knobRadius, knobPaint)
+        canvas.drawCircle(knobX, knobY, spec.knobRadius, strokePaint)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean = false
 
     private fun drawZone(
@@ -1364,53 +1865,13 @@ private class ControlsOverlayView(context: Context) : View(context) {
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
 
-        when (label) {
-            "UP" -> drawArrow(canvas, rect, Direction.UP)
-            "DOWN" -> drawArrow(canvas, rect, Direction.DOWN)
-            "LEFT" -> drawArrow(canvas, rect, Direction.LEFT)
-            "RIGHT" -> drawArrow(canvas, rect, Direction.RIGHT)
-            else -> {
-                textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
-                val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-                canvas.drawText(label, rect.centerX(), centerY, textPaint)
-            }
-        }
-    }
-
-    private enum class Direction { UP, DOWN, LEFT, RIGHT }
-
-    private fun drawArrow(canvas: Canvas, rect: RectF, direction: Direction) {
-        val size = min(rect.width(), rect.height()) * 0.45f
-        val cx = rect.centerX()
-        val cy = rect.centerY()
-        val path = Path()
-        when (direction) {
-            Direction.UP -> {
-                path.moveTo(cx, cy - size * 0.5f)
-                path.lineTo(cx - size * 0.5f, cy + size * 0.35f)
-                path.lineTo(cx + size * 0.5f, cy + size * 0.35f)
-            }
-            Direction.DOWN -> {
-                path.moveTo(cx, cy + size * 0.5f)
-                path.lineTo(cx - size * 0.5f, cy - size * 0.35f)
-                path.lineTo(cx + size * 0.5f, cy - size * 0.35f)
-            }
-            Direction.LEFT -> {
-                path.moveTo(cx - size * 0.5f, cy)
-                path.lineTo(cx + size * 0.35f, cy - size * 0.5f)
-                path.lineTo(cx + size * 0.35f, cy + size * 0.5f)
-            }
-            Direction.RIGHT -> {
-                path.moveTo(cx + size * 0.5f, cy)
-                path.lineTo(cx - size * 0.35f, cy - size * 0.5f)
-                path.lineTo(cx - size * 0.35f, cy + size * 0.5f)
-            }
-        }
-        path.close()
-        canvas.drawPath(path, arrowPaint)
+        textPaint.textSize = max(12f, min(height * 0.42f, width * 0.28f))
+        val centerY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(label, rect.centerX(), centerY, textPaint)
     }
 }
 
+@SuppressLint("ViewConstructor")
 private class DrawerEdgeSwipeHandleView(
     context: Context,
     private val onDrawerOpen: () -> Unit,
@@ -1454,69 +1915,40 @@ private class DrawerEdgeSwipeHandleView(
                 true
             }
 
-            else -> super.onTouchEvent(event)
+            else -> {
+                super.onTouchEvent(event)
+            }
         }
 
     override fun performClick(): Boolean = super.performClick()
 }
 
-internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZoneSpec> {
-    // Move controls slightly lower so the game viewport sits higher on-screen.
-    val controlTop = height * 0.54f
+internal fun controlsLayout(
+    width: Float,
+    height: Float,
+    scalePercent: Int = 100,
+    verticalOffsetPercent: Int = 0,
+): List<OverlayZoneSpec> {
+    val portrait = height >= width
+    val base = min(width, height)
+    val scale = scalePercent.coerceIn(50, 150) / 100f
+    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
+    val controlTop = if (portrait) height * 0.54f else 0f
     val controlHeight = height - controlTop
-    val dpadLeft = width * 0.08f
-    val dpadSize = width * 0.28f
-    val dpadCenterX = dpadLeft + dpadSize * 0.5f
-    val dpadCenterY = controlTop + controlHeight * 0.58f
-    val dpadArm = dpadSize * 0.28f
-    val dpadExtent = dpadSize * 0.42f
-    val actionSize = width * 0.14f
-    val actionGap = width * 0.04f
-    val actionLeft = width * 0.64f
-    val actionTop = dpadCenterY - actionSize * 0.5f
-    val centerButtonWidth = width * 0.10f
-    val centerButtonHeight = height * 0.038f
-    val centerGap = width * 0.03f
+    val joystick = floatingJoystickLayout(width, height, scalePercent, verticalOffsetPercent)
+    val actionSize = base * 0.14f * scale
+    val actionGap = base * 0.04f
+    val actionLeft = if (portrait) width * 0.64f else width - base * 0.08f - actionSize * 2f - actionGap
+    val actionTop = joystick.centerY - actionSize * 0.5f
+    val centerButtonWidth = base * 0.10f * scale
+    val centerButtonHeight = base * 0.068f * scale
+    val centerGap = base * 0.03f
     val centerRowWidth = centerButtonWidth * 2f + centerGap
-    val centerLeftBound = dpadLeft + dpadSize + width * 0.03f
-    val centerRightBound = actionLeft - width * 0.03f
-    val centeredStart = (centerLeftBound + centerRightBound - centerRowWidth) * 0.5f
-    val centerStartX =
-        centeredStart.coerceIn(
-            centerLeftBound,
-            max(centerLeftBound, centerRightBound - centerRowWidth),
-        )
-    val centerTop = controlTop + controlHeight * 0.16f
+    val centerStartX = (width - centerRowWidth) * 0.5f
+    val centerTop =
+        (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
 
     return listOf(
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadArm * 0.5f,
-            y = dpadCenterY - dpadExtent,
-            width = dpadArm,
-            height = dpadExtent - dpadArm * 0.5f,
-            label = "UP",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadArm * 0.5f,
-            y = dpadCenterY + dpadArm * 0.5f,
-            width = dpadArm,
-            height = dpadExtent - dpadArm * 0.5f,
-            label = "DOWN",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX - dpadExtent,
-            y = dpadCenterY - dpadArm * 0.5f,
-            width = dpadExtent - dpadArm * 0.5f,
-            height = dpadArm,
-            label = "LEFT",
-        ),
-        OverlayZoneSpec(
-            x = dpadCenterX + dpadArm * 0.5f,
-            y = dpadCenterY - dpadArm * 0.5f,
-            width = dpadExtent - dpadArm * 0.5f,
-            height = dpadArm,
-            label = "RIGHT",
-        ),
         OverlayZoneSpec(
             x = actionLeft,
             y = actionTop,
@@ -1545,5 +1977,39 @@ internal fun portraitControlsLayout(width: Float, height: Float): List<OverlayZo
             height = centerButtonHeight,
             label = "START",
         ),
+    )
+}
+
+internal fun floatingJoystickLayout(
+    width: Float,
+    height: Float,
+    scalePercent: Int = 100,
+    verticalOffsetPercent: Int = 0,
+): FloatingJoystickSpec {
+    val portrait = height >= width
+    val base = min(width, height)
+    val scale = scalePercent.coerceIn(50, 150) / 100f
+    val verticalOffset = height * verticalOffsetPercent.coerceIn(-30, 30) / 100f
+    val controlTop = if (portrait) height * 0.54f else 0f
+    val controlHeight = height - controlTop
+    val dpadSize = base * 0.28f * scale
+    val baseRadius = dpadSize * 0.42f
+    val centerX = base * 0.08f + dpadSize * 0.5f
+    val centerY =
+        (if (portrait) controlTop + controlHeight * 0.58f else height * 0.65f) + verticalOffset
+    val activationRight = if (portrait) width * 0.52f else width * 0.45f
+    val activationTop = if (portrait) controlTop else height * 0.25f
+    return FloatingJoystickSpec(
+        centerX = centerX,
+        centerY = centerY,
+        baseRadius = baseRadius,
+        knobRadius = baseRadius * 0.48f,
+        activationBounds =
+            RectF(
+                baseRadius,
+                activationTop + baseRadius,
+                activationRight - baseRadius,
+                height - baseRadius,
+            ),
     )
 }

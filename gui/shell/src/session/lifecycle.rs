@@ -25,6 +25,36 @@ pub struct WindowSize {
 }
 
 impl SessionHandle {
+    fn apply_runtime_settings(
+        &mut self,
+        next_settings: &nerust_gui_runtime::settings::SettingsSnapshot,
+        next_assignments: Option<&InputAssignments>,
+        previous_assignments: &InputAssignments,
+        needs_rebuild: bool,
+        audio_volume_changed: bool,
+    ) -> Result<(), SessionError> {
+        if needs_rebuild {
+            self.rebuild_for_settings(
+                next_settings,
+                next_assignments.unwrap_or(previous_assignments),
+            )?;
+        } else if audio_volume_changed {
+            let volume =
+                f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
+            let volume = if next_settings.local.audio.muted {
+                0.0
+            } else {
+                volume
+            };
+            if let Some(ref mut core) = self.emu_core
+                && let Err(error) = core.set_volume(volume)
+            {
+                log::warn!("set_volume failed: {error}");
+            }
+        }
+        Ok(())
+    }
+
     pub fn metrics(&self) -> ConsoleMetrics {
         self.emu_core
             .as_ref()
@@ -92,23 +122,19 @@ impl SessionHandle {
             .is_some_and(|a| a.to_string_pairs() != previous_assignments.to_string_pairs());
         let needs_rebuild = plan.session_rebuild_required || assignments_changed;
 
-        if needs_rebuild {
-            let assignments = next_assignments.as_ref().unwrap_or(&previous_assignments);
-            self.rebuild_for_settings(&next_settings, assignments)?;
-        } else if plan.audio_volume_changed {
-            let volume =
-                f32::from(next_settings.local.audio.master_volume_percent.min(100)) / 100.0;
-            let volume = if next_settings.local.audio.muted {
-                0.0
-            } else {
-                volume
-            };
-            if let Some(ref mut core) = self.emu_core
-                && let Err(e) = core.set_volume(volume)
-            {
-                log::warn!("set_volume failed: {e}");
-            }
+        if plan.persistence_changed
+            && let Some(ref core) = self.emu_core
+        {
+            self.persistence.flush_mapper_save(core)?;
         }
+
+        self.apply_runtime_settings(
+            &next_settings,
+            next_assignments.as_ref(),
+            &previous_assignments,
+            needs_rebuild,
+            plan.audio_volume_changed,
+        )?;
 
         if let Err(error) = self.settings.save_snapshot(next_settings.clone()) {
             if needs_rebuild
@@ -124,6 +150,13 @@ impl SessionHandle {
         }
 
         self.settings_snapshot = next_settings;
+        if plan.persistence_changed && self.loaded() {
+            let rom_path = self
+                .loaded_media
+                .as_ref()
+                .and_then(|media| media.media.native_path().map(Path::to_path_buf));
+            self.setup_persistence(rom_path.as_deref(), false);
+        }
         self.pressed_keys.clear();
         self.clear_input();
         self.rebuild_key_field_map();
@@ -174,9 +207,9 @@ impl SessionHandle {
             media: media.clone(),
         });
 
-        self.setup_persistence(media.path.as_deref(), true);
+        self.setup_persistence(media.native_path(), true);
 
-        self.remember_last_successful_rom_directory(media.path.as_deref());
+        self.remember_last_successful_rom_directory(media.native_path());
         Ok(())
     }
 
@@ -387,7 +420,7 @@ impl SessionHandle {
             let rom_path = self
                 .loaded_media
                 .as_ref()
-                .and_then(|m| m.media.path.clone());
+                .and_then(|m| m.media.native_path().map(Path::to_path_buf));
             let rom_path_deref = rom_path.as_deref();
             self.setup_persistence(rom_path_deref, !restored_runtime_state);
             if was_paused && let Some(ref mut core) = self.emu_core {

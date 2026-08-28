@@ -1,4 +1,4 @@
-pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 2;
+pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -6,6 +6,8 @@ pub struct HostBackendLocalSettings {
     pub schema_version: u32,
     pub video: VideoSettings,
     pub audio: AudioSettings,
+    pub touch_overlay: TouchOverlaySettings,
+    pub screen_orientation: ScreenOrientation,
 }
 
 impl Default for HostBackendLocalSettings {
@@ -14,8 +16,50 @@ impl Default for HostBackendLocalSettings {
             schema_version: HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION,
             video: VideoSettings::default(),
             audio: AudioSettings::default(),
+            touch_overlay: TouchOverlaySettings::default(),
+            screen_orientation: ScreenOrientation::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenOrientation {
+    #[default]
+    Auto,
+    Portrait,
+    Landscape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TouchOverlaySettings {
+    pub visibility: TouchOverlayVisibility,
+    pub opacity_percent: u8,
+    pub scale_percent: u8,
+    pub vertical_offset_percent: i8,
+    pub haptics: bool,
+}
+
+impl Default for TouchOverlaySettings {
+    fn default() -> Self {
+        Self {
+            visibility: TouchOverlayVisibility::Auto,
+            opacity_percent: 65,
+            scale_percent: 100,
+            vertical_offset_percent: 0,
+            haptics: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TouchOverlayVisibility {
+    Always,
+    #[default]
+    Auto,
+    Hidden,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

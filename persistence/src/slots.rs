@@ -129,6 +129,36 @@ pub fn write_state_slot(
     )
 }
 
+pub fn build_state_slot_bytes(
+    path: PathBuf,
+    slot_id: u64,
+    machine_state: &[u8],
+    identity: &SystemIdentity,
+    preview: Option<&ThumbnailSource>,
+) -> Result<(Vec<u8>, StateSlotSummary), PersistenceError> {
+    let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
+    let has_thumbnail = preview.is_some();
+    let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
+    let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
+    let bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
+    let summary = summary_from_metadata(path, saved_at, &metadata, has_thumbnail);
+    Ok((bytes, summary))
+}
+
+pub fn load_state_slot_bytes(
+    path: PathBuf,
+    bytes: Vec<u8>,
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+    let archive = crate::archive::load_state_archive_from_reader(std::io::Cursor::new(bytes))?;
+    if identity.is_some_and(|identity| {
+        !crate::metadata::slot_matches_identity(&archive.metadata, identity)
+    }) {
+        return Ok(None);
+    }
+    Ok(Some(loaded_state_slot_from_archive(&path, archive)))
+}
+
 pub fn write_autosave_state_slot(
     states_dir: &Path,
     machine_state: &[u8],
@@ -165,11 +195,8 @@ fn write_state_slot_to_path(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
-    let has_thumbnail = preview.is_some();
-    let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
-    let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
-    let archive_bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
+    let (archive_bytes, summary) =
+        build_state_slot_bytes(path.clone(), slot_id, machine_state, identity, preview)?;
     write_atomic(&path, &archive_bytes)?;
 
     // If we created a reservation file earlier, attempt to remove it now that the
@@ -180,12 +207,7 @@ fn write_state_slot_to_path(
         let _ = fs::remove_file(reserve_path);
     }
 
-    Ok(summary_from_metadata(
-        path,
-        saved_at,
-        &metadata,
-        has_thumbnail,
-    ))
+    Ok(summary)
 }
 
 pub fn load_state_slot(path: &Path) -> Result<LoadedStateSlot, PersistenceError> {

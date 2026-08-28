@@ -139,6 +139,10 @@ impl CpuStepState for Halt {
         // the instruction after EI).
         if core.take_armed_ime() {
             bus.set_ime(true);
+            if bus.interrupt_pending() {
+                let pc = core.registers().pc();
+                core.registers_mut().set_pc(pc.wrapping_sub(1));
+            }
         }
         bus.halt_cpu();
         StepResult::Exit
@@ -146,7 +150,11 @@ impl CpuStepState for Halt {
 }
 pub(crate) struct Stop;
 impl CpuStepState for Stop {
-    fn exec(_: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step == 0 {
+            return StepResult::Continue;
+        }
+        let _padding = core.pc_read(bus);
         bus.stop();
         StepResult::Exit
     }

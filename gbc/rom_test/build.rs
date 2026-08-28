@@ -1,20 +1,35 @@
-use std::{env, fmt::Write as _, fs, path::PathBuf};
+use std::{collections::BTreeSet, env, fmt::Write as _, fs, path::PathBuf};
 
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct Manifest {
+    rom_root: PathBuf,
     suites: Vec<Suite>,
 }
 
 #[derive(Deserialize)]
 struct Suite {
+    name: String,
+    #[serde(default)]
     cases: Vec<Case>,
+    #[serde(default)]
+    case_patterns: Vec<CasePattern>,
 }
 
 #[derive(Deserialize)]
 struct Case {
     id: String,
+    models: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CasePattern {
+    glob: String,
+    #[serde(default)]
+    exclude_globs: Vec<String>,
+    #[serde(default)]
+    id_prefix: String,
     models: Vec<String>,
 }
 
@@ -27,10 +42,46 @@ fn main() {
         fs::read_to_string(&manifest_path).expect("ROM test manifest should be readable");
     let manifest: Manifest =
         serde_saphyr::from_str(&manifest_source).expect("ROM test manifest should be valid YAML");
+    let manifest_dir = manifest_path
+        .parent()
+        .expect("manifest should have a parent");
+    let rom_root = manifest_dir.join(&manifest.rom_root);
     let cells = manifest
         .suites
         .into_iter()
-        .flat_map(|suite| suite.cases)
+        .flat_map(|mut suite| {
+            let mut matched_paths = BTreeSet::new();
+            for pattern in suite.case_patterns {
+                let suite_dir = rom_root.join(&suite.name);
+                let absolute_pattern = suite_dir.join(&pattern.glob);
+                for path in glob::glob(&absolute_pattern.to_string_lossy())
+                    .expect("ROM case glob should be valid")
+                {
+                    let path = path.expect("ROM case glob should be readable");
+                    let relative = path
+                        .strip_prefix(&suite_dir)
+                        .expect("ROM case glob should stay inside suite");
+                    if pattern.exclude_globs.iter().any(|exclude| {
+                        glob::Pattern::new(exclude)
+                            .is_ok_and(|pattern| pattern.matches_path(relative))
+                    }) {
+                        continue;
+                    }
+                    if !matched_paths.insert(path.clone()) {
+                        continue;
+                    }
+                    let stem = path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .expect("ROM case path should have a UTF-8 file stem");
+                    suite.cases.push(Case {
+                        id: format!("{}{}", pattern.id_prefix, stem),
+                        models: pattern.models.clone(),
+                    });
+                }
+            }
+            suite.cases
+        })
         .flat_map(|case| {
             case.models
                 .into_iter()

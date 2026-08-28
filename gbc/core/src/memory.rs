@@ -28,12 +28,23 @@ pub(crate) struct MemoryState {
     hwio_72_75: [u8; 4],
     double_speed: bool,
     speed_switch_pending: bool,
+    #[serde(default)]
+    speed_switch_toggle_countdown: u8,
+    #[serde(default)]
+    speed_switch_halt_countdown: u32,
+    #[serde(default)]
+    speed_switch_ppu_freeze: u8,
+    #[serde(default)]
+    apu_div_event_delayed: bool,
+    #[serde(default)]
+    apu_div_event_countdown: u8,
     key1_dmg_compat_value: bool,
     hdma: HdmaController,
     cgb_mode: bool,
     tick: u32,
     ppu_ds_toggle: bool,
     dma_tcounter: u8,
+    timer_irq_pending: bool,
     cartridge: Vec<u8>,
 }
 
@@ -87,6 +98,11 @@ pub struct GbcMemoryBus {
 
     double_speed: bool,
     speed_switch_pending: bool,
+    speed_switch_toggle_countdown: u8,
+    speed_switch_halt_countdown: u32,
+    speed_switch_ppu_freeze: u8,
+    apu_div_event_delayed: bool,
+    apu_div_event_countdown: u8,
     /// KEY1 reads $FF in CGB DMG-compatibility mode; native CGB games read
     /// the speed and pending-switch bits.
     key1_dmg_compat_value: bool,
@@ -106,6 +122,8 @@ pub struct GbcMemoryBus {
     ppu_ds_toggle: bool,
     /// DMA transfer sub-cycle counter: 1 byte per 4 T-cycles.
     dma_tcounter: u8,
+    /// DMG exposes the timer interrupt request one bus T-cycle after reload.
+    timer_irq_pending: bool,
     /// Routes CPU bus writes through the end-of-T-cycle event queue.
     cpu_step_active: bool,
     pending_ppu_writes: VecDeque<PpuWriteEvent>,
@@ -139,12 +157,18 @@ impl GbcMemoryBus {
             hwio_72_75: self.hwio_72_75,
             double_speed: self.double_speed,
             speed_switch_pending: self.speed_switch_pending,
+            speed_switch_toggle_countdown: self.speed_switch_toggle_countdown,
+            speed_switch_halt_countdown: self.speed_switch_halt_countdown,
+            speed_switch_ppu_freeze: self.speed_switch_ppu_freeze,
+            apu_div_event_delayed: self.apu_div_event_delayed,
+            apu_div_event_countdown: self.apu_div_event_countdown,
             key1_dmg_compat_value: self.key1_dmg_compat_value,
             hdma: self.hdma.clone(),
             cgb_mode: self.cgb_mode,
             tick: self.tick,
             ppu_ds_toggle: self.ppu_ds_toggle,
             dma_tcounter: self.dma_tcounter,
+            timer_irq_pending: self.timer_irq_pending,
             cartridge: self.cartridge.serialize_mbc_state(),
         })
     }
@@ -154,6 +178,7 @@ impl GbcMemoryBus {
             || state.hram.len() != HRAM_SIZE
             || state.joypad_select & !0x30 != 0
             || state.dma_tcounter >= 4
+            || state.apu_div_event_countdown > 4
         {
             return Err("memory state value out of range".into());
         }
@@ -176,13 +201,20 @@ impl GbcMemoryBus {
         self.joypad_input = state.joypad_input;
         self.hwio_72_75 = state.hwio_72_75;
         self.double_speed = state.double_speed;
+        self.ppu.set_double_speed(state.double_speed);
         self.speed_switch_pending = state.speed_switch_pending;
+        self.speed_switch_toggle_countdown = state.speed_switch_toggle_countdown;
+        self.speed_switch_halt_countdown = state.speed_switch_halt_countdown;
+        self.speed_switch_ppu_freeze = state.speed_switch_ppu_freeze;
+        self.apu_div_event_delayed = state.apu_div_event_delayed;
+        self.apu_div_event_countdown = state.apu_div_event_countdown;
         self.key1_dmg_compat_value = state.key1_dmg_compat_value;
         self.hdma = state.hdma;
         self.cgb_mode = state.cgb_mode;
         self.tick = state.tick;
         self.ppu_ds_toggle = state.ppu_ds_toggle;
         self.dma_tcounter = state.dma_tcounter;
+        self.timer_irq_pending = state.timer_irq_pending;
         self.cpu_step_active = false;
         self.pending_ppu_writes.clear();
         self.current_pc = 0;
@@ -209,6 +241,11 @@ impl GbcMemoryBus {
 
             double_speed: false,
             speed_switch_pending: false,
+            speed_switch_toggle_countdown: 0,
+            speed_switch_halt_countdown: 0,
+            speed_switch_ppu_freeze: 0,
+            apu_div_event_delayed: false,
+            apu_div_event_countdown: 0,
             key1_dmg_compat_value: true,
 
             hdma: HdmaController::new(),
@@ -216,6 +253,7 @@ impl GbcMemoryBus {
             tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
+            timer_irq_pending: false,
             cpu_step_active: false,
             pending_ppu_writes: VecDeque::new(),
             current_pc: 0,
@@ -259,7 +297,7 @@ impl GbcMemoryBus {
             0xFF4D if self.cgb_mode => self.read_key1(),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.read_register(addr),
             0xFF55 if self.cgb_mode => self.hdma.read_status(),
-            0xFF70 if self.cgb_mode => self.wram_bank | 0xF8,
+            0xFF70 if self.cgb_mode && !self.key1_dmg_compat_value => self.wram_bank | 0xF8,
             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize],
             0xFF74 => 0xFF,
             0xFF75 if self.cgb_mode => self.hwio_72_75[3] & 0x70 | 0x8F,
@@ -270,6 +308,14 @@ impl GbcMemoryBus {
         }
     }
 
+    /// Read observable state for diagnostics without CPU bus access locks.
+    pub fn debug_read(&self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0x9FFF => self.ppu.debug_read_vram(addr),
+            _ => self.read(addr),
+        }
+    }
+
     /// Cartridge, VRAM, WRAM, and HRAM — shared between
     /// `read()` (CPU access) and `read_raw()` (DMA access).
     fn read_storage(&self, addr: u16) -> u8 {
@@ -277,9 +323,23 @@ impl GbcMemoryBus {
             0x0000..=0x7FFF => self.cartridge.read_rom(addr),
             0x8000..=0x9FFF => self.ppu.read_vram(addr),
             0xA000..=0xBFFF => self.cartridge.read_ram(addr),
-            0xC000..=0xDFFF => self.wram[addr as usize & 0x1FFF],
+            0xC000..=0xDFFF => self.wram[self.wram_offset(addr)],
             0xE000..=0xFDFF => self.read_storage(addr - 0x2000),
             _ => 0xFF,
+        }
+    }
+
+    fn wram_offset(&self, addr: u16) -> usize {
+        if addr < 0xD000 {
+            usize::from(addr - 0xC000)
+        } else {
+            let bank = if self.wram_bank == 0xFF {
+                1
+            } else {
+                (self.wram_bank & 0x07).max(1)
+            };
+            let bank = usize::from(bank);
+            bank * 0x1000 + usize::from(addr - 0xD000)
         }
     }
 
@@ -311,7 +371,8 @@ impl GbcMemoryBus {
         if (0xC000..=0xCBFF).contains(&addr) && (0xC3E7..=0xC400).contains(&self.current_pc) {
             self.text_scratch[(addr - 0xC000) as usize] = value;
         } else {
-            self.wram[addr as usize & 0x1FFF] = value;
+            let offset = self.wram_offset(addr);
+            self.wram[offset] = value;
         }
     }
 
@@ -332,7 +393,7 @@ impl GbcMemoryBus {
                 let apu_div_bit_was_set = self.timer.apu_div_bit(self.double_speed);
                 self.timer.write(addr, value);
                 if apu_div_bit_was_set {
-                    self.apu.clock_div_apu();
+                    self.clock_or_delay_apu_div();
                 }
             }
             0xFF05..=0xFF07 => {
@@ -346,16 +407,24 @@ impl GbcMemoryBus {
                 }
                 self.apu.write_register(addr, value);
             }
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
+                if addr == 0xFF41 && value == 0 && !self.cgb_mode && self.ppu.dmg_stat_write_irq() {
+                    self.interrupt.request(InterruptKind::LcdStat);
+                }
+                self.enqueue_ppu_write(addr, value);
+            }
             0xFF4F | 0xFF6C if self.cgb_mode => self.enqueue_ppu_write(addr, value),
             0xFF46 => self.dma.start(value),
             0xFF4D if self.cgb_mode => self.write_key1(value),
             0xFF51..=0xFF54 if self.cgb_mode => self.hdma.write_register(addr, value),
             0xFF55 if self.cgb_mode => self.write_hdma5(value),
             0xFF68..=0xFF6B if self.cgb_mode => self.ppu.write_palette(addr, value),
-            0xFF70 if self.cgb_mode => {
-                if value & 0x07 != 0 {
-                    self.wram_bank = value & 0x07;
+            0xFF70 if self.cgb_mode && !self.key1_dmg_compat_value => {
+                let bank = value & 0x07;
+                if bank != 0 {
+                    self.wram_bank = bank;
+                } else if self.wram_bank != 0xFF {
+                    self.wram_bank = 1;
                 }
             }
             0xFF72..=0xFF73 if self.cgb_mode => self.hwio_72_75[(addr - 0xFF72) as usize] = value,
@@ -409,14 +478,7 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
         // Timer must be stepped before APU to ensure proper synchronization
-        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
-        let timer_cycles = if self.double_speed { 2 } else { 1 };
-        if self.timer.step(timer_cycles).overflow {
-            self.interrupt.request(InterruptKind::Timer);
-        }
-        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
-            self.apu.clock_div_apu();
-        }
+        self.advance_timer();
         self.apu.step(video);
         if t1 == 3 && self.serial.step() {
             self.interrupt.request(InterruptKind::Serial);
@@ -465,28 +527,39 @@ impl GbcMemoryBus {
 
         let video = 1u32;
         let was_hblank = self.ppu.is_hblank();
-        let ppu_res = self.ppu.step(video);
-        self.advance_ppu_interrupts(was_hblank, &ppu_res);
+        let ppu_res = if self.advance_speed_switch() {
+            PpuStepResult {
+                frame_done: false,
+                lcd_stat: false,
+                vblank: false,
+            }
+        } else {
+            self.ppu.step(video)
+        };
+        self.advance_ppu_non_stat_interrupts(was_hblank, &ppu_res);
+        if ppu_res.lcd_stat && !self.cgb_mode {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
         // Timer must be stepped before APU to ensure proper synchronization
         // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
         self.apu.step(video);
         self.advance_dma();
         self.maybe_step_cpu(cpu, t1);
+        if ppu_res.lcd_stat && self.cgb_mode {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
         self.deliver_ppu_write_events();
         ppu_res.frame_done
     }
 
-    fn advance_ppu_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
+    fn advance_ppu_non_stat_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
         let now_hblank = self.ppu.is_hblank();
         if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
             self.transfer_hdma_block();
         }
         if was_hblank && !now_hblank {
             self.hdma.set_hblank(false);
-        }
-        if ppu_res.lcd_stat {
-            self.interrupt.request(InterruptKind::LcdStat);
         }
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);
@@ -498,12 +571,48 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        self.advance_pending_apu_div_event();
+        self.deliver_pending_timer_interrupt();
         let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
-        if self.timer.step(timer_cycles).overflow {
-            self.interrupt.request(InterruptKind::Timer);
-        }
+        self.advance_timer_counter(timer_cycles);
         if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.clock_or_delay_apu_div();
+        }
+    }
+
+    fn advance_pending_apu_div_event(&mut self) {
+        if self.apu_div_event_countdown != 0 {
+            let timer_cycles = if self.double_speed { 2 } else { 1 };
+            self.apu_div_event_countdown =
+                self.apu_div_event_countdown.saturating_sub(timer_cycles);
+            if self.apu_div_event_countdown == 0 {
+                self.apu.clock_div_apu();
+            }
+        }
+    }
+
+    fn deliver_pending_timer_interrupt(&mut self) {
+        if self.timer_irq_pending {
+            self.interrupt.request(InterruptKind::Timer);
+            self.timer_irq_pending = false;
+        }
+    }
+
+    fn advance_timer_counter(&mut self, timer_cycles: u32) {
+        if self.timer.step(timer_cycles).overflow {
+            if !self.cgb_mode && self.interrupt.is_halted_or_stopped() {
+                self.timer_irq_pending = true;
+            } else {
+                self.interrupt.request(InterruptKind::Timer);
+            }
+        }
+    }
+
+    fn clock_or_delay_apu_div(&mut self) {
+        if self.apu_div_event_delayed {
+            self.apu_div_event_countdown = 4;
+        } else {
             self.apu.clock_div_apu();
         }
     }
@@ -522,6 +631,12 @@ impl GbcMemoryBus {
     }
 
     fn maybe_step_cpu(&mut self, cpu: &mut impl CpuStepper, t1: u32) {
+        if self.speed_switch_halt_countdown != 0 {
+            if self.speed_switch_halt_countdown > 4 && self.interrupt.enabled_interrupt_pending() {
+                self.speed_switch_halt_countdown = 4;
+            }
+            return;
+        }
         let cpu_runs = if self.double_speed {
             t1 == 1 || t1 == 3
         } else {
@@ -535,6 +650,48 @@ impl GbcMemoryBus {
                 self.interrupt.request(InterruptKind::Serial);
             }
         }
+    }
+
+    /// Advance the CGB speed-switch oscillator state. Returns whether the PPU
+    /// is frozen for this dot; timers continue independently during the halt.
+    fn advance_speed_switch(&mut self) -> bool {
+        let cpu_cycles = if self.double_speed { 2 } else { 1 };
+        let freeze_ppu = self.speed_switch_ppu_freeze != 0;
+        self.speed_switch_ppu_freeze = self.speed_switch_ppu_freeze.saturating_sub(cpu_cycles);
+        self.speed_switch_halt_countdown = self
+            .speed_switch_halt_countdown
+            .saturating_sub(u32::from(cpu_cycles));
+        if self.speed_switch_toggle_countdown != 0 {
+            self.speed_switch_toggle_countdown = self
+                .speed_switch_toggle_countdown
+                .saturating_sub(cpu_cycles);
+            if self.speed_switch_toggle_countdown == 0 {
+                self.complete_speed_switch();
+            }
+        }
+        freeze_ppu
+    }
+
+    fn complete_speed_switch(&mut self) {
+        let apu_div_reset_fires = self
+            .timer
+            .apu_speed_switch_reset_fires(self.double_speed, self.apu_div_event_delayed);
+        if !self.double_speed {
+            self.apu_div_event_delayed = !self.apu_div_event_delayed;
+        }
+        self.timer
+            .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
+        if apu_div_reset_fires {
+            self.clock_or_delay_apu_div();
+        }
+        self.double_speed = !self.double_speed;
+        if self.double_speed {
+            self.ppu_ds_toggle = self.tick % 8 == 5;
+        }
+        self.ppu.set_double_speed(self.double_speed);
+        self.ppu.set_double_speed_odd_phase(
+            self.ppu_ds_toggle && (self.double_speed || !self.ppu.is_cgb_revision_d()),
+        );
     }
 
     fn deliver_ppu_write_events(&mut self) {
@@ -551,6 +708,10 @@ impl GbcMemoryBus {
 
     pub fn sync_cartridge_rtc(&mut self, now: SystemTime) {
         self.cartridge.sync_rtc(now);
+    }
+
+    pub fn sync_cartridge_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        self.cartridge.sync_rtc_from(saved_at, now);
     }
 
     pub fn export_cartridge_save(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
@@ -703,18 +864,31 @@ impl GbcMemoryBus {
     }
 
     pub fn stop(&mut self) {
-        self.timer.reset_div();
         if self.speed_switch_pending {
-            // CGB speed switch: KEY1 bit 0 (prepare) was set before STOP.
-            // The switch happens and execution continues (no halt). The
-            // switch only occurs while IME = 0.
-            self.speed_switch_pending = false;
-            if !self.interrupt.get_ime() {
-                self.double_speed = !self.double_speed;
-            }
+            self.prepare_speed_switch();
             return;
         }
+        self.timer.reset_div();
         self.interrupt.stop();
+    }
+
+    fn prepare_speed_switch(&mut self) {
+        // A pending enabled interrupt skips the long oscillator stall, but
+        // IME itself does not prevent the speed toggle.
+        self.speed_switch_pending = false;
+        let interrupt_pending = self.interrupt.enabled_interrupt_pending();
+        self.speed_switch_toggle_countdown = 6;
+        self.speed_switch_halt_countdown = match (interrupt_pending, self.ppu.is_cgb_revision_d()) {
+            (true, true) => 8,
+            (true, false) => 4,
+            (false, _) => 0x20008,
+        };
+        self.speed_switch_ppu_freeze = match (interrupt_pending, self.double_speed, self.tick % 4) {
+            (true, _, _) => 1,
+            (false, true, 1) => 2,
+            (false, true, _) => 6,
+            (false, false, _) => 2,
+        };
     }
 
     pub fn halt_cpu(&mut self) {
@@ -739,6 +913,10 @@ impl GbcMemoryBus {
 
     pub fn ime_enabled(&self) -> bool {
         self.interrupt.get_ime()
+    }
+
+    pub fn interrupt_pending(&self) -> bool {
+        self.interrupt.interrupt_pending()
     }
 
     /// Read IE ($FFFF) during the OAM-DMA-locked window of a CPU
@@ -858,6 +1036,7 @@ mod tests {
     fn cgb_bus() -> GbcMemoryBus {
         let mut bus = bus();
         bus.set_cgb_mode(true);
+        bus.set_post_boot_key1(true);
         bus
     }
 
@@ -912,6 +1091,7 @@ mod tests {
         if double_speed {
             bus.write(0xFF4D, 0x01);
             bus.stop();
+            finish_speed_switch(&mut bus);
         }
         let mut cpu = CountingCpu { steps: 0 };
         for _ in 0..cycles {
@@ -920,6 +1100,13 @@ mod tests {
             }
         }
         cpu.steps
+    }
+
+    fn finish_speed_switch(bus: &mut GbcMemoryBus) {
+        let mut cpu = CountingCpu { steps: 0 };
+        while bus.speed_switch_halt_countdown != 0 {
+            bus.step_tcycle(&mut cpu);
+        }
     }
 
     fn bus_with_clock_counter() -> (GbcMemoryBus, Arc<AtomicUsize>) {
@@ -959,6 +1146,8 @@ mod tests {
         })));
         bus.write(0xFF4D, 0x01);
         bus.stop();
+        finish_speed_switch(&mut bus);
+        clocks.store(0, Ordering::Relaxed);
         let mut cpu = CountingCpu { steps: 0 };
 
         bus.step_tcycle(&mut cpu);
@@ -1237,7 +1426,8 @@ mod tests {
         // Before the boot ROM finishes ($FF50 write) it reads $FF even on
         // CGB; afterwards bit 7 = current speed, bit 0 = armed switch.
         assert_eq!(bus().read(0xFF4D), 0xFF);
-        let mut cgb = cgb_bus();
+        let mut cgb = bus();
+        cgb.set_cgb_mode(true);
         assert_eq!(cgb.read(0xFF4D), 0xFF);
         cgb.set_post_boot_key1(true);
         assert_eq!(cgb.read(0xFF4D), 0x7E);
@@ -1254,10 +1444,11 @@ mod tests {
     fn write_key1_sets_pending_flag() {
         let mut bus = cgb_bus();
         bus.write(0xFF4D, 0x01);
-        // bit0 of the written value arms the speed switch; STOP then flips
-        // double speed instead of halting.
+        // Bit 0 arms a switch; STOP starts the oscillator stabilization halt.
         bus.stop();
         assert!(!bus.is_halted_or_stopped());
+        assert!(!bus.is_double_speed());
+        finish_speed_switch(&mut bus);
         assert!(bus.is_double_speed());
     }
 
@@ -1278,10 +1469,60 @@ mod tests {
 
     #[test]
     fn write_wram_bank_0_clamps_to_1() {
-        // Writing 0 to SVBK leaves the bank unchanged (never selects bank 0).
+        // Bank 0 aliases bank 1 because the switchable area has no bank 0.
         let mut bus = cgb_bus();
         bus.write(0xFF70, 0x00);
         assert_eq!(bus.read(0xFF70), 0xF9);
+    }
+
+    #[test]
+    fn switchable_wram_banks_are_isolated() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF70, 1);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+        bus.write(0xD123, 0x22);
+
+        assert_eq!(bus.read(0xD123), 0x22);
+        bus.write(0xFF70, 1);
+        assert_eq!(bus.read(0xD123), 0x11);
+    }
+
+    #[test]
+    fn fixed_wram_and_banked_echo_follow_hardware_mapping() {
+        let mut bus = cgb_bus();
+        bus.write(0xC123, 0xC0);
+        bus.write(0xFF70, 3);
+        bus.write(0xD123, 0x33);
+        assert_eq!(bus.read(0xC123), 0xC0);
+        assert_eq!(bus.read(0xF123), 0x33);
+
+        bus.write(0xFF70, 4);
+        assert_eq!(bus.read(0xC123), 0xC0);
+        assert_eq!(bus.read(0xF123), 0x00);
+    }
+
+    #[test]
+    fn post_boot_svbk_readback_uses_effective_bank_one() {
+        let mut bus = cgb_bus();
+        bus.set_post_boot_io(true);
+        assert_eq!(bus.read(0xFF70), 0xFF);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+        bus.write(0xD123, 0x22);
+        bus.write(0xFF70, 1);
+        assert_eq!(bus.read(0xD123), 0x11);
+    }
+
+    #[test]
+    fn svbk_is_unmapped_in_cgb_dmg_compatibility_mode() {
+        let mut bus = cgb_bus();
+        bus.set_post_boot_key1(false);
+        bus.write(0xD123, 0x11);
+        bus.write(0xFF70, 2);
+
+        assert_eq!(bus.read(0xFF70), 0xFF);
+        assert_eq!(bus.read(0xD123), 0x11);
     }
 
     #[test]
@@ -1325,9 +1566,131 @@ mod tests {
         bus.write(0xFF4D, 0x01); // prepare speed switch
         assert!(!bus.is_halted_or_stopped());
         bus.stop();
-        // Speed switch does not halt the CPU and toggles double speed.
+        // The regular STOP state is not entered, but CPU execution is held by
+        // the speed-switch oscillator until stabilization completes.
         assert!(!bus.is_halted_or_stopped());
+        assert!(!bus.is_double_speed());
+        finish_speed_switch(&mut bus);
         assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn speed_switch_resets_div_at_toggle_edge() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF04, 0);
+        bus.step_devices(0x100);
+        assert_eq!(bus.read(0xFF04), 1);
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+
+        assert_eq!(bus.read(0xFF04), 1);
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..5 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert_eq!(bus.read(0xFF04), 1);
+        bus.step_tcycle(&mut cpu);
+        assert_eq!(bus.read(0xFF04), 0);
+        assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn speed_switch_preserves_odd_ppu_alignment() {
+        let mut bus = cgb_bus();
+        bus.tick = 7;
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        assert_eq!(bus.speed_switch_ppu_freeze, 2);
+
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..6 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert!(bus.is_double_speed());
+        assert!(bus.ppu_ds_toggle);
+
+        bus.tick = 15;
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        assert_eq!(bus.speed_switch_ppu_freeze, 6);
+    }
+
+    #[test]
+    fn delayed_apu_div_event_queues_one_mcycle() {
+        let mut bus = cgb_bus();
+        bus.apu_div_event_delayed = true;
+        bus.clock_or_delay_apu_div();
+        assert_eq!(bus.apu_div_event_countdown, 4);
+    }
+
+    #[test]
+    fn speed_switch_starts_while_ime_is_enabled() {
+        let mut bus = cgb_bus();
+        bus.set_ime(true);
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+
+        finish_speed_switch(&mut bus);
+        assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn enabled_interrupt_releases_speed_switch_stall() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..8 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert_eq!(cpu.steps, 0);
+
+        bus.write(0xFFFF, 0x04);
+        bus.write(0xFF0F, 0x04);
+        for _ in 0..4 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert!(cpu.steps > 0);
+    }
+
+    #[test]
+    fn pending_interrupt_speed_switch_stall_depends_on_cgb_revision() {
+        for (revision_d, expected) in [(false, 4), (true, 8)] {
+            let mut bus = cgb_bus();
+            bus.set_cgb_revision_d(revision_d);
+            bus.write(0xFFFF, 0x04);
+            bus.write(0xFF0F, 0x04);
+            bus.write(0xFF4D, 0x01);
+            bus.stop();
+            assert_eq!(bus.speed_switch_halt_countdown, expected);
+        }
+    }
+
+    #[test]
+    fn speed_switch_stabilization_freezes_cpu_and_briefly_freezes_ppu() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        let initial_ly = bus.read(0xFF44);
+        let initial_mode = bus.read(0xFF41) & 3;
+        let mut cpu = CountingCpu { steps: 0 };
+
+        for _ in 0..5 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert_eq!(cpu.steps, 0);
+        assert_eq!(bus.read(0xFF44), initial_ly);
+        assert_eq!(bus.read(0xFF41) & 3, initial_mode);
+
+        bus.step_tcycle(&mut cpu);
+        assert!(bus.is_double_speed());
+        assert_eq!(cpu.steps, 0);
+
+        finish_speed_switch(&mut bus);
+        for _ in 0..2 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert!(cpu.steps > 0);
     }
 
     #[test]
@@ -1337,6 +1700,21 @@ mod tests {
         assert!(bus.is_halted_or_stopped());
         // No speed switch performed.
         assert!(!bus.is_double_speed());
+    }
+
+    #[test]
+    fn dmg_timer_interrupt_becomes_visible_one_tcycle_after_reload() {
+        let mut bus = bus();
+        bus.write(0xFF04, 0);
+        bus.write(0xFF05, 0xFF);
+        bus.write(0xFF07, 0x05);
+        bus.write(0xFF0F, 0);
+        bus.halt_cpu();
+
+        bus.step_devices(20);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Timer.bit(), 0);
+        bus.step_devices(1);
+        assert_ne!(bus.read(0xFF0F) & InterruptKind::Timer.bit(), 0);
     }
 
     #[test]
@@ -1360,6 +1738,7 @@ mod tests {
         let mut double = cgb_bus();
         double.write(0xFF4D, 0x01);
         double.stop();
+        finish_speed_switch(&mut double);
         let mut normal_cpu = CountingCpu { steps: 0 };
         let mut double_cpu = CountingCpu { steps: 0 };
         let mut normal_frames = 0;

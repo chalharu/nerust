@@ -50,6 +50,14 @@ impl Mbc3 {
                 % self.ram.len(),
         )
     }
+
+    fn rom_bank_mask(&self) -> u8 {
+        if self.rom.len() > 0x20_0000 {
+            0xFF
+        } else {
+            0x7F
+        }
+    }
 }
 
 impl Mbc for Mbc3 {
@@ -74,7 +82,7 @@ impl Mbc for Mbc3 {
     fn write_rom(&mut self, addr: u16, value: u8) {
         match addr {
             0x0000..=0x1FFF => self.ram_rtc_enabled = value & 0x0F == 0x0A,
-            0x2000..=0x3FFF => self.rom_bank = (value & 0x7F).max(1),
+            0x2000..=0x3FFF => self.rom_bank = (value & self.rom_bank_mask()).max(1),
             0x4000..=0x5FFF => self.ram_rtc_select = value,
             0x6000..=0x7FFF => {
                 if let Some(rtc) = &mut self.rtc {
@@ -143,6 +151,12 @@ impl Mbc for Mbc3 {
     fn sync_rtc(&mut self, now: SystemTime) {
         if let Some(rtc) = &mut self.rtc {
             rtc.sync(now);
+        }
+    }
+
+    fn sync_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        if let Some(rtc) = &mut self.rtc {
+            rtc.sync_from(saved_at, now);
         }
     }
 
@@ -326,6 +340,29 @@ mod tests {
             mbc.write_rom(0x4000, bank);
             assert_eq!(mbc.read_ram(0xA000), 0x80 | bank);
         }
+    }
+
+    #[test]
+    fn mbc30_selects_all_256_rom_banks() {
+        let mut rom = vec![0; 0x400000];
+        rom[0x80 * 0x4000] = 0x80;
+        rom[0xFF * 0x4000] = 0xFF;
+        let mut mbc = Mbc3::new(rom, vec![], false, false);
+
+        mbc.write_rom(0x2000, 0x80);
+        assert_eq!(mbc.read_rom_n(0x4000), 0x80);
+        mbc.write_rom(0x2000, 0xFF);
+        assert_eq!(mbc.read_rom_n(0x4000), 0xFF);
+    }
+
+    #[test]
+    fn regular_mbc3_masks_rom_bank_to_seven_bits() {
+        let mut rom = vec![0; 0x200000];
+        rom[0x7F * 0x4000] = 0x7F;
+        let mut mbc = Mbc3::new(rom, vec![], false, false);
+
+        mbc.write_rom(0x2000, 0xFF);
+        assert_eq!(mbc.read_rom_n(0x4000), 0x7F);
     }
 
     #[test]

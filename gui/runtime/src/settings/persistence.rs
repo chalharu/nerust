@@ -9,6 +9,7 @@ use super::{SettingsError, SettingsPaths};
 
 const MAPPER_SAVE_FILE_NAME: &str = "mapper.sav";
 const STATES_DIR_NAME: &str = "states";
+const DOCUMENT_TREE_MARKER: &str = "__nerust_document_tree__";
 
 pub fn resolve_persistence_paths(
     shared: &DesktopSharedSettings,
@@ -51,6 +52,65 @@ pub fn resolve_central_storage_paths(
     }
 }
 
+pub fn resolve_document_tree_storage_paths(
+    uri: &str,
+    system: &dyn SystemId,
+    identity: &SystemIdentity,
+) -> SidecarPaths {
+    let encoded_uri = uri
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let base = Path::new(DOCUMENT_TREE_MARKER)
+        .join(encoded_uri)
+        .join(system.to_string())
+        .join(system_storage_key(system, identity));
+    SidecarPaths {
+        mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME),
+        states_dir: base.join(STATES_DIR_NAME),
+    }
+}
+
+pub fn resolve_document_tree_sidecar_paths(
+    uri: &str,
+    system: &dyn SystemId,
+    identity: &SystemIdentity,
+) -> SidecarPaths {
+    let encoded_uri = uri
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let base = Path::new(DOCUMENT_TREE_MARKER).join(encoded_uri);
+    let key = format!("{}-{}", system, system_storage_key(system, identity));
+    SidecarPaths {
+        mapper_save_path: base.join(format!("{key}.sav")),
+        states_dir: base.join(format!("{key}.states")),
+    }
+}
+
+pub fn decode_document_tree_path(path: &Path) -> Option<(String, String)> {
+    let mut components = path.components();
+    if components.next()?.as_os_str() != DOCUMENT_TREE_MARKER {
+        return None;
+    }
+    let encoded = components.next()?.as_os_str().to_str()?;
+    if encoded.len() % 2 != 0 {
+        return None;
+    }
+    let bytes = (0..encoded.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let uri = String::from_utf8(bytes).ok()?;
+    let relative = components
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?
+        .join("/");
+    Some((uri, relative))
+}
+
 fn resolve_current_persistence_paths(
     shared: &DesktopSharedSettings,
     paths: Option<&SettingsPaths>,
@@ -60,6 +120,9 @@ fn resolve_current_persistence_paths(
 ) -> Result<SidecarPaths, SettingsError> {
     match shared.persistence.storage_policy {
         StoragePolicy::Sidecar => {
+            if let Some(uri) = shared.persistence.storage_document_tree_uri.as_deref() {
+                return Ok(resolve_document_tree_sidecar_paths(uri, system, identity));
+            }
             let rom_path = rom_path.ok_or(SettingsError::PersistenceUnavailable)?;
             Ok(resolve_sidecars(rom_path))
         }
@@ -74,6 +137,9 @@ fn resolve_current_persistence_paths(
             ))
         }
         StoragePolicy::CustomDirectory => {
+            if let Some(uri) = shared.persistence.storage_document_tree_uri.as_deref() {
+                return Ok(resolve_document_tree_storage_paths(uri, system, identity));
+            }
             let root = shared
                 .persistence
                 .storage_directory
@@ -92,6 +158,9 @@ fn maybe_auto_import_storage(
     identity: &SystemIdentity,
     destination: &SidecarPaths,
 ) -> Result<(), SettingsError> {
+    if decode_document_tree_path(&destination.mapper_save_path).is_some() {
+        return Ok(());
+    }
     let Some(rom_path) = rom_path else {
         return Ok(());
     };
@@ -198,7 +267,9 @@ mod tests {
 
     use super::{
         super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity},
-        resolve_central_storage_paths, resolve_persistence_paths_with_import, system_storage_key,
+        decode_document_tree_path, resolve_central_storage_paths,
+        resolve_document_tree_sidecar_paths, resolve_document_tree_storage_paths,
+        resolve_persistence_paths_with_import, system_storage_key,
     };
 
     #[test]
@@ -212,6 +283,38 @@ mod tests {
         assert!(first.mapper_save_path.ends_with("mapper.sav"));
         assert!(first.states_dir.ends_with("states"));
         assert!(!system_storage_key(&DummySystemId, &identity).is_empty());
+    }
+
+    #[test]
+    fn document_tree_paths_round_trip_uri_and_relative_name() {
+        let identity = test_system_identity();
+        let paths = resolve_document_tree_storage_paths(
+            "content://provider/tree/primary%3ASaves",
+            identity.system_id.as_ref(),
+            &identity,
+        );
+
+        let (uri, relative) = decode_document_tree_path(&paths.mapper_save_path).unwrap();
+        assert_eq!(uri, "content://provider/tree/primary%3ASaves");
+        assert!(relative.starts_with(&format!("{}/", identity.system_id)));
+        assert!(relative.ends_with("/mapper.sav"));
+    }
+
+    #[test]
+    fn document_tree_sidecars_are_siblings_in_selected_tree() {
+        let identity = test_system_identity();
+        let paths = resolve_document_tree_sidecar_paths(
+            "content://provider/tree/primary%3ASaves",
+            identity.system_id.as_ref(),
+            &identity,
+        );
+        let (_, mapper) = decode_document_tree_path(&paths.mapper_save_path).unwrap();
+        let (_, states) = decode_document_tree_path(&paths.states_dir).unwrap();
+
+        assert!(!mapper.contains('/'));
+        assert!(!states.contains('/'));
+        assert!(mapper.ends_with(".sav"));
+        assert!(states.ends_with(".states"));
     }
 
     #[test]

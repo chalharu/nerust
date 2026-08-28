@@ -103,6 +103,7 @@ version = "0.1.0-dev"
 
 [workspace.dependencies]
 android_logger = { version = "=0.15.1" }
+base64 = { version = "=0.22.1" }
 bitflags = { features = ["serde"], version = "=2.13.1" }
 clap = { features = ["derive"], version = "=4.6.4" }
 cpal = { version = "=0.18.1" }
@@ -114,6 +115,7 @@ dyn-clone = { version = "=1.0.20" }
 dyn-eq = { version = "=0.1.3" }
 dyn-hash = { version = "=1.0.0" }
 flume = { version = "=0.12.0" }
+glob = { version = "=0.3.3" }
 gdk = { package = "gdk4", version = "=0.11.4" }
 gdk-macos = { package = "gdk4-macos", version = "=0.11.0" }
 gdk-win32 = { package = "gdk4-win32", version = "=0.11.0" }

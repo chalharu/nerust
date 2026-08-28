@@ -145,6 +145,17 @@ impl Timer {
         self.div & mask != 0
     }
 
+    pub fn apu_speed_switch_reset_fires(
+        &self,
+        double_speed: bool,
+        delayed_rising_edge: bool,
+    ) -> bool {
+        let mask = if double_speed { 0x2000 } else { 0x1000 };
+        let phase = self.div & (mask * 2 - 1);
+        self.div & mask != 0
+            && !((!double_speed || delayed_rising_edge) && (mask..mask + 4).contains(&phase))
+    }
+
     pub fn write(&mut self, addr: u16, value: u8) -> bool {
         match addr {
             0xFF04 => {
@@ -179,6 +190,23 @@ impl Timer {
     /// Reset the divider (used on STOP instruction). Behaves like a DIV write.
     pub fn reset_div(&mut self) {
         self.set_div(0);
+    }
+
+    /// Reset DIV at a CGB speed-toggle edge. On late CGB revisions, the
+    /// reset-induced TIMA increment is suppressed for the first M-cycle after
+    /// the selected divider bit rises (except for the 262 KHz source).
+    pub fn reset_div_for_speed_switch(&mut self, delayed_rising_edge: bool) {
+        let mask = self.selected_bit();
+        let phase = self.div & (mask * 2 - 1);
+        let suppress_increment = (delayed_rising_edge || mask == 0x0200)
+            && (self.tac & 0x04) != 0
+            && mask != 0x0008
+            && (mask..mask + 4).contains(&phase);
+        if suppress_increment {
+            self.div = 0;
+        } else {
+            self.set_div(0);
+        }
     }
 
     /// Set the 16-bit system counter to the post-boot value for a model
@@ -286,6 +314,41 @@ mod tests {
         t.div = 8;
         t.write(0xFF04, 0);
         assert_eq!(t.tima, 1);
+    }
+
+    #[test]
+    fn apu_speed_reset_suppresses_late_rising_edges() {
+        let mut t = timer();
+        t.div = 0x1001;
+        assert!(!t.apu_speed_switch_reset_fires(false, false));
+
+        t.div = 0x2000;
+        assert!(t.apu_speed_switch_reset_fires(true, false));
+        assert!(!t.apu_speed_switch_reset_fires(true, true));
+        t.div = 0x2004;
+        assert!(t.apu_speed_switch_reset_fires(true, true));
+    }
+
+    #[test]
+    fn late_cgb_speed_switch_delays_reset_tick_at_rising_edge() {
+        let mut late = timer();
+        late.write(0xFF07, 0x04); // enable, freq 00 (bit 9)
+        late.div = 0x0200;
+        late.reset_div_for_speed_switch(true);
+        assert_eq!(late.div, 0);
+        assert_eq!(late.tima, 0);
+
+        let mut early_4khz = timer();
+        early_4khz.write(0xFF07, 0x04);
+        early_4khz.div = 0x0200;
+        early_4khz.reset_div_for_speed_switch(false);
+        assert_eq!(early_4khz.tima, 0);
+
+        let mut early_65khz = timer();
+        early_65khz.write(0xFF07, 0x06);
+        early_65khz.div = 0x0020;
+        early_65khz.reset_div_for_speed_switch(false);
+        assert_eq!(early_65khz.tima, 1);
     }
 
     #[test]

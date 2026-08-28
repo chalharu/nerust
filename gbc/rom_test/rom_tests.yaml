@@ -1,4 +1,6 @@
 rom_root: ../../roms/gbc
+expected_failure_files:
+  - accuracy_expected_failures.txt
 expected_failures:
   - m3_lcdc_obj_size_change@dmg
   - m3_lcdc_obj_size_change_scx@dmg
@@ -23,7 +25,250 @@ completion_profiles:
           - {address: '0xA000', value: '0x80'}
       - memory:
           - {address: '0xA000', not_value: '0x80'}
+  gbmicro_status:
+    poll_interval: 16
+    stages:
+      - memory:
+          - {address: '0xFF82', not_value: '0x00'}
+  age_registers:
+    poll_interval: 16
+    stages:
+      - registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+  mbc3_tester_complete:
+    poll_interval: 256
+    stages:
+      - memory:
+          - {address: '0x9A2F', not_value: '0x00'}
 suites:
+  - name: aappleby_gbmicrotest
+    case_patterns:
+      - glob: repo/bin/*.gb
+        id_prefix: gbmicro_
+        # These diagnostic benches do not call GBMicrotest's test_finish/test_pass
+        # macros, so FF82 is not a pass/fail result for them.
+        exclude_globs:
+          - repo/bin/000-oam_lock.gb
+          - repo/bin/000-write_to_x8000.gb
+          - repo/bin/001-vram_unlocked.gb
+          - repo/bin/002-vram_locked.gb
+          - repo/bin/004-tima_boot_phase.gb
+          - repo/bin/004-tima_cycle_timer.gb
+          - repo/bin/007-lcd_on_stat.gb
+          - repo/bin/400-dma.gb
+          - repo/bin/500-scx-timing.gb
+          - repo/bin/800-ppu-latch-scx.gb
+          - repo/bin/801-ppu-latch-scy.gb
+          - repo/bin/802-ppu-latch-tileselect.gb
+          - repo/bin/803-ppu-latch-bgdisplay.gb
+          - repo/bin/audio_testbench.gb
+          - repo/bin/cpu_bus_1.gb
+          - repo/bin/dma_basic.gb
+          - repo/bin/flood_vram.gb
+          - repo/bin/lcdon_write_timing.gb
+          - repo/bin/ly_while_lcd_off.gb
+          - repo/bin/minimal.gb
+          - repo/bin/mode2_stat_int_to_oam_unlock.gb
+          - repo/bin/oam_sprite_trashing.gb
+          - repo/bin/poweron.gb
+          - repo/bin/ppu_scx_vs_bgp.gb
+          - repo/bin/ppu_sprite_testbench.gb
+          - repo/bin/ppu_spritex_vs_scx.gb
+          - repo/bin/ppu_win_vs_wx.gb
+          - repo/bin/ppu_wx_early.gb
+          - repo/bin/temp.gb
+          - repo/bin/toggle_lcdc.gb
+          - repo/bin/wave_write_to_0xC003.gb
+        models:
+          - dmg
+        cycles: 500000
+        completion: gbmicro_status
+        verify:
+          memory:
+            - {address: '0xFF82', value: '0x01'}
+          memory_comparisons:
+            - actual_address: '0xFF80'
+              expected_address: '0xFF81'
+              name: gbmicro_result
+              when: {address: '0xFF82', not_value: '0x01'}
+        tags:
+          - accuracy
+          - timing
+  - name: c-sp_age-test-roms
+    case_patterns:
+      - glob: artifacts/**/*-dmgC-cgbBCE.gb
+        id_prefix: age_
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-dmgC-cgbBC.gb
+        id_prefix: age_
+        models: [dmg, cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-dmgC.gb
+        id_prefix: age_
+        models: [dmg]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmBCE.gb
+        id_prefix: age_
+        models: [cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmBC.gb
+        id_prefix: age_
+        models: [cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmE.gb
+        id_prefix: age_
+        models: [cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbE.gb
+        id_prefix: age_
+        models: [cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbBCE.gb
+        id_prefix: age_
+        models: [cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbBC.gb
+        id_prefix: age_
+        models: [cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+    cases:
+      - id: age_m3_bg_bgp
+        rom: artifacts/m3-bg-bgp/m3-bg-bgp.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-bgp/m3-bg-bgp-dmgC.png
+          cgb_c: artifacts/m3-bg-bgp/m3-bg-bgp-ncmBC.png
+          cgb_d: artifacts/m3-bg-bgp/m3-bg-bgp-ncmE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_lcdc
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-lcdc/m3-bg-lcdc-dmgC.png
+          cgb_c: artifacts/m3-bg-lcdc/m3-bg-lcdc-cgbBCE.png
+          cgb_d: artifacts/m3-bg-lcdc/m3-bg-lcdc-cgbBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_lcdc_ds
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc-ds.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-lcdc/m3-bg-lcdc-ds-cgbBCE.png
+        tags: [ppu, visual, double_speed]
+      - id: age_m3_bg_lcdc_nocgb
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb-ncmBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_scx
+        rom: artifacts/m3-bg-scx/m3-bg-scx.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-scx/m3-bg-scx-dmgC.png
+          cgb_c: artifacts/m3-bg-scx/m3-bg-scx-cgbBCE.png
+          cgb_d: artifacts/m3-bg-scx/m3-bg-scx-cgbBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_scx_ds
+        rom: artifacts/m3-bg-scx/m3-bg-scx-ds.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-scx/m3-bg-scx-ds-cgbBCE.png
+        tags: [ppu, visual, double_speed]
+      - id: age_m3_bg_scx_nocgb
+        rom: artifacts/m3-bg-scx/m3-bg-scx-nocgb.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-scx/m3-bg-scx-nocgb-ncmBCE.png
+        tags: [ppu, visual]
+  - name: EricKirschenmann_MBC3-Tester-gb
+    cases:
+      - id: mbc3_tester_255_banks
+        description: MBC30 4 MiB ROM banking across all 255 selectable banks
+        rom: release/mbctest-padded.gb
+        models: [dmg, cgb_d]
+        cycles: 10000000
+        completion: mbc3_tester_complete
+        verify:
+          memory_regions:
+            - {start: '0x9841', length: 255, value: '0x25', row_length: 16, stride: 32}
+        tags: [mapper, mbc3, mbc30]
+  - name: aaaaaa123456789_rtc3test
+    cases:
+      - id: rtc3_basic
+        description: MBC3 RTC basic ticking, writes, rollover, and overflow
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 7F051AD7}}
+        inputs:
+          - {cycle: 500000, buttons: [a]}
+          - {cycle: 600000, buttons: []}
+        tags: [mapper, mbc3, rtc]
+      - id: rtc3_range
+        description: MBC3 RTC register bit and out-of-range behavior
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 84D60AD5}}
+        inputs:
+          - {cycle: 500000, buttons: [down]}
+          - {cycle: 600000, buttons: []}
+          - {cycle: 700000, buttons: [a]}
+          - {cycle: 800000, buttons: []}
+        tags: [mapper, mbc3, rtc]
+      - id: rtc3_subsecond
+        description: MBC3 RTC sub-second register write timing
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 02B75BC9}}
+        inputs:
+          - {cycle: 500000, buttons: [down]}
+          - {cycle: 600000, buttons: []}
+          - {cycle: 700000, buttons: [down]}
+          - {cycle: 800000, buttons: []}
+          - {cycle: 900000, buttons: [a]}
+          - {cycle: 1000000, buttons: []}
+        tags: [mapper, mbc3, rtc]
   - name: retrio_gb-test-roms
     cases:
       - id: cpu_instrs_all

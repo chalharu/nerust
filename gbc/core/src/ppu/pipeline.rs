@@ -152,12 +152,15 @@ pub(super) struct Mode3Pipeline {
     cgb_mode: bool,
     cgb_game: bool,
     cgb_revision_d: bool,
+    double_speed: bool,
     oam_priority: bool,
     startup_dots: u8,
     initial_dummy_pending: bool,
     fine_discard: u8,
     scx_tile_latch: u8,
     pending_scx_high: Option<u8>,
+    pending_scx_skip_delta: bool,
+    skip_next_scx_column_delta: bool,
     pixel_x: u8,
     complete: bool,
 
@@ -186,6 +189,8 @@ pub(super) struct Mode3Pipeline {
     /// Extra mode-3 dots added by sprite fetches (extend the pixel transfer
     /// period beyond the base 172 dots).
     sprite_extra_dots: u8,
+    /// Six-dot fetcher restart paid when the window becomes active.
+    window_extra_dots: u8,
     pending_bg_enable: Option<(u8, u8)>,
     pending_obj_enable: Option<(u8, u8)>,
     pending_bgp: Option<(u8, u8)>,
@@ -241,12 +246,15 @@ impl Mode3Pipeline {
             cgb_mode,
             cgb_game,
             cgb_revision_d,
+            double_speed: false,
             oam_priority,
             startup_dots: 19 + (registers.scx & 7),
             initial_dummy_pending: true,
             fine_discard: registers.scx & 7,
             scx_tile_latch: registers.scx >> 3,
             pending_scx_high: None,
+            pending_scx_skip_delta: false,
+            skip_next_scx_column_delta: false,
             pixel_x: 0,
             complete: false,
             fetcher: Fetcher::new(registers.scx >> 3),
@@ -271,6 +279,7 @@ impl Mode3Pipeline {
             sprite_fetch: None,
             output_stall: 0,
             sprite_extra_dots: 0,
+            window_extra_dots: 0,
             pending_bg_enable: None,
             pending_obj_enable: None,
             pending_bgp: None,
@@ -355,8 +364,12 @@ impl Mode3Pipeline {
             && self.sprites.is_empty();
     }
 
+    pub(super) fn set_double_speed(&mut self, enabled: bool) {
+        self.double_speed = enabled;
+    }
+
     fn deliver_register_writes(&mut self) {
-        if self.cgb_revision_d {
+        if self.cgb_d_tile_quirks() {
             if let Some(write) = self.pending_tile_select_write.take() {
                 self.active_tile_select_write = Some(write);
             }
@@ -554,7 +567,7 @@ impl Mode3Pipeline {
             .next_sprite
             .checked_sub(1)
             .map(|index| self.sprites[index].x);
-        let reload_low_only = self.cgb_revision_d
+        let reload_low_only = self.cgb_d_tile_quirks()
             && !self.window_active
             && last_sprite_x == Some(8)
             && self.fetcher.tile_y == 0
@@ -569,7 +582,7 @@ impl Mode3Pipeline {
             self.registers.lcdc = lcdc;
             self.active_tile_select_write = None;
         }
-        let offscreen_tile_select = if self.cgb_revision_d && !self.window_active {
+        let offscreen_tile_select = if self.cgb_d_tile_quirks() && !self.window_active {
             match (last_sprite_x, self.active_tile_select_write) {
                 (Some(x), Some((old, 0))) if x <= -7 && old != 0 => Some((old, false)),
                 (Some(-6), Some((0, new))) if new != 0 => Some((new, false)),
@@ -597,12 +610,12 @@ impl Mode3Pipeline {
     }
 
     fn fetch_data_low(&mut self, vram: &[u8; 0x4000]) {
-        let reset_glitch = !self.cgb_revision_d
+        let reset_glitch = !self.cgb_d_tile_quirks()
             && self
                 .active_tile_select_write
                 .is_some_and(|(old, new)| old != 0 && new == 0 && self.cgb_c_tile_write_persistent);
         self.fetcher.low = if self.active_tile_select_write.is_some_and(|(old, new)| {
-            old == 0 && new != 0 && (self.cgb_revision_d || self.cgb_c_tile_write_persistent)
+            old == 0 && new != 0 && (self.cgb_d_tile_quirks() || self.cgb_c_tile_write_persistent)
         }) {
             self.object_data_bus.unwrap_or(self.tile_data_bus)
         } else if self
@@ -634,10 +647,10 @@ impl Mode3Pipeline {
             Some((0, new)) if new != 0 => self.object_data_bus.unwrap_or(self.tile_data_bus),
             Some((old, 0)) if old != 0 => self.fetcher.tile_index,
             _ => match self.active_tile_select_write {
-                Some((0, new)) if new != 0 && self.cgb_revision_d => {
+                Some((0, new)) if new != 0 && self.cgb_d_tile_quirks() => {
                     self.object_data_bus.unwrap_or(self.tile_data_bus)
                 }
-                Some((old, 0)) if old != 0 && self.cgb_revision_d => self.fetcher.low,
+                Some((old, 0)) if old != 0 && self.cgb_d_tile_quirks() => self.fetcher.low,
                 _ => vram[self.fetcher.data_address],
             },
         };
@@ -726,18 +739,34 @@ impl Mode3Pipeline {
     }
 
     fn prepare_tile_address(&mut self) {
+        self.advance_background_tile_column();
+        let (map_base, tile_row, tile_y) = self.tile_map_position();
+        self.fetcher.map_address =
+            map_base + u16::from(tile_row) * 32 + u16::from(self.fetcher.tile_column & 31);
+        self.fetcher.tile_y = tile_y;
+    }
+
+    fn advance_background_tile_column(&mut self) {
         if !self.window_active && self.fetcher.stage_dot == 0 {
             let new_column = self.registers.scx >> 3;
-            self.fetcher.tile_column = self
-                .fetcher
-                .tile_column
-                .wrapping_add(new_column.wrapping_sub(self.scx_tile_latch));
+            let column_delta = if self.pixel_x >= 138 && self.skip_next_scx_column_delta {
+                0
+            } else {
+                new_column.wrapping_sub(self.scx_tile_latch)
+            };
+            self.skip_next_scx_column_delta = false;
+            self.fetcher.tile_column = self.fetcher.tile_column.wrapping_add(column_delta);
             self.scx_tile_latch = new_column;
             if let Some(value) = self.pending_scx_high.take() {
                 self.registers.scx = (self.registers.scx & 7) | value;
+                self.skip_next_scx_column_delta = self.pending_scx_skip_delta;
+                self.pending_scx_skip_delta = false;
             }
         }
-        let (map_base, tile_row, tile_y) = if self.window_active {
+    }
+
+    fn tile_map_position(&self) -> (u16, u8, u8) {
+        if self.window_active {
             let map = if self.registers.lcdc & 0x40 != 0 {
                 0x9C00
             } else {
@@ -752,10 +781,7 @@ impl Mode3Pipeline {
                 0x9800
             };
             (map, y >> 3, y & 7)
-        };
-        self.fetcher.map_address =
-            map_base + u16::from(tile_row) * 32 + u16::from(self.fetcher.tile_column & 31);
-        self.fetcher.tile_y = tile_y;
+        }
     }
 
     fn read_tile(&mut self, vram: &[u8; 0x4000]) {
@@ -774,7 +800,7 @@ impl Mode3Pipeline {
     }
 
     fn prepare_tile_data_address(&mut self, high: bool) {
-        if !self.cgb_revision_d && !self.window_active {
+        if !self.cgb_d_tile_quirks() && !self.window_active {
             self.fetcher.tile_y = self.registers.scy.wrapping_add(self.ly) & 7;
             if self.cgb_game && self.fetcher.attributes & 0x40 != 0 {
                 self.fetcher.tile_y = 7 - self.fetcher.tile_y;
@@ -866,6 +892,7 @@ impl Mode3Pipeline {
                 self.window_line = self.window_line.wrapping_add(1);
             }
             self.window_active = true;
+            self.window_extra_dots = self.window_extra_dots.saturating_add(6);
             self.window_trigger_at = None;
             self.window_comparator_seen = true;
             self.window_seen = true;
@@ -937,7 +964,31 @@ impl Mode3Pipeline {
         let tile_x = (pixel_pos + i16::from(self.registers.scx)) & 7;
         let fetch_wait = (5 - tile_x).max(0) as u8;
         if sprite.x < 0 {
-            if sprite.x <= -5 {
+            if self.cgb_mode && self.double_speed && sprite.x >= -8 {
+                const OFFSCREEN_STALLS: [[u8; 8]; 8] = [
+                    [11, 11, 11, 11, 11, 11, 11, 11],
+                    [10, 8, 8, 6, 6, 6, 6, 10],
+                    [9, 9, 7, 7, 5, 7, 11, 11],
+                    [8, 6, 6, 6, 6, 10, 10, 8],
+                    [7, 7, 5, 7, 11, 11, 9, 9],
+                    [6, 6, 6, 10, 10, 8, 8, 6],
+                    [6, 6, 12, 10, 10, 8, 8, 6],
+                    [6, 10, 10, 8, 8, 6, 6, 6],
+                ];
+                OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize].max(6)
+            } else if self.cgb_mode && self.cgb_game && self.sprites.len() == 1 && sprite.x >= -8 {
+                const OFFSCREEN_STALLS: [[u8; 8]; 8] = [
+                    [11, 11, 11, 11, 11, 11, 11, 11],
+                    [10, 10, 6, 6, 6, 6, 6, 10],
+                    [9, 9, 9, 6, 6, 6, 13, 9],
+                    [8, 8, 8, 8, 6, 12, 12, 12],
+                    [7, 6, 7, 7, 11, 7, 7, 7],
+                    [6, 6, 6, 10, 10, 10, 6, 6],
+                    [6, 6, 10, 10, 10, 10, 6, 6],
+                    [6, 14, 10, 10, 10, 10, 6, 6],
+                ];
+                OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize]
+            } else if sprite.x <= -5 {
                 (3 - sprite.x) as u8
             } else if sprite.x == -4 {
                 7
@@ -1412,15 +1463,32 @@ impl Mode3Pipeline {
         let old_tile_select = old_written & 0x10;
         let new_tile_select = value & 0x10;
         self.apply_window_tile_select(old_tile_select, new_tile_select);
-        let collided = self.detect_tile_select_collision(old_tile_select, new_tile_select);
-        self.pending_tile_select_write = (!collided).then_some((old_tile_select, new_tile_select));
-        self.apply_cgb_c_tile_select_glitches(old_tile_select, new_tile_select);
-        let tile_sel_delay = if self.cgb_mode { 3 } else { 2 };
+        if self.double_speed {
+            self.pending_tile_select_write = None;
+            self.cgb_c_tile_write_persistent = false;
+            self.cgb_c_high_glitch = None;
+        } else {
+            let collided = self.detect_tile_select_collision(old_tile_select, new_tile_select);
+            self.pending_tile_select_write =
+                (!collided).then_some((old_tile_select, new_tile_select));
+            self.apply_cgb_c_tile_select_glitches(old_tile_select, new_tile_select);
+        }
+        let tile_sel_delay = if self.cgb_mode && self.double_speed {
+            4
+        } else if self.cgb_mode {
+            3
+        } else {
+            2
+        };
         self.pending_tile_select = Some((tile_sel_delay, value & 0x10));
     }
 
+    fn cgb_d_tile_quirks(&self) -> bool {
+        self.cgb_revision_d && !self.sprites.is_empty()
+    }
+
     fn apply_window_tile_select(&mut self, old: u8, new: u8) {
-        if !(self.cgb_revision_d && self.window_active && old != 0 && new == 0) {
+        if !(self.cgb_d_tile_quirks() && self.window_active && old != 0 && new == 0) {
             return;
         }
         let object_x = self
@@ -1449,7 +1517,7 @@ impl Mode3Pipeline {
     }
 
     fn detect_tile_select_collision(&mut self, old: u8, new: u8) -> bool {
-        self.cgb_revision_d
+        self.cgb_d_tile_quirks()
             && match (old, new, self.last_bg_data_read) {
                 (0, new, Some(BgDataRead::Low)) if new != 0 => {
                     self.fetcher.low = self.tile_data_bus;
@@ -1468,11 +1536,11 @@ impl Mode3Pipeline {
     }
 
     fn apply_cgb_c_tile_select_glitches(&mut self, old: u8, new: u8) {
-        self.cgb_c_tile_write_persistent = !self.cgb_revision_d
+        self.cgb_c_tile_write_persistent = !self.cgb_d_tile_quirks()
             && self.fetcher.stage == FetchStage::Tile
             && self.fetcher.stage_dot == 0
             && (self.window_active || (old != 0 && new == 0));
-        if !self.cgb_revision_d
+        if !self.cgb_d_tile_quirks()
             && !self.window_active
             && old != 0
             && new == 0
@@ -1489,7 +1557,7 @@ impl Mode3Pipeline {
             self.force_bg_low = low;
             self.force_bg_low_pixels = 7;
         }
-        self.cgb_c_high_glitch = (!self.cgb_revision_d
+        self.cgb_c_high_glitch = (!self.cgb_d_tile_quirks()
             && self.fetcher.stage == FetchStage::DataLow
             && self.fetcher.stage_dot == 0
             && self.bg_fifo.len() == 5)
@@ -1540,8 +1608,11 @@ impl Mode3Pipeline {
         if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
             self.fine_discard = value & 7;
         }
-        let defer_high = self.compute_scx_defer_high();
+        let fine_wrap = self.registers.scx & 7 > value & 7;
+        let defer_high =
+            self.compute_scx_defer_high() || self.double_speed && self.pixel_x >= 138 && fine_wrap;
         if defer_high {
+            self.pending_scx_skip_delta = fine_wrap;
             self.pending_scx_high = Some(value & 0xF8);
             self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
         } else {
@@ -1672,6 +1743,14 @@ impl Mode3Pipeline {
         self.sprite_extra_dots
     }
 
+    pub(super) fn sprite_count(&self) -> usize {
+        self.sprites.len()
+    }
+
+    pub(super) fn window_extra_dots(&self) -> u8 {
+        self.window_extra_dots
+    }
+
     pub(super) fn unstarted_visible_sprite_pending(&self) -> bool {
         self.next_sprite < self.sprites.len() && self.sprites[self.next_sprite].x < 160
     }
@@ -1732,6 +1811,32 @@ mod tests {
             obp0: 0xE4,
             obp1: 0xE4,
         }
+    }
+
+    #[test]
+    fn cgb_offscreen_sprite_stall_depends_on_scx_phase() {
+        let sprite = Sprite {
+            x: -2,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+
+        pipeline.registers.scx = 0;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 6);
+        pipeline.registers.scx = 2;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 12);
+        pipeline.registers.scx = 7;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 6);
+
+        let mut normal =
+            Mode3Pipeline::new(registers(), 0, 0, false, vec![sprite], true, true, true, 0);
+        normal.registers.scx = 2;
+        assert_eq!(normal.sprite_stall(&sprite, 0), 10);
     }
 
     #[test]
@@ -1938,6 +2043,47 @@ mod tests {
     }
 
     #[test]
+    fn cgb_d_tile_write_persists_only_when_scanline_has_sprites() {
+        let mut no_sprites =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        no_sprites.pending_tile_select_write = Some((0, 0x10));
+        no_sprites.deliver_register_writes();
+        no_sprites.deliver_register_writes();
+        assert_eq!(no_sprites.active_tile_select_write, None);
+
+        let sprite = Sprite {
+            x: 0,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut with_sprite =
+            Mode3Pipeline::new(registers(), 0, 0, false, vec![sprite], true, true, true, 0);
+        with_sprite.pending_tile_select_write = Some((0, 0x10));
+        with_sprite.deliver_register_writes();
+        with_sprite.deliver_register_writes();
+        assert_eq!(with_sprite.active_tile_select_write, Some((0, 0x10)));
+    }
+
+    #[test]
+    fn double_speed_tile_select_uses_delayed_latch_without_collision_glitch() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+        pipeline.pending_tile_select_write = Some((0, 0x10));
+        pipeline.cgb_c_tile_write_persistent = true;
+        pipeline.cgb_c_high_glitch = Some((0, 0x10));
+
+        pipeline.apply_tile_select_change(0, 0x10);
+
+        assert_eq!(pipeline.pending_tile_select_write, None);
+        assert!(!pipeline.cgb_c_tile_write_persistent);
+        assert_eq!(pipeline.cgb_c_high_glitch, None);
+        assert_eq!(pipeline.pending_tile_select, Some((4, 0)));
+    }
+
+    #[test]
     fn disabling_inactive_window_preserves_future_trigger() {
         let mut pipeline =
             Mode3Pipeline::new(registers(), 0, 0, true, Vec::new(), false, false, true, 0);
@@ -1993,6 +2139,29 @@ mod tests {
 
         assert_eq!(pipeline.registers.scx, 0x20);
         assert_eq!(pipeline.pending_scx_high, None);
+    }
+
+    #[test]
+    fn late_scx_fine_wrap_preserves_sequential_tile_column() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+        pipeline.pixel_x = 140;
+        pipeline.registers.scx = 7;
+        pipeline.scx_tile_latch = 0;
+        pipeline.fetcher.stage = FetchStage::Tile;
+        pipeline.fetcher.stage_dot = 1;
+
+        pipeline.write_scx(8);
+        assert_eq!(pipeline.pending_scx_high, Some(8));
+        assert!(pipeline.pending_scx_skip_delta);
+
+        pipeline.fetcher.stage_dot = 0;
+        pipeline.prepare_tile_address();
+        let column = pipeline.fetcher.tile_column;
+        pipeline.prepare_tile_address();
+        assert_eq!(pipeline.fetcher.tile_column, column);
+        assert_eq!(pipeline.scx_tile_latch, 1);
     }
 
     #[test]
@@ -2091,6 +2260,22 @@ mod tests {
         assert!(pipeline.emit_output_pixel(&[0; 32], &[0; 32]).is_some());
         assert_eq!(pipeline.bg_fifo.len(), 1);
         assert_eq!(pipeline.window_zero_at, None);
+    }
+
+    #[test]
+    fn window_activation_adds_six_mode3_dots() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, true, Vec::new(), false, false, false, 0);
+        pipeline.window_eligible = true;
+        pipeline.registers.lcdc |= 0x20;
+        pipeline.registers.wy = 0;
+        pipeline.registers.wx = 7;
+        pipeline.pixel_x = 0;
+
+        pipeline.try_activate_window();
+
+        assert!(pipeline.window_active);
+        assert_eq!(pipeline.window_extra_dots(), 6);
     }
 
     #[test]
