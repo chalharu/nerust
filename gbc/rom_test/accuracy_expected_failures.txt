@@ -53,8 +53,6 @@ age_spsw-interrupts-cgbBC@cgb_d
 age_spsw-interrupts-cgbE@cgb_d
 age_spsw-mode0-cgbBCE@cgb_c
 age_spsw-mode0-cgbBCE@cgb_d
-age_spsw-stop-prefetch-cgbBCE@cgb_c
-age_spsw-stop-prefetch-cgbBCE@cgb_d
 age_spsw-tima-cgbBC@cgb_c
 age_spsw-tima-cgbBC@cgb_d
 age_spsw-tima-cgbE@cgb_d
