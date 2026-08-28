@@ -522,27 +522,30 @@ impl GbcMemoryBus {
         } else {
             self.ppu.step(video)
         };
-        self.advance_ppu_interrupts(was_hblank, &ppu_res);
+        self.advance_ppu_non_stat_interrupts(was_hblank, &ppu_res);
+        if ppu_res.lcd_stat && !self.cgb_mode {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
         // Timer must be stepped before APU to ensure proper synchronization
         // (both derive from the same 16-bit counter in real hardware)
         self.advance_timer();
         self.apu.step(video);
         self.advance_dma();
         self.maybe_step_cpu(cpu, t1);
+        if ppu_res.lcd_stat && self.cgb_mode {
+            self.interrupt.request(InterruptKind::LcdStat);
+        }
         self.deliver_ppu_write_events();
         ppu_res.frame_done
     }
 
-    fn advance_ppu_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
+    fn advance_ppu_non_stat_interrupts(&mut self, was_hblank: bool, ppu_res: &PpuStepResult) {
         let now_hblank = self.ppu.is_hblank();
         if !was_hblank && now_hblank && self.hdma.set_hblank(true) {
             self.transfer_hdma_block();
         }
         if was_hblank && !now_hblank {
             self.hdma.set_hblank(false);
-        }
-        if ppu_res.lcd_stat {
-            self.interrupt.request(InterruptKind::LcdStat);
         }
         if ppu_res.vblank {
             self.interrupt.request(InterruptKind::VBlank);

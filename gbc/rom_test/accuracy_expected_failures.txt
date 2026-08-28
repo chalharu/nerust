@@ -7,8 +7,6 @@
 #   to cgb_d, and BCE maps to both; ncm variants use the same revision policy.
 # - Diagnostic GBMicrotest ROMs that never publish the FF82 pass/fail protocol
 #   are excluded by the manifest rather than listed as expected failures.
-age_halt-m0-interrupt-dmgC-cgbBCE@cgb_c
-age_halt-m0-interrupt-dmgC-cgbBCE@cgb_d
 age_halt-m0-interrupt-dmgC-cgbBCE@dmg
 age_lcd-align-ly-cgbBC@cgb_c
 age_lcd-align-ly-cgbE@cgb_d
