@@ -591,6 +591,11 @@ impl GbcMemoryBus {
 
     fn maybe_step_cpu(&mut self, cpu: &mut impl CpuStepper, t1: u32) {
         if self.speed_switch_halt_countdown != 0 {
+            if self.speed_switch_halt_countdown > 4
+                && self.interrupt.enabled_interrupt_pending()
+            {
+                self.speed_switch_halt_countdown = 4;
+            }
             return;
         }
         let cpu_runs = if self.double_speed {
@@ -799,15 +804,14 @@ impl GbcMemoryBus {
     pub fn stop(&mut self) {
         if self.speed_switch_pending {
             // CGB speed switch: KEY1 bit 0 (prepare) was set before STOP.
-            // The switch happens and execution continues (no halt). The
-            // switch only occurs while IME = 0.
+            // The switch happens and execution continues (no regular STOP).
+            // A pending enabled interrupt skips the long oscillator stall,
+            // but IME itself does not prevent the speed toggle.
             self.speed_switch_pending = false;
-            if !self.interrupt.get_ime() {
-                let interrupt_pending = self.interrupt.enabled_interrupt_pending();
-                self.speed_switch_toggle_countdown = 6;
-                self.speed_switch_halt_countdown = if interrupt_pending { 0 } else { 0x20008 };
-                self.speed_switch_ppu_freeze = if interrupt_pending { 1 } else { 5 };
-            }
+            let interrupt_pending = self.interrupt.enabled_interrupt_pending();
+            self.speed_switch_toggle_countdown = 6;
+            self.speed_switch_halt_countdown = if interrupt_pending { 8 } else { 0x20008 };
+            self.speed_switch_ppu_freeze = if interrupt_pending { 1 } else { 5 };
             return;
         }
         self.timer.reset_div();
@@ -1515,6 +1519,36 @@ mod tests {
         bus.step_tcycle(&mut cpu);
         assert_eq!(bus.read(0xFF04), 0);
         assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn speed_switch_starts_while_ime_is_enabled() {
+        let mut bus = cgb_bus();
+        bus.set_ime(true);
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+
+        finish_speed_switch(&mut bus);
+        assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn enabled_interrupt_releases_speed_switch_stall() {
+        let mut bus = cgb_bus();
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..8 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert_eq!(cpu.steps, 0);
+
+        bus.write(0xFFFF, 0x04);
+        bus.write(0xFF0F, 0x04);
+        for _ in 0..4 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert!(cpu.steps > 0);
     }
 
     #[test]
