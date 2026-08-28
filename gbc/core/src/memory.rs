@@ -34,6 +34,7 @@ pub(crate) struct MemoryState {
     tick: u32,
     ppu_ds_toggle: bool,
     dma_tcounter: u8,
+    timer_irq_pending: bool,
     cartridge: Vec<u8>,
 }
 
@@ -106,6 +107,8 @@ pub struct GbcMemoryBus {
     ppu_ds_toggle: bool,
     /// DMA transfer sub-cycle counter: 1 byte per 4 T-cycles.
     dma_tcounter: u8,
+    /// DMG exposes the timer interrupt request one bus T-cycle after reload.
+    timer_irq_pending: bool,
     /// Routes CPU bus writes through the end-of-T-cycle event queue.
     cpu_step_active: bool,
     pending_ppu_writes: VecDeque<PpuWriteEvent>,
@@ -145,6 +148,7 @@ impl GbcMemoryBus {
             tick: self.tick,
             ppu_ds_toggle: self.ppu_ds_toggle,
             dma_tcounter: self.dma_tcounter,
+            timer_irq_pending: self.timer_irq_pending,
             cartridge: self.cartridge.serialize_mbc_state(),
         })
     }
@@ -183,6 +187,7 @@ impl GbcMemoryBus {
         self.tick = state.tick;
         self.ppu_ds_toggle = state.ppu_ds_toggle;
         self.dma_tcounter = state.dma_tcounter;
+        self.timer_irq_pending = state.timer_irq_pending;
         self.cpu_step_active = false;
         self.pending_ppu_writes.clear();
         self.current_pc = 0;
@@ -216,6 +221,7 @@ impl GbcMemoryBus {
             tick: 0,
             ppu_ds_toggle: false,
             dma_tcounter: 0,
+            timer_irq_pending: false,
             cpu_step_active: false,
             pending_ppu_writes: VecDeque::new(),
             current_pc: 0,
@@ -440,14 +446,7 @@ impl GbcMemoryBus {
             self.interrupt.request(InterruptKind::VBlank);
         }
         // Timer must be stepped before APU to ensure proper synchronization
-        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
-        let timer_cycles = if self.double_speed { 2 } else { 1 };
-        if self.timer.step(timer_cycles).overflow {
-            self.interrupt.request(InterruptKind::Timer);
-        }
-        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
-            self.apu.clock_div_apu();
-        }
+        self.advance_timer();
         self.apu.step(video);
         if t1 == 3 && self.serial.step() {
             self.interrupt.request(InterruptKind::Serial);
@@ -529,10 +528,18 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        if self.timer_irq_pending {
+            self.interrupt.request(InterruptKind::Timer);
+            self.timer_irq_pending = false;
+        }
         let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
         let timer_cycles = if self.double_speed { 2 } else { 1 };
         if self.timer.step(timer_cycles).overflow {
-            self.interrupt.request(InterruptKind::Timer);
+            if !self.cgb_mode && self.interrupt.is_halted_or_stopped() {
+                self.timer_irq_pending = true;
+            } else {
+                self.interrupt.request(InterruptKind::Timer);
+            }
         }
         if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
             self.apu.clock_div_apu();
@@ -1420,6 +1427,21 @@ mod tests {
         assert!(bus.is_halted_or_stopped());
         // No speed switch performed.
         assert!(!bus.is_double_speed());
+    }
+
+    #[test]
+    fn dmg_timer_interrupt_becomes_visible_one_tcycle_after_reload() {
+        let mut bus = bus();
+        bus.write(0xFF04, 0);
+        bus.write(0xFF05, 0xFF);
+        bus.write(0xFF07, 0x05);
+        bus.write(0xFF0F, 0);
+        bus.halt_cpu();
+
+        bus.step_devices(20);
+        assert_eq!(bus.read(0xFF0F) & InterruptKind::Timer.bit(), 0);
+        bus.step_devices(1);
+        assert_ne!(bus.read(0xFF0F) & InterruptKind::Timer.bit(), 0);
     }
 
     #[test]

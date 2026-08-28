@@ -166,8 +166,6 @@ gbmicro_int_hblank_nops_scx7@dmg
 gbmicro_int_oam_halt@dmg
 gbmicro_int_oam_incs@dmg
 gbmicro_int_oam_nops@dmg
-gbmicro_int_timer_halt_div_b@dmg
-gbmicro_int_timer_halt@dmg
 gbmicro_lcdon_to_if_oam_a@dmg
 gbmicro_lcdon_to_oam_int_l0@dmg
 gbmicro_lcdon_to_oam_int_l1@dmg
