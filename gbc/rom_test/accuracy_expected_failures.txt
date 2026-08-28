@@ -3,23 +3,19 @@
 # Model policy:
 # - GBMicrotest's README states the ROMs were verified on DMG-CPU-08 hardware;
 #   these @dmg entries are real accuracy gaps, not expected model rejection.
-# - AGE ROM suffixes encode their supported revisions. rom_tests.yaml maps
-#   dmgC -> dmg, cgbBC -> cgb_c/cgb_d, cgbE -> cgb_d, and ncm -> CGB DMG mode.
+# - AGE ROM suffixes encode their verified revisions. BC maps to cgb_c, E maps
+#   to cgb_d, and BCE maps to both; ncm variants use the same revision policy.
 # - Diagnostic GBMicrotest ROMs that never publish the FF82 pass/fail protocol
 #   are excluded by the manifest rather than listed as expected failures.
 age_halt-m0-interrupt-dmgC-cgbBCE@cgb_c
 age_halt-m0-interrupt-dmgC-cgbBCE@cgb_d
 age_halt-m0-interrupt-dmgC-cgbBCE@dmg
 age_lcd-align-ly-cgbBC@cgb_c
-age_lcd-align-ly-cgbBC@cgb_d
 age_lcd-align-ly-cgbE@cgb_d
 age_ly-cgbE@cgb_d
 age_ly-dmgC-cgbBC@cgb_c
-age_ly-dmgC-cgbBC@cgb_d
 age_ly-dmgC-cgbBC@dmg
 age_ly-ncmBC@cgb_c
-age_ly-ncmBC@cgb_d
-age_ly-ncmE@cgb_c
 age_ly-ncmE@cgb_d
 age_m3_bg_lcdc@dmg
 age_m3_bg_lcdc_ds@cgb_c
@@ -33,11 +29,8 @@ age_m3_bg_scx_nocgb@cgb_c
 age_m3_bg_scx_nocgb@cgb_d
 age_oam-read-cgbE@cgb_d
 age_oam-read-dmgC-cgbBC@cgb_c
-age_oam-read-dmgC-cgbBC@cgb_d
 age_oam-read-dmgC-cgbBC@dmg
 age_oam-read-ncmBC@cgb_c
-age_oam-read-ncmBC@cgb_d
-age_oam-read-ncmE@cgb_c
 age_oam-read-ncmE@cgb_d
 age_oam-write-cgbBCE@cgb_c
 age_oam-write-cgbBCE@cgb_d
@@ -49,12 +42,10 @@ age_spsw-ch2-lc-delay-cgbBCE@cgb_d
 age_spsw-div-cgbBCE@cgb_c
 age_spsw-div-cgbBCE@cgb_d
 age_spsw-interrupts-cgbBC@cgb_c
-age_spsw-interrupts-cgbBC@cgb_d
 age_spsw-interrupts-cgbE@cgb_d
 age_spsw-mode0-cgbBCE@cgb_c
 age_spsw-mode0-cgbBCE@cgb_d
 age_spsw-tima-cgbBC@cgb_c
-age_spsw-tima-cgbBC@cgb_d
 age_spsw-tima-cgbE@cgb_d
 age_stat-int-dmgC-cgbBCE@cgb_c
 age_stat-int-dmgC-cgbBCE@cgb_d
@@ -63,13 +54,10 @@ age_stat-int-ncmBCE@cgb_c
 age_stat-int-ncmBCE@cgb_d
 age_stat-mode-cgbE@cgb_d
 age_stat-mode-dmgC-cgbBC@cgb_c
-age_stat-mode-dmgC-cgbBC@cgb_d
 age_stat-mode-dmgC-cgbBC@dmg
 age_stat-mode-ds-cgbBCE@cgb_c
 age_stat-mode-ds-cgbBCE@cgb_d
 age_stat-mode-ncmBC@cgb_c
-age_stat-mode-ncmBC@cgb_d
-age_stat-mode-ncmE@cgb_c
 age_stat-mode-ncmE@cgb_d
 age_stat-mode-sprites-dmgC-cgbBCE@cgb_c
 age_stat-mode-sprites-dmgC-cgbBCE@cgb_d
