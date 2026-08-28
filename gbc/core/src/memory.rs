@@ -622,7 +622,8 @@ impl GbcMemoryBus {
                 .speed_switch_toggle_countdown
                 .saturating_sub(cpu_cycles);
             if self.speed_switch_toggle_countdown == 0 {
-                self.timer.reset_div();
+                self.timer
+                    .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
                 self.double_speed = !self.double_speed;
                 self.ppu.set_double_speed(self.double_speed);
             }

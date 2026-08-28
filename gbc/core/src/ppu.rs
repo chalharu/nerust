@@ -748,6 +748,10 @@ impl GbcPpu {
         self.key0
     }
 
+    pub fn is_cgb_revision_d(&self) -> bool {
+        self.cgb_revision_d
+    }
+
     /// Write $FF6C (KEY0/OPRI). Only bit 0 affects sprite priority;
     /// upper bits are stored for DMG emulation mode detection.
     pub fn set_key0(&mut self, value: u8) {

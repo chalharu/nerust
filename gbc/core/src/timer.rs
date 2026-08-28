@@ -181,6 +181,23 @@ impl Timer {
         self.set_div(0);
     }
 
+    /// Reset DIV at a CGB speed-toggle edge. On late CGB revisions, the
+    /// reset-induced TIMA increment is suppressed for the first M-cycle after
+    /// the selected divider bit rises (except for the 262 KHz source).
+    pub fn reset_div_for_speed_switch(&mut self, delayed_rising_edge: bool) {
+        let mask = self.selected_bit();
+        let phase = self.div & (mask * 2 - 1);
+        let suppress_increment = delayed_rising_edge
+            && (self.tac & 0x04) != 0
+            && mask != 0x0008
+            && (mask..mask + 4).contains(&phase);
+        if suppress_increment {
+            self.div = 0;
+        } else {
+            self.set_div(0);
+        }
+    }
+
     /// Set the 16-bit system counter to the post-boot value for a model
     /// (the boot ROM advances the counter; skipping it needs this).
     pub fn set_boot_counter(&mut self, value: u16) {
@@ -286,6 +303,22 @@ mod tests {
         t.div = 8;
         t.write(0xFF04, 0);
         assert_eq!(t.tima, 1);
+    }
+
+    #[test]
+    fn late_cgb_speed_switch_delays_reset_tick_at_rising_edge() {
+        let mut late = timer();
+        late.write(0xFF07, 0x04); // enable, freq 00 (bit 9)
+        late.div = 0x0200;
+        late.reset_div_for_speed_switch(true);
+        assert_eq!(late.div, 0);
+        assert_eq!(late.tima, 0);
+
+        let mut early = timer();
+        early.write(0xFF07, 0x04);
+        early.div = 0x0200;
+        early.reset_div_for_speed_switch(false);
+        assert_eq!(early.tima, 1);
     }
 
     #[test]
