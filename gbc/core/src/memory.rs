@@ -673,8 +673,10 @@ impl GbcMemoryBus {
                     self.ppu_ds_toggle = self.tick % 8 == 5;
                 }
                 self.ppu.set_double_speed(self.double_speed);
-                self.ppu
-                    .set_double_speed_odd_phase(self.double_speed && self.ppu_ds_toggle);
+                self.ppu.set_double_speed_odd_phase(
+                    self.ppu_ds_toggle
+                        && (self.double_speed || !self.ppu.is_cgb_revision_d()),
+                );
             }
         }
         freeze_ppu

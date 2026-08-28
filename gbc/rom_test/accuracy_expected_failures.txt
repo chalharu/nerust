@@ -8,13 +8,10 @@
 # - Diagnostic GBMicrotest ROMs that never publish the FF82 pass/fail protocol
 #   are excluded by the manifest rather than listed as expected failures.
 age_halt-m0-interrupt-dmgC-cgbBCE@dmg
-age_lcd-align-ly-cgbBC@cgb_c
 age_ly-dmgC-cgbBC@dmg
 age_m3_bg_lcdc@dmg
 age_m3_bg_scx@dmg
-age_oam-read-dmgC-cgbBC@cgb_c
 age_oam-read-dmgC-cgbBC@dmg
-age_oam-read-ncmBC@cgb_c
 age_oam-write-dmgC@dmg
 age_stat-int-dmgC-cgbBCE@dmg
 age_stat-mode-dmgC-cgbBC@dmg

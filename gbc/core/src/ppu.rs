@@ -749,7 +749,12 @@ impl GbcPpu {
             0
         } else if self.cgb_mode
             && self.lcdc & 0x80 != 0
-            && self.mode_clock + 1 >= self.line_length()
+            && self.mode_clock
+                + u32::from(
+                    !self.cgb_revision_d && !self.double_speed && self.double_speed_odd_phase,
+                )
+                + 1
+                >= self.line_length()
         {
             let next = if self.ly + 1 >= SCANLINES_PER_FRAME {
                 0
@@ -1116,8 +1121,14 @@ impl GbcPpu {
         if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 {
             let blocked = if self.cgb_mode {
                 if self.lcd_on_short_line {
-                    let mode3_end = 232 + u32::from(self.scx & 7);
+                    let mode3_end = 232 + u32::from(self.scx & 7)
+                        - u32::from(!self.cgb_revision_d && !self.double_speed);
                     self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock)
+                } else if self.double_speed
+                    && !self.cgb_revision_d
+                    && self.ly < VBLANK_START
+                {
+                    self.mode_clock != 0 && self.mode_clock <= self.mode3_end_clock() + 1
                 } else if self.cgb_revision_d && self.ly < VBLANK_START {
                     self.mode_clock <= self.mode3_end_clock() + 1
                 } else {
@@ -1577,6 +1588,24 @@ mod tests {
     }
 
     #[test]
+    fn cgb_c_double_speed_oam_read_window_opens_at_line_start() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = false;
+        p.double_speed = true;
+        p.oam[0] = 0x42;
+
+        p.mode_clock = 0;
+        assert_eq!(p.read_oam(0), 0x42);
+        p.mode_clock = 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock += 1;
+        assert_eq!(p.read_oam(0), 0x42);
+    }
+
+    #[test]
     fn step_increments_ly() {
         let mut p = ppu();
         let r = p.step(T_CYCLES_PER_SCANLINE);
@@ -1659,6 +1688,12 @@ mod tests {
 
         p.ly = 1;
         assert_eq!(p.read_register(0xFF44), 0);
+
+        p.cgb_revision_d = false;
+        p.double_speed_odd_phase = true;
+        p.ly = 143;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 2;
+        assert_eq!(p.read_register(0xFF44), 143 & 144);
     }
 
     #[test]
