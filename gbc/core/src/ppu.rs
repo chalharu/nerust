@@ -450,7 +450,8 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock < self.mode3_end_clock()
+        } else if (self.cgb_mode && self.mode_clock <= self.mode3_end_clock()
+            || !self.cgb_mode && self.mode_clock < self.mode3_end_clock())
             || self
                 .mode3_pipeline
                 .as_ref()
@@ -573,7 +574,7 @@ impl GbcPpu {
     fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
-            self.mode3_scx_penalty = if self.lcdc & 0x02 != 0 {
+            self.mode3_scx_penalty = if self.cgb_mode || self.lcdc & 0x02 != 0 {
                 u32::from(self.scx & 7)
             } else {
                 u32::from((self.scx & 7).div_ceil(4) * 4)
@@ -1626,6 +1627,19 @@ mod tests {
         for scx in 0..8 {
             let mut p = ppu();
             p.lcdc |= 0x02;
+            p.scx = scx;
+            p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+            p.start_pipeline_if_needed();
+            assert_eq!(p.mode3_scx_penalty, u32::from(scx), "SCX={scx}");
+        }
+    }
+
+    #[test]
+    fn cgb_scx_uses_raw_fine_scroll_without_objects() {
+        for scx in 0..8 {
+            let mut p = ppu();
+            p.cgb_mode = true;
+            p.lcdc &= !0x02;
             p.scx = scx;
             p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
             p.start_pipeline_if_needed();
