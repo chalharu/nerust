@@ -779,6 +779,10 @@ impl GbcMemoryBus {
         self.interrupt.get_ime()
     }
 
+    pub fn interrupt_pending(&self) -> bool {
+        self.interrupt.interrupt_pending()
+    }
+
     /// Read IE ($FFFF) during the OAM-DMA-locked window of a CPU
     /// instruction. Used by the interrupt dispatch when pushing PC to the
     /// IE register.

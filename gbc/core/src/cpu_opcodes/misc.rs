@@ -139,6 +139,10 @@ impl CpuStepState for Halt {
         // the instruction after EI).
         if core.take_armed_ime() {
             bus.set_ime(true);
+            if bus.interrupt_pending() {
+                let pc = core.registers().pc();
+                core.registers_mut().set_pc(pc.wrapping_sub(1));
+            }
         }
         bus.halt_cpu();
         StepResult::Exit

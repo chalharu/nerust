@@ -535,6 +535,19 @@ fn ei_then_halt_enables_ime_for_halt() {
 }
 
 #[test]
+fn ei_halt_with_pending_interrupt_rewinds_return_address_to_halt() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x76, 0x07]);
+    bus.write(0xFFFF, 0x01);
+    bus.write(0xFF0F, 0x01);
+
+    step_until_done(&mut cpu, &mut bus);
+    cpu.step(&mut bus);
+
+    assert!(bus.ime_enabled());
+    assert_eq!(cpu.registers().pc(), BASE + 1);
+}
+
+#[test]
 fn stop_consumes_padding_byte_before_speed_switch() {
     let (mut cpu, mut bus) = setup(&[0x10, 0x00, 0x3E, 0x42]);
     bus.set_cgb_mode(true);
