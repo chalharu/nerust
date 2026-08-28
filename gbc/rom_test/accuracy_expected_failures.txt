@@ -31,8 +31,6 @@ age_oam-read-ncmBC@cgb_c
 age_oam-write-dmgC@dmg
 age_spsw-ch2-lc-delay-cgbBCE@cgb_c
 age_spsw-ch2-lc-delay-cgbBCE@cgb_d
-age_spsw-div-cgbBCE@cgb_c
-age_spsw-div-cgbBCE@cgb_d
 age_spsw-interrupts-cgbBC@cgb_c
 age_spsw-interrupts-cgbE@cgb_d
 age_spsw-mode0-cgbBCE@cgb_c
