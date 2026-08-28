@@ -904,7 +904,9 @@ impl GbcPpu {
         let blocked = if self.cgb_mode {
             self.current_mode() == PpuMode::PixelTransfer
         } else {
-            self.mode_clock >= self.oam_search_cycles() && self.mode_clock <= self.mode3_end_clock()
+            self.ly < VBLANK_START
+                && self.mode_clock >= self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
         };
         if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
             return 0xFF;
@@ -929,7 +931,9 @@ impl GbcPpu {
         let blocked = if self.cgb_mode {
             self.current_mode() == PpuMode::PixelTransfer
         } else {
-            self.mode_clock > self.oam_search_cycles() && self.mode_clock <= self.mode3_end_clock()
+            self.ly < VBLANK_START
+                && self.mode_clock > self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
         };
         if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
             return;
@@ -955,7 +959,7 @@ impl GbcPpu {
                     PpuMode::OamSearch | PpuMode::PixelTransfer
                 )
             } else {
-                self.mode_clock <= self.mode3_end_clock()
+                self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock()
             };
             if blocked {
                 return 0xFF;
@@ -971,7 +975,8 @@ impl GbcPpu {
                 PpuMode::OamSearch | PpuMode::PixelTransfer
             )
         } else {
-            self.mode_clock > 0
+            self.ly < VBLANK_START
+                && self.mode_clock > 0
                 && self.mode_clock != self.oam_search_cycles()
                 && self.mode_clock <= self.mode3_end_clock()
         };
@@ -1288,6 +1293,22 @@ mod tests {
         assert_eq!(p.read_vram(0x8000), 0xFF);
         p.write_vram(0x8000, 0x73);
         assert_eq!(p.vram[0], 0x42);
+    }
+
+    #[test]
+    fn dmg_allows_vram_and_oam_access_during_vblank() {
+        let mut p = ppu();
+        p.ly = VBLANK_START;
+        p.mode_clock = p.oam_search_cycles() + 1;
+        p.vram[0] = 0x42;
+        p.oam[0] = 0x24;
+
+        assert_eq!(p.read_vram(0x8000), 0x42);
+        p.write_vram(0x8000, 0x73);
+        assert_eq!(p.read_vram(0x8000), 0x73);
+        assert_eq!(p.read_oam(0), 0x24);
+        p.write_oam(0, 0x37);
+        assert_eq!(p.read_oam(0), 0x37);
     }
 
     #[test]

@@ -2,7 +2,6 @@ rom_root: ../../roms/gbc
 expected_failure_files:
   - accuracy_expected_failures.txt
 expected_failures:
-  - mbc3_tester_255_banks@dmg
   - m3_lcdc_obj_size_change@dmg
   - m3_lcdc_obj_size_change_scx@dmg
   - m3_lcdc_tile_sel_change@dmg
