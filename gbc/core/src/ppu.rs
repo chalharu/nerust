@@ -713,7 +713,7 @@ impl GbcPpu {
                 self.ly = 0;
                 self.frame_complete = true;
                 self.window_line = 0;
-                self.cgb_vblank_mode_carry = self.cgb_revision_d;
+                self.cgb_vblank_mode_carry = self.cgb_revision_d || self.double_speed;
             }
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
         }
@@ -1985,6 +1985,21 @@ mod tests {
         p.step(1);
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::VBlank as u8);
         p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn cgb_c_double_speed_carries_vblank_mode_across_frame_wrap() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = false;
+        p.double_speed = true;
+        p.ly = SCANLINES_PER_FRAME - 1;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::VBlank as u8);
+        p.mode_clock = 2;
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
     }
 

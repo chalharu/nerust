@@ -22,7 +22,6 @@ age_spsw-interrupts-cgbBC@cgb_c
 age_spsw-tima-cgbBC@cgb_c
 age_stat-int-dmgC-cgbBCE@dmg
 age_stat-mode-dmgC-cgbBC@dmg
-age_stat-mode-ds-cgbBCE@cgb_c
 age_stat-mode-sprites-dmgC-cgbBCE@dmg
 age_stat-mode-window-dmgC@dmg
 age_vram-read-dmgC@dmg
