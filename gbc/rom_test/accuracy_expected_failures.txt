@@ -14,7 +14,6 @@ age_m3_bg_scx@dmg
 age_oam-read-dmgC-cgbBC@dmg
 age_oam-write-dmgC@dmg
 age_stat-int-dmgC-cgbBCE@dmg
-age_stat-mode-dmgC-cgbBC@dmg
 age_stat-mode-sprites-dmgC-cgbBCE@dmg
 age_stat-mode-window-dmgC@dmg
 age_vram-read-dmgC@dmg
