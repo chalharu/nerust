@@ -723,19 +723,39 @@ impl GbcPpu {
     /// though the real mode has already advanced to OAM search.
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
-        if self.cgb_vblank_mode_carry && self.ly == 0 && self.mode_clock < 4 {
+        let line_start_window = if self.double_speed { 2 } else { 4 };
+        if self.cgb_vblank_mode_carry
+            && self.ly == 0
+            && self.mode_clock < line_start_window
+        {
             stat = (stat & 0xFC) | PpuMode::VBlank as u8;
-        } else if self.cgb_mode && self.ly == VBLANK_START && self.mode_clock < 4 {
+        } else if self.cgb_mode
+            && self.ly == VBLANK_START
+            && self.mode_clock < line_start_window
+        {
             stat &= 0xFC;
         } else if self.cgb_mode && self.lcd_on_short_line {
             let fine_scroll = u32::from(self.scx & 7);
-            let mode3_end = 232 + (fine_scroll + 2) / 4 * 4;
+            let mode3_end = if self.double_speed {
+                232 + fine_scroll.div_ceil(2) * 2
+            } else {
+                232 + (fine_scroll + 2) / 4 * 4
+            };
             if (52..60).contains(&self.mode_clock) || self.mode_clock >= mode3_end {
                 stat &= 0xFC;
             } else if self.mode_clock >= 60 {
                 stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
             }
-        } else if (self.cgb_mode && self.ly < VBLANK_START && self.mode_clock < 4)
+        } else if self.cgb_mode
+            && self.double_speed
+            && self.ly < VBLANK_START
+            && self.scx & 1 != 0
+            && self.mode_clock == self.mode3_end_clock() + 1
+        {
+            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        } else if (self.cgb_mode
+            && self.ly < VBLANK_START
+            && self.mode_clock < if self.double_speed { 2 } else { 4 })
             || (self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0)
         {
             stat &= 0xFC;
@@ -1786,6 +1806,38 @@ mod tests {
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
         p.mode_clock = 232;
         assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+    }
+
+    #[test]
+    fn double_speed_stat_quantizes_short_line_and_odd_scx() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.lcd_on_short_line = true;
+        p.scx = 1;
+        p.mode_clock = 232;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.scx = 2;
+        p.mode_clock = 234;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+
+        p.lcd_on_short_line = false;
+        p.scx = 1;
+        p.mode3_scx_penalty = 1;
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+    }
+
+    #[test]
+    fn double_speed_stat_line_start_window_is_two_dots() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.stat = (p.stat & 0xFC) | PpuMode::OamSearch as u8;
+        p.mode_clock = 0;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 2;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
     }
 
     #[test]
