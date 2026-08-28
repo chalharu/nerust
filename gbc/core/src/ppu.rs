@@ -806,6 +806,14 @@ impl GbcPpu {
             } else {
                 (68..72).contains(&self.mode_clock)
             };
+        let dmg_raw_scx_hblank = !self.cgb_mode
+            && self.lcdc & 0x22 == 0
+            && self.ly < VBLANK_START
+            && self.mode_clock
+                > self.oam_search_cycles()
+                    + T_CYCLES_PIXEL_TRANSFER
+                    + u32::from(self.scx & 7)
+                    + u32::from(self.scx & 3 == 2);
         if self.cgb_vblank_mode_carry
             && self.ly == 0
             && self.mode_clock < line_start_window
@@ -814,6 +822,7 @@ impl GbcPpu {
         } else if self.cgb_mode
             && ((self.ly == VBLANK_START && self.mode_clock < line_start_window)
                 || startup_mode0_pulse)
+            || dmg_raw_scx_hblank
         {
             stat &= 0xFC;
         } else if self.cgb_mode && self.lcd_on_short_line {
@@ -2063,6 +2072,19 @@ mod tests {
             p.start_pipeline_if_needed();
             assert_eq!(p.mode3_scx_penalty, expected_penalty, "SCX={scx}");
         }
+    }
+
+    #[test]
+    fn dmg_stat_uses_raw_scx_only_without_window_or_objects() {
+        let mut p = ppu();
+        p.lcdc &= !0x22;
+        p.scx = 5;
+        p.mode_clock = T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER + 6;
+        p.stat = (p.stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+
+        p.lcdc |= 0x20;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
     }
 
     #[test]
