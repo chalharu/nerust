@@ -678,7 +678,16 @@ impl GbcPpu {
     /// internal line state advances. Keep rendering/LYC on the internal line,
     /// but expose the next line during that final bus-access window.
     fn visible_ly(&self) -> u8 {
-        if !self.cgb_mode
+        if self.cgb_revision_d
+            && self.ly == SCANLINES_PER_FRAME - 1
+            && if self.double_speed {
+                (6..8).contains(&self.mode_clock) || self.mode_clock >= 454
+            } else {
+                (8..12).contains(&self.mode_clock) || self.mode_clock >= 452
+            }
+        {
+            0
+        } else if !self.cgb_mode
             && self.lcdc & 0x80 != 0
             && self.lcd_on_delay == 0
             && self.mode_clock + 1 >= self.line_length()
@@ -1498,6 +1507,33 @@ mod tests {
         let mut p = ppu();
         step_ly(&mut p, 10);
         assert_eq!(p.read_register(0xFF44), 10);
+    }
+
+    #[test]
+    fn late_cgb_ly_153_zero_window_is_speed_aware() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = 153;
+
+        p.mode_clock = 7;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 8;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 12;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 452;
+        assert_eq!(p.read_register(0xFF44), 0);
+
+        p.double_speed = true;
+        p.mode_clock = 5;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 6;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 8;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 454;
+        assert_eq!(p.read_register(0xFF44), 0);
     }
 
     #[test]
