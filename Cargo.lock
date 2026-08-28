@@ -1849,6 +1849,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
 name = "glow"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2892,21 +2898,27 @@ name = "nerust_android"
 version = "0.1.0-dev"
 dependencies = [
  "android_logger",
+ "base64",
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
+ "nerust_gbc_factory",
+ "nerust_gbc_settings",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
- "nerust_nes_controller",
  "nerust_nes_factory",
  "nerust_nes_settings",
+ "nerust_persistence",
  "nerust_render_traits",
  "nerust_render_wgpu",
  "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
+ "serde",
+ "serde_json",
+ "sha2",
  "winit",
 ]
 
@@ -2987,6 +2999,7 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "crc",
+ "glob",
  "nerust_gbc_core",
  "nerust_input_traits",
  "nerust_render_traits",

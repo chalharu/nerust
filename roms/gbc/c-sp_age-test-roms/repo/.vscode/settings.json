@@ -1,0 +1,14 @@
+{
+    "files.eol": "\n",
+    "rgbdsz80.includePath": [
+        "src",
+        "src/_include"
+    ],
+    "rgbdsz80.formatting.capitalization": {
+        "language.keyword": "upper",
+        "language.register": "lower",
+        "language.conditioncode": "lower",
+        "language.instruction": "lower",
+        "language.hex": "upper"
+    }
+}

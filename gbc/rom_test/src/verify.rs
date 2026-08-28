@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use nerust_gbc_core::memory::GbcMemoryBus;
+use nerust_gbc_core::{cpu_registers::CpuRegisters, memory::GbcMemoryBus};
 
 use super::{error::RomTestError, media};
+
+type RegisterEntry<'a> = (&'static str, Option<&'a str>, fn(&CpuRegisters) -> u8);
 
 /// Outcome of one declared verification check.
 #[derive(Debug, Clone, Serialize)]
@@ -18,6 +20,115 @@ pub struct CheckResult {
 pub struct MemoryEntry {
     pub address: String, // hex, e.g. "0xC000"
     pub value: String,   // hex, e.g. "0x42"
+}
+
+/// Repeated expected byte values, optionally arranged in strided rows.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryRegion {
+    pub start: String,
+    pub length: usize,
+    pub value: String,
+    #[serde(default)]
+    pub row_length: Option<usize>,
+    #[serde(default)]
+    pub stride: Option<usize>,
+}
+
+/// Compare two 8-bit memory locations. Useful for ROM protocols that publish
+/// an actual value and its expected counterpart separately.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryComparison {
+    pub actual_address: String,
+    pub expected_address: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub when: Option<MemoryCondition>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryCondition {
+    pub address: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub not_value: Option<String>,
+}
+
+/// Expected values for the 8-bit CPU registers used by test ROM protocols.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RegisterVerify {
+    #[serde(default)]
+    pub b: Option<String>,
+    #[serde(default)]
+    pub c: Option<String>,
+    #[serde(default)]
+    pub d: Option<String>,
+    #[serde(default)]
+    pub e: Option<String>,
+    #[serde(default)]
+    pub h: Option<String>,
+    #[serde(default)]
+    pub l: Option<String>,
+}
+
+impl RegisterVerify {
+    pub fn is_empty(&self) -> bool {
+        self.entries().iter().all(|(_, value, _)| value.is_none())
+    }
+
+    pub fn validate(&self) -> Result<(), RomTestError> {
+        for (name, value, _) in self.entries() {
+            if value.is_some_and(|value| parse_hex(value).is_err()) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "invalid CPU register {name} value"
+                )));
+            }
+            if value
+                .is_some_and(|value| parse_hex(value).is_ok_and(|value| value > u64::from(u8::MAX)))
+            {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "CPU register {name} value is out of range"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn matches(&self, registers: &CpuRegisters) -> bool {
+        self.entries().into_iter().all(|(_, expected, actual)| {
+            expected.is_none_or(|expected| {
+                parse_hex(expected).is_ok_and(|expected| u64::from(actual(registers)) == expected)
+            })
+        })
+    }
+
+    fn entries(&self) -> [RegisterEntry<'_>; 6] {
+        [
+            ("B", self.b.as_deref(), CpuRegisters::b),
+            ("C", self.c.as_deref(), CpuRegisters::c),
+            ("D", self.d.as_deref(), CpuRegisters::d),
+            ("E", self.e.as_deref(), CpuRegisters::e),
+            ("H", self.h.as_deref(), CpuRegisters::h),
+            ("L", self.l.as_deref(), CpuRegisters::l),
+        ]
+    }
+
+    fn verify(&self, registers: &CpuRegisters, checks: &mut Vec<CheckResult>) {
+        for (name, expected, actual) in self.entries() {
+            let Some(expected) = expected else {
+                continue;
+            };
+            let expected = parse_hex(expected).expect("register values are validated") as u8;
+            let actual = actual(registers);
+            checks.push(CheckResult {
+                name: format!("register.{name}"),
+                expected: format!("${expected:02X}"),
+                actual: format!("${actual:02X}"),
+                passed: actual == expected,
+            });
+        }
+    }
 }
 
 /// Hash algorithm used for a digest check.
@@ -91,6 +202,12 @@ pub struct VerifySpec {
     pub frame: Option<FrameVerify>,
     #[serde(default)]
     pub memory: Vec<MemoryEntry>,
+    #[serde(default)]
+    pub memory_regions: Vec<MemoryRegion>,
+    #[serde(default)]
+    pub memory_comparisons: Vec<MemoryComparison>,
+    #[serde(default)]
+    pub registers: RegisterVerify,
 }
 
 impl VerifySpec {
@@ -115,32 +232,33 @@ impl VerifySpec {
     /// Called at manifest load time so configuration errors fail fast
     /// instead of surfacing per cell at run time.
     pub fn validate(&self) -> Result<(), RomTestError> {
-        if let Some(serial) = &self.serial {
-            if let Some(hash) = &serial.hash {
-                parse_hex_bytes(hash.value())?;
-            }
-            if let Some(suffix) = &serial.suffix {
-                parse_hex_bytes(suffix)?;
-            }
+        self.validate_media()?;
+        for entry in &self.memory {
+            validate_memory_entry(entry)?;
+        }
+        for region in &self.memory_regions {
+            validate_memory_region(region)?;
+        }
+        for comparison in &self.memory_comparisons {
+            validate_memory_comparison(comparison)?;
+        }
+        self.registers.validate()?;
+        Ok(())
+    }
+
+    fn validate_media(&self) -> Result<(), RomTestError> {
+        if let Some(hash) = self.serial.as_ref().and_then(|serial| serial.hash.as_ref()) {
+            parse_hex_bytes(hash.value())?;
+        }
+        if let Some(suffix) = self
+            .serial
+            .as_ref()
+            .and_then(|serial| serial.suffix.as_ref())
+        {
+            parse_hex_bytes(suffix)?;
         }
         if let Some(frame) = &self.frame {
             parse_hex_bytes(frame.hash.value())?;
-        }
-        for entry in &self.memory {
-            let address = parse_hex(&entry.address)?;
-            if address > u16::MAX as u64 {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "invalid memory address: {}",
-                    entry.address
-                )));
-            }
-            let value = parse_hex(&entry.value)?;
-            if value > u8::MAX as u64 {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "invalid memory value: {}",
-                    entry.value
-                )));
-            }
         }
         Ok(())
     }
@@ -230,7 +348,7 @@ impl VerifySpec {
         for entry in &self.memory {
             let addr = parse_hex(&entry.address)? as u16;
             let expected = parse_hex(&entry.value)? as u8;
-            let actual = bus.read(addr);
+            let actual = bus.debug_read(addr);
             checks.push(CheckResult {
                 name: format!("memory@${:04X}", addr),
                 expected: format!("${:02X}", expected),
@@ -238,8 +356,132 @@ impl VerifySpec {
                 passed: actual == expected,
             });
         }
+        for region in &self.memory_regions {
+            let start = parse_hex(&region.start)? as usize;
+            let expected = parse_hex(&region.value)? as u8;
+            let row_length = region.row_length.unwrap_or(region.length);
+            let stride = region.stride.unwrap_or(row_length);
+            let mismatch = (0..region.length).find_map(|index| {
+                let address = start + index / row_length * stride + index % row_length;
+                let actual = bus.debug_read(address as u16);
+                (actual != expected).then_some((address, actual))
+            });
+            checks.push(CheckResult {
+                name: format!("memory_region@${start:04X}"),
+                expected: format!("{} bytes of ${expected:02X}", region.length),
+                actual: mismatch.map_or_else(
+                    || "all bytes matched".to_string(),
+                    |(address, actual)| format!("${actual:02X} at ${address:04X}"),
+                ),
+                passed: mismatch.is_none(),
+            });
+        }
+        for comparison in &self.memory_comparisons {
+            if let Some(condition) = &comparison.when {
+                let address = parse_hex(&condition.address)? as u16;
+                let actual = bus.debug_read(address);
+                let matches = condition
+                    .value
+                    .as_deref()
+                    .map(|value| parse_hex(value).map(|value| actual == value as u8))
+                    .or_else(|| {
+                        condition
+                            .not_value
+                            .as_deref()
+                            .map(|value| parse_hex(value).map(|value| actual != value as u8))
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            let actual_address = parse_hex(&comparison.actual_address)? as u16;
+            let expected_address = parse_hex(&comparison.expected_address)? as u16;
+            let actual = bus.debug_read(actual_address);
+            let expected = bus.debug_read(expected_address);
+            checks.push(CheckResult {
+                name: comparison.name.clone().unwrap_or_else(|| {
+                    format!("memory@${actual_address:04X} == memory@${expected_address:04X}")
+                }),
+                expected: format!("${expected:02X}"),
+                actual: format!("${actual:02X}"),
+                passed: actual == expected,
+            });
+        }
         Ok(())
     }
+
+    pub fn verify_registers(&self, registers: &CpuRegisters, checks: &mut Vec<CheckResult>) {
+        self.registers.verify(registers, checks);
+    }
+}
+
+fn validate_memory_entry(entry: &MemoryEntry) -> Result<(), RomTestError> {
+    if parse_hex(&entry.address)? > u64::from(u16::MAX) {
+        return Err(RomTestError::InvalidManifest(format!(
+            "invalid memory address: {}",
+            entry.address
+        )));
+    }
+    if parse_hex(&entry.value)? > u64::from(u8::MAX) {
+        return Err(RomTestError::InvalidManifest(format!(
+            "invalid memory value: {}",
+            entry.value
+        )));
+    }
+    Ok(())
+}
+
+fn validate_memory_region(region: &MemoryRegion) -> Result<(), RomTestError> {
+    let start = parse_hex(&region.start)?;
+    let value = parse_hex(&region.value)?;
+    let row_length = region.row_length.unwrap_or(region.length);
+    let stride = region.stride.unwrap_or(row_length);
+    if region.length == 0 || row_length == 0 || stride < row_length {
+        return Err(RomTestError::InvalidManifest(
+            "memory region dimensions must be positive and stride must cover a row".to_string(),
+        ));
+    }
+    let rows = region.length.div_ceil(row_length);
+    let last = start + ((rows - 1) * stride + (region.length - 1) % row_length) as u64;
+    if last > u64::from(u16::MAX) || value > u64::from(u8::MAX) {
+        return Err(RomTestError::InvalidManifest(
+            "memory region exceeds the address or byte value range".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_memory_comparison(comparison: &MemoryComparison) -> Result<(), RomTestError> {
+    for address in [&comparison.actual_address, &comparison.expected_address] {
+        if parse_hex(address)? > u64::from(u16::MAX) {
+            return Err(RomTestError::InvalidManifest(format!(
+                "invalid memory comparison address: {address}"
+            )));
+        }
+    }
+    let Some(condition) = &comparison.when else {
+        return Ok(());
+    };
+    if condition.value.is_some() == condition.not_value.is_some() {
+        return Err(RomTestError::InvalidManifest(
+            "memory comparison condition requires exactly one of value/not_value".to_string(),
+        ));
+    }
+    let value = condition
+        .value
+        .as_deref()
+        .or(condition.not_value.as_deref())
+        .expect("condition value presence was validated");
+    if parse_hex(&condition.address)? > u64::from(u16::MAX)
+        || parse_hex(value)? > u64::from(u8::MAX)
+    {
+        return Err(RomTestError::InvalidManifest(
+            "memory comparison condition is out of range".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Raw rendered pixels for reference comparison.
@@ -473,6 +715,60 @@ mod tests {
             ..VerifySpec::default()
         };
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn memory_comparison_validates_addresses_and_reports_values() {
+        let spec = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0xFF80".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: Some("rom_result".to_string()),
+                when: None,
+            }],
+            ..VerifySpec::default()
+        };
+        assert!(spec.validate().is_ok());
+
+        let mut bus = GbcMemoryBus::new();
+        bus.write(0xFF80, 0x12);
+        bus.write(0xFF81, 0x34);
+        let mut checks = Vec::new();
+        spec.verify_memory(&bus, &mut checks).unwrap();
+
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "rom_result");
+        assert_eq!(checks[0].actual, "$12");
+        assert_eq!(checks[0].expected, "$34");
+        assert!(!checks[0].passed);
+
+        let conditional = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0xFF80".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: None,
+                when: Some(MemoryCondition {
+                    address: "0xFF82".to_string(),
+                    value: Some("0xFF".to_string()),
+                    not_value: None,
+                }),
+            }],
+            ..VerifySpec::default()
+        };
+        checks.clear();
+        conditional.verify_memory(&bus, &mut checks).unwrap();
+        assert!(checks.is_empty());
+
+        let invalid = VerifySpec {
+            memory_comparisons: vec![MemoryComparison {
+                actual_address: "0x10000".to_string(),
+                expected_address: "0xFF81".to_string(),
+                name: None,
+                when: None,
+            }],
+            ..VerifySpec::default()
+        };
+        assert!(invalid.validate().is_err());
     }
 
     #[test]

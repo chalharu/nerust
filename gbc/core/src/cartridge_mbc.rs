@@ -92,6 +92,7 @@ pub trait Mbc: std::fmt::Debug + Send {
     }
     fn step_clock(&mut self) {}
     fn sync_rtc(&mut self, now: SystemTime) {}
+    fn sync_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {}
 
     fn reset_runtime(&mut self) {}
 

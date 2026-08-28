@@ -533,3 +533,36 @@ fn ei_then_halt_enables_ime_for_halt() {
     );
     assert!(bus.is_halted_or_stopped(), "HALT should halt the CPU");
 }
+
+#[test]
+fn ei_halt_with_pending_interrupt_rewinds_return_address_to_halt() {
+    let (mut cpu, mut bus) = setup(&[0xFB, 0x76, 0x07]);
+    bus.write(0xFFFF, 0x01);
+    bus.write(0xFF0F, 0x01);
+
+    step_until_done(&mut cpu, &mut bus);
+    cpu.step(&mut bus);
+
+    assert!(bus.ime_enabled());
+    assert_eq!(cpu.registers().pc(), BASE + 1);
+}
+
+#[test]
+fn stop_consumes_padding_byte_before_speed_switch() {
+    let (mut cpu, mut bus) = setup(&[0x10, 0x00, 0x3E, 0x42]);
+    bus.set_cgb_mode(true);
+    bus.write(0xFF4D, 0x01);
+
+    step_until_done(&mut cpu, &mut bus);
+
+    assert_eq!(cpu.registers().pc(), BASE + 2);
+    assert!(!bus.is_double_speed());
+    for _ in 0..70_000 {
+        bus.step_tcycle(&mut cpu);
+        if cpu.registers().a() == 0x42 {
+            break;
+        }
+    }
+    assert!(bus.is_double_speed());
+    assert_eq!(cpu.registers().a(), 0x42);
+}

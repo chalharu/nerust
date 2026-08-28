@@ -51,15 +51,14 @@ impl Noise {
         }
     }
 
-    /// Clock the LFSR (XNOR of bits 0 and 1).
+    /// Clock the LFSR (XOR of bits 0 and 1).
     fn clock_lfsr(&mut self) {
-        // XNOR of bit 0 and bit 1 (Pan Docs: 1 if identical, 0 otherwise)
-        let xnor_bit = ((self.lfsr & 1) ^ ((self.lfsr >> 1) & 1)) ^ 1;
+        let xor_bit = (self.lfsr & 1) ^ ((self.lfsr >> 1) & 1);
         // Shift right and put result in bit 14
-        self.lfsr = (self.lfsr >> 1) | (xnor_bit << 14);
+        self.lfsr = (self.lfsr >> 1) | (xor_bit << 14);
         // 7-bit mode: also copy to bit 6
         if self.width_mode {
-            self.lfsr = (self.lfsr & !0x40) | (xnor_bit << 6);
+            self.lfsr = (self.lfsr & !0x40) | (xor_bit << 6);
         }
     }
 
@@ -68,8 +67,8 @@ impl Noise {
         if !self.dac_enabled || !self.active {
             return 0;
         }
-        // Output is 0 if LFSR bit 0 is 0, otherwise the envelope volume
-        if self.lfsr & 1 == 0 {
+        // The DAC receives the inverse of LFSR bit 0.
+        if self.lfsr & 1 != 0 {
             0
         } else {
             self.envelope.output()
@@ -152,36 +151,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn noise_lfsr_xnor() {
+    fn noise_lfsr_uses_xor_feedback() {
         let mut ch = Noise::new();
         ch.lfsr = 0x7FFF; // All bits 1
         ch.clock_lfsr();
-        // XNOR of bit 0 (1) and bit 1 (1) = 1
-        // After shift: bit 14 = 1, rest shifted right
-        // Expected: 0x7FFF >> 1 | (1 << 14) = 0x3FFF | 0x4000 = 0x7FFF
-        assert_eq!(ch.lfsr, 0x7FFF);
+        assert_eq!(ch.lfsr, 0x3FFF);
     }
 
     #[test]
-    fn noise_output_zero_when_lfsr_bit0_zero() {
+    fn noise_output_volume_when_lfsr_bit0_zero() {
         let mut ch = Noise::new();
         ch.active = true;
         ch.dac_enabled = true;
         ch.envelope.reload_volume(0xF0);
         ch.envelope.reload_timer(false);
         ch.lfsr = 0x7FFE; // bit 0 = 0
-        assert_eq!(ch.output(), 0);
+        assert_eq!(ch.output(), 15);
     }
 
     #[test]
-    fn noise_output_volume_when_lfsr_bit0_one() {
+    fn noise_output_zero_when_lfsr_bit0_one() {
         let mut ch = Noise::new();
         ch.active = true;
         ch.dac_enabled = true;
         ch.envelope.reload_volume(0xF0);
         ch.envelope.reload_timer(false);
         ch.lfsr = 0x7FFF; // bit 0 = 1
-        assert_eq!(ch.output(), 15);
+        assert_eq!(ch.output(), 0);
     }
 
     #[test]

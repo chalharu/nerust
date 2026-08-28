@@ -1,0 +1,23 @@
+# compiled object file
+*.o
+
+# roms
+*.gbc
+*.gb
+
+# rgbds extras
+*.sym
+*.map
+
+# converted image data
+*.2bpp
+*.1bpp
+*.pic
+
+# for any of the poor souls with save game files in their working directory
+*.sgm
+*.sav
+*.sys
+
+#macOS
+.DS_Store

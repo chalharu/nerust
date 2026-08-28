@@ -7,12 +7,14 @@ rust-version.workspace = true
 version.workspace = true
 
 [build-dependencies]
+glob.workspace = true
 serde = { features = ["derive"], workspace = true }
 serde-saphyr.workspace = true
 
 [dependencies]
 clap.workspace = true
 crc.workspace = true
+glob.workspace = true
 nerust_gbc_core = { path = "../core" }
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true

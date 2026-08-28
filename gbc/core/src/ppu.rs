@@ -47,6 +47,10 @@ pub(crate) struct PpuState {
     cgb_mode: bool,
     cgb_game: bool,
     cgb_revision_d: bool,
+    #[serde(default)]
+    double_speed: bool,
+    #[serde(default)]
+    double_speed_odd_phase: bool,
     stat_signal: bool,
     stat_forced: bool,
     vblank_if_countdown: u8,
@@ -54,6 +58,10 @@ pub(crate) struct PpuState {
     lcd_on_hblank_extra: u32,
     ly_for_comparison: i16,
     lcd_on_short_line: bool,
+    #[serde(default)]
+    cgb_lcd_startup_lines: u8,
+    #[serde(default)]
+    cgb_vblank_mode_carry: bool,
     mode3_scx_penalty: u32,
     mode3_sprite_penalty: u32,
     wx_written_during_oam: bool,
@@ -101,6 +109,8 @@ pub struct GbcPpu {
     pub cgb_mode: bool,
     pub cgb_game: bool, // game uses CGB features (bit 7 of $143)
     pub cgb_revision_d: bool,
+    double_speed: bool,
+    double_speed_odd_phase: bool,
 
     /// Current level of the combined STAT interrupt signal. The LCD STAT
     /// interrupt (IF bit 1) is requested on a rising edge of this signal.
@@ -127,6 +137,9 @@ pub struct GbcPpu {
     /// The first line after the LCD is turned on is shorter than a normal
     /// scanline (448 T-cycles; mode 2 is 76 and mode 0 is 4+8 shorter).
     lcd_on_short_line: bool,
+    cgb_lcd_startup_lines: u8,
+    /// CGB-E keeps mode 1 visible for four dots after LY wraps to zero.
+    cgb_vblank_mode_carry: bool,
 
     /// SCX fine-scroll penalty (SCX & 7) latched at the start of mode 3;
     /// extends the pixel transfer period.
@@ -178,6 +191,8 @@ impl Default for GbcPpu {
             cgb_mode: false,
             cgb_game: false,
             cgb_revision_d: true,
+            double_speed: false,
+            double_speed_odd_phase: false,
             stat_signal: false,
             stat_forced: false,
             vblank_if_countdown: 0,
@@ -185,6 +200,8 @@ impl Default for GbcPpu {
             lcd_on_hblank_extra: 0,
             ly_for_comparison: 0,
             lcd_on_short_line: false,
+            cgb_lcd_startup_lines: 0,
+            cgb_vblank_mode_carry: false,
             mode3_scx_penalty: 0,
             mode3_sprite_penalty: 0,
             wx_written_during_oam: false,
@@ -218,6 +235,8 @@ impl GbcPpu {
             cgb_mode: self.cgb_mode,
             cgb_game: self.cgb_game,
             cgb_revision_d: self.cgb_revision_d,
+            double_speed: self.double_speed,
+            double_speed_odd_phase: self.double_speed_odd_phase,
             stat_signal: self.stat_signal,
             stat_forced: self.stat_forced,
             vblank_if_countdown: self.vblank_if_countdown,
@@ -225,6 +244,8 @@ impl GbcPpu {
             lcd_on_hblank_extra: self.lcd_on_hblank_extra,
             ly_for_comparison: self.ly_for_comparison,
             lcd_on_short_line: self.lcd_on_short_line,
+            cgb_lcd_startup_lines: self.cgb_lcd_startup_lines,
+            cgb_vblank_mode_carry: self.cgb_vblank_mode_carry,
             mode3_scx_penalty: self.mode3_scx_penalty,
             mode3_sprite_penalty: self.mode3_sprite_penalty,
             wx_written_during_oam: self.wx_written_during_oam,
@@ -238,6 +259,7 @@ impl GbcPpu {
             || state.bg_palette.len() != 32
             || state.obj_palette.len() != 32
             || state.frame_buffer.len() != 160 * 144
+            || state.cgb_lcd_startup_lines > 4
         {
             return Err("PPU state buffer length mismatch".into());
         }
@@ -281,6 +303,8 @@ impl GbcPpu {
         candidate.cgb_mode = state.cgb_mode;
         candidate.cgb_game = state.cgb_game;
         candidate.cgb_revision_d = state.cgb_revision_d;
+        candidate.double_speed = state.double_speed;
+        candidate.double_speed_odd_phase = state.double_speed_odd_phase;
         candidate.stat_signal = state.stat_signal;
         candidate.stat_forced = state.stat_forced;
         candidate.vblank_if_countdown = state.vblank_if_countdown;
@@ -288,6 +312,8 @@ impl GbcPpu {
         candidate.lcd_on_hblank_extra = state.lcd_on_hblank_extra;
         candidate.ly_for_comparison = state.ly_for_comparison;
         candidate.lcd_on_short_line = state.lcd_on_short_line;
+        candidate.cgb_lcd_startup_lines = state.cgb_lcd_startup_lines;
+        candidate.cgb_vblank_mode_carry = state.cgb_vblank_mode_carry;
         candidate.mode3_scx_penalty = state.mode3_scx_penalty;
         candidate.mode3_sprite_penalty = state.mode3_sprite_penalty;
         candidate.wx_written_during_oam = state.wx_written_during_oam;
@@ -323,6 +349,7 @@ impl GbcPpu {
     fn step_lcd_off(&mut self) -> PpuStepResult {
         self.ly = 0;
         self.mode_clock = 0;
+        self.cgb_vblank_mode_carry = false;
         self.mode3_pipeline = None;
         // LCD off: STAT mode bits read as 00 (HBlank); the LYC
         // coincidence bit (bit2) is latched and retained.
@@ -403,6 +430,19 @@ impl GbcPpu {
         }
     }
 
+    /// DMG STAT write bug: during a write to STAT, all interrupt-enable bits
+    /// briefly behave as set. This raises the combined STAT line in modes
+    /// 0, 1, or 2, and while LY=LYC, but not in mode 3 alone.
+    pub(crate) fn dmg_stat_write_irq(&self) -> bool {
+        if self.lcdc & 0x80 == 0 {
+            return false;
+        }
+        if self.lyc_coincide() || self.ly >= VBLANK_START {
+            return true;
+        }
+        self.mode_clock < self.oam_irq_rise() || self.mode_clock >= self.mode3_end_clock() + 4
+    }
+
     fn stat_signal_vblank(&self) -> bool {
         // The mode-1 condition is level-active for all of VBlank
         // (starting 4 T-cycles into line 144).
@@ -437,7 +477,8 @@ impl GbcPpu {
             PpuMode::HBlank
         } else if self.mode_clock <= self.oam_search_cycles() {
             PpuMode::OamSearch
-        } else if self.mode_clock < self.mode3_end_clock()
+        } else if (self.cgb_mode && self.mode_clock <= self.mode3_end_clock()
+            || !self.cgb_mode && self.mode_clock < self.mode3_end_clock())
             || self
                 .mode3_pipeline
                 .as_ref()
@@ -487,8 +528,47 @@ impl GbcPpu {
                 .mode3_pipeline
                 .as_ref()
                 .map_or(self.mode3_sprite_penalty, |p| {
-                    u32::from(p.sprite_extra_dots()).max(self.mode3_sprite_penalty)
+                    let window = p.window_extra_dots();
+                    let sprite = p.sprite_extra_dots();
+                    let sprite_reload = if self.cgb_mode && self.double_speed && sprite != 0 {
+                        2
+                    } else if self.cgb_mode
+                        && !self.double_speed
+                        && self.cgb_game
+                        && sprite != 0
+                        && p.sprite_count() == 1
+                    {
+                        4
+                    } else {
+                        0
+                    };
+                    u32::from(
+                        sprite
+                            .saturating_add(sprite_reload)
+                            .saturating_add(window)
+                            .saturating_add(self.cgb_window_reload_penalty(window)),
+                    )
+                    .max(self.mode3_sprite_penalty)
                 })
+    }
+
+    fn cgb_window_reload_penalty(&self, window_dots: u8) -> u8 {
+        if !self.cgb_mode {
+            return 0;
+        }
+        if window_dots != 0 {
+            return if self.double_speed { 2 } else { 4 }
+                + u8::from(self.wx == 0 && self.scx & 7 != 0);
+        }
+        if self.window_eligible && (162..=167).contains(&self.wx) {
+            let penalty = match self.wx {
+                166 => 5,
+                167 => 2,
+                _ => 4,
+            };
+            return penalty + if self.double_speed { 0 } else { 2 };
+        }
+        0
     }
 
     /// The LY=LYC coincidence signal feeding the STAT interrupt.
@@ -559,11 +639,11 @@ impl GbcPpu {
     fn start_pipeline_if_needed(&mut self) {
         if self.ly < VBLANK_START && self.mode_clock == self.oam_search_cycles() + 1 {
             let sprites = self.scanline_sprites();
-            // The fetcher pays the raw SCX fine-scroll delay, but the CPU
-            // observes the mode-3→0 boundary on 4-T-cycle bus phases. Round
-            // the STAT/access boundary up to 0/4/8 T-cycles (mooneye
-            // hblank_ly_scx_timing-GS).
-            self.mode3_scx_penalty = u32::from((self.scx & 7).div_ceil(4) * 4);
+            self.mode3_scx_penalty = if self.cgb_mode || self.lcdc & 0x02 != 0 {
+                u32::from(self.scx & 7)
+            } else {
+                u32::from((self.scx & 7).div_ceil(4) * 4)
+            };
             self.mode3_sprite_penalty = 0;
             let mut pipeline = Mode3Pipeline::new(
                 Registers {
@@ -585,6 +665,7 @@ impl GbcPpu {
                 self.cgb_revision_d,
                 self.opri,
             );
+            pipeline.set_double_speed(self.double_speed);
             pipeline.set_wx_written_during_oam(self.wx_written_during_oam);
             self.wx_written_during_oam = false;
             self.mode3_pipeline = Some(pipeline);
@@ -599,7 +680,11 @@ impl GbcPpu {
                 self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
                     output.color;
             }
-            self.mode3_sprite_penalty = u32::from(pipeline.sprite_extra_dots());
+            self.mode3_sprite_penalty = u32::from(
+                pipeline
+                    .sprite_extra_dots()
+                    .saturating_add(pipeline.window_extra_dots()),
+            );
             if pipeline.complete() {
                 self.window_line = pipeline.final_window_line();
                 self.mode3_pipeline = None;
@@ -614,6 +699,7 @@ impl GbcPpu {
             self.mode3_pipeline = None;
             self.wx_written_during_oam = false;
             self.lcd_on_short_line = false;
+            self.cgb_lcd_startup_lines = self.cgb_lcd_startup_lines.saturating_sub(1);
             self.ly = self.ly.wrapping_add(1);
             if !self.cgb_mode {
                 self.ly_for_comparison = -1;
@@ -627,6 +713,7 @@ impl GbcPpu {
                 self.ly = 0;
                 self.frame_complete = true;
                 self.window_line = 0;
+                self.cgb_vblank_mode_carry = self.cgb_revision_d || self.double_speed;
             }
             self.window_eligible = self.lcdc & 0x20 != 0 && self.ly >= self.wy;
         }
@@ -648,16 +735,48 @@ impl GbcPpu {
     /// internal line state advances. Keep rendering/LYC on the internal line,
     /// but expose the next line during that final bus-access window.
     fn visible_ly(&self) -> u8 {
-        if !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock + 1 >= self.line_length()
-        {
-            let next = self.ly.wrapping_add(1);
-            if next >= SCANLINES_PER_FRAME { 0 } else { next }
+        if self.cgb_ly_wrap_visible() {
+            0
+        } else if self.cgb_next_ly_visible() {
+            self.ly & self.next_ly()
+        } else if self.dmg_next_ly_visible() {
+            self.next_ly()
         } else {
             self.ly
         }
+    }
+
+    fn cgb_ly_wrap_visible(&self) -> bool {
+        self.cgb_mode
+            && self.ly == SCANLINES_PER_FRAME - 1
+            && if self.double_speed {
+                (5..8).contains(&self.mode_clock)
+                    || self.double_speed_odd_phase && (106..108).contains(&self.mode_clock)
+                    || self.mode_clock >= 453
+            } else {
+                ((if self.cgb_revision_d { 5 } else { 4 })..14).contains(&self.mode_clock)
+                    || self.mode_clock >= 450
+            }
+    }
+
+    fn cgb_next_ly_visible(&self) -> bool {
+        let early_offset =
+            u32::from(!self.cgb_revision_d && !self.double_speed && self.double_speed_odd_phase);
+        self.cgb_mode
+            && self.lcdc & 0x80 != 0
+            && self.mode_clock + early_offset + 1 >= self.line_length()
+    }
+
+    fn dmg_next_ly_visible(&self) -> bool {
+        !self.cgb_mode
+            && self.lcdc & 0x80 != 0
+            && self.lcd_on_delay == 0
+            && self.mode_clock + 1 >= self.line_length()
+    }
+
+    fn next_ly(&self) -> u8 {
+        let next = self.ly.wrapping_add(1);
+        if next >= SCANLINES_PER_FRAME { 0 } else { next }
     }
 
     fn current_mode(&self) -> PpuMode {
@@ -684,10 +803,82 @@ impl GbcPpu {
     /// though the real mode has already advanced to OAM search.
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
-        if self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0 {
+        if self.carries_vblank_stat_mode() {
+            stat = (stat & 0xFC) | PpuMode::VBlank as u8;
+        } else if self.forces_hblank_stat_mode() {
+            stat &= 0xFC;
+        } else if self.cgb_mode && self.lcd_on_short_line {
+            stat = self.short_line_stat_mode(stat);
+        } else if self.extends_double_speed_mode3() {
+            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        } else if self.starts_line_in_hblank() {
             stat &= 0xFC;
         }
         stat
+    }
+
+    fn line_start_window(&self) -> u32 {
+        if self.double_speed { 2 } else { 4 }
+    }
+
+    fn carries_vblank_stat_mode(&self) -> bool {
+        self.cgb_vblank_mode_carry && self.ly == 0 && self.mode_clock < self.line_start_window()
+    }
+
+    fn forces_hblank_stat_mode(&self) -> bool {
+        let cgb_mode0 = self.cgb_mode
+            && ((self.ly == VBLANK_START && self.mode_clock < self.line_start_window())
+                || self.cgb_startup_mode0_pulse());
+        cgb_mode0 || self.dmg_raw_scx_hblank()
+    }
+
+    fn cgb_startup_mode0_pulse(&self) -> bool {
+        self.cgb_lcd_startup_lines != 0
+            && self.ly == 3
+            && if self.double_speed {
+                (40..42).contains(&self.mode_clock)
+            } else {
+                (68..72).contains(&self.mode_clock)
+            }
+    }
+
+    fn dmg_raw_scx_hblank(&self) -> bool {
+        let mode3_end = self.oam_search_cycles()
+            + T_CYCLES_PIXEL_TRANSFER
+            + u32::from(self.scx & 7)
+            + u32::from(self.scx & 3 == 2);
+        !self.cgb_mode
+            && self.lcdc & 0x22 == 0
+            && self.ly < VBLANK_START
+            && self.mode_clock > mode3_end
+    }
+
+    fn short_line_stat_mode(&self, mut stat: u8) -> u8 {
+        let fine_scroll = u32::from(self.scx & 7);
+        let mode3_end = if self.double_speed {
+            232 + fine_scroll.div_ceil(2) * 2
+        } else {
+            232 + (fine_scroll + 2) / 4 * 4
+        };
+        if (52..60).contains(&self.mode_clock) || self.mode_clock >= mode3_end {
+            stat &= 0xFC;
+        } else if self.mode_clock >= 60 {
+            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        }
+        stat
+    }
+
+    fn extends_double_speed_mode3(&self) -> bool {
+        self.cgb_mode
+            && self.double_speed
+            && self.ly < VBLANK_START
+            && (self.scx & 1 != 0 || self.double_speed_odd_phase)
+            && self.mode_clock == self.mode3_end_clock() + 1
+    }
+
+    fn starts_line_in_hblank(&self) -> bool {
+        (self.cgb_mode && self.ly < VBLANK_START && self.mode_clock < self.line_start_window())
+            || (self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0)
     }
 
     /// Mode 2 is 76 T-cycles (not 80) on the first line after the LCD is
@@ -704,6 +895,10 @@ impl GbcPpu {
         self.key0
     }
 
+    pub fn is_cgb_revision_d(&self) -> bool {
+        self.cgb_revision_d
+    }
+
     /// Write $FF6C (KEY0/OPRI). Only bit 0 affects sprite priority;
     /// upper bits are stored for DMG emulation mode detection.
     pub fn set_key0(&mut self, value: u8) {
@@ -715,6 +910,14 @@ impl GbcPpu {
     /// (boot ROM emulation) to avoid overriding the desired default.
     pub fn raw_set_key0(&mut self, value: u8) {
         self.key0 = value;
+    }
+
+    pub(crate) fn set_double_speed(&mut self, enabled: bool) {
+        self.double_speed = enabled;
+    }
+
+    pub(crate) fn set_double_speed_odd_phase(&mut self, enabled: bool) {
+        self.double_speed_odd_phase = enabled;
     }
 
     /// Whether the PPU is in HBlank (mode 0). Used by HDMA controller.
@@ -887,29 +1090,57 @@ impl GbcPpu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock >= self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock()
-        {
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.vram_read_blocked() {
             return 0xFF;
         }
+        self.vram[self.vram_index(addr)]
+    }
+
+    fn vram_read_blocked(&self) -> bool {
+        if self.cgb_mode {
+            if self.lcd_on_short_line {
+                let fine_scroll = u32::from(self.scx & 7);
+                let (mode3_start, mode3_end) = if self.double_speed {
+                    (60, 232 + fine_scroll)
+                } else {
+                    (64, 232 + (fine_scroll + 2) / 4 * 4)
+                };
+                (mode3_start..mode3_end).contains(&self.mode_clock)
+            } else if self.double_speed && self.ly < VBLANK_START {
+                self.current_mode() == PpuMode::PixelTransfer
+                    || self.mode_clock == self.mode3_end_clock() + 1
+            } else {
+                self.current_mode() == PpuMode::PixelTransfer
+            }
+        } else {
+            self.ly < VBLANK_START
+                && self.mode_clock >= self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
+        }
+    }
+
+    fn vram_index(&self, addr: u16) -> usize {
         let idx = if self.vbk == 0 {
             addr & 0x1FFF
         } else {
             0x2000 + (addr & 0x1FFF)
         };
-        self.vram[idx as usize]
+        idx as usize
+    }
+
+    pub fn debug_read_vram(&self, addr: u16) -> u8 {
+        self.vram[self.vram_index(addr)]
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
-        if !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock > self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock()
-        {
+        let blocked = if self.cgb_mode {
+            self.current_mode() == PpuMode::PixelTransfer
+        } else {
+            self.ly < VBLANK_START
+                && self.mode_clock > self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
+        };
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
             return;
         }
         let idx = if self.vbk == 0 {
@@ -926,33 +1157,72 @@ impl GbcPpu {
         // on the DMG the scanline position is used directly so that the
         // OAM-search window (which starts right after the line's brief
         // HBlank continuation) blocks reads.
-        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 {
-            let blocked = if self.cgb_mode {
-                matches!(
-                    self.current_mode(),
-                    PpuMode::OamSearch | PpuMode::PixelTransfer
-                )
-            } else {
-                self.mode_clock <= self.mode3_end_clock()
-            };
-            if blocked {
-                return 0xFF;
-            }
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.oam_read_blocked() {
+            return 0xFF;
         }
         self.oam[addr as usize]
     }
 
+    fn oam_read_blocked(&self) -> bool {
+        if !self.cgb_mode {
+            return self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock();
+        }
+        if self.lcd_on_short_line {
+            let mode3_end = 232 + u32::from(self.scx & 7)
+                - u32::from(!self.cgb_revision_d && !self.double_speed);
+            return self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock);
+        }
+        if self.double_speed && !self.cgb_revision_d && self.ly < VBLANK_START {
+            return self.mode_clock != 0 && self.mode_clock <= self.mode3_end_clock() + 1;
+        }
+        if self.cgb_revision_d && self.ly < VBLANK_START {
+            return self.mode_clock <= self.mode3_end_clock() + 1;
+        }
+        self.mode_blocks_oam()
+    }
+
     pub fn write_oam(&mut self, addr: u8, value: u8) {
-        let blocked = !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock > 0
-            && self.mode_clock != self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock();
+        let blocked = self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.oam_write_blocked();
         if blocked {
             return;
         }
         self.oam[addr as usize] = value;
+    }
+
+    fn oam_write_blocked(&self) -> bool {
+        if self.cgb_mode {
+            if self.lcd_on_short_line {
+                let fine_scroll = u32::from(self.scx & 7);
+                let (mode3_start, mode3_end) = if self.double_speed {
+                    (58, 232 + fine_scroll)
+                } else {
+                    (60, 232 + (fine_scroll + 2) / 4 * 4)
+                };
+                self.mode_clock < 52 || (mode3_start..mode3_end).contains(&self.mode_clock)
+            } else if self.double_speed && self.ly < VBLANK_START {
+                matches!(
+                    self.current_mode(),
+                    PpuMode::OamSearch | PpuMode::PixelTransfer
+                ) || self.mode_clock == self.mode3_end_clock() + 1
+            } else {
+                matches!(
+                    self.current_mode(),
+                    PpuMode::OamSearch | PpuMode::PixelTransfer
+                )
+            }
+        } else {
+            self.ly < VBLANK_START
+                && self.mode_clock > 0
+                && self.mode_clock != self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
+        }
+    }
+
+    fn mode_blocks_oam(&self) -> bool {
+        matches!(
+            self.current_mode(),
+            PpuMode::OamSearch | PpuMode::PixelTransfer
+        )
     }
 
     /// OAM DMA writes are never blocked (the DMA is a PPU-internal access).
@@ -1137,10 +1407,11 @@ impl GbcPpu {
         self.lcdc = value;
         if !lcd_was_enabled && value & 0x80 != 0 {
             // The PPU starts at the beginning of the next scanline. During
-            // the power-on delay (20 T-cycles) STAT mode bits read as 00 and
+            // the power-on delay STAT mode bits read as 00 and
             // the LYC comparison clock is not running.
             self.lcd_on_delay = if self.cgb_mode { 20 } else { 77 };
             self.lcd_on_short_line = true;
+            self.cgb_lcd_startup_lines = if self.cgb_mode { 4 } else { 0 };
             self.ly_for_comparison = 0;
             self.window_eligible = value & 0x20 != 0 && self.ly >= self.wy;
             // LY=0 at power-on. The comparison against LYC is evaluated on
@@ -1252,6 +1523,133 @@ mod tests {
     }
 
     #[test]
+    fn cgb_blocks_vram_during_mode3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.vram[0] = 0x42;
+        p.mode_clock = p.oam_search_cycles() + 1;
+
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.write_vram(0x8000, 0x73);
+        assert_eq!(p.vram[0], 0x42);
+    }
+
+    #[test]
+    fn dmg_allows_vram_and_oam_access_during_vblank() {
+        let mut p = ppu();
+        p.ly = VBLANK_START;
+        p.mode_clock = p.oam_search_cycles() + 1;
+        p.vram[0] = 0x42;
+        p.oam[0] = 0x24;
+
+        assert_eq!(p.read_vram(0x8000), 0x42);
+        p.write_vram(0x8000, 0x73);
+        assert_eq!(p.read_vram(0x8000), 0x73);
+        assert_eq!(p.read_oam(0), 0x24);
+        p.write_oam(0, 0x37);
+        assert_eq!(p.read_oam(0), 0x37);
+    }
+
+    #[test]
+    fn cgb_blocks_oam_writes_during_modes2_and3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.oam[0] = 0x42;
+
+        p.mode_clock = 1;
+        p.write_oam(0, 0x73);
+        assert_eq!(p.oam[0], 0x42);
+
+        p.mode_clock = p.oam_search_cycles() + 1;
+        p.write_oam(0, 0x99);
+        assert_eq!(p.oam[0], 0x42);
+    }
+
+    #[test]
+    fn cgb_short_line_has_oam_transition_hole_and_early_hblank() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.lcd_on_short_line = true;
+        p.oam[0] = 0x42;
+        p.vram[0] = 0x24;
+
+        p.mode_clock = 51;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = 52;
+        assert_eq!(p.read_oam(0), 0x42);
+        p.mode_clock = 60;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = 232;
+        assert_eq!(p.read_oam(0), 0x42);
+
+        p.scx = 1;
+        p.write_oam(0, 0x73);
+        assert_eq!(p.oam[0], 0x73);
+        p.scx = 2;
+        p.mode_clock = 232;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
+
+        p.scx = 0;
+        p.mode_clock = 60;
+        assert_eq!(p.read_vram(0x8000), 0x24);
+        p.mode_clock = 64;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.mode_clock = 232;
+        assert_eq!(p.read_vram(0x8000), 0x24);
+        p.scx = 2;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+
+        p.double_speed = true;
+        p.scx = 1;
+        p.mode_clock = 58;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
+        p.mode_clock = 232;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x73);
+        p.mode_clock = 233;
+        p.write_oam(0, 0x37);
+        assert_eq!(p.oam[0], 0x37);
+
+        p.mode_clock = 60;
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.mode_clock = 233;
+        assert_eq!(p.read_vram(0x8000), 0x24);
+    }
+
+    #[test]
+    fn cgb_d_oam_read_lock_extends_one_dot_past_mode3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.oam[0] = 0x42;
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+
+        p.cgb_revision_d = false;
+        assert_eq!(p.read_oam(0), 0x42);
+    }
+
+    #[test]
+    fn cgb_c_double_speed_oam_read_window_opens_at_line_start() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = false;
+        p.double_speed = true;
+        p.oam[0] = 0x42;
+
+        p.mode_clock = 0;
+        assert_eq!(p.read_oam(0), 0x42);
+        p.mode_clock = 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_oam(0), 0xFF);
+        p.mode_clock += 1;
+        assert_eq!(p.read_oam(0), 0x42);
+    }
+
+    #[test]
     fn step_increments_ly() {
         let mut p = ppu();
         let r = p.step(T_CYCLES_PER_SCANLINE);
@@ -1284,6 +1682,62 @@ mod tests {
         let mut p = ppu();
         step_ly(&mut p, 10);
         assert_eq!(p.read_register(0xFF44), 10);
+    }
+
+    #[test]
+    fn late_cgb_ly_153_zero_window_is_speed_aware() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = 153;
+
+        p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 5;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 13;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 14;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 450;
+        assert_eq!(p.read_register(0xFF44), 0);
+
+        p.double_speed = true;
+        p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.mode_clock = 5;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 8;
+        assert_eq!(p.read_register(0xFF44), 153);
+        p.double_speed_odd_phase = true;
+        p.mode_clock = 106;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 453;
+        assert_eq!(p.read_register(0xFF44), 0);
+
+        p.cgb_revision_d = false;
+        p.double_speed = false;
+        p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF44), 0);
+    }
+
+    #[test]
+    fn late_cgb_ly_bus_ands_adjacent_lines_on_final_dot() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = 143;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+        assert_eq!(p.read_register(0xFF44), 143 & 144);
+
+        p.ly = 1;
+        assert_eq!(p.read_register(0xFF44), 0);
+
+        p.cgb_revision_d = false;
+        p.double_speed_odd_phase = true;
+        p.ly = 143;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 2;
+        assert_eq!(p.read_register(0xFF44), 143 & 144);
     }
 
     #[test]
@@ -1322,6 +1776,22 @@ mod tests {
         p.write_register(0xFF41, 0xFF);
         assert_eq!(p.read_register(0xFF41) & 0x07, 0);
         assert_eq!(p.read_register(0xFF41) & 0x78, 0x78);
+    }
+
+    #[test]
+    fn dmg_stat_write_bug_uses_delayed_hblank_window() {
+        let mut p = ppu();
+        p.write_register(0xFF45, 1);
+
+        p.mode_clock = p.mode3_end_clock();
+        assert!(!p.dmg_stat_write_irq());
+        p.mode_clock += 4;
+        assert!(p.dmg_stat_write_irq());
+        p.mode_clock = 0;
+        p.ly = 1;
+        assert!(p.dmg_stat_write_irq());
+        p.mode_clock = 4;
+        assert!(!p.dmg_stat_write_irq());
     }
 
     #[test]
@@ -1509,6 +1979,115 @@ mod tests {
     }
 
     #[test]
+    fn cgb_short_line_stat_has_early_mode3_and_hblank() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.lcd_on_short_line = true;
+
+        p.mode_clock = 56;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 60;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.mode_clock = 232;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+    }
+
+    #[test]
+    fn double_speed_stat_quantizes_short_line_and_odd_scx() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.lcd_on_short_line = true;
+        p.scx = 1;
+        p.mode_clock = 232;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.scx = 2;
+        p.mode_clock = 234;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+
+        p.lcd_on_short_line = false;
+        p.scx = 1;
+        p.mode3_scx_penalty = 1;
+        p.mode_clock = p.mode3_end_clock() + 1;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+    }
+
+    #[test]
+    fn double_speed_stat_line_start_window_is_two_dots() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.stat = (p.stat & 0xFC) | PpuMode::OamSearch as u8;
+        p.mode_clock = 0;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 2;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn cgb_lcd_startup_exposes_speed_aware_mode0_pulse() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_lcd_startup_lines = 1;
+        p.ly = 3;
+        p.stat = (p.stat & 0xFC) | PpuMode::OamSearch as u8;
+
+        p.mode_clock = 68;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 72;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+
+        p.double_speed = true;
+        p.mode_clock = 40;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+        p.mode_clock = 42;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn odd_double_speed_phase_carries_mode3_one_dot() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.double_speed = true;
+        p.double_speed_odd_phase = true;
+        p.scx = 0;
+        p.mode_clock = p.mode3_end_clock() + 1;
+
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+        p.mode_clock += 1;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+    }
+
+    #[test]
+    fn cgb_e_stat_carries_vblank_mode_across_frame_wrap() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = SCANLINES_PER_FRAME - 1;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::VBlank as u8);
+        p.mode_clock = 4;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
+    fn cgb_c_double_speed_carries_vblank_mode_across_frame_wrap() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = false;
+        p.double_speed = true;
+        p.ly = SCANLINES_PER_FRAME - 1;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+
+        p.step(1);
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::VBlank as u8);
+        p.mode_clock = 2;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::OamSearch as u8);
+    }
+
+    #[test]
     fn stat_mode_keeps_final_pixel_transfer_t_cycle_visible() {
         let mut p = ppu();
         p.mode_clock = p.mode3_end_clock() - 1;
@@ -1519,7 +2098,7 @@ mod tests {
     }
 
     #[test]
-    fn dmg_scx_quantizes_cpu_visible_hblank_boundary() {
+    fn dmg_scx_quantizes_cpu_visible_hblank_boundary_without_sprites() {
         let expected = [0, 4, 4, 4, 4, 8, 8, 8];
         for (scx, expected_penalty) in expected.into_iter().enumerate() {
             let mut p = ppu();
@@ -1528,6 +2107,71 @@ mod tests {
             p.start_pipeline_if_needed();
             assert_eq!(p.mode3_scx_penalty, expected_penalty, "SCX={scx}");
         }
+    }
+
+    #[test]
+    fn dmg_stat_uses_raw_scx_only_without_window_or_objects() {
+        let mut p = ppu();
+        p.lcdc &= !0x22;
+        p.scx = 5;
+        p.mode_clock = T_CYCLES_OAM_SEARCH + T_CYCLES_PIXEL_TRANSFER + 6;
+        p.stat = (p.stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::HBlank as u8);
+
+        p.lcdc |= 0x20;
+        assert_eq!(p.read_register(0xFF41) & 3, PpuMode::PixelTransfer as u8);
+    }
+
+    #[test]
+    fn dmg_scx_uses_raw_fine_scroll_when_objects_are_enabled() {
+        for scx in 0..8 {
+            let mut p = ppu();
+            p.lcdc |= 0x02;
+            p.scx = scx;
+            p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+            p.start_pipeline_if_needed();
+            assert_eq!(p.mode3_scx_penalty, u32::from(scx), "SCX={scx}");
+        }
+    }
+
+    #[test]
+    fn cgb_scx_uses_raw_fine_scroll_without_objects() {
+        for scx in 0..8 {
+            let mut p = ppu();
+            p.cgb_mode = true;
+            p.lcdc &= !0x02;
+            p.scx = scx;
+            p.mode_clock = T_CYCLES_OAM_SEARCH + 1;
+            p.start_pipeline_if_needed();
+            assert_eq!(p.mode3_scx_penalty, u32::from(scx), "SCX={scx}");
+        }
+    }
+
+    #[test]
+    fn cgb_window_reload_penalty_handles_fine_scroll_and_right_edge() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+
+        p.wx = 0;
+        p.scx = 0;
+        assert_eq!(p.cgb_window_reload_penalty(6), 4);
+        p.scx = 1;
+        assert_eq!(p.cgb_window_reload_penalty(6), 5);
+
+        p.window_eligible = true;
+        p.wx = 162;
+        assert_eq!(p.cgb_window_reload_penalty(0), 6);
+        p.wx = 166;
+        assert_eq!(p.cgb_window_reload_penalty(0), 7);
+        p.wx = 167;
+        assert_eq!(p.cgb_window_reload_penalty(0), 4);
+
+        p.double_speed = true;
+        p.wx = 0;
+        p.scx = 0;
+        assert_eq!(p.cgb_window_reload_penalty(6), 2);
+        p.wx = 167;
+        assert_eq!(p.cgb_window_reload_penalty(0), 2);
     }
 
     #[test]

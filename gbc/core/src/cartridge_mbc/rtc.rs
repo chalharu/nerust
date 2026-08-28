@@ -168,6 +168,14 @@ impl Mbc3Rtc {
         let Some(saved_at) = self.saved_at_unix_seconds.take() else {
             return;
         };
+        self.sync_from_unix_seconds(saved_at, now);
+    }
+
+    pub fn sync_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        self.sync_from_unix_seconds(unix_seconds(saved_at), now);
+    }
+
+    fn sync_from_unix_seconds(&mut self, saved_at: u64, now: SystemTime) {
         let now = unix_seconds(now);
         if now > saved_at && !self.live.halted {
             self.live.advance_seconds(now - saved_at);

@@ -55,7 +55,13 @@ pub(crate) fn read_state_summary(
 
 pub(crate) fn load_state_archive(path: &Path) -> Result<LoadedArchive, PersistenceError> {
     let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
+    load_state_archive_from_reader(file)
+}
+
+pub(crate) fn load_state_archive_from_reader<R: std::io::Read + std::io::Seek>(
+    reader: R,
+) -> Result<LoadedArchive, PersistenceError> {
+    let mut archive = ZipArchive::new(reader)?;
     let metadata = read_metadata(&mut archive)?;
     let machine_state = {
         let mut machine_state_file = archive.by_name(STATE_ENTRY)?;

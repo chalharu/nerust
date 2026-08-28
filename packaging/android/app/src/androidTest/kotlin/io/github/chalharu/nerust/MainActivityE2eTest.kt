@@ -2,9 +2,11 @@ package io.github.chalharu.nerust
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -21,6 +23,11 @@ import java.util.concurrent.atomic.AtomicReference
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
     @Test
+    fun runtimeMeetsMinimumSupportedApi() {
+        assertTrue("Android API 28 or newer is required", Build.VERSION.SDK_INT >= 28)
+    }
+
+    @Test
     fun romPickerIntentUsesSafPersistableReadAccess() {
         val intent = MainActivity.createRomPickerIntentForTest()
 
@@ -36,12 +43,51 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test
+    fun directoryPickerIntentUsesPersistableReadWriteAccess() {
+        val intent = MainActivity.createDirectoryPickerIntentForTest()
+
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, intent.action)
+        assertTrue(
+            intent.flags and DIRECTORY_PICKER_REQUIRED_FLAGS == DIRECTORY_PICKER_REQUIRED_FLAGS,
+        )
+    }
+
+    @Suppress("DEPRECATION")
     @Test(timeout = TEST_TIMEOUT_MS)
-    fun appSupportsDrawerDialogsAndMenuActionsWithoutVisibleMenuButton() {
+    fun appLoadsGbcAndSupportsDrawerDialogsAndMenuActions() {
         val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
+        }
+        assertTrue(
+            "GBC document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+
+        val stateFilesBefore = stateSlotFiles()
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest("save_state")
+        }
+        assertTrue(
+            "GBC Save State should create a state archive",
+            waitUntil(DIALOG_TIMEOUT_MS) { (stateSlotFiles() - stateFilesBefore).isNotEmpty() },
+        )
 
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         assertDrawerHandleAvailable(activity)
+
+        runOnActivityThread(activity) {
+            activity.updateFloatingDpad(true, 400f, 1300f, 500f, 1200f)
+            assertArrayEquals(
+                floatArrayOf(1f, 400f, 1300f, 500f, 1200f),
+                requireNotNull(activity.floatingDpadStateForTest()),
+                0.01f,
+            )
+            activity.updateFloatingDpad(false, 0f, 0f, 0f, 0f)
+            assertEquals(0f, requireNotNull(activity.floatingDpadStateForTest())[0], 0.01f)
+        }
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
@@ -77,47 +123,13 @@ class MainActivityE2eTest {
         }
 
         runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive before opening ROM Library" }
-            activity.showRomLibraryDialogForTest(
-                arrayOf("Super Mario Bros.", "Metroid"),
-                arrayOf("mario", "metroid"),
-            )
-        }
-
-        assertChromeViewAvailable(
-            activity,
-            ROM_LIBRARY_DIALOG_TAG,
-            DIALOG_TIMEOUT_MS,
-            "ROM library dialog should be attached after requesting it",
-        )
-
-        runOnActivityThread(activity) {
-            val dialogRoot =
-                requireNotNull(activity.findChromeViewForTest(ROM_LIBRARY_DIALOG_TAG)) {
-                    "ROM library dialog root should be available"
-                }
-            assertEquals(
-                "ROM Library\nImport new ROM…\nSuper Mario Bros.\nMetroid",
-                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
-            )
-            assertEquals(
-                DIALOG_PRESENTATION_FULL_SCREEN,
-                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
-            )
-            activity.dismissComposeDialogForTest()
-        }
-
-        runOnActivityThread(activity) {
-            activity.resetChromeStateForTest()
-        }
-
-        runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
             activity.showSettingsDialogForTest(
                 arrayOf("video_filter", "touch_overlay"),
                 arrayOf("Video Filter", "Touch Overlay"),
                 arrayOf("CRT\tLCD", "On\tOff"),
                 arrayOf("1", "0"),
+                arrayOf("video", "controls"),
             )
         }
 
@@ -138,8 +150,12 @@ class MainActivityE2eTest {
                 dialogRoot.getTag(R.id.nerust_dialog_content_probe),
             )
             assertEquals(
-                DIALOG_PRESENTATION_CARD,
+                DIALOG_PRESENTATION_FULL_SCREEN,
                 dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
+            )
+            assertEquals(
+                "Video: 1 setting\nControls: 1 setting",
+                dialogRoot.getTag(R.id.nerust_settings_hierarchy_probe),
             )
             activity.dismissComposeDialogForTest()
         }
@@ -149,16 +165,55 @@ class MainActivityE2eTest {
         }
         exerciseMenuAction(
             activity,
-            MENU_ACTION_OPEN_LIBRARY,
-            ROM_LIBRARY_DIALOG_TAG,
-            "ROM library dialog should be attached after dispatching open_library",
-        )
-        exerciseMenuAction(
-            activity,
             MENU_ACTION_OPEN_SETTINGS,
             SETTINGS_DIALOG_TAG,
             "Settings dialog should be attached after dispatching open_settings",
         )
+
+        runOnActivityThread(activity) {
+            activity.moveTaskToBack(true)
+        }
+        assertTrue(
+            "MainActivity should suspend before process restart",
+            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
+        )
+        SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun gbcDocumentUriRestoresAfterProcessRestart() {
+        val activity = launchActivity()
+
+        assertTrue(
+            "GBC document URI should restore after process restart",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun appLaunchesAfterTermination() {
+        assertDrawerHandleAvailable(launchActivity())
+    }
+
+    @Suppress("DEPRECATION")
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun backTerminatesApplicationProcess() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.onBackPressed()
+        }
+        SystemClock.sleep(STARTUP_TIMEOUT_MS)
+        fail("Back should terminate the application process")
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun exitTerminatesApplicationProcess() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest("exit")
+        }
+        SystemClock.sleep(STARTUP_TIMEOUT_MS)
+        fail("Exit should terminate the application process")
     }
 
     private fun launchActivity(): MainActivity {
@@ -168,13 +223,10 @@ class MainActivityE2eTest {
                 "Launch intent for ${context.packageName} was not found"
             }
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val preLaunchActivity = MainActivity.currentActivityForTest()
         context.startActivity(launchIntent)
         val activity =
             waitUntilValue(STARTUP_TIMEOUT_MS) {
-                MainActivity.currentActivityForTest()?.takeIf { current ->
-                    preLaunchActivity == null || current !== preLaunchActivity
-                }
+                MainActivity.currentActivityForTest()
             }
         if (activity == null) {
             val current = MainActivity.currentActivityForTest()
@@ -224,28 +276,42 @@ class MainActivityE2eTest {
 
     @Test
     fun portraitControlsOverlayMatchesExpectedArrangement() {
-        val zones = portraitControlsLayout(1080f, 1920f).associateBy { it.label }
-        val up = requireNotNull(zones["UP"])
-        val down = requireNotNull(zones["DOWN"])
-        val left = requireNotNull(zones["LEFT"])
-        val right = requireNotNull(zones["RIGHT"])
+        val zones = controlsLayout(1080f, 1920f).associateBy { it.label }
+        val joystick = floatingJoystickLayout(1080f, 1920f)
         val select = requireNotNull(zones["SELECT"])
         val start = requireNotNull(zones["START"])
         val b = requireNotNull(zones["B"])
         val a = requireNotNull(zones["A"])
 
-        assertEquals(up.x, down.x, 0.01f)
-        assertEquals(up.width, down.width, 0.01f)
-        assertEquals(left.y, right.y, 0.01f)
-        assertEquals(left.height, right.height, 0.01f)
+        assertEquals(4, zones.size)
+        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
+        assertTrue(joystick.centerX - joystick.baseRadius >= 0f)
+        assertTrue(joystick.centerY + joystick.baseRadius <= 1920f)
         assertEquals(a.y, b.y, 0.01f)
         assertEquals(a.height, b.height, 0.01f)
-        assertTrue("B should sit to the right of the D-pad", b.x > right.x + right.width)
+        assertTrue("B should sit to the right of the joystick", b.x > joystick.activationBounds.right)
         assertTrue("A should sit to the right of B", a.x > b.x + b.width)
         assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
         assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
-        assertTrue("Select should sit between the D-pad and face buttons", select.x > left.x + left.width)
+        assertTrue("Select should sit between the joystick and face buttons", select.x > joystick.centerX)
         assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
+    }
+
+    @Test
+    fun landscapeControlsStayInsideSafeScreenBounds() {
+        val width = 1920f
+        val height = 1080f
+        val zones = controlsLayout(width, height)
+        val joystick = floatingJoystickLayout(width, height)
+        assertEquals(4, zones.size)
+        zones.forEach { zone ->
+            assertTrue(zone.x >= 0f && zone.y >= 0f)
+            assertTrue(zone.x + zone.width <= width)
+            assertTrue(zone.y + zone.height <= height)
+        }
+        val byLabel = zones.associateBy { it.label }
+        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
+        assertTrue(joystick.activationBounds.right < requireNotNull(byLabel["B"]).x)
     }
 
     private fun assertChromeViewAvailable(
@@ -322,6 +388,15 @@ class MainActivityE2eTest {
         return condition()
     }
 
+    private fun stateSlotFiles(): Set<String> {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        return context.filesDir
+            .walkTopDown()
+            .filter { it.isFile && it.extension == "state" }
+            .map { it.absolutePath }
+            .toSet()
+    }
+
     private fun <T> waitUntilValue(timeoutMs: Long, supplier: () -> T?): T? {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() <= deadline) {
@@ -333,21 +408,23 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
-        const val DIALOG_PRESENTATION_CARD = "card"
         const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
-            "Nerust\nROM Library\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
-        const val MENU_ACTION_OPEN_LIBRARY = "open_library"
+            "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
         const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
+        const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
-        const val ROM_LIBRARY_DIALOG_TAG = "nerust-rom-library-dialog"
         const val ROM_PICKER_REQUIRED_FLAGS =
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        const val DIRECTORY_PICKER_REQUIRED_FLAGS =
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L

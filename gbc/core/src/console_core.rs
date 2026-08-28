@@ -8,11 +8,8 @@ use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    core_options::{GbcCoreOptions, RtcSyncPolicy},
-    input_types::GbcInputBuffer,
-    persistence,
-    rom_identity::GbcRomIdentity,
-    system::GbcSystem,
+    core_options::GbcCoreOptions, input_types::GbcInputBuffer, persistence,
+    rom_identity::GbcRomIdentity, system::GbcSystem,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -162,8 +159,13 @@ impl ConsoleCore for GbcConsoleCore {
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let loaded = self.loaded_ref()?;
-        persistence::export_machine_state(&loaded.system, loaded.identity, loaded.options)
-            .map_err(|error| CoreError::Core(Box::new(error)))
+        persistence::export_machine_state(
+            &loaded.system,
+            loaded.identity,
+            loaded.options,
+            SystemTime::now(),
+        )
+        .map_err(|error| CoreError::Core(Box::new(error)))
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
@@ -175,6 +177,7 @@ impl ConsoleCore for GbcConsoleCore {
             data,
             loaded.identity,
             loaded.options,
+            SystemTime::now(),
         )
         .map_err(|error| CoreError::Core(Box::new(error)))?;
         self.loaded_mut()?.system = candidate.system;
@@ -191,7 +194,7 @@ impl ConsoleCore for GbcConsoleCore {
         let loaded = self.loaded_mut()?;
         persistence::import_mapper_save(&mut loaded.system, data, loaded.identity)
             .map_err(|error| CoreError::Core(Box::new(error)))?;
-        if loaded.options.rtc_sync == RtcSyncPolicy::SystemTime {
+        if loaded.options.rtc_sync.syncs_save_data() {
             loaded.system.bus.sync_cartridge_rtc(SystemTime::now());
         }
         Ok(())
