@@ -710,6 +710,10 @@ impl GbcMemoryBus {
         self.cartridge.sync_rtc(now);
     }
 
+    pub fn sync_cartridge_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        self.cartridge.sync_rtc_from(saved_at, now);
+    }
+
     pub fn export_cartridge_save(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
         self.cartridge.export_persistent_state(now)
     }

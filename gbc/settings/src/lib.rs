@@ -58,8 +58,9 @@ impl std::str::FromStr for HardwareModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RtcSyncMode {
-    #[default]
     Off,
+    SaveDataOnly,
+    #[default]
     SystemTime,
 }
 
@@ -93,10 +94,10 @@ mod tests {
     }
 
     #[test]
-    fn default_has_rtc_disabled() {
+    fn default_syncs_rtc_with_system_time() {
         let s = GbcSettings::default();
         assert_eq!(s.core.hardware_model, HardwareModel::CgbD);
-        assert_eq!(s.core.rtc_sync, RtcSyncMode::Off);
+        assert_eq!(s.core.rtc_sync, RtcSyncMode::SystemTime);
     }
 
     #[test]

@@ -82,6 +82,9 @@ pub(crate) fn apply_gbc_settings_choice(
         (GbcSettingField::SystemRtcSync, GbcSettingChoice::Off) => {
             settings.core.rtc_sync = RtcSyncMode::Off;
         }
+        (GbcSettingField::SystemRtcSync, GbcSettingChoice::SaveDataOnly) => {
+            settings.core.rtc_sync = RtcSyncMode::SaveDataOnly;
+        }
         (GbcSettingField::SystemRtcSync, GbcSettingChoice::SystemTime) => {
             settings.core.rtc_sync = RtcSyncMode::SystemTime;
         }
@@ -104,6 +107,7 @@ pub(crate) fn resolve_gbc_load_request(
         .map_err(|_| FactoryError::Resolve("failed to downcast GBC load options".to_string()))?;
     let rtc_sync = match settings.core.rtc_sync {
         RtcSyncMode::Off => RtcSyncPolicy::Off,
+        RtcSyncMode::SaveDataOnly => RtcSyncPolicy::SaveDataOnly,
         RtcSyncMode::SystemTime => RtcSyncPolicy::SystemTime,
     };
     Ok(ResolvedLoadRequest {
@@ -136,6 +140,20 @@ mod tests {
     fn page_exposes_hardware_model_and_rtc() {
         let page = gbc_settings_page(&view());
         assert_eq!(page.fields.len(), 2);
+        let rtc = page
+            .fields
+            .iter()
+            .find(|field| field.id.as_str() == "system.rtc_sync")
+            .unwrap();
+        let SystemSettingsFieldKind::Choice { selected, options } = &rtc.kind;
+        assert_eq!(selected.as_str(), "system_time");
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            ["off", "save_data_only", "system_time"]
+        );
     }
 
     #[test]
@@ -163,6 +181,21 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn resolves_save_data_only_rtc_sync() {
+        let mut view = view();
+        apply_gbc_settings_choice(
+            &mut view,
+            &SystemSettingsFieldId(Cow::Borrowed("system.rtc_sync")),
+            &SystemSettingsChoiceId(Cow::Borrowed("save_data_only")),
+        )
+        .unwrap();
+
+        let resolved = resolve_gbc_load_request(&view, GbcLoadOptions::default().into()).unwrap();
+        let options = resolved.options.downcast::<GbcCoreOptions>().unwrap();
+        assert_eq!(options.rtc_sync, RtcSyncPolicy::SaveDataOnly);
     }
 
     #[test]

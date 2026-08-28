@@ -154,6 +154,12 @@ impl Mbc for Mbc3 {
         }
     }
 
+    fn sync_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        if let Some(rtc) = &mut self.rtc {
+            rtc.sync_from(saved_at, now);
+        }
+    }
+
     fn reset_runtime(&mut self) {
         self.ram_rtc_enabled = false;
         self.rom_bank = 1;
