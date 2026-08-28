@@ -199,7 +199,7 @@ impl Timer {
     pub fn reset_div_for_speed_switch(&mut self, delayed_rising_edge: bool) {
         let mask = self.selected_bit();
         let phase = self.div & (mask * 2 - 1);
-        let suppress_increment = delayed_rising_edge
+        let suppress_increment = (delayed_rising_edge || mask == 0x0200)
             && (self.tac & 0x04) != 0
             && mask != 0x0008
             && (mask..mask + 4).contains(&phase);
@@ -339,11 +339,17 @@ mod tests {
         assert_eq!(late.div, 0);
         assert_eq!(late.tima, 0);
 
-        let mut early = timer();
-        early.write(0xFF07, 0x04);
-        early.div = 0x0200;
-        early.reset_div_for_speed_switch(false);
-        assert_eq!(early.tima, 1);
+        let mut early_4khz = timer();
+        early_4khz.write(0xFF07, 0x04);
+        early_4khz.div = 0x0200;
+        early_4khz.reset_div_for_speed_switch(false);
+        assert_eq!(early_4khz.tima, 0);
+
+        let mut early_65khz = timer();
+        early_65khz.write(0xFF07, 0x06);
+        early_65khz.div = 0x0020;
+        early_65khz.reset_div_for_speed_switch(false);
+        assert_eq!(early_65khz.tima, 1);
     }
 
     #[test]
