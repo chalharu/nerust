@@ -146,7 +146,11 @@ impl CpuStepState for Halt {
 }
 pub(crate) struct Stop;
 impl CpuStepState for Stop {
-    fn exec(_: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, _step: u8) -> StepResult {
+    fn exec(core: &mut Lr35902Cpu, bus: &mut GbcMemoryBus, step: u8) -> StepResult {
+        if step == 0 {
+            return StepResult::Continue;
+        }
+        let _padding = core.pc_read(bus);
         bus.stop();
         StepResult::Exit
     }
