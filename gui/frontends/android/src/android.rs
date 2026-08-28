@@ -19,7 +19,10 @@ use jni::{jni_sig, jni_str};
 use nerust_core_traits::{
     audio::AudioBackendRegistry,
     factory::load::MediaObject,
-    touch::{TouchControl, TouchControlRole, TouchOverlayAction, TouchPoint, TouchRect},
+    touch::{
+        TouchControl, TouchControlRole, TouchOverlayAction, TouchPoint, TouchRect,
+        clamp_floating_dpad_knob, floating_dpad_roles,
+    },
 };
 use nerust_gui_runtime::{
     settings::{
@@ -224,6 +227,16 @@ struct TouchZone {
 #[derive(Debug)]
 struct ProfileTouchOverlay {
     zones: Vec<TouchZone>,
+    dpad_controls: Vec<TouchControl>,
+    dpad_activation: TouchRect,
+    dpad_radius: f32,
+}
+
+#[derive(Debug)]
+struct FloatingDpadState {
+    touch_id: u64,
+    center: TouchPoint,
+    targets: Vec<(AttachmentId, DigitalControlId)>,
 }
 
 impl ProfileTouchOverlay {
@@ -240,16 +253,13 @@ impl ProfileTouchOverlay {
         let vertical_offset = height * f32::from(vertical_offset_percent.clamp(-30, 30)) / 100.0;
         let control_top = if portrait { height * 0.54 } else { 0.0 };
         let control_height = height - control_top;
-        let dpad_left = base * 0.08;
         let dpad_size = base * 0.28 * scale;
-        let dpad_center_x = dpad_left + dpad_size * 0.50;
         let dpad_center_y = if portrait {
             control_top + control_height * 0.58
         } else {
             height * 0.65
         } + vertical_offset;
-        let dpad_arm = dpad_size * 0.28;
-        let dpad_extent = dpad_size * 0.42;
+        let dpad_radius = dpad_size * 0.42;
         let action_size = base * 0.14 * scale;
         let action_gap = base * 0.04;
         let action_left = if portrait {
@@ -270,30 +280,6 @@ impl ProfileTouchOverlay {
         } + vertical_offset;
 
         let bounds_for = |role| match role {
-            TouchControlRole::DpadUp => TouchRect {
-                x: dpad_center_x - dpad_arm * 0.5,
-                y: dpad_center_y - dpad_extent,
-                width: dpad_arm,
-                height: dpad_extent - dpad_arm * 0.5,
-            },
-            TouchControlRole::DpadDown => TouchRect {
-                x: dpad_center_x - dpad_arm * 0.5,
-                y: dpad_center_y + dpad_arm * 0.5,
-                width: dpad_arm,
-                height: dpad_extent - dpad_arm * 0.5,
-            },
-            TouchControlRole::DpadLeft => TouchRect {
-                x: dpad_center_x - dpad_extent,
-                y: dpad_center_y - dpad_arm * 0.5,
-                width: dpad_extent - dpad_arm * 0.5,
-                height: dpad_arm,
-            },
-            TouchControlRole::DpadRight => TouchRect {
-                x: dpad_center_x + dpad_arm * 0.5,
-                y: dpad_center_y - dpad_arm * 0.5,
-                width: dpad_extent - dpad_arm * 0.5,
-                height: dpad_arm,
-            },
             TouchControlRole::FaceButton2 => TouchRect {
                 x: action_left,
                 y: action_top,
@@ -318,16 +304,64 @@ impl ProfileTouchOverlay {
                 width: center_width,
                 height: center_height,
             },
+            _ => unreachable!("D-Pad controls use the floating joystick"),
         };
+        let (dpad_controls, button_controls): (Vec<_>, Vec<_>) = controls
+            .into_iter()
+            .partition(|control| Self::is_dpad_role(control.role));
+        let activation_right = if portrait { width * 0.52 } else { width * 0.45 };
+        let activation_top = if portrait { control_top } else { height * 0.25 };
         Self {
-            zones: controls
+            zones: button_controls
                 .into_iter()
                 .map(|control| TouchZone {
                     bounds: bounds_for(control.role),
                     control,
                 })
                 .collect(),
+            dpad_controls,
+            dpad_activation: TouchRect {
+                x: dpad_radius,
+                y: activation_top + dpad_radius,
+                width: (activation_right - dpad_radius * 2.0).max(0.0),
+                height: (height - activation_top - dpad_radius * 2.0).max(0.0),
+            },
+            dpad_radius,
         }
+    }
+
+    fn is_dpad_role(role: TouchControlRole) -> bool {
+        matches!(
+            role,
+            TouchControlRole::DpadUp
+                | TouchControlRole::DpadDown
+                | TouchControlRole::DpadLeft
+                | TouchControlRole::DpadRight
+        )
+    }
+
+    fn accepts_floating_dpad(&self, point: TouchPoint) -> bool {
+        !self.dpad_controls.is_empty() && self.dpad_activation.contains(point)
+    }
+
+    fn floating_dpad_targets(
+        &self,
+        center: TouchPoint,
+        point: TouchPoint,
+    ) -> Vec<(AttachmentId, DigitalControlId)> {
+        floating_dpad_roles(center, point, self.dpad_radius)
+            .into_iter()
+            .filter_map(|role| {
+                self.dpad_controls
+                    .iter()
+                    .find(|control| control.role == role)
+                    .map(|control| (control.attachment_id, control.control_id))
+            })
+            .collect()
+    }
+
+    fn floating_knob(&self, center: TouchPoint, point: TouchPoint) -> TouchPoint {
+        clamp_floating_dpad_knob(center, point, self.dpad_radius)
     }
 
     fn hit_test(&self, point: TouchPoint) -> Option<(AttachmentId, DigitalControlId)> {
@@ -349,6 +383,7 @@ struct AndroidFrontend {
     gpu_factory: Rc<dyn GpuFactory>,
     overlay: Option<ProfileTouchOverlay>,
     active_touches: HashMap<u64, (AttachmentId, DigitalControlId)>,
+    floating_dpad: Option<FloatingDpadState>,
     overlay_revision: u64,
     physical_pressed: HashSet<(i32, AbstractKey)>,
     is_resumed: bool,
@@ -426,6 +461,7 @@ impl AndroidFrontend {
             gpu_factory,
             overlay: None,
             active_touches: HashMap::new(),
+            floating_dpad: None,
             overlay_revision: 0,
             physical_pressed: HashSet::new(),
             is_resumed: false,
@@ -532,7 +568,7 @@ impl AndroidFrontend {
         }
 
         self.session.clear_input();
-        self.active_touches.clear();
+        self.reset_touch_tracking();
         self.physical_pressed.clear();
         nerust_gui_shell::load::RomLoadTarget::set_active_system(
             &mut self.session,
@@ -709,7 +745,7 @@ impl AndroidFrontend {
             log::info!("save_lifecycle_state: auto-paused session");
         }
         self.session.clear_input();
-        self.active_touches.clear();
+        self.reset_touch_tracking();
         self.physical_pressed.clear();
         self.lifecycle_restore_pending = self.session.save_hidden_lifecycle_state();
         if !self.lifecycle_restore_pending {
@@ -733,9 +769,20 @@ impl AndroidFrontend {
     fn release_surface_resources(&mut self) {
         self.renderer = None;
         self.overlay = None;
-        self.active_touches.clear();
+        self.reset_touch_tracking();
         self.physical_pressed.clear();
         self.shell.needs_redraw = true;
+    }
+
+    fn reset_touch_tracking(&mut self) {
+        self.active_touches.clear();
+        self.floating_dpad = None;
+        update_floating_dpad_visual(
+            &self.app,
+            false,
+            TouchPoint { x: 0.0, y: 0.0 },
+            TouchPoint { x: 0.0, y: 0.0 },
+        );
     }
 
     fn handle_surface_close(&mut self) {
@@ -1278,13 +1325,104 @@ impl AndroidFrontend {
         }
     }
 
-    fn handle_touch(&mut self, touch: Touch) {
-        let next_target = self.overlay.as_ref().and_then(|overlay| {
-            overlay.hit_test(TouchPoint {
-                x: touch.location.x as f32,
-                y: touch.location.y as f32,
-            })
+    fn sync_floating_dpad_targets(&mut self, next_targets: Vec<(AttachmentId, DigitalControlId)>) {
+        let previous_targets = self
+            .floating_dpad
+            .as_ref()
+            .map(|state| state.targets.clone())
+            .unwrap_or_default();
+        for previous in previous_targets
+            .iter()
+            .filter(|target| !next_targets.contains(target))
+        {
+            self.session
+                .apply_input_event(DigitalInputEvent::released(previous.0, previous.1));
+        }
+        for next in next_targets
+            .iter()
+            .filter(|target| !previous_targets.contains(target))
+        {
+            self.session
+                .apply_input_event(DigitalInputEvent::pressed(next.0, next.1));
+        }
+        if let Some(state) = self.floating_dpad.as_mut() {
+            state.targets = next_targets;
+        }
+        self.request_redraw();
+    }
+
+    fn begin_floating_dpad(&mut self, touch_id: u64, point: TouchPoint) -> bool {
+        let Some(overlay) = self.overlay.as_ref() else {
+            return false;
+        };
+        if self.floating_dpad.is_some() || !overlay.accepts_floating_dpad(point) {
+            return false;
+        }
+        self.floating_dpad = Some(FloatingDpadState {
+            touch_id,
+            center: point,
+            targets: Vec::new(),
         });
+        log::info!(
+            "floating D-Pad started: touch_id={touch_id} x={:.1} y={:.1}",
+            point.x,
+            point.y
+        );
+        update_floating_dpad_visual(&self.app, true, point, point);
+        if self.session.settings_snapshot().local.touch_overlay.haptics {
+            perform_control_haptic(&self.app);
+        }
+        true
+    }
+
+    fn update_floating_dpad(&mut self, point: TouchPoint) {
+        let Some(center) = self.floating_dpad.as_ref().map(|state| state.center) else {
+            return;
+        };
+        let Some(overlay) = self.overlay.as_ref() else {
+            return;
+        };
+        let targets = overlay.floating_dpad_targets(center, point);
+        let knob = overlay.floating_knob(center, point);
+        self.sync_floating_dpad_targets(targets);
+        update_floating_dpad_visual(&self.app, true, center, knob);
+    }
+
+    fn end_floating_dpad(&mut self) {
+        self.sync_floating_dpad_targets(Vec::new());
+        self.floating_dpad = None;
+        log::info!("floating D-Pad ended");
+        update_floating_dpad_visual(
+            &self.app,
+            false,
+            TouchPoint { x: 0.0, y: 0.0 },
+            TouchPoint { x: 0.0, y: 0.0 },
+        );
+    }
+
+    fn handle_touch(&mut self, touch: Touch) {
+        let point = TouchPoint {
+            x: touch.location.x as f32,
+            y: touch.location.y as f32,
+        };
+        if self
+            .floating_dpad
+            .as_ref()
+            .is_some_and(|state| state.touch_id == touch.id)
+        {
+            match touch.phase {
+                TouchPhase::Started | TouchPhase::Moved => self.update_floating_dpad(point),
+                TouchPhase::Ended | TouchPhase::Cancelled => self.end_floating_dpad(),
+            }
+            return;
+        }
+        if touch.phase == TouchPhase::Started && self.begin_floating_dpad(touch.id, point) {
+            return;
+        }
+        let next_target = self
+            .overlay
+            .as_ref()
+            .and_then(|overlay| overlay.hit_test(point));
         match touch.phase {
             TouchPhase::Started | TouchPhase::Moved => {
                 if touch.phase == TouchPhase::Started
@@ -1346,6 +1484,36 @@ fn perform_control_haptic(app: &AndroidApp) {
                 jni_str!("performControlHaptic"),
                 jni_sig!("()V"),
                 &[],
+            )?;
+            Ok(())
+        });
+    }));
+}
+
+fn update_floating_dpad_visual(
+    app: &AndroidApp,
+    active: bool,
+    center: TouchPoint,
+    knob: TouchPoint,
+) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            env.call_method(
+                &activity,
+                jni_str!("updateFloatingDpad"),
+                jni_sig!("(ZFFFF)V"),
+                &[
+                    jni::objects::JValue::Bool(active),
+                    jni::objects::JValue::Float(center.x),
+                    jni::objects::JValue::Float(center.y),
+                    jni::objects::JValue::Float(knob.x),
+                    jni::objects::JValue::Float(knob.y),
+                ],
             )?;
             Ok(())
         });
