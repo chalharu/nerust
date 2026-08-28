@@ -153,8 +153,7 @@ impl Timer {
         let mask = if double_speed { 0x2000 } else { 0x1000 };
         let phase = self.div & (mask * 2 - 1);
         self.div & mask != 0
-            && !((!double_speed || delayed_rising_edge)
-            && (mask..mask + 4).contains(&phase))
+            && !((!double_speed || delayed_rising_edge) && (mask..mask + 4).contains(&phase))
     }
 
     pub fn write(&mut self, addr: u16, value: u8) -> bool {
