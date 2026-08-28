@@ -606,4 +606,22 @@ mod tests {
         assert!(samples.iter().all(|sample| sample.left == 0.0));
         assert!(samples.iter().any(|sample| sample.right.abs() > 0.001));
     }
+
+    #[test]
+    fn triggered_ch4_generates_varying_noise_samples() {
+        let mut apu = GbcApu::new();
+        apu.write_register(0xFF26, 0x80);
+        apu.write_register(0xFF24, 0x77);
+        apu.write_register(0xFF25, 0x88);
+        apu.write_register(0xFF21, 0xF0);
+        apu.write_register(0xFF22, 0x00);
+        apu.write_register(0xFF23, 0x80);
+
+        apu.step(70_224);
+
+        let samples = apu.flush_samples();
+        assert!(samples.iter().any(|sample| sample.left.abs() > 0.001));
+        assert!(samples.windows(2).any(|pair| pair[0].left != pair[1].left));
+        assert!(samples.iter().all(|sample| sample.left == sample.right));
+    }
 }
