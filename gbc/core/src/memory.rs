@@ -630,7 +630,12 @@ impl GbcMemoryBus {
                 self.timer
                     .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
                 self.double_speed = !self.double_speed;
+                if self.double_speed {
+                    self.ppu_ds_toggle = self.tick % 8 == 5;
+                }
                 self.ppu.set_double_speed(self.double_speed);
+                self.ppu
+                    .set_double_speed_odd_phase(self.double_speed && self.ppu_ds_toggle);
             }
         }
         freeze_ppu
@@ -811,7 +816,13 @@ impl GbcMemoryBus {
             let interrupt_pending = self.interrupt.enabled_interrupt_pending();
             self.speed_switch_toggle_countdown = 6;
             self.speed_switch_halt_countdown = if interrupt_pending { 8 } else { 0x20008 };
-            self.speed_switch_ppu_freeze = if interrupt_pending { 1 } else { 5 };
+            self.speed_switch_ppu_freeze = if interrupt_pending {
+                1
+            } else if self.double_speed {
+                if self.tick % 4 == 1 { 2 } else { 6 }
+            } else {
+                2
+            };
             return;
         }
         self.timer.reset_div();
@@ -1519,6 +1530,27 @@ mod tests {
         bus.step_tcycle(&mut cpu);
         assert_eq!(bus.read(0xFF04), 0);
         assert!(bus.is_double_speed());
+    }
+
+    #[test]
+    fn speed_switch_preserves_odd_ppu_alignment() {
+        let mut bus = cgb_bus();
+        bus.tick = 7;
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        assert_eq!(bus.speed_switch_ppu_freeze, 2);
+
+        let mut cpu = CountingCpu { steps: 0 };
+        for _ in 0..6 {
+            bus.step_tcycle(&mut cpu);
+        }
+        assert!(bus.is_double_speed());
+        assert!(bus.ppu_ds_toggle);
+
+        bus.tick = 15;
+        bus.write(0xFF4D, 0x01);
+        bus.stop();
+        assert_eq!(bus.speed_switch_ppu_freeze, 6);
     }
 
     #[test]
