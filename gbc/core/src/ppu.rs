@@ -735,19 +735,19 @@ impl GbcPpu {
     /// internal line state advances. Keep rendering/LYC on the internal line,
     /// but expose the next line during that final bus-access window.
     fn visible_ly(&self) -> u8 {
-        if self.cgb_revision_d
+        if self.cgb_mode
             && self.ly == SCANLINES_PER_FRAME - 1
             && if self.double_speed {
                 (5..8).contains(&self.mode_clock)
                     || self.double_speed_odd_phase && (106..108).contains(&self.mode_clock)
                     || self.mode_clock >= 453
             } else {
-                (5..14).contains(&self.mode_clock) || self.mode_clock >= 450
+                ((if self.cgb_revision_d { 5 } else { 4 })..14).contains(&self.mode_clock)
+                    || self.mode_clock >= 450
             }
         {
             0
         } else if self.cgb_mode
-            && self.cgb_revision_d
             && self.lcdc & 0x80 != 0
             && self.mode_clock + 1 >= self.line_length()
         {
@@ -1640,6 +1640,11 @@ mod tests {
         p.mode_clock = 106;
         assert_eq!(p.read_register(0xFF44), 0);
         p.mode_clock = 453;
+        assert_eq!(p.read_register(0xFF44), 0);
+
+        p.cgb_revision_d = false;
+        p.double_speed = false;
+        p.mode_clock = 4;
         assert_eq!(p.read_register(0xFF44), 0);
     }
 
