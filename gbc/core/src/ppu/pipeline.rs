@@ -159,6 +159,8 @@ pub(super) struct Mode3Pipeline {
     fine_discard: u8,
     scx_tile_latch: u8,
     pending_scx_high: Option<u8>,
+    pending_scx_skip_delta: bool,
+    skip_next_scx_column_delta: bool,
     pixel_x: u8,
     complete: bool,
 
@@ -251,6 +253,8 @@ impl Mode3Pipeline {
             fine_discard: registers.scx & 7,
             scx_tile_latch: registers.scx >> 3,
             pending_scx_high: None,
+            pending_scx_skip_delta: false,
+            skip_next_scx_column_delta: false,
             pixel_x: 0,
             complete: false,
             fetcher: Fetcher::new(registers.scx >> 3),
@@ -737,13 +741,21 @@ impl Mode3Pipeline {
     fn prepare_tile_address(&mut self) {
         if !self.window_active && self.fetcher.stage_dot == 0 {
             let new_column = self.registers.scx >> 3;
+            let column_delta = if self.pixel_x >= 138 && self.skip_next_scx_column_delta {
+                0
+            } else {
+                new_column.wrapping_sub(self.scx_tile_latch)
+            };
+            self.skip_next_scx_column_delta = false;
             self.fetcher.tile_column = self
                 .fetcher
                 .tile_column
-                .wrapping_add(new_column.wrapping_sub(self.scx_tile_latch));
+                .wrapping_add(column_delta);
             self.scx_tile_latch = new_column;
             if let Some(value) = self.pending_scx_high.take() {
                 self.registers.scx = (self.registers.scx & 7) | value;
+                self.skip_next_scx_column_delta = self.pending_scx_skip_delta;
+                self.pending_scx_skip_delta = false;
             }
         }
         let (map_base, tile_row, tile_y) = if self.window_active {
@@ -1595,8 +1607,11 @@ impl Mode3Pipeline {
         if self.ly != 0 && self.pixel_x == 0 && self.fetcher.stage == FetchStage::Tile {
             self.fine_discard = value & 7;
         }
-        let defer_high = self.compute_scx_defer_high();
+        let fine_wrap = self.registers.scx & 7 > value & 7;
+        let defer_high = self.compute_scx_defer_high()
+            || self.double_speed && self.pixel_x >= 138 && fine_wrap;
         if defer_high {
+            self.pending_scx_skip_delta = fine_wrap;
             self.pending_scx_high = Some(value & 0xF8);
             self.registers.scx = (self.registers.scx & 0xF8) | (value & 7);
         } else {
@@ -2123,6 +2138,29 @@ mod tests {
 
         assert_eq!(pipeline.registers.scx, 0x20);
         assert_eq!(pipeline.pending_scx_high, None);
+    }
+
+    #[test]
+    fn late_scx_fine_wrap_preserves_sequential_tile_column() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+        pipeline.pixel_x = 140;
+        pipeline.registers.scx = 7;
+        pipeline.scx_tile_latch = 0;
+        pipeline.fetcher.stage = FetchStage::Tile;
+        pipeline.fetcher.stage_dot = 1;
+
+        pipeline.write_scx(8);
+        assert_eq!(pipeline.pending_scx_high, Some(8));
+        assert!(pipeline.pending_scx_skip_delta);
+
+        pipeline.fetcher.stage_dot = 0;
+        pipeline.prepare_tile_address();
+        let column = pipeline.fetcher.tile_column;
+        pipeline.prepare_tile_address();
+        assert_eq!(pipeline.fetcher.tile_column, column);
+        assert_eq!(pipeline.scx_tile_latch, 1);
     }
 
     #[test]
