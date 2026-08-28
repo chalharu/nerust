@@ -556,7 +556,13 @@ fn stop_consumes_padding_byte_before_speed_switch() {
     step_until_done(&mut cpu, &mut bus);
 
     assert_eq!(cpu.registers().pc(), BASE + 2);
+    assert!(!bus.is_double_speed());
+    for _ in 0..70_000 {
+        bus.step_tcycle(&mut cpu);
+        if cpu.registers().a() == 0x42 {
+            break;
+        }
+    }
     assert!(bus.is_double_speed());
-    step_until_done(&mut cpu, &mut bus);
     assert_eq!(cpu.registers().a(), 0x42);
 }
