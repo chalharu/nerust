@@ -521,9 +521,31 @@ impl GbcPpu {
                 .mode3_pipeline
                 .as_ref()
                 .map_or(self.mode3_sprite_penalty, |p| {
-                    u32::from(p.sprite_extra_dots().saturating_add(p.window_extra_dots()))
+                    let window = p.window_extra_dots();
+                    u32::from(
+                        p.sprite_extra_dots()
+                            .saturating_add(window)
+                            .saturating_add(self.cgb_window_reload_penalty(window)),
+                    )
                         .max(self.mode3_sprite_penalty)
                 })
+    }
+
+    fn cgb_window_reload_penalty(&self, window_dots: u8) -> u8 {
+        if !self.cgb_mode {
+            return 0;
+        }
+        if window_dots != 0 {
+            return 2 + u8::from(self.wx == 0 && self.scx & 7 != 0);
+        }
+        if self.window_eligible && (162..=167).contains(&self.wx) {
+            return match self.wx {
+                166 => 5,
+                167 => 2,
+                _ => 4,
+            };
+        }
+        0
     }
 
     /// The LY=LYC coincidence signal feeding the STAT interrupt.
@@ -634,7 +656,11 @@ impl GbcPpu {
                 self.frame_buffer[usize::from(self.ly) * 160 + usize::from(output.x)] =
                     output.color;
             }
-            self.mode3_sprite_penalty = u32::from(pipeline.sprite_extra_dots());
+            self.mode3_sprite_penalty = u32::from(
+                pipeline
+                    .sprite_extra_dots()
+                    .saturating_add(pipeline.window_extra_dots()),
+            );
             if pipeline.complete() {
                 self.window_line = pipeline.final_window_line();
                 self.mode3_pipeline = None;
@@ -1954,6 +1980,26 @@ mod tests {
             p.start_pipeline_if_needed();
             assert_eq!(p.mode3_scx_penalty, u32::from(scx), "SCX={scx}");
         }
+    }
+
+    #[test]
+    fn cgb_window_reload_penalty_handles_fine_scroll_and_right_edge() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+
+        p.wx = 0;
+        p.scx = 0;
+        assert_eq!(p.cgb_window_reload_penalty(6), 2);
+        p.scx = 1;
+        assert_eq!(p.cgb_window_reload_penalty(6), 3);
+
+        p.window_eligible = true;
+        p.wx = 162;
+        assert_eq!(p.cgb_window_reload_penalty(0), 4);
+        p.wx = 166;
+        assert_eq!(p.cgb_window_reload_penalty(0), 5);
+        p.wx = 167;
+        assert_eq!(p.cgb_window_reload_penalty(0), 2);
     }
 
     #[test]
