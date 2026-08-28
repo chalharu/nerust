@@ -24,11 +24,9 @@ age_ly-ncmBC@cgb_c
 age_ly-ncmBC@cgb_d
 age_ly-ncmE@cgb_c
 age_ly-ncmE@cgb_d
-age_m3_bg_lcdc@cgb_d
 age_m3_bg_lcdc@dmg
 age_m3_bg_lcdc_ds@cgb_c
 age_m3_bg_lcdc_ds@cgb_d
-age_m3_bg_lcdc_nocgb@cgb_d
 age_m3_bg_scx@cgb_c
 age_m3_bg_scx@cgb_d
 age_m3_bg_scx@dmg
