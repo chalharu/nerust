@@ -35,8 +35,6 @@ age_stat-int-ncmBCE@cgb_c
 age_stat-int-ncmBCE@cgb_d
 age_stat-mode-dmgC-cgbBC@dmg
 age_stat-mode-ds-cgbBCE@cgb_c
-age_stat-mode-sprites-dmgC-cgbBCE@cgb_c
-age_stat-mode-sprites-dmgC-cgbBCE@cgb_d
 age_stat-mode-sprites-dmgC-cgbBCE@dmg
 age_stat-mode-window-dmgC@dmg
 age_vram-read-dmgC@dmg

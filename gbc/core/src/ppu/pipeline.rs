@@ -959,6 +959,22 @@ impl Mode3Pipeline {
                     [6, 10, 10, 8, 8, 6, 6, 6],
                 ];
                 OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize].max(6)
+            } else if self.cgb_mode
+                && self.cgb_game
+                && self.sprites.len() == 1
+                && sprite.x >= -8
+            {
+                const OFFSCREEN_STALLS: [[u8; 8]; 8] = [
+                    [11, 11, 11, 11, 11, 11, 11, 11],
+                    [10, 10, 6, 6, 6, 6, 6, 10],
+                    [9, 9, 9, 6, 6, 6, 13, 9],
+                    [8, 8, 8, 8, 6, 12, 12, 12],
+                    [7, 6, 7, 7, 11, 7, 7, 7],
+                    [6, 6, 6, 10, 10, 10, 6, 6],
+                    [6, 6, 10, 10, 10, 10, 6, 6],
+                    [6, 14, 10, 10, 10, 10, 6, 6],
+                ];
+                OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize]
             } else if sprite.x <= -5 {
                 (3 - sprite.x) as u8
             } else if sprite.x == -4 {
@@ -1711,6 +1727,10 @@ impl Mode3Pipeline {
         self.sprite_extra_dots
     }
 
+    pub(super) fn sprite_count(&self) -> usize {
+        self.sprites.len()
+    }
+
     pub(super) fn window_extra_dots(&self) -> u8 {
         self.window_extra_dots
     }
@@ -1796,6 +1816,11 @@ mod tests {
         assert_eq!(pipeline.sprite_stall(&sprite, 0), 12);
         pipeline.registers.scx = 7;
         assert_eq!(pipeline.sprite_stall(&sprite, 0), 6);
+
+        let mut normal =
+            Mode3Pipeline::new(registers(), 0, 0, false, vec![sprite], true, true, true, 0);
+        normal.registers.scx = 2;
+        assert_eq!(normal.sprite_stall(&sprite, 0), 10);
     }
 
     #[test]
