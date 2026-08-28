@@ -1434,10 +1434,23 @@ impl Mode3Pipeline {
         let old_tile_select = old_written & 0x10;
         let new_tile_select = value & 0x10;
         self.apply_window_tile_select(old_tile_select, new_tile_select);
-        let collided = self.detect_tile_select_collision(old_tile_select, new_tile_select);
-        self.pending_tile_select_write = (!collided).then_some((old_tile_select, new_tile_select));
-        self.apply_cgb_c_tile_select_glitches(old_tile_select, new_tile_select);
-        let tile_sel_delay = if self.cgb_mode { 3 } else { 2 };
+        if self.double_speed {
+            self.pending_tile_select_write = None;
+            self.cgb_c_tile_write_persistent = false;
+            self.cgb_c_high_glitch = None;
+        } else {
+            let collided = self.detect_tile_select_collision(old_tile_select, new_tile_select);
+            self.pending_tile_select_write =
+                (!collided).then_some((old_tile_select, new_tile_select));
+            self.apply_cgb_c_tile_select_glitches(old_tile_select, new_tile_select);
+        }
+        let tile_sel_delay = if self.cgb_mode && self.double_speed {
+            4
+        } else if self.cgb_mode {
+            3
+        } else {
+            2
+        };
         self.pending_tile_select = Some((tile_sel_delay, value & 0x10));
     }
 
@@ -2010,6 +2023,23 @@ mod tests {
         with_sprite.deliver_register_writes();
         with_sprite.deliver_register_writes();
         assert_eq!(with_sprite.active_tile_select_write, Some((0, 0x10)));
+    }
+
+    #[test]
+    fn double_speed_tile_select_uses_delayed_latch_without_collision_glitch() {
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+        pipeline.pending_tile_select_write = Some((0, 0x10));
+        pipeline.cgb_c_tile_write_persistent = true;
+        pipeline.cgb_c_high_glitch = Some((0, 0x10));
+
+        pipeline.apply_tile_select_change(0, 0x10);
+
+        assert_eq!(pipeline.pending_tile_select_write, None);
+        assert!(!pipeline.cgb_c_tile_write_persistent);
+        assert_eq!(pipeline.cgb_c_high_glitch, None);
+        assert_eq!(pipeline.pending_tile_select, Some((4, 0)));
     }
 
     #[test]

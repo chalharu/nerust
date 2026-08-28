@@ -13,8 +13,6 @@ age_ly-dmgC-cgbBC@dmg
 age_ly-dmgC-cgbBC@cgb_c
 age_ly-ncmBC@cgb_c
 age_m3_bg_lcdc@dmg
-age_m3_bg_lcdc_ds@cgb_c
-age_m3_bg_lcdc_ds@cgb_d
 age_m3_bg_scx@cgb_c
 age_m3_bg_scx@cgb_d
 age_m3_bg_scx@dmg
