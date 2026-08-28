@@ -34,6 +34,10 @@ pub(crate) struct MemoryState {
     speed_switch_halt_countdown: u32,
     #[serde(default)]
     speed_switch_ppu_freeze: u8,
+    #[serde(default)]
+    apu_div_event_delayed: bool,
+    #[serde(default)]
+    apu_div_event_countdown: u8,
     key1_dmg_compat_value: bool,
     hdma: HdmaController,
     cgb_mode: bool,
@@ -97,6 +101,8 @@ pub struct GbcMemoryBus {
     speed_switch_toggle_countdown: u8,
     speed_switch_halt_countdown: u32,
     speed_switch_ppu_freeze: u8,
+    apu_div_event_delayed: bool,
+    apu_div_event_countdown: u8,
     /// KEY1 reads $FF in CGB DMG-compatibility mode; native CGB games read
     /// the speed and pending-switch bits.
     key1_dmg_compat_value: bool,
@@ -154,6 +160,8 @@ impl GbcMemoryBus {
             speed_switch_toggle_countdown: self.speed_switch_toggle_countdown,
             speed_switch_halt_countdown: self.speed_switch_halt_countdown,
             speed_switch_ppu_freeze: self.speed_switch_ppu_freeze,
+            apu_div_event_delayed: self.apu_div_event_delayed,
+            apu_div_event_countdown: self.apu_div_event_countdown,
             key1_dmg_compat_value: self.key1_dmg_compat_value,
             hdma: self.hdma.clone(),
             cgb_mode: self.cgb_mode,
@@ -170,6 +178,7 @@ impl GbcMemoryBus {
             || state.hram.len() != HRAM_SIZE
             || state.joypad_select & !0x30 != 0
             || state.dma_tcounter >= 4
+            || state.apu_div_event_countdown > 4
         {
             return Err("memory state value out of range".into());
         }
@@ -197,6 +206,8 @@ impl GbcMemoryBus {
         self.speed_switch_toggle_countdown = state.speed_switch_toggle_countdown;
         self.speed_switch_halt_countdown = state.speed_switch_halt_countdown;
         self.speed_switch_ppu_freeze = state.speed_switch_ppu_freeze;
+        self.apu_div_event_delayed = state.apu_div_event_delayed;
+        self.apu_div_event_countdown = state.apu_div_event_countdown;
         self.key1_dmg_compat_value = state.key1_dmg_compat_value;
         self.hdma = state.hdma;
         self.cgb_mode = state.cgb_mode;
@@ -233,6 +244,8 @@ impl GbcMemoryBus {
             speed_switch_toggle_countdown: 0,
             speed_switch_halt_countdown: 0,
             speed_switch_ppu_freeze: 0,
+            apu_div_event_delayed: false,
+            apu_div_event_countdown: 0,
             key1_dmg_compat_value: true,
 
             hdma: HdmaController::new(),
@@ -380,7 +393,7 @@ impl GbcMemoryBus {
                 let apu_div_bit_was_set = self.timer.apu_div_bit(self.double_speed);
                 self.timer.write(addr, value);
                 if apu_div_bit_was_set {
-                    self.apu.clock_div_apu();
+                    self.clock_or_delay_apu_div();
                 }
             }
             0xFF05..=0xFF07 => {
@@ -558,6 +571,14 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        if self.apu_div_event_countdown != 0 {
+            let timer_cycles = if self.double_speed { 2 } else { 1 };
+            self.apu_div_event_countdown =
+                self.apu_div_event_countdown.saturating_sub(timer_cycles);
+            if self.apu_div_event_countdown == 0 {
+                self.apu.clock_div_apu();
+            }
+        }
         if self.timer_irq_pending {
             self.interrupt.request(InterruptKind::Timer);
             self.timer_irq_pending = false;
@@ -572,6 +593,14 @@ impl GbcMemoryBus {
             }
         }
         if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.clock_or_delay_apu_div();
+        }
+    }
+
+    fn clock_or_delay_apu_div(&mut self) {
+        if self.apu_div_event_delayed {
+            self.apu_div_event_countdown = 4;
+        } else {
             self.apu.clock_div_apu();
         }
     }
@@ -627,8 +656,18 @@ impl GbcMemoryBus {
                 .speed_switch_toggle_countdown
                 .saturating_sub(cpu_cycles);
             if self.speed_switch_toggle_countdown == 0 {
+                let apu_div_reset_fires = self.timer.apu_speed_switch_reset_fires(
+                    self.double_speed,
+                    self.apu_div_event_delayed,
+                );
+                if !self.double_speed {
+                    self.apu_div_event_delayed = !self.apu_div_event_delayed;
+                }
                 self.timer
                     .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
+                if apu_div_reset_fires {
+                    self.clock_or_delay_apu_div();
+                }
                 self.double_speed = !self.double_speed;
                 if self.double_speed {
                     self.ppu_ds_toggle = self.tick % 8 == 5;
@@ -1551,6 +1590,14 @@ mod tests {
         bus.write(0xFF4D, 0x01);
         bus.stop();
         assert_eq!(bus.speed_switch_ppu_freeze, 6);
+    }
+
+    #[test]
+    fn delayed_apu_div_event_queues_one_mcycle() {
+        let mut bus = cgb_bus();
+        bus.apu_div_event_delayed = true;
+        bus.clock_or_delay_apu_div();
+        assert_eq!(bus.apu_div_event_countdown, 4);
     }
 
     #[test]

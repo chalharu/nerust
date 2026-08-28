@@ -18,8 +18,6 @@ age_oam-read-dmgC-cgbBC@cgb_c
 age_oam-read-dmgC-cgbBC@dmg
 age_oam-read-ncmBC@cgb_c
 age_oam-write-dmgC@dmg
-age_spsw-ch2-lc-delay-cgbBCE@cgb_c
-age_spsw-ch2-lc-delay-cgbBCE@cgb_d
 age_spsw-interrupts-cgbBC@cgb_c
 age_spsw-tima-cgbBC@cgb_c
 age_stat-int-dmgC-cgbBCE@cgb_c

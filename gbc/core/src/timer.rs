@@ -145,6 +145,18 @@ impl Timer {
         self.div & mask != 0
     }
 
+    pub fn apu_speed_switch_reset_fires(
+        &self,
+        double_speed: bool,
+        delayed_rising_edge: bool,
+    ) -> bool {
+        let mask = if double_speed { 0x2000 } else { 0x1000 };
+        let phase = self.div & (mask * 2 - 1);
+        self.div & mask != 0
+            && !((!double_speed || delayed_rising_edge)
+            && (mask..mask + 4).contains(&phase))
+    }
+
     pub fn write(&mut self, addr: u16, value: u8) -> bool {
         match addr {
             0xFF04 => {
@@ -303,6 +315,19 @@ mod tests {
         t.div = 8;
         t.write(0xFF04, 0);
         assert_eq!(t.tima, 1);
+    }
+
+    #[test]
+    fn apu_speed_reset_suppresses_late_rising_edges() {
+        let mut t = timer();
+        t.div = 0x1001;
+        assert!(!t.apu_speed_switch_reset_fires(false, false));
+
+        t.div = 0x2000;
+        assert!(t.apu_speed_switch_reset_fires(true, false));
+        assert!(!t.apu_speed_switch_reset_fires(true, true));
+        t.div = 0x2004;
+        assert!(t.apu_speed_switch_reset_fires(true, true));
     }
 
     #[test]
