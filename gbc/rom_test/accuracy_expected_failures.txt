@@ -10,11 +10,9 @@
 age_halt-m0-interrupt-dmgC-cgbBCE@dmg
 age_lcd-align-ly-cgbBC@cgb_c
 age_lcd-align-ly-cgbE@cgb_d
-age_ly-cgbE@cgb_d
-age_ly-dmgC-cgbBC@cgb_c
 age_ly-dmgC-cgbBC@dmg
+age_ly-dmgC-cgbBC@cgb_c
 age_ly-ncmBC@cgb_c
-age_ly-ncmE@cgb_d
 age_m3_bg_lcdc@dmg
 age_m3_bg_lcdc_ds@cgb_c
 age_m3_bg_lcdc_ds@cgb_d
