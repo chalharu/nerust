@@ -1,4 +1,4 @@
-pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -7,6 +7,7 @@ pub struct HostBackendLocalSettings {
     pub video: VideoSettings,
     pub audio: AudioSettings,
     pub touch_overlay: TouchOverlaySettings,
+    pub screen_orientation: ScreenOrientation,
 }
 
 impl Default for HostBackendLocalSettings {
@@ -16,8 +17,18 @@ impl Default for HostBackendLocalSettings {
             video: VideoSettings::default(),
             audio: AudioSettings::default(),
             touch_overlay: TouchOverlaySettings::default(),
+            screen_orientation: ScreenOrientation::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenOrientation {
+    #[default]
+    Auto,
+    Portrait,
+    Landscape,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

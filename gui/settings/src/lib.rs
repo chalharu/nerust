@@ -14,6 +14,7 @@ mod tests {
         input::{ShortcutAction, ShortcutBinding},
         local::{
             HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
+            ScreenOrientation,
         },
         shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
     };
@@ -119,5 +120,17 @@ video:
         assert!(!decoded.video.window.fullscreen_default);
         assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
         assert!(decoded.video.presentation.vsync);
+    }
+
+    #[test]
+    fn legacy_local_settings_default_to_auto_orientation() {
+        let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
+            r#"
+schema_version: 3
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(decoded.screen_orientation, ScreenOrientation::Auto);
     }
 }
