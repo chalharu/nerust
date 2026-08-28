@@ -44,13 +44,9 @@ age_stat-int-dmgC-cgbBCE@cgb_d
 age_stat-int-dmgC-cgbBCE@dmg
 age_stat-int-ncmBCE@cgb_c
 age_stat-int-ncmBCE@cgb_d
-age_stat-mode-cgbE@cgb_d
-age_stat-mode-dmgC-cgbBC@cgb_c
 age_stat-mode-dmgC-cgbBC@dmg
 age_stat-mode-ds-cgbBCE@cgb_c
 age_stat-mode-ds-cgbBCE@cgb_d
-age_stat-mode-ncmBC@cgb_c
-age_stat-mode-ncmE@cgb_d
 age_stat-mode-sprites-dmgC-cgbBCE@cgb_c
 age_stat-mode-sprites-dmgC-cgbBCE@cgb_d
 age_stat-mode-sprites-dmgC-cgbBCE@dmg
