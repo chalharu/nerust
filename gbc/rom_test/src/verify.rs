@@ -84,7 +84,8 @@ impl RegisterVerify {
                     "invalid CPU register {name} value"
                 )));
             }
-            if value.is_some_and(|value| parse_hex(value).is_ok_and(|value| value > u8::MAX as u64))
+            if value
+                .is_some_and(|value| parse_hex(value).is_ok_and(|value| value > u64::from(u8::MAX)))
             {
                 return Err(RomTestError::InvalidManifest(format!(
                     "CPU register {name} value is out of range"
@@ -231,83 +232,34 @@ impl VerifySpec {
     /// Called at manifest load time so configuration errors fail fast
     /// instead of surfacing per cell at run time.
     pub fn validate(&self) -> Result<(), RomTestError> {
-        if let Some(serial) = &self.serial {
-            if let Some(hash) = &serial.hash {
-                parse_hex_bytes(hash.value())?;
-            }
-            if let Some(suffix) = &serial.suffix {
-                parse_hex_bytes(suffix)?;
-            }
+        self.validate_media()?;
+        for entry in &self.memory {
+            validate_memory_entry(entry)?;
+        }
+        for region in &self.memory_regions {
+            validate_memory_region(region)?;
+        }
+        for comparison in &self.memory_comparisons {
+            validate_memory_comparison(comparison)?;
+        }
+        self.registers.validate()?;
+        Ok(())
+    }
+
+    fn validate_media(&self) -> Result<(), RomTestError> {
+        if let Some(hash) = self.serial.as_ref().and_then(|serial| serial.hash.as_ref()) {
+            parse_hex_bytes(hash.value())?;
+        }
+        if let Some(suffix) = self
+            .serial
+            .as_ref()
+            .and_then(|serial| serial.suffix.as_ref())
+        {
+            parse_hex_bytes(suffix)?;
         }
         if let Some(frame) = &self.frame {
             parse_hex_bytes(frame.hash.value())?;
         }
-        for entry in &self.memory {
-            let address = parse_hex(&entry.address)?;
-            if address > u16::MAX as u64 {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "invalid memory address: {}",
-                    entry.address
-                )));
-            }
-            let value = parse_hex(&entry.value)?;
-            if value > u8::MAX as u64 {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "invalid memory value: {}",
-                    entry.value
-                )));
-            }
-        }
-        for region in &self.memory_regions {
-            let start = parse_hex(&region.start)?;
-            let value = parse_hex(&region.value)?;
-            let row_length = region.row_length.unwrap_or(region.length);
-            let stride = region.stride.unwrap_or(row_length);
-            if region.length == 0 || row_length == 0 || stride < row_length {
-                return Err(RomTestError::InvalidManifest(
-                    "memory region dimensions must be positive and stride must cover a row"
-                        .to_string(),
-                ));
-            }
-            let rows = region.length.div_ceil(row_length);
-            let last = start + ((rows - 1) * stride + (region.length - 1) % row_length) as u64;
-            if last > u16::MAX as u64 || value > u8::MAX as u64 {
-                return Err(RomTestError::InvalidManifest(
-                    "memory region exceeds the address or byte value range".to_string(),
-                ));
-            }
-        }
-        for comparison in &self.memory_comparisons {
-            for address in [&comparison.actual_address, &comparison.expected_address] {
-                if parse_hex(address)? > u16::MAX as u64 {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "invalid memory comparison address: {address}"
-                    )));
-                }
-            }
-            if let Some(condition) = &comparison.when {
-                if condition.value.is_some() == condition.not_value.is_some() {
-                    return Err(RomTestError::InvalidManifest(
-                        "memory comparison condition requires exactly one of value/not_value"
-                            .to_string(),
-                    ));
-                }
-                let address = parse_hex(&condition.address)?;
-                let value = parse_hex(
-                    condition
-                        .value
-                        .as_deref()
-                        .or(condition.not_value.as_deref())
-                        .expect("condition value presence was validated"),
-                )?;
-                if address > u16::MAX as u64 || value > u8::MAX as u64 {
-                    return Err(RomTestError::InvalidManifest(
-                        "memory comparison condition is out of range".to_string(),
-                    ));
-                }
-            }
-        }
-        self.registers.validate()?;
         Ok(())
     }
 
@@ -463,6 +415,73 @@ impl VerifySpec {
     pub fn verify_registers(&self, registers: &CpuRegisters, checks: &mut Vec<CheckResult>) {
         self.registers.verify(registers, checks);
     }
+}
+
+fn validate_memory_entry(entry: &MemoryEntry) -> Result<(), RomTestError> {
+    if parse_hex(&entry.address)? > u64::from(u16::MAX) {
+        return Err(RomTestError::InvalidManifest(format!(
+            "invalid memory address: {}",
+            entry.address
+        )));
+    }
+    if parse_hex(&entry.value)? > u64::from(u8::MAX) {
+        return Err(RomTestError::InvalidManifest(format!(
+            "invalid memory value: {}",
+            entry.value
+        )));
+    }
+    Ok(())
+}
+
+fn validate_memory_region(region: &MemoryRegion) -> Result<(), RomTestError> {
+    let start = parse_hex(&region.start)?;
+    let value = parse_hex(&region.value)?;
+    let row_length = region.row_length.unwrap_or(region.length);
+    let stride = region.stride.unwrap_or(row_length);
+    if region.length == 0 || row_length == 0 || stride < row_length {
+        return Err(RomTestError::InvalidManifest(
+            "memory region dimensions must be positive and stride must cover a row".to_string(),
+        ));
+    }
+    let rows = region.length.div_ceil(row_length);
+    let last = start + ((rows - 1) * stride + (region.length - 1) % row_length) as u64;
+    if last > u64::from(u16::MAX) || value > u64::from(u8::MAX) {
+        return Err(RomTestError::InvalidManifest(
+            "memory region exceeds the address or byte value range".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_memory_comparison(comparison: &MemoryComparison) -> Result<(), RomTestError> {
+    for address in [&comparison.actual_address, &comparison.expected_address] {
+        if parse_hex(address)? > u64::from(u16::MAX) {
+            return Err(RomTestError::InvalidManifest(format!(
+                "invalid memory comparison address: {address}"
+            )));
+        }
+    }
+    let Some(condition) = &comparison.when else {
+        return Ok(());
+    };
+    if condition.value.is_some() == condition.not_value.is_some() {
+        return Err(RomTestError::InvalidManifest(
+            "memory comparison condition requires exactly one of value/not_value".to_string(),
+        ));
+    }
+    let value = condition
+        .value
+        .as_deref()
+        .or(condition.not_value.as_deref())
+        .expect("condition value presence was validated");
+    if parse_hex(&condition.address)? > u64::from(u16::MAX)
+        || parse_hex(value)? > u64::from(u8::MAX)
+    {
+        return Err(RomTestError::InvalidManifest(
+            "memory comparison condition is out of range".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Raw rendered pixels for reference comparison.

@@ -739,6 +739,14 @@ impl Mode3Pipeline {
     }
 
     fn prepare_tile_address(&mut self) {
+        self.advance_background_tile_column();
+        let (map_base, tile_row, tile_y) = self.tile_map_position();
+        self.fetcher.map_address =
+            map_base + u16::from(tile_row) * 32 + u16::from(self.fetcher.tile_column & 31);
+        self.fetcher.tile_y = tile_y;
+    }
+
+    fn advance_background_tile_column(&mut self) {
         if !self.window_active && self.fetcher.stage_dot == 0 {
             let new_column = self.registers.scx >> 3;
             let column_delta = if self.pixel_x >= 138 && self.skip_next_scx_column_delta {
@@ -747,10 +755,7 @@ impl Mode3Pipeline {
                 new_column.wrapping_sub(self.scx_tile_latch)
             };
             self.skip_next_scx_column_delta = false;
-            self.fetcher.tile_column = self
-                .fetcher
-                .tile_column
-                .wrapping_add(column_delta);
+            self.fetcher.tile_column = self.fetcher.tile_column.wrapping_add(column_delta);
             self.scx_tile_latch = new_column;
             if let Some(value) = self.pending_scx_high.take() {
                 self.registers.scx = (self.registers.scx & 7) | value;
@@ -758,7 +763,10 @@ impl Mode3Pipeline {
                 self.pending_scx_skip_delta = false;
             }
         }
-        let (map_base, tile_row, tile_y) = if self.window_active {
+    }
+
+    fn tile_map_position(&self) -> (u16, u8, u8) {
+        if self.window_active {
             let map = if self.registers.lcdc & 0x40 != 0 {
                 0x9C00
             } else {
@@ -773,10 +781,7 @@ impl Mode3Pipeline {
                 0x9800
             };
             (map, y >> 3, y & 7)
-        };
-        self.fetcher.map_address =
-            map_base + u16::from(tile_row) * 32 + u16::from(self.fetcher.tile_column & 31);
-        self.fetcher.tile_y = tile_y;
+        }
     }
 
     fn read_tile(&mut self, vram: &[u8; 0x4000]) {
@@ -971,11 +976,7 @@ impl Mode3Pipeline {
                     [6, 10, 10, 8, 8, 6, 6, 6],
                 ];
                 OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize].max(6)
-            } else if self.cgb_mode
-                && self.cgb_game
-                && self.sprites.len() == 1
-                && sprite.x >= -8
-            {
+            } else if self.cgb_mode && self.cgb_game && self.sprites.len() == 1 && sprite.x >= -8 {
                 const OFFSCREEN_STALLS: [[u8; 8]; 8] = [
                     [11, 11, 11, 11, 11, 11, 11, 11],
                     [10, 10, 6, 6, 6, 6, 6, 10],
@@ -1608,8 +1609,8 @@ impl Mode3Pipeline {
             self.fine_discard = value & 7;
         }
         let fine_wrap = self.registers.scx & 7 > value & 7;
-        let defer_high = self.compute_scx_defer_high()
-            || self.double_speed && self.pixel_x >= 138 && fine_wrap;
+        let defer_high =
+            self.compute_scx_defer_high() || self.double_speed && self.pixel_x >= 138 && fine_wrap;
         if defer_high {
             self.pending_scx_skip_delta = fine_wrap;
             self.pending_scx_high = Some(value & 0xF8);

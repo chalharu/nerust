@@ -571,6 +571,17 @@ impl GbcMemoryBus {
     }
 
     fn advance_timer(&mut self) {
+        self.advance_pending_apu_div_event();
+        self.deliver_pending_timer_interrupt();
+        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
+        let timer_cycles = if self.double_speed { 2 } else { 1 };
+        self.advance_timer_counter(timer_cycles);
+        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
+            self.clock_or_delay_apu_div();
+        }
+    }
+
+    fn advance_pending_apu_div_event(&mut self) {
         if self.apu_div_event_countdown != 0 {
             let timer_cycles = if self.double_speed { 2 } else { 1 };
             self.apu_div_event_countdown =
@@ -579,21 +590,22 @@ impl GbcMemoryBus {
                 self.apu.clock_div_apu();
             }
         }
+    }
+
+    fn deliver_pending_timer_interrupt(&mut self) {
         if self.timer_irq_pending {
             self.interrupt.request(InterruptKind::Timer);
             self.timer_irq_pending = false;
         }
-        let apu_div_bit = self.timer.apu_div_bit(self.double_speed);
-        let timer_cycles = if self.double_speed { 2 } else { 1 };
+    }
+
+    fn advance_timer_counter(&mut self, timer_cycles: u32) {
         if self.timer.step(timer_cycles).overflow {
             if !self.cgb_mode && self.interrupt.is_halted_or_stopped() {
                 self.timer_irq_pending = true;
             } else {
                 self.interrupt.request(InterruptKind::Timer);
             }
-        }
-        if apu_div_bit && !self.timer.apu_div_bit(self.double_speed) {
-            self.clock_or_delay_apu_div();
         }
     }
 
@@ -620,9 +632,7 @@ impl GbcMemoryBus {
 
     fn maybe_step_cpu(&mut self, cpu: &mut impl CpuStepper, t1: u32) {
         if self.speed_switch_halt_countdown != 0 {
-            if self.speed_switch_halt_countdown > 4
-                && self.interrupt.enabled_interrupt_pending()
-            {
+            if self.speed_switch_halt_countdown > 4 && self.interrupt.enabled_interrupt_pending() {
                 self.speed_switch_halt_countdown = 4;
             }
             return;
@@ -656,30 +666,32 @@ impl GbcMemoryBus {
                 .speed_switch_toggle_countdown
                 .saturating_sub(cpu_cycles);
             if self.speed_switch_toggle_countdown == 0 {
-                let apu_div_reset_fires = self.timer.apu_speed_switch_reset_fires(
-                    self.double_speed,
-                    self.apu_div_event_delayed,
-                );
-                if !self.double_speed {
-                    self.apu_div_event_delayed = !self.apu_div_event_delayed;
-                }
-                self.timer
-                    .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
-                if apu_div_reset_fires {
-                    self.clock_or_delay_apu_div();
-                }
-                self.double_speed = !self.double_speed;
-                if self.double_speed {
-                    self.ppu_ds_toggle = self.tick % 8 == 5;
-                }
-                self.ppu.set_double_speed(self.double_speed);
-                self.ppu.set_double_speed_odd_phase(
-                    self.ppu_ds_toggle
-                        && (self.double_speed || !self.ppu.is_cgb_revision_d()),
-                );
+                self.complete_speed_switch();
             }
         }
         freeze_ppu
+    }
+
+    fn complete_speed_switch(&mut self) {
+        let apu_div_reset_fires = self
+            .timer
+            .apu_speed_switch_reset_fires(self.double_speed, self.apu_div_event_delayed);
+        if !self.double_speed {
+            self.apu_div_event_delayed = !self.apu_div_event_delayed;
+        }
+        self.timer
+            .reset_div_for_speed_switch(self.ppu.is_cgb_revision_d());
+        if apu_div_reset_fires {
+            self.clock_or_delay_apu_div();
+        }
+        self.double_speed = !self.double_speed;
+        if self.double_speed {
+            self.ppu_ds_toggle = self.tick % 8 == 5;
+        }
+        self.ppu.set_double_speed(self.double_speed);
+        self.ppu.set_double_speed_odd_phase(
+            self.ppu_ds_toggle && (self.double_speed || !self.ppu.is_cgb_revision_d()),
+        );
     }
 
     fn deliver_ppu_write_events(&mut self) {
@@ -849,29 +861,30 @@ impl GbcMemoryBus {
 
     pub fn stop(&mut self) {
         if self.speed_switch_pending {
-            // CGB speed switch: KEY1 bit 0 (prepare) was set before STOP.
-            // The switch happens and execution continues (no regular STOP).
-            // A pending enabled interrupt skips the long oscillator stall,
-            // but IME itself does not prevent the speed toggle.
-            self.speed_switch_pending = false;
-            let interrupt_pending = self.interrupt.enabled_interrupt_pending();
-            self.speed_switch_toggle_countdown = 6;
-            self.speed_switch_halt_countdown = if interrupt_pending {
-                if self.ppu.is_cgb_revision_d() { 8 } else { 4 }
-            } else {
-                0x20008
-            };
-            self.speed_switch_ppu_freeze = if interrupt_pending {
-                1
-            } else if self.double_speed {
-                if self.tick % 4 == 1 { 2 } else { 6 }
-            } else {
-                2
-            };
+            self.prepare_speed_switch();
             return;
         }
         self.timer.reset_div();
         self.interrupt.stop();
+    }
+
+    fn prepare_speed_switch(&mut self) {
+        // A pending enabled interrupt skips the long oscillator stall, but
+        // IME itself does not prevent the speed toggle.
+        self.speed_switch_pending = false;
+        let interrupt_pending = self.interrupt.enabled_interrupt_pending();
+        self.speed_switch_toggle_countdown = 6;
+        self.speed_switch_halt_countdown = match (interrupt_pending, self.ppu.is_cgb_revision_d()) {
+            (true, true) => 8,
+            (true, false) => 4,
+            (false, _) => 0x20008,
+        };
+        self.speed_switch_ppu_freeze = match (interrupt_pending, self.double_speed, self.tick % 4) {
+            (true, _, _) => 1,
+            (false, true, 1) => 2,
+            (false, true, _) => 6,
+            (false, false, _) => 2,
+        };
     }
 
     pub fn halt_cpu(&mut self) {

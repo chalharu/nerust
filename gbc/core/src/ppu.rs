@@ -548,7 +548,7 @@ impl GbcPpu {
                             .saturating_add(window)
                             .saturating_add(self.cgb_window_reload_penalty(window)),
                     )
-                        .max(self.mode3_sprite_penalty)
+                    .max(self.mode3_sprite_penalty)
                 })
     }
 
@@ -735,7 +735,19 @@ impl GbcPpu {
     /// internal line state advances. Keep rendering/LYC on the internal line,
     /// but expose the next line during that final bus-access window.
     fn visible_ly(&self) -> u8 {
-        if self.cgb_mode
+        if self.cgb_ly_wrap_visible() {
+            0
+        } else if self.cgb_next_ly_visible() {
+            self.ly & self.next_ly()
+        } else if self.dmg_next_ly_visible() {
+            self.next_ly()
+        } else {
+            self.ly
+        }
+    }
+
+    fn cgb_ly_wrap_visible(&self) -> bool {
+        self.cgb_mode
             && self.ly == SCANLINES_PER_FRAME - 1
             && if self.double_speed {
                 (5..8).contains(&self.mode_clock)
@@ -745,33 +757,26 @@ impl GbcPpu {
                 ((if self.cgb_revision_d { 5 } else { 4 })..14).contains(&self.mode_clock)
                     || self.mode_clock >= 450
             }
-        {
-            0
-        } else if self.cgb_mode
+    }
+
+    fn cgb_next_ly_visible(&self) -> bool {
+        let early_offset =
+            u32::from(!self.cgb_revision_d && !self.double_speed && self.double_speed_odd_phase);
+        self.cgb_mode
             && self.lcdc & 0x80 != 0
-            && self.mode_clock
-                + u32::from(
-                    !self.cgb_revision_d && !self.double_speed && self.double_speed_odd_phase,
-                )
-                + 1
-                >= self.line_length()
-        {
-            let next = if self.ly + 1 >= SCANLINES_PER_FRAME {
-                0
-            } else {
-                self.ly + 1
-            };
-            self.ly & next
-        } else if !self.cgb_mode
+            && self.mode_clock + early_offset + 1 >= self.line_length()
+    }
+
+    fn dmg_next_ly_visible(&self) -> bool {
+        !self.cgb_mode
             && self.lcdc & 0x80 != 0
             && self.lcd_on_delay == 0
             && self.mode_clock + 1 >= self.line_length()
-        {
-            let next = self.ly.wrapping_add(1);
-            if next >= SCANLINES_PER_FRAME { 0 } else { next }
-        } else {
-            self.ly
-        }
+    }
+
+    fn next_ly(&self) -> u8 {
+        let next = self.ly.wrapping_add(1);
+        if next >= SCANLINES_PER_FRAME { 0 } else { next }
     }
 
     fn current_mode(&self) -> PpuMode {
@@ -798,60 +803,82 @@ impl GbcPpu {
     /// though the real mode has already advanced to OAM search.
     fn stat_mode(&self) -> u8 {
         let mut stat = (self.stat & 0x78) | 0x80 | (self.stat & 0x07);
-        let line_start_window = if self.double_speed { 2 } else { 4 };
-        let startup_mode0_pulse = self.cgb_lcd_startup_lines != 0
+        if self.carries_vblank_stat_mode() {
+            stat = (stat & 0xFC) | PpuMode::VBlank as u8;
+        } else if self.forces_hblank_stat_mode() {
+            stat &= 0xFC;
+        } else if self.cgb_mode && self.lcd_on_short_line {
+            stat = self.short_line_stat_mode(stat);
+        } else if self.extends_double_speed_mode3() {
+            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        } else if self.starts_line_in_hblank() {
+            stat &= 0xFC;
+        }
+        stat
+    }
+
+    fn line_start_window(&self) -> u32 {
+        if self.double_speed { 2 } else { 4 }
+    }
+
+    fn carries_vblank_stat_mode(&self) -> bool {
+        self.cgb_vblank_mode_carry && self.ly == 0 && self.mode_clock < self.line_start_window()
+    }
+
+    fn forces_hblank_stat_mode(&self) -> bool {
+        let cgb_mode0 = self.cgb_mode
+            && ((self.ly == VBLANK_START && self.mode_clock < self.line_start_window())
+                || self.cgb_startup_mode0_pulse());
+        cgb_mode0 || self.dmg_raw_scx_hblank()
+    }
+
+    fn cgb_startup_mode0_pulse(&self) -> bool {
+        self.cgb_lcd_startup_lines != 0
             && self.ly == 3
             && if self.double_speed {
                 (40..42).contains(&self.mode_clock)
             } else {
                 (68..72).contains(&self.mode_clock)
-            };
-        let dmg_raw_scx_hblank = !self.cgb_mode
+            }
+    }
+
+    fn dmg_raw_scx_hblank(&self) -> bool {
+        let mode3_end = self.oam_search_cycles()
+            + T_CYCLES_PIXEL_TRANSFER
+            + u32::from(self.scx & 7)
+            + u32::from(self.scx & 3 == 2);
+        !self.cgb_mode
             && self.lcdc & 0x22 == 0
             && self.ly < VBLANK_START
-            && self.mode_clock
-                > self.oam_search_cycles()
-                    + T_CYCLES_PIXEL_TRANSFER
-                    + u32::from(self.scx & 7)
-                    + u32::from(self.scx & 3 == 2);
-        if self.cgb_vblank_mode_carry
-            && self.ly == 0
-            && self.mode_clock < line_start_window
-        {
-            stat = (stat & 0xFC) | PpuMode::VBlank as u8;
-        } else if self.cgb_mode
-            && ((self.ly == VBLANK_START && self.mode_clock < line_start_window)
-                || startup_mode0_pulse)
-            || dmg_raw_scx_hblank
-        {
+            && self.mode_clock > mode3_end
+    }
+
+    fn short_line_stat_mode(&self, mut stat: u8) -> u8 {
+        let fine_scroll = u32::from(self.scx & 7);
+        let mode3_end = if self.double_speed {
+            232 + fine_scroll.div_ceil(2) * 2
+        } else {
+            232 + (fine_scroll + 2) / 4 * 4
+        };
+        if (52..60).contains(&self.mode_clock) || self.mode_clock >= mode3_end {
             stat &= 0xFC;
-        } else if self.cgb_mode && self.lcd_on_short_line {
-            let fine_scroll = u32::from(self.scx & 7);
-            let mode3_end = if self.double_speed {
-                232 + fine_scroll.div_ceil(2) * 2
-            } else {
-                232 + (fine_scroll + 2) / 4 * 4
-            };
-            if (52..60).contains(&self.mode_clock) || self.mode_clock >= mode3_end {
-                stat &= 0xFC;
-            } else if self.mode_clock >= 60 {
-                stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
-            }
-        } else if self.cgb_mode
+        } else if self.mode_clock >= 60 {
+            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
+        }
+        stat
+    }
+
+    fn extends_double_speed_mode3(&self) -> bool {
+        self.cgb_mode
             && self.double_speed
             && self.ly < VBLANK_START
             && (self.scx & 1 != 0 || self.double_speed_odd_phase)
             && self.mode_clock == self.mode3_end_clock() + 1
-        {
-            stat = (stat & 0xFC) | PpuMode::PixelTransfer as u8;
-        } else if (self.cgb_mode
-            && self.ly < VBLANK_START
-            && self.mode_clock < if self.double_speed { 2 } else { 4 })
+    }
+
+    fn starts_line_in_hblank(&self) -> bool {
+        (self.cgb_mode && self.ly < VBLANK_START && self.mode_clock < self.line_start_window())
             || (self.ly <= VBLANK_START && self.lcd_on_hblank_extra > 0)
-        {
-            stat &= 0xFC;
-        }
-        stat
     }
 
     /// Mode 2 is 76 T-cycles (not 80) on the first line after the LCD is
@@ -1063,7 +1090,14 @@ impl GbcPpu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        let blocked = if self.cgb_mode {
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.vram_read_blocked() {
+            return 0xFF;
+        }
+        self.vram[self.vram_index(addr)]
+    }
+
+    fn vram_read_blocked(&self) -> bool {
+        if self.cgb_mode {
             if self.lcd_on_short_line {
                 let fine_scroll = u32::from(self.scx & 7);
                 let (mode3_start, mode3_end) = if self.double_speed {
@@ -1082,24 +1116,20 @@ impl GbcPpu {
             self.ly < VBLANK_START
                 && self.mode_clock >= self.oam_search_cycles()
                 && self.mode_clock <= self.mode3_end_clock()
-        };
-        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
-            return 0xFF;
         }
-        let idx = if self.vbk == 0 {
-            addr & 0x1FFF
-        } else {
-            0x2000 + (addr & 0x1FFF)
-        };
-        self.vram[idx as usize]
     }
-    pub fn debug_read_vram(&self, addr: u16) -> u8 {
+
+    fn vram_index(&self, addr: u16) -> usize {
         let idx = if self.vbk == 0 {
             addr & 0x1FFF
         } else {
             0x2000 + (addr & 0x1FFF)
         };
-        self.vram[idx as usize]
+        idx as usize
+    }
+
+    pub fn debug_read_vram(&self, addr: u16) -> u8 {
+        self.vram[self.vram_index(addr)]
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
@@ -1127,37 +1157,40 @@ impl GbcPpu {
         // on the DMG the scanline position is used directly so that the
         // OAM-search window (which starts right after the line's brief
         // HBlank continuation) blocks reads.
-        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 {
-            let blocked = if self.cgb_mode {
-                if self.lcd_on_short_line {
-                    let mode3_end = 232 + u32::from(self.scx & 7)
-                        - u32::from(!self.cgb_revision_d && !self.double_speed);
-                    self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock)
-                } else if self.double_speed
-                    && !self.cgb_revision_d
-                    && self.ly < VBLANK_START
-                {
-                    self.mode_clock != 0 && self.mode_clock <= self.mode3_end_clock() + 1
-                } else if self.cgb_revision_d && self.ly < VBLANK_START {
-                    self.mode_clock <= self.mode3_end_clock() + 1
-                } else {
-                    matches!(
-                        self.current_mode(),
-                        PpuMode::OamSearch | PpuMode::PixelTransfer
-                    )
-                }
-            } else {
-                self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock()
-            };
-            if blocked {
-                return 0xFF;
-            }
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.oam_read_blocked() {
+            return 0xFF;
         }
         self.oam[addr as usize]
     }
 
+    fn oam_read_blocked(&self) -> bool {
+        if !self.cgb_mode {
+            return self.ly < VBLANK_START && self.mode_clock <= self.mode3_end_clock();
+        }
+        if self.lcd_on_short_line {
+            let mode3_end = 232 + u32::from(self.scx & 7)
+                - u32::from(!self.cgb_revision_d && !self.double_speed);
+            return self.mode_clock < 52 || (60..mode3_end).contains(&self.mode_clock);
+        }
+        if self.double_speed && !self.cgb_revision_d && self.ly < VBLANK_START {
+            return self.mode_clock != 0 && self.mode_clock <= self.mode3_end_clock() + 1;
+        }
+        if self.cgb_revision_d && self.ly < VBLANK_START {
+            return self.mode_clock <= self.mode3_end_clock() + 1;
+        }
+        self.mode_blocks_oam()
+    }
+
     pub fn write_oam(&mut self, addr: u8, value: u8) {
-        let blocked = if self.cgb_mode {
+        let blocked = self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && self.oam_write_blocked();
+        if blocked {
+            return;
+        }
+        self.oam[addr as usize] = value;
+    }
+
+    fn oam_write_blocked(&self) -> bool {
+        if self.cgb_mode {
             if self.lcd_on_short_line {
                 let fine_scroll = u32::from(self.scx & 7);
                 let (mode3_start, mode3_end) = if self.double_speed {
@@ -1182,12 +1215,14 @@ impl GbcPpu {
                 && self.mode_clock > 0
                 && self.mode_clock != self.oam_search_cycles()
                 && self.mode_clock <= self.mode3_end_clock()
-        };
-        let blocked = self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked;
-        if blocked {
-            return;
         }
-        self.oam[addr as usize] = value;
+    }
+
+    fn mode_blocks_oam(&self) -> bool {
+        matches!(
+            self.current_mode(),
+            PpuMode::OamSearch | PpuMode::PixelTransfer
+        )
     }
 
     /// OAM DMA writes are never blocked (the DMA is a PPU-internal access).
