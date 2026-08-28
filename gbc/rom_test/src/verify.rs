@@ -98,7 +98,7 @@ impl RegisterVerify {
     pub fn matches(&self, registers: &CpuRegisters) -> bool {
         self.entries().into_iter().all(|(_, expected, actual)| {
             expected.is_none_or(|expected| {
-                parse_hex(expected).is_ok_and(|expected| actual(registers) as u64 == expected)
+                parse_hex(expected).is_ok_and(|expected| u64::from(actual(registers)) == expected)
             })
         })
     }
