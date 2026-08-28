@@ -888,12 +888,12 @@ impl GbcPpu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        if !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock >= self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock()
-        {
+        let blocked = if self.cgb_mode {
+            self.current_mode() == PpuMode::PixelTransfer
+        } else {
+            self.mode_clock >= self.oam_search_cycles() && self.mode_clock <= self.mode3_end_clock()
+        };
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
             return 0xFF;
         }
         let idx = if self.vbk == 0 {
@@ -903,7 +903,6 @@ impl GbcPpu {
         };
         self.vram[idx as usize]
     }
-
     pub fn debug_read_vram(&self, addr: u16) -> u8 {
         let idx = if self.vbk == 0 {
             addr & 0x1FFF
@@ -914,12 +913,12 @@ impl GbcPpu {
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
-        if !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock > self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock()
-        {
+        let blocked = if self.cgb_mode {
+            self.current_mode() == PpuMode::PixelTransfer
+        } else {
+            self.mode_clock > self.oam_search_cycles() && self.mode_clock <= self.mode3_end_clock()
+        };
+        if self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked {
             return;
         }
         let idx = if self.vbk == 0 {
@@ -953,12 +952,17 @@ impl GbcPpu {
     }
 
     pub fn write_oam(&mut self, addr: u8, value: u8) {
-        let blocked = !self.cgb_mode
-            && self.lcdc & 0x80 != 0
-            && self.lcd_on_delay == 0
-            && self.mode_clock > 0
-            && self.mode_clock != self.oam_search_cycles()
-            && self.mode_clock <= self.mode3_end_clock();
+        let blocked = if self.cgb_mode {
+            matches!(
+                self.current_mode(),
+                PpuMode::OamSearch | PpuMode::PixelTransfer
+            )
+        } else {
+            self.mode_clock > 0
+                && self.mode_clock != self.oam_search_cycles()
+                && self.mode_clock <= self.mode3_end_clock()
+        };
+        let blocked = self.lcdc & 0x80 != 0 && self.lcd_on_delay == 0 && blocked;
         if blocked {
             return;
         }
@@ -1259,6 +1263,33 @@ mod tests {
         while p.ly != target_ly {
             p.step(T_CYCLES_PER_SCANLINE);
         }
+    }
+
+    #[test]
+    fn cgb_blocks_vram_during_mode3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.vram[0] = 0x42;
+        p.mode_clock = p.oam_search_cycles() + 1;
+
+        assert_eq!(p.read_vram(0x8000), 0xFF);
+        p.write_vram(0x8000, 0x73);
+        assert_eq!(p.vram[0], 0x42);
+    }
+
+    #[test]
+    fn cgb_blocks_oam_writes_during_modes2_and3() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.oam[0] = 0x42;
+
+        p.mode_clock = 1;
+        p.write_oam(0, 0x73);
+        assert_eq!(p.oam[0], 0x42);
+
+        p.mode_clock = p.oam_search_cycles() + 1;
+        p.write_oam(0, 0x99);
+        assert_eq!(p.oam[0], 0x42);
     }
 
     #[test]
