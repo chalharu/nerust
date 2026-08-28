@@ -95,9 +95,17 @@ suites:
           - timing
   - name: c-sp_age-test-roms
     case_patterns:
-      - glob: artifacts/**/*-dmgC-cgb*.gb
+      - glob: artifacts/**/*-dmgC-cgbBCE.gb
         id_prefix: age_
         models: [dmg, cgb_c, cgb_d]
+        cycles: 2000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-dmgC-cgbBC.gb
+        id_prefix: age_
+        models: [dmg, cgb_c]
         cycles: 2000000
         completion: age_registers
         verify:
@@ -111,9 +119,25 @@ suites:
         verify:
           registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
         tags: [accuracy]
-      - glob: artifacts/**/*-ncm*.gb
+      - glob: artifacts/**/*-ncmBCE.gb
         id_prefix: age_
         models: [cgb_c, cgb_d]
+        cycles: 2000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmBC.gb
+        id_prefix: age_
+        models: [cgb_c]
+        cycles: 2000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmE.gb
+        id_prefix: age_
+        models: [cgb_d]
         cycles: 2000000
         completion: age_registers
         verify:
@@ -127,9 +151,17 @@ suites:
         verify:
           registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
         tags: [accuracy]
-      - glob: artifacts/**/*-cgbB*.gb
+      - glob: artifacts/**/*-cgbBCE.gb
         id_prefix: age_
         models: [cgb_c, cgb_d]
+        cycles: 2000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbBC.gb
+        id_prefix: age_
+        models: [cgb_c]
         cycles: 2000000
         completion: age_registers
         verify:
