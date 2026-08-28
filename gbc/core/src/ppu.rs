@@ -687,12 +687,25 @@ impl GbcPpu {
         if self.cgb_revision_d
             && self.ly == SCANLINES_PER_FRAME - 1
             && if self.double_speed {
-                (6..8).contains(&self.mode_clock) || self.mode_clock >= 454
+                (5..8).contains(&self.mode_clock)
+                    || self.double_speed_odd_phase && (106..108).contains(&self.mode_clock)
+                    || self.mode_clock >= 453
             } else {
-                (8..12).contains(&self.mode_clock) || self.mode_clock >= 452
+                (5..14).contains(&self.mode_clock) || self.mode_clock >= 450
             }
         {
             0
+        } else if self.cgb_mode
+            && self.cgb_revision_d
+            && self.lcdc & 0x80 != 0
+            && self.mode_clock + 1 >= self.line_length()
+        {
+            let next = if self.ly + 1 >= SCANLINES_PER_FRAME {
+                0
+            } else {
+                self.ly + 1
+            };
+            self.ly & next
         } else if !self.cgb_mode
             && self.lcdc & 0x80 != 0
             && self.lcd_on_delay == 0
@@ -1546,23 +1559,41 @@ mod tests {
         p.cgb_revision_d = true;
         p.ly = 153;
 
-        p.mode_clock = 7;
+        p.mode_clock = 4;
         assert_eq!(p.read_register(0xFF44), 153);
-        p.mode_clock = 8;
+        p.mode_clock = 5;
         assert_eq!(p.read_register(0xFF44), 0);
-        p.mode_clock = 12;
+        p.mode_clock = 13;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 14;
         assert_eq!(p.read_register(0xFF44), 153);
-        p.mode_clock = 452;
+        p.mode_clock = 450;
         assert_eq!(p.read_register(0xFF44), 0);
 
         p.double_speed = true;
-        p.mode_clock = 5;
+        p.mode_clock = 4;
         assert_eq!(p.read_register(0xFF44), 153);
-        p.mode_clock = 6;
+        p.mode_clock = 5;
         assert_eq!(p.read_register(0xFF44), 0);
         p.mode_clock = 8;
         assert_eq!(p.read_register(0xFF44), 153);
-        p.mode_clock = 454;
+        p.double_speed_odd_phase = true;
+        p.mode_clock = 106;
+        assert_eq!(p.read_register(0xFF44), 0);
+        p.mode_clock = 453;
+        assert_eq!(p.read_register(0xFF44), 0);
+    }
+
+    #[test]
+    fn late_cgb_ly_bus_ands_adjacent_lines_on_final_dot() {
+        let mut p = ppu();
+        p.cgb_mode = true;
+        p.cgb_revision_d = true;
+        p.ly = 143;
+        p.mode_clock = T_CYCLES_PER_SCANLINE - 1;
+        assert_eq!(p.read_register(0xFF44), 143 & 144);
+
+        p.ly = 1;
         assert_eq!(p.read_register(0xFF44), 0);
     }
 
