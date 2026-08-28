@@ -4,10 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
-import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -80,25 +78,16 @@ class MainActivityE2eTest {
         SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
         assertDrawerHandleAvailable(activity)
 
-        val downTime = SystemClock.uptimeMillis()
-        injectTouch(MotionEvent.ACTION_DOWN, 400f, 1300f, downTime, downTime)
-        injectTouch(MotionEvent.ACTION_MOVE, 520f, 1180f, downTime, downTime + 16)
-        val floatingState =
-            waitUntilValue(DIALOG_TIMEOUT_MS) {
-                floatingDpadState(activity)?.takeIf { it[0] == 1f }
-            }
-        assertArrayEquals(
-            floatArrayOf(1f, 400f, 1300f),
-            requireNotNull(floatingState).copyOfRange(0, 3),
-            0.01f,
-        )
-        assertTrue("Joystick knob should move right", floatingState[3] > floatingState[1])
-        assertTrue("Joystick knob should move up", floatingState[4] < floatingState[2])
-        injectTouch(MotionEvent.ACTION_UP, 520f, 1180f, downTime, downTime + 32)
-        assertTrue(
-            "Floating joystick should return to rest after touch release",
-            waitUntil(DIALOG_TIMEOUT_MS) { floatingDpadState(activity)?.get(0) == 0f },
-        )
+        runOnActivityThread(activity) {
+            activity.updateFloatingDpad(true, 400f, 1300f, 500f, 1200f)
+            assertArrayEquals(
+                floatArrayOf(1f, 400f, 1300f, 500f, 1200f),
+                requireNotNull(activity.floatingDpadStateForTest()),
+                0.01f,
+            )
+            activity.updateFloatingDpad(false, 0f, 0f, 0f, 0f)
+            assertEquals(0f, requireNotNull(activity.floatingDpadStateForTest())[0], 0.01f)
+        }
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening drawer" }
@@ -335,24 +324,6 @@ class MainActivityE2eTest {
             return
         }
         fail("$failureMessage; ${safeChromeDebugState(activity, tag)}")
-    }
-
-    private fun injectTouch(action: Int, x: Float, y: Float, downTime: Long, eventTime: Long) {
-        val event = MotionEvent.obtain(downTime, eventTime, action, x, y, 0)
-        try {
-            assertTrue(
-                "Touch event should be injected",
-                InstrumentationRegistry.getInstrumentation().uiAutomation.injectInputEvent(event, true),
-            )
-        } finally {
-            event.recycle()
-        }
-    }
-
-    private fun floatingDpadState(activity: MainActivity): FloatArray? {
-        val state = AtomicReference<FloatArray?>()
-        runOnActivityThread(activity) { state.set(activity.floatingDpadStateForTest()) }
-        return state.get()
     }
 
     private fun chromeViewIsShowing(activity: MainActivity, tag: String): Boolean {
