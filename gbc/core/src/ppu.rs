@@ -403,6 +403,19 @@ impl GbcPpu {
         }
     }
 
+    /// DMG STAT write bug: during a write to STAT, all interrupt-enable bits
+    /// briefly behave as set. This raises the combined STAT line in modes
+    /// 0, 1, or 2, and while LY=LYC, but not in mode 3 alone.
+    pub(crate) fn dmg_stat_write_irq(&self) -> bool {
+        if self.lcdc & 0x80 == 0 {
+            return false;
+        }
+        if self.lyc_coincide() || self.ly >= VBLANK_START {
+            return true;
+        }
+        self.mode_clock < self.oam_irq_rise() || self.mode_clock >= self.mode3_end_clock() + 4
+    }
+
     fn stat_signal_vblank(&self) -> bool {
         // The mode-1 condition is level-active for all of VBlank
         // (starting 4 T-cycles into line 144).
@@ -1151,7 +1164,7 @@ impl GbcPpu {
         self.lcdc = value;
         if !lcd_was_enabled && value & 0x80 != 0 {
             // The PPU starts at the beginning of the next scanline. During
-            // the power-on delay (20 T-cycles) STAT mode bits read as 00 and
+            // the power-on delay STAT mode bits read as 00 and
             // the LYC comparison clock is not running.
             self.lcd_on_delay = if self.cgb_mode { 20 } else { 77 };
             self.lcd_on_short_line = true;
@@ -1363,6 +1376,22 @@ mod tests {
         p.write_register(0xFF41, 0xFF);
         assert_eq!(p.read_register(0xFF41) & 0x07, 0);
         assert_eq!(p.read_register(0xFF41) & 0x78, 0x78);
+    }
+
+    #[test]
+    fn dmg_stat_write_bug_uses_delayed_hblank_window() {
+        let mut p = ppu();
+        p.write_register(0xFF45, 1);
+
+        p.mode_clock = p.mode3_end_clock();
+        assert!(!p.dmg_stat_write_irq());
+        p.mode_clock += 4;
+        assert!(p.dmg_stat_write_irq());
+        p.mode_clock = 0;
+        p.ly = 1;
+        assert!(p.dmg_stat_write_irq());
+        p.mode_clock = 4;
+        assert!(!p.dmg_stat_write_irq());
     }
 
     #[test]

@@ -369,7 +369,12 @@ impl GbcMemoryBus {
                 }
                 self.apu.write_register(addr, value);
             }
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.enqueue_ppu_write(addr, value),
+            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
+                if addr == 0xFF41 && value == 0 && !self.cgb_mode && self.ppu.dmg_stat_write_irq() {
+                    self.interrupt.request(InterruptKind::LcdStat);
+                }
+                self.enqueue_ppu_write(addr, value);
+            }
             0xFF4F | 0xFF6C if self.cgb_mode => self.enqueue_ppu_write(addr, value),
             0xFF46 => self.dma.start(value),
             0xFF4D if self.cgb_mode => self.write_key1(value),
