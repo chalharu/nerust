@@ -7,9 +7,6 @@
 #   dmgC -> dmg, cgbBC -> cgb_c/cgb_d, cgbE -> cgb_d, and ncm -> CGB DMG mode.
 # - Diagnostic GBMicrotest ROMs that never publish the FF82 pass/fail protocol
 #   are excluded by the manifest rather than listed as expected failures.
-age_ei-halt-dmgC-cgbBCE@cgb_c
-age_ei-halt-dmgC-cgbBCE@cgb_d
-age_ei-halt-dmgC-cgbBCE@dmg
 age_halt-m0-interrupt-dmgC-cgbBCE@cgb_c
 age_halt-m0-interrupt-dmgC-cgbBCE@cgb_d
 age_halt-m0-interrupt-dmgC-cgbBCE@dmg
