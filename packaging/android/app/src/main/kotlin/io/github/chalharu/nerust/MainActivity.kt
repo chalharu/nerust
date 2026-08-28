@@ -1233,27 +1233,6 @@ class MainActivity :
             false
         }
 
-    private fun updatePopupWindow(
-        popup: PopupWindow,
-        x: Int,
-        y: Int,
-        width: Int,
-        height: Int,
-    ): Boolean =
-        try {
-            popup.width = width
-            popup.height = height
-            popup.update(x, y, width, height)
-            Log.i(TAG, "updatePopupWindow: updated popup to ($x,$y ${width}x$height)")
-            true
-        } catch (error: WindowManager.BadTokenException) {
-            Log.w(TAG, "updatePopupWindow: failed with bad token", error)
-            false
-        } catch (error: IllegalStateException) {
-            Log.w(TAG, "updatePopupWindow: failed with illegal state", error)
-            false
-        }
-
     private fun clearDrawerWindowReferences() {
         drawerShowing = false
         drawerOverlayView = null
