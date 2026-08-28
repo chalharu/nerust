@@ -15,7 +15,10 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_settings::{local::TouchOverlayVisibility, shared::StoragePolicy};
+use nerust_gui_settings::{
+    local::{ScreenOrientation, TouchOverlayVisibility},
+    shared::StoragePolicy,
+};
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
 use winit::platform::android::activity::AndroidApp;
@@ -53,6 +56,7 @@ pub(crate) struct AndroidSettings {
     pub latency_ms: u16,
     pub sample_rate: u32,
     pub vsync: bool,
+    pub screen_orientation: ScreenOrientation,
     pub storage_policy: StoragePolicy,
     pub overlay_visibility: TouchOverlayVisibility,
     pub overlay_opacity_percent: u8,
@@ -121,6 +125,7 @@ impl AndroidSettings {
             latency_ms: snapshot.local.audio.latency_ms,
             sample_rate: snapshot.local.audio.sample_rate,
             vsync: snapshot.local.video.presentation.vsync,
+            screen_orientation: snapshot.local.screen_orientation,
             storage_policy: snapshot.shared.persistence.storage_policy,
             overlay_visibility: snapshot.local.touch_overlay.visibility,
             overlay_opacity_percent: snapshot.local.touch_overlay.opacity_percent,
@@ -144,6 +149,7 @@ impl AndroidSettings {
         snapshot.local.audio.latency_ms = self.latency_ms;
         snapshot.local.audio.sample_rate = self.sample_rate;
         snapshot.local.video.presentation.vsync = self.vsync;
+        snapshot.local.screen_orientation = self.screen_orientation;
         snapshot.shared.persistence.storage_policy = self.storage_policy;
         snapshot.local.touch_overlay.visibility = self.overlay_visibility;
         snapshot.local.touch_overlay.opacity_percent = self.overlay_opacity_percent;
@@ -177,6 +183,7 @@ impl AndroidSettings {
             "latency_ms".to_string(),
             "sample_rate".to_string(),
             "vsync".to_string(),
+            "screen.orientation".to_string(),
             "storage.policy".to_string(),
             "controls.overlay.visibility".to_string(),
             "controls.overlay.opacity".to_string(),
@@ -200,6 +207,7 @@ impl AndroidSettings {
             "Audio Latency (ms)".to_string(),
             "Sample Rate (Hz)".to_string(),
             "VSync".to_string(),
+            "Screen Orientation".to_string(),
             "Save Location".to_string(),
             "Touch Overlay".to_string(),
             "Overlay Opacity".to_string(),
@@ -227,6 +235,7 @@ impl AndroidSettings {
                     .map(|value| format!("{value} Hz")),
             ),
             "Off\tOn".to_string(),
+            "Auto Rotate\tPortrait\tLandscape".to_string(),
             "Next to ROM\tApp Storage\tCustom Directory".to_string(),
             "Always\tAuto\tHidden".to_string(),
             join_tab_labels((0..=100).map(|value| format!("{value}%"))),
@@ -261,6 +270,12 @@ impl AndroidSettings {
             latency_idx.to_string(),
             sample_rate_idx.to_string(),
             (self.vsync as usize).to_string(),
+            match self.screen_orientation {
+                ScreenOrientation::Auto => 0,
+                ScreenOrientation::Portrait => 1,
+                ScreenOrientation::Landscape => 2,
+            }
+            .to_string(),
             match self.storage_policy {
                 StoragePolicy::Sidecar => 0,
                 StoragePolicy::AppSharedData => 1,
@@ -332,36 +347,42 @@ impl AndroidSettings {
             1 => true,
             _ => return None,
         };
-        let storage_policy = match indices[5] {
+        let screen_orientation = match indices[5] {
+            0 => ScreenOrientation::Auto,
+            1 => ScreenOrientation::Portrait,
+            2 => ScreenOrientation::Landscape,
+            _ => return None,
+        };
+        let storage_policy = match indices[6] {
             0 => StoragePolicy::Sidecar,
             1 => StoragePolicy::AppSharedData,
             2 => StoragePolicy::CustomDirectory,
             _ => return None,
         };
-        let overlay_visibility = match indices[6] {
+        let overlay_visibility = match indices[7] {
             0 => TouchOverlayVisibility::Always,
             1 => TouchOverlayVisibility::Auto,
             2 => TouchOverlayVisibility::Hidden,
             _ => return None,
         };
-        let overlay_opacity_percent = u8::try_from(indices[7])
+        let overlay_opacity_percent = u8::try_from(indices[8])
             .ok()
             .filter(|value| *value <= 100)?;
-        let overlay_scale_percent = u8::try_from(indices[8])
+        let overlay_scale_percent = u8::try_from(indices[9])
             .ok()
             .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
             + OVERLAY_SCALE_MIN;
-        let overlay_vertical_offset_percent = i8::try_from(indices[9])
+        let overlay_vertical_offset_percent = i8::try_from(indices[10])
             .ok()
             .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
             + OVERLAY_OFFSET_MIN;
-        let overlay_haptics = match indices[10] {
+        let overlay_haptics = match indices[11] {
             0 => false,
             1 => true,
             _ => return None,
         };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[11..]) {
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[12..]) {
             choice.selected = choice.options.get(*selected_index)?.0.clone();
         }
 
@@ -371,6 +392,7 @@ impl AndroidSettings {
             latency_ms,
             sample_rate,
             vsync,
+            screen_orientation,
             storage_policy,
             overlay_visibility,
             overlay_opacity_percent,
@@ -394,7 +416,7 @@ impl AndroidSettings {
                 "controls".to_string()
             } else if key.starts_with("storage.") {
                 "storage".to_string()
-            } else if key == "vsync" {
+            } else if key == "vsync" || key.starts_with("screen.") {
                 "video".to_string()
             } else {
                 "audio".to_string()
@@ -492,6 +514,34 @@ fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
     with_state(|state| state.cache = Some(current.clone()));
+}
+
+pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrientation) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let result = unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) }
+            .attach_current_thread(|env| {
+                let activity_raw = callback_app.activity_as_ptr() as jobject;
+                let activity =
+                    unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+                let value = match orientation {
+                    ScreenOrientation::Auto => 0,
+                    ScreenOrientation::Portrait => 1,
+                    ScreenOrientation::Landscape => 2,
+                };
+                env.call_method(
+                    activity.as_ref(),
+                    jni_str!("applyScreenOrientation"),
+                    jni_sig!("(I)V"),
+                    &[JValue::Int(value)],
+                )?;
+                Ok::<_, jni::errors::Error>(())
+            });
+        if let Err(error) = result {
+            log::error!("failed to apply Android screen orientation: {error:?}");
+        }
+    }));
 }
 
 fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
@@ -804,10 +854,12 @@ mod tests {
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
         assert_eq!(
-            &indices[..11],
-            ["0", "100", "40", "1", "1", "0", "1", "65", "50", "30", "1"]
+            &indices[..12],
+            [
+                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1"
+            ]
         );
-        assert_eq!(indices.len(), 15);
+        assert_eq!(indices.len(), 16);
     }
 
     #[test]
@@ -820,6 +872,7 @@ mod tests {
         original.latency_ms = 100;
         original.sample_rate = 44_100;
         original.vsync = false;
+        original.screen_orientation = ScreenOrientation::Landscape;
         set_system_choice(&mut original, "video.filter", "ntsc_svideo");
         original
             .apply_to_snapshot(&mut snapshot, &registry)
@@ -840,6 +893,7 @@ mod tests {
         original.latency_ms = 37;
         original.sample_rate = 44_100;
         original.vsync = true;
+        original.screen_orientation = ScreenOrientation::Portrait;
         set_system_choice(&mut original, "video.filter", "none");
 
         let indices_str = original.current_indices().join(",");
@@ -943,6 +997,27 @@ mod tests {
             .unwrap();
         assert_eq!(storage["options"][0], "Next to ROM");
         assert_eq!(storage["options"][1], "App Storage");
+        let orientation = fields
+            .iter()
+            .find(|field| field["key"] == "screen.orientation")
+            .unwrap();
+        assert_eq!(orientation["options"][0], "Auto Rotate");
+        assert_eq!(orientation["options"][1], "Portrait");
+        assert_eq!(orientation["options"][2], "Landscape");
+        assert!(
+            payload["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|section| {
+                    section["id"] == "video"
+                        && section["fields"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|field| field["key"] == "screen.orientation")
+                })
+        );
         assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
     }
 

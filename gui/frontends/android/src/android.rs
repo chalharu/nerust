@@ -457,6 +457,7 @@ impl AndroidFrontend {
         );
         current.prioritize_system(self.session.active_system_id());
         settings::update_cached_settings(&current);
+        settings::apply_screen_orientation(&self.app, current.screen_orientation);
     }
 
     fn load_from_library_with_autosave(
@@ -616,7 +617,10 @@ impl AndroidFrontend {
                 };
                 next.shared.persistence.storage_document_tree_uri = Some(uri);
                 match self.apply_settings(next) {
-                    Ok(_) => self.request_redraw(),
+                    Ok(_) => {
+                        self.refresh_dialog_caches();
+                        self.request_redraw();
+                    }
                     Err(error) => {
                         log::error!("failed to apply Android storage directory: {error}");
                         show_toast(&self.app, "Selected directory could not be used");
@@ -684,6 +688,7 @@ impl AndroidFrontend {
                 self.request_redraw();
                 // Settings changed – refresh cached settings for sync dialogs.
                 settings::update_cached_settings(&android_settings);
+                settings::apply_screen_orientation(&self.app, android_settings.screen_orientation);
             }
             Err(error) => {
                 log::error!("failed to apply Android settings: {error}");

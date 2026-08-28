@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.NativeActivity
+import android.content.pm.ActivityInfo
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -112,6 +113,14 @@ private const val MENU_BUTTON_TAG = "nerust-menu-button"
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val DRAWER_TITLE = "Nerust"
 private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
+
+internal fun screenOrientationRequest(value: Int): Int? =
+    when (value) {
+        0 -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        1 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        2 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        else -> null
+    }
 
 private data class DrawerAction(val label: String, val action: String)
 
@@ -635,6 +644,17 @@ class MainActivity : NativeActivity(), LifecycleOwner, SavedStateRegistryOwner, 
             requestId = requestId,
             ownedByTest = false,
         )
+    }
+
+    fun applyScreenOrientation(value: Int) {
+        val orientation = screenOrientationRequest(value)
+        if (orientation == null) {
+            Log.w(TAG, "Ignoring invalid screen orientation value: $value")
+            return
+        }
+        if (requestedOrientation != orientation) {
+            requestedOrientation = orientation
+        }
     }
 
     private fun showSettingsDialogInternal(
