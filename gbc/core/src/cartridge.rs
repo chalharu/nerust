@@ -69,6 +69,12 @@ impl Cartridge {
         }
     }
 
+    pub fn sync_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {
+        if self.has_rtc {
+            self.mbc.sync_rtc_from(saved_at, now);
+        }
+    }
+
     pub fn reset_runtime(&mut self) {
         self.mbc.reset_runtime();
     }

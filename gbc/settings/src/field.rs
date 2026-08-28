@@ -58,6 +58,8 @@ pub enum GbcSettingChoice {
     Agb,
     #[strum(serialize = "off")]
     Off,
+    #[strum(serialize = "save_data_only")]
+    SaveDataOnly,
     #[strum(serialize = "system_time")]
     SystemTime,
 }
@@ -71,6 +73,7 @@ impl GbcSettingChoice {
             Self::CgbD => "gbc.hardware.cgb_d",
             Self::Agb => "gbc.hardware.agb",
             Self::Off => "gbc.rtc_sync.off",
+            Self::SaveDataOnly => "gbc.rtc_sync.save_data_only",
             Self::SystemTime => "gbc.rtc_sync.system_time",
         }
     }
@@ -92,6 +95,7 @@ impl From<RtcSyncMode> for GbcSettingChoice {
     fn from(v: RtcSyncMode) -> Self {
         match v {
             RtcSyncMode::Off => Self::Off,
+            RtcSyncMode::SaveDataOnly => Self::SaveDataOnly,
             RtcSyncMode::SystemTime => Self::SystemTime,
         }
     }
@@ -114,7 +118,7 @@ fn hardware_model_options() -> Vec<SystemSettingsChoiceOption> {
 
 fn rtc_sync_options() -> Vec<SystemSettingsChoiceOption> {
     use GbcSettingChoice::*;
-    build_choice_options(&[Off, SystemTime])
+    build_choice_options(&[Off, SaveDataOnly, SystemTime])
 }
 
 #[cfg(test)]
@@ -141,6 +145,7 @@ mod tests {
             GbcSettingChoice::CgbD,
             GbcSettingChoice::Agb,
             GbcSettingChoice::Off,
+            GbcSettingChoice::SaveDataOnly,
             GbcSettingChoice::SystemTime,
         ];
         let ids: Vec<String> = all.iter().map(|c| c.to_string()).collect();
@@ -186,6 +191,10 @@ mod tests {
     #[test]
     fn from_rtc_sync_mode_maps_all_variants() {
         assert_eq!(GbcSettingChoice::from(RtcSyncMode::Off).to_string(), "off");
+        assert_eq!(
+            GbcSettingChoice::from(RtcSyncMode::SaveDataOnly).to_string(),
+            "save_data_only"
+        );
         assert_eq!(
             GbcSettingChoice::from(RtcSyncMode::SystemTime).to_string(),
             "system_time"
