@@ -45,8 +45,6 @@ age_stat-mode-sprites-ds-cgbBCE@cgb_d
 age_stat-mode-window-cgbBCE@cgb_c
 age_stat-mode-window-cgbBCE@cgb_d
 age_stat-mode-window-dmgC@dmg
-age_stat-mode-window-ds-cgbBCE@cgb_c
-age_stat-mode-window-ds-cgbBCE@cgb_d
 age_stat-mode-window-ncmBCE@cgb_c
 age_stat-mode-window-ncmBCE@cgb_d
 age_vram-read-dmgC@dmg
