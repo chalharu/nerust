@@ -522,8 +522,15 @@ impl GbcPpu {
                 .as_ref()
                 .map_or(self.mode3_sprite_penalty, |p| {
                     let window = p.window_extra_dots();
+                    let sprite = p.sprite_extra_dots();
+                    let sprite_reload = if self.cgb_mode && self.double_speed && sprite != 0 {
+                        2
+                    } else {
+                        0
+                    };
                     u32::from(
-                        p.sprite_extra_dots()
+                        sprite
+                            .saturating_add(sprite_reload)
                             .saturating_add(window)
                             .saturating_add(self.cgb_window_reload_penalty(window)),
                     )
@@ -644,6 +651,7 @@ impl GbcPpu {
                 self.cgb_revision_d,
                 self.opri,
             );
+            pipeline.set_double_speed(self.double_speed);
             pipeline.set_wx_written_during_oam(self.wx_written_during_oam);
             self.wx_written_during_oam = false;
             self.mode3_pipeline = Some(pipeline);

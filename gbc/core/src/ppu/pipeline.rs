@@ -152,6 +152,7 @@ pub(super) struct Mode3Pipeline {
     cgb_mode: bool,
     cgb_game: bool,
     cgb_revision_d: bool,
+    double_speed: bool,
     oam_priority: bool,
     startup_dots: u8,
     initial_dummy_pending: bool,
@@ -243,6 +244,7 @@ impl Mode3Pipeline {
             cgb_mode,
             cgb_game,
             cgb_revision_d,
+            double_speed: false,
             oam_priority,
             startup_dots: 19 + (registers.scx & 7),
             initial_dummy_pending: true,
@@ -356,6 +358,10 @@ impl Mode3Pipeline {
             && self.window_eligible
             && (4..=5).contains(&self.registers.wx)
             && self.sprites.is_empty();
+    }
+
+    pub(super) fn set_double_speed(&mut self, enabled: bool) {
+        self.double_speed = enabled;
     }
 
     fn deliver_register_writes(&mut self) {
@@ -941,7 +947,19 @@ impl Mode3Pipeline {
         let tile_x = (pixel_pos + i16::from(self.registers.scx)) & 7;
         let fetch_wait = (5 - tile_x).max(0) as u8;
         if sprite.x < 0 {
-            if sprite.x <= -5 {
+            if self.cgb_mode && self.double_speed && sprite.x >= -8 {
+                const OFFSCREEN_STALLS: [[u8; 8]; 8] = [
+                    [11, 11, 11, 11, 11, 11, 11, 11],
+                    [10, 8, 8, 6, 6, 6, 6, 10],
+                    [9, 9, 7, 7, 5, 7, 11, 11],
+                    [8, 6, 6, 6, 6, 10, 10, 8],
+                    [7, 7, 5, 7, 11, 11, 9, 9],
+                    [6, 6, 6, 10, 10, 8, 8, 6],
+                    [6, 6, 12, 10, 10, 8, 8, 6],
+                    [6, 10, 10, 8, 8, 6, 6, 6],
+                ];
+                OFFSCREEN_STALLS[(sprite.x + 8) as usize][(self.registers.scx & 7) as usize].max(6)
+            } else if sprite.x <= -5 {
                 (3 - sprite.x) as u8
             } else if sprite.x == -4 {
                 7
@@ -1744,6 +1762,27 @@ mod tests {
             obp0: 0xE4,
             obp1: 0xE4,
         }
+    }
+
+    #[test]
+    fn cgb_offscreen_sprite_stall_depends_on_scx_phase() {
+        let sprite = Sprite {
+            x: -2,
+            tile: 0,
+            y: 0,
+            flags: 0,
+            oam_index: 0,
+        };
+        let mut pipeline =
+            Mode3Pipeline::new(registers(), 0, 0, false, Vec::new(), true, true, true, 0);
+        pipeline.set_double_speed(true);
+
+        pipeline.registers.scx = 0;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 6);
+        pipeline.registers.scx = 2;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 12);
+        pipeline.registers.scx = 7;
+        assert_eq!(pipeline.sprite_stall(&sprite, 0), 6);
     }
 
     #[test]
