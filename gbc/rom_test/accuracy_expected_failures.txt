@@ -36,7 +36,6 @@ age_spsw-interrupts-cgbE@cgb_d
 age_spsw-mode0-cgbBCE@cgb_c
 age_spsw-mode0-cgbBCE@cgb_d
 age_spsw-tima-cgbBC@cgb_c
-age_spsw-tima-cgbE@cgb_d
 age_stat-int-dmgC-cgbBCE@cgb_c
 age_stat-int-dmgC-cgbBCE@cgb_d
 age_stat-int-dmgC-cgbBCE@dmg
