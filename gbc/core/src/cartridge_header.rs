@@ -242,7 +242,10 @@ impl CartridgeHeader {
         let cgb_flag = hdr[0x43];
 
         let checksum_valid = Self::compute_checksum(hdr);
-        let multicart = is_mbc1_multicart(rom);
+        let multicart = matches!(
+            cartridge_type,
+            CartridgeType::Mbc1 | CartridgeType::Mbc1Ram | CartridgeType::Mbc1RamBattery
+        ) && is_mbc1_multicart(rom);
 
         Some(Self {
             cartridge_type,
@@ -459,6 +462,23 @@ mod tests {
         assert!(battery.has_battery());
         assert!(!battery.has_rtc());
         assert!(!battery.has_rumble());
+    }
+
+    #[test]
+    fn multicart_detection_is_limited_to_mbc1_types() {
+        let mut rom = vec![0; 0x100000];
+        for page in 0..4 {
+            let logo = page * 0x40000 + 0x0104;
+            rom[logo..logo + NINTENDO_LOGO.len()].copy_from_slice(&NINTENDO_LOGO);
+        }
+        rom[0x0147] = 0x01;
+        rom[0x0148] = 0x05;
+        compute_and_set_checksum(&mut rom);
+        assert!(CartridgeHeader::parse(&rom).unwrap().multicart);
+
+        rom[0x0147] = 0x00;
+        compute_and_set_checksum(&mut rom);
+        assert!(!CartridgeHeader::parse(&rom).unwrap().multicart);
     }
 
     #[test]

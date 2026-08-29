@@ -178,6 +178,7 @@ mod tests {
             (descriptor.initial_rom0_bank, descriptor.initial_romx_bank),
             (6, 7)
         );
+        assert!(!descriptor.header.multicart);
     }
 
     #[test]
