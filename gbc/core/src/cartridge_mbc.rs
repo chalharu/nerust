@@ -1,22 +1,31 @@
 use std::time::SystemTime;
 
-use crate::cartridge_header::CartridgeHeader;
+use crate::{
+    cartridge_descriptor::{CartridgeDescriptor, DetectedMapper},
+    cartridge_header::CartridgeHeader,
+};
 
 mod huc1;
 mod huc3;
 mod huc3_rtc;
+mod m161;
 mod mbc3;
 mod mbc5;
 mod mbc6;
 mod mbc7;
+mod mmm01;
 mod rtc;
+mod wisdom_tree;
 
 pub use huc1::HuC1;
 pub use huc3::HuC3;
+pub use m161::M161;
 pub use mbc3::Mbc3;
 pub use mbc5::Mbc5;
 pub use mbc6::Mbc6;
 pub use mbc7::Mbc7;
+pub use mmm01::Mmm01;
+pub use wisdom_tree::WisdomTree;
 
 const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -29,6 +38,9 @@ pub enum MbcKind {
     Mbc5,
     Mbc6,
     Mbc7,
+    M161,
+    Mmm01,
+    WisdomTree,
     HuC1,
     HuC3,
 }
@@ -576,12 +588,31 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         }
         crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
         crate::cartridge_header::CartridgeType::Mbc7 => Box::new(Mbc7::new(rom)),
+        crate::cartridge_header::CartridgeType::Mmm01
+        | crate::cartridge_header::CartridgeType::Mmm01Ram
+        | crate::cartridge_header::CartridgeType::Mmm01RamBattery => Box::new(Mmm01::new(
+            rom,
+            cartridge_ram(header, ram, header.cartridge_type.has_ram()),
+            header.cartridge_type.has_battery(),
+        )),
         crate::cartridge_header::CartridgeType::HuC3 => {
             Box::new(HuC3::new(rom, cartridge_ram(header, ram, true)))
         }
         crate::cartridge_header::CartridgeType::HuC1 => {
             Box::new(HuC1::new(rom, cartridge_ram(header, ram, true)))
         }
+    }
+}
+
+pub fn create_mbc_from_descriptor(
+    descriptor: &CartridgeDescriptor,
+    rom: Vec<u8>,
+    ram: Option<Vec<u8>>,
+) -> Box<dyn Mbc> {
+    match descriptor.mapper {
+        DetectedMapper::Header(_) => create_mbc(&descriptor.header, rom, ram),
+        DetectedMapper::M161 => Box::new(M161::new(rom)),
+        DetectedMapper::WisdomTree => Box::new(WisdomTree::new(rom)),
     }
 }
 

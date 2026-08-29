@@ -1,7 +1,10 @@
 use crc::{CRC_64_XZ, Crc};
 use nerust_core_traits::identity::SystemIdentity;
 
-use crate::cartridge_header::CartridgeHeader;
+use crate::{
+    cartridge_descriptor::{CartridgeDescriptor, detect_cartridge},
+    cartridge_header::HEADER_OFFSET,
+};
 
 const CRC64: Crc<u64> = Crc::<u64>::new(&CRC_64_XZ);
 
@@ -20,9 +23,15 @@ pub struct GbcRomIdentity {
 
 impl GbcRomIdentity {
     pub fn from_rom(rom: &[u8]) -> Option<Self> {
-        let header = CartridgeHeader::parse(rom)?;
+        let descriptor = detect_cartridge(rom)?;
+        Self::from_descriptor(rom, &descriptor)
+    }
+
+    pub fn from_descriptor(rom: &[u8], descriptor: &CartridgeDescriptor) -> Option<Self> {
+        let header = &descriptor.header;
+        let type_offset = descriptor.header_offset.checked_add(HEADER_OFFSET + 0x47)?;
         Some(Self {
-            cartridge_type: *rom.get(0x0147)?,
+            cartridge_type: *rom.get(type_offset)?,
             cgb_flag: header.cgb_flag,
             rom_len: rom.len(),
             declared_rom_len: header.rom_size.bytes,
@@ -54,6 +63,7 @@ mod tests {
         rom[0x0147] = 0x00;
         rom[0x0148] = 0x00;
         rom[0x0149] = 0x00;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 
