@@ -1,5 +1,6 @@
 use std::{collections::VecDeque, sync::Mutex};
 
+use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::event_loop::EventLoopProxy;
 
 use super::messages::MenuAction;
@@ -7,6 +8,7 @@ use super::messages::MenuAction;
 pub(super) struct AndroidBridgeState {
     pub(super) event_loop_proxy: Option<EventLoopProxy<()>>,
     pub(super) menu_actions: VecDeque<MenuAction>,
+    accelerometer: Option<AccelerometerInputHandle>,
     exit_requested: bool,
 }
 
@@ -15,6 +17,7 @@ impl AndroidBridgeState {
         Self {
             event_loop_proxy: None,
             menu_actions: VecDeque::new(),
+            accelerometer: None,
             exit_requested: false,
         }
     }
@@ -33,7 +36,12 @@ pub(super) fn bind_event_loop(event_loop_proxy: EventLoopProxy<()>) {
 pub(super) fn reset_transient() {
     with_state(|state| {
         state.menu_actions.clear();
+        state.accelerometer = None;
     });
+}
+
+pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
+    with_state(|state| state.accelerometer = handle);
 }
 
 pub(super) fn request_exit() {
@@ -66,4 +74,17 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onActivityDes
     _activity: jni::objects::JObject<'_>,
 ) {
     request_exit();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration(
+    _env: jni::EnvUnowned<'_>,
+    _activity: jni::objects::JObject<'_>,
+    x_g: jni::sys::jfloat,
+    y_g: jni::sys::jfloat,
+) {
+    let handle = with_state(|state| state.accelerometer.clone());
+    if let Some(handle) = handle {
+        handle.publish(AccelerationSample::new(x_g, y_g));
+    }
 }

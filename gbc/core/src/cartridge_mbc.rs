@@ -4,10 +4,14 @@ use crate::cartridge_header::CartridgeHeader;
 
 mod mbc3;
 mod mbc5;
+mod mbc6;
+mod mbc7;
 mod rtc;
 
 pub use mbc3::Mbc3;
 pub use mbc5::Mbc5;
+pub use mbc6::Mbc6;
+pub use mbc7::Mbc7;
 
 const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -18,6 +22,8 @@ pub enum MbcKind {
     Mbc2,
     Mbc3,
     Mbc5,
+    Mbc6,
+    Mbc7,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -93,6 +99,16 @@ pub trait Mbc: std::fmt::Debug + Send {
     fn step_clock(&mut self) {}
     fn sync_rtc(&mut self, now: SystemTime) {}
     fn sync_rtc_from(&mut self, saved_at: SystemTime, now: SystemTime) {}
+
+    fn set_acceleration(
+        &mut self,
+        _sample: Option<nerust_core_traits::peripheral::AccelerationSample>,
+    ) {
+    }
+
+    fn rumble_state(&self) -> nerust_core_traits::peripheral::RumbleState {
+        nerust_core_traits::peripheral::RumbleState::OFF
+    }
 
     fn reset_runtime(&mut self) {}
 
@@ -553,6 +569,8 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         | crate::cartridge_header::CartridgeType::Mbc2Battery => {
             Box::new(Mbc2::new(rom, header.cartridge_type.has_battery()))
         }
+        crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
+        crate::cartridge_header::CartridgeType::Mbc7 => Box::new(Mbc7::new(rom)),
     }
 }
 

@@ -31,7 +31,7 @@ use nerust_gui_runtime::{
     },
     shell::NativeShellState,
 };
-use nerust_gui_settings::shared::StoragePolicy;
+use nerust_gui_settings::{local::RumbleTarget, shared::StoragePolicy};
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
@@ -99,6 +99,12 @@ pub(crate) fn register_main_activity_natives(
                 jni_str!("onActivityDestroyed"),
                 jni_str!("()V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onCartridgeAcceleration"),
+                jni_str!("(FF)V"),
+                bridge::Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration
                     as *mut c_void,
             ),
         ]
@@ -214,6 +220,68 @@ fn configure_controls_overlay(
         });
         if let Err(error) = result {
             log::warn!("failed to configure Android controls overlay: {error:?}");
+        }
+    }));
+}
+
+fn configure_cartridge_peripherals(
+    app: &AndroidApp,
+    motion_enabled: bool,
+    rumble_enabled: bool,
+    rumble_strength_percent: u8,
+    rumble_target: RumbleTarget,
+) {
+    let target = match rumble_target {
+        RumbleTarget::Auto => "auto",
+        RumbleTarget::Handset => "handset",
+        RumbleTarget::Controller => "controller",
+    }
+    .to_string();
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            let target = env.new_string(&target)?;
+            env.call_method(
+                &activity,
+                jni_str!("configureCartridgePeripherals"),
+                jni_sig!("(ZZILjava/lang/String;)V"),
+                &[
+                    jni::objects::JValue::Bool(motion_enabled),
+                    jni::objects::JValue::Bool(rumble_enabled),
+                    jni::objects::JValue::Int(i32::from(rumble_strength_percent)),
+                    jni::objects::JValue::Object(target.as_ref()),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to configure Android cartridge peripherals: {error:?}");
+        }
+    }));
+}
+
+fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            env.call_method(
+                &activity,
+                jni_str!("setCartridgeRumble"),
+                jni_sig!("(I)V"),
+                &[jni::objects::JValue::Int(i32::from(intensity))],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to update Android cartridge rumble: {error:?}");
         }
     }));
 }
@@ -395,6 +463,8 @@ struct AndroidFrontend {
     lifecycle_restore_pending: bool,
     pending_storage_settings: Option<SettingsSnapshot>,
     pending_legacy_digest: Option<[u8; 32]>,
+    last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
+    last_rumble_intensity: Option<u8>,
 }
 
 impl AndroidFrontend {
@@ -473,6 +543,8 @@ impl AndroidFrontend {
             lifecycle_restore_pending: restore_pending,
             pending_storage_settings: None,
             pending_legacy_digest: None,
+            last_peripheral_config: None,
+            last_rumble_intensity: None,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -494,6 +566,60 @@ impl AndroidFrontend {
         current.prioritize_system(self.session.active_system_id());
         settings::update_cached_settings(&current);
         settings::apply_screen_orientation(&self.app, current.screen_orientation);
+    }
+
+    fn sync_cartridge_peripherals(&mut self) {
+        let handles = self.session.host_peripherals();
+        let requested = handles
+            .accelerometer
+            .as_ref()
+            .is_some_and(|handle| handle.demand().requested);
+        let settings = &self.session.settings_snapshot().local.cartridge_peripherals;
+        let motion_active = self.is_resumed && requested && settings.motion_enabled;
+        if !motion_active && let Some(accelerometer) = handles.accelerometer.as_ref() {
+            accelerometer.clear();
+        }
+        bridge::bind_accelerometer(
+            motion_active
+                .then(|| handles.accelerometer.as_ref().cloned())
+                .flatten(),
+        );
+
+        let config = (
+            motion_active,
+            settings.rumble_enabled,
+            settings.rumble_strength_percent.min(100),
+            settings.rumble_target,
+        );
+        if self.last_peripheral_config != Some(config) {
+            configure_cartridge_peripherals(&self.app, config.0, config.1, config.2, config.3);
+            self.last_peripheral_config = Some(config);
+            self.last_rumble_intensity = None;
+        }
+
+        let intensity = if self.is_resumed && settings.rumble_enabled {
+            handles
+                .rumble
+                .as_ref()
+                .map_or(0, |handle| handle.snapshot().state.intensity)
+        } else {
+            0
+        };
+        if self.last_rumble_intensity != Some(intensity) {
+            set_cartridge_rumble(&self.app, intensity);
+            self.last_rumble_intensity = Some(intensity);
+        }
+    }
+
+    fn stop_cartridge_peripherals(&mut self) {
+        if let Some(accelerometer) = self.session.host_peripherals().accelerometer.as_ref() {
+            accelerometer.clear();
+        }
+        bridge::bind_accelerometer(None);
+        configure_cartridge_peripherals(&self.app, false, false, 0, RumbleTarget::Auto);
+        set_cartridge_rumble(&self.app, 0);
+        self.last_peripheral_config = None;
+        self.last_rumble_intensity = None;
     }
 
     fn load_from_library_with_autosave(
@@ -1616,6 +1742,7 @@ impl ApplicationHandler for AndroidFrontend {
         self.foreground_retry_attempts = 0;
         self.foreground_retry_at = None;
         self.last_foreground_error = None;
+        self.stop_cartridge_peripherals();
         self.save_lifecycle_state();
         bridge::reset_transient();
         picker::reset_transient();
@@ -1675,6 +1802,7 @@ impl ApplicationHandler for AndroidFrontend {
         for action in menu::take_actions() {
             self.handle_menu_action(action);
         }
+        self.sync_cartridge_peripherals();
         self.maybe_refresh_title(now);
 
         if let Some(window) = self.window.as_ref() {
