@@ -79,6 +79,8 @@ impl Mbc for WisdomTree {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
 
     fn rom() -> Vec<u8> {
@@ -115,5 +117,26 @@ mod tests {
         let mut restored = WisdomTree::new(rom());
         restored.deserialize_state(&state).unwrap();
         assert_eq!(restored.read_rom0(0), 3);
+    }
+
+    #[test]
+    fn invalid_state_is_transactional_and_mapper_has_no_save() {
+        let mut mapper = WisdomTree::new(rom());
+        mapper.write_rom(2, 0);
+        let before = mapper.serialize_state();
+        let mut state: WisdomTreeMachineState = rmp_serde::from_slice(&before).unwrap();
+        state.bank = 0x40;
+        assert!(
+            mapper
+                .deserialize_state(&rmp_serde::to_vec_named(&state).unwrap())
+                .is_err()
+        );
+        assert_eq!(mapper.serialize_state(), before);
+        assert!(
+            mapper
+                .export_persistent_state(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .is_none()
+        );
     }
 }

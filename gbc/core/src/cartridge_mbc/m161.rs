@@ -89,6 +89,8 @@ impl Mbc for M161 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
 
     fn rom() -> Vec<u8> {
@@ -129,5 +131,26 @@ mod tests {
         restored.deserialize_state(&state).unwrap();
         restored.write_rom(0, 1);
         assert_eq!(restored.read_rom0(0), 2);
+    }
+
+    #[test]
+    fn invalid_state_is_transactional_and_mapper_has_no_save() {
+        let mut mapper = M161::new(rom());
+        mapper.write_rom(0, 2);
+        let before = mapper.serialize_state();
+        let mut state: M161MachineState = rmp_serde::from_slice(&before).unwrap();
+        state.bank = 8;
+        assert!(
+            mapper
+                .deserialize_state(&rmp_serde::to_vec_named(&state).unwrap())
+                .is_err()
+        );
+        assert_eq!(mapper.serialize_state(), before);
+        assert!(
+            mapper
+                .export_persistent_state(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .is_none()
+        );
     }
 }

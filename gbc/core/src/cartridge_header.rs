@@ -442,6 +442,26 @@ mod tests {
     }
 
     #[test]
+    fn mmm01_types_have_expected_capabilities() {
+        let plain = CartridgeType::from_byte(0x0B).unwrap();
+        assert_eq!(plain, CartridgeType::Mmm01);
+        assert!(!plain.has_ram());
+        assert!(!plain.has_battery());
+
+        let ram = CartridgeType::from_byte(0x0C).unwrap();
+        assert_eq!(ram, CartridgeType::Mmm01Ram);
+        assert!(ram.has_ram());
+        assert!(!ram.has_battery());
+
+        let battery = CartridgeType::from_byte(0x0D).unwrap();
+        assert_eq!(battery, CartridgeType::Mmm01RamBattery);
+        assert!(battery.has_ram());
+        assert!(battery.has_battery());
+        assert!(!battery.has_rtc());
+        assert!(!battery.has_rumble());
+    }
+
+    #[test]
     fn huc_types_have_expected_capabilities() {
         let huc3 = CartridgeType::from_byte(0xFE).unwrap();
         assert_eq!(huc3, CartridgeType::HuC3);
