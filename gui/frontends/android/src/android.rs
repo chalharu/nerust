@@ -576,6 +576,9 @@ impl AndroidFrontend {
             .is_some_and(|handle| handle.demand().requested);
         let settings = &self.session.settings_snapshot().local.cartridge_peripherals;
         let motion_active = self.is_resumed && requested && settings.motion_enabled;
+        if !motion_active && let Some(accelerometer) = handles.accelerometer.as_ref() {
+            accelerometer.clear();
+        }
         bridge::bind_accelerometer(
             motion_active
                 .then(|| handles.accelerometer.as_ref().cloned())
@@ -609,6 +612,9 @@ impl AndroidFrontend {
     }
 
     fn stop_cartridge_peripherals(&mut self) {
+        if let Some(accelerometer) = self.session.host_peripherals().accelerometer.as_ref() {
+            accelerometer.clear();
+        }
         bridge::bind_accelerometer(None);
         configure_cartridge_peripherals(&self.app, false, false, 0, RumbleTarget::Auto);
         set_cartridge_rumble(&self.app, 0);
