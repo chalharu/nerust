@@ -650,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn pokemon_crystal_ball_wobble_sweep_remains_audible() {
+    fn low_frequency_ch1_sweep_retains_full_dac_amplitude() {
         let mut apu = GbcApu::new();
         apu.set_cgb(true);
         apu.write_register(0xFF26, 0x80);
