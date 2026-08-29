@@ -63,6 +63,7 @@ pub(crate) fn create_core_and_adapter(
             ntsc_packed_rgba8: None,
         },
         palette: Vec::new().into_boxed_slice(),
+        host_peripherals: Default::default(),
     })
 }
 

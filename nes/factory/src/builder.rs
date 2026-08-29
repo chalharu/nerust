@@ -31,6 +31,7 @@ pub(crate) fn create_core_and_adapter(
         field_map,
         render_profile,
         palette,
+        host_peripherals: Default::default(),
     })
 }
 

@@ -37,6 +37,7 @@ pub struct CoreParts {
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     pub render_profile: nerust_render_traits::VideoRenderProfile,
     pub palette: Box<[u32]>,
+    pub host_peripherals: crate::peripheral::HostPeripheralHandles,
 }
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。
