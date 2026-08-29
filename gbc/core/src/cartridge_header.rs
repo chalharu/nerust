@@ -195,10 +195,6 @@ pub(crate) const NINTENDO_LOGO: [u8; 0x30] = [
     0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
 
-pub fn is_supported_rom(rom: &[u8]) -> bool {
-    crate::cartridge_descriptor::detect_cartridge(rom).is_some()
-}
-
 #[cfg(test)]
 pub(crate) fn finalize_test_rom(rom: &mut [u8]) {
     rom[0x0104..0x0134].copy_from_slice(&NINTENDO_LOGO);
@@ -321,29 +317,6 @@ mod tests {
         rom[0x014D] = checksum;
     }
 
-    fn supported_rom() -> Vec<u8> {
-        let mut rom = vec![0; 0x8000];
-        rom[0x0104..0x0134].copy_from_slice(&NINTENDO_LOGO);
-        rom[0x0143] = 0x80;
-        compute_and_set_checksum(&mut rom);
-        rom
-    }
-
-    #[test]
-    fn supported_rom_requires_logo_checksum_and_declared_length() {
-        let rom = supported_rom();
-        assert!(is_supported_rom(&rom));
-
-        let mut invalid_logo = rom.clone();
-        invalid_logo[0x0104] ^= 0xFF;
-        assert!(!is_supported_rom(&invalid_logo));
-
-        let mut invalid_checksum = rom.clone();
-        invalid_checksum[0x014D] ^= 0xFF;
-        assert!(!is_supported_rom(&invalid_checksum));
-
-        assert!(!is_supported_rom(&rom[..0x4000]));
-    }
     #[test]
     fn parse_rom_only() {
         let mut rom = minimal_rom();

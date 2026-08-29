@@ -291,7 +291,12 @@ mod tests {
 
     fn banked_rom(bank_count: usize) -> Vec<u8> {
         let mut rom = vec![0; bank_count * ROM_BANK_SIZE];
-        for (bank, chunk) in rom.chunks_exact_mut(ROM_BANK_SIZE).enumerate() {
+        for (bank, chunk) in rom
+            .as_chunks_mut::<ROM_BANK_SIZE>()
+            .0
+            .iter_mut()
+            .enumerate()
+        {
             chunk.fill(bank as u8);
         }
         rom
