@@ -41,15 +41,17 @@ struct CoreRuntime {
     emu_core: EmuCore,
     gui_input: GuiInput,
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
 impl CoreRuntime {
     fn from_factory_parts(parts: nerust_core_traits::factory::CoreParts) -> Self {
-        let (emu_core, gui_input, field_map) = EmuCore::from_parts(parts);
+        let (emu_core, gui_input, field_map, host_peripherals) = EmuCore::from_parts(parts);
         Self {
             emu_core,
             gui_input,
             field_map,
+            host_peripherals,
         }
     }
 }
@@ -84,6 +86,7 @@ pub struct SessionHandle {
     gui_input: Option<GuiInput>,
     current_assignments: InputAssignments,
     field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
+    host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     capabilities: HostBackendCapabilities,
@@ -243,7 +246,9 @@ impl SessionHandle {
             .as_ref()
             .and_then(|id| registry.find_by_id(id.as_ref()))
             .cloned();
-        let (emu_core, gui_input, field_map, assignments) = if let Some(ref f) = factory {
+        let (emu_core, gui_input, field_map, host_peripherals, assignments) = if let Some(ref f) =
+            factory
+        {
             let sid = f.system_id();
             let requested_assignments = Self::load_assignments(f, &settings_snapshot, sid.as_ref());
             let created = Self::create_core_with_assignments(
@@ -256,6 +261,7 @@ impl SessionHandle {
                 Some(created.runtime.emu_core),
                 Some(created.runtime.gui_input),
                 created.runtime.field_map,
+                created.runtime.host_peripherals,
                 created.applied_assignments,
             )
         } else {
@@ -263,6 +269,7 @@ impl SessionHandle {
                 None,
                 None,
                 HashMap::new(),
+                Default::default(),
                 InputAssignments { slots: vec![] },
             )
         };
@@ -271,6 +278,7 @@ impl SessionHandle {
             gui_input,
             current_assignments: assignments,
             field_map,
+            host_peripherals,
             key_field_map: HashMap::new(),
             registry,
             active_system_id,
@@ -361,6 +369,10 @@ impl SessionHandle {
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         &self.settings_snapshot
+    }
+
+    pub fn host_peripherals(&self) -> &nerust_core_traits::peripheral::HostPeripheralHandles {
+        &self.host_peripherals
     }
 
     pub fn current_assignments(&self) -> &InputAssignments {
@@ -497,6 +509,7 @@ impl RomLoadTarget for SessionHandle {
         self.emu_core = Some(created.runtime.emu_core);
         self.gui_input = Some(created.runtime.gui_input);
         self.field_map = created.runtime.field_map;
+        self.host_peripherals = created.runtime.host_peripherals;
         self.loaded_media = None;
         self.persistence.reset();
         self.pressed_keys.clear();

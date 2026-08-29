@@ -89,5 +89,6 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
         field_map: std::collections::HashMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),
+        host_peripherals: Default::default(),
     }
 }
