@@ -18,6 +18,7 @@ pub enum CartridgeType {
     Mbc5Rumble,
     Mbc5RumbleRam,
     Mbc5RumbleRamBattery,
+    Mbc6,
 }
 
 impl CartridgeType {
@@ -40,6 +41,7 @@ impl CartridgeType {
             0x1C => Some(Self::Mbc5Rumble),
             0x1D => Some(Self::Mbc5RumbleRam),
             0x1E => Some(Self::Mbc5RumbleRamBattery),
+            0x20 => Some(Self::Mbc6),
             _ => None,
         }
     }
@@ -54,6 +56,7 @@ impl CartridgeType {
                 | Self::Mbc3RamBattery
                 | Self::Mbc5RamBattery
                 | Self::Mbc5RumbleRamBattery
+                | Self::Mbc6
         )
     }
 
@@ -71,6 +74,7 @@ impl CartridgeType {
                 | Self::Mbc5RamBattery
                 | Self::Mbc5RumbleRam
                 | Self::Mbc5RumbleRamBattery
+                | Self::Mbc6
         )
     }
 
@@ -385,6 +389,15 @@ mod tests {
         assert!(CartridgeType::Mbc3TimerBattery.has_rtc());
         assert!(!CartridgeType::Mbc3TimerBattery.has_ram());
         assert!(CartridgeType::Mbc3TimerBattery.has_battery());
+    }
+
+    #[test]
+    fn mbc6_has_expected_capabilities() {
+        let mbc6 = CartridgeType::from_byte(0x20).unwrap();
+        assert_eq!(mbc6, CartridgeType::Mbc6);
+        assert!(mbc6.has_ram());
+        assert!(mbc6.has_battery());
+        assert!(!mbc6.has_rumble());
     }
 
     #[test]
