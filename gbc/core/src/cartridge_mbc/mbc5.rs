@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use nerust_core_traits::peripheral::RumbleState;
 
 const MACHINE_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -98,6 +99,14 @@ impl Mbc for Mbc5 {
 
     fn has_battery(&self) -> bool {
         self.battery
+    }
+
+    fn rumble_state(&self) -> RumbleState {
+        if self.rumble_enabled {
+            RumbleState::FULL
+        } else {
+            RumbleState::OFF
+        }
     }
 
     fn ram_data(&self) -> Option<&[u8]> {

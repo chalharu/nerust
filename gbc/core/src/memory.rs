@@ -718,6 +718,17 @@ impl GbcMemoryBus {
         self.cartridge.export_persistent_state(now)
     }
 
+    pub fn set_cartridge_acceleration(
+        &mut self,
+        sample: Option<nerust_core_traits::peripheral::AccelerationSample>,
+    ) {
+        self.cartridge.set_acceleration(sample);
+    }
+
+    pub fn cartridge_rumble_state(&self) -> nerust_core_traits::peripheral::RumbleState {
+        self.cartridge.rumble_state()
+    }
+
     pub fn import_cartridge_save(&mut self, data: &[u8]) -> Result<(), String> {
         self.cartridge.import_persistent_state(data)
     }
