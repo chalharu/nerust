@@ -12,11 +12,18 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.input.InputManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
@@ -25,6 +32,7 @@ import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface as AndroidSurface
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -95,6 +103,25 @@ import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+
+internal fun screenRelativeAcceleration(
+    x: Float,
+    y: Float,
+    rotation: Int,
+): FloatArray {
+    val (screenX, screenY) =
+        when (rotation) {
+            AndroidSurface.ROTATION_0 -> x to y
+            AndroidSurface.ROTATION_90 -> -y to x
+            AndroidSurface.ROTATION_180 -> -x to -y
+            AndroidSurface.ROTATION_270 -> y to -x
+            else -> x to y
+        }
+    return floatArrayOf(
+        screenX / SensorManager.GRAVITY_EARTH,
+        -screenY / SensorManager.GRAVITY_EARTH,
+    )
+}
 
 private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
@@ -188,7 +215,8 @@ class MainActivity :
     LifecycleOwner,
     SavedStateRegistryOwner,
     ViewModelStoreOwner,
-    InputManager.InputDeviceListener {
+    InputManager.InputDeviceListener,
+    SensorEventListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
@@ -209,6 +237,19 @@ class MainActivity :
     private var controlsScalePercent = 100
     private var controlsVerticalOffsetPercent = 0
     private var controlsHaptics = true
+    private lateinit var sensorManager: SensorManager
+    private var accelerometer: Sensor? = null
+    private var activityResumed = false
+    private var windowHasFocus = false
+    private var cartridgeMotionEnabled = false
+    private var sensorRegistered = false
+    private var cartridgeRumbleEnabled = false
+    private var cartridgeRumbleStrengthPercent = 100
+    private var cartridgeRumbleTarget = "auto"
+    private var cartridgeRumbleIntensity = 0
+    private var lastControllerDeviceId: Int? = null
+    private var activeRumbleVibrator: Vibrator? = null
+    private var activeRumbleAmplitude = 0
     private var drawerChromePopup: PopupWindow? = null
     private var drawerChromeContainer: FrameLayout? = null
     private var drawerEdgeHandleView: View? = null
@@ -248,6 +289,8 @@ class MainActivity :
             )
         }
         volumeControlStream = AudioManager.STREAM_MUSIC
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         scheduleChromeAttach()
     }
@@ -262,17 +305,26 @@ class MainActivity :
         super.onResume()
         Log.i(TAG, "onResume")
         activeActivityForTest = this
+        activityResumed = true
         chromeAttachEnabled = true
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        updateCartridgeMotionRegistration()
+        applyCartridgeRumble()
         scheduleChromeAttach()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        windowHasFocus = hasFocus
         Log.i(TAG, "onWindowFocusChanged: hasFocus=$hasFocus")
         if (hasFocus) {
+            updateCartridgeMotionRegistration()
+            applyCartridgeRumble()
             scheduleChromeAttach()
+        } else {
+            updateCartridgeMotionRegistration()
+            cancelCartridgeRumble()
         }
     }
 
@@ -329,7 +381,11 @@ class MainActivity :
         val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
-        if (pressed) hideControlsForControllerInput()
+        if (pressed) {
+            lastControllerDeviceId = deviceId
+            hideControlsForControllerInput()
+            applyCartridgeRumble()
+        }
         onMenuAction("controller:$deviceId:$key:${if (pressed) 1 else 0}")
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
@@ -350,6 +406,11 @@ class MainActivity :
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
+        if (lastControllerDeviceId == deviceId) {
+            cancelCartridgeRumble()
+            lastControllerDeviceId = null
+            applyCartridgeRumble()
+        }
     }
 
     override fun onPause() {
@@ -357,7 +418,10 @@ class MainActivity :
             activeActivityForTest = null
         }
         Log.i(TAG, "onPause")
+        activityResumed = false
         chromeAttachEnabled = false
+        updateCartridgeMotionRegistration()
+        cancelCartridgeRumble()
         releaseAllControllers()
         (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         removePendingChromeAttachCallbacks()
@@ -390,6 +454,9 @@ class MainActivity :
                 "lastDrawerState=$lastDrawerStateForTest lastDialogState=$lastDialogStateForTest",
         )
         chromeAttachEnabled = false
+        activityResumed = false
+        updateCartridgeMotionRegistration()
+        cancelCartridgeRumble()
         removePendingChromeAttachCallbacks()
         dismissChromePopups()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
@@ -444,6 +511,131 @@ class MainActivity :
         if (controlsHaptics) {
             window.decorView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
+    }
+
+    fun configureCartridgePeripherals(
+        motionEnabled: Boolean,
+        rumbleEnabled: Boolean,
+        rumbleStrengthPercent: Int,
+        rumbleTarget: String,
+    ) {
+        cartridgeMotionEnabled = motionEnabled
+        cartridgeRumbleEnabled = rumbleEnabled
+        cartridgeRumbleStrengthPercent = rumbleStrengthPercent.coerceIn(0, 100)
+        cartridgeRumbleTarget =
+            when (rumbleTarget) {
+                "handset", "controller" -> rumbleTarget
+                else -> "auto"
+            }
+        updateCartridgeMotionRegistration()
+        applyCartridgeRumble()
+    }
+
+    fun setCartridgeRumble(intensity: Int) {
+        cartridgeRumbleIntensity = intensity.coerceIn(0, 255)
+        applyCartridgeRumble()
+    }
+
+    private fun updateCartridgeMotionRegistration() {
+        if (!::sensorManager.isInitialized) return
+        val shouldRegister =
+            activityResumed && windowHasFocus && cartridgeMotionEnabled && accelerometer != null
+        if (shouldRegister == sensorRegistered) return
+        if (shouldRegister) {
+            sensorRegistered =
+                sensorManager.registerListener(
+                    this,
+                    accelerometer,
+                    SensorManager.SENSOR_DELAY_GAME,
+                )
+            if (!sensorRegistered) onCartridgeAcceleration(0f, 0f)
+        } else {
+            sensorManager.unregisterListener(this)
+            sensorRegistered = false
+            onCartridgeAcceleration(0f, 0f)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type != Sensor.TYPE_ACCELEROMETER || !sensorRegistered) return
+        val sample =
+            screenRelativeAcceleration(
+                event.values[0],
+                event.values[1],
+                windowManager.defaultDisplay.rotation,
+            )
+        onCartridgeAcceleration(sample[0], sample[1])
+    }
+
+    override fun onAccuracyChanged(
+        sensor: Sensor?,
+        accuracy: Int,
+    ) = Unit
+
+    private fun applyCartridgeRumble() {
+        val scaledIntensity =
+            cartridgeRumbleIntensity * cartridgeRumbleStrengthPercent / 100
+        val vibrator =
+            if (activityResumed && windowHasFocus && cartridgeRumbleEnabled && scaledIntensity > 0) {
+                selectCartridgeVibrator()
+            } else {
+                null
+            }
+        if (vibrator == null || !vibrator.hasVibrator()) {
+            cancelCartridgeRumble()
+            return
+        }
+        val amplitude =
+            if (vibrator.hasAmplitudeControl()) {
+                scaledIntensity.coerceIn(1, 255)
+            } else {
+                VibrationEffect.DEFAULT_AMPLITUDE
+            }
+        if (activeRumbleVibrator === vibrator && activeRumbleAmplitude == amplitude) return
+        cancelCartridgeRumble()
+        vibrator.vibrate(
+            VibrationEffect.createWaveform(
+                longArrayOf(1_000L),
+                intArrayOf(amplitude),
+                0,
+            ),
+        )
+        activeRumbleVibrator = vibrator
+        activeRumbleAmplitude = amplitude
+    }
+
+    private fun cancelCartridgeRumble() {
+        activeRumbleVibrator?.cancel()
+        activeRumbleVibrator = null
+        activeRumbleAmplitude = 0
+    }
+
+    private fun selectCartridgeVibrator(): Vibrator? =
+        when (cartridgeRumbleTarget) {
+            "handset" -> handsetVibrator()
+            "controller" -> controllerVibrator()
+            else -> controllerVibrator() ?: handsetVibrator()
+        }
+
+    @Suppress("DEPRECATION")
+    private fun handsetVibrator(): Vibrator =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java).defaultVibrator
+        } else {
+            getSystemService(VIBRATOR_SERVICE) as Vibrator
+        }
+
+    @Suppress("DEPRECATION")
+    private fun controllerVibrator(): Vibrator? {
+        val device = lastControllerDeviceId?.let(InputDevice::getDevice) ?: return null
+        val vibrator =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                device.vibratorManager.defaultVibrator
+            } else {
+                device.vibrator
+            }
+        return vibrator.takeIf(Vibrator::hasVibrator)
     }
 
     fun updateFloatingDpad(
@@ -1317,6 +1509,11 @@ class MainActivity :
     private external fun onSettingsDialogResult(result: String?)
 
     private external fun onActivityDestroyed()
+
+    private external fun onCartridgeAcceleration(
+        xG: Float,
+        yG: Float,
+    )
 
     companion object {
         private const val TAG = "Nerust"

@@ -1,4 +1,4 @@
-pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 4;
+pub const HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -7,6 +7,7 @@ pub struct HostBackendLocalSettings {
     pub video: VideoSettings,
     pub audio: AudioSettings,
     pub touch_overlay: TouchOverlaySettings,
+    pub cartridge_peripherals: CartridgePeripheralSettings,
     pub screen_orientation: ScreenOrientation,
 }
 
@@ -17,9 +18,39 @@ impl Default for HostBackendLocalSettings {
             video: VideoSettings::default(),
             audio: AudioSettings::default(),
             touch_overlay: TouchOverlaySettings::default(),
+            cartridge_peripherals: CartridgePeripheralSettings::default(),
             screen_orientation: ScreenOrientation::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct CartridgePeripheralSettings {
+    pub motion_enabled: bool,
+    pub rumble_enabled: bool,
+    pub rumble_strength_percent: u8,
+    pub rumble_target: RumbleTarget,
+}
+
+impl Default for CartridgePeripheralSettings {
+    fn default() -> Self {
+        Self {
+            motion_enabled: true,
+            rumble_enabled: true,
+            rumble_strength_percent: 100,
+            rumble_target: RumbleTarget::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RumbleTarget {
+    #[default]
+    Auto,
+    Handset,
+    Controller,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
