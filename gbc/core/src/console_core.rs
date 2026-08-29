@@ -1,8 +1,13 @@
 use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    audio::AudioBackend,
     identity::SystemIdentity,
+    peripheral::{
+        AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
+        rumble_channel,
+    },
 };
 use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
@@ -32,16 +37,45 @@ pub struct GbcConsoleCore {
     audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
+    accelerometer: AccelerometerInputPort,
+    rumble: RumbleOutputPort,
 }
 
 impl GbcConsoleCore {
     pub fn new_empty(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
+        let (_, accelerometer) = accelerometer_channel();
+        let (_, rumble) = rumble_channel();
+        Self::with_peripherals(audio, emu_input, accelerometer, rumble)
+    }
+
+    pub fn with_peripherals(
+        audio: Box<dyn AudioBackend>,
+        emu_input: EmuInput,
+        accelerometer: AccelerometerInputPort,
+        rumble: RumbleOutputPort,
+    ) -> Self {
         Self {
             loaded: None,
             audio,
             emu_input,
             paused: false,
+            accelerometer,
+            rumble,
         }
+    }
+
+    fn current_rumble_state(&self) -> RumbleState {
+        if self.paused {
+            RumbleState::OFF
+        } else {
+            self.loaded.as_ref().map_or(RumbleState::OFF, |loaded| {
+                loaded.system.bus.cartridge_rumble_state()
+            })
+        }
+    }
+
+    fn sync_rumble(&self) {
+        self.rumble.publish(self.current_rumble_state());
     }
 
     fn create_loaded(
@@ -91,6 +125,10 @@ impl ConsoleCore for GbcConsoleCore {
             .ok_or_else(|| CoreError::Core(Box::new(GbcCoreError::InvalidInputBuffer)))?
             .0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        loaded
+            .system
+            .bus
+            .set_cartridge_acceleration(self.accelerometer.latest());
         loaded.system.bus.set_joypad(input);
         // LCD-off games do not produce a PPU frame event; cap one frontend
         // frame to the hardware frame duration so the emulation thread stays live.
@@ -107,6 +145,7 @@ impl ConsoleCore for GbcConsoleCore {
         }
         frame_slot.resize(160, 144);
         loaded.system.bus.render_frame(frame_slot);
+        self.sync_rumble();
         Ok(())
     }
 
@@ -120,14 +159,19 @@ impl ConsoleCore for GbcConsoleCore {
             GbcCoreOptions::default()
         };
         let loaded = Self::create_loaded(rom, options, self.audio.sample_rate())?;
+        self.accelerometer
+            .set_requested(loaded.identity.cartridge_type == 0x22);
         self.loaded = Some(loaded);
         self.paused = false;
+        self.sync_rumble();
         Ok(())
     }
 
     fn unload(&mut self) {
+        self.accelerometer.set_requested(false);
         self.loaded = None;
         self.paused = false;
+        self.sync_rumble();
     }
 
     fn reset(&mut self) {
@@ -143,6 +187,7 @@ impl ConsoleCore for GbcConsoleCore {
         cartridge.reset_runtime();
         reset.system.bus.set_cartridge(cartridge);
         current.system = reset.system;
+        self.sync_rumble();
     }
 
     fn set_volume(&mut self, volume: f32) {
@@ -155,6 +200,7 @@ impl ConsoleCore for GbcConsoleCore {
 
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        self.sync_rumble();
     }
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
@@ -181,6 +227,7 @@ impl ConsoleCore for GbcConsoleCore {
         )
         .map_err(|error| CoreError::Core(Box::new(error)))?;
         self.loaded_mut()?.system = candidate.system;
+        self.sync_rumble();
         Ok(())
     }
 
@@ -215,7 +262,11 @@ mod tests {
         sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
-    use nerust_core_traits::{CoreOptions, audio::StereoSample};
+    use nerust_core_traits::{
+        CoreOptions,
+        audio::StereoSample,
+        peripheral::{AccelerationSample, RumbleState, accelerometer_channel, rumble_channel},
+    };
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
@@ -295,6 +346,13 @@ mod tests {
     fn distinct_rom() -> Vec<u8> {
         let mut value = rom();
         value[0x2000] = 1;
+        value
+    }
+
+    fn mapper_rom(cartridge_type: u8) -> Vec<u8> {
+        let mut value = rom();
+        value[0x0147] = cartridge_type;
+        crate::cartridge_header::finalize_test_rom(&mut value);
         value
     }
 
@@ -432,5 +490,63 @@ mod tests {
             GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
         core.load(&rom(), &config()).unwrap();
         assert!(core.mapper_save().unwrap().is_none());
+    }
+
+    #[test]
+    fn mbc7_requests_and_latches_live_acceleration() {
+        let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
+        let (_, rumble_port) = rumble_channel();
+        let mut core = GbcConsoleCore::with_peripherals(
+            Box::new(nerust_core_traits::audio::NullAudio),
+            input(),
+            accelerometer_port,
+            rumble_port,
+        );
+        core.load(&mapper_rom(0x22), &config()).unwrap();
+        assert!(accelerometer_handle.demand().requested);
+        accelerometer_handle.publish(AccelerationSample::new(1.0, -1.0));
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        core.render_frame(&mut frame).unwrap();
+
+        let bus = &mut core.loaded.as_mut().unwrap().system.bus;
+        bus.write(0, 0x0A);
+        bus.write(0x4000, 0x40);
+        bus.write(0xA000, 0x55);
+        bus.write(0xA010, 0xAA);
+        assert_eq!(
+            u16::from_le_bytes([bus.read(0xA020), bus.read(0xA030)]),
+            0x8240
+        );
+        assert_eq!(
+            u16::from_le_bytes([bus.read(0xA040), bus.read(0xA050)]),
+            0x8160
+        );
+
+        core.unload();
+        assert!(!accelerometer_handle.demand().requested);
+    }
+
+    #[test]
+    fn mbc5_rumble_tracks_frame_pause_resume_and_unload() {
+        let (_, accelerometer_port) = accelerometer_channel();
+        let (rumble_handle, rumble_port) = rumble_channel();
+        let mut core = GbcConsoleCore::with_peripherals(
+            Box::new(nerust_core_traits::audio::NullAudio),
+            input(),
+            accelerometer_port,
+            rumble_port,
+        );
+        core.load(&mapper_rom(0x1C), &config()).unwrap();
+        core.loaded.as_mut().unwrap().system.bus.write(0x4000, 0x08);
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        core.render_frame(&mut frame).unwrap();
+        assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
+
+        core.set_paused(true);
+        assert_eq!(rumble_handle.snapshot().state, RumbleState::OFF);
+        core.set_paused(false);
+        assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
+        core.unload();
+        assert_eq!(rumble_handle.snapshot().state, RumbleState::OFF);
     }
 }

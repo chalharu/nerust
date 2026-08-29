@@ -1,6 +1,7 @@
 use nerust_core_traits::{
     audio::AudioBackend,
     factory::{CoreParts, FactoryError, settings::FactorySettingsView},
+    peripheral::{HostPeripheralHandles, accelerometer_channel, rumble_channel},
 };
 use nerust_gbc_core::console_core::GbcConsoleCore;
 use nerust_gbc_settings::GbcSettings;
@@ -46,7 +47,10 @@ pub(crate) fn create_core_and_adapter(
     let gui_input = GuiInput::from_split(&resources.split);
     let emu_input = EmuInput::from_split(&resources.split);
     speaker.start();
-    let core = GbcConsoleCore::new_empty(speaker, emu_input);
+    let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
+    let (rumble_handle, rumble_port) = rumble_channel();
+    let core =
+        GbcConsoleCore::with_peripherals(speaker, emu_input, accelerometer_port, rumble_port);
     let logical_size = LogicalSize {
         width: 160,
         height: 144,
@@ -63,6 +67,10 @@ pub(crate) fn create_core_and_adapter(
             ntsc_packed_rgba8: None,
         },
         palette: Vec::new().into_boxed_slice(),
+        host_peripherals: HostPeripheralHandles {
+            accelerometer: Some(accelerometer_handle),
+            rumble: Some(rumble_handle),
+        },
     })
 }
 
@@ -88,6 +96,8 @@ mod tests {
         assert_eq!(parts.render_profile.frame_format, VideoFrameFormat::Rgba);
         assert!(parts.palette.is_empty());
         assert_eq!(parts.field_map.len(), 8);
+        assert!(parts.host_peripherals.accelerometer.is_some());
+        assert!(parts.host_peripherals.rumble.is_some());
     }
 
     #[test]

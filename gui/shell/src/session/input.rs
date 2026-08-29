@@ -97,7 +97,8 @@ impl SessionHandle {
             crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
         let parts =
             factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
-        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
+        let (rebuilt_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
         let was_paused = self
             .emu_core
             .as_ref()
@@ -113,6 +114,7 @@ impl SessionHandle {
         self.emu_core = Some(rebuilt_core);
         self.gui_input = Some(gui_input);
         self.field_map = field_map;
+        self.host_peripherals = host_peripherals;
         self.current_assignments = assignments.clone();
         self.rebuild_key_field_map();
         Ok(())

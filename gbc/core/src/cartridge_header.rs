@@ -18,6 +18,8 @@ pub enum CartridgeType {
     Mbc5Rumble,
     Mbc5RumbleRam,
     Mbc5RumbleRamBattery,
+    Mbc6,
+    Mbc7,
 }
 
 impl CartridgeType {
@@ -40,6 +42,8 @@ impl CartridgeType {
             0x1C => Some(Self::Mbc5Rumble),
             0x1D => Some(Self::Mbc5RumbleRam),
             0x1E => Some(Self::Mbc5RumbleRamBattery),
+            0x20 => Some(Self::Mbc6),
+            0x22 => Some(Self::Mbc7),
             _ => None,
         }
     }
@@ -54,6 +58,8 @@ impl CartridgeType {
                 | Self::Mbc3RamBattery
                 | Self::Mbc5RamBattery
                 | Self::Mbc5RumbleRamBattery
+                | Self::Mbc6
+                | Self::Mbc7
         )
     }
 
@@ -71,13 +77,15 @@ impl CartridgeType {
                 | Self::Mbc5RamBattery
                 | Self::Mbc5RumbleRam
                 | Self::Mbc5RumbleRamBattery
+                | Self::Mbc6
+                | Self::Mbc7
         )
     }
 
     pub fn has_rumble(self) -> bool {
         matches!(
             self,
-            Self::Mbc5Rumble | Self::Mbc5RumbleRam | Self::Mbc5RumbleRamBattery
+            Self::Mbc5Rumble | Self::Mbc5RumbleRam | Self::Mbc5RumbleRamBattery | Self::Mbc7
         )
     }
 
@@ -385,6 +393,25 @@ mod tests {
         assert!(CartridgeType::Mbc3TimerBattery.has_rtc());
         assert!(!CartridgeType::Mbc3TimerBattery.has_ram());
         assert!(CartridgeType::Mbc3TimerBattery.has_battery());
+    }
+
+    #[test]
+    fn mbc6_has_expected_capabilities() {
+        let mbc6 = CartridgeType::from_byte(0x20).unwrap();
+        assert_eq!(mbc6, CartridgeType::Mbc6);
+        assert!(mbc6.has_ram());
+        assert!(mbc6.has_battery());
+        assert!(!mbc6.has_rumble());
+    }
+
+    #[test]
+    fn mbc7_has_expected_capabilities() {
+        let mbc7 = CartridgeType::from_byte(0x22).unwrap();
+        assert_eq!(mbc7, CartridgeType::Mbc7);
+        assert!(mbc7.has_ram());
+        assert!(mbc7.has_battery());
+        assert!(mbc7.has_rumble());
+        assert!(!mbc7.has_rtc());
     }
 
     #[test]
