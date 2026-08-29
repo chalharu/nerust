@@ -14,8 +14,7 @@ use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
     cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions,
-    input_types::GbcInputBuffer, persistence,
-    rom_identity::GbcRomIdentity, system::GbcSystem,
+    input_types::GbcInputBuffer, persistence, rom_identity::GbcRomIdentity, system::GbcSystem,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -91,8 +90,9 @@ impl GbcConsoleCore {
         if identity.rom_len < identity.declared_rom_len {
             return Err(CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)));
         }
-        let mut system = GbcSystem::from_descriptor(options.hardware_model, rom.to_vec(), &descriptor)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+        let mut system =
+            GbcSystem::from_descriptor(options.hardware_model, rom.to_vec(), &descriptor)
+                .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
         system.bus.set_audio_sample_rate(sample_rate);
         Ok(LoadedGbc {
             system,
