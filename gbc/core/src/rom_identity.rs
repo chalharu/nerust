@@ -63,6 +63,7 @@ mod tests {
         rom[0x0147] = 0x00;
         rom[0x0148] = 0x00;
         rom[0x0149] = 0x00;
+        crate::cartridge_header::finalize_test_rom(&mut rom);
         rom
     }
 

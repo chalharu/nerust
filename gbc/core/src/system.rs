@@ -81,6 +81,14 @@ impl GbcSystem {
 mod tests {
     use super::*;
 
+    fn banked_rom(bank_count: usize) -> Vec<u8> {
+        let mut rom = vec![0; bank_count * 0x4000];
+        for (bank, bytes) in rom.chunks_exact_mut(0x4000).enumerate() {
+            bytes.fill(bank as u8);
+        }
+        rom
+    }
+
     fn minimal_rom(cgb: bool) -> Vec<u8> {
         let mut rom = vec![0; 0x8000];
         rom[0x0143] = if cgb { 0x80 } else { 0 };
@@ -114,5 +122,35 @@ mod tests {
         assert_eq!(registers.e(), 0x08);
         assert_eq!(registers.h(), 0x00);
         assert_eq!(registers.l(), 0x7C);
+    }
+
+    #[test]
+    fn loads_mmm01_from_trailing_header_and_starts_in_menu_banks() {
+        let mut rom = banked_rom(8);
+        let menu_base = rom.len() - 0x8000;
+        rom[menu_base + 0x0100..menu_base + 0x0150].fill(0);
+        rom[menu_base + 0x0147] = 0x0B;
+        rom[menu_base + 0x0148] = 2;
+        crate::cartridge_header::finalize_test_rom(&mut rom[menu_base..]);
+
+        let system = GbcSystem::from_rom(HardwareModel::Dmg, rom).unwrap();
+        assert_eq!(system.bus.read(0), 6);
+        assert_eq!(system.bus.read(0x4000), 7);
+    }
+
+    #[test]
+    fn detected_wisdom_tree_mapper_switches_the_full_rom_window() {
+        let mut rom = banked_rom(8);
+        rom[0x0147] = 0;
+        rom[0x0148] = 0;
+        rom[0x00F0..0x0100].fill(0);
+        rom[0x0134..0x014C].fill(0);
+        rom[0x0300..0x030B].copy_from_slice(b"WISDOM TREE");
+        crate::cartridge_header::finalize_test_rom(&mut rom);
+
+        let mut system = GbcSystem::from_rom(HardwareModel::Dmg, rom).unwrap();
+        system.bus.write(2, 0);
+        assert_eq!(system.bus.read(0), 4);
+        assert_eq!(system.bus.read(0x4000), 5);
     }
 }

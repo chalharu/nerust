@@ -1,8 +1,13 @@
 use crate::cartridge_header::{CartridgeHeader, CartridgeType};
+use crc::{CRC_32_ISO_HDLC, Crc};
 
 const MBC_BANK_SIZE: usize = 0x4000;
 const MENU_SIZE: usize = 0x8000;
 const MAX_MMM01_ROM_SIZE: usize = 0x800000;
+const MAX_M161_ROM_SIZE: usize = 8 * MENU_SIZE;
+const MAX_WISDOM_TREE_ROM_SIZE: usize = 64 * MENU_SIZE;
+const M161_HEADER_CRC32: u32 = 0xA61F_3EE1;
+const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectedMapper {
@@ -30,13 +35,61 @@ pub fn detect_cartridge(rom: &[u8]) -> Option<CartridgeDescriptor> {
         return None;
     }
 
+    let mapper = detect_unlicensed_mapper(rom, &header)
+        .unwrap_or(DetectedMapper::Header(header.cartridge_type));
     Some(CartridgeDescriptor {
-        mapper: DetectedMapper::Header(header.cartridge_type),
+        mapper,
         header,
         header_offset: 0,
         initial_rom0_bank: 0,
         initial_romx_bank: 1,
     })
+}
+
+fn detect_unlicensed_mapper(rom: &[u8], header: &CartridgeHeader) -> Option<DetectedMapper> {
+    if header.cartridge_type != CartridgeType::RomOnly {
+        return None;
+    }
+    if is_m161(rom) {
+        Some(DetectedMapper::M161)
+    } else if is_wisdom_tree(rom) {
+        Some(DetectedMapper::WisdomTree)
+    } else {
+        None
+    }
+}
+
+fn is_m161(rom: &[u8]) -> bool {
+    rom.len() >= 2 * MENU_SIZE
+        && rom.len() <= MAX_M161_ROM_SIZE
+        && rom.len().is_multiple_of(MENU_SIZE)
+        && rom
+            .get(0x0100..0x0150)
+            .is_some_and(|header| is_known_m161_header(CRC32.checksum(header)))
+}
+
+fn is_known_m161_header(header_crc32: u32) -> bool {
+    header_crc32 == M161_HEADER_CRC32
+}
+
+fn is_wisdom_tree(rom: &[u8]) -> bool {
+    rom.len() >= MENU_SIZE
+        && rom.len() <= MAX_WISDOM_TREE_ROM_SIZE
+        && rom.len().is_multiple_of(MENU_SIZE)
+        && rom.get(0x00F0..0x0100).is_some_and(all_zero)
+        && rom.get(0x0134..0x014C).is_some_and(all_zero)
+        && rom.get(0x014D) == Some(&0xE7)
+        && rom
+            .get(0x0300..)
+            .is_some_and(|body| body.windows(11).any(is_wisdom_tree_signature))
+}
+
+fn all_zero(bytes: &[u8]) -> bool {
+    bytes.iter().all(|byte| *byte == 0)
+}
+
+fn is_wisdom_tree_signature(window: &[u8]) -> bool {
+    window.get(..6) == Some(b"WISDOM") && window.get(7..) == Some(b"TREE")
 }
 
 fn detect_mmm01(rom: &[u8]) -> Option<CartridgeDescriptor> {
@@ -90,8 +143,14 @@ mod tests {
         let rom = standard_rom(0x00, 0);
         let descriptor = detect_cartridge(&rom).unwrap();
         assert_eq!(descriptor.header_offset, 0);
-        assert_eq!(descriptor.mapper, DetectedMapper::Header(CartridgeType::RomOnly));
-        assert_eq!((descriptor.initial_rom0_bank, descriptor.initial_romx_bank), (0, 1));
+        assert_eq!(
+            descriptor.mapper,
+            DetectedMapper::Header(CartridgeType::RomOnly)
+        );
+        assert_eq!(
+            (descriptor.initial_rom0_bank, descriptor.initial_romx_bank),
+            (0, 1)
+        );
     }
 
     #[test]
@@ -111,7 +170,42 @@ mod tests {
 
         let descriptor = detect_cartridge(&rom).unwrap();
         assert_eq!(descriptor.header_offset, menu_base);
-        assert_eq!(descriptor.mapper, DetectedMapper::Header(CartridgeType::Mmm01));
-        assert_eq!((descriptor.initial_rom0_bank, descriptor.initial_romx_bank), (6, 7));
+        assert_eq!(
+            descriptor.mapper,
+            DetectedMapper::Header(CartridgeType::Mmm01)
+        );
+        assert_eq!(
+            (descriptor.initial_rom0_bank, descriptor.initial_romx_bank),
+            (6, 7)
+        );
+    }
+
+    #[test]
+    fn m161_known_header_crc_uses_standard_crc32() {
+        assert_eq!(CRC32.checksum(b"123456789"), 0xCBF4_3926);
+        assert!(is_known_m161_header(0xA61F_3EE1));
+        assert!(!is_known_m161_header(0xA61F_3EE0));
+    }
+
+    #[test]
+    fn wisdom_tree_requires_the_complete_compound_signature() {
+        let mut rom = standard_rom(0x00, 1);
+        rom[0x0148] = 0;
+        rom[0x0300..0x030B].copy_from_slice(b"WISDOM TREE");
+        finalize_test_rom(&mut rom);
+        assert_eq!(rom[0x014D], 0xE7);
+        assert_eq!(
+            detect_cartridge(&rom).unwrap().mapper,
+            DetectedMapper::WisdomTree
+        );
+
+        for offset in [0x00F0, 0x0134, 0x014D, 0x0300] {
+            let mut invalid = rom.clone();
+            invalid[offset] ^= 1;
+            assert_ne!(
+                detect_cartridge(&invalid).map(|value| value.mapper),
+                Some(DetectedMapper::WisdomTree)
+            );
+        }
     }
 }
