@@ -206,11 +206,11 @@ impl Mbc6 {
 
         let mode = std::mem::replace(&mut self.flash_mode, FlashMode::ReadArray);
         match mode {
-            FlashMode::ReadArray
-            | FlashMode::Id
-            | FlashMode::HiddenRead
-            | FlashMode::Status { .. } => {
+            FlashMode::ReadArray => {
                 self.start_sequence_or_reset(address, value);
+            }
+            mode @ (FlashMode::Id | FlashMode::HiddenRead | FlashMode::Status { .. }) => {
+                self.flash_mode = mode;
             }
             FlashMode::UnlockSecond => {
                 self.flash_mode = if address == UNLOCK_ADDRESS_2 && value == 0x55 {
@@ -644,6 +644,20 @@ mod tests {
         assert_eq!(mbc.read_rom_n(0x4001), 0x81);
         mbc.write_rom(0x4000, 0xF0);
         assert_eq!(mbc.read_rom_n(0x4000), 0xFF);
+    }
+
+    #[test]
+    fn status_mode_requires_explicit_exit_before_another_command() {
+        let mut mbc = Mbc6::new(rom());
+        map_flash(&mut mbc);
+        mbc.flash_mode = FlashMode::Status { failed: false };
+
+        unlock_command(&mut mbc, 0x90);
+        assert!(matches!(mbc.flash_mode, FlashMode::Status { .. }));
+
+        flash_write(&mut mbc, 0, 0xF0);
+        unlock_command(&mut mbc, 0x90);
+        assert!(matches!(mbc.flash_mode, FlashMode::Id));
     }
 
     #[test]
