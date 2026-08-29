@@ -16,7 +16,7 @@ use nerust_core_traits::{
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_settings::{
-    local::{ScreenOrientation, TouchOverlayVisibility},
+    local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
     shared::StoragePolicy,
 };
 use nerust_gui_shell::registry::SystemRegistry;
@@ -63,6 +63,10 @@ pub(crate) struct AndroidSettings {
     pub overlay_scale_percent: u8,
     pub overlay_vertical_offset_percent: i8,
     pub overlay_haptics: bool,
+    pub motion_enabled: bool,
+    pub rumble_enabled: bool,
+    pub rumble_strength_percent: u8,
+    pub rumble_target: RumbleTarget,
     system_choices: Vec<AndroidSystemChoice>,
 }
 
@@ -132,6 +136,10 @@ impl AndroidSettings {
             overlay_scale_percent: snapshot.local.touch_overlay.scale_percent,
             overlay_vertical_offset_percent: snapshot.local.touch_overlay.vertical_offset_percent,
             overlay_haptics: snapshot.local.touch_overlay.haptics,
+            motion_enabled: snapshot.local.cartridge_peripherals.motion_enabled,
+            rumble_enabled: snapshot.local.cartridge_peripherals.rumble_enabled,
+            rumble_strength_percent: snapshot.local.cartridge_peripherals.rumble_strength_percent,
+            rumble_target: snapshot.local.cartridge_peripherals.rumble_target,
             system_choices,
         }
     }
@@ -156,6 +164,10 @@ impl AndroidSettings {
         snapshot.local.touch_overlay.scale_percent = self.overlay_scale_percent;
         snapshot.local.touch_overlay.vertical_offset_percent = self.overlay_vertical_offset_percent;
         snapshot.local.touch_overlay.haptics = self.overlay_haptics;
+        snapshot.local.cartridge_peripherals.motion_enabled = self.motion_enabled;
+        snapshot.local.cartridge_peripherals.rumble_enabled = self.rumble_enabled;
+        snapshot.local.cartridge_peripherals.rumble_strength_percent = self.rumble_strength_percent;
+        snapshot.local.cartridge_peripherals.rumble_target = self.rumble_target;
 
         for choice in &self.system_choices {
             let factory = registry
@@ -190,6 +202,10 @@ impl AndroidSettings {
             "controls.overlay.scale".to_string(),
             "controls.overlay.vertical_offset".to_string(),
             "controls.overlay.haptics".to_string(),
+            "controls.cartridge.motion".to_string(),
+            "controls.cartridge.rumble".to_string(),
+            "controls.cartridge.rumble_strength".to_string(),
+            "controls.cartridge.rumble_target".to_string(),
         ];
         keys.extend(
             self.system_choices
@@ -214,6 +230,10 @@ impl AndroidSettings {
             "Overlay Scale".to_string(),
             "Overlay Vertical Position".to_string(),
             "Overlay Haptics".to_string(),
+            "Cartridge Motion Sensor".to_string(),
+            "Cartridge Rumble".to_string(),
+            "Rumble Strength".to_string(),
+            "Rumble Target".to_string(),
         ];
         labels.extend(
             self.system_choices
@@ -235,6 +255,10 @@ impl AndroidSettings {
                     .map(|value| format!("{value} Hz")),
             ),
             "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
+            "Auto\tHandset\tController".to_string(),
             "Auto Rotate\tPortrait\tLandscape".to_string(),
             "Next to ROM\tApp Storage\tCustom Directory".to_string(),
             "Always\tAuto\tHidden".to_string(),
@@ -303,6 +327,15 @@ impl AndroidSettings {
             .unwrap_or_default()
             .to_string(),
             (self.overlay_haptics as usize).to_string(),
+            (self.motion_enabled as usize).to_string(),
+            (self.rumble_enabled as usize).to_string(),
+            usize::from(self.rumble_strength_percent.min(100)).to_string(),
+            match self.rumble_target {
+                RumbleTarget::Auto => 0,
+                RumbleTarget::Handset => 1,
+                RumbleTarget::Controller => 2,
+            }
+            .to_string(),
         ];
         indices.extend(self.system_choices.iter().map(|choice| {
             choice
@@ -381,8 +414,27 @@ impl AndroidSettings {
             1 => true,
             _ => return None,
         };
+        let motion_enabled = match indices[12] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let rumble_enabled = match indices[13] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let rumble_strength_percent = u8::try_from(indices[14])
+            .ok()
+            .filter(|value| *value <= 100)?;
+        let rumble_target = match indices[15] {
+            0 => RumbleTarget::Auto,
+            1 => RumbleTarget::Handset,
+            2 => RumbleTarget::Controller,
+            _ => return None,
+        };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[12..]) {
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[16..]) {
             choice.selected = choice.options.get(*selected_index)?.0.clone();
         }
 
@@ -399,6 +451,10 @@ impl AndroidSettings {
             overlay_scale_percent,
             overlay_vertical_offset_percent,
             overlay_haptics,
+            motion_enabled,
+            rumble_enabled,
+            rumble_strength_percent,
+            rumble_target,
             system_choices,
         })
     }
@@ -828,6 +884,10 @@ mod tests {
         android.latency_ms = 75;
         android.sample_rate = 44_100;
         android.vsync = false;
+        android.motion_enabled = false;
+        android.rumble_enabled = false;
+        android.rumble_strength_percent = 35;
+        android.rumble_target = RumbleTarget::Controller;
         set_system_choice(&mut android, "video.filter", "ntsc_rgb");
         android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
 
@@ -836,6 +896,16 @@ mod tests {
         assert_eq!(snapshot.local.audio.latency_ms, 75);
         assert_eq!(snapshot.local.audio.sample_rate, 44_100);
         assert!(!snapshot.local.video.presentation.vsync);
+        assert!(!snapshot.local.cartridge_peripherals.motion_enabled);
+        assert!(!snapshot.local.cartridge_peripherals.rumble_enabled);
+        assert_eq!(
+            snapshot.local.cartridge_peripherals.rumble_strength_percent,
+            35
+        );
+        assert_eq!(
+            snapshot.local.cartridge_peripherals.rumble_target,
+            RumbleTarget::Controller
+        );
         let nes = snapshot
             .shared
             .systems
@@ -854,12 +924,13 @@ mod tests {
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
         assert_eq!(
-            &indices[..12],
+            &indices[..16],
             [
-                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1"
+                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1", "1", "1", "100",
+                "0"
             ]
         );
-        assert_eq!(indices.len(), 16);
+        assert_eq!(indices.len(), 20);
     }
 
     #[test]
@@ -873,6 +944,10 @@ mod tests {
         original.sample_rate = 44_100;
         original.vsync = false;
         original.screen_orientation = ScreenOrientation::Landscape;
+        original.motion_enabled = false;
+        original.rumble_enabled = false;
+        original.rumble_strength_percent = 42;
+        original.rumble_target = RumbleTarget::Handset;
         set_system_choice(&mut original, "video.filter", "ntsc_svideo");
         original
             .apply_to_snapshot(&mut snapshot, &registry)
