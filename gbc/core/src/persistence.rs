@@ -258,6 +258,25 @@ mod tests {
         system.bus.read(0xA000)
     }
 
+    fn huc3_command(system: &mut GbcSystem, command: u8, argument: u8) -> u8 {
+        system.bus.write(0x0000, 0x0B);
+        system.bus.write(0xA000, command << 4 | argument);
+        system.bus.write(0x0000, 0x0D);
+        system.bus.write(0xA000, 0xFE);
+        system.bus.write(0x0000, 0x0C);
+        system.bus.read(0xA000)
+    }
+
+    fn set_huc3_address(system: &mut GbcSystem, address: u8) {
+        huc3_command(system, 4, address & 0x0F);
+        huc3_command(system, 5, address >> 4);
+    }
+
+    fn read_huc3_rtc_nibble(system: &mut GbcSystem, address: u8) -> u8 {
+        set_huc3_address(system, address);
+        huc3_command(system, 1, 0) & 0x0F
+    }
+
     #[test]
     fn system_time_snapshot_sync_applies_elapsed_time() {
         let rom = rom(0x0F, 0, 0);
@@ -379,5 +398,84 @@ mod tests {
             import_mapper_save(&mut target, b"invalid", identity),
             Err(GbcPersistenceError::Decode(_))
         ));
+    }
+
+    #[test]
+    fn huc_mapper_saves_round_trip_and_reject_cross_mapper_payload() {
+        let huc1_rom = rom(0xFF, 0x02, 0);
+        let huc1_identity = GbcRomIdentity::from_rom(&huc1_rom).unwrap();
+        let mut huc1_source = system(&huc1_rom, HardwareModel::CgbD);
+        huc1_source.bus.write(0xA000, 0x51);
+        let huc1_save = export_mapper_save(&huc1_source, huc1_identity, UNIX_EPOCH)
+            .unwrap()
+            .unwrap();
+        let mut huc1_target = system(&huc1_rom, HardwareModel::CgbD);
+        import_mapper_save(&mut huc1_target, &huc1_save, huc1_identity).unwrap();
+        assert_eq!(huc1_target.bus.read(0xA000), 0x51);
+
+        let huc3_rom = rom(0xFE, 0x02, 0);
+        let huc3_identity = GbcRomIdentity::from_rom(&huc3_rom).unwrap();
+        let mut huc3_source = system(&huc3_rom, HardwareModel::CgbD);
+        huc3_source.bus.write(0x0000, 0x0A);
+        huc3_source.bus.write(0xA000, 0x53);
+        set_huc3_address(&mut huc3_source, 0x42);
+        huc3_command(&mut huc3_source, 3, 0x0C);
+        let huc3_save = export_mapper_save(&huc3_source, huc3_identity, UNIX_EPOCH)
+            .unwrap()
+            .unwrap();
+        let mut huc3_target = system(&huc3_rom, HardwareModel::CgbD);
+        import_mapper_save(&mut huc3_target, &huc3_save, huc3_identity).unwrap();
+        huc3_target.bus.write(0x0000, 0x0A);
+        assert_eq!(huc3_target.bus.read(0xA000), 0x53);
+        assert_eq!(read_huc3_rtc_nibble(&mut huc3_target, 0x42), 0x0C);
+
+        let huc1_payload: MapperSavePayload = rmp_serde::from_slice(&huc1_save).unwrap();
+        let cross_mapper = rmp_serde::to_vec_named(&MapperSavePayload {
+            schema_version: PERSISTENCE_SCHEMA_VERSION,
+            rom_identity: huc3_identity,
+            cartridge: huc1_payload.cartridge,
+        })
+        .unwrap();
+        assert!(matches!(
+            import_mapper_save(&mut huc3_target, &cross_mapper, huc3_identity),
+            Err(GbcPersistenceError::InvalidState(_))
+        ));
+    }
+
+    #[test]
+    fn huc3_snapshot_sync_respects_rtc_policy() {
+        let rom = rom(0xFE, 0x02, 0);
+        let identity = GbcRomIdentity::from_rom(&rom).unwrap();
+        let captured_at = UNIX_EPOCH + Duration::from_secs(100);
+        let source = system(&rom, HardwareModel::CgbD);
+
+        let system_time_options = rtc_options(RtcSyncPolicy::SystemTime);
+        let bytes =
+            export_machine_state(&source, identity, system_time_options, captured_at).unwrap();
+        let mut synced = system(&rom, HardwareModel::CgbD);
+        import_machine_state(
+            &mut synced,
+            &bytes,
+            identity,
+            system_time_options,
+            captured_at + Duration::from_secs(120),
+        )
+        .unwrap();
+        huc3_command(&mut synced, 6, 0);
+        assert_eq!(read_huc3_rtc_nibble(&mut synced, 0), 2);
+
+        let exact_options = rtc_options(RtcSyncPolicy::SaveDataOnly);
+        let bytes = export_machine_state(&source, identity, exact_options, captured_at).unwrap();
+        let mut exact = system(&rom, HardwareModel::CgbD);
+        import_machine_state(
+            &mut exact,
+            &bytes,
+            identity,
+            exact_options,
+            captured_at + Duration::from_secs(120),
+        )
+        .unwrap();
+        huc3_command(&mut exact, 6, 0);
+        assert_eq!(read_huc3_rtc_nibble(&mut exact, 0), 0);
     }
 }

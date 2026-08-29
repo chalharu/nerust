@@ -20,6 +20,8 @@ pub enum CartridgeType {
     Mbc5RumbleRamBattery,
     Mbc6,
     Mbc7,
+    HuC3,
+    HuC1,
 }
 
 impl CartridgeType {
@@ -44,6 +46,8 @@ impl CartridgeType {
             0x1E => Some(Self::Mbc5RumbleRamBattery),
             0x20 => Some(Self::Mbc6),
             0x22 => Some(Self::Mbc7),
+            0xFE => Some(Self::HuC3),
+            0xFF => Some(Self::HuC1),
             _ => None,
         }
     }
@@ -60,6 +64,8 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
                 | Self::Mbc6
                 | Self::Mbc7
+                | Self::HuC3
+                | Self::HuC1
         )
     }
 
@@ -79,6 +85,8 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
                 | Self::Mbc6
                 | Self::Mbc7
+                | Self::HuC3
+                | Self::HuC1
         )
     }
 
@@ -90,7 +98,10 @@ impl CartridgeType {
     }
 
     pub fn has_rtc(self) -> bool {
-        matches!(self, Self::Mbc3TimerBattery | Self::Mbc3TimerRamBattery)
+        matches!(
+            self,
+            Self::Mbc3TimerBattery | Self::Mbc3TimerRamBattery | Self::HuC3
+        )
     }
 }
 
@@ -364,7 +375,7 @@ mod tests {
     #[test]
     fn unknown_cartridge_type_returns_none() {
         let mut rom = minimal_rom();
-        rom[0x0147] = 0xFF;
+        rom[0x0147] = 0xFC;
         compute_and_set_checksum(&mut rom);
         assert!(CartridgeHeader::parse(&rom).is_none());
     }
@@ -412,6 +423,21 @@ mod tests {
         assert!(mbc7.has_battery());
         assert!(mbc7.has_rumble());
         assert!(!mbc7.has_rtc());
+    }
+
+    #[test]
+    fn huc_types_have_expected_capabilities() {
+        let huc3 = CartridgeType::from_byte(0xFE).unwrap();
+        assert_eq!(huc3, CartridgeType::HuC3);
+        assert!(huc3.has_ram());
+        assert!(huc3.has_battery());
+        assert!(huc3.has_rtc());
+
+        let huc1 = CartridgeType::from_byte(0xFF).unwrap();
+        assert_eq!(huc1, CartridgeType::HuC1);
+        assert!(huc1.has_ram());
+        assert!(huc1.has_battery());
+        assert!(!huc1.has_rtc());
     }
 
     #[test]
