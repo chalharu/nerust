@@ -1,6 +1,6 @@
 use crate::{
     cartridge::Cartridge,
-    cartridge_header::{CartridgeHeader, is_supported_rom},
+    cartridge_descriptor::{CartridgeDescriptor, detect_cartridge},
     cartridge_mbc,
     cpu_core::{GbcModel, Lr35902Cpu},
     memory::GbcMemoryBus,
@@ -15,19 +15,26 @@ pub struct GbcSystem {
 
 impl GbcSystem {
     pub fn from_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
-        let header = CartridgeHeader::parse(&rom_bytes)?;
+        let descriptor = detect_cartridge(&rom_bytes)?;
+        Self::from_descriptor(model, rom_bytes, &descriptor)
+    }
+
+    pub fn from_descriptor(
+        model: HardwareModel,
+        rom_bytes: Vec<u8>,
+        descriptor: &CartridgeDescriptor,
+    ) -> Option<Self> {
+        let header = &descriptor.header;
         let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-        if !is_supported_rom(&rom_bytes) {
-            return None;
-        }
-        let font_bank1 = if rom_bytes.len() > 0x4000 {
-            Some(rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec())
+        let font_start = descriptor.initial_romx_bank.checked_mul(0x4000)?;
+        let font_bank1 = if rom_bytes.len() > font_start {
+            Some(rom_bytes[font_start..rom_bytes.len().min(font_start + 0x800)].to_vec())
         } else {
             None
         };
-        let compatibility_palettes =
-            (!rom_is_cgb).then(|| crate::compatibility_palette::select(&rom_bytes));
-        let mbc = cartridge_mbc::create_mbc(&header, rom_bytes, None);
+        let compatibility_palettes = (!rom_is_cgb)
+            .then(|| crate::compatibility_palette::select(&rom_bytes[descriptor.header_offset..]));
+        let mbc = cartridge_mbc::create_mbc_from_descriptor(descriptor, rom_bytes, None);
 
         let hw_is_cgb = matches!(
             model,

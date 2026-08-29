@@ -20,6 +20,9 @@ pub enum CartridgeType {
     Mbc5RumbleRamBattery,
     Mbc6,
     Mbc7,
+    Mmm01,
+    Mmm01Ram,
+    Mmm01RamBattery,
     HuC3,
     HuC1,
 }
@@ -33,6 +36,9 @@ impl CartridgeType {
             0x03 => Some(Self::Mbc1RamBattery),
             0x05 => Some(Self::Mbc2),
             0x06 => Some(Self::Mbc2Battery),
+            0x0B => Some(Self::Mmm01),
+            0x0C => Some(Self::Mmm01Ram),
+            0x0D => Some(Self::Mmm01RamBattery),
             0x0F => Some(Self::Mbc3TimerBattery),
             0x10 => Some(Self::Mbc3TimerRamBattery),
             0x11 => Some(Self::Mbc3),
@@ -64,6 +70,7 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
                 | Self::Mbc6
                 | Self::Mbc7
+                | Self::Mmm01RamBattery
                 | Self::HuC3
                 | Self::HuC1
         )
@@ -85,6 +92,8 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
                 | Self::Mbc6
                 | Self::Mbc7
+                | Self::Mmm01Ram
+                | Self::Mmm01RamBattery
                 | Self::HuC3
                 | Self::HuC1
         )
@@ -177,22 +186,17 @@ pub struct CartridgeHeader {
     pub multicart: bool,
 }
 
-const HEADER_OFFSET: usize = 0x0100;
+pub(crate) const HEADER_OFFSET: usize = 0x0100;
 
 /// The standard Nintendo logo ($0104-$0133).
-const NINTENDO_LOGO: [u8; 0x30] = [
+pub(crate) const NINTENDO_LOGO: [u8; 0x30] = [
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
     0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
     0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
 
 pub fn is_supported_rom(rom: &[u8]) -> bool {
-    let Some(header) = CartridgeHeader::parse(rom) else {
-        return false;
-    };
-    rom.get(0x0104..0x0134) == Some(NINTENDO_LOGO.as_slice())
-        && header.checksum_valid
-        && rom.len() >= header.rom_size.bytes
+    crate::cartridge_descriptor::detect_cartridge(rom).is_some()
 }
 
 #[cfg(test)]
@@ -221,11 +225,16 @@ fn is_mbc1_multicart(rom: &[u8]) -> bool {
 
 impl CartridgeHeader {
     pub fn parse(rom: &[u8]) -> Option<Self> {
-        if rom.len() < HEADER_OFFSET + 0x50 {
+        Self::parse_at(rom, 0)
+    }
+
+    pub fn parse_at(rom: &[u8], base_offset: usize) -> Option<Self> {
+        let header_offset = base_offset.checked_add(HEADER_OFFSET)?;
+        if rom.len() < header_offset.checked_add(0x50)? {
             return None;
         }
 
-        let hdr = &rom[HEADER_OFFSET..];
+        let hdr = &rom[header_offset..];
 
         let cartridge_type = CartridgeType::from_byte(hdr[0x47])?;
         let rom_size = RomSize::from_byte(hdr[0x48])?;
@@ -243,6 +252,13 @@ impl CartridgeHeader {
             checksum_valid,
             multicart,
         })
+    }
+
+    pub(crate) fn has_valid_logo(rom: &[u8], base_offset: usize) -> bool {
+        let Some(logo_start) = base_offset.checked_add(HEADER_OFFSET + 0x04) else {
+            return false;
+        };
+        rom.get(logo_start..logo_start + NINTENDO_LOGO.len()) == Some(NINTENDO_LOGO.as_slice())
     }
 
     fn compute_checksum(hdr: &[u8]) -> bool {

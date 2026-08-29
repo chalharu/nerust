@@ -1,6 +1,9 @@
 use std::time::SystemTime;
 
-use crate::cartridge_header::CartridgeHeader;
+use crate::{
+    cartridge_descriptor::{CartridgeDescriptor, DetectedMapper},
+    cartridge_header::CartridgeHeader,
+};
 
 mod huc1;
 mod huc3;
@@ -576,11 +579,29 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         }
         crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
         crate::cartridge_header::CartridgeType::Mbc7 => Box::new(Mbc7::new(rom)),
+        crate::cartridge_header::CartridgeType::Mmm01
+        | crate::cartridge_header::CartridgeType::Mmm01Ram
+        | crate::cartridge_header::CartridgeType::Mmm01RamBattery => {
+            unreachable!("MMM01 mapper must be created through cartridge descriptor dispatch")
+        }
         crate::cartridge_header::CartridgeType::HuC3 => {
             Box::new(HuC3::new(rom, cartridge_ram(header, ram, true)))
         }
         crate::cartridge_header::CartridgeType::HuC1 => {
             Box::new(HuC1::new(rom, cartridge_ram(header, ram, true)))
+        }
+    }
+}
+
+pub fn create_mbc_from_descriptor(
+    descriptor: &CartridgeDescriptor,
+    rom: Vec<u8>,
+    ram: Option<Vec<u8>>,
+) -> Box<dyn Mbc> {
+    match descriptor.mapper {
+        DetectedMapper::Header(_) => create_mbc(&descriptor.header, rom, ram),
+        DetectedMapper::M161 | DetectedMapper::WisdomTree => {
+            unreachable!("unlicensed mapper is not connected")
         }
     }
 }
