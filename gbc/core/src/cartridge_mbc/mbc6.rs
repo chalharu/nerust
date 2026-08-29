@@ -206,65 +206,80 @@ impl Mbc6 {
 
         let mode = std::mem::replace(&mut self.flash_mode, FlashMode::ReadArray);
         match mode {
-            FlashMode::ReadArray => {
-                self.start_sequence_or_reset(address, value);
-            }
+            FlashMode::ReadArray => self.start_sequence_or_reset(address, value),
             mode @ (FlashMode::Id | FlashMode::HiddenRead | FlashMode::Status { .. }) => {
                 self.flash_mode = mode;
             }
-            FlashMode::UnlockSecond => {
-                self.flash_mode = if address == UNLOCK_ADDRESS_2 && value == 0x55 {
-                    FlashMode::Command
-                } else {
-                    FlashMode::ReadArray
-                };
-            }
-            FlashMode::Command => {
-                if address != UNLOCK_ADDRESS_1 {
-                    return;
-                }
-                self.flash_mode = match value {
-                    0x90 => FlashMode::Id,
-                    0xA0 => FlashMode::Program(ProgramBuffer::new()),
-                    0x80 | 0x60 | 0x77 => FlashMode::FollowupFirst { command: value },
-                    _ => FlashMode::ReadArray,
-                };
-            }
+            FlashMode::UnlockSecond => self.write_unlock_second(address, value),
+            FlashMode::Command => self.write_command(address, value),
             FlashMode::FollowupFirst { command } => {
-                self.flash_mode = if address == UNLOCK_ADDRESS_1 && value == 0xAA {
-                    FlashMode::FollowupSecond { command }
-                } else {
-                    FlashMode::ReadArray
-                };
+                self.write_followup_first(command, address, value)
             }
             FlashMode::FollowupSecond { command } => {
-                self.flash_mode = if address == UNLOCK_ADDRESS_2 && value == 0x55 {
-                    FlashMode::FollowupCommand { command }
-                } else {
-                    FlashMode::ReadArray
-                };
+                self.write_followup_second(command, address, value)
             }
             FlashMode::FollowupCommand { command } => self.finish_followup(command, address, value),
-            FlashMode::Program(mut buffer) => match buffer.write(address, value) {
-                ProgramAction::Collecting => self.flash_mode = FlashMode::Program(buffer),
-                ProgramAction::Commit => {
-                    let failed = !self.commit_program(&buffer, false);
-                    self.flash_mode = FlashMode::Status { failed };
-                }
-                ProgramAction::Failed => self.flash_mode = FlashMode::Status { failed: true },
-            },
-            FlashMode::HiddenProgram(mut buffer) => {
-                let hidden_address = address & (HIDDEN_SIZE - 1);
-                match buffer.write(hidden_address, value) {
-                    ProgramAction::Collecting => self.flash_mode = FlashMode::HiddenProgram(buffer),
-                    ProgramAction::Commit => {
-                        let failed = !self.commit_program(&buffer, true);
-                        self.flash_mode = FlashMode::Status { failed };
-                    }
-                    ProgramAction::Failed => self.flash_mode = FlashMode::Status { failed: true },
-                }
-            }
+            FlashMode::Program(buffer) => self.write_program(buffer, address, value, false),
+            FlashMode::HiddenProgram(buffer) => self.write_program(buffer, address, value, true),
         }
+    }
+
+    fn write_unlock_second(&mut self, address: usize, value: u8) {
+        self.flash_mode = if address == UNLOCK_ADDRESS_2 && value == 0x55 {
+            FlashMode::Command
+        } else {
+            FlashMode::ReadArray
+        };
+    }
+
+    fn write_command(&mut self, address: usize, value: u8) {
+        if address != UNLOCK_ADDRESS_1 {
+            return;
+        }
+        self.flash_mode = match value {
+            0x90 => FlashMode::Id,
+            0xA0 => FlashMode::Program(ProgramBuffer::new()),
+            0x80 | 0x60 | 0x77 => FlashMode::FollowupFirst { command: value },
+            _ => FlashMode::ReadArray,
+        };
+    }
+
+    fn write_followup_first(&mut self, command: u8, address: usize, value: u8) {
+        self.flash_mode = if address == UNLOCK_ADDRESS_1 && value == 0xAA {
+            FlashMode::FollowupSecond { command }
+        } else {
+            FlashMode::ReadArray
+        };
+    }
+
+    fn write_followup_second(&mut self, command: u8, address: usize, value: u8) {
+        self.flash_mode = if address == UNLOCK_ADDRESS_2 && value == 0x55 {
+            FlashMode::FollowupCommand { command }
+        } else {
+            FlashMode::ReadArray
+        };
+    }
+
+    fn write_program(
+        &mut self,
+        mut buffer: ProgramBuffer,
+        address: usize,
+        value: u8,
+        hidden: bool,
+    ) {
+        let storage_address = if hidden {
+            address & (HIDDEN_SIZE - 1)
+        } else {
+            address
+        };
+        self.flash_mode = match buffer.write(storage_address, value) {
+            ProgramAction::Collecting if hidden => FlashMode::HiddenProgram(buffer),
+            ProgramAction::Collecting => FlashMode::Program(buffer),
+            ProgramAction::Commit => FlashMode::Status {
+                failed: !self.commit_program(&buffer, hidden),
+            },
+            ProgramAction::Failed => FlashMode::Status { failed: true },
+        };
     }
 
     fn finish_followup(&mut self, command: u8, address: usize, value: u8) {
