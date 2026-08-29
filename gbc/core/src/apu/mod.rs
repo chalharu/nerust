@@ -232,7 +232,12 @@ impl GbcApu {
         let ch3 = self.ch3.output();
         let ch4 = self.ch4.output();
 
-        let (left, right) = self.mixer.mix(ch1, ch2, ch3, ch4);
+        let (left, right) = self.mixer.mix([
+            (ch1, self.ch1.dac_enabled),
+            (ch2, self.ch2.dac_enabled),
+            (ch3, self.ch3.dac_enabled),
+            (ch4, self.ch4.dac_enabled),
+        ]);
 
         // HPF
         let dacs_enabled = self.ch1.dac_enabled
@@ -623,5 +628,51 @@ mod tests {
         assert!(samples.iter().any(|sample| sample.left.abs() > 0.001));
         assert!(samples.windows(2).any(|pair| pair[0].left != pair[1].left));
         assert!(samples.iter().all(|sample| sample.left == sample.right));
+    }
+
+    fn step_with_div_apu(apu: &mut GbcApu, cycles: u32) {
+        let mut remaining = cycles;
+        while remaining != 0 {
+            let step = remaining.min(8_192);
+            apu.step(step);
+            remaining -= step;
+            if step == 8_192 {
+                apu.clock_div_apu();
+            }
+        }
+    }
+
+    fn channel_energy(samples: &[StereoSample]) -> (f32, f32) {
+        samples.iter().fold((0.0, 0.0), |(peak, energy), sample| {
+            let value = sample.right.abs();
+            (peak.max(value), energy + value)
+        })
+    }
+
+    #[test]
+    fn pokemon_crystal_ball_wobble_sweep_remains_audible() {
+        let mut apu = GbcApu::new();
+        apu.set_cgb(true);
+        apu.write_register(0xFF26, 0x80);
+        apu.write_register(0xFF24, 0x77);
+        apu.write_register(0xFF25, 0x01);
+        apu.write_register(0xFF10, 0x3A);
+        apu.write_register(0xFF11, 0xBF);
+        apu.write_register(0xFF12, 0xF2);
+        apu.write_register(0xFF13, 0x00);
+        apu.write_register(0xFF14, 0x84);
+        step_with_div_apu(&mut apu, 4 * 70_224);
+        let first = channel_energy(&apu.flush_samples());
+
+        apu.write_register(0xFF10, 0x22);
+        apu.write_register(0xFF11, 0xBF);
+        apu.write_register(0xFF12, 0xE2);
+        apu.write_register(0xFF13, 0x00);
+        apu.write_register(0xFF14, 0x84);
+        step_with_div_apu(&mut apu, 8 * 70_224);
+        let second = channel_energy(&apu.flush_samples());
+
+        assert!(first.0 > 0.45 && first.1 > 70.0);
+        assert!(second.0 > 0.4 && second.1 > 70.0);
     }
 }
