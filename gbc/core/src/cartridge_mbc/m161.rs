@@ -95,7 +95,7 @@ mod tests {
 
     fn rom() -> Vec<u8> {
         let mut rom = vec![0; 4 * BANK_SIZE];
-        for (bank, bytes) in rom.chunks_exact_mut(BANK_SIZE).enumerate() {
+        for (bank, bytes) in rom.as_chunks_mut::<BANK_SIZE>().0.iter_mut().enumerate() {
             bytes.fill(bank as u8);
         }
         rom

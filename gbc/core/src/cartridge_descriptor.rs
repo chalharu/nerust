@@ -155,9 +155,17 @@ mod tests {
 
     #[test]
     fn invalid_standard_header_is_rejected() {
-        let mut rom = standard_rom(0x00, 0);
-        rom[0x0104] ^= 0xFF;
-        assert!(detect_cartridge(&rom).is_none());
+        let rom = standard_rom(0x00, 0);
+
+        let mut invalid_logo = rom.clone();
+        invalid_logo[0x0104] ^= 0xFF;
+        assert!(detect_cartridge(&invalid_logo).is_none());
+
+        let mut invalid_checksum = rom.clone();
+        invalid_checksum[0x014D] ^= 0xFF;
+        assert!(detect_cartridge(&invalid_checksum).is_none());
+
+        assert!(detect_cartridge(&rom[..0x4000]).is_none());
     }
 
     #[test]
