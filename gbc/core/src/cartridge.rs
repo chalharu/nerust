@@ -1,6 +1,7 @@
 use std::time::SystemTime;
 
 use crate::cartridge_mbc::Mbc;
+use nerust_core_traits::peripheral::{AccelerationSample, RumbleState};
 
 /// Top-level cartridge struct wrapping the ROM data and MBC.
 ///
@@ -77,6 +78,14 @@ impl Cartridge {
 
     pub fn reset_runtime(&mut self) {
         self.mbc.reset_runtime();
+    }
+
+    pub fn set_acceleration(&mut self, sample: Option<AccelerationSample>) {
+        self.mbc.set_acceleration(sample);
+    }
+
+    pub fn rumble_state(&self) -> RumbleState {
+        self.mbc.rumble_state()
     }
 
     pub fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {

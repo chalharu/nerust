@@ -106,6 +106,10 @@ pub trait Mbc: std::fmt::Debug + Send {
     ) {
     }
 
+    fn rumble_state(&self) -> nerust_core_traits::peripheral::RumbleState {
+        nerust_core_traits::peripheral::RumbleState::OFF
+    }
+
     fn reset_runtime(&mut self) {}
 
     fn export_persistent_state(&self, _now: SystemTime) -> Result<Option<Vec<u8>>, String> {
