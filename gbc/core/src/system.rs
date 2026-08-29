@@ -1,6 +1,6 @@
 use crate::{
     cartridge::Cartridge,
-    cartridge_header::{CartridgeHeader, is_supported_rom},
+    cartridge_descriptor::{CartridgeDescriptor, detect_cartridge},
     cartridge_mbc,
     cpu_core::{GbcModel, Lr35902Cpu},
     memory::GbcMemoryBus,
@@ -15,19 +15,26 @@ pub struct GbcSystem {
 
 impl GbcSystem {
     pub fn from_rom(model: HardwareModel, rom_bytes: Vec<u8>) -> Option<Self> {
-        let header = CartridgeHeader::parse(&rom_bytes)?;
+        let descriptor = detect_cartridge(&rom_bytes)?;
+        Self::from_descriptor(model, rom_bytes, &descriptor)
+    }
+
+    pub fn from_descriptor(
+        model: HardwareModel,
+        rom_bytes: Vec<u8>,
+        descriptor: &CartridgeDescriptor,
+    ) -> Option<Self> {
+        let header = &descriptor.header;
         let rom_is_cgb = header.cgb_flag & 0x80 != 0;
-        if !is_supported_rom(&rom_bytes) {
-            return None;
-        }
-        let font_bank1 = if rom_bytes.len() > 0x4000 {
-            Some(rom_bytes[0x4000..rom_bytes.len().min(0x4800)].to_vec())
+        let font_start = descriptor.initial_romx_bank.checked_mul(0x4000)?;
+        let font_bank1 = if rom_bytes.len() > font_start {
+            Some(rom_bytes[font_start..rom_bytes.len().min(font_start + 0x800)].to_vec())
         } else {
             None
         };
-        let compatibility_palettes =
-            (!rom_is_cgb).then(|| crate::compatibility_palette::select(&rom_bytes));
-        let mbc = cartridge_mbc::create_mbc(&header, rom_bytes, None);
+        let compatibility_palettes = (!rom_is_cgb)
+            .then(|| crate::compatibility_palette::select(&rom_bytes[descriptor.header_offset..]));
+        let mbc = cartridge_mbc::create_mbc_from_descriptor(descriptor, rom_bytes, None);
 
         let hw_is_cgb = matches!(
             model,
@@ -74,6 +81,14 @@ impl GbcSystem {
 mod tests {
     use super::*;
 
+    fn banked_rom(bank_count: usize) -> Vec<u8> {
+        let mut rom = vec![0; bank_count * 0x4000];
+        for (bank, bytes) in rom.as_chunks_mut::<0x4000>().0.iter_mut().enumerate() {
+            bytes.fill(bank as u8);
+        }
+        rom
+    }
+
     fn minimal_rom(cgb: bool) -> Vec<u8> {
         let mut rom = vec![0; 0x8000];
         rom[0x0143] = if cgb { 0x80 } else { 0 };
@@ -107,5 +122,35 @@ mod tests {
         assert_eq!(registers.e(), 0x08);
         assert_eq!(registers.h(), 0x00);
         assert_eq!(registers.l(), 0x7C);
+    }
+
+    #[test]
+    fn loads_mmm01_from_trailing_header_and_starts_in_menu_banks() {
+        let mut rom = banked_rom(8);
+        let menu_base = rom.len() - 0x8000;
+        rom[menu_base + 0x0100..menu_base + 0x0150].fill(0);
+        rom[menu_base + 0x0147] = 0x0B;
+        rom[menu_base + 0x0148] = 2;
+        crate::cartridge_header::finalize_test_rom(&mut rom[menu_base..]);
+
+        let system = GbcSystem::from_rom(HardwareModel::Dmg, rom).unwrap();
+        assert_eq!(system.bus.read(0), 6);
+        assert_eq!(system.bus.read(0x4000), 7);
+    }
+
+    #[test]
+    fn detected_wisdom_tree_mapper_switches_the_full_rom_window() {
+        let mut rom = banked_rom(8);
+        rom[0x0147] = 0;
+        rom[0x0148] = 0;
+        rom[0x00F0..0x0100].fill(0);
+        rom[0x0134..0x014C].fill(0);
+        rom[0x0300..0x030B].copy_from_slice(b"WISDOM TREE");
+        crate::cartridge_header::finalize_test_rom(&mut rom);
+
+        let mut system = GbcSystem::from_rom(HardwareModel::Dmg, rom).unwrap();
+        system.bus.write(2, 0);
+        assert_eq!(system.bus.read(0), 4);
+        assert_eq!(system.bus.read(0x4000), 5);
     }
 }

@@ -13,8 +13,8 @@ use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    core_options::GbcCoreOptions, input_types::GbcInputBuffer, persistence,
-    rom_identity::GbcRomIdentity, system::GbcSystem,
+    cartridge_descriptor::detect_cartridge, core_options::GbcCoreOptions,
+    input_types::GbcInputBuffer, persistence, rom_identity::GbcRomIdentity, system::GbcSystem,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -83,13 +83,16 @@ impl GbcConsoleCore {
         options: GbcCoreOptions,
         sample_rate: u32,
     ) -> Result<LoadedGbc, CoreError> {
-        let identity = GbcRomIdentity::from_rom(rom)
+        let descriptor = detect_cartridge(rom)
+            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+        let identity = GbcRomIdentity::from_descriptor(rom, &descriptor)
             .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
         if identity.rom_len < identity.declared_rom_len {
             return Err(CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)));
         }
-        let mut system = GbcSystem::from_rom(options.hardware_model, rom.to_vec())
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+        let mut system =
+            GbcSystem::from_descriptor(options.hardware_model, rom.to_vec(), &descriptor)
+                .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
         system.bus.set_audio_sample_rate(sample_rate);
         Ok(LoadedGbc {
             system,

@@ -2,6 +2,7 @@
 pub(crate) mod apu;
 #[allow(dead_code)]
 pub mod cartridge;
+pub mod cartridge_descriptor;
 #[allow(dead_code)]
 pub mod cartridge_header;
 #[allow(dead_code)]
