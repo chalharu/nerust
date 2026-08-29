@@ -4,10 +4,12 @@ use crate::cartridge_header::CartridgeHeader;
 
 mod mbc3;
 mod mbc5;
+mod mbc6;
 mod rtc;
 
 pub use mbc3::Mbc3;
 pub use mbc5::Mbc5;
+pub use mbc6::Mbc6;
 
 const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -18,6 +20,7 @@ pub enum MbcKind {
     Mbc2,
     Mbc3,
     Mbc5,
+    Mbc6,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -553,6 +556,7 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         | crate::cartridge_header::CartridgeType::Mbc2Battery => {
             Box::new(Mbc2::new(rom, header.cartridge_type.has_battery()))
         }
+        crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
     }
 }
 
