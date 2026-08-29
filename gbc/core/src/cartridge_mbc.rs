@@ -517,61 +517,59 @@ impl Mbc for Mbc2 {
     }
 }
 
+fn cartridge_ram(
+    header: &CartridgeHeader,
+    ram: Option<Vec<u8>>,
+    default_when_unspecified: bool,
+) -> Vec<u8> {
+    let size = match (header.ram_size.bytes, default_when_unspecified) {
+        (0, true) => 0x2000,
+        (size, _) => size,
+    };
+    ram.unwrap_or_else(|| vec![0; size])
+}
+
+fn create_mbc1(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
+    let ram = cartridge_ram(header, ram, header.cartridge_type.has_ram());
+    if header.multicart {
+        Box::new(Mbc1::new_multicart(
+            rom,
+            ram,
+            header.cartridge_type.has_battery(),
+        ))
+    } else {
+        Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
+    }
+}
+
 /// Factory function to create the appropriate MBC from header + ROM data.
 pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) -> Box<dyn Mbc> {
     match header.cartridge_type {
         crate::cartridge_header::CartridgeType::RomOnly => Box::new(RomOnly::new(rom)),
         crate::cartridge_header::CartridgeType::Mbc1
         | crate::cartridge_header::CartridgeType::Mbc1Ram
-        | crate::cartridge_header::CartridgeType::Mbc1RamBattery => {
-            let ram_size = if header.cartridge_type.has_ram() && header.ram_size.bytes == 0 {
-                0x2000
-            } else {
-                header.ram_size.bytes
-            };
-            let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
-            if header.multicart {
-                Box::new(Mbc1::new_multicart(
-                    rom,
-                    ram,
-                    header.cartridge_type.has_battery(),
-                ))
-            } else {
-                Box::new(Mbc1::new(rom, ram, header.cartridge_type.has_battery()))
-            }
-        }
+        | crate::cartridge_header::CartridgeType::Mbc1RamBattery => create_mbc1(header, rom, ram),
         crate::cartridge_header::CartridgeType::Mbc5
         | crate::cartridge_header::CartridgeType::Mbc5Ram
         | crate::cartridge_header::CartridgeType::Mbc5RamBattery
         | crate::cartridge_header::CartridgeType::Mbc5Rumble
         | crate::cartridge_header::CartridgeType::Mbc5RumbleRam
-        | crate::cartridge_header::CartridgeType::Mbc5RumbleRamBattery => {
-            let ram_size = if header.cartridge_type.has_ram() && header.ram_size.bytes == 0 {
-                0x2000
-            } else {
-                header.ram_size.bytes
-            };
-            let ram = ram.unwrap_or_else(|| vec![0; ram_size]);
-            Box::new(Mbc5::new(
-                rom,
-                ram,
-                header.cartridge_type.has_battery(),
-                header.cartridge_type.has_rumble(),
-            ))
-        }
+        | crate::cartridge_header::CartridgeType::Mbc5RumbleRamBattery => Box::new(Mbc5::new(
+            rom,
+            cartridge_ram(header, ram, header.cartridge_type.has_ram()),
+            header.cartridge_type.has_battery(),
+            header.cartridge_type.has_rumble(),
+        )),
         crate::cartridge_header::CartridgeType::Mbc3TimerBattery
         | crate::cartridge_header::CartridgeType::Mbc3TimerRamBattery
         | crate::cartridge_header::CartridgeType::Mbc3
         | crate::cartridge_header::CartridgeType::Mbc3Ram
-        | crate::cartridge_header::CartridgeType::Mbc3RamBattery => {
-            let ram = ram.unwrap_or_else(|| vec![0; header.ram_size.bytes]);
-            Box::new(Mbc3::new(
-                rom,
-                ram,
-                header.cartridge_type.has_battery(),
-                header.cartridge_type.has_rtc(),
-            ))
-        }
+        | crate::cartridge_header::CartridgeType::Mbc3RamBattery => Box::new(Mbc3::new(
+            rom,
+            cartridge_ram(header, ram, false),
+            header.cartridge_type.has_battery(),
+            header.cartridge_type.has_rtc(),
+        )),
         crate::cartridge_header::CartridgeType::Mbc2
         | crate::cartridge_header::CartridgeType::Mbc2Battery => {
             Box::new(Mbc2::new(rom, header.cartridge_type.has_battery()))
@@ -579,20 +577,10 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
         crate::cartridge_header::CartridgeType::Mbc7 => Box::new(Mbc7::new(rom)),
         crate::cartridge_header::CartridgeType::HuC3 => {
-            let ram_size = if header.ram_size.bytes == 0 {
-                0x2000
-            } else {
-                header.ram_size.bytes
-            };
-            Box::new(HuC3::new(rom, ram.unwrap_or_else(|| vec![0; ram_size])))
+            Box::new(HuC3::new(rom, cartridge_ram(header, ram, true)))
         }
         crate::cartridge_header::CartridgeType::HuC1 => {
-            let ram_size = if header.ram_size.bytes == 0 {
-                0x2000
-            } else {
-                header.ram_size.bytes
-            };
-            Box::new(HuC1::new(rom, ram.unwrap_or_else(|| vec![0; ram_size])))
+            Box::new(HuC1::new(rom, cartridge_ram(header, ram, true)))
         }
     }
 }
