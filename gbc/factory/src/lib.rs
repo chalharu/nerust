@@ -42,7 +42,7 @@ impl CoreFactory for GbcFactory {
     }
 
     fn probe_media(&self, media: &MediaObject) -> bool {
-        nerust_gbc_core::cartridge_header::is_supported_rom(&media.bytes)
+        nerust_gbc_core::cartridge_descriptor::detect_cartridge(&media.bytes).is_some()
     }
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
