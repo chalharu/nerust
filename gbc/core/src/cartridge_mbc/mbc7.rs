@@ -121,80 +121,87 @@ impl Eeprom {
     fn clock_rising_edge(&mut self) {
         let phase = std::mem::replace(&mut self.phase, EepromPhase::Idle);
         match phase {
-            EepromPhase::Idle => {
-                if self.di {
-                    self.phase = EepromPhase::Command { bits: 1, count: 1 };
-                }
-            }
-            EepromPhase::Command {
-                mut bits,
-                mut count,
-            } => {
-                bits = (bits << 1) | u16::from(self.di);
-                count += 1;
-                if count == COMMAND_BITS {
-                    self.decode_command(bits);
-                } else {
-                    self.phase = EepromPhase::Command { bits, count };
-                }
-            }
-            EepromPhase::Read {
-                mut word,
-                mut bits_left,
-            } => {
-                self.do_ = word & 0x8000 != 0;
-                word <<= 1;
-                bits_left -= 1;
-                self.phase = if bits_left == 0 {
-                    EepromPhase::Ready
-                } else {
-                    EepromPhase::Read { word, bits_left }
-                };
-            }
+            EepromPhase::Idle => self.clock_idle(),
+            EepromPhase::Command { bits, count } => self.clock_command(bits, count),
+            EepromPhase::Read { word, bits_left } => self.clock_read(word, bits_left),
             EepromPhase::Write {
                 address,
-                mut word,
-                mut bits_left,
-            } => {
-                word = (word << 1) | u16::from(self.di);
-                bits_left -= 1;
-                if bits_left == 0 {
-                    if self.write_enabled {
-                        self.write_word(address, word);
-                    }
-                    self.do_ = true;
-                    self.phase = EepromPhase::Ready;
-                } else {
-                    self.phase = EepromPhase::Write {
-                        address,
-                        word,
-                        bits_left,
-                    };
-                }
-            }
-            EepromPhase::WriteAll {
-                mut word,
-                mut bits_left,
-            } => {
-                word = (word << 1) | u16::from(self.di);
-                bits_left -= 1;
-                if bits_left == 0 {
-                    if self.write_enabled {
-                        for address in 0..EEPROM_WORDS as u8 {
-                            self.write_word(address, word);
-                        }
-                    }
-                    self.do_ = true;
-                    self.phase = EepromPhase::Ready;
-                } else {
-                    self.phase = EepromPhase::WriteAll { word, bits_left };
-                }
-            }
+                word,
+                bits_left,
+            } => self.clock_write(address, word, bits_left),
+            EepromPhase::WriteAll { word, bits_left } => self.clock_write_all(word, bits_left),
             EepromPhase::Ready => {
                 self.do_ = true;
                 self.phase = EepromPhase::Ready;
             }
         }
+    }
+
+    fn clock_idle(&mut self) {
+        if self.di {
+            self.phase = EepromPhase::Command { bits: 1, count: 1 };
+        }
+    }
+
+    fn clock_command(&mut self, bits: u16, count: u8) {
+        let bits = (bits << 1) | u16::from(self.di);
+        let count = count + 1;
+        if count == COMMAND_BITS {
+            self.decode_command(bits);
+        } else {
+            self.phase = EepromPhase::Command { bits, count };
+        }
+    }
+
+    fn clock_read(&mut self, mut word: u16, bits_left: u8) {
+        self.do_ = word & 0x8000 != 0;
+        word <<= 1;
+        self.phase = if bits_left == 1 {
+            EepromPhase::Ready
+        } else {
+            EepromPhase::Read {
+                word,
+                bits_left: bits_left - 1,
+            }
+        };
+    }
+
+    fn clock_write(&mut self, address: u8, word: u16, bits_left: u8) {
+        let word = (word << 1) | u16::from(self.di);
+        if bits_left == 1 {
+            if self.write_enabled {
+                self.write_word(address, word);
+            }
+            self.finish_write();
+        } else {
+            self.phase = EepromPhase::Write {
+                address,
+                word,
+                bits_left: bits_left - 1,
+            };
+        }
+    }
+
+    fn clock_write_all(&mut self, word: u16, bits_left: u8) {
+        let word = (word << 1) | u16::from(self.di);
+        if bits_left == 1 {
+            if self.write_enabled {
+                for address in 0..EEPROM_WORDS as u8 {
+                    self.write_word(address, word);
+                }
+            }
+            self.finish_write();
+        } else {
+            self.phase = EepromPhase::WriteAll {
+                word,
+                bits_left: bits_left - 1,
+            };
+        }
+    }
+
+    fn finish_write(&mut self) {
+        self.do_ = true;
+        self.phase = EepromPhase::Ready;
     }
 
     fn decode_command(&mut self, command: u16) {
