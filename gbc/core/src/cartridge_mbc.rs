@@ -2,12 +2,17 @@ use std::time::SystemTime;
 
 use crate::cartridge_header::CartridgeHeader;
 
+mod huc1;
+mod huc3;
+mod huc3_rtc;
 mod mbc3;
 mod mbc5;
 mod mbc6;
 mod mbc7;
 mod rtc;
 
+pub use huc1::HuC1;
+pub use huc3::HuC3;
 pub use mbc3::Mbc3;
 pub use mbc5::Mbc5;
 pub use mbc6::Mbc6;
@@ -24,6 +29,8 @@ pub enum MbcKind {
     Mbc5,
     Mbc6,
     Mbc7,
+    HuC1,
+    HuC3,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -571,6 +578,22 @@ pub fn create_mbc(header: &CartridgeHeader, rom: Vec<u8>, ram: Option<Vec<u8>>) 
         }
         crate::cartridge_header::CartridgeType::Mbc6 => Box::new(Mbc6::new(rom)),
         crate::cartridge_header::CartridgeType::Mbc7 => Box::new(Mbc7::new(rom)),
+        crate::cartridge_header::CartridgeType::HuC3 => {
+            let ram_size = if header.ram_size.bytes == 0 {
+                0x2000
+            } else {
+                header.ram_size.bytes
+            };
+            Box::new(HuC3::new(rom, ram.unwrap_or_else(|| vec![0; ram_size])))
+        }
+        crate::cartridge_header::CartridgeType::HuC1 => {
+            let ram_size = if header.ram_size.bytes == 0 {
+                0x2000
+            } else {
+                header.ram_size.bytes
+            };
+            Box::new(HuC1::new(rom, ram.unwrap_or_else(|| vec![0; ram_size])))
+        }
     }
 }
 
