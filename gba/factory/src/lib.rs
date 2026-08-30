@@ -1,7 +1,9 @@
 mod builder;
+mod input_profiles;
+mod labels;
+mod settings;
 
 use std::rc::Rc;
-use std::sync::Arc;
 
 use nerust_core_traits::{
     audio::AudioBackend,
@@ -17,10 +19,7 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gba_settings::GbaSettings;
-use nerust_input_traits::{
-    ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments, InputResources,
-    InputSystemFactory, SlotInfo,
-};
+use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
 
 pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
     nerust_gba_device::gba_device_controller_profiles()
@@ -47,32 +46,25 @@ impl CoreFactory for GbaFactory {
         false
     }
 
-    fn settings_page(&self, _view: &FactorySettingsView) -> SystemSettingsPageModel {
-        // Phase 2 で実装
-        SystemSettingsPageModel {
-            fields: Arc::new([]),
-        }
+    fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+        settings::gba_settings_page(view)
     }
 
     fn apply_settings_choice(
         &self,
-        _view: &mut FactorySettingsView,
-        _field: &SystemSettingsFieldId,
-        _choice: &SystemSettingsChoiceId,
+        view: &mut FactorySettingsView,
+        field: &SystemSettingsFieldId,
+        choice: &SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
-        // Phase 2 で実装
-        Ok(())
+        settings::apply_gba_settings_choice(view, field, choice)
     }
 
     fn resolve_load_request(
         &self,
-        _view: &FactorySettingsView,
-        _options: Box<dyn DynSystemLoadOptions>,
+        view: &FactorySettingsView,
+        options: Box<dyn DynSystemLoadOptions>,
     ) -> Result<ResolvedLoadRequest, FactoryError> {
-        // Phase 2 で実装
-        Ok(ResolvedLoadRequest {
-            options: Box::new(nerust_gba_core::core_options::GbaCoreOptions),
-        })
+        settings::resolve_gba_load_request(view, options)
     }
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
@@ -107,9 +99,8 @@ impl SystemDefaults for GbaFactory {
         Some(Box::new(GbaSettings::default()))
     }
 
-    fn resolve_label(&self, _label_id: &str, _language: &str) -> Option<String> {
-        // Phase 2 で実装
-        None
+    fn resolve_label(&self, label_id: &str, language: &str) -> Option<String> {
+        labels::resolve(label_id, language)
     }
 
     fn default_input_attachment_id(&self) -> Option<&'static str> {
@@ -118,32 +109,6 @@ impl SystemDefaults for GbaFactory {
 
     fn default_input_control_prefix(&self) -> Option<&'static str> {
         Some("gba.control")
-    }
-}
-
-impl nerust_input_traits::InputPorts for GbaFactory {
-    fn slots(&self) -> &[SlotInfo] {
-        // Phase 2 で実装
-        &[]
-    }
-
-    fn controllers(&self) -> Vec<Rc<dyn ControllerProfile>> {
-        gba_device_controller_profiles()
-    }
-}
-
-impl InputSystemFactory for GbaFactory {
-    fn default_assignments(&self) -> InputAssignments {
-        // Phase 2 で実装
-        InputAssignments { slots: Vec::new() }
-    }
-
-    fn create_split(
-        &self,
-        _controllers: &ControllerCollection,
-    ) -> Result<InputResources, CreateSplitError> {
-        // Phase 2 で実装
-        todo!("create_split")
     }
 }
 
