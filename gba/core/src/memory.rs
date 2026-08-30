@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::cartridge::Cartridge;
+
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
 // ---------------------------------------------------------------------------
@@ -10,8 +12,6 @@ const IWRAM_SIZE: usize = 0x8000;
 const PALETTE_SIZE: usize = 0x400;
 const VRAM_SIZE: usize = 0x18000;
 const OAM_SIZE: usize = 0x400;
-const SRAM_SIZE: usize = 0x10000;
-const ROM_DUMMY_SIZE: usize = 0x4000;
 
 /// GBA メモリバス。GbcMemoryBus と同様に全RAM/レジスタの唯一所有者であり、
 /// CPU は `&mut GbaMemoryBus` 経由でアクセスする。
@@ -22,8 +22,9 @@ pub struct GbaMemoryBus {
     palette_ram: Box<[u8; PALETTE_SIZE]>,
     vram: Box<[u8; VRAM_SIZE]>,
     oam: Box<[u8; OAM_SIZE]>,
-    rom_ws0: Vec<u8>,
-    sram: Box<[u8; SRAM_SIZE]>,
+    cartridge: Option<Cartridge>,
+    // Fallback SRAM for Phase 3 tests when no cartridge is loaded
+    fallback_sram: Box<[u8; 0x10000]>,
 
     // レジスタ — Phase 3 基本16件
     disp_cnt: u16,
@@ -66,8 +67,8 @@ impl GbaMemoryBus {
             palette_ram: Box::new([0u8; PALETTE_SIZE]),
             vram: Box::new([0u8; VRAM_SIZE]),
             oam: Box::new([0u8; OAM_SIZE]),
-            rom_ws0: vec![0xEA; ROM_DUMMY_SIZE],
-            sram: Box::new([0u8; SRAM_SIZE]),
+            cartridge: None,
+            fallback_sram: Box::new([0u8; 0x10000]),
 
             disp_cnt: 0x0080, // Force Blank post-BIOS
             disp_stat: 0,
@@ -180,6 +181,23 @@ impl GbaMemoryBus {
         self.current_pc = pc;
     }
 
+    pub fn set_cartridge(&mut self, cart: Cartridge) {
+        self.cartridge = Some(cart);
+        self.prefetch_queue.clear();
+    }
+
+    pub fn cartridge(&self) -> Option<&Cartridge> {
+        self.cartridge.as_ref()
+    }
+
+    pub fn cartridge_mut(&mut self) -> Option<&mut Cartridge> {
+        self.cartridge.as_mut()
+    }
+
+    pub fn take_cartridge(&mut self) -> Option<Cartridge> {
+        self.cartridge.take()
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -263,11 +281,14 @@ impl GbaMemoryBus {
         if !self.prefetch_enabled {
             return;
         }
+        let rom_len = self
+            .cartridge
+            .as_ref()
+            .map(|c| c.rom.len())
+            .unwrap_or(0x4000);
         for i in 1..=8 {
             let next = addr.wrapping_add(i * 4);
-            if (0x08000000..=0x0DFFFFFF).contains(&next)
-                && (next as usize) < self.rom_ws0.len() + 0x08000000
-            {
+            if (0x08000000..=0x0DFFFFFF).contains(&next) && (next as usize) < rom_len + 0x08000000 {
                 self.prefetch_queue.push_back(0xEAEA_EAEA);
             }
         }
@@ -338,20 +359,18 @@ impl GbaMemoryBus {
     }
 
     fn read_rom(&self, addr: u32, width: u8) -> u32 {
-        // Phase 3 ダミー: rom_ws0 の範囲内なら読む、範囲外は open_bus
-        if (0x08000000..=0x09FFFFFF).contains(&addr) {
-            let aligned = addr & !((width as u32) - 1).min(3);
-            let off = (aligned - 0x08000000) as usize;
-            if off < self.rom_ws0.len() {
-                return Self::read_slice(&self.rom_ws0, off, width);
-            }
+        if let Some(cart) = &self.cartridge {
+            return cart.read_rom(addr, width);
         }
         self.open_bus_value
     }
 
     fn read_sram(&self, addr: u32, width: u8) -> u32 {
+        if let Some(cart) = &self.cartridge {
+            return cart.read_sram(addr, width);
+        }
         let off = Self::aligned_off(addr, width, 0xFFFF);
-        Self::read_slice(&*self.sram, off, width)
+        Self::read_slice(&*self.fallback_sram, off, width)
     }
 
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
@@ -432,8 +451,12 @@ impl GbaMemoryBus {
     }
 
     fn write_sram(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0xFFFF) as usize;
-        Self::write_slice(&mut *self.sram, off, width, value);
+        if let Some(cart) = &mut self.cartridge {
+            cart.write_sram(addr, width, value);
+        } else {
+            let off = Self::aligned_off(addr, width, 0xFFFF);
+            Self::write_slice(&mut *self.fallback_sram, off, width, value);
+        }
         self.open_bus_value = value;
     }
 

@@ -2972,6 +2972,7 @@ dependencies = [
 name = "nerust_gba_core"
 version = "0.1.0-dev"
 dependencies = [
+ "crc",
  "log",
  "nerust_core_traits",
  "nerust_gba_settings",
@@ -2979,6 +2980,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_serialize",
  "nerust_sound_filter",
+ "rmp-serde",
  "serde",
  "thiserror 2.0.20",
  "typetag",
