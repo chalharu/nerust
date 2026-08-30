@@ -9,7 +9,10 @@ use nerust_core_traits::factory::{
     settings::FactorySettingsView,
 };
 use nerust_gba_core::core_options::GbaCoreOptions;
-use nerust_gba_settings::{GbaSettings, field::GbaSettingField};
+use nerust_gba_settings::{
+    GbaSettings,
+    field::{GbaSettingChoice, GbaSettingField},
+};
 
 const EXPOSED_FIELDS: [GbaSettingField; 0] = [];
 
@@ -50,27 +53,18 @@ pub(crate) fn apply_gba_settings_choice(
     }
     let _choice = choice_id
         .as_str()
-        .parse::<GbaSettingChoiceProxy>()
+        .parse::<GbaSettingChoice>()
         .map_err(|_| FactoryError::InvalidChoice(choice_id.as_str().to_string()))?;
     let _settings = view
         .system_config
         .as_deref_mut()
         .and_then(|value| value.downcast_mut::<GbaSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    // No fields to apply — any valid field would have been handled above.
-    // This point is unreachable while EXPOSED_FIELDS is empty.
+    // TODO(gba-settings): EXPOSED_FIELDS is currently empty (Phase 2).
+    // When adding a new field (e.g. GbaVideoFilter), extend the match below
+    // to handle (field, choice) pairs, mirroring gbc/factory/src/settings.rs:66-92.
+    // At that time, ensure labels.rs and field.rs label_id mappings are updated together.
     Ok(())
-}
-
-// Proxy for choice parsing when no choices exist — always fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GbaSettingChoiceProxy;
-
-impl std::str::FromStr for GbaSettingChoiceProxy {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Err(format!("unknown GBA choice: {value}"))
-    }
 }
 
 pub(crate) fn resolve_gba_load_request(
