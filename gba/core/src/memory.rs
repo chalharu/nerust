@@ -222,57 +222,62 @@ impl GbaMemoryBus {
         }
     }
 
-    fn read_internal(&mut self, addr: u32, width: u8) -> (u32, u8) {
-        let wait = self.cycles_for(addr, width);
-        let sequential_prefetch = self.is_sequential(addr) && self.prefetch_enabled;
-
-        let raw: u32 = match addr {
-            0x00000000..=0x00003FFF => {
-                if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-                    0
-                } else {
-                    self.read_bios(addr, width)
-                }
-            }
+    fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
+        match addr {
+            0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
             0x02000000..=0x0203FFFF => self.read_ewram(addr, width),
             0x03000000..=0x03007FFF => self.read_iwram(addr, width),
             0x04000000..=0x040003FE => self.read_io(addr, width),
             0x05000000..=0x050003FF => self.read_palette(addr, width),
             0x06000000..=0x06017FFF => self.read_vram(addr, width),
             0x07000000..=0x070003FF => self.read_oam(addr, width),
-            0x08000000..=0x09FFFFFF => self.read_rom(addr, width),
-            0x0A000000..=0x0BFFFFFF => self.read_rom(addr, width),
-            0x0C000000..=0x0DFFFFFF => self.read_rom(addr, width),
+            0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
             0x0E000000..=0x0E00FFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
-        };
+        }
+    }
 
-        // プリフェッチキュー更新: ROM連続読みでキューを消費、非連続でフラッシュ
-        if (0x08000000..=0x0DFFFFFF).contains(&addr) {
-            if sequential_prefetch && !self.prefetch_queue.is_empty() {
+    fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
+        if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
+            0
+        } else {
+            self.read_bios(addr, width)
+        }
+    }
+
+    fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
+        let is_rom = (0x08000000..=0x0DFFFFFF).contains(&addr);
+        if is_rom {
+            if sequential && !self.prefetch_queue.is_empty() {
                 let _ = self.prefetch_queue.pop_front();
-            } else if !sequential_prefetch {
-                self.prefetch_queue.clear();
-                // 次の8ワードをプリフェッチ（ダミー実装では単純にクリアのみ）
-                if self.prefetch_enabled {
-                    for i in 1..=8 {
-                        let next = addr.wrapping_add(i * 4);
-                        if (0x08000000..=0x0DFFFFFF).contains(&next)
-                            && (next as usize) < self.rom_ws0.len() + 0x08000000
-                        {
-                            self.prefetch_queue.push_back(0xEAEA_EAEA);
-                        }
-                    }
-                }
+            } else if !sequential {
+                self.refill_prefetch_queue(addr);
             }
-        } else if !(0x04000000..=0x040003FE).contains(&addr) {
-            // ROM以外へのアクセスでプリフェッチキューをフラッシュ（GBA実機挙動の簡易版）
-            // ただし I/Oアクセスではフラッシュしない
-            if self.prefetch_enabled && !self.prefetch_queue.is_empty() {
-                // keep queue for now — only ROM non-sequential flushes
+            return;
+        }
+        // Non-ROM, non-I/O accesses keep queue (only ROM non-sequential flushes)
+    }
+
+    fn refill_prefetch_queue(&mut self, addr: u32) {
+        self.prefetch_queue.clear();
+        if !self.prefetch_enabled {
+            return;
+        }
+        for i in 1..=8 {
+            let next = addr.wrapping_add(i * 4);
+            if (0x08000000..=0x0DFFFFFF).contains(&next)
+                && (next as usize) < self.rom_ws0.len() + 0x08000000
+            {
+                self.prefetch_queue.push_back(0xEAEA_EAEA);
             }
         }
+    }
 
+    fn read_internal(&mut self, addr: u32, width: u8) -> (u32, u8) {
+        let wait = self.cycles_for(addr, width);
+        let sequential = self.is_sequential(addr) && self.prefetch_enabled;
+        let raw = self.read_mapped(addr, width);
+        self.update_prefetch_queue(addr, sequential);
         self.prev_addr = Some(addr);
         self.last_prefetch = raw;
         self.open_bus_value = raw;
