@@ -1,0 +1,17 @@
+[package]
+name = "nerust_gba_factory"
+description = "GBA factory integration"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+clap.workspace = true
+nerust_core_traits.workspace = true
+nerust_gba_core.workspace = true
+nerust_gba_device.workspace = true
+nerust_gba_settings.workspace = true
+nerust_input_traits.workspace = true
+nerust_render_traits.workspace = true
+nerust_settings_traits.workspace = true
