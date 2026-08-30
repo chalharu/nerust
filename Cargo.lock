@@ -256,6 +256,12 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
@@ -288,6 +294,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
 ]
 
 [[package]]
@@ -783,6 +798,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -826,6 +850,16 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
+name = "crypto-common"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
+dependencies = [
+ "generic-array",
+ "typenum",
+]
 
 [[package]]
 name = "ctor"
@@ -894,6 +928,16 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+
+[[package]]
+name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer",
+ "crypto-common",
+]
 
 [[package]]
 name = "directories"
@@ -1575,6 +1619,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "generic-array"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+dependencies = [
+ "typenum",
+ "version_check",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1797,6 +1851,12 @@ dependencies = [
  "libc",
  "system-deps 7.0.8",
 ]
+
+[[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "glow"
@@ -2421,6 +2481,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2813,6 +2892,7 @@ dependencies = [
  "clap",
  "log",
  "nerust_core_traits",
+ "nerust_gbc_factory",
  "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
@@ -2833,21 +2913,27 @@ name = "nerust_android"
 version = "0.1.0-dev"
 dependencies = [
  "android_logger",
+ "base64 0.22.1",
  "jni 0.22.4",
  "log",
  "nerust_core_traits",
+ "nerust_gbc_factory",
+ "nerust_gbc_settings",
  "nerust_gui_runtime",
  "nerust_gui_settings",
  "nerust_gui_shell",
  "nerust_input_traits",
- "nerust_nes_controller",
  "nerust_nes_factory",
  "nerust_nes_settings",
+ "nerust_persistence",
  "nerust_render_traits",
  "nerust_render_wgpu",
  "nerust_settings_core",
  "nerust_settings_traits",
  "nerust_sound_cpal",
+ "serde",
+ "serde_json",
+ "sha2",
  "winit",
 ]
 
@@ -2879,6 +2965,80 @@ dependencies = [
  "nerust_render_traits",
  "nerust_timer",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nerust_gbc_core"
+version = "0.1.0-dev"
+dependencies = [
+ "bitflags 2.13.1",
+ "crc",
+ "log",
+ "nerust_core_traits",
+ "nerust_gbc_settings",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_serialize",
+ "nerust_sound_filter",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "thiserror 2.0.20",
+ "typetag",
+]
+
+[[package]]
+name = "nerust_gbc_device"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_input_traits",
+]
+
+[[package]]
+name = "nerust_gbc_factory"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "nerust_core_traits",
+ "nerust_gbc_core",
+ "nerust_gbc_device",
+ "nerust_gbc_settings",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_settings_traits",
+]
+
+[[package]]
+name = "nerust_gbc_rom_test"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "crc",
+ "glob",
+ "nerust_gbc_core",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "open",
+ "png",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nerust_gbc_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "dyn-clone",
+ "dyn-eq",
+ "nerust_core_traits",
+ "nerust_settings_traits",
+ "serde",
+ "serde-value",
+ "strum",
+ "typetag",
 ]
 
 [[package]]
@@ -3767,6 +3927,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "open"
+version = "5.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0b3d059e795d52b8a72fef45658620edd4d9c359b338564aa14391ffa511ed5"
+dependencies = [
+ "is-wsl",
+ "libc",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4396,7 +4566,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1ec1f5cac0eb96063c64b28705255a7ed6e7d77f95c1d25e9f8b8c928006ce1"
 dependencies = [
  "annotate-snippets",
- "base64",
+ "base64 0.23.1",
  "encoding_rs_io",
  "granit-parser",
  "nohash-hasher",
@@ -4475,6 +4645,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]
@@ -5170,6 +5351,12 @@ name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
+
+[[package]]
+name = "typenum"
+version = "1.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "typetag"

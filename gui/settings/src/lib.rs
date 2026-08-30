@@ -13,7 +13,8 @@ mod tests {
         app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
         input::{ShortcutAction, ShortcutBinding},
         local::{
-            HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, ScalingMode,
+            HOST_BACKEND_LOCAL_SETTINGS_SCHEMA_VERSION, HostBackendLocalSettings, RumbleTarget,
+            ScalingMode, ScreenOrientation,
         },
         shared::{DESKTOP_SHARED_SETTINGS_SCHEMA_VERSION, DesktopSharedSettings},
     };
@@ -119,5 +120,35 @@ video:
         assert!(!decoded.video.window.fullscreen_default);
         assert_eq!(decoded.video.window.scaling, ScalingMode::FitToWindow);
         assert!(decoded.video.presentation.vsync);
+    }
+
+    #[test]
+    fn legacy_local_settings_default_to_auto_orientation() {
+        let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
+            r#"
+schema_version: 3
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(decoded.screen_orientation, ScreenOrientation::Auto);
+    }
+
+    #[test]
+    fn legacy_local_settings_enable_cartridge_peripherals_by_default() {
+        let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
+            r#"
+schema_version: 4
+"#,
+        )
+        .unwrap();
+
+        assert!(decoded.cartridge_peripherals.motion_enabled);
+        assert!(decoded.cartridge_peripherals.rumble_enabled);
+        assert_eq!(decoded.cartridge_peripherals.rumble_strength_percent, 100);
+        assert_eq!(
+            decoded.cartridge_peripherals.rumble_target,
+            RumbleTarget::Auto
+        );
     }
 }

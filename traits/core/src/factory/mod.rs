@@ -9,16 +9,12 @@ use nerust_input_traits::{
 };
 use thiserror::Error;
 
-use crate::{
-    audio::AudioBackend,
-    factory::{
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
+use crate::{audio::AudioBackend, identity::SystemId};
+
+use self::{
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
 };
 
 #[derive(Debug, Error)]
@@ -41,6 +37,7 @@ pub struct CoreParts {
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,
     pub render_profile: nerust_render_traits::VideoRenderProfile,
     pub palette: Box<[u32]>,
+    pub host_peripherals: crate::peripheral::HostPeripheralHandles,
 }
 
 /// システム（NES/SNES）の全知識をカプセル化する factory。
@@ -54,6 +51,12 @@ pub trait CoreFactory: Send + Sync {
     fn system_id(&self) -> Box<dyn SystemId>;
 
     fn display_name(&self) -> &'static str;
+
+    /// File extensions shown by frontend media pickers.
+    /// Media acceptance must still be decided by [`Self::probe_media`].
+    fn supported_extensions(&self) -> &'static [&'static str] {
+        &[]
+    }
 
     fn probe_media(&self, media: &MediaObject) -> bool;
 

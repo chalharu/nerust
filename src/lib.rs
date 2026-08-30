@@ -114,6 +114,8 @@ pub fn run() {
     let factories: Vec<Arc<dyn CoreFactory>> = vec![
         #[cfg(feature = "nes")]
         Arc::new(nerust_nes_factory::NesFactory),
+        #[cfg(feature = "gbc")]
+        Arc::new(nerust_gbc_factory::GbcFactory),
     ];
     let registry = Arc::new(SystemRegistry::new(factories));
     let audio_registry = Arc::new(create_audio_registry());
@@ -155,6 +157,8 @@ mod tests {
             load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
         },
     };
+    #[cfg(feature = "gbc")]
+    use nerust_gbc_factory::GbcFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
         load::{RomLoadTarget, RomLoaderError},
@@ -249,5 +253,57 @@ mod tests {
         );
 
         assert!(result.is_ok(), "valid flag should parse without error");
+    }
+
+    #[cfg(feature = "gbc")]
+    #[test]
+    fn parse_cli_args_from_accepts_gbc_hardware_model() {
+        let factory: Arc<dyn CoreFactory> = Arc::new(GbcFactory);
+        let factories = [factory];
+
+        let result = super::parse_cli_args_from(
+            &factories,
+            ["nerust".into(), "--gbc-hardware-model".into(), "dmg".into()],
+        );
+
+        let (_, parsed) = result.expect("valid GBC hardware model should parse");
+        assert!(parsed.contains_key(&factories[0].system_id()));
+    }
+
+    #[cfg(all(feature = "nes", feature = "gbc"))]
+    #[test]
+    fn registry_distinguishes_nes_and_gbc_media() {
+        let nes: Arc<dyn CoreFactory> = Arc::new(NesFactory);
+        let gbc: Arc<dyn CoreFactory> = Arc::new(GbcFactory);
+        let nes_id = nes.system_id();
+        let gbc_id = gbc.system_id();
+        let registry = SystemRegistry::new(vec![nes, gbc]);
+
+        let nes_media = MediaObject::new(
+            None,
+            vec![0x4E, 0x45, 0x53, 0x1A, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        assert_eq!(
+            registry.detect(&nes_media).unwrap().unwrap().system_id(),
+            nes_id
+        );
+
+        let mut gbc_rom = vec![0; 0x8000];
+        gbc_rom[0x0104..0x0134].copy_from_slice(&[
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C,
+            0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6,
+            0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
+            0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+        ]);
+        let mut checksum = 0u8;
+        for byte in &gbc_rom[0x0134..=0x014C] {
+            checksum = checksum.wrapping_sub(*byte).wrapping_sub(1);
+        }
+        gbc_rom[0x014D] = checksum;
+        let gbc_media = MediaObject::new(None, gbc_rom);
+        assert_eq!(
+            registry.detect(&gbc_media).unwrap().unwrap().system_id(),
+            gbc_id
+        );
     }
 }

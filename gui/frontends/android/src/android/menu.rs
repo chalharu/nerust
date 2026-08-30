@@ -1,58 +1,56 @@
-use std::{mem, sync::Mutex};
-
 use jni::objects::{JObject, JString};
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+use nerust_input_traits::AbstractKey;
 
-use super::{library, settings};
+use super::{bridge, messages::MenuAction, settings};
 
 const ACTION_EXIT: &str = "exit";
 const ACTION_LOAD_STATE: &str = "load_state";
-const ACTION_OPEN_LIBRARY: &str = "open_library";
+const ACTION_OPEN_ROM: &str = "open_rom";
 const ACTION_OPEN_SETTINGS: &str = "open_settings";
 const ACTION_RESET: &str = "reset";
 const ACTION_SAVE_STATE: &str = "save_state";
 const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 const ACTION_UNLOAD: &str = "unload";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MenuAction {
-    Exit,
-    LoadState,
-    OpenLibrary,
-    OpenSettings,
-    Reset,
-    SaveState,
-    TogglePause,
-    Unload,
-}
-
-static MENU_ACTIONS: Mutex<Vec<MenuAction>> = Mutex::new(Vec::new());
-static MENU_WAKER: Mutex<Option<AndroidAppWaker>> = Mutex::new(None);
-
-pub(crate) fn bind_app(app: &AndroidApp) {
-    *MENU_WAKER.lock().expect("menu waker mutex poisoned") = Some(app.create_waker());
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .clear();
-}
-
-pub(crate) fn reset() {
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .clear();
-}
-
 pub(crate) fn take_actions() -> Vec<MenuAction> {
-    mem::take(&mut *MENU_ACTIONS.lock().expect("menu actions mutex poisoned"))
+    bridge::with_state(|state| state.menu_actions.drain(..).collect())
 }
 
 fn decode_action(raw: &str) -> Option<MenuAction> {
+    if let Some(payload) = raw.strip_prefix("controller:") {
+        let mut parts = payload.split(':');
+        let device_id = parts.next()?.parse().ok()?;
+        let key = parts.next()?;
+        let pressed = parts.next()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        let key = match key {
+            "button1" => AbstractKey::Button1,
+            "button2" => AbstractKey::Button2,
+            "start" => AbstractKey::Start,
+            "select" => AbstractKey::Select,
+            "up" => AbstractKey::DpadUp,
+            "down" => AbstractKey::DpadDown,
+            "left" => AbstractKey::DpadLeft,
+            "right" => AbstractKey::DpadRight,
+            _ => return None,
+        };
+        let pressed = match pressed {
+            "1" => true,
+            "0" => false,
+            _ => return None,
+        };
+        return Some(MenuAction::ControllerInput {
+            device_id,
+            key,
+            pressed,
+        });
+    }
     match raw {
         ACTION_EXIT => Some(MenuAction::Exit),
         ACTION_LOAD_STATE => Some(MenuAction::LoadState),
-        ACTION_OPEN_LIBRARY => Some(MenuAction::OpenLibrary),
+        ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
         ACTION_OPEN_SETTINGS => Some(MenuAction::OpenSettings),
         ACTION_RESET => Some(MenuAction::Reset),
         ACTION_SAVE_STATE => Some(MenuAction::SaveState),
@@ -64,21 +62,8 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
 
 fn publish_action(action: MenuAction) {
     log::info!("Android menu: published action: {:?}", action);
-    MENU_ACTIONS
-        .lock()
-        .expect("menu actions mutex poisoned")
-        .push(action);
-    wake_main_thread();
-}
-
-fn wake_main_thread() {
-    if let Some(waker) = MENU_WAKER
-        .lock()
-        .expect("menu waker mutex poisoned")
-        .clone()
-    {
-        waker.wake();
-    }
+    bridge::with_state(|state| state.menu_actions.push_back(action));
+    bridge::wake();
 }
 
 #[unsafe(no_mangle)]
@@ -97,26 +82,14 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 
                 // Dialog-showing actions are handled synchronously since we
                 // already have env/activity on the Java main thread.
-                match decoded {
-                    Some(MenuAction::OpenLibrary) => {
-                        match library::show_library_dialog_sync(env, &activity) {
-                            Ok(_) => {}
-                            Err(error) => {
-                                log::error!("sync library dialog failed: {error}");
-                            }
+                if let Some(MenuAction::OpenSettings) = decoded {
+                    match settings::show_settings_dialog_sync(env, &activity) {
+                        Ok(_) => {}
+                        Err(error) => {
+                            log::error!("sync settings dialog failed: {error}");
                         }
-                        return Ok(None);
                     }
-                    Some(MenuAction::OpenSettings) => {
-                        match settings::show_settings_dialog_sync(env, &activity) {
-                            Ok(_) => {}
-                            Err(error) => {
-                                log::error!("sync settings dialog failed: {error}");
-                            }
-                        }
-                        return Ok(None);
-                    }
-                    _ => {}
+                    return Ok(None);
                 }
 
                 Ok(decoded)
@@ -138,16 +111,13 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_LIBRARY, ACTION_OPEN_SETTINGS, ACTION_RESET,
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_RESET,
         ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE, ACTION_UNLOAD, MenuAction, decode_action,
     };
 
     #[test]
     fn decode_action_maps_known_ids() {
-        assert_eq!(
-            decode_action(ACTION_OPEN_LIBRARY),
-            Some(MenuAction::OpenLibrary)
-        );
+        assert_eq!(decode_action(ACTION_OPEN_ROM), Some(MenuAction::OpenRom));
         assert_eq!(
             decode_action(ACTION_OPEN_SETTINGS),
             Some(MenuAction::OpenSettings)
@@ -172,5 +142,18 @@ mod tests {
     #[test]
     fn decode_action_rejects_unknown_ids() {
         assert_eq!(decode_action("mystery"), None);
+    }
+
+    #[test]
+    fn decode_action_maps_controller_input() {
+        assert_eq!(
+            decode_action("controller:7:button1:1"),
+            Some(MenuAction::ControllerInput {
+                device_id: 7,
+                key: nerust_input_traits::AbstractKey::Button1,
+                pressed: true,
+            })
+        );
+        assert_eq!(decode_action("controller:7:unknown:1"), None);
     }
 }

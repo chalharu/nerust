@@ -1,5 +1,6 @@
 use nerust_core_traits::save_state::load_state_from_header;
 use nerust_emu_thread::EmuThread;
+use nerust_render_traits::FrameBuffer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewFrame {
@@ -48,7 +49,7 @@ pub fn generate_preview(emu: &EmuThread) -> Option<PreviewFrame> {
         }
         rgba
     } else {
-        guard.as_ref().to_vec()
+        compact_rgba(&guard)?
     };
     drop(guard);
     Some(PreviewFrame {
@@ -56,6 +57,21 @@ pub fn generate_preview(emu: &EmuThread) -> Option<PreviewFrame> {
         height: h as u32,
         rgba,
     })
+}
+
+fn compact_rgba(frame: &FrameBuffer) -> Option<Vec<u8>> {
+    let row_bytes = frame.width().checked_mul(4)?;
+    let source_len = frame.stride().checked_mul(frame.height())?;
+    let source = frame.as_ref().get(..source_len)?;
+    if frame.stride() < row_bytes {
+        return None;
+    }
+
+    let mut rgba = Vec::with_capacity(row_bytes.checked_mul(frame.height())?);
+    for row in source.chunks_exact(frame.stride()) {
+        rgba.extend_from_slice(&row[..row_bytes]);
+    }
+    Some(rgba)
 }
 
 /// Resolve a save state blob to raw core bytes.
@@ -67,5 +83,25 @@ pub fn resolve_state_format(bytes: &[u8]) -> Vec<u8> {
             Ok(payload) if !payload.core_state.is_empty() => payload.core_state,
             _ => bytes.to_vec(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nerust_render_traits::{FrameBuffer, PixelFormat};
+
+    use super::compact_rgba;
+
+    #[test]
+    fn compact_rgba_removes_aligned_row_padding() {
+        let mut frame = FrameBuffer::with_capacity(3, 2, PixelFormat::Rgba);
+        frame.resize(3, 2);
+        assert!(frame.stride() > 3 * 4);
+        frame.as_mut().fill(0xEE);
+        frame.as_mut()[..12].copy_from_slice(&[1; 12]);
+        let second_row = frame.stride();
+        frame.as_mut()[second_row..second_row + 12].copy_from_slice(&[2; 12]);
+
+        assert_eq!(compact_rgba(&frame), Some([[1; 12], [2; 12]].concat()));
     }
 }

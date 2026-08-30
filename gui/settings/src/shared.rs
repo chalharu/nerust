@@ -40,6 +40,7 @@ pub struct GeneralSettings {
 pub struct PersistenceSettings {
     pub storage_policy: StoragePolicy,
     pub storage_directory: Option<PathBuf>,
+    pub storage_document_tree_uri: Option<String>,
 }
 
 impl Default for PersistenceSettings {
@@ -47,6 +48,7 @@ impl Default for PersistenceSettings {
         Self {
             storage_policy: StoragePolicy::Sidecar,
             storage_directory: None,
+            storage_document_tree_uri: None,
         }
     }
 }

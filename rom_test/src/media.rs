@@ -4,7 +4,7 @@ use std::{
 };
 
 use crc::{CRC_64_XZ, Crc, Digest};
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_render_filters::FilterTypeExt;
 use nerust_render_traits::{FrameBuffer, PixelFormat, filter::FilterType};
 use png::{BitDepth, ColorType, Encoder};
@@ -126,9 +126,10 @@ impl HashingMixer {
 impl AudioBackend for HashingMixer {
     fn start(&mut self) {}
     fn pause(&mut self) {}
-    fn push(&mut self, data: f32) {
+    fn push(&mut self, data: StereoSample) {
+        assert_eq!(data.left.to_bits(), data.right.to_bits());
         self.samples += 1;
-        self.checksum ^= u64::from(data.to_bits());
+        self.checksum ^= u64::from(data.left.to_bits());
         self.checksum = self.checksum.wrapping_mul(Self::FNV_PRIME);
     }
 

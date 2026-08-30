@@ -7,15 +7,191 @@ on:
 permissions:
   contents: read
 jobs:
-  sonarcloud:
-    name: SonarCloud
+  prepare-image:
+    name: Prepare image
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 10
+    outputs:
+      image_tag: "${{ steps.set-tag.outputs.tag }}"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set image tag
+        id: set-tag
+        run: echo "tag=${{ hashFiles('.github/workflows/docker/Dockerfile.sonarcloud') }}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check if image exists
+        id: check-image
+        continue-on-error: true
+        env:
+          GH_REPO: ${{ github.repository }}
+          IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
+        run: |
+          docker pull "ghcr.io/$GH_REPO/ci-image-sonarcloud:$IMAGE_TAG"
+      - name: Build and push if not exists
+        if: steps.check-image.outcome == 'failure'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: .github/workflows/docker/Dockerfile.sonarcloud
+          push: true
+          tags: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ steps.set-tag.outputs.tag }}
+          provenance: false
+  build-tests:
+    name: Build tests (${{ matrix.variant }})
+    needs: prepare-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - tao
+          - gtk
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
       CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-all-crates: "true"
+          workspaces: |
+            . -> target
+            . -> target/llvm-cov-target
+      - name: Build test archive
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          mkdir -p artifacts
+          if [ "${{ matrix.variant }}" = "tao" ]; then
+            cargo llvm-cov nextest-archive --workspace --exclude nerust_rom_test \
+              --features tao,wgpu --archive-file artifacts/tao.tar.zst
+          else
+            cargo llvm-cov nextest-archive --workspace --exclude nerust_rom_test \
+              --exclude nerust_gbc_rom_test --exclude nerust_gbc_core \
+              --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes \
+              --archive-file artifacts/gtk.tar.zst
+          fi
+      - name: Upload test archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-archive-${{ matrix.variant }}
+          path: artifacts/${{ matrix.variant }}.tar.zst
+          compression-level: 0
+          retention-days: 1
+  test-coverage:
+    name: Test coverage (${{ matrix.variant }}, ${{ matrix.shard }}/${{ matrix.total }})
+    needs:
+      - prepare-image
+      - build-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: tao
+            shard: 1
+            total: 4
+          - variant: tao
+            shard: 2
+            total: 4
+          - variant: tao
+            shard: 3
+            total: 4
+          - variant: tao
+            shard: 4
+            total: 4
+          - variant: gtk
+            shard: 1
+            total: 2
+          - variant: gtk
+            shard: 2
+            total: 2
+    container:
+      image: ghcr.io/${{ github.repository }}/ci-image-sonarcloud:${{ needs.prepare-image.outputs.image_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+      CARGO_TERM_COLOR: always
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download test archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: test-archive-${{ matrix.variant }}
+          path: artifacts
+      - name: Generate coverage report
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
+          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
+          mkdir -p coverage target/llvm-cov-target
+          if [ "${{ matrix.variant }}" = "gtk" ]; then
+            xvfb-run cargo llvm-cov nextest --no-report \
+              --archive-file artifacts/${{ matrix.variant }}.tar.zst \
+              --partition slice:${{ matrix.shard }}/${{ matrix.total }}
+          else
+            cargo llvm-cov nextest --no-report \
+              --archive-file artifacts/${{ matrix.variant }}.tar.zst \
+              --partition slice:${{ matrix.shard }}/${{ matrix.total }}
+          fi
+          cargo llvm-cov report \
+            --nextest-archive-file artifacts/${{ matrix.variant }}.tar.zst \
+            --no-default-ignore-filename-regex \
+            --lcov --output-path coverage/raw.info
+          workspace_root="${PWD%/}/"
+          awk -v prefix="SF:${workspace_root}" '
+            /^SF:/ { include = index($0, prefix) == 1 }
+            include { print }
+            /^end_of_record$/ { include = 0 }
+          ' coverage/raw.info > coverage/lcov-${{ matrix.variant }}-${{ matrix.shard }}.info
+          rm coverage/raw.info
+          sed -i "s#^SF:${workspace_root}#SF:#" coverage/*.info
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov-${{ matrix.variant }}-${{ matrix.shard }}
+          path: coverage/*.info
+          retention-days: 1
+  sonarcloud:
+    name: SonarCloud
+    needs: test-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -25,50 +201,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            clang mold \
-            libgtk-3-dev \
-            libgtk-4-dev \
-            libepoxy-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            libasound2-dev \
-            libcubeb-dev \
-            libudev-dev \
-            xvfb
-      - name: Restore Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Download coverage reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          cache-all-crates: "true"
-          workspaces: |
-            . -> target
-            . -> target/llvm-cov-target
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: 1.97.1
-          components: llvm-tools-preview, clippy
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version =0.8.7
-      - name: Initialize coverage environment
-        run: mkdir -p coverage
-      - name: Generate coverage report (wgpu, tao)
-        run: |
-          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
-          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          cargo llvm-cov --workspace --exclude nerust_rom_test --features tao,wgpu --lcov --output-path coverage/lcov-tao.info
-          workspace_root="${PWD%/}/"
-          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-tao.info
-      - name: Generate coverage report (opengl, gtk)
-        run: |
-          export RUSTFLAGS="${RUSTFLAGS-} -C link-arg=-fuse-ld=mold -C debuginfo=0"
-          export LIBCUBEB_SYS_USE_PKG_CONFIG=1
-          xvfb-run cargo llvm-cov --workspace --exclude nerust_rom_test --no-default-features --features gtk,opengl,nes --lcov --output-path coverage/lcov-gtk.info
-          workspace_root="${PWD%/}/"
-          sed -i "s#^SF:${workspace_root}#SF:#" coverage/lcov-gtk.info
+          pattern: lcov-*
+          path: coverage
+          merge-multiple: true
       - name: Run SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:

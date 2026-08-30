@@ -134,7 +134,7 @@ impl GpuRenderer for WgpuRenderer {
             pipeline.update_palette_texture(&p);
         }
 
-        match pipeline.render(surface, self.size, frame.as_ref()) {
+        match pipeline.render(surface, self.size, frame.as_ref(), frame.stride()) {
             Ok(RenderOutcome::Presented) => {
                 self.last_render_error = None;
                 RenderResult::Presented

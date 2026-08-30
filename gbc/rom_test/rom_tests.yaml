@@ -1,0 +1,2530 @@
+rom_root: ../../roms/gbc
+expected_failure_files:
+  - accuracy_expected_failures.txt
+expected_failures:
+  - m3_lcdc_obj_size_change@dmg
+  - m3_lcdc_obj_size_change_scx@dmg
+  - m3_lcdc_tile_sel_change@dmg
+  - m3_lcdc_tile_sel_change@cgb_c
+  - m3_lcdc_tile_sel_win_change@dmg
+  - m3_lcdc_tile_sel_win_change@cgb_c
+  - m3_scy_change@dmg
+  - m3_scy_change@cgb_c
+completion_profiles:
+  serial_hash:
+    poll_interval: 256
+    stages:
+      - serial_hash: true
+  signed_memory_status:
+    poll_interval: 256
+    stages:
+      - memory:
+          - {address: '0xA001', value: '0xDE'}
+          - {address: '0xA002', value: '0xB0'}
+          - {address: '0xA003', value: '0x61'}
+          - {address: '0xA000', value: '0x80'}
+      - memory:
+          - {address: '0xA000', not_value: '0x80'}
+  gbmicro_status:
+    poll_interval: 16
+    stages:
+      - memory:
+          - {address: '0xFF82', not_value: '0x00'}
+  age_registers:
+    poll_interval: 16
+    stages:
+      - registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+  mbc3_tester_complete:
+    poll_interval: 256
+    stages:
+      - memory:
+          - {address: '0x9A2F', not_value: '0x00'}
+suites:
+  - name: aappleby_gbmicrotest
+    case_patterns:
+      - glob: repo/bin/*.gb
+        id_prefix: gbmicro_
+        # These diagnostic benches do not call GBMicrotest's test_finish/test_pass
+        # macros, so FF82 is not a pass/fail result for them.
+        exclude_globs:
+          - repo/bin/000-oam_lock.gb
+          - repo/bin/000-write_to_x8000.gb
+          - repo/bin/001-vram_unlocked.gb
+          - repo/bin/002-vram_locked.gb
+          - repo/bin/004-tima_boot_phase.gb
+          - repo/bin/004-tima_cycle_timer.gb
+          - repo/bin/007-lcd_on_stat.gb
+          - repo/bin/400-dma.gb
+          - repo/bin/500-scx-timing.gb
+          - repo/bin/800-ppu-latch-scx.gb
+          - repo/bin/801-ppu-latch-scy.gb
+          - repo/bin/802-ppu-latch-tileselect.gb
+          - repo/bin/803-ppu-latch-bgdisplay.gb
+          - repo/bin/audio_testbench.gb
+          - repo/bin/cpu_bus_1.gb
+          - repo/bin/dma_basic.gb
+          - repo/bin/flood_vram.gb
+          - repo/bin/lcdon_write_timing.gb
+          - repo/bin/ly_while_lcd_off.gb
+          - repo/bin/minimal.gb
+          - repo/bin/mode2_stat_int_to_oam_unlock.gb
+          - repo/bin/oam_sprite_trashing.gb
+          - repo/bin/poweron.gb
+          - repo/bin/ppu_scx_vs_bgp.gb
+          - repo/bin/ppu_sprite_testbench.gb
+          - repo/bin/ppu_spritex_vs_scx.gb
+          - repo/bin/ppu_win_vs_wx.gb
+          - repo/bin/ppu_wx_early.gb
+          - repo/bin/temp.gb
+          - repo/bin/toggle_lcdc.gb
+          - repo/bin/wave_write_to_0xC003.gb
+        models:
+          - dmg
+        cycles: 500000
+        completion: gbmicro_status
+        verify:
+          memory:
+            - {address: '0xFF82', value: '0x01'}
+          memory_comparisons:
+            - actual_address: '0xFF80'
+              expected_address: '0xFF81'
+              name: gbmicro_result
+              when: {address: '0xFF82', not_value: '0x01'}
+        tags:
+          - accuracy
+          - timing
+  - name: c-sp_age-test-roms
+    case_patterns:
+      - glob: artifacts/**/*-dmgC-cgbBCE.gb
+        id_prefix: age_
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-dmgC-cgbBC.gb
+        id_prefix: age_
+        models: [dmg, cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-dmgC.gb
+        id_prefix: age_
+        models: [dmg]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmBCE.gb
+        id_prefix: age_
+        models: [cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmBC.gb
+        id_prefix: age_
+        models: [cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-ncmE.gb
+        id_prefix: age_
+        models: [cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbE.gb
+        id_prefix: age_
+        models: [cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbBCE.gb
+        id_prefix: age_
+        models: [cgb_c, cgb_d]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+      - glob: artifacts/**/*-cgbBC.gb
+        id_prefix: age_
+        models: [cgb_c]
+        cycles: 8000000
+        completion: age_registers
+        verify:
+          registers: {b: '0x03', c: '0x05', d: '0x08', e: '0x0D', h: '0x15', l: '0x22'}
+        tags: [accuracy]
+    cases:
+      - id: age_m3_bg_bgp
+        rom: artifacts/m3-bg-bgp/m3-bg-bgp.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-bgp/m3-bg-bgp-dmgC.png
+          cgb_c: artifacts/m3-bg-bgp/m3-bg-bgp-ncmBC.png
+          cgb_d: artifacts/m3-bg-bgp/m3-bg-bgp-ncmE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_lcdc
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-lcdc/m3-bg-lcdc-dmgC.png
+          cgb_c: artifacts/m3-bg-lcdc/m3-bg-lcdc-cgbBCE.png
+          cgb_d: artifacts/m3-bg-lcdc/m3-bg-lcdc-cgbBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_lcdc_ds
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc-ds.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-lcdc/m3-bg-lcdc-ds-cgbBCE.png
+        tags: [ppu, visual, double_speed]
+      - id: age_m3_bg_lcdc_nocgb
+        rom: artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-lcdc/m3-bg-lcdc-nocgb-ncmBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_scx
+        rom: artifacts/m3-bg-scx/m3-bg-scx.gb
+        models: [dmg, cgb_c, cgb_d]
+        cycles: 500000
+        reference:
+          dmg: artifacts/m3-bg-scx/m3-bg-scx-dmgC.png
+          cgb_c: artifacts/m3-bg-scx/m3-bg-scx-cgbBCE.png
+          cgb_d: artifacts/m3-bg-scx/m3-bg-scx-cgbBCE.png
+        tags: [ppu, visual]
+      - id: age_m3_bg_scx_ds
+        rom: artifacts/m3-bg-scx/m3-bg-scx-ds.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-scx/m3-bg-scx-ds-cgbBCE.png
+        tags: [ppu, visual, double_speed]
+      - id: age_m3_bg_scx_nocgb
+        rom: artifacts/m3-bg-scx/m3-bg-scx-nocgb.gb
+        models: [cgb_c, cgb_d]
+        cycles: 500000
+        reference: artifacts/m3-bg-scx/m3-bg-scx-nocgb-ncmBCE.png
+        tags: [ppu, visual]
+  - name: EricKirschenmann_MBC3-Tester-gb
+    cases:
+      - id: mbc3_tester_255_banks
+        description: MBC30 4 MiB ROM banking across all 255 selectable banks
+        rom: release/mbctest-padded.gb
+        models: [dmg, cgb_d]
+        cycles: 10000000
+        completion: mbc3_tester_complete
+        verify:
+          memory_regions:
+            - {start: '0x9841', length: 255, value: '0x25', row_length: 16, stride: 32}
+        tags: [mapper, mbc3, mbc30]
+  - name: aaaaaa123456789_rtc3test
+    cases:
+      - id: rtc3_basic
+        description: MBC3 RTC basic ticking, writes, rollover, and overflow
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 7F051AD7}}
+        inputs:
+          - {cycle: 500000, buttons: [a]}
+          - {cycle: 600000, buttons: []}
+        tags: [mapper, mbc3, rtc]
+      - id: rtc3_range
+        description: MBC3 RTC register bit and out-of-range behavior
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 84D60AD5}}
+        inputs:
+          - {cycle: 500000, buttons: [down]}
+          - {cycle: 600000, buttons: []}
+          - {cycle: 700000, buttons: [a]}
+          - {cycle: 800000, buttons: []}
+        tags: [mapper, mbc3, rtc]
+      - id: rtc3_subsecond
+        description: MBC3 RTC sub-second register write timing
+        rom: release/rtc3test.gb
+        models: [cgb_d]
+        cycles: 80000000
+        verify: {frame: {hash: 02B75BC9}}
+        inputs:
+          - {cycle: 500000, buttons: [down]}
+          - {cycle: 600000, buttons: []}
+          - {cycle: 700000, buttons: [down]}
+          - {cycle: 800000, buttons: []}
+          - {cycle: 900000, buttons: [a]}
+          - {cycle: 1000000, buttons: []}
+        tags: [mapper, mbc3, rtc]
+  - name: retrio_gb-test-roms
+    cases:
+      - id: cpu_instrs_all
+        description: CPU instrs — combined suite (all 11 subtests)
+        rom: cpu_instrs/cpu_instrs.gb
+        models:
+          - dmg
+        cycles: 60000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 483E4D0E
+        tags:
+          - cpu
+      - id: cpu_instrs_01_special
+        description: CPU special instructions
+        rom: cpu_instrs/individual/01-special.gb
+        models:
+          - dmg
+        cycles: 3000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 2B25B1A8
+        tags:
+          - cpu
+      - id: cpu_instrs_02_interrupts
+        description: CPU interrupt handling
+        rom: cpu_instrs/individual/02-interrupts.gb
+        models:
+          - dmg
+        cycles: 600000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: D56D47C8
+        tags:
+          - interrupt
+          - cpu
+      - id: cpu_instrs_03_op_sp_hl
+        description: CPU op SP, HL
+        rom: cpu_instrs/individual/03-op sp,hl.gb
+        models:
+          - dmg
+        cycles: 3000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 80207C1D
+        tags:
+          - cpu
+      - id: cpu_instrs_04_op_r_imm
+        description: CPU op r, imm
+        rom: cpu_instrs/individual/04-op r,imm.gb
+        models:
+          - dmg
+        cycles: 3500000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 2CEED1BE
+        tags:
+          - cpu
+      - id: cpu_instrs_05_op_rp
+        description: CPU op rp
+        rom: cpu_instrs/individual/05-op rp.gb
+        models:
+          - dmg
+        cycles: 4500000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 25328ED0
+        tags:
+          - cpu
+      - id: cpu_instrs_06_ld_r_r
+        description: CPU ld r,r
+        rom: cpu_instrs/individual/06-ld r,r.gb
+        models:
+          - dmg
+        cycles: 800000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: CFC3176B
+        tags:
+          - cpu
+      - id: cpu_instrs_07_jr_jp_call_ret_rst
+        description: CPU jr,jp,call,ret,rst
+        rom: cpu_instrs/individual/07-jr,jp,call,ret,rst.gb
+        models:
+          - dmg
+        cycles: 1000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: B7D8A077
+        tags:
+          - cpu
+      - id: cpu_instrs_08_misc_instrs
+        description: CPU misc instrs
+        rom: cpu_instrs/individual/08-misc instrs.gb
+        models:
+          - dmg
+        cycles: 800000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 2CA5A744
+        tags:
+          - cpu
+      - id: cpu_instrs_09_op_r_r
+        description: CPU op r,r
+        rom: cpu_instrs/individual/09-op r,r.gb
+        models:
+          - dmg
+        cycles: 10500000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: DE6AFDDD
+        tags:
+          - cpu
+      - id: cpu_instrs_10_bit_ops
+        description: CPU bit ops
+        rom: cpu_instrs/individual/10-bit ops.gb
+        models:
+          - dmg
+        cycles: 16000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: F81CB006
+        tags:
+          - cpu
+      - id: cpu_instrs_11_op_a_hl
+        description: CPU op a,(hl)
+        rom: cpu_instrs/individual/11-op a,(hl).gb
+        models:
+          - dmg
+        cycles: 20000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 05A6D948
+        tags:
+          - cpu
+      - id: instr_timing
+        description: Instruction timing verification
+        rom: instr_timing/instr_timing.gb
+        models:
+          - dmg
+        cycles: 800000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: EB56FABB
+        tags:
+          - cpu
+          - timing
+      - id: mem_timing_read
+        description: Memory read timing
+        rom: mem_timing/individual/01-read_timing.gb
+        models:
+          - dmg
+        cycles: 600000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: 7A15AF07
+        tags:
+          - memory
+          - timing
+      - id: mem_timing_write
+        description: Memory write timing
+        rom: mem_timing/individual/02-write_timing.gb
+        models:
+          - dmg
+        cycles: 600000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: E5881150
+        tags:
+          - memory
+          - timing
+      - id: mem_timing_modify
+        description: Memory modify timing
+        rom: mem_timing/individual/03-modify_timing.gb
+        models:
+          - dmg
+        cycles: 700000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: D2B4F231
+        tags:
+          - memory
+          - timing
+      - id: mem_timing_all
+        description: Memory timing combined
+        rom: mem_timing/mem_timing.gb
+        models:
+          - dmg
+        cycles: 1800000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: A2165D86
+        tags:
+          - memory
+          - timing
+      - id: mem_timing2_read
+        description: Memory read timing (mem_timing-2)
+        rom: mem_timing-2/rom_singles/01-read_timing.gb
+        models:
+          - dmg
+        cycles: 600000
+        verify:
+          memory:
+            - address: '0xA015'
+              value: '0x50'
+            - address: '0xA01A'
+              value: '0x64'
+        tags:
+          - memory
+          - timing
+      - id: mem_timing2_write
+        description: Memory write timing (mem_timing-2)
+        rom: mem_timing-2/rom_singles/02-write_timing.gb
+        models:
+          - dmg
+        cycles: 600000
+        verify:
+          memory:
+            - address: '0xA016'
+              value: '0x50'
+            - address: '0xA01B'
+              value: '0x64'
+        tags:
+          - memory
+          - timing
+      - id: mem_timing2_modify
+        description: Memory modify timing (mem_timing-2)
+        rom: mem_timing-2/rom_singles/03-modify_timing.gb
+        models:
+          - dmg
+        cycles: 700000
+        verify:
+          memory:
+            - address: '0xA017'
+              value: '0x50'
+            - address: '0xA01C'
+              value: '0x64'
+        tags:
+          - memory
+          - timing
+      - id: mem_timing2_all
+        description: Memory timing combined (mem_timing-2)
+        rom: mem_timing-2/mem_timing.gb
+        models:
+          - dmg
+        cycles: 3300000
+        verify:
+          memory:
+            - address: '0xA027'
+              value: '0x50'
+            - address: '0xA02C'
+              value: '0x64'
+        tags:
+          - memory
+          - timing
+      - id: interrupt_time
+        description: Interrupt handling time (retrio)
+        rom: interrupt_time/interrupt_time.gb
+        models:
+          - cgb_d
+        cycles: 700000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - interrupt
+          - timing
+      - id: halt_bug
+        description: HALT bug (retrio)
+        rom: halt_bug.gb
+        models:
+          - dmg
+        cycles: 2500000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - cpu
+          - timing
+      - id: oam_bug
+        description: OAM corruption bug (retrio, DMG)
+        rom: oam_bug/oam_bug.gb
+        models:
+          - dmg
+        cycles: 25000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+          - timing
+      - id: oam_bug_1
+        description: OAM corruption - 1-lcd_sync (retrio, DMG)
+        rom: oam_bug/rom_singles/1-lcd_sync.gb
+        models:
+          - dmg
+        cycles: 700000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_2
+        description: OAM corruption - 2-causes (retrio, DMG)
+        rom: oam_bug/rom_singles/2-causes.gb
+        models:
+          - dmg
+        cycles: 2200000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_3
+        description: OAM corruption - 3-non_causes (retrio, DMG)
+        rom: oam_bug/rom_singles/3-non_causes.gb
+        models:
+          - dmg
+        cycles: 2200000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_4
+        description: OAM corruption - 4-scanline_timing (retrio, DMG)
+        rom: oam_bug/rom_singles/4-scanline_timing.gb
+        models:
+          - dmg
+        cycles: 1300000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_5
+        description: OAM corruption - 5-timing_bug (retrio, DMG)
+        rom: oam_bug/rom_singles/5-timing_bug.gb
+        models:
+          - dmg
+        cycles: 1300000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_6
+        description: OAM corruption - 6-timing_no_bug (retrio, DMG)
+        rom: oam_bug/rom_singles/6-timing_no_bug.gb
+        models:
+          - dmg
+        cycles: 2000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_7
+        description: OAM corruption - 7-timing_effect (retrio, DMG)
+        rom: oam_bug/rom_singles/7-timing_effect.gb
+        models:
+          - dmg
+        cycles: 28000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: oam_bug_8
+        description: OAM corruption - 8-instr_effect (retrio, DMG)
+        rom: oam_bug/rom_singles/8-instr_effect.gb
+        models:
+          - dmg
+        cycles: 8000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - ppu
+      - id: dmg_sound
+        description: DMG sound hardware tests (retrio)
+        rom: dmg_sound/dmg_sound.gb
+        models:
+          - dmg
+        cycles: 45000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - apu
+      - id: cgb_sound
+        description: CGB sound hardware tests (retrio)
+        rom: cgb_sound/cgb_sound.gb
+        models:
+          - cgb_d
+        cycles: 45000000
+        completion: signed_memory_status
+        verify:
+          memory:
+            - address: '0xA000'
+              value: '0x00'
+        tags:
+          - apu
+      - id: dmg_sound_01_registers
+        description: DMG sound registers
+        rom: dmg_sound/rom_singles/01-registers.gb
+        models: [dmg]
+        cycles: 1100000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_02_length_counter
+        description: DMG sound length counter
+        rom: dmg_sound/rom_singles/02-len ctr.gb
+        models: [dmg]
+        cycles: 12000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_03_trigger
+        description: DMG sound trigger
+        rom: dmg_sound/rom_singles/03-trigger.gb
+        models: [dmg]
+        cycles: 22000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_04_sweep
+        description: DMG sound sweep
+        rom: dmg_sound/rom_singles/04-sweep.gb
+        models: [dmg]
+        cycles: 1600000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_05_sweep_details
+        description: DMG sound sweep details
+        rom: dmg_sound/rom_singles/05-sweep details.gb
+        models: [dmg]
+        cycles: 1600000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_06_overflow_on_trigger
+        description: DMG sound sweep overflow on trigger
+        rom: dmg_sound/rom_singles/06-overflow on trigger.gb
+        models: [dmg]
+        cycles: 1200000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_07_length_sweep_period_sync
+        description: DMG sound length and sweep period synchronization
+        rom: dmg_sound/rom_singles/07-len sweep period sync.gb
+        models: [dmg]
+        cycles: 800000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_08_length_counter_during_power
+        description: DMG sound length counter during power changes
+        rom: dmg_sound/rom_singles/08-len ctr during power.gb
+        models: [dmg]
+        cycles: 1800000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_09_wave_read_while_on
+        description: DMG wave RAM reads during playback
+        rom: dmg_sound/rom_singles/09-wave read while on.gb
+        models: [dmg]
+        cycles: 800000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_10_wave_trigger_while_on
+        description: DMG wave trigger during playback
+        rom: dmg_sound/rom_singles/10-wave trigger while on.gb
+        models: [dmg]
+        cycles: 5000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_11_registers_after_power
+        description: DMG sound registers after power changes
+        rom: dmg_sound/rom_singles/11-regs after power.gb
+        models: [dmg]
+        cycles: 1000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: dmg_sound_12_wave_write_while_on
+        description: DMG wave RAM writes during playback
+        rom: dmg_sound/rom_singles/12-wave write while on.gb
+        models: [dmg]
+        cycles: 5000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_01_registers
+        description: CGB sound registers
+        rom: cgb_sound/rom_singles/01-registers.gb
+        models: [cgb_d]
+        cycles: 1100000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_02_length_counter
+        description: CGB sound length counter
+        rom: cgb_sound/rom_singles/02-len ctr.gb
+        models: [cgb_d]
+        cycles: 12000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_03_trigger
+        description: CGB sound trigger
+        rom: cgb_sound/rom_singles/03-trigger.gb
+        models: [cgb_d]
+        cycles: 22000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_04_sweep
+        description: CGB sound sweep
+        rom: cgb_sound/rom_singles/04-sweep.gb
+        models: [cgb_d]
+        cycles: 1600000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_05_sweep_details
+        description: CGB sound sweep details
+        rom: cgb_sound/rom_singles/05-sweep details.gb
+        models: [cgb_d]
+        cycles: 1600000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_06_overflow_on_trigger
+        description: CGB sound sweep overflow on trigger
+        rom: cgb_sound/rom_singles/06-overflow on trigger.gb
+        models: [cgb_d]
+        cycles: 1200000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_07_length_sweep_period_sync
+        description: CGB sound length and sweep period synchronization
+        rom: cgb_sound/rom_singles/07-len sweep period sync.gb
+        models: [cgb_d]
+        cycles: 800000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_08_length_counter_during_power
+        description: CGB sound length counter during power changes
+        rom: cgb_sound/rom_singles/08-len ctr during power.gb
+        models: [cgb_d]
+        cycles: 3200000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_09_wave_read_while_on
+        description: CGB wave RAM reads during playback
+        rom: cgb_sound/rom_singles/09-wave read while on.gb
+        models: [cgb_d]
+        cycles: 800000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_10_wave_trigger_while_on
+        description: CGB wave trigger during playback
+        rom: cgb_sound/rom_singles/10-wave trigger while on.gb
+        models: [cgb_d]
+        cycles: 5000000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_11_registers_after_power
+        description: CGB sound registers after power changes
+        rom: cgb_sound/rom_singles/11-regs after power.gb
+        models: [cgb_d]
+        cycles: 1200000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+      - id: cgb_sound_12_wave
+        description: CGB wave channel behavior
+        rom: cgb_sound/rom_singles/12-wave.gb
+        models: [cgb_d]
+        cycles: 600000
+        completion: signed_memory_status
+        verify: {memory: [{address: '0xA000', value: '0x00'}]}
+        tags: [apu]
+  - name: Gekkio_mooneye-test-suite
+    cases:
+      - id: stat_lyc_onoff
+        description: Mooneye Test Suite — stat_lyc_onoff (STAT LYC comparison, LCD on/off)
+        rom: acceptance/ppu/stat_lyc_onoff.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+      - id: stat_irq_blocking
+        description: Mooneye Test Suite — stat_irq_blocking (STAT interrupt line blocking)
+        rom: acceptance/ppu/stat_irq_blocking.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+      - id: intr_1_2_timing_GS
+        description: Mooneye Test Suite — ppu/intr_1_2_timing-GS
+        rom: acceptance/ppu/intr_1_2_timing-GS.gb
+        models:
+          - dmg
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: hblank_ly_scx_timing_GS
+        description: Mooneye Test Suite — ppu/hblank_ly_scx_timing-GS
+        rom: acceptance/ppu/hblank_ly_scx_timing-GS.gb
+        models:
+          - dmg
+        cycles: 1100000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - timing
+      - id: lcdon_timing_GS
+        description: Mooneye Test Suite — ppu/lcdon_timing-GS
+        rom: acceptance/ppu/lcdon_timing-GS.gb
+        models:
+          - dmg
+        cycles: 600000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - timing
+      - id: lcdon_write_timing_GS
+        description: Mooneye Test Suite — ppu/lcdon_write_timing-GS
+        rom: acceptance/ppu/lcdon_write_timing-GS.gb
+        models:
+          - dmg
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - timing
+      - id: vblank_stat_intr_GS
+        description: Mooneye Test Suite — ppu/vblank_stat_intr-GS
+        rom: acceptance/ppu/vblank_stat_intr-GS.gb
+        models:
+          - dmg
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: vblank_stat_intr_C
+        description: Mooneye Test Suite — misc/ppu/vblank_stat_intr-C
+        rom: misc/ppu/vblank_stat_intr-C.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: intr_2_mode3_timing
+        description: Mooneye Test Suite — intr_2_mode3_timing (mode 2 to mode 3 interrupt)
+        rom: acceptance/ppu/intr_2_mode3_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: intr_2_0_timing
+        description: Mooneye Test Suite — intr_2_0_timing (mode 2 to mode 0 interrupt)
+        rom: acceptance/ppu/intr_2_0_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: intr_2_mode0_timing
+        description: Mooneye Test Suite — intr_2_mode0_timing (mode 2 to mode 0 interrupt)
+        rom: acceptance/ppu/intr_2_mode0_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: intr_2_mode0_timing_sprites
+        description: Mooneye Test Suite — intr_2_mode0_timing_sprites (mode 2 to mode 0 interrupt with sprites)
+        rom: acceptance/ppu/intr_2_mode0_timing_sprites.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 6000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: intr_2_oam_ok_timing
+        description: Mooneye Test Suite — intr_2_oam_ok_timing (mode 2 to readable OAM)
+        rom: acceptance/ppu/intr_2_oam_ok_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 400000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - ppu
+          - interrupt
+          - timing
+      - id: boot_regs_dmgABC
+        description: Mooneye Test Suite — boot_regs-dmgABC
+        rom: acceptance/boot_regs-dmgABC.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_div_dmg0
+        description: Mooneye Test Suite — boot_div-dmg0 (DIV during boot on DMG 0)
+        rom: acceptance/boot_div-dmg0.gb
+        models:
+          - dmg0
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_div_dmgABCmgb
+        description: Mooneye Test Suite — boot_div-dmgABCmgb (DIV during boot)
+        rom: acceptance/boot_div-dmgABCmgb.gb
+        models:
+          - dmg
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_hwio_dmg0
+        description: Mooneye Test Suite — boot_hwio-dmg0 (HWIO during boot on DMG 0)
+        rom: acceptance/boot_hwio-dmg0.gb
+        models:
+          - dmg0
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_hwio_dmgABCmgb
+        description: Mooneye Test Suite — boot_hwio-dmgABCmgb (HWIO during boot)
+        rom: acceptance/boot_hwio-dmgABCmgb.gb
+        models:
+          - dmg
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_regs_dmg0
+        description: Mooneye Test Suite — boot_regs-dmg0 (register values during boot)
+        rom: acceptance/boot_regs-dmg0.gb
+        models:
+          - dmg0
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_sclk_align
+        description: Mooneye Test Suite — serial/boot_sclk_align-dmgABCmgb
+        rom: acceptance/serial/boot_sclk_align-dmgABCmgb.gb
+        models:
+          - dmg
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+          - serial
+      - id: boot_div_cgbABCDE
+        description: Mooneye Test Suite — misc/boot_div-cgbABCDE
+        rom: misc/boot_div-cgbABCDE.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_hwio_C
+        description: Mooneye Test Suite — misc/boot_hwio-C
+        rom: misc/boot_hwio-C.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: boot_regs_cgb
+        description: Mooneye Test Suite — misc/boot_regs-cgb
+        rom: misc/boot_regs-cgb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: div_timing
+        description: Mooneye Test Suite — div_timing
+        rom: acceptance/div_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+          - timing
+      - id: ei_sequence
+        description: Mooneye Test Suite — ei_sequence
+        rom: acceptance/ei_sequence.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+      - id: ei_timing
+        description: Mooneye Test Suite — ei_timing
+        rom: acceptance/ei_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: halt_ime0_ei
+        description: Mooneye Test Suite — halt_ime0_ei
+        rom: acceptance/halt_ime0_ei.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+      - id: halt_ime1_timing
+        description: Mooneye Test Suite — halt_ime1_timing
+        rom: acceptance/halt_ime1_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: halt_ime1_timing2_GS
+        description: Mooneye Test Suite — halt_ime1_timing2-GS
+        rom: acceptance/halt_ime1_timing2-GS.gb
+        models:
+          - dmg
+        cycles: 2000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: di_timing_GS
+        description: Mooneye Test Suite — di_timing-GS
+        rom: acceptance/di_timing-GS.gb
+        models:
+          - dmg
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: if_ie_registers
+        description: Mooneye Test Suite — if_ie_registers
+        rom: acceptance/if_ie_registers.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+      - id: halt_ime0_nointr_timing
+        description: Mooneye Test Suite — halt_ime0_nointr_timing
+        rom: acceptance/halt_ime0_nointr_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: interrupts_ie_push
+        description: Mooneye Test Suite — interrupts/ie_push
+        rom: acceptance/interrupts/ie_push.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+      - id: intr_timing
+        description: Mooneye Test Suite — intr_timing
+        rom: acceptance/intr_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: pop_timing
+        description: Mooneye Test Suite — pop_timing
+        rom: acceptance/pop_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: rapid_di_ei
+        description: Mooneye Test Suite — rapid_di_ei
+        rom: acceptance/rapid_di_ei.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+      - id: reti_intr_timing
+        description: Mooneye Test Suite — reti_intr_timing
+        rom: acceptance/reti_intr_timing.gb
+        models:
+          - dmg
+        cycles: 250000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - interrupt
+          - timing
+      - id: mbc5_rom_512kb
+        description: Mooneye Test Suite — mbc5 rom_512kb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_512kb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_1Mb
+        description: Mooneye Test Suite — mbc5 rom_1Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_1Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_2Mb
+        description: Mooneye Test Suite — mbc5 rom_2Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_2Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_4Mb
+        description: Mooneye Test Suite — mbc5 rom_4Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_4Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_8Mb
+        description: Mooneye Test Suite — mbc5 rom_8Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_8Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_16Mb
+        description: Mooneye Test Suite — mbc5 rom_16Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_16Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_32Mb
+        description: Mooneye Test Suite — mbc5 rom_32Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_32Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc5_rom_64Mb
+        description: Mooneye Test Suite — mbc5 rom_64Mb (ROM bank switching)
+        rom: emulator-only/mbc5/rom_64Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 3000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_bits_bank1
+        description: Mooneye Test Suite — mbc1 bits_bank1 (ROM bank bits)
+        rom: emulator-only/mbc1/bits_bank1.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 4000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc1_bits_bank2
+        description: Mooneye Test Suite — mbc1 bits_bank2 (ROM bank bits)
+        rom: emulator-only/mbc1/bits_bank2.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 4000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc1_bits_mode
+        description: Mooneye Test Suite — mbc1 bits_mode (banking mode bits)
+        rom: emulator-only/mbc1/bits_mode.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 4000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc1_bits_ramg
+        description: Mooneye Test Suite — mbc1 bits_ramg (RAM enable bits)
+        rom: emulator-only/mbc1/bits_ramg.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 8000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc1_ram_64kb
+        description: Mooneye Test Suite — mbc1 ram_64kb (64 KiB RAM)
+        rom: emulator-only/mbc1/ram_64kb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 2000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_ram_256kb
+        description: Mooneye Test Suite — mbc1 ram_256kb (256 KiB RAM)
+        rom: emulator-only/mbc1/ram_256kb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 2000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_512kb
+        description: Mooneye Test Suite — mbc1 rom_512kb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_512kb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_1Mb
+        description: Mooneye Test Suite — mbc1 rom_1Mb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_1Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_2Mb
+        description: Mooneye Test Suite — mbc1 rom_2Mb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_2Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_4Mb
+        description: Mooneye Test Suite — mbc1 rom_4Mb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_4Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_8Mb
+        description: Mooneye Test Suite — mbc1 rom_8Mb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_8Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_rom_16Mb
+        description: Mooneye Test Suite — mbc1 rom_16Mb (ROM bank switching)
+        rom: emulator-only/mbc1/rom_16Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc1_multicart_rom_8Mb
+        description: Mooneye Test Suite — mbc1 multicart_rom_8Mb (multicart ROM)
+        rom: emulator-only/mbc1/multicart_rom_8Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc2_bits_ramg
+        description: Mooneye Test Suite — mbc2 bits_ramg (RAM enable bits)
+        rom: emulator-only/mbc2/bits_ramg.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 8000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc2_bits_romb
+        description: Mooneye Test Suite — mbc2 bits_romb (ROM bank bits)
+        rom: emulator-only/mbc2/bits_romb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 4000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc2_bits_unused
+        description: Mooneye Test Suite — mbc2 bits_unused (unused bits)
+        rom: emulator-only/mbc2/bits_unused.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 4000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+          - cpu
+      - id: mbc2_ram
+        description: Mooneye Test Suite — mbc2 ram (RAM banking)
+        rom: emulator-only/mbc2/ram.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc2_rom_512kb
+        description: Mooneye Test Suite — mbc2 rom_512kb (ROM bank switching)
+        rom: emulator-only/mbc2/rom_512kb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc2_rom_1Mb
+        description: Mooneye Test Suite — mbc2 rom_1Mb (ROM bank switching)
+        rom: emulator-only/mbc2/rom_1Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: mbc2_rom_2Mb
+        description: Mooneye Test Suite — mbc2 rom_2Mb (ROM bank switching)
+        rom: emulator-only/mbc2/rom_2Mb.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - mbc
+      - id: bits_mem_oam
+        description: Mooneye Test Suite — bits/mem_oam (OAM memory)
+        rom: acceptance/bits/mem_oam.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - cpu
+      - id: bits_reg_f
+        description: Mooneye Test Suite — bits/reg_f (F register)
+        rom: acceptance/bits/reg_f.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - cpu
+      - id: bits_unused_hwio_GS
+        description: Mooneye Test Suite — bits/unused_hwio-GS
+        rom: acceptance/bits/unused_hwio-GS.gb
+        models:
+          - dmg
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - cpu
+      - id: bits_unused_hwio_C
+        description: Mooneye Test Suite — misc/bits/unused_hwio-C
+        rom: misc/bits/unused_hwio-C.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - cpu
+      - id: instr_daa
+        description: Mooneye Test Suite — instr/daa (DAA instruction)
+        rom: acceptance/instr/daa.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 500000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - cpu
+      - id: oam_dma_basic
+        description: Mooneye Test Suite — oam_dma/basic (OAM DMA)
+        rom: acceptance/oam_dma/basic.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+      - id: oam_dma_reg_read
+        description: Mooneye Test Suite — oam_dma/reg_read (DMA register readback)
+        rom: acceptance/oam_dma/reg_read.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+      - id: oam_dma_start
+        description: Mooneye Test Suite — oam_dma_start (DMA startup timing)
+        rom: acceptance/oam_dma_start.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+      - id: oam_dma_sources_GS
+        description: Mooneye Test Suite — oam_dma/sources-GS
+        rom: acceptance/oam_dma/sources-GS.gb
+        models:
+          - dmg
+        cycles: 1000000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+      - id: oam_dma_timing
+        description: Mooneye Test Suite — oam_dma_timing (DMA transfer timing)
+        rom: acceptance/oam_dma_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+          - timing
+      - id: oam_dma_restart
+        description: Mooneye Test Suite — oam_dma_restart (DMA restart timing)
+        rom: acceptance/oam_dma_restart.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - oam_dma
+      - id: timer_div_write
+        description: Mooneye Test Suite — timer/div_write (DIV register write)
+        rom: acceptance/timer/div_write.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 1500000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim00
+        description: Mooneye Test Suite — timer/tim00 (TIMA clock 4096Hz)
+        rom: acceptance/timer/tim00.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim01
+        description: Mooneye Test Suite — timer/tim01 (TIMA clock 262144Hz)
+        rom: acceptance/timer/tim01.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim10
+        description: Mooneye Test Suite — timer/tim10 (TIMA clock 65536Hz)
+        rom: acceptance/timer/tim10.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim11
+        description: Mooneye Test Suite — timer/tim11 (TIMA clock 16384Hz)
+        rom: acceptance/timer/tim11.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim00_div_trigger
+        description: Mooneye Test Suite — timer/tim00_div_trigger (DIV write falling-edge trigger)
+        rom: acceptance/timer/tim00_div_trigger.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim01_div_trigger
+        description: Mooneye Test Suite — timer/tim01_div_trigger (DIV write falling-edge trigger)
+        rom: acceptance/timer/tim01_div_trigger.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim10_div_trigger
+        description: Mooneye Test Suite — timer/tim10_div_trigger (DIV write falling-edge trigger)
+        rom: acceptance/timer/tim10_div_trigger.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tim11_div_trigger
+        description: Mooneye Test Suite — timer/tim11_div_trigger (DIV write falling-edge trigger)
+        rom: acceptance/timer/tim11_div_trigger.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tima_reload
+        description: Mooneye Test Suite — timer/tima_reload (TIMA 4-cycle reload delay)
+        rom: acceptance/timer/tima_reload.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tima_write_reloading
+        description: Mooneye Test Suite — timer/tima_write_reloading (TIMA write during reload)
+        rom: acceptance/timer/tima_write_reloading.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_tma_write_reloading
+        description: Mooneye Test Suite — timer/tma_write_reloading (TMA write during reload)
+        rom: acceptance/timer/tma_write_reloading.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: timer_rapid_toggle
+        description: Mooneye Test Suite — timer/rapid_toggle (rapid TAC on/off toggling)
+        rom: acceptance/timer/rapid_toggle.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timer
+      - id: call_timing
+        description: Mooneye Test Suite — call_timing (CALL instruction timing)
+        rom: acceptance/call_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: call_timing2
+        description: Mooneye Test Suite — call_timing2 (CALL instruction timing)
+        rom: acceptance/call_timing2.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: call_cc_timing
+        description: Mooneye Test Suite — call_cc_timing (conditional CALL timing)
+        rom: acceptance/call_cc_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: call_cc_timing2
+        description: Mooneye Test Suite — call_cc_timing2 (conditional CALL timing)
+        rom: acceptance/call_cc_timing2.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: jp_timing
+        description: Mooneye Test Suite — jp_timing (JP instruction timing)
+        rom: acceptance/jp_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: jp_cc_timing
+        description: Mooneye Test Suite — jp_cc_timing (conditional JP timing)
+        rom: acceptance/jp_cc_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: ret_timing
+        description: Mooneye Test Suite — ret_timing (RET instruction timing)
+        rom: acceptance/ret_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: ret_cc_timing
+        description: Mooneye Test Suite — ret_cc_timing (conditional RET timing)
+        rom: acceptance/ret_cc_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: reti_timing
+        description: Mooneye Test Suite — reti_timing (RETI instruction timing)
+        rom: acceptance/reti_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: push_timing
+        description: Mooneye Test Suite — push_timing (PUSH instruction timing)
+        rom: acceptance/push_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: rst_timing
+        description: Mooneye Test Suite — rst_timing (RST instruction timing)
+        rom: acceptance/rst_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: add_sp_e_timing
+        description: Mooneye Test Suite — add_sp_e_timing (ADD SP,e timing)
+        rom: acceptance/add_sp_e_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+      - id: ld_hl_sp_e_timing
+        description: Mooneye Test Suite — ld_hl_sp_e_timing (LD HL,SP+e timing)
+        rom: acceptance/ld_hl_sp_e_timing.gb
+        models:
+          - cgb_c
+          - cgb_d
+        cycles: 300000
+        verify:
+          serial:
+            suffix: 0305080D1522
+        tags:
+          - timing
+  - name: mattcurrie_mealybug-tearoom-tests
+    cases:
+      - id: mbc3_rtc
+        description: Mealybug Tearoom Tests — MBC3 real-time clock
+        rom: mbc3_rtc.gb
+        models:
+          - dmg
+          - cgb_d
+        cycles: 24000000
+        completion: serial_hash
+        verify:
+          serial:
+            hash: D00F4031
+        tags:
+          - mbc
+          - rtc
+          - timing
+      - id: m2_win_en_toggle
+        description: Mealybug Tearoom Tests — m2_win_en_toggle (CGB D)
+        rom: m2_win_en_toggle.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 150000
+        reference:
+          dmg: repo/expected/DMG-blob/m2_win_en_toggle.png
+          cgb_c: repo/expected/CPU CGB C/m2_win_en_toggle.png
+          cgb_d: repo/expected/CPU CGB D/m2_win_en_toggle.png
+      - id: m3_bgp_change
+        description: Mealybug Tearoom Tests — m3_bgp_change (CGB D)
+        rom: m3_bgp_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 80000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_bgp_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_bgp_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_bgp_change.png
+      - id: m3_bgp_change_sprites
+        description: Mealybug Tearoom Tests — m3_bgp_change_sprites (CGB D)
+        rom: m3_bgp_change_sprites.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_bgp_change_sprites.png
+          cgb_c: repo/expected/CPU CGB C/m3_bgp_change_sprites.png
+          cgb_d: repo/expected/CPU CGB D/m3_bgp_change_sprites.png
+      - id: m3_lcdc_bg_en_change
+        description: Mealybug Tearoom Tests — m3_lcdc_bg_en_change (CGB D)
+        rom: m3_lcdc_bg_en_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 110000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_bg_en_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_en_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_bg_en_change.png
+      - id: m3_lcdc_bg_en_change2
+        description: Mealybug Tearoom Tests — m3_lcdc_bg_en_change2
+        rom: m3_lcdc_bg_en_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_en_change2.png
+      - id: m3_lcdc_bg_map_change
+        description: Mealybug Tearoom Tests — m3_lcdc_bg_map_change (CGB D)
+        rom: m3_lcdc_bg_map_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_bg_map_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_map_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_bg_map_change.png
+      - id: m3_lcdc_bg_map_change2
+        description: Mealybug Tearoom Tests — m3_lcdc_bg_map_change2
+        rom: m3_lcdc_bg_map_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_bg_map_change2.png
+      - id: m3_lcdc_obj_en_change
+        description: Mealybug Tearoom Tests — m3_lcdc_obj_en_change (CGB D)
+        rom: m3_lcdc_obj_en_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 40000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_obj_en_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_en_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_en_change.png
+      - id: m3_lcdc_obj_en_change_variant
+        description: Mealybug Tearoom Tests — m3_lcdc_obj_en_change_variant (CGB D)
+        rom: m3_lcdc_obj_en_change_variant.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_obj_en_change_variant.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_en_change_variant.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_en_change_variant.png
+      - id: m3_lcdc_obj_size_change
+        description: Mealybug Tearoom Tests — m3_lcdc_obj_size_change (CGB D)
+        rom: m3_lcdc_obj_size_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 110000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_obj_size_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_size_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_size_change.png
+      - id: m3_lcdc_obj_size_change_scx
+        description: Mealybug Tearoom Tests — m3_lcdc_obj_size_change_scx (CGB D)
+        rom: m3_lcdc_obj_size_change_scx.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 110000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_obj_size_change_scx.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_obj_size_change_scx.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_obj_size_change_scx.png
+      - id: m3_lcdc_tile_sel_change
+        description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_change (CGB D)
+        rom: m3_lcdc_tile_sel_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_tile_sel_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_tile_sel_change.png
+      - id: m3_lcdc_tile_sel_change2
+        description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_change2
+        rom: m3_lcdc_tile_sel_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_change2.png
+      - id: m3_lcdc_tile_sel_win_change
+        description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change (CGB D)
+        rom: m3_lcdc_tile_sel_win_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_tile_sel_win_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_win_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_tile_sel_win_change.png
+      - id: m3_lcdc_tile_sel_win_change2
+        description: Mealybug Tearoom Tests — m3_lcdc_tile_sel_win_change2
+        rom: m3_lcdc_tile_sel_win_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_tile_sel_win_change2.png
+      - id: m3_lcdc_win_en_change_multiple
+        description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple (CGB D)
+        rom: m3_lcdc_win_en_change_multiple.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 130000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_win_en_change_multiple.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_en_change_multiple.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_en_change_multiple.png
+      - id: m3_lcdc_win_en_change_multiple_wx
+        description: Mealybug Tearoom Tests — m3_lcdc_win_en_change_multiple_wx (DMG)
+        rom: m3_lcdc_win_en_change_multiple_wx.gb
+        models:
+          - dmg
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_win_en_change_multiple_wx.png
+      - id: m3_lcdc_win_map_change
+        description: Mealybug Tearoom Tests — m3_lcdc_win_map_change (CGB D)
+        rom: m3_lcdc_win_map_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_lcdc_win_map_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_map_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_lcdc_win_map_change.png
+      - id: m3_lcdc_win_map_change2
+        description: Mealybug Tearoom Tests — m3_lcdc_win_map_change2
+        rom: m3_lcdc_win_map_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_lcdc_win_map_change2.png
+      - id: m3_obp0_change
+        description: Mealybug Tearoom Tests — m3_obp0_change (CGB D)
+        rom: m3_obp0_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 40000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_obp0_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_obp0_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_obp0_change.png
+      - id: m3_scx_high_5_bits
+        description: Mealybug Tearoom Tests — m3_scx_high_5_bits (CGB D)
+        rom: m3_scx_high_5_bits.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 110000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_scx_high_5_bits.png
+          cgb_c: repo/expected/CPU CGB C/m3_scx_high_5_bits.png
+          cgb_d: repo/expected/CPU CGB D/m3_scx_high_5_bits.png
+        tags:
+          - cpu
+      - id: m3_scx_high_5_bits_change2
+        description: Mealybug Tearoom Tests — m3_scx_high_5_bits_change2
+        rom: m3_scx_high_5_bits_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_scx_high_5_bits_change2.png
+        tags:
+          - cpu
+      - id: m3_scx_low_3_bits
+        description: Mealybug Tearoom Tests — m3_scx_low_3_bits (CGB D)
+        rom: m3_scx_low_3_bits.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 80000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_scx_low_3_bits.png
+          cgb_c: repo/expected/CPU CGB C/m3_scx_low_3_bits.png
+          cgb_d: repo/expected/CPU CGB D/m3_scx_low_3_bits.png
+        tags:
+          - cpu
+      - id: m3_scy_change
+        description: Mealybug Tearoom Tests — m3_scy_change (CGB D)
+        rom: m3_scy_change.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 110000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_scy_change.png
+          cgb_c: repo/expected/CPU CGB C/m3_scy_change.png
+          cgb_d: repo/expected/CPU CGB D/m3_scy_change.png
+      - id: m3_scy_change2
+        description: Mealybug Tearoom Tests — m3_scy_change2
+        rom: m3_scy_change2.gb
+        models:
+          - cgb_c
+        cycles: 150000
+        reference:
+          cgb_c: repo/expected/CPU CGB C/m3_scy_change2.png
+      - id: m3_window_timing
+        description: Mealybug Tearoom Tests — m3_window_timing (CGB D)
+        rom: m3_window_timing.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_window_timing.png
+          cgb_c: repo/expected/CPU CGB C/m3_window_timing.png
+          cgb_d: repo/expected/CPU CGB D/m3_window_timing.png
+        tags:
+          - timing
+      - id: m3_window_timing_wx_0
+        description: Mealybug Tearoom Tests — m3_window_timing_wx_0 (CGB D)
+        rom: m3_window_timing_wx_0.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 90000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_window_timing_wx_0.png
+          cgb_c: repo/expected/CPU CGB C/m3_window_timing_wx_0.png
+          cgb_d: repo/expected/CPU CGB D/m3_window_timing_wx_0.png
+        tags:
+          - timing
+      - id: m3_wx_4_change
+        description: Mealybug Tearoom Tests — m3_wx_4_change (DMG)
+        rom: m3_wx_4_change.gb
+        models:
+          - dmg
+        cycles: 130000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_wx_4_change.png
+      - id: m3_wx_4_change_sprites
+        description: Mealybug Tearoom Tests — m3_wx_4_change_sprites (CGB D)
+        rom: m3_wx_4_change_sprites.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+        cycles: 150000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_wx_4_change_sprites.png
+          cgb_c: repo/expected/CPU CGB C/m3_wx_4_change_sprites.png
+          cgb_d: repo/expected/CPU CGB D/m3_wx_4_change_sprites.png
+      - id: m3_wx_5_change
+        description: Mealybug Tearoom Tests — m3_wx_5_change (DMG)
+        rom: m3_wx_5_change.gb
+        models:
+          - dmg
+        cycles: 130000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_wx_5_change.png
+      - id: m3_wx_6_change
+        description: Mealybug Tearoom Tests — m3_wx_6_change (DMG)
+        rom: m3_wx_6_change.gb
+        models:
+          - dmg
+        cycles: 130000
+        reference:
+          dmg: repo/expected/DMG-blob/m3_wx_6_change.png
+  - name: mattcurrie_dmg-acid2
+    cases:
+      - id: dmg_acid2
+        description: DMG acid2 PPU test — reference image rendering
+        rom: dmg-acid2.gb
+        models:
+          - dmg
+          - cgb_c
+          - cgb_d
+          - agb
+        cycles: 250000
+        reference:
+          dmg: repo/img/reference-dmg.png
+          cgb_c: repo/img/reference-cgb.png
+          cgb_d: repo/img/reference-cgb.png
+        tags:
+          - ppu
+  - name: mattcurrie_cgb-acid2
+    cases:
+      - id: cgb_acid2
+        description: cgb-acid2 — CGB PPU compliance test
+        rom: cgb-acid2.gbc
+        models:
+          - cgb_c
+          - cgb_d
+          - agb
+        cycles: 350000
+        reference:
+          cgb_c: repo/img/reference.png
+          cgb_d: repo/img/reference.png
+        tags:
+          - ppu

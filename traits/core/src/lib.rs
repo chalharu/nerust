@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod factory;
 pub mod identity;
+pub mod peripheral;
 pub mod save_state;
 pub mod touch;
 

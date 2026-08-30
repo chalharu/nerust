@@ -65,20 +65,25 @@ impl RenderPipeline {
         surface.configure(&self.device, &self.config);
     }
 
-    fn update_frame_texture(&mut self, encoder: &mut wgpu::CommandEncoder, frame_buffer: &[u8]) {
-        let upload_bytes = if self.frame_upload_layout.copy_bytes_per_row
-            == self.frame_upload_layout.upload_bytes_per_row
-        {
-            frame_buffer
-        } else {
-            pack_frame_rows(
-                frame_buffer,
-                self.frame_logical_size.height,
-                &mut self.frame_upload_staging,
-                self.frame_upload_layout,
-            );
-            &self.frame_upload_staging
-        };
+    fn update_frame_texture(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame_buffer: &[u8],
+        source_bytes_per_row: usize,
+    ) {
+        let upload_bytes =
+            if source_bytes_per_row == self.frame_upload_layout.upload_bytes_per_row as usize {
+                frame_buffer
+            } else {
+                pack_frame_rows(
+                    frame_buffer,
+                    source_bytes_per_row,
+                    self.frame_logical_size.height,
+                    &mut self.frame_upload_staging,
+                    self.frame_upload_layout,
+                );
+                &self.frame_upload_staging
+            };
         self.queue
             .write_buffer(&self.frame_upload_buffer, 0, upload_bytes);
         encoder.copy_buffer_to_texture(
@@ -109,6 +114,7 @@ impl RenderPipeline {
         surface: &wgpu::Surface<'_>,
         surface_size: SurfaceSize,
         frame_buffer: &[u8],
+        source_bytes_per_row: usize,
     ) -> Result<RenderOutcome, String> {
         let surface_size =
             fit_surface_size_to_limit(surface_size, self.device.limits().max_texture_dimension_2d);
@@ -138,7 +144,7 @@ impl RenderPipeline {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("nerust_render_encoder"),
             });
-        self.update_frame_texture(&mut encoder, frame_buffer);
+        self.update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row);
         let viewport = compute_viewport(surface_size, self.content_size);
 
         {
