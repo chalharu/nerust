@@ -43,6 +43,9 @@ pub struct GbaMemoryBus {
     rcnt: u16,
 
     // Bus制御
+    // TODO(gba-open-bus): last_prefetch と open_bus_value は現状常に同値。
+    // Phase 8.5 Timer/DMAで last_prefetch をパイプライン用に分離する可能性があるため
+    // 現状は冗長だが据置。イベントスケジューラ導入時に統合/分離を再検討する。
     last_prefetch: u32,
     open_bus_value: u32,
     prefetch_queue: VecDeque<u32>,
