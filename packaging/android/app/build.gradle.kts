@@ -29,7 +29,7 @@ android {
         applicationId = "io.github.chalharu.nerust"
         minSdk = 28
         targetSdk = 37
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "io.github.chalharu.nerust.FixedAndroidJUnitRunner"
         versionCode = versionCodeOverride
         versionName = versionNameOverride
         ndk {

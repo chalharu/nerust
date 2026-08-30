@@ -309,7 +309,14 @@ jobs:
         with:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          cores: 2
+          ram-size: 4096M
+          heap-size: 512M
+          disk-size: 4096M
+          disable-animations: true
+          disable-spellchecker: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics # yamllint disable-line rule:line-length
           script: |
             chmod +x packaging/android/e2e.sh packaging/android/gradlew
             packaging/android/e2e.sh
