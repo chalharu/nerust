@@ -41,9 +41,12 @@ impl CoreFactory for GbaFactory {
         &["gba"]
     }
 
-    fn probe_media(&self, _media: &MediaObject) -> bool {
-        // Phase 4 で実装（ROMヘッダ検証）
-        false
+    fn probe_media(&self, media: &MediaObject) -> bool {
+        if let Some(header) = nerust_gba_core::cartridge::header::GbaHeader::parse(&media.bytes) {
+            header.logo_valid && header.fixed_valid && header.complement_valid
+        } else {
+            false
+        }
     }
 
     fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
