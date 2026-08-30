@@ -1,8 +1,9 @@
 use std::{collections::HashMap, hash::Hash};
 
+use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_gui_settings::input::{KeyboardBinding, ShortcutAction};
 use nerust_input_traits::{
-    AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
+    AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent, InputAssignments, InputValue,
 };
 use nerust_keyboard::Key;
 use nerust_settings_core::factory::settings_view;
@@ -47,6 +48,43 @@ fn rebuild_input_map<B: InputBinding>(
 }
 
 impl SessionHandle {
+    pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
+        let mut controls = Vec::new();
+        for (attachment_id, profile) in &self.current_assignments.slots {
+            let Some(profile) = profile else {
+                continue;
+            };
+            let group = profile
+                .port_sets()
+                .iter()
+                .position(|set| set.ports.contains(attachment_id))
+                .and_then(|index| profile.port_groups().get(index));
+            let Some(group) = group else {
+                continue;
+            };
+            for info in *group {
+                let role = match info.abstract_key {
+                    Some(AbstractKey::DpadUp) => TouchControlRole::DpadUp,
+                    Some(AbstractKey::DpadDown) => TouchControlRole::DpadDown,
+                    Some(AbstractKey::DpadLeft) => TouchControlRole::DpadLeft,
+                    Some(AbstractKey::DpadRight) => TouchControlRole::DpadRight,
+                    Some(AbstractKey::Button1) => TouchControlRole::FaceButton1,
+                    Some(AbstractKey::Button2) => TouchControlRole::FaceButton2,
+                    Some(AbstractKey::Start) => TouchControlRole::Start,
+                    Some(AbstractKey::Select) => TouchControlRole::Select,
+                    _ => continue,
+                };
+                controls.push(TouchControl {
+                    attachment_id: *attachment_id,
+                    control_id: info.id,
+                    role,
+                    label: info.label.to_string(),
+                });
+            }
+        }
+        TouchOverlayModel { revision, controls }
+    }
+
     /// Reassign controllers and rebuild the core.
     pub fn reassign_controllers(
         &mut self,
@@ -59,7 +97,8 @@ impl SessionHandle {
             crate::settings::build_speaker(&self.audio_registry, &self.settings_snapshot.local);
         let parts =
             factory.create_core_and_adapter_with_assignments(&view, speaker, assignments)?;
-        let (rebuilt_core, gui_input, field_map) = crate::emu_core::EmuCore::from_parts(parts);
+        let (rebuilt_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
         let was_paused = self
             .emu_core
             .as_ref()
@@ -75,6 +114,7 @@ impl SessionHandle {
         self.emu_core = Some(rebuilt_core);
         self.gui_input = Some(gui_input);
         self.field_map = field_map;
+        self.host_peripherals = host_peripherals;
         self.current_assignments = assignments.clone();
         self.rebuild_key_field_map();
         Ok(())
@@ -314,6 +354,22 @@ mod tests {
         rebuild_input_map(&field_map, &bindings, &mut key_map);
 
         assert_eq!(key_map, HashMap::from([(Key::KeyA, 7)]));
+    }
+
+    #[test]
+    fn touch_overlay_uses_assigned_profile_controls() {
+        let mut session = crate::session::test_util::test_session();
+        let slot = AttachmentId::new("test.topology.slot");
+        session.current_assignments.slots = vec![(slot, Some(Rc::new(MockTopologyProfile)))];
+
+        let overlay = session.touch_overlay_model(42);
+
+        assert_eq!(overlay.revision, 42);
+        assert_eq!(overlay.controls.len(), 1);
+        assert_eq!(overlay.controls[0].attachment_id, slot);
+        assert_eq!(overlay.controls[0].control_id.as_str(), "test.topology.a");
+        assert_eq!(overlay.controls[0].role, TouchControlRole::FaceButton1);
+        assert_eq!(overlay.controls[0].label, "A");
     }
 
     #[test]

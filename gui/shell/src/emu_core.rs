@@ -77,6 +77,7 @@ impl EmuCore {
         Self,
         GuiInput,
         std::collections::HashMap<(AttachmentId, DigitalControlId), usize>,
+        nerust_core_traits::peripheral::HostPeripheralHandles,
     ) {
         let field_map = parts.field_map;
         use std::sync::Mutex;
@@ -121,6 +122,7 @@ impl EmuCore {
             },
             parts.gui_input,
             field_map,
+            parts.host_peripherals,
         )
     }
 

@@ -1,0 +1,9 @@
+misconfigurations:
+  - id: DS-0002
+    paths:
+      # CI-only image that requires root privileges for test execution
+      - ".github/workflows/docker/Dockerfile.sonarcloud"
+  - id: DS-0026
+    paths:
+      # CI-only image, no long-running service to healthcheck
+      - ".github/workflows/docker/Dockerfile.sonarcloud"

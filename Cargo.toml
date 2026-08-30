@@ -1,5 +1,5 @@
 [workspace]
-default-members = [".", "nes/core"]
+default-members = [".", "nes/core", "gbc/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
@@ -9,6 +9,11 @@ members = [
   "gui/settings",
   "gui/shell",
   "gui/viewmodel",
+  "gbc/core",
+  "gbc/device",
+  "gbc/factory",
+  "gbc/settings",
+  "gbc/rom_test",
   "keyboard",
   "nes/controller",
   "nes/core",
@@ -55,6 +60,7 @@ nerust_core_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
+nerust_gbc_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
@@ -67,7 +73,8 @@ nerust_tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [features]
-default = ["nes", "wgpu"]
+default = ["nes", "gbc", "wgpu"]
+gbc = ["nerust_gbc_factory"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
@@ -96,6 +103,7 @@ version = "0.1.0-dev"
 
 [workspace.dependencies]
 android_logger = { version = "=0.15.1" }
+base64 = { version = "=0.22.1" }
 bitflags = { features = ["serde"], version = "=2.13.1" }
 clap = { features = ["derive"], version = "=4.6.6" }
 cpal = { version = "=0.18.2" }
@@ -107,6 +115,7 @@ dyn-clone = { version = "=1.0.20" }
 dyn-eq = { version = "=0.1.3" }
 dyn-hash = { version = "=1.0.0" }
 flume = { version = "=0.12.0" }
+glob = { version = "=0.3.3" }
 gdk = { package = "gdk4", version = "=0.11.4" }
 gdk-macos = { package = "gdk4-macos", version = "=0.11.0" }
 gdk-win32 = { package = "gdk4-win32", version = "=0.11.0" }
@@ -132,6 +141,10 @@ muda = { default-features = false, features = ["gtk"], version = "=0.19.3" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
 nerust_emu_thread = { path = "traits/emu-thread" }
+nerust_gbc_core = { path = "gbc/core" }
+nerust_gbc_device = { path = "gbc/device" }
+nerust_gbc_factory = { path = "gbc/factory" }
+nerust_gbc_settings = { path = "gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
@@ -173,6 +186,7 @@ objc2-app-kit = { default-features = false, features = [
 objc2-quartz-core = { default-features = false, features = [
   "objc2-core-foundation",
 ], version = "=0.3.2" }
+open = { version = "=5.4.0" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
@@ -183,6 +197,7 @@ serde-saphyr = { version = "=1.1.0" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.151" }
+sha2 = { version = "=0.10.9" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }

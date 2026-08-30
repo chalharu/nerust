@@ -1,11 +1,11 @@
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 /// Android-relevant settings subset and JNI dialog bridge.
 ///
 /// Only the fields that make sense on a mobile/touch device are exposed.
 /// All persistence and validation remain on the Rust side; Kotlin merely
 /// presents the choices and returns the user's selections.
-use jni::objects::{JObject, JObjectArray, JString, JValue};
+use jni::objects::{JObject, JString, JValue};
 use jni::{JavaVM, jni_sig, jni_str, refs::Global, sys::jobject};
 use nerust_core_traits::{
     factory::{
@@ -15,9 +15,15 @@ use nerust_core_traits::{
     identity::SystemId,
 };
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_gui_settings::{
+    local::{RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
+    shared::StoragePolicy,
+};
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
-use winit::platform::android::activity::{AndroidApp, AndroidAppWaker};
+use winit::platform::android::activity::AndroidApp;
+
+use super::{bridge, messages::SettingsDialogResult};
 
 // ---------------------------------------------------------------------------
 // Choice constants
@@ -28,6 +34,11 @@ const VOLUME_MAX: u8 = 100;
 const LATENCY_MIN: u16 = 10;
 const LATENCY_MAX: u16 = 200;
 const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
+const OVERLAY_SCALE_MIN: u8 = 50;
+const OVERLAY_SCALE_MAX: u8 = 150;
+const OVERLAY_OFFSET_MIN: i8 = -30;
+const OVERLAY_OFFSET_MAX: i8 = 30;
+const SETTINGS_SCHEMA_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -45,6 +56,17 @@ pub(crate) struct AndroidSettings {
     pub latency_ms: u16,
     pub sample_rate: u32,
     pub vsync: bool,
+    pub screen_orientation: ScreenOrientation,
+    pub storage_policy: StoragePolicy,
+    pub overlay_visibility: TouchOverlayVisibility,
+    pub overlay_opacity_percent: u8,
+    pub overlay_scale_percent: u8,
+    pub overlay_vertical_offset_percent: i8,
+    pub overlay_haptics: bool,
+    pub motion_enabled: bool,
+    pub rumble_enabled: bool,
+    pub rumble_strength_percent: u8,
+    pub rumble_target: RumbleTarget,
     system_choices: Vec<AndroidSystemChoice>,
 }
 
@@ -58,6 +80,14 @@ struct AndroidSystemChoice {
 }
 
 impl AndroidSettings {
+    pub(crate) fn prioritize_system(&mut self, active: Option<&dyn SystemId>) {
+        let Some(active) = active else {
+            return;
+        };
+        self.system_choices
+            .sort_by_key(|choice| choice.system_id.as_ref() != active);
+    }
+
     /// Extract Android-relevant fields from the full settings snapshot.
     pub(crate) fn from_snapshot(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> Self {
         let language = snapshot.shared.general.language;
@@ -99,6 +129,17 @@ impl AndroidSettings {
             latency_ms: snapshot.local.audio.latency_ms,
             sample_rate: snapshot.local.audio.sample_rate,
             vsync: snapshot.local.video.presentation.vsync,
+            screen_orientation: snapshot.local.screen_orientation,
+            storage_policy: snapshot.shared.persistence.storage_policy,
+            overlay_visibility: snapshot.local.touch_overlay.visibility,
+            overlay_opacity_percent: snapshot.local.touch_overlay.opacity_percent,
+            overlay_scale_percent: snapshot.local.touch_overlay.scale_percent,
+            overlay_vertical_offset_percent: snapshot.local.touch_overlay.vertical_offset_percent,
+            overlay_haptics: snapshot.local.touch_overlay.haptics,
+            motion_enabled: snapshot.local.cartridge_peripherals.motion_enabled,
+            rumble_enabled: snapshot.local.cartridge_peripherals.rumble_enabled,
+            rumble_strength_percent: snapshot.local.cartridge_peripherals.rumble_strength_percent,
+            rumble_target: snapshot.local.cartridge_peripherals.rumble_target,
             system_choices,
         }
     }
@@ -116,6 +157,17 @@ impl AndroidSettings {
         snapshot.local.audio.latency_ms = self.latency_ms;
         snapshot.local.audio.sample_rate = self.sample_rate;
         snapshot.local.video.presentation.vsync = self.vsync;
+        snapshot.local.screen_orientation = self.screen_orientation;
+        snapshot.shared.persistence.storage_policy = self.storage_policy;
+        snapshot.local.touch_overlay.visibility = self.overlay_visibility;
+        snapshot.local.touch_overlay.opacity_percent = self.overlay_opacity_percent;
+        snapshot.local.touch_overlay.scale_percent = self.overlay_scale_percent;
+        snapshot.local.touch_overlay.vertical_offset_percent = self.overlay_vertical_offset_percent;
+        snapshot.local.touch_overlay.haptics = self.overlay_haptics;
+        snapshot.local.cartridge_peripherals.motion_enabled = self.motion_enabled;
+        snapshot.local.cartridge_peripherals.rumble_enabled = self.rumble_enabled;
+        snapshot.local.cartridge_peripherals.rumble_strength_percent = self.rumble_strength_percent;
+        snapshot.local.cartridge_peripherals.rumble_target = self.rumble_target;
 
         for choice in &self.system_choices {
             let factory = registry
@@ -143,6 +195,17 @@ impl AndroidSettings {
             "latency_ms".to_string(),
             "sample_rate".to_string(),
             "vsync".to_string(),
+            "screen.orientation".to_string(),
+            "storage.policy".to_string(),
+            "controls.overlay.visibility".to_string(),
+            "controls.overlay.opacity".to_string(),
+            "controls.overlay.scale".to_string(),
+            "controls.overlay.vertical_offset".to_string(),
+            "controls.overlay.haptics".to_string(),
+            "controls.cartridge.motion".to_string(),
+            "controls.cartridge.rumble".to_string(),
+            "controls.cartridge.rumble_strength".to_string(),
+            "controls.cartridge.rumble_target".to_string(),
         ];
         keys.extend(
             self.system_choices
@@ -160,6 +223,17 @@ impl AndroidSettings {
             "Audio Latency (ms)".to_string(),
             "Sample Rate (Hz)".to_string(),
             "VSync".to_string(),
+            "Screen Orientation".to_string(),
+            "Save Location".to_string(),
+            "Touch Overlay".to_string(),
+            "Overlay Opacity".to_string(),
+            "Overlay Scale".to_string(),
+            "Overlay Vertical Position".to_string(),
+            "Overlay Haptics".to_string(),
+            "Cartridge Motion Sensor".to_string(),
+            "Cartridge Rumble".to_string(),
+            "Rumble Strength".to_string(),
+            "Rumble Target".to_string(),
         ];
         labels.extend(
             self.system_choices
@@ -179,6 +253,21 @@ impl AndroidSettings {
                 SAMPLE_RATE_CHOICES
                     .iter()
                     .map(|value| format!("{value} Hz")),
+            ),
+            "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
+            "Auto\tHandset\tController".to_string(),
+            "Auto Rotate\tPortrait\tLandscape".to_string(),
+            "Next to ROM\tApp Storage\tCustom Directory".to_string(),
+            "Always\tAuto\tHidden".to_string(),
+            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
+            join_tab_labels(
+                (OVERLAY_SCALE_MIN..=OVERLAY_SCALE_MAX).map(|value| format!("{value}%")),
+            ),
+            join_tab_labels(
+                (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX).map(|value| format!("{value}%")),
             ),
             "Off\tOn".to_string(),
         ];
@@ -205,6 +294,48 @@ impl AndroidSettings {
             latency_idx.to_string(),
             sample_rate_idx.to_string(),
             (self.vsync as usize).to_string(),
+            match self.screen_orientation {
+                ScreenOrientation::Auto => 0,
+                ScreenOrientation::Portrait => 1,
+                ScreenOrientation::Landscape => 2,
+            }
+            .to_string(),
+            match self.storage_policy {
+                StoragePolicy::Sidecar => 0,
+                StoragePolicy::AppSharedData => 1,
+                StoragePolicy::CustomDirectory => 2,
+            }
+            .to_string(),
+            match self.overlay_visibility {
+                TouchOverlayVisibility::Always => 0,
+                TouchOverlayVisibility::Auto => 1,
+                TouchOverlayVisibility::Hidden => 2,
+            }
+            .to_string(),
+            usize::from(self.overlay_opacity_percent.min(100)).to_string(),
+            usize::from(
+                self.overlay_scale_percent
+                    .clamp(OVERLAY_SCALE_MIN, OVERLAY_SCALE_MAX)
+                    - OVERLAY_SCALE_MIN,
+            )
+            .to_string(),
+            i16::from(
+                self.overlay_vertical_offset_percent
+                    .clamp(OVERLAY_OFFSET_MIN, OVERLAY_OFFSET_MAX),
+            )
+            .checked_sub(i16::from(OVERLAY_OFFSET_MIN))
+            .unwrap_or_default()
+            .to_string(),
+            (self.overlay_haptics as usize).to_string(),
+            (self.motion_enabled as usize).to_string(),
+            (self.rumble_enabled as usize).to_string(),
+            usize::from(self.rumble_strength_percent.min(100)).to_string(),
+            match self.rumble_target {
+                RumbleTarget::Auto => 0,
+                RumbleTarget::Handset => 1,
+                RumbleTarget::Controller => 2,
+            }
+            .to_string(),
         ];
         indices.extend(self.system_choices.iter().map(|choice| {
             choice
@@ -249,8 +380,61 @@ impl AndroidSettings {
             1 => true,
             _ => return None,
         };
+        let screen_orientation = match indices[5] {
+            0 => ScreenOrientation::Auto,
+            1 => ScreenOrientation::Portrait,
+            2 => ScreenOrientation::Landscape,
+            _ => return None,
+        };
+        let storage_policy = match indices[6] {
+            0 => StoragePolicy::Sidecar,
+            1 => StoragePolicy::AppSharedData,
+            2 => StoragePolicy::CustomDirectory,
+            _ => return None,
+        };
+        let overlay_visibility = match indices[7] {
+            0 => TouchOverlayVisibility::Always,
+            1 => TouchOverlayVisibility::Auto,
+            2 => TouchOverlayVisibility::Hidden,
+            _ => return None,
+        };
+        let overlay_opacity_percent = u8::try_from(indices[8])
+            .ok()
+            .filter(|value| *value <= 100)?;
+        let overlay_scale_percent = u8::try_from(indices[9])
+            .ok()
+            .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
+            + OVERLAY_SCALE_MIN;
+        let overlay_vertical_offset_percent = i8::try_from(indices[10])
+            .ok()
+            .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
+            + OVERLAY_OFFSET_MIN;
+        let overlay_haptics = match indices[11] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let motion_enabled = match indices[12] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let rumble_enabled = match indices[13] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let rumble_strength_percent = u8::try_from(indices[14])
+            .ok()
+            .filter(|value| *value <= 100)?;
+        let rumble_target = match indices[15] {
+            0 => RumbleTarget::Auto,
+            1 => RumbleTarget::Handset,
+            2 => RumbleTarget::Controller,
+            _ => return None,
+        };
         let mut system_choices = current.system_choices.clone();
-        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[5..]) {
+        for (choice, selected_index) in system_choices.iter_mut().zip(&indices[16..]) {
             choice.selected = choice.options.get(*selected_index)?.0.clone();
         }
 
@@ -260,9 +444,91 @@ impl AndroidSettings {
             latency_ms,
             sample_rate,
             vsync,
+            screen_orientation,
+            storage_policy,
+            overlay_visibility,
+            overlay_opacity_percent,
+            overlay_scale_percent,
+            overlay_vertical_offset_percent,
+            overlay_haptics,
+            motion_enabled,
+            rumble_enabled,
+            rumble_strength_percent,
+            rumble_target,
             system_choices,
         })
     }
+
+    pub(crate) fn dialog_payload(&self, request_id: u64) -> String {
+        let keys = self.dialog_keys();
+        let labels = self.dialog_labels();
+        let choices = self.dialog_choices();
+        let indices = self.current_indices();
+        let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+        for (index, key) in keys.iter().enumerate() {
+            let section = if key.starts_with("system.") {
+                key.split('.').take(2).collect::<Vec<_>>().join(".")
+            } else if key.starts_with("controls.") {
+                "controls".to_string()
+            } else if key.starts_with("storage.") {
+                "storage".to_string()
+            } else if key == "vsync" || key.starts_with("screen.") {
+                "video".to_string()
+            } else {
+                "audio".to_string()
+            };
+            let field = serde_json::json!({
+                    "key": key,
+                    "label": labels[index],
+                    "kind": "choice",
+                    "value": indices[index].parse::<usize>().unwrap_or_default(),
+                    "options": choices[index].split('\t').collect::<Vec<_>>(),
+                    "enabled": true,
+            });
+            if let Some((_, fields)) = sections.iter_mut().find(|(id, _)| id == &section) {
+                fields.push(field);
+            } else {
+                sections.push((section, vec![field]));
+            }
+        }
+        let sections: Vec<_> = sections
+            .into_iter()
+            .map(|(id, fields)| serde_json::json!({ "id": id, "fields": fields }))
+            .collect();
+        serde_json::json!({
+            "schemaVersion": SETTINGS_SCHEMA_VERSION,
+            "requestId": request_id,
+            "sections": sections,
+        })
+        .to_string()
+    }
+
+    pub(crate) fn from_keyed_indices(
+        values: &BTreeMap<String, usize>,
+        current: &Self,
+    ) -> Option<Self> {
+        let keys = current.dialog_keys();
+        if values.len() != keys.len() || keys.iter().any(|key| !values.contains_key(key)) {
+            return None;
+        }
+        let raw = keys
+            .iter()
+            .map(|key| values.get(key).map(usize::to_string))
+            .collect::<Option<Vec<_>>>()?
+            .join(",");
+        Self::from_choice_indices(&raw, current)
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsResultPayload {
+    schema_version: u32,
+    request_id: u64,
+    #[serde(default)]
+    dismissed: bool,
+    #[serde(default)]
+    values: BTreeMap<String, usize>,
 }
 
 fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
@@ -279,65 +545,71 @@ fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
 // State machine (mirrors the library / picker pattern)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SettingsDialogResult {
-    /// The user dismissed the dialog without saving.
-    Dismissed,
-    /// The user saved settings; the value encodes the comma-separated indices.
-    Applied(String),
-}
-
-/// JNI bridge state: bundled into one struct to avoid multiple statics.
-struct SettingsBridge {
+struct SettingsBridgeState {
     result: Option<SettingsDialogResult>,
-    waker: Option<AndroidAppWaker>,
-    in_flight: bool,
-    cached: CachedSettingsData,
+    cache: Option<AndroidSettings>,
+    next_request_id: u64,
+    pending_request_id: Option<u64>,
 }
 
-impl SettingsBridge {
-    const fn empty() -> Self {
-        Self {
-            result: None,
-            waker: None,
-            in_flight: false,
-            cached: CachedSettingsData::empty(),
-        }
-    }
-}
+static SETTINGS_STATE: Mutex<SettingsBridgeState> = Mutex::new(SettingsBridgeState {
+    result: None,
+    cache: None,
+    next_request_id: 1,
+    pending_request_id: None,
+});
 
-static SETTINGS: Mutex<SettingsBridge> = Mutex::new(SettingsBridge::empty());
-
-struct CachedSettingsData {
-    keys: Vec<String>,
-    labels: Vec<String>,
-    choices: Vec<String>,
-    current_indices: Vec<String>,
-}
-
-impl CachedSettingsData {
-    const fn empty() -> Self {
-        Self {
-            keys: Vec::new(),
-            labels: Vec::new(),
-            choices: Vec::new(),
-            current_indices: Vec::new(),
-        }
-    }
+fn with_state<T>(operation: impl FnOnce(&mut SettingsBridgeState) -> T) -> T {
+    operation(
+        &mut SETTINGS_STATE
+            .lock()
+            .expect("settings bridge mutex poisoned"),
+    )
 }
 
 /// Update cached settings so `show_settings_dialog_sync` can present current data.
 pub(crate) fn update_cached_settings(current: &AndroidSettings) {
-    let keys = current.dialog_keys();
-    let labels = current.dialog_labels();
-    let choices = current.dialog_choices();
-    let current_indices = current.current_indices();
-    SETTINGS.lock().expect("settings mutex poisoned").cached = CachedSettingsData {
-        keys,
-        labels,
-        choices,
-        current_indices,
-    };
+    with_state(|state| state.cache = Some(current.clone()));
+}
+
+pub(crate) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrientation) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let result = unsafe { JavaVM::from_raw(callback_app.vm_as_ptr() as _) }
+            .attach_current_thread(|env| {
+                let activity_raw = callback_app.activity_as_ptr() as jobject;
+                let activity =
+                    unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
+                let value = match orientation {
+                    ScreenOrientation::Auto => 0,
+                    ScreenOrientation::Portrait => 1,
+                    ScreenOrientation::Landscape => 2,
+                };
+                env.call_method(
+                    activity.as_ref(),
+                    jni_str!("applyScreenOrientation"),
+                    jni_sig!("(I)V"),
+                    &[JValue::Int(value)],
+                )?;
+                Ok::<_, jni::errors::Error>(())
+            });
+        if let Err(error) = result {
+            log::error!("failed to apply Android screen orientation: {error:?}");
+        }
+    }));
+}
+
+fn begin_request(current: &AndroidSettings) -> Option<(u64, String)> {
+    with_state(|state| {
+        if state.pending_request_id.is_some() {
+            return None;
+        }
+        let request_id = state.next_request_id;
+        state.next_request_id = state.next_request_id.wrapping_add(1).max(1);
+        state.pending_request_id = Some(request_id);
+        Some((request_id, current.dialog_payload(request_id)))
+    })
 }
 
 /// Show the settings dialog synchronously from a JNI callback running on the
@@ -346,45 +618,31 @@ pub(crate) fn show_settings_dialog_sync(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
 ) -> Result<bool, String> {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    if guard.in_flight {
+    let current = with_state(|state| state.cache.clone())
+        .ok_or_else(|| "Android settings cache is empty".to_string())?;
+    let Some((request_id, payload)) = begin_request(&current) else {
         return Ok(false);
-    }
-    guard.in_flight = true;
-    let keys = guard.cached.keys.clone();
-    let labels = guard.cached.labels.clone();
-    let choices = guard.cached.choices.clone();
-    let current_indices = guard.cached.current_indices.clone();
-    drop(guard);
-
-    if let Err(error) =
-        show_settings_with_env(env, activity, &keys, &labels, &choices, &current_indices)
-    {
-        SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
+    };
+    if let Err(error) = show_settings_with_env(env, activity, &payload) {
+        with_state(|state| {
+            if state.pending_request_id == Some(request_id) {
+                state.pending_request_id = None;
+            }
+        });
         return Err(error);
     }
     Ok(true)
 }
 
-pub(crate) fn bind_app(app: &AndroidApp) {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    guard.waker = Some(app.create_waker());
-    guard.result = None;
-    guard.in_flight = false;
-}
-
-pub(crate) fn reset() {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    guard.result = None;
-    guard.in_flight = false;
-}
-
 pub(crate) fn take_result() -> Option<SettingsDialogResult> {
-    SETTINGS
-        .lock()
-        .expect("settings mutex poisoned")
-        .result
-        .take()
+    with_state(|state| state.result.take())
+}
+
+pub(crate) fn reset_transient() {
+    with_state(|state| {
+        state.result = None;
+        state.pending_request_id = None;
+    });
 }
 
 /// Request that the Android side show the settings dialog.
@@ -394,56 +652,32 @@ pub(crate) fn request_show_settings_dialog(
     app: &AndroidApp,
     current: &AndroidSettings,
 ) -> Result<bool, String> {
-    {
-        let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-        if guard.in_flight {
-            return Ok(false);
-        }
-        guard.in_flight = true;
-    }
-
-    let keys = current.dialog_keys();
-    let labels = current.dialog_labels();
-    let choices = current.dialog_choices();
-    let current_indices = current.current_indices();
+    let Some((request_id, payload)) = begin_request(current) else {
+        return Ok(false);
+    };
 
     let app = app.clone();
     let callback_app = app.clone();
     app.run_on_java_main_thread(Box::new(move || {
-        if let Err(error) = show_settings_on_java_main_thread(
-            &callback_app,
-            &keys,
-            &labels,
-            &choices,
-            &current_indices,
-        ) {
+        if let Err(error) = show_settings_on_java_main_thread(&callback_app, &payload) {
             log::error!("{error}");
-            SETTINGS.lock().expect("settings mutex poisoned").in_flight = false;
-            wake_main_thread();
+            with_state(|state| {
+                if state.pending_request_id == Some(request_id) {
+                    state.pending_request_id = None;
+                }
+            });
+            bridge::wake();
         }
     }));
     Ok(true)
 }
 
-fn show_settings_on_java_main_thread(
-    app: &AndroidApp,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
-) -> Result<(), String> {
+fn show_settings_on_java_main_thread(app: &AndroidApp, payload: &str) -> Result<(), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     vm.attach_current_thread(|env| {
         let activity_raw = app.activity_as_ptr() as jobject;
         let activity = unsafe { env.as_cast_raw::<Global<JObject<'static>>>(&activity_raw)? };
-        show_settings_with_env_inner(
-            env,
-            activity.as_ref(),
-            keys,
-            labels,
-            choices,
-            current_indices,
-        )
+        show_settings_with_env_inner(env, activity.as_ref(), payload)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
 }
@@ -451,14 +685,10 @@ fn show_settings_on_java_main_thread(
 fn show_settings_with_env(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
+    payload: &str,
 ) -> Result<(), String> {
-    let n = keys.len();
-    env.with_local_frame(4 + n * 4 + 8, |env| {
-        show_settings_with_env_inner(env, activity, keys, labels, choices, current_indices)
+    env.with_local_frame(8, |env| {
+        show_settings_with_env_inner(env, activity, payload)
     })
     .map_err(|error| format!("failed to show Android settings dialog: {error:?}"))
 }
@@ -466,58 +696,33 @@ fn show_settings_with_env(
 fn show_settings_with_env_inner(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
-    keys: &[String],
-    labels: &[String],
-    choices: &[String],
-    current_indices: &[String],
+    payload: &str,
 ) -> Result<(), jni::errors::Error> {
-    let string_class = env.find_class(jni_str!("java/lang/String"))?;
-
-    let mut make_string_array = |items: &[String]| -> Result<JObjectArray<'_>, jni::errors::Error> {
-        let arr = env.new_object_array(items.len() as _, &string_class, JObject::null())?;
-        for (i, s) in items.iter().enumerate() {
-            let js = env.new_string(s.as_str())?;
-            arr.set_element(env, i, &js)?;
-        }
-        Ok(arr)
-    };
-
-    let keys_arr = make_string_array(keys)?;
-    let labels_arr = make_string_array(labels)?;
-    let choices_arr = make_string_array(choices)?;
-    let current_arr = make_string_array(current_indices)?;
+    let payload = env.new_string(payload)?;
 
     env.call_method(
         activity,
         jni_str!("showSettingsDialog"),
-        jni_sig!("([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;)V"),
-        &[
-            JValue::Object(keys_arr.as_ref()),
-            JValue::Object(labels_arr.as_ref()),
-            JValue::Object(choices_arr.as_ref()),
-            JValue::Object(current_arr.as_ref()),
-        ],
+        jni_sig!("(Ljava/lang/String;)V"),
+        &[JValue::Object(payload.as_ref())],
     )?;
     Ok(())
 }
 
-fn publish_result(result: SettingsDialogResult) {
-    let mut guard = SETTINGS.lock().expect("settings mutex poisoned");
-    guard.result = Some(result);
-    guard.in_flight = false;
-    drop(guard);
-    wake_main_thread();
-}
-
-fn wake_main_thread() {
-    if let Some(waker) = SETTINGS
-        .lock()
-        .expect("settings mutex poisoned")
-        .waker
-        .clone()
-    {
-        waker.wake();
+fn publish_result(request_id: u64, result: SettingsDialogResult) {
+    let accepted = with_state(|state| {
+        if state.pending_request_id != Some(request_id) {
+            return false;
+        }
+        state.result = Some(result);
+        state.pending_request_id = None;
+        true
+    });
+    if !accepted {
+        log::warn!("ignoring stale Android settings result for request {request_id}");
+        return;
     }
+    bridge::wake();
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +730,7 @@ fn wake_main_thread() {
 // ---------------------------------------------------------------------------
 //
 // * `result == null`  → dialog was dismissed
-// * `result` is a comma-separated string of choice indices, e.g. "0,4,1,1,1,1"
+// * `result` is a versioned JSON object containing request ID and keyed values.
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
@@ -534,24 +739,38 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     result: JString<'_>,
 ) {
     match env
-        .with_env(|env| -> jni::errors::Result<SettingsDialogResult> {
+        .with_env(|env| -> jni::errors::Result<Option<String>> {
             if result.is_null() {
-                Ok(SettingsDialogResult::Dismissed)
+                Ok(None)
             } else {
-                let result = result.try_to_string(env)?;
-                Ok(SettingsDialogResult::Applied(result))
+                Ok(Some(result.try_to_string(env)?))
             }
         })
         .into_outcome()
     {
-        jni::Outcome::Ok(r) => publish_result(r),
+        jni::Outcome::Ok(Some(raw)) => match serde_json::from_str::<SettingsResultPayload>(&raw) {
+            Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => {
+                let result = if payload.dismissed {
+                    SettingsDialogResult::Dismissed
+                } else {
+                    SettingsDialogResult::Applied(payload.values)
+                };
+                publish_result(payload.request_id, result);
+            }
+            Ok(payload) => log::error!(
+                "unsupported Android settings result schema {}",
+                payload.schema_version
+            ),
+            Err(error) => log::error!("failed to parse Android settings result: {error}"),
+        },
+        jni::Outcome::Ok(None) => log::warn!("ignoring settings result without request ID"),
         jni::Outcome::Err(error) => {
             log::error!("failed to decode Android settings dialog result: {error:?}");
-            publish_result(SettingsDialogResult::Dismissed);
+            with_state(|state| state.pending_request_id = None);
         }
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
-            publish_result(SettingsDialogResult::Dismissed);
+            with_state(|state| state.pending_request_id = None);
         }
     }
 }
@@ -565,6 +784,8 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::factory::CoreFactory;
+    use nerust_gbc_factory::GbcFactory;
+    use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_settings::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
@@ -580,6 +801,10 @@ mod tests {
             NesFactory.system_id(),
             Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
+        shared.systems.insert(
+            GbcFactory.system_id(),
+            Box::new(GbcSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -588,7 +813,7 @@ mod tests {
     }
 
     fn registry() -> SystemRegistry {
-        SystemRegistry::new(vec![Arc::new(NesFactory)])
+        SystemRegistry::new(vec![Arc::new(NesFactory), Arc::new(GbcFactory)])
     }
 
     fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
@@ -659,6 +884,10 @@ mod tests {
         android.latency_ms = 75;
         android.sample_rate = 44_100;
         android.vsync = false;
+        android.motion_enabled = false;
+        android.rumble_enabled = false;
+        android.rumble_strength_percent = 35;
+        android.rumble_target = RumbleTarget::Controller;
         set_system_choice(&mut android, "video.filter", "ntsc_rgb");
         android.apply_to_snapshot(&mut snapshot, &registry).unwrap();
 
@@ -667,6 +896,16 @@ mod tests {
         assert_eq!(snapshot.local.audio.latency_ms, 75);
         assert_eq!(snapshot.local.audio.sample_rate, 44_100);
         assert!(!snapshot.local.video.presentation.vsync);
+        assert!(!snapshot.local.cartridge_peripherals.motion_enabled);
+        assert!(!snapshot.local.cartridge_peripherals.rumble_enabled);
+        assert_eq!(
+            snapshot.local.cartridge_peripherals.rumble_strength_percent,
+            35
+        );
+        assert_eq!(
+            snapshot.local.cartridge_peripherals.rumble_target,
+            RumbleTarget::Controller
+        );
         let nes = snapshot
             .shared
             .systems
@@ -684,7 +923,14 @@ mod tests {
         let indices = android.current_indices();
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
-        assert_eq!(indices, vec!["0", "100", "40", "1", "1", "1", "0"]);
+        assert_eq!(
+            &indices[..16],
+            [
+                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1", "1", "1", "100",
+                "0"
+            ]
+        );
+        assert_eq!(indices.len(), 20);
     }
 
     #[test]
@@ -697,6 +943,11 @@ mod tests {
         original.latency_ms = 100;
         original.sample_rate = 44_100;
         original.vsync = false;
+        original.screen_orientation = ScreenOrientation::Landscape;
+        original.motion_enabled = false;
+        original.rumble_enabled = false;
+        original.rumble_strength_percent = 42;
+        original.rumble_target = RumbleTarget::Handset;
         set_system_choice(&mut original, "video.filter", "ntsc_svideo");
         original
             .apply_to_snapshot(&mut snapshot, &registry)
@@ -717,6 +968,7 @@ mod tests {
         original.latency_ms = 37;
         original.sample_rate = 44_100;
         original.vsync = true;
+        original.screen_orientation = ScreenOrientation::Portrait;
         set_system_choice(&mut original, "video.filter", "none");
 
         let indices_str = original.current_indices().join(",");
@@ -786,5 +1038,81 @@ mod tests {
         assert_eq!(android.dialog_labels().len(), n);
         assert_eq!(android.dialog_choices().len(), n);
         assert_eq!(android.current_indices().len(), n);
+    }
+
+    #[test]
+    fn dialog_payload_contains_schema_request_and_stable_keys() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let payload: serde_json::Value = serde_json::from_str(&android.dialog_payload(42)).unwrap();
+
+        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["requestId"], 42);
+        assert_eq!(payload["sections"][0]["id"], "audio");
+        assert_eq!(payload["sections"][0]["fields"][0]["key"], "audio_muted");
+        let fields: Vec<_> = payload["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap())
+            .collect();
+        let keys: Vec<_> = fields
+            .iter()
+            .map(|field| field["key"].as_str().unwrap())
+            .collect();
+        let volume = fields
+            .iter()
+            .find(|field| field["key"] == "master_volume")
+            .unwrap();
+        assert_eq!(volume["options"][0], "0%");
+        assert_eq!(volume["options"][100], "100%");
+        let storage = fields
+            .iter()
+            .find(|field| field["key"] == "storage.policy")
+            .unwrap();
+        assert_eq!(storage["options"][0], "Next to ROM");
+        assert_eq!(storage["options"][1], "App Storage");
+        let orientation = fields
+            .iter()
+            .find(|field| field["key"] == "screen.orientation")
+            .unwrap();
+        assert_eq!(orientation["options"][0], "Auto Rotate");
+        assert_eq!(orientation["options"][1], "Portrait");
+        assert_eq!(orientation["options"][2], "Landscape");
+        assert!(
+            payload["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|section| {
+                    section["id"] == "video"
+                        && section["fields"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|field| field["key"] == "screen.orientation")
+                })
+        );
+        assert!(keys.iter().any(|key| key.starts_with("system.gbc.")));
+    }
+
+    #[test]
+    fn keyed_indices_do_not_depend_on_map_order() {
+        let registry = registry();
+        let current = android_settings(&default_snapshot(), &registry);
+        let mut values = BTreeMap::new();
+        for (key, value) in current
+            .dialog_keys()
+            .into_iter()
+            .zip(current.current_indices())
+            .rev()
+        {
+            values.insert(key, value.parse().unwrap());
+        }
+
+        assert_eq!(
+            AndroidSettings::from_keyed_indices(&values, &current),
+            Some(current)
+        );
     }
 }

@@ -1,0 +1,10 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_gbc_device"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+nerust_input_traits.workspace = true

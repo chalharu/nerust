@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-use nerust_core_traits::audio::AudioBackend;
+use nerust_core_traits::audio::{AudioBackend, StereoSample};
 use nerust_input_traits::{Controller, ControllerHub, OpenBusReadResult, Port};
 use nerust_render_traits::FrameBuffer;
 
@@ -92,8 +92,9 @@ impl CapturingMixer {
 impl AudioBackend for CapturingMixer {
     fn start(&mut self) {}
     fn pause(&mut self) {}
-    fn push(&mut self, data: f32) {
-        self.samples.push(data);
+    fn push(&mut self, data: StereoSample) {
+        assert_eq!(data.left.to_bits(), data.right.to_bits());
+        self.samples.push(data.left);
     }
 
     fn sample_rate(&self) -> u32 {

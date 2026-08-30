@@ -3,7 +3,6 @@ on:
   push:
     branches: [master, release]
   pull_request:
-    branches: [master, release]
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -222,7 +221,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
+          key: ${{ runner.os }}-gradle-android-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }} # yamllint disable-line rule:line-length
           restore-keys: ${{ runner.os }}-gradle-android-
       - name: Build Android APK
         env:
@@ -264,7 +263,8 @@ jobs:
           persist-credentials: false
       - name: Enable KVM group access
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Set up JDK 17
@@ -300,7 +300,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }}
+          key: ${{ runner.os }}-gradle-android-e2e-api${{ matrix.api-level }}-${{ hashFiles('packaging/android/gradle/wrapper/gradle-wrapper.properties', 'packaging/android/build.gradle.kts', 'packaging/android/app/build.gradle.kts') }} # yamllint disable-line rule:line-length
           restore-keys: ${{ runner.os }}-gradle-android-e2e-
       - name: Run emulator e2e tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0

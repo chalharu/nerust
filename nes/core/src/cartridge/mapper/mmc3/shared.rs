@@ -260,9 +260,7 @@ impl Mapper4Shared {
     }
 
     fn clear_ram_mapping(&mut self) {
-        for slot in &mut self.mapper_state_mut().sram_page_table {
-            *slot = None;
-        }
+        self.mapper_state_mut().sram_page_table.fill(None);
     }
 
     pub(super) fn export_runtime_state(&self) -> Result<CartridgeRuntimeState, PersistenceError> {

@@ -64,6 +64,9 @@ pub fn validate_shared_settings(settings: &DesktopSharedSettings) -> Result<(), 
         settings.persistence.storage_policy,
         StoragePolicy::CustomDirectory
     ) {
+        if settings.persistence.storage_document_tree_uri.is_some() {
+            return Ok(());
+        }
         let Some(path) = settings.persistence.storage_directory.as_ref() else {
             return Err(SettingsError::MissingCustomStorageDirectory);
         };

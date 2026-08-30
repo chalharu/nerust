@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false">
+        <provider
+            android:name="io.github.chalharu.nerust.TestRomProvider"
+            android:authorities="io.github.chalharu.nerust.testrom"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>
