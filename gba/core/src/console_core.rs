@@ -1,8 +1,8 @@
-use nerust_core_traits::{ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind};
-use nerust_core_traits::identity::SystemIdentity;
-use nerust_render_traits::{FrameBuffer, PixelFormat};
-use crate::rom_identity::{GbaRomIdentity};
+use crate::rom_identity::GbaRomIdentity;
 use crate::rom_identity::GbaSystemId;
+use nerust_core_traits::identity::SystemIdentity;
+use nerust_core_traits::{ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind};
+use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 pub struct GbaConsoleCore {
     loaded: bool,

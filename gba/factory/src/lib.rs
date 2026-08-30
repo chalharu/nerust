@@ -18,8 +18,8 @@ use nerust_core_traits::{
 };
 use nerust_gba_settings::GbaSettings;
 use nerust_input_traits::{
-    ControllerCollection, ControllerProfile, CreateSplitError,
-    InputAssignments, InputResources, InputSystemFactory, SlotInfo,
+    ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments, InputResources,
+    InputSystemFactory, SlotInfo,
 };
 
 pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
