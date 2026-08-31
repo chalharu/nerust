@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 use crate::cpu::thumb_opcodes;

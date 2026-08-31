@@ -1,5 +1,5 @@
 use crate::cpu::arm_opcodes::helpers::{barrel_shift, barrel_shift_register};
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
@@ -190,7 +190,7 @@ fn sbc_with_flags(a: u32, b: u32, c_in: u32) -> (u32, bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::registers::CpuRegisters;
+    use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
     #[test]

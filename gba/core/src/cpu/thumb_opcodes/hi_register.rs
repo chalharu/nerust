@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u16) -> u32 {

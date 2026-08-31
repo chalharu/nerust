@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
@@ -86,7 +86,7 @@ fn multiplier_cycles(rs_val: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::registers::CpuRegisters;
+    use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
     #[test]
