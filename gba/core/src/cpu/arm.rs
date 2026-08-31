@@ -20,10 +20,14 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
 
     match bits27_25 {
         0b000 | 0b001 => {
-            // Data Processing / PSR Transfer / Multiply / Halfword
+            // Data Processing / PSR Transfer / Multiply / Halfword / SWP
             if (instr & 0x0FC000F0) == 0x00000090 {
                 // Multiply
                 return handle_multiply(regs, bus, instr);
+            }
+            if (instr & 0x0FB00FF0) == 0x01000090 {
+                // SWP/SWPB
+                return handle_swp(regs, bus, instr);
             }
             if (instr & 0x0FBF0FFF) == 0x010F0000 {
                 return handle_psr(regs, instr);
@@ -92,6 +96,26 @@ fn handle_data_processing(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
 }
 fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::halfword_transfer::handle(regs, bus, instr)
+}
+fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    let b = (instr >> 22) & 1 != 0;
+    let rn = ((instr >> 16) & 0xF) as usize;
+    let rd = ((instr >> 12) & 0xF) as usize;
+    let rm = (instr & 0xF) as usize;
+    let addr = regs.r(rn);
+    let rm_val = regs.r(rm);
+    let mem_val = if b {
+        bus.read8(addr) as u32
+    } else {
+        bus.read32(addr)
+    };
+    if b {
+        bus.write8(addr, (rm_val & 0xFF) as u8);
+    } else {
+        bus.write32(addr, rm_val);
+    }
+    regs.set_r(rd, mem_val);
+    4
 }
 fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::multiply::handle(regs, bus, instr)
