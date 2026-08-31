@@ -8,11 +8,18 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     let s = (instr >> 20) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
+    let register_shift = !i && (instr >> 4) & 1 != 0;
     // Operand2 always passes through the barrel shifter, including immediates.
     let (op2, shifter_carry) = operand2(regs, instr, i);
-    let (result, carry, overflow) = execute(opcode, regs.r(rn), op2, shifter_carry, regs.cpsr_c());
+    let rn_value = register_operand(regs, rn, register_shift);
+    let (result, carry, overflow) = execute(opcode, rn_value, op2, shifter_carry, regs.cpsr_c());
     // TST/TEQ/CMP/CMN update flags without writing Rd.
     let flag_only = matches!(opcode, 0x8..=0xB);
+    if flag_only && rd == 15 && s {
+        // Unpredictable on later ARM cores; ARM7TDMI restores CPSR without writing PC.
+        regs.set_cpsr(regs.spsr());
+        return 1 + u32::from(register_shift);
+    }
     if !flag_only {
         write_result(regs, rd, result, s);
     }
@@ -20,7 +27,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
         update_flags(regs, opcode, result, carry, overflow);
     }
     // Register-specified shifts consume one additional internal cycle.
-    1 + u32::from(!i && ((instr >> 4) & 1) != 0)
+    1 + u32::from(register_shift)
 }
 
 fn operand2(regs: &CpuRegisters, instr: u32, immediate: bool) -> (u32, bool) {
@@ -29,14 +36,21 @@ fn operand2(regs: &CpuRegisters, instr: u32, immediate: bool) -> (u32, bool) {
         let rot = ((instr >> 8) & 0xF) * 2;
         return immediate_operand(imm, rot, regs.cpsr_c());
     }
-    let value = regs.r((instr & 0xF) as usize);
+    let rm = (instr & 0xF) as usize;
     let shift_type = ((instr >> 5) & 0b11) as u8;
     if (instr >> 4) & 1 != 0 {
+        let value = register_operand(regs, rm, true);
         let amount = regs.r(((instr >> 8) & 0xF) as usize) & 0xFF;
         barrel_shift_register(value, shift_type, amount, regs.cpsr_c())
     } else {
+        let value = regs.r(rm);
         barrel_shift(value, shift_type, (instr >> 7) & 0x1F, regs.cpsr_c())
     }
+}
+
+fn register_operand(regs: &CpuRegisters, register: usize, register_shift: bool) -> u32 {
+    regs.r(register)
+        .wrapping_add(u32::from(register == 15 && register_shift) * 4)
 }
 
 fn immediate_operand(value: u32, rotation: u32, carry: bool) -> (u32, bool) {
@@ -159,5 +173,46 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         handle(&mut regs, &mut bus, 0xE3100001); // TST R0,#1
         assert!(regs.cpsr_v());
+    }
+
+    #[test]
+    fn add_sets_and_clears_overflow() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(0, 0x7FFFFFFF);
+        handle(&mut regs, &mut bus, 0xE2900001); // ADDS R0,R0,#1
+        assert!(regs.cpsr_v());
+        assert!(!crate::cpu::arm_opcodes::helpers::condition_passed(
+            regs.cpsr(),
+            0x7
+        )); // VC
+
+        regs.set_r(0, 0);
+        handle(&mut regs, &mut bus, 0xE2900001);
+        assert!(!regs.cpsr_v());
+        assert!(!crate::cpu::arm_opcodes::helpers::condition_passed(
+            regs.cpsr(),
+            0x6
+        )); // VS
+    }
+
+    #[test]
+    fn rotated_immediates_build_full_word() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        for instruction in [0xE3A000FF, 0xE3800CFF, 0xE38008FF, 0xE380047F] {
+            handle(&mut regs, &mut bus, instruction);
+        }
+        assert_eq!(regs.r(0), 0x7FFFFFFF);
+    }
+
+    #[test]
+    fn register_shift_reads_pc_as_instruction_plus_12() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000108);
+        regs.set_r(0, 0);
+        let mut bus = GbaMemoryBus::new();
+        handle(&mut regs, &mut bus, 0xE1A0001F); // MOV R0,PC,LSL R0
+        assert_eq!(regs.r(0), 0x0800010C);
     }
 }

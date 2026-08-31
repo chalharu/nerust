@@ -37,7 +37,8 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         // Writing R15 sets the PC-written latch and causes the pipeline to refill.
         regs.set_r(rd, load(bus, addr, b));
     } else {
-        store(bus, addr, regs.r(rd), b);
+        let value = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
+        store(bus, addr, value, b);
     }
 
     if writeback && !(l && rd == rn) {

@@ -36,7 +36,6 @@ pub fn run_case(selected: &SelectedCase<'_>, rom_root: &Path) -> CaseResult {
         suite: selected.suite.name.clone(),
         description: selected.case.description.clone(),
         passed,
-        expected_failure: false,
         checks,
         error,
         error_kind,
