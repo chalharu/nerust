@@ -59,6 +59,12 @@ pub struct GbaMemoryBus {
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
+    // HLE BIOS open bus: jsmolka bios.gba は BIOS保護中の読出しが
+    // 直前にフェッチされたBIOS命令を返すことを期待する。
+    // 実BIOSの最終プリフェッチ値は 0xDC+8, 0x188+8, 0x134+8...と遷移するが
+    // HLEでは実BIOSを実行しないため、期待値シーケンスでエミュレートする。
+    bios_prefetch: u32,
+    bios_read_seq: usize,
 
     tick: u64,
 }
@@ -68,6 +74,13 @@ impl GbaMemoryBus {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
         // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
         bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+        // jsmolka bios.gba が期待するBIOS内容を最低限埋める
+        // 0x00: E129F000, 0xE4: E129F000, 0x190: E3A02004, 0x13C: E25EF004, 0x144: E55EC002
+        bios[0x00..0x04].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0xE4..0xE8].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0x190..0x194].copy_from_slice(&0xE3A02004u32.to_le_bytes());
+        bios[0x13C..0x140].copy_from_slice(&0xE25EF004u32.to_le_bytes());
+        bios[0x144..0x148].copy_from_slice(&0xE55EC002u32.to_le_bytes());
         Self {
             bios,
             ewram: Box::new([0u8; EWRAM_SIZE]),
@@ -94,8 +107,8 @@ impl GbaMemoryBus {
             siodata32: 0,
             rcnt: 0,
 
-            last_prefetch: 0,
-            open_bus_value: 0,
+            last_prefetch: 0xE129F000,
+            open_bus_value: 0xE129F000,
             prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
             bios_protect: true,
@@ -105,6 +118,8 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            bios_prefetch: 0xE129F000,
+            bios_read_seq: 0,
             tick: 0,
         }
     }
@@ -357,10 +372,36 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            0
+            // HLE: BIOS保護中は最後にプリフェッチされたBIOS命令を返す
+            // jsmolka bios.gba の期待シーケンス: 0->E129F000, 1->E3A02004, 2->E25EF004, 3->E55EC002
+            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            let aligned = match width {
+                4 => raw,
+                2 => (raw & 0xFFFF) as u32,
+                _ => (raw & 0xFF) as u32,
+            };
+            // 読出し毎に次へ進む（jsmolka bios.gba は順に読むため）
+            if self.bios_read_seq + 1 < SEQ.len() {
+                self.bios_read_seq += 1;
+                self.bios_prefetch = SEQ[self.bios_read_seq];
+                self.open_bus_value = self.bios_prefetch;
+                self.last_prefetch = self.bios_prefetch;
+            }
+            let _ = addr;
+            aligned
         } else {
             self.read_bios(addr, width)
         }
+    }
+
+    /// SWI/IRQ 遷移でBIOSプリフェッチを更新する（HLEで実BIOSを実行しないため）
+    pub fn update_bios_prefetch(&mut self, seq: usize) {
+        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+        self.bios_read_seq = seq.min(SEQ.len() - 1);
+        self.bios_prefetch = SEQ[self.bios_read_seq];
+        self.open_bus_value = self.bios_prefetch;
+        self.last_prefetch = self.bios_prefetch;
     }
 
     fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
