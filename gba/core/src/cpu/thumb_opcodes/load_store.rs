@@ -53,7 +53,7 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
             3
         }
         0b10 => {
-            regs.set_r(rd, bus.read16(addr) as u32); // LDRH
+            regs.set_r(rd, bus.read_ldr_halfword(addr)); // LDRH
             3
         }
         _ => {
@@ -105,7 +105,7 @@ pub fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
     let rd = (instr & 0x7) as usize;
     let addr = regs.r(rb).wrapping_add(offset << 1);
     if l {
-        let val = bus.read16(addr) as u32;
+        let val = bus.read_ldr_halfword(addr);
         regs.set_r(rd, val);
         3
     } else {

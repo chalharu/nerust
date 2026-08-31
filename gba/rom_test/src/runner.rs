@@ -36,6 +36,7 @@ pub fn run_case(selected: &SelectedCase<'_>, rom_root: &Path) -> CaseResult {
         suite: selected.suite.name.clone(),
         description: selected.case.description.clone(),
         passed,
+        expected_failure: false,
         checks,
         error,
         error_kind,
@@ -59,7 +60,7 @@ fn run_case_inner(
         )));
     }
     let rom = std::fs::read(&rom_path)?;
-    let mut system = GbaSystem::from_rom(rom)
+    let mut system = GbaSystem::from_test_rom(rom)
         .ok_or_else(|| RomTestError::InvalidRom(rom_path.display().to_string()))?;
 
     let mut completion_tracker = CompletionTracker::default();

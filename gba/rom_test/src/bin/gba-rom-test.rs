@@ -40,16 +40,23 @@ fn main() {
         std::process::exit(2);
     }
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
-    let results = run_manifest(&rom_root, &cases);
+    let mut results = run_manifest(&rom_root, &cases);
+    for result in &mut results {
+        result.expected_failure = manifest.is_expected_failure(&result.id);
+    }
     match cli.format {
         OutputFormat::Json => println!("{}", write_json(&results)),
         OutputFormat::Text => {
             for result in &results {
-                if result.passed {
+                if result.passed && !result.expected_failure {
                     println!(
                         "{} ... ok ({} T-cycles)",
                         result.id, result.executed_tcycles
                     );
+                } else if result.expected_failure && !result.passed {
+                    println!("{} ... expected failure", result.id);
+                } else if result.expected_failure {
+                    println!("{} ... UNEXPECTED PASS", result.id);
                 } else {
                     let detail = result.error.clone().unwrap_or_else(|| {
                         result
@@ -72,9 +79,12 @@ fn main() {
     }
     let summary = Summary::of(&results);
     if matches!(cli.format, OutputFormat::Text) {
-        println!("\n{} passed, {} failed", summary.passed, summary.failed);
+        println!(
+            "\n{} passed, {} failed, {} expected, {} unexpected",
+            summary.passed, summary.failed, summary.expected_failures, summary.unexpected
+        );
     }
-    if summary.failed > 0 {
+    if summary.unexpected > 0 {
         std::process::exit(1);
     }
 }

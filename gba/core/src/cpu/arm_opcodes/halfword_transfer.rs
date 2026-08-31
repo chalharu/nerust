@@ -41,7 +41,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
 
 fn load(bus: &mut GbaMemoryBus, address: u32, signed: bool, halfword: bool) -> u32 {
     match (signed, halfword, address & 1 != 0) {
-        (false, _, _) => u32::from(bus.read16(address)),
+        (false, _, _) => bus.read_ldr_halfword(address),
         (true, false, _) | (true, true, true) => bus.read8(address) as i8 as i32 as u32,
         (true, true, false) => bus.read16(address) as i16 as i32 as u32,
     }

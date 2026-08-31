@@ -123,6 +123,16 @@ impl GbaMemoryBus {
         self.align_read(addr, 2, data) as u16
     }
 
+    /// ARM7TDMI LDRH result, including the 32-bit ROR 8 result for odd addresses.
+    pub fn read_ldr_halfword(&mut self, addr: u32) -> u32 {
+        let (data, _wait) = self.read_internal(addr, 2);
+        if addr & 1 != 0 {
+            (data & 0xFFFF).rotate_right(8)
+        } else {
+            data & 0xFFFF
+        }
+    }
+
     pub fn read32(&mut self, addr: u32) -> u32 {
         let (data, _wait) = self.read_internal(addr, 4);
         self.align_read(addr, 4, data)
@@ -821,6 +831,10 @@ mod tests {
         bus.write16(0x03000000, 0xABCD);
         // ARM7TDMIの奇数アドレスLDRHは、整列読出しを8bitローテートする。
         assert_eq!(bus.read16(0x03000001), 0xCDAB);
+        assert_eq!(bus.read_ldr_halfword(0x03000001), 0xCD0000AB);
+
+        bus.write16(0x03000000, 0x00FF);
+        assert_eq!(bus.read_ldr_halfword(0x03000001), 0xFF000000);
     }
 
     #[test]
