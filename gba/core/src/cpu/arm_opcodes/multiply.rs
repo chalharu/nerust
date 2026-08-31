@@ -2,6 +2,54 @@ use crate::cpu::registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    let is_long = (instr >> 24) & 1 != 0;
+    if is_long {
+        // Multiply Long: UMULL/UMLAL/SMULL/SMLAL
+        let u = (instr >> 23) & 1 != 0;
+        let a = (instr >> 21) & 1 != 0;
+        let s = (instr >> 20) & 1 != 0;
+        let rd_hi = ((instr >> 16) & 0xF) as usize;
+        let rd_lo = ((instr >> 12) & 0xF) as usize;
+        let rs = ((instr >> 8) & 0xF) as usize;
+        let rm = (instr & 0xF) as usize;
+
+        let rs_val = regs.r(rs);
+        let rm_val = regs.r(rm);
+        let (hi, lo) = if u {
+            // Unsigned
+            let res = (rm_val as u64).wrapping_mul(rs_val as u64);
+            if a {
+                let lo_val = regs.r(rd_lo) as u64;
+                let hi_val = regs.r(rd_hi) as u64;
+                let acc = (hi_val << 32) | lo_val;
+                let res_acc = res.wrapping_add(acc);
+                ((res_acc >> 32) as u32, res_acc as u32)
+            } else {
+                ((res >> 32) as u32, res as u32)
+            }
+        } else {
+            // Signed
+            let res = (rm_val as i32 as i64).wrapping_mul(rs_val as i32 as i64) as u64;
+            if a {
+                let lo_val = regs.r(rd_lo) as u64;
+                let hi_val = regs.r(rd_hi) as u64;
+                let acc = (hi_val << 32) | lo_val;
+                let res_acc = res.wrapping_add(acc);
+                ((res_acc >> 32) as u32, res_acc as u32)
+            } else {
+                ((res >> 32) as u32, res as u32)
+            }
+        };
+        regs.set_r(rd_hi, hi);
+        regs.set_r(rd_lo, lo);
+        if s {
+            regs.set_cpsr_n((hi >> 31) & 1 != 0);
+            regs.set_cpsr_z(hi == 0 && lo == 0);
+        }
+        // Long multiply takes 2 extra cycles?
+        return 2 + if a { 1 } else { 0 };
+    }
+
     let a = (instr >> 21) & 1 != 0; // MLA if 1
     let s = (instr >> 20) & 1 != 0;
     let rd = ((instr >> 16) & 0xF) as usize;
@@ -20,10 +68,8 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     if s {
         regs.set_cpsr_n((result >> 31) & 1 != 0);
         regs.set_cpsr_z(result == 0);
-        // C and V unchanged for MUL?
     }
 
-    // Multiply cycles: based on Rs value (early termination)
     let cycles = if rs_val & 0xFFFFFF00 == 0 || rs_val & 0xFFFFFF00 == 0xFFFFFF00 {
         1
     } else if rs_val & 0xFFFF0000 == 0 || rs_val & 0xFFFF0000 == 0xFFFF0000 {
