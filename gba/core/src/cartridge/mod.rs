@@ -2,6 +2,7 @@ pub mod header;
 pub mod save;
 
 use self::header::GbaHeader;
+use self::save::helpers::read_slice;
 use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
 
 #[derive(Debug)]
@@ -56,24 +57,6 @@ impl Cartridge {
 
     pub fn ram_restore(&mut self, data: &[u8]) {
         self.save.ram_restore(data);
-    }
-}
-
-fn read_slice(slice: &[u8], off: usize, width: u8) -> u32 {
-    match width {
-        4 => {
-            let b0 = *slice.get(off).unwrap_or(&0xFF) as u32;
-            let b1 = *slice.get(off + 1).unwrap_or(&0xFF) as u32;
-            let b2 = *slice.get(off + 2).unwrap_or(&0xFF) as u32;
-            let b3 = *slice.get(off + 3).unwrap_or(&0xFF) as u32;
-            b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
-        }
-        2 => {
-            let b0 = *slice.get(off).unwrap_or(&0xFF) as u32;
-            let b1 = *slice.get(off + 1).unwrap_or(&0xFF) as u32;
-            b0 | (b1 << 8)
-        }
-        _ => *slice.get(off).unwrap_or(&0xFF) as u32,
     }
 }
 
