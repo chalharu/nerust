@@ -14,35 +14,25 @@ fn run_generated_manifest_case(id: &str) {
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
     let selected = manifest.select(&[id.to_string()]);
     assert_eq!(selected.len(), 1, "generated case `{id}` must exist");
-    let mut result = runner::run_case(&selected[0], &rom_root);
-    result.expected_failure = manifest.is_expected_failure(id);
-    assert_case_expected(result);
+    assert_case_passed(runner::run_case(&selected[0], &rom_root));
 }
 
 #[cfg(test)]
-fn assert_case_expected(result: report::CaseResult) {
+fn assert_case_passed(result: report::CaseResult) {
     assert!(
-        !result.unexpected(),
+        result.passed,
         "{}: {}",
         result.id,
-        if result.passed {
-            "unexpected pass; remove it from expected_failures".to_string()
-        } else {
-            result.error.unwrap_or_else(|| {
-                result
-                    .checks
-                    .iter()
-                    .filter(|check| !check.passed)
-                    .map(|check| {
-                        format!(
-                            "{}: expected {}, got {}",
-                            check.name, check.expected, check.actual
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })
-        }
+        result.error.unwrap_or_else(|| result
+            .checks
+            .iter()
+            .filter(|check| !check.passed)
+            .map(|check| format!(
+                "{}: expected {}, got {}",
+                check.name, check.expected, check.actual
+            ))
+            .collect::<Vec<_>>()
+            .join("; "))
     );
 }
 

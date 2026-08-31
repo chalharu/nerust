@@ -138,6 +138,11 @@ impl GbaMemoryBus {
         self.align_read(addr, 4, data)
     }
 
+    /// Aligned word transfer used by LDM, which ignores address bits 0-1 without ROR.
+    pub fn read_aligned32(&mut self, addr: u32) -> u32 {
+        self.read_internal(addr & !3, 4).0
+    }
+
     pub fn write8(&mut self, addr: u32, value: u8) {
         self.write_internal(addr, 1, value as u32);
     }
@@ -161,18 +166,18 @@ impl GbaMemoryBus {
     pub fn cycles_for(&self, addr: u32, width: u8) -> u8 {
         match addr {
             0x00000000..=0x00003FFF => 1,
-            0x02000000..=0x0203FFFF => {
+            0x02000000..=0x02FFFFFF => {
                 if width == 4 {
                     6
                 } else {
                     3
                 }
             }
-            0x03000000..=0x03007FFF => 1,
+            0x03000000..=0x03FFFFFF => 1,
             0x04000000..=0x040003FE => 1,
-            0x05000000..=0x050003FF => 1,
-            0x06000000..=0x06017FFF => 1,
-            0x07000000..=0x070003FF => 1,
+            0x05000000..=0x05FFFFFF => 1,
+            0x06000000..=0x06FFFFFF => 1,
+            0x07000000..=0x07FFFFFF => 1,
             0x08000000..=0x0DFFFFFF => {
                 if self.is_sequential(addr, width)
                     && self.prefetch_enabled
@@ -338,12 +343,12 @@ impl GbaMemoryBus {
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
-            0x02000000..=0x0203FFFF => self.read_ewram(addr, width),
-            0x03000000..=0x03007FFF => self.read_iwram(addr, width),
+            0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
+            0x03000000..=0x03FFFFFF => self.read_iwram(addr, width),
             0x04000000..=0x040003FE => self.read_io(addr, width),
-            0x05000000..=0x050003FF => self.read_palette(addr, width),
-            0x06000000..=0x06017FFF => self.read_vram(addr, width),
-            0x07000000..=0x070003FF => self.read_oam(addr, width),
+            0x05000000..=0x05FFFFFF => self.read_palette(addr, width),
+            0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
+            0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
             0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
             0x0E000000..=0x0E00FFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
@@ -408,12 +413,12 @@ impl GbaMemoryBus {
         let wait = self.cycles_for(addr, width);
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         match addr {
-            0x02000000..=0x0203FFFF => self.write_ewram(addr, width, value),
-            0x03000000..=0x03007FFF => self.write_iwram(addr, width, value),
+            0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
+            0x03000000..=0x03FFFFFF => self.write_iwram(addr, width, value),
             0x04000000..=0x040003FE => self.write_io(addr, width, value),
-            0x05000000..=0x050003FF => self.write_palette(addr, width, value),
-            0x06000000..=0x06017FFF => self.write_vram(addr, width, value),
-            0x07000000..=0x070003FF => self.write_oam(addr, width, value),
+            0x05000000..=0x05FFFFFF => self.write_palette(addr, width, value),
+            0x06000000..=0x06FFFFFF => self.write_vram(addr, width, value),
+            0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
             0x0E000000..=0x0E00FFFF => self.write_sram(addr, width, value),
             _ => {
                 // 未マッピング・ROM・BIOSへの書き込みは無視だが open_bus は更新
@@ -528,34 +533,49 @@ impl GbaMemoryBus {
     // -- Region writers --
 
     fn write_ewram(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FFFF) as usize;
+        let off = Self::aligned_off(addr, width, 0x3FFFF);
         write_slice(&mut *self.ewram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x7FFF) as usize;
+        let off = Self::aligned_off(addr, width, 0x7FFF);
         write_slice(&mut *self.iwram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_palette(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FF) as usize;
-        write_slice(&mut *self.palette_ram, off, width, value);
+        let off = Self::aligned_off(addr, width, 0x3FF);
+        if width == 1 {
+            let aligned = off & !1;
+            write_slice(&mut *self.palette_ram, aligned, 2, (value & 0xFF) * 0x0101);
+        } else {
+            write_slice(&mut *self.palette_ram, off, width, value);
+        }
         self.open_bus_value = value;
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
         // TODO(gba-vram-mirror): 同上
-        let off = (addr as usize) & 0x17FFF;
+        let off = Self::aligned_off(addr, width, 0x17FFF);
         let off = off % VRAM_SIZE;
-        write_slice(&mut *self.vram, off, width, value);
+        if width == 1 {
+            let bitmap_mode = self.disp_cnt & 7 >= 3;
+            let object_start = if bitmap_mode { 0x14000 } else { 0x10000 };
+            if off < object_start {
+                write_slice(&mut *self.vram, off & !1, 2, (value & 0xFF) * 0x0101);
+            }
+        } else {
+            write_slice(&mut *self.vram, off, width, value);
+        }
         self.open_bus_value = value;
     }
 
     fn write_oam(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FF) as usize;
-        write_slice(&mut *self.oam, off, width, value);
+        let off = Self::aligned_off(addr, width, 0x3FF);
+        if width != 1 {
+            write_slice(&mut *self.oam, off, width, value);
+        }
         self.open_bus_value = value;
     }
 

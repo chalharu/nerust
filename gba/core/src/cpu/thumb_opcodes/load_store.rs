@@ -132,27 +132,58 @@ pub fn handle_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
     let l = (instr >> 11) & 1 != 0;
     let rb = ((instr >> 8) & 0x7) as usize;
     let rlist = instr & 0xFF;
+    if rlist == 0 {
+        return handle_empty_multiple(regs, bus, rb, l);
+    }
     let mut addr = regs.r(rb);
+    let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
+    let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
     for i in 0..8 {
         if (rlist >> i) & 1 != 0 {
             if l {
                 regs.set_r(i, bus.read32(addr));
             } else {
-                bus.write32(addr, regs.r(i));
+                let value = if i == rb && rb != first_register {
+                    final_addr
+                } else {
+                    regs.r(i)
+                };
+                bus.write32(addr, value);
             }
             addr = addr.wrapping_add(4);
             count += 1;
         }
     }
-    // Writeback if not in list
-    if (rlist >> rb) & 1 == 0 {
+    // STM always writes back. LDM suppresses writeback when the base is loaded.
+    if !l || (rlist >> rb) & 1 == 0 {
         regs.set_r(rb, addr);
     }
     if l {
         3 + count as u32
     } else {
         2 + count as u32
+    }
+}
+
+/// Empty Thumb block-transfer lists act as a PC transfer but write back 16 words.
+fn handle_empty_multiple(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    base_register: usize,
+    load: bool,
+) -> u32 {
+    let address = regs.r(base_register);
+    if load {
+        let target = bus.read32(address);
+        regs.set_r(base_register, address.wrapping_add(0x40));
+        regs.set_pc(target);
+        19
+    } else {
+        // Empty STM stores the PC value observed by the following Thumb instruction.
+        bus.write32(address, regs.pc().wrapping_add(2));
+        regs.set_r(base_register, address.wrapping_add(0x40));
+        18
     }
 }
 
@@ -172,5 +203,25 @@ mod tests {
         assert_eq!(regs.r(0), 0xFFFFFFFF);
         handle_sign_extended(&mut regs, &mut bus, 0x5E88); // LDRSH R0,[R1,R2]
         assert_eq!(regs.r(0), 0xFFFF80FF);
+    }
+
+    #[test]
+    fn empty_multiple_transfers_pc_and_writes_back_0x40() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_pc(0x08000104);
+        regs.set_r(0, 0x03000000);
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x03000000, 0x08000201);
+
+        handle_multiple(&mut regs, &mut bus, 0xC800);
+        assert_eq!(regs.r(0), 0x03000040);
+        assert_eq!(regs.pc(), 0x08000200);
+
+        regs.set_pc(0x08000304);
+        regs.set_r(0, 0x03000000);
+        handle_multiple(&mut regs, &mut bus, 0xC000);
+        assert_eq!(regs.r(0), 0x03000040);
+        assert_eq!(bus.read32(0x03000000), 0x08000306);
     }
 }

@@ -37,7 +37,7 @@ fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32
     if (instr & 0x0FFFFFF0) == 0x012FFF10 {
         return handle_bx(regs, instr);
     }
-    if (instr & 0x00000090) == 0x00000090 {
+    if (instr >> 25) & 1 == 0 && (instr & 0x00000090) == 0x00000090 {
         return handle_halfword(regs, bus, instr);
     }
     handle_data_processing(regs, bus, instr)
@@ -156,6 +156,14 @@ mod tests {
         decode_arm(&mut regs, &mut bus, 0xE0832190);
         assert_eq!(regs.r(2), 12);
         assert_eq!(regs.r(3), 0);
+    }
+
+    #[test]
+    fn immediate_with_bits_7_and_4_remains_data_processing() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        decode_arm(&mut regs, &mut bus, 0xE3A000FF); // MOV R0,#0xFF
+        assert_eq!(regs.r(0), 0xFF);
     }
 
     #[test]
