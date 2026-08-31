@@ -104,58 +104,27 @@ impl RomManifest {
         let rom_root = manifest_dir.join(&self.rom_root);
         for suite in &mut self.suites {
             let suite_dir = rom_root.join(&suite.name);
-            let mut matched = BTreeSet::new();
-            for pattern in &suite.case_patterns {
-                for exclude in &pattern.exclude_globs {
-                    glob::Pattern::new(exclude).map_err(|error| {
-                        RomTestError::InvalidManifest(format!(
-                            "invalid exclude glob `{exclude}`: {error}"
-                        ))
-                    })?;
-                }
-                let absolute = suite_dir.join(&pattern.glob);
-                let paths = glob::glob(&absolute.to_string_lossy()).map_err(|error| {
-                    RomTestError::InvalidManifest(format!(
-                        "invalid case glob `{}`: {error}",
-                        pattern.glob
-                    ))
-                })?;
-                for path in paths {
-                    let path = path.map_err(|error| {
-                        RomTestError::InvalidManifest(format!(
-                            "failed to expand glob `{}`: {error}",
-                            pattern.glob
-                        ))
-                    })?;
-                    let relative = path.strip_prefix(&suite_dir).map_err(|_| {
-                        RomTestError::InvalidManifest(format!(
-                            "glob `{}` escaped suite `{}`",
-                            pattern.glob, suite.name
-                        ))
-                    })?;
-                    if pattern.exclude_globs.iter().any(|exclude| {
-                        glob::Pattern::new(exclude)
-                            .expect("exclude was validated")
-                            .matches_path(relative)
-                    }) || !matched.insert(path.clone())
-                    {
-                        continue;
-                    }
-                    let stem = relative
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| {
-                            RomTestError::InvalidManifest("ROM filename must be UTF-8".to_string())
-                        })?;
-                    suite.cases.push(RomCase {
-                        id: format!("{}{}", pattern.id_prefix, stem),
-                        rom: relative.to_string_lossy().into_owned(),
-                        cycles: pattern.cycles,
-                        completion: pattern.completion.clone(),
-                        description: stem.replace(['_', '-'], " "),
-                        verify: pattern.verify.clone(),
-                    });
-                }
+            let patterns = suite
+                .case_patterns
+                .iter()
+                .map(|pattern| crate::case_expansion::CasePatternRef {
+                    glob: &pattern.glob,
+                    exclude_globs: &pattern.exclude_globs,
+                    id_prefix: &pattern.id_prefix,
+                })
+                .collect::<Vec<_>>();
+            let expanded = crate::case_expansion::expand_case_patterns(&suite_dir, &patterns)
+                .map_err(RomTestError::InvalidManifest)?;
+            for case in expanded {
+                let pattern = &suite.case_patterns[case.pattern_index];
+                suite.cases.push(RomCase {
+                    id: case.id,
+                    rom: case.rom,
+                    cycles: pattern.cycles,
+                    completion: pattern.completion.clone(),
+                    description: case.description,
+                    verify: pattern.verify.clone(),
+                });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
         }

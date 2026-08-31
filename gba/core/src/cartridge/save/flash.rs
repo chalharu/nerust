@@ -137,6 +137,7 @@ impl FlashSave {
     }
 
     fn execute_command(&mut self, address: u32, command: u8) {
+        // This is reached only after the AA@5555, 55@2AAA unlock sequence.
         self.state = FlashState::Ready;
         match command {
             0x90 => self.id_mode = true,

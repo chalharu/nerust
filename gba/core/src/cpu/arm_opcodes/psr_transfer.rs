@@ -39,6 +39,7 @@ fn psr_operand(regs: &CpuRegisters, instr: u32) -> u32 {
 }
 
 fn apply_fields(mut current: u32, operand: u32, mask: u32) -> u32 {
+    // ARM7TDMI defines control and NZCV fields here; reserved x/s bits stay unchanged.
     if mask & 1 != 0 {
         current = (current & 0xFFFFFF00) | (operand & 0xFF);
     }
