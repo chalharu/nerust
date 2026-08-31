@@ -199,7 +199,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bank_switch_via_B0() {
+    fn bank_switch_via_b0() {
         let mut flash = FlashSave::new(true); // 128K
         assert_eq!(flash.bank, 0);
         // Write to bank 0 (AA 55 A0 + data)

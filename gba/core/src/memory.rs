@@ -340,33 +340,33 @@ impl GbaMemoryBus {
 
     fn read_bios(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FFF);
-        Self::read_slice(&*self.bios, off, width)
+        read_slice(&*self.bios, off, width)
     }
 
     fn read_ewram(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FFFF);
-        Self::read_slice(&*self.ewram, off, width)
+        read_slice(&*self.ewram, off, width)
     }
 
     fn read_iwram(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x7FFF);
-        Self::read_slice(&*self.iwram, off, width)
+        read_slice(&*self.iwram, off, width)
     }
 
     fn read_palette(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FF);
-        Self::read_slice(&*self.palette_ram, off, width)
+        read_slice(&*self.palette_ram, off, width)
     }
 
     fn read_vram(&self, addr: u32, width: u8) -> u32 {
         // TODO(gba-vram-mirror): 実機は 0x06018000以降で32KBミラー (&0x1FFFF 説あり)。Phase 3は &0x17FFF で検証。
         let off = Self::aligned_off(addr, width, 0x17FFF) % VRAM_SIZE;
-        Self::read_slice(&*self.vram, off, width)
+        read_slice(&*self.vram, off, width)
     }
 
     fn read_oam(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FF);
-        Self::read_slice(&*self.oam, off, width)
+        read_slice(&*self.oam, off, width)
     }
 
     fn read_rom(&self, addr: u32, width: u8) -> u32 {
@@ -381,7 +381,7 @@ impl GbaMemoryBus {
             return cart.read_sram(addr, width);
         }
         let off = Self::aligned_off(addr, width, 0xFFFF);
-        Self::read_slice(&*self.fallback_sram, off, width)
+        read_slice(&*self.fallback_sram, off, width)
     }
 
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
@@ -431,19 +431,19 @@ impl GbaMemoryBus {
 
     fn write_ewram(&mut self, addr: u32, width: u8, value: u32) {
         let off = (addr & 0x3FFFF) as usize;
-        Self::write_slice(&mut *self.ewram, off, width, value);
+        write_slice(&mut *self.ewram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
         let off = (addr & 0x7FFF) as usize;
-        Self::write_slice(&mut *self.iwram, off, width, value);
+        write_slice(&mut *self.iwram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_palette(&mut self, addr: u32, width: u8, value: u32) {
         let off = (addr & 0x3FF) as usize;
-        Self::write_slice(&mut *self.palette_ram, off, width, value);
+        write_slice(&mut *self.palette_ram, off, width, value);
         self.open_bus_value = value;
     }
 
@@ -451,13 +451,13 @@ impl GbaMemoryBus {
         // TODO(gba-vram-mirror): 同上
         let off = (addr as usize) & 0x17FFF;
         let off = off % VRAM_SIZE;
-        Self::write_slice(&mut *self.vram, off, width, value);
+        write_slice(&mut *self.vram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_oam(&mut self, addr: u32, width: u8, value: u32) {
         let off = (addr & 0x3FF) as usize;
-        Self::write_slice(&mut *self.oam, off, width, value);
+        write_slice(&mut *self.oam, off, width, value);
         self.open_bus_value = value;
     }
 
@@ -466,7 +466,7 @@ impl GbaMemoryBus {
             cart.write_sram(addr, width, value);
         } else {
             let off = Self::aligned_off(addr, width, 0xFFFF);
-            Self::write_slice(&mut *self.fallback_sram, off, width, value);
+            write_slice(&mut *self.fallback_sram, off, width, value);
         }
         self.open_bus_value = value;
     }
@@ -522,58 +522,6 @@ impl GbaMemoryBus {
             4 => ((addr & !3) & mask) as usize,
             2 => ((addr & !1) & mask) as usize,
             _ => (addr & mask) as usize,
-        }
-    }
-
-    // -- Slice helpers --
-
-    fn read_slice(slice: &[u8], off: usize, width: u8) -> u32 {
-        match width {
-            4 => {
-                let b0 = *slice.get(off).unwrap_or(&0) as u32;
-                let b1 = *slice.get(off + 1).unwrap_or(&0) as u32;
-                let b2 = *slice.get(off + 2).unwrap_or(&0) as u32;
-                let b3 = *slice.get(off + 3).unwrap_or(&0) as u32;
-                b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
-            }
-            2 => {
-                let b0 = *slice.get(off).unwrap_or(&0) as u32;
-                let b1 = *slice.get(off + 1).unwrap_or(&0) as u32;
-                b0 | (b1 << 8)
-            }
-            _ => *slice.get(off).unwrap_or(&0) as u32,
-        }
-    }
-
-    fn write_slice(slice: &mut [u8], off: usize, width: u8, value: u32) {
-        match width {
-            4 => {
-                if let Some(b) = slice.get_mut(off) {
-                    *b = (value & 0xFF) as u8;
-                }
-                if let Some(b) = slice.get_mut(off + 1) {
-                    *b = ((value >> 8) & 0xFF) as u8;
-                }
-                if let Some(b) = slice.get_mut(off + 2) {
-                    *b = ((value >> 16) & 0xFF) as u8;
-                }
-                if let Some(b) = slice.get_mut(off + 3) {
-                    *b = ((value >> 24) & 0xFF) as u8;
-                }
-            }
-            2 => {
-                if let Some(b) = slice.get_mut(off) {
-                    *b = (value & 0xFF) as u8;
-                }
-                if let Some(b) = slice.get_mut(off + 1) {
-                    *b = ((value >> 8) & 0xFF) as u8;
-                }
-            }
-            _ => {
-                if let Some(b) = slice.get_mut(off) {
-                    *b = (value & 0xFF) as u8;
-                }
-            }
         }
     }
 }
