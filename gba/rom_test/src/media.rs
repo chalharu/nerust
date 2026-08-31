@@ -1,3 +1,20 @@
-pub fn encode_screenshot_png(_fb: &nerust_render_traits::FrameBuffer) -> Vec<u8> {
-    Vec::new()
+use std::io::Cursor;
+
+use nerust_render_traits::FrameBuffer;
+use png::{BitDepth, ColorType, Encoder};
+
+pub fn encode_screenshot_png(fb: &FrameBuffer) -> Result<Vec<u8>, png::EncodingError> {
+    let mut rgba = Vec::with_capacity(fb.width() * fb.height() * 4);
+    for y in 0..fb.height() {
+        let start = y * fb.stride();
+        rgba.extend_from_slice(&fb.as_ref()[start..start + fb.width() * 4]);
+    }
+    let mut encoded = Cursor::new(Vec::new());
+    let mut encoder = Encoder::new(&mut encoded, fb.width() as u32, fb.height() as u32);
+    encoder.set_color(ColorType::Rgba);
+    encoder.set_depth(BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&rgba)?;
+    drop(writer);
+    Ok(encoded.into_inner())
 }

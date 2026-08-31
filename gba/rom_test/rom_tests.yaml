@@ -1,19 +1,34 @@
 rom_root: ../../roms/gba
 completion_profiles:
-  cycles_only:
+  result_ready:
     poll_interval: 256
-    stages: []
+    stages:
+      - memory:
+          - address: 0x02000000
+            not_value: 0x00
 suites:
   - name: mgba
     case_patterns:
       - glob: suite/mgba/arm/*.gba
         id_prefix: mgba_arm_
+        cycles: 100000
+        completion: result_ready
+        verify:
+          memory:
+            - address: 0x02000000
+              value: 0x01
       - glob: suite/mgba/thumb/*.gba
         id_prefix: mgba_thumb_
+        cycles: 100000
+        completion: result_ready
+        verify:
+          memory:
+            - address: 0x02000000
+              value: 0x01
   - name: custom
     cases:
       - id: custom_mem_test
-        rom: custom/mem_test.gba
+        rom: mem_test.gba
         cycles: 100000
         verify:
           memory:

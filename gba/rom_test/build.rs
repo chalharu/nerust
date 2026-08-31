@@ -20,6 +20,7 @@ struct Suite {
 #[derive(Deserialize)]
 struct Case {
     id: String,
+    rom: String,
 }
 
 #[derive(Deserialize)]
@@ -31,82 +32,110 @@ struct CasePattern {
     id_prefix: String,
 }
 
-fn main() {
-    let manifest_path =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir")).join("rom_tests.yaml");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join("rom_tests.yaml");
     println!("cargo::rerun-if-changed={}", manifest_path.display());
 
-    let manifest_source =
-        fs::read_to_string(&manifest_path).expect("ROM test manifest should be readable");
-    let manifest: Manifest =
-        serde_saphyr::from_str(&manifest_source).expect("ROM test manifest should be valid YAML");
+    let manifest_source = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+    let manifest: Manifest = serde_saphyr::from_str(&manifest_source)
+        .map_err(|error| format!("invalid YAML in {}: {error}", manifest_path.display()))?;
     let manifest_dir = manifest_path
         .parent()
-        .expect("manifest should have a parent");
+        .ok_or("manifest has no parent directory")?;
     let rom_root = manifest_dir.join(&manifest.rom_root);
-    let cases = manifest
-        .suites
-        .into_iter()
-        .flat_map(|mut suite| {
-            let mut matched_paths = BTreeSet::new();
-            for pattern in suite.case_patterns {
-                let suite_dir = rom_root.join(&suite.name);
-                let absolute_pattern = suite_dir.join(&pattern.glob);
-                for path in glob::glob(&absolute_pattern.to_string_lossy())
-                    .expect("ROM case glob should be valid")
+    println!("cargo::rerun-if-changed={}", rom_root.display());
+    let mut cases = Vec::new();
+    for mut suite in manifest.suites {
+        let suite_dir = rom_root.join(&suite.name);
+        let mut matched_paths = BTreeSet::new();
+        for pattern in suite.case_patterns {
+            let absolute_pattern = suite_dir.join(&pattern.glob);
+            let exclude_patterns = pattern
+                .exclude_globs
+                .iter()
+                .map(|exclude| {
+                    glob::Pattern::new(exclude).map_err(|error| {
+                        std::io::Error::other(format!(
+                            "invalid exclude glob `{exclude}` in suite `{}`: {error}",
+                            suite.name
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let paths = glob::glob(&absolute_pattern.to_string_lossy()).map_err(|error| {
+                std::io::Error::other(format!(
+                    "invalid case glob `{}` in suite `{}`: {error}",
+                    pattern.glob, suite.name
+                ))
+            })?;
+            for path in paths {
+                let path = path.map_err(|error| {
+                    std::io::Error::other(format!(
+                        "failed to read case glob `{}` in suite `{}`: {error}",
+                        pattern.glob, suite.name
+                    ))
+                })?;
+                let relative = path.strip_prefix(&suite_dir).map_err(|_| {
+                    std::io::Error::other(format!(
+                        "glob `{}` matched outside suite `{}`",
+                        pattern.glob, suite.name
+                    ))
+                })?;
+                if exclude_patterns
+                    .iter()
+                    .any(|pattern| pattern.matches_path(relative))
+                    || !matched_paths.insert(path.clone())
                 {
-                    let path = path.expect("ROM case glob should be readable");
-                    let relative = path
-                        .strip_prefix(&suite_dir)
-                        .expect("ROM case glob should stay inside suite");
-                    if pattern.exclude_globs.iter().any(|exclude| {
-                        glob::Pattern::new(exclude)
-                            .is_ok_and(|pattern| pattern.matches_path(relative))
-                    }) {
-                        continue;
-                    }
-                    if !matched_paths.insert(path.clone()) {
-                        continue;
-                    }
-                    let stem = path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .expect("ROM case path should have a UTF-8 file stem");
-                    suite.cases.push(Case {
-                        id: format!("{}{}", pattern.id_prefix, stem),
-                    });
+                    continue;
                 }
+                let stem = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .ok_or_else(|| {
+                        std::io::Error::other(format!("ROM path is not UTF-8: {}", path.display()))
+                    })?;
+                suite.cases.push(Case {
+                    id: format!("{}{}", pattern.id_prefix, stem),
+                    rom: relative.to_string_lossy().into_owned(),
+                });
             }
-            suite.cases
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        !cases.is_empty(),
-        "ROM test manifest must contain at least one case"
-    );
+        }
+        cases.extend(
+            suite
+                .cases
+                .into_iter()
+                .map(|case| (suite.name.clone(), case)),
+        );
+    }
+    if cases.is_empty() {
+        return Err("ROM test manifest must contain at least one case".into());
+    }
 
     let mut generated = String::new();
     writeln!(
         generated,
-        "// @generated by gba/rom_test/build.rs - do not edit manually.\n\
-         const GENERATED_ROM_CASE_COUNT: usize = {};",
-        cases.len()
-    )
-    .unwrap();
+        "// @generated by gba/rom_test/build.rs - do not edit manually."
+    )?;
 
-    for (index, case) in cases.iter().enumerate() {
+    for (index, (suite, case)) in cases.iter().enumerate() {
+        let rom_exists = rom_root.join(suite).join(&case.rom).is_file();
+        let ignore = if rom_exists {
+            String::new()
+        } else {
+            "#[ignore = \"ROM asset is not available\"]\n".to_string()
+        };
         writeln!(
             generated,
-            "#[test]\nfn {}() {{\n    let _ = {:?};\n}}\n",
+            "#[test]\n{ignore}fn {}() {{\n    crate::run_generated_manifest_case({:?});\n}}\n",
             test_name(index, &case.id),
-            &case.id
-        )
-        .unwrap();
+            case.id
+        )?;
     }
 
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR should be available"));
-    fs::write(out_dir.join("generated_rom_manifest_tests.rs"), generated)
-        .expect("generated ROM tests should be written");
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    fs::write(out_dir.join("generated_rom_manifest_tests.rs"), generated)?;
+    Ok(())
 }
 
 fn test_name(index: usize, case_id: &str) -> String {
@@ -118,5 +147,6 @@ fn test_name(index: usize, case_id: &str) -> String {
             name.push('_');
         }
     }
+    name.truncate(120);
     name
 }
