@@ -8,6 +8,8 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
         return 1; // 条件不一致 → 1S NOP
     }
 
+    // Primary ARM classes: data/misc, single transfer, block transfer, branch,
+    // coprocessor (undefined on GBA), and software interrupt.
     match (instr >> 25) & 0b111 {
         0b000 | 0b001 => decode_data_class(regs, bus, instr),
         0b010 | 0b011 => handle_single_transfer(regs, bus, instr),
@@ -20,6 +22,8 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
 }
 
 fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    // The 000/001 class overlaps data processing, multiply, SWP, PSR, BX,
+    // and signed/halfword transfers. More-specific masks must be tested first.
     if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
         return handle_multiply(regs, bus, instr);
     }
@@ -49,6 +53,7 @@ fn decode_software_or_coprocessor(
     bus: &mut GbaMemoryBus,
     instr: u32,
 ) -> u32 {
+    // ARM7TDMI in the GBA has no coprocessor; those encodings enter UND.
     if (instr >> 24) & 1 == 1 {
         handle_swi(regs, bus, instr)
     } else {

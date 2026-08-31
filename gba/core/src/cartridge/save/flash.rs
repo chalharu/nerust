@@ -66,6 +66,7 @@ impl SaveBackend for FlashSave {
     fn write(&mut self, addr: u32, _width: u8, value: u32) {
         let low = addr & 0xFFFF;
         let byte = (value & 0xFF) as u8;
+        // A0 program data and B0 bank selection take priority over a new unlock sequence.
         if self.finish_program(addr, byte) || self.finish_bank_switch(addr, byte) {
             return;
         }
@@ -142,9 +143,12 @@ impl FlashSave {
         match command {
             0x90 => self.id_mode = true,
             0xF0 => self.id_mode = false,
+            // 80 is erase setup; the following AA/55 unlock leads to 10 or 30.
             0x80 => {}
+            // A0 programs the next byte; B0 selects the next 64 KiB bank.
             0xA0 => self.program_pending = true,
             0xB0 => self.bank_switch_pending = true,
+            // 10 erases the chip and 30 erases the addressed 4 KiB sector.
             0x10 => self.data.fill(0xFF),
             0x30 => self.erase_sector(address),
             _ => self.program_byte(address, command),

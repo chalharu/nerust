@@ -11,6 +11,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     let reg_list = instr & 0xFFFF;
 
     let base = regs.r(rn);
+    // P/U select IA, IB, DA, or DB; transfers still visit registers ascending.
     let start = start_address(base, reg_list.count_ones(), p, u);
     let transferred = transfer_registers(regs, bus, reg_list, start, l, s);
 
@@ -69,6 +70,7 @@ fn load_register(
 ) {
     regs.set_r(register, bus.read32(address));
     if restore && register == 15 {
+        // LDM^ including PC returns from an exception and restores CPSR from SPSR.
         regs.set_cpsr(regs.spsr());
     }
 }
@@ -82,6 +84,7 @@ fn store_register(regs: &CpuRegisters, bus: &mut GbaMemoryBus, register: usize, 
 }
 
 fn transfer_cycles(load: bool, list: u32, transferred: u32) -> u32 {
+    // Loading PC also incurs the pipeline refill cost.
     if load && list & (1 << 15) != 0 {
         5
     } else {

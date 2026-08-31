@@ -6,8 +6,10 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
     let r = (instr >> 8) & 1 != 0; // PC/LR
     let rlist = instr & 0xFF;
     if l {
+        // POP loads low registers in ascending order and optionally loads PC last.
         pop(regs, bus, rlist, r)
     } else {
+        // PUSH stores low registers in ascending order and optionally stores LR last.
         push(regs, bus, rlist, r)
     }
 }

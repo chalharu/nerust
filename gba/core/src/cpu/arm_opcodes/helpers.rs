@@ -40,6 +40,7 @@ fn shift_asr(value: u32, amount: u32) -> (u32, bool) {
 
 fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
     if amount == 0 {
+        // Immediate ROR #0 is RRX: old C enters bit 31 and bit 0 becomes C.
         return (((carry_in as u32) << 31) | (value >> 1), value & 1 != 0);
     }
     let rotation = amount % 32;
