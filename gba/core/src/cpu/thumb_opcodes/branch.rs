@@ -1,34 +1,11 @@
+use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
-
-fn check_cond(cpsr: u32, cond: u8) -> bool {
-    let n = cpsr & (1 << 31) != 0;
-    let z = cpsr & (1 << 30) != 0;
-    let c = cpsr & (1 << 29) != 0;
-    let v = cpsr & (1 << 28) != 0;
-    match cond {
-        0x0 => z,
-        0x1 => !z,
-        0x2 => c,
-        0x3 => !c,
-        0x4 => n,
-        0x5 => !n,
-        0x6 => v,
-        0x7 => !v,
-        0x8 => c && !z,
-        0x9 => !c || z,
-        0xA => n == v,
-        0xB => n != v,
-        0xC => !z && n == v,
-        0xD => z || n != v,
-        _ => false,
-    }
-}
 
 pub fn handle_cond(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let cond = ((instr >> 8) & 0xF) as u8;
     let offset = ((instr & 0xFF) as i8 as i32) << 1;
-    if check_cond(regs.cpsr(), cond) {
+    if condition_passed(regs.cpsr(), cond) {
         let pc = regs.pc();
         regs.set_pc(pc.wrapping_add(offset as u32));
         3

@@ -147,18 +147,16 @@ impl RomManifest {
     }
 
     fn validate_completion_profiles(&self) -> Result<(), RomTestError> {
-        for (name, profile) in &self.completion_profiles {
-            validate_completion_profile(name, profile)?;
-        }
-        Ok(())
+        self.completion_profiles
+            .iter()
+            .try_for_each(|(name, profile)| validate_completion_profile(name, profile))
     }
 
     fn validate_suites(&self) -> Result<(), RomTestError> {
         let mut ids = BTreeSet::new();
-        for suite in &self.suites {
-            self.validate_suite(suite, &mut ids)?;
-        }
-        Ok(())
+        self.suites
+            .iter()
+            .try_for_each(|suite| self.validate_suite(suite, &mut ids))
     }
 
     fn validate_suite(

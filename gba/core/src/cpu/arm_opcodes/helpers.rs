@@ -67,6 +67,32 @@ pub fn update_nz(regs: &mut crate::cpu_registers::CpuRegisters, result: u32) {
     regs.set_cpsr_z(result == 0);
 }
 
+/// Evaluate an ARM condition code against CPSR N/Z/C/V flags.
+pub fn condition_passed(cpsr: u32, condition: u8) -> bool {
+    let n = cpsr & (1 << 31) != 0;
+    let z = cpsr & (1 << 30) != 0;
+    let c = cpsr & (1 << 29) != 0;
+    let v = cpsr & (1 << 28) != 0;
+    match condition {
+        0x0 => z,
+        0x1 => !z,
+        0x2 => c,
+        0x3 => !c,
+        0x4 => n,
+        0x5 => !n,
+        0x6 => v,
+        0x7 => !v,
+        0x8 => c && !z,
+        0x9 => !c || z,
+        0xA => n == v,
+        0xB => n != v,
+        0xC => !z && n == v,
+        0xD => z || n != v,
+        0xE => true,
+        _ => false,
+    }
+}
+
 /// Return the effective address and writeback address for ARM pre/post indexing.
 pub fn transfer_addresses(base: u32, offset: u32, pre: bool, up: bool) -> (u32, u32) {
     let offset_address = if up {
