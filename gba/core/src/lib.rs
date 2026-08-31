@@ -1,3 +1,4 @@
+pub mod bios;
 pub mod cartridge;
 pub mod console_core;
 pub mod core_options;

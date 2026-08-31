@@ -1,7 +1,11 @@
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
-pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
+pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    let swi = (instr & 0xFF) as u8;
+    if let Some(cycles) = crate::bios::handle_swi(regs, bus, swi) {
+        return cycles;
+    }
     let return_address = regs.pc().wrapping_sub(4);
     regs.enter_exception(0x13, 0x08, return_address, true);
     3
