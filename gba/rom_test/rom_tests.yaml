@@ -52,3 +52,14 @@ suites:
         verify:
           registers:
             r12: 0x00
+  - name: nba-emu_hw-test
+    case_patterns:
+      - glob: "**/*.gba"
+        exclude_globs: ["ppu/**", "archive/ppu/**"]
+        id_prefix: nba_
+        cycles: 10000000
+        verify:
+          memory:
+            - address: 0x0203FFE0
+              value: 0x00
+              width: 1
