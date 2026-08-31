@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 
 pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let op = (instr >> 11) & 0b11;

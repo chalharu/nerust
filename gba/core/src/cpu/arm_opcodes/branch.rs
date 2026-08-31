@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
@@ -18,7 +18,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::registers::CpuRegisters;
+    use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
     #[test]

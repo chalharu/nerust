@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 
 pub fn handle(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let psr = (instr >> 22) & 1 != 0; // 0=CPSR, 1=SPSR

@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// ARM命令デコーダ。condチェック後、カテゴリ別ハンドラへ振り分け。
@@ -153,7 +153,7 @@ fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::registers::CpuRegisters;
+    use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
     use super::{check_cond, decode_arm};

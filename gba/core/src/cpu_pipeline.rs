@@ -1,4 +1,4 @@
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// 3段パイプラインの初期充填とフラッシュヘルパー。
@@ -33,7 +33,7 @@ pub fn flush_pipeline(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu::registers::CpuRegisters;
+    use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
     #[test]

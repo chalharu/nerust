@@ -1,11 +1,10 @@
 pub mod arm;
 pub mod arm_opcodes;
-pub mod pipeline;
-pub mod registers;
 pub mod thumb;
 pub mod thumb_opcodes;
 
-use crate::cpu::registers::CpuRegisters;
+use crate::cpu_pipeline::fill_pipeline;
+use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
@@ -28,7 +27,7 @@ impl GbaCpu {
 
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
-        pipeline::fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+        fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
 
@@ -64,7 +63,7 @@ impl GbaCpu {
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
             self.pipeline = [0; 2];
-            pipeline::fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(4));
         }
@@ -81,7 +80,7 @@ impl GbaCpu {
         let cycles = thumb::decode_thumb(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
             self.pipeline = [0; 2];
-            pipeline::fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(2));
         }
@@ -134,7 +133,7 @@ mod tests {
         bus.write32(start + 4, 0xE3A01002); // MOV R1,#2
         bus.write32(start + 8, 0xE3A02003); // MOV R2,#3
         cpu.regs.set_pc(start);
-        pipeline::fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
         bus.take_access_wait_cycles();
 
         assert_eq!(cpu.step(&mut bus), 6); // 1 CPU + 5 EWRAM wait
@@ -155,7 +154,7 @@ mod tests {
         bus.write16(start + 4, 0x2203); // MOV R2,#3
         cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
         cpu.regs.set_pc(start);
-        pipeline::fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
         bus.take_access_wait_cycles();
 
         cpu.step(&mut bus);
@@ -173,7 +172,7 @@ mod tests {
         bus.write32(start + 4, 0xE3A00001); // skipped
         bus.write32(start + 8, 0xE3A00002); // target
         cpu.regs.set_pc(start);
-        pipeline::fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
         bus.take_access_wait_cycles();
 
         cpu.step(&mut bus);
