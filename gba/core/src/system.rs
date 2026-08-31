@@ -1,3 +1,4 @@
+use crate::cartridge::Cartridge;
 use crate::memory::GbaMemoryBus;
 
 pub struct GbaSystem {
@@ -11,6 +12,16 @@ impl GbaSystem {
             bus: GbaMemoryBus::new(),
             tick: 0,
         }
+    }
+
+    pub fn from_rom(rom: Vec<u8>) -> Option<Self> {
+        let cart = Cartridge::new(rom)?;
+        if !cart.header.logo_valid || !cart.header.fixed_valid || !cart.header.complement_valid {
+            return None;
+        }
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(cart);
+        Some(Self { bus, tick: 0 })
     }
 
     pub fn bus(&self) -> &GbaMemoryBus {
