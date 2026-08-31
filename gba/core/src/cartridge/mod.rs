@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn flash_cmd_AA_55_90() {
+    fn flash_cmd_aa_55_90() {
         let rom = make_rom_with_save(b"FLASH_V130");
         let mut cart = Cartridge::new(rom).unwrap();
         assert_eq!(cart.save_type(), SaveType::Flash64);
