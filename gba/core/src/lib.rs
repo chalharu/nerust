@@ -1,3 +1,4 @@
+pub mod cartridge;
 pub mod console_core;
 pub mod core_options;
 pub mod input_types;
