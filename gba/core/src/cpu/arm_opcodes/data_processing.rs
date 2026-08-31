@@ -8,148 +8,78 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     let s = (instr >> 20) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
-    let rn_val = regs.r(rn);
+    let (op2, shifter_carry) = operand2(regs, instr, i);
+    let (result, carry, overflow) = execute(opcode, regs.r(rn), op2, shifter_carry, regs.cpsr_c());
+    let flag_only = matches!(opcode, 0x8..=0xB);
+    if !flag_only {
+        write_result(regs, rd, result, s);
+    }
+    if s && !(rd == 15 && !flag_only) {
+        update_flags(regs, opcode, result, carry, overflow);
+    }
+    1 + u32::from(!i && ((instr >> 4) & 1) != 0)
+}
 
-    // Operand2
-    let (op2, shifter_carry) = if i {
+fn operand2(regs: &CpuRegisters, instr: u32, immediate: bool) -> (u32, bool) {
+    if immediate {
         let imm = instr & 0xFF;
         let rot = ((instr >> 8) & 0xF) * 2;
-        if rot == 0 {
-            (imm, regs.cpsr_c())
-        } else {
-            let carry = (imm >> (rot - 1)) & 1 != 0;
-            (imm.rotate_right(rot), carry)
-        }
+        return immediate_operand(imm, rot, regs.cpsr_c());
+    }
+    let value = regs.r((instr & 0xF) as usize);
+    let shift_type = ((instr >> 5) & 0b11) as u8;
+    if (instr >> 4) & 1 != 0 {
+        let amount = regs.r(((instr >> 8) & 0xF) as usize) & 0xFF;
+        barrel_shift_register(value, shift_type, amount, regs.cpsr_c())
     } else {
-        let rm = (instr & 0xF) as usize;
-        let rm_val = regs.r(rm);
-        let shift_type = ((instr >> 5) & 0b11) as u8;
-        let shift_by_reg = (instr >> 4) & 1 != 0;
-        if shift_by_reg {
-            let rs = ((instr >> 8) & 0xF) as usize;
-            let rs_val = regs.r(rs) & 0xFF;
-            // Register shift takes +1 I cycle
-            barrel_shift_register(rm_val, shift_type, rs_val, regs.cpsr_c())
-        } else {
-            let amount = (instr >> 7) & 0x1F;
-            barrel_shift(rm_val, shift_type, amount, regs.cpsr_c())
-        }
-    };
+        barrel_shift(value, shift_type, (instr >> 7) & 0x1F, regs.cpsr_c())
+    }
+}
 
-    let (result, carry, overflow) = match opcode {
-        0x0 => {
-            // AND
-            let r = rn_val & op2;
-            (r, shifter_carry, false)
-        }
-        0x1 => {
-            // EOR
-            let r = rn_val ^ op2;
-            (r, shifter_carry, false)
-        }
-        0x2 => {
-            // SUB
-            let (r, c, v) = sub_with_flags(rn_val, op2);
-            (r, c, v)
-        }
-        0x3 => {
-            // RSB
-            let (r, c, v) = sub_with_flags(op2, rn_val);
-            (r, c, v)
-        }
-        0x4 => {
-            // ADD
-            let (r, c, v) = add_with_flags(rn_val, op2);
-            (r, c, v)
-        }
-        0x5 => {
-            // ADC
-            let c_in = regs.cpsr_c() as u32;
-            let (r, c, v) = adc_with_flags(rn_val, op2, c_in);
-            (r, c, v)
-        }
-        0x6 => {
-            // SBC
-            let c_in = regs.cpsr_c() as u32;
-            let (r, c, v) = sbc_with_flags(rn_val, op2, c_in);
-            (r, c, v)
-        }
-        0x7 => {
-            // RSC
-            let c_in = regs.cpsr_c() as u32;
-            let (r, c, v) = sbc_with_flags(op2, rn_val, c_in);
-            (r, c, v)
-        }
-        0x8 => {
-            // TST
-            let r = rn_val & op2;
-            (r, shifter_carry, false)
-        }
-        0x9 => {
-            // TEQ
-            let r = rn_val ^ op2;
-            (r, shifter_carry, false)
-        }
-        0xA => {
-            // CMP
-            let (r, c, v) = sub_with_flags(rn_val, op2);
-            (r, c, v)
-        }
-        0xB => {
-            // CMN
-            let (r, c, v) = add_with_flags(rn_val, op2);
-            (r, c, v)
-        }
-        0xC => {
-            // ORR
-            let r = rn_val | op2;
-            (r, shifter_carry, false)
-        }
-        0xD => {
-            // MOV
-            (op2, shifter_carry, false)
-        }
-        0xE => {
-            // BIC
-            let r = rn_val & !op2;
-            (r, shifter_carry, false)
-        }
-        0xF => {
-            // MVN
-            let r = !op2;
-            (r, shifter_carry, false)
-        }
+fn immediate_operand(value: u32, rotation: u32, carry: bool) -> (u32, bool) {
+    if rotation == 0 {
+        (value, carry)
+    } else {
+        (
+            value.rotate_right(rotation),
+            value & (1 << (rotation - 1)) != 0,
+        )
+    }
+}
+
+fn execute(opcode: u8, left: u32, right: u32, shift_carry: bool, carry: bool) -> (u32, bool, bool) {
+    match opcode {
+        0x0 => (left & right, shift_carry, false),
+        0x1 => (left ^ right, shift_carry, false),
+        0x2 | 0xA => sub_with_flags(left, right),
+        0x3 => sub_with_flags(right, left),
+        0x4 | 0xB => add_with_flags(left, right),
+        0x5 => adc_with_flags(left, right, u32::from(carry)),
+        0x6 => sbc_with_flags(left, right, u32::from(carry)),
+        0x7 => sbc_with_flags(right, left, u32::from(carry)),
+        0x8 => (left & right, shift_carry, false),
+        0x9 => (left ^ right, shift_carry, false),
+        0xC => (left | right, shift_carry, false),
+        0xD => (right, shift_carry, false),
+        0xE => (left & !right, shift_carry, false),
+        0xF => (!right, shift_carry, false),
         _ => unreachable!(),
-    };
-
-    // TST/TEQ/CMP/CMN are flag-only, no Rd write
-    let is_flag_only = matches!(opcode, 0x8..=0xB);
-    if !is_flag_only {
-        regs.set_r(rd, result);
-        if rd == 15 && s {
-            // MOVS PC,LR etc: CPSR = SPSR
-            let spsr = regs.spsr();
-            regs.set_cpsr(spsr);
-        }
     }
+}
 
-    // Flag update
-    if s && !(rd == 15 && !is_flag_only) {
-        let is_logical = matches!(opcode, 0x0 | 0x1 | 0x8 | 0x9 | 0xC | 0xD | 0xE | 0xF);
-        if is_logical {
-            // 論理演算はVを保持する。
-            crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
-            regs.set_cpsr_c(carry);
-        } else {
-            crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
-            regs.set_cpsr_c(carry);
-            regs.set_cpsr_v(overflow);
-        }
+fn write_result(regs: &mut CpuRegisters, destination: usize, result: u32, set_flags: bool) {
+    regs.set_r(destination, result);
+    if destination == 15 && set_flags {
+        regs.set_cpsr(regs.spsr());
     }
+}
 
-    // Cycle: +1 I if register shift
-    let extra = if !i && ((instr >> 4) & 1) != 0 { 1 } else { 0 };
-    1 + extra
+fn update_flags(regs: &mut CpuRegisters, opcode: u8, result: u32, carry: bool, overflow: bool) {
+    crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    if !matches!(opcode, 0x0 | 0x1 | 0x8 | 0x9 | 0xC..=0xF) {
+        regs.set_cpsr_v(overflow);
+    }
 }
 
 fn add_with_flags(a: u32, b: u32) -> (u32, bool, bool) {

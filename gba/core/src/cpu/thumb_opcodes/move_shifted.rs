@@ -42,8 +42,7 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
         _ => (0, false),
     };
     regs.set_r(rd, result);
-    regs.set_cpsr_n((result >> 31) & 1 != 0);
-    regs.set_cpsr_z(result == 0);
+    crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
     regs.set_cpsr_c(carry);
     1
 }

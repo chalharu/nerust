@@ -22,39 +22,12 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         regs.r(rm)
     };
 
-    let base = regs.r(rn);
-    let addr = if p {
-        if u {
-            base.wrapping_add(offset)
-        } else {
-            base.wrapping_sub(offset)
-        }
-    } else {
-        base
-    };
-    let wb_addr = if p {
-        addr
-    } else if u {
-        base.wrapping_add(offset)
-    } else {
-        base.wrapping_sub(offset)
-    };
+    let (addr, wb_addr) =
+        crate::cpu::arm_opcodes::helpers::transfer_addresses(regs.r(rn), offset, p, u);
     let writeback = w || !p;
 
     if l {
-        let val = match (s, h) {
-            (false, true) => bus.read16(addr) as u32,      // LDRH
-            (true, false) => bus.read8(addr) as i8 as u32, // LDRSB
-            (true, true) => {
-                if addr & 1 != 0 {
-                    bus.read8(addr) as i8 as i32 as u32
-                } else {
-                    bus.read16(addr) as i16 as i32 as u32
-                }
-            } // LDRSH
-            _ => bus.read16(addr) as u32,
-        };
-        regs.set_r(rd, val);
+        regs.set_r(rd, load(bus, addr, s, h));
     } else {
         let val = regs.r(rd);
         bus.write16(addr, (val & 0xFFFF) as u16);
@@ -64,6 +37,14 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         regs.set_r(rn, wb_addr);
     }
     if l { 3 } else { 2 }
+}
+
+fn load(bus: &mut GbaMemoryBus, address: u32, signed: bool, halfword: bool) -> u32 {
+    match (signed, halfword, address & 1 != 0) {
+        (false, _, _) => u32::from(bus.read16(address)),
+        (true, false, _) | (true, true, true) => bus.read8(address) as i8 as i32 as u32,
+        (true, true, false) => bus.read16(address) as i16 as i32 as u32,
+    }
 }
 
 #[cfg(test)]

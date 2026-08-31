@@ -3,62 +3,53 @@
 pub fn barrel_shift(rm: u32, shift_type: u8, amount: u32, carry_in: bool) -> (u32, bool) {
     let amount = amount & 0xFF;
     match shift_type & 0b11 {
-        0b00 => {
-            // LSL
-            if amount == 0 {
-                (rm, carry_in)
-            } else if amount < 32 {
-                let carry = (rm >> (32 - amount)) & 1 != 0;
-                (rm << amount, carry)
-            } else if amount == 32 {
-                let carry = rm & 1 != 0;
-                (0, carry)
-            } else {
-                (0, false)
-            }
-        }
-        0b01 => {
-            // LSR
-            if amount == 0 || amount == 32 {
-                let carry = (rm >> 31) & 1 != 0;
-                (0, carry)
-            } else if amount < 32 {
-                let carry = (rm >> (amount - 1)) & 1 != 0;
-                (rm >> amount, carry)
-            } else {
-                (0, false)
-            }
-        }
-        0b10 => {
-            // ASR
-            if amount == 0 || amount >= 32 {
-                let carry = (rm >> 31) & 1 != 0;
-                let val = if (rm >> 31) & 1 != 0 { 0xFFFFFFFF } else { 0 };
-                (val, carry)
-            } else {
-                let carry = (rm >> (amount - 1)) & 1 != 0;
-                let val = ((rm as i32) >> amount) as u32;
-                (val, carry)
-            }
-        }
-        _ => {
-            // ROR
-            if amount == 0 {
-                // RRX
-                let carry = rm & 1 != 0;
-                let val = (carry_in as u32) << 31 | (rm >> 1);
-                (val, carry)
-            } else {
-                let rot = amount % 32;
-                if rot == 0 {
-                    let carry = (rm >> 31) & 1 != 0;
-                    (rm, carry)
-                } else {
-                    let carry = (rm >> (rot - 1)) & 1 != 0;
-                    (rm.rotate_right(rot), carry)
-                }
-            }
-        }
+        0b00 => shift_lsl(rm, amount, carry_in),
+        0b01 => shift_lsr(rm, amount),
+        0b10 => shift_asr(rm, amount),
+        _ => shift_ror(rm, amount, carry_in),
+    }
+}
+
+fn shift_lsl(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    match amount {
+        0 => (value, carry_in),
+        1..=31 => (value << amount, value & (1 << (32 - amount)) != 0),
+        32 => (0, value & 1 != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_lsr(value: u32, amount: u32) -> (u32, bool) {
+    match amount {
+        0 | 32 => (0, value >> 31 != 0),
+        1..=31 => (value >> amount, value & (1 << (amount - 1)) != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_asr(value: u32, amount: u32) -> (u32, bool) {
+    if amount == 0 || amount >= 32 {
+        let negative = value >> 31 != 0;
+        return (if negative { u32::MAX } else { 0 }, negative);
+    }
+    (
+        ((value as i32) >> amount) as u32,
+        value & (1 << (amount - 1)) != 0,
+    )
+}
+
+fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    if amount == 0 {
+        return (((carry_in as u32) << 31) | (value >> 1), value & 1 != 0);
+    }
+    let rotation = amount % 32;
+    if rotation == 0 {
+        (value, value >> 31 != 0)
+    } else {
+        (
+            value.rotate_right(rotation),
+            value & (1 << (rotation - 1)) != 0,
+        )
     }
 }
 
@@ -73,6 +64,15 @@ pub fn barrel_shift_register(rm: u32, shift_type: u8, amount: u32, carry_in: boo
 pub fn update_nz(regs: &mut crate::cpu_registers::CpuRegisters, result: u32) {
     regs.set_cpsr_n((result >> 31) & 1 != 0);
     regs.set_cpsr_z(result == 0);
+}
+
+pub fn transfer_addresses(base: u32, offset: u32, pre: bool, up: bool) -> (u32, u32) {
+    let offset_address = if up {
+        base.wrapping_add(offset)
+    } else {
+        base.wrapping_sub(offset)
+    };
+    (if pre { offset_address } else { base }, offset_address)
 }
 
 #[cfg(test)]

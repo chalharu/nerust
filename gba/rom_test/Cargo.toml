@@ -1,0 +1,25 @@
+[package]
+name = "nerust_gba_rom_test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GBA ROM test framework (headless frontend)"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nerust_gba_core.workspace = true
+nerust_render_traits.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde-saphyr.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+png.workspace = true
+clap.workspace = true
+glob.workspace = true
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde-saphyr.workspace = true
+glob.workspace = true

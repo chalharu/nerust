@@ -3,6 +3,9 @@ pub mod arm_opcodes;
 pub mod thumb;
 pub mod thumb_opcodes;
 
+#[cfg(test)]
+mod sonar_coverage_tests;
+
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
