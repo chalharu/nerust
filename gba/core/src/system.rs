@@ -1,16 +1,24 @@
 use crate::cartridge::Cartridge;
+use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
 pub struct GbaSystem {
+    pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
     tick: u64,
+    cpu_cycles_remaining: u32,
 }
 
 impl GbaSystem {
     pub fn new() -> Self {
+        let mut cpu = GbaCpu::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        cpu.reset(&mut bus);
         Self {
-            bus: GbaMemoryBus::new(),
+            cpu,
+            bus,
             tick: 0,
+            cpu_cycles_remaining: 0,
         }
     }
 
@@ -21,7 +29,14 @@ impl GbaSystem {
         }
         let mut bus = GbaMemoryBus::new();
         bus.set_cartridge(cart);
-        Some(Self { bus, tick: 0 })
+        let mut cpu = GbaCpu::post_bios();
+        cpu.reset(&mut bus);
+        Some(Self {
+            cpu,
+            bus,
+            tick: 0,
+            cpu_cycles_remaining: 0,
+        })
     }
 
     pub fn bus(&self) -> &GbaMemoryBus {
@@ -32,9 +47,20 @@ impl GbaSystem {
         &mut self.bus
     }
 
-    /// 1 T-cycle 進行。VCOUNT 更新は Bus 側に委譲。
-    /// TODO(gba-tick-frame): Phase 3では常に false。Phase 8で frame_done を返す。
+    pub fn cpu(&self) -> &GbaCpu {
+        &self.cpu
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut GbaCpu {
+        &mut self.cpu
+    }
+
+    /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
+        if self.cpu_cycles_remaining == 0 {
+            self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+        }
+        self.cpu_cycles_remaining -= 1;
         self.tick = self.tick.wrapping_add(1);
         self.bus.tick()
     }
@@ -43,5 +69,19 @@ impl GbaSystem {
 impl Default for GbaSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_tcycle_advances_exactly_one_cycle() {
+        let mut system = GbaSystem::new();
+        assert_eq!(system.tick, 0);
+        system.step_tcycle();
+        assert_eq!(system.tick, 1);
+        assert!(system.cpu_cycles_remaining > 0);
     }
 }

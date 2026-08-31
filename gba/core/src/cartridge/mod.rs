@@ -26,7 +26,7 @@ impl Cartridge {
             return 0xFFFFFFFF;
         }
         let base = 0x08000000;
-        let raw_off = (addr - base) as usize;
+        let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
         let off = if len.is_power_of_two() {
             raw_off & (len - 1)
         } else {
@@ -77,12 +77,23 @@ mod tests {
     fn rom_3mirrors_same() {
         let mut rom = vec![0u8; 0x8000];
         finalize_test_gba_rom(&mut rom);
-        for i in 0..0x8000 {
-            rom[i] = (i & 0xFF) as u8;
+        for (i, byte) in rom.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
         }
         let cart = Cartridge::new(rom).unwrap();
         assert_eq!(cart.read_rom(0x08000000, 4), cart.read_rom(0x0A000000, 4));
         assert_eq!(cart.read_rom(0x08000000, 4), cart.read_rom(0x0C000000, 4));
+    }
+
+    #[test]
+    fn non_power_of_two_rom_3mirrors_same() {
+        let mut rom = vec![0u8; 0x1001];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x1000] = 0xA5;
+        let cart = Cartridge::new(rom).unwrap();
+        assert_eq!(cart.read_rom(0x08001000, 1), 0xA5);
+        assert_eq!(cart.read_rom(0x0A001000, 1), 0xA5);
+        assert_eq!(cart.read_rom(0x0C001000, 1), 0xA5);
     }
 
     #[test]

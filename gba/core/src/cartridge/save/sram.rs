@@ -16,6 +16,12 @@ impl SramSave {
     }
 }
 
+impl Default for SramSave {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SaveBackend for SramSave {
     fn save_type(&self) -> SaveType {
         SaveType::Sram
