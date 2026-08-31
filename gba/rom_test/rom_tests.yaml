@@ -1,36 +1,65 @@
 rom_root: ../../roms/gba
-completion_profiles:
-  result_ready:
-    poll_interval: 256
-    stages:
-      - memory:
-          - address: 0x02000000
-            not_value: 0x00
 suites:
-  - name: mgba
-    case_patterns:
-      - glob: suite/mgba/arm/*.gba
-        id_prefix: mgba_arm_
-        cycles: 100000
-        completion: result_ready
-        verify:
-          memory:
-            - address: 0x02000000
-              value: 0x01
-      - glob: suite/mgba/thumb/*.gba
-        id_prefix: mgba_thumb_
-        cycles: 100000
-        completion: result_ready
-        verify:
-          memory:
-            - address: 0x02000000
-              value: 0x01
-  - name: custom
+  - name: jsmolka_gba-tests
     cases:
-      - id: custom_mem_test
-        rom: mem_test.gba
-        cycles: 100000
+      # These aggregate ROMs leave the first failed test number in R12/R7.
+      # Zero therefore means that every embedded instruction test completed.
+      - id: jsmolka_arm
+        rom: arm/arm.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_thumb
+        rom: thumb/thumb.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r7: 0x00
+      - id: jsmolka_memory
+        rom: memory/memory.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_save_none
+        rom: save/none.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_save_sram
+        rom: save/sram.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_save_flash64
+        rom: save/flash64.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_save_flash128
+        rom: save/flash128.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_bios
+        rom: bios/bios.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+  - name: nba-emu_hw-test
+    case_patterns:
+      - glob: "**/*.gba"
+        exclude_globs: ["ppu/**", "archive/ppu/**"]
+        id_prefix: nba_
+        cycles: 10000000
         verify:
           memory:
-            - address: 0x02000000
-              value: 0x01
+            - address: 0x0203FFE0
+              value: 0x00
+              width: 1

@@ -104,58 +104,27 @@ impl RomManifest {
         let rom_root = manifest_dir.join(&self.rom_root);
         for suite in &mut self.suites {
             let suite_dir = rom_root.join(&suite.name);
-            let mut matched = BTreeSet::new();
-            for pattern in &suite.case_patterns {
-                for exclude in &pattern.exclude_globs {
-                    glob::Pattern::new(exclude).map_err(|error| {
-                        RomTestError::InvalidManifest(format!(
-                            "invalid exclude glob `{exclude}`: {error}"
-                        ))
-                    })?;
-                }
-                let absolute = suite_dir.join(&pattern.glob);
-                let paths = glob::glob(&absolute.to_string_lossy()).map_err(|error| {
-                    RomTestError::InvalidManifest(format!(
-                        "invalid case glob `{}`: {error}",
-                        pattern.glob
-                    ))
-                })?;
-                for path in paths {
-                    let path = path.map_err(|error| {
-                        RomTestError::InvalidManifest(format!(
-                            "failed to expand glob `{}`: {error}",
-                            pattern.glob
-                        ))
-                    })?;
-                    let relative = path.strip_prefix(&suite_dir).map_err(|_| {
-                        RomTestError::InvalidManifest(format!(
-                            "glob `{}` escaped suite `{}`",
-                            pattern.glob, suite.name
-                        ))
-                    })?;
-                    if pattern.exclude_globs.iter().any(|exclude| {
-                        glob::Pattern::new(exclude)
-                            .expect("exclude was validated")
-                            .matches_path(relative)
-                    }) || !matched.insert(path.clone())
-                    {
-                        continue;
-                    }
-                    let stem = relative
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| {
-                            RomTestError::InvalidManifest("ROM filename must be UTF-8".to_string())
-                        })?;
-                    suite.cases.push(RomCase {
-                        id: format!("{}{}", pattern.id_prefix, stem),
-                        rom: relative.to_string_lossy().into_owned(),
-                        cycles: pattern.cycles,
-                        completion: pattern.completion.clone(),
-                        description: stem.replace(['_', '-'], " "),
-                        verify: pattern.verify.clone(),
-                    });
-                }
+            let patterns = suite
+                .case_patterns
+                .iter()
+                .map(|pattern| crate::case_expansion::CasePatternRef {
+                    glob: &pattern.glob,
+                    exclude_globs: &pattern.exclude_globs,
+                    id_prefix: &pattern.id_prefix,
+                })
+                .collect::<Vec<_>>();
+            let expanded = crate::case_expansion::expand_case_patterns(&suite_dir, &patterns)
+                .map_err(RomTestError::InvalidManifest)?;
+            for case in expanded {
+                let pattern = &suite.case_patterns[case.pattern_index];
+                suite.cases.push(RomCase {
+                    id: case.id,
+                    rom: case.rom,
+                    cycles: pattern.cycles,
+                    completion: pattern.completion.clone(),
+                    description: case.description,
+                    verify: pattern.verify.clone(),
+                });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
         }
@@ -163,61 +132,76 @@ impl RomManifest {
     }
 
     pub fn validate(&self) -> Result<(), RomTestError> {
+        self.validate_structure()?;
+        self.validate_completion_profiles()?;
+        self.validate_suites()
+    }
+
+    fn validate_structure(&self) -> Result<(), RomTestError> {
         if self.rom_root.as_os_str().is_empty() || self.suites.is_empty() {
             return Err(RomTestError::InvalidManifest(
                 "rom_root and at least one suite are required".to_string(),
             ));
         }
-        for (name, profile) in &self.completion_profiles {
-            if profile.poll_interval == 0 || profile.stages.is_empty() {
-                return Err(RomTestError::InvalidManifest(format!(
-                    "completion profile `{name}` needs a positive interval and a stage"
-                )));
-            }
-            for stage in &profile.stages {
-                if stage.memory.is_empty() && stage.registers.is_empty() {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "completion profile `{name}` contains an empty stage"
-                    )));
-                }
-                for condition in &stage.memory {
-                    condition.validate()?;
-                }
-                stage.registers.validate()?;
-            }
-        }
+        Ok(())
+    }
+
+    fn validate_completion_profiles(&self) -> Result<(), RomTestError> {
+        self.completion_profiles
+            .iter()
+            .try_for_each(|(name, profile)| validate_completion_profile(name, profile))
+    }
+
+    fn validate_suites(&self) -> Result<(), RomTestError> {
         let mut ids = BTreeSet::new();
-        for suite in &self.suites {
-            if suite.name.is_empty() {
-                return Err(RomTestError::InvalidManifest(
-                    "suite name is empty".to_string(),
-                ));
-            }
-            for case in &suite.cases {
-                if !ids.insert(case.id.clone()) {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "duplicate case id `{}`",
-                        case.id
-                    )));
-                }
-                if case.rom.is_empty() || case.cycles == 0 || case.verify.is_empty() {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "case `{}` needs rom, positive cycles, and verification",
-                        case.id
-                    )));
-                }
-                case.verify.validate()?;
-                if case
-                    .completion
-                    .as_ref()
-                    .is_some_and(|name| !self.completion_profiles.contains_key(name))
-                {
-                    return Err(RomTestError::InvalidManifest(format!(
-                        "case `{}` references unknown completion profile",
-                        case.id
-                    )));
-                }
-            }
+        self.suites
+            .iter()
+            .try_for_each(|suite| self.validate_suite(suite, &mut ids))
+    }
+
+    fn validate_suite(
+        &self,
+        suite: &RomSuite,
+        ids: &mut BTreeSet<String>,
+    ) -> Result<(), RomTestError> {
+        if suite.name.is_empty() {
+            return Err(RomTestError::InvalidManifest(
+                "suite name is empty".to_string(),
+            ));
+        }
+        for case in &suite.cases {
+            self.validate_case(case, ids)?;
+        }
+        Ok(())
+    }
+
+    fn validate_case(
+        &self,
+        case: &RomCase,
+        ids: &mut BTreeSet<String>,
+    ) -> Result<(), RomTestError> {
+        if !ids.insert(case.id.clone()) {
+            return Err(RomTestError::InvalidManifest(format!(
+                "duplicate case id `{}`",
+                case.id
+            )));
+        }
+        if case.rom.is_empty() || case.cycles == 0 || case.verify.is_empty() {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` needs rom, positive cycles, and verification",
+                case.id
+            )));
+        }
+        case.verify.validate()?;
+        if case
+            .completion
+            .as_ref()
+            .is_some_and(|name| !self.completion_profiles.contains_key(name))
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` references unknown completion profile",
+                case.id
+            )));
         }
         Ok(())
     }
@@ -241,6 +225,30 @@ impl RomManifest {
             })
             .collect()
     }
+}
+
+fn validate_completion_profile(name: &str, profile: &CompletionSpec) -> Result<(), RomTestError> {
+    if profile.poll_interval == 0 || profile.stages.is_empty() {
+        return Err(RomTestError::InvalidManifest(format!(
+            "completion profile `{name}` needs a positive interval and a stage"
+        )));
+    }
+    for stage in &profile.stages {
+        validate_completion_stage(name, stage)?;
+    }
+    Ok(())
+}
+
+fn validate_completion_stage(name: &str, stage: &CompletionStage) -> Result<(), RomTestError> {
+    if stage.memory.is_empty() && stage.registers.is_empty() {
+        return Err(RomTestError::InvalidManifest(format!(
+            "completion profile `{name}` contains an empty stage"
+        )));
+    }
+    for condition in &stage.memory {
+        condition.validate()?;
+    }
+    stage.registers.validate()
 }
 
 impl MemoryCompletion {

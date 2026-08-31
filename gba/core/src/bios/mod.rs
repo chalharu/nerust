@@ -37,6 +37,30 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             div(regs);
             SwiResult::Return(10)
         }
+        0x07 => {
+            div_arm(regs);
+            SwiResult::Return(10)
+        }
+        0x08 => {
+            sqrt(regs);
+            SwiResult::Return(10)
+        }
+        0x09 => {
+            arc_tan(regs);
+            SwiResult::Return(10)
+        }
+        0x0A => {
+            arc_tan2(regs);
+            SwiResult::Return(10)
+        }
+        0x0E => {
+            bg_affine_set(regs, bus);
+            SwiResult::Return(10)
+        }
+        0x0F => {
+            obj_affine_set(regs, bus);
+            SwiResult::Return(10)
+        }
         0x0B => SwiResult::Return(cpu_set(regs, bus)),
         0x0C => SwiResult::Return(cpu_fast_set(regs, bus)),
         0x0D => {
@@ -66,6 +90,21 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         0x15 => {
             decompress::rl(regs, bus, 2);
             SwiResult::Return(18)
+        }
+        0x03
+        | 0x16
+        | 0x17
+        | 0x18
+        | 0x19
+        | 0x1A
+        | 0x1B
+        | 0x1C
+        | 0x1D
+        | 0x1E
+        | 0x1F
+        | 0x20..=0x2F => {
+            // Sound / Diff / Stop / MultiBoot etc — no-op for HLE minimal
+            SwiResult::Return(1)
         }
         _ => SwiResult::Unsupported,
     }
@@ -157,6 +196,125 @@ fn div(regs: &mut CpuRegisters) {
         regs.set_r(0, quotient as u32);
         regs.set_r(1, remainder as u32);
         regs.set_r(3, quotient.unsigned_abs());
+    }
+}
+
+fn div_arm(regs: &mut CpuRegisters) {
+    // DivArm swaps r0 and r1 vs Div
+    let den = regs.r(0) as i32;
+    let num = regs.r(1) as i32;
+    if den == 0 {
+        regs.set_r(0, -1i32 as u32);
+        regs.set_r(1, num as u32);
+        regs.set_r(3, num.unsigned_abs());
+    } else {
+        let (q, o) = num.overflowing_div(den);
+        let r = if o { 0 } else { num % den };
+        regs.set_r(0, q as u32);
+        regs.set_r(1, r as u32);
+        regs.set_r(3, q.unsigned_abs());
+    }
+}
+
+fn sqrt(regs: &mut CpuRegisters) {
+    let n = regs.r(0);
+    regs.set_r(0, n.isqrt());
+}
+
+fn arc_tan(regs: &mut CpuRegisters) {
+    // GBATEK: r0 = Tan (1.14 fixed), return -PI/2..PI/2 => C000h..4000h
+    let tan = regs.r(0) as i16 as f32 / 16384.0;
+    let theta = tan.atan();
+    let v = (theta * 65536.0 / (2.0 * std::f32::consts::PI)) as i32;
+    regs.set_r(0, (v & 0xFFFF) as u32);
+}
+
+fn arc_tan2(regs: &mut CpuRegisters) {
+    let x = regs.r(0) as i16 as f32 / 16384.0;
+    let y = regs.r(1) as i16 as f32 / 16384.0;
+    let theta = y.atan2(x);
+    let mut v = (theta * 65536.0 / (2.0 * std::f32::consts::PI)) as i32;
+    if v < 0 {
+        v += 65536;
+    }
+    regs.set_r(0, (v & 0xFFFF) as u32);
+}
+
+fn bg_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    use crate::math::affine::{BgAffineDst, BgAffineSrc, bg_affine_set as math_bg};
+    use crate::math::fixed_point::Fixed8_8;
+    let src = regs.r(0);
+    let dst = regs.r(1);
+    let count = regs.r(2) as usize;
+    for i in 0..count {
+        let base_src = src + i as u32 * 20;
+        let base_dst = dst + i as u32 * 16;
+        let cx = bus.read32(base_src) as i32;
+        let cy = bus.read32(base_src + 4) as i32;
+        let disp_cx = bus.read16(base_src + 8) as i16;
+        let disp_cy = bus.read16(base_src + 10) as i16;
+        let sx = Fixed8_8::from_raw(bus.read16(base_src + 12) as i16);
+        let sy = Fixed8_8::from_raw(bus.read16(base_src + 14) as i16);
+        let alpha = bus.read16(base_src + 16);
+        let s = BgAffineSrc {
+            cx,
+            cy,
+            disp_cx,
+            disp_cy,
+            sx,
+            sy,
+            alpha,
+        };
+        let mut d = BgAffineDst {
+            pa: Fixed8_8::from_raw(0),
+            pb: Fixed8_8::from_raw(0),
+            pc: Fixed8_8::from_raw(0),
+            pd: Fixed8_8::from_raw(0),
+            start_x: 0,
+            start_y: 0,
+        };
+        math_bg(&s, &mut d);
+        bus.write16(base_dst, d.pa.to_raw() as u16);
+        bus.write16(base_dst + 2, d.pb.to_raw() as u16);
+        bus.write16(base_dst + 4, d.pc.to_raw() as u16);
+        bus.write16(base_dst + 6, d.pd.to_raw() as u16);
+        bus.write32(base_dst + 8, d.start_x as u32);
+        bus.write32(base_dst + 12, d.start_y as u32);
+    }
+}
+
+fn obj_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    use crate::math::affine::{ObjAffineDst, ObjAffineSrc, obj_affine_set as math_obj};
+    use crate::math::fixed_point::Fixed8_8;
+    let src = regs.r(0);
+    let dst = regs.r(1);
+    let count = regs.r(2) as usize;
+    let offset = regs.r(3) as usize;
+    let mut base_dst = dst;
+    for i in 0..count {
+        let base_src = src + i as u32 * 8;
+        let sx = Fixed8_8::from_raw(bus.read16(base_src) as i16);
+        let sy = Fixed8_8::from_raw(bus.read16(base_src + 2) as i16);
+        let alpha = bus.read16(base_src + 4);
+        let s = ObjAffineSrc { sx, sy, alpha };
+        let mut d = ObjAffineDst {
+            pa: Fixed8_8::from_raw(0),
+            pb: Fixed8_8::from_raw(0),
+            pc: Fixed8_8::from_raw(0),
+            pd: Fixed8_8::from_raw(0),
+        };
+        math_obj(&s, &mut d);
+        bus.write16(base_dst, d.pa.to_raw() as u16);
+        bus.write16(base_dst.wrapping_add(offset as u32), d.pb.to_raw() as u16);
+        bus.write16(
+            base_dst.wrapping_add(offset as u32 * 2),
+            d.pc.to_raw() as u16,
+        );
+        bus.write16(
+            base_dst.wrapping_add(offset as u32 * 3),
+            d.pd.to_raw() as u16,
+        );
+        base_dst = base_dst.wrapping_add(offset as u32 * 4);
     }
 }
 

@@ -4,6 +4,7 @@ pub fn handle(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let psr = (instr >> 22) & 1 != 0; // 0=CPSR, 1=SPSR
     let is_mrs = (instr >> 21) & 1 == 0 && (instr & 0x0FBF0FFF) == 0x010F0000;
     if is_mrs {
+        // MRS copies the selected status register into Rd.
         read_psr(regs, instr, psr);
     } else {
         write_psr(regs, instr, psr);
@@ -39,6 +40,8 @@ fn psr_operand(regs: &CpuRegisters, instr: u32) -> u32 {
 }
 
 fn apply_fields(mut current: u32, operand: u32, mask: u32) -> u32 {
+    // Field mask encoding: bit0=c, bit1=x, bit2=s, bit3=f.
+    // ARM7TDMI defines control and NZCV fields here; reserved x/s bits stay unchanged.
     if mask & 1 != 0 {
         current = (current & 0xFFFFFF00) | (operand & 0xFF);
     }

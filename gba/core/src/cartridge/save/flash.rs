@@ -1,4 +1,4 @@
-use super::helpers::read_slice;
+use super::helpers::{repeat_byte, selected_write_byte};
 use super::{SaveBackend, SaveType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,12 +60,13 @@ impl SaveBackend for FlashSave {
             };
         }
         let off = ((addr & 0xFFFF) as usize) + self.bank_offset();
-        read_slice(&self.data, off, width)
+        repeat_byte(self.data[off], width)
     }
 
-    fn write(&mut self, addr: u32, _width: u8, value: u32) {
+    fn write(&mut self, addr: u32, width: u8, value: u32) {
         let low = addr & 0xFFFF;
-        let byte = (value & 0xFF) as u8;
+        let byte = selected_write_byte(addr, width, value);
+        // A0 program data and B0 bank selection take priority over a new unlock sequence.
         if self.finish_program(addr, byte) || self.finish_bank_switch(addr, byte) {
             return;
         }
@@ -137,13 +138,17 @@ impl FlashSave {
     }
 
     fn execute_command(&mut self, address: u32, command: u8) {
+        // This is reached only after the AA@5555, 55@2AAA unlock sequence.
         self.state = FlashState::Ready;
         match command {
             0x90 => self.id_mode = true,
             0xF0 => self.id_mode = false,
+            // 80 is erase setup; the following AA/55 unlock leads to 10 or 30.
             0x80 => {}
+            // A0 programs the next byte; B0 selects the next 64 KiB bank.
             0xA0 => self.program_pending = true,
             0xB0 => self.bank_switch_pending = true,
+            // 10 erases the chip and 30 erases the addressed 4 KiB sector.
             0x10 => self.data.fill(0xFF),
             0x30 => self.erase_sector(address),
             _ => self.program_byte(address, command),

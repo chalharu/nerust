@@ -20,6 +20,6 @@ clap.workspace = true
 glob.workspace = true
 
 [build-dependencies]
+glob.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde-saphyr.workspace = true
-glob.workspace = true
