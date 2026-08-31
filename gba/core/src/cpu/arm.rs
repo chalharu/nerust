@@ -20,7 +20,7 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
 
     match bits27_25 {
         0b000 | 0b001 => {
-            // Data Processing / PSR Transfer / Multiply
+            // Data Processing / PSR Transfer / Multiply / Halfword
             if (instr & 0x0FC000F0) == 0x00000090 {
                 // Multiply
                 return handle_multiply(regs, bus, instr);
@@ -30,6 +30,9 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
             }
             if (instr & 0x0FFFFFF0) == 0x012FFF10 {
                 return handle_bx(regs, instr);
+            }
+            if (instr & 0x00000090) == 0x00000090 {
+                return handle_halfword(regs, bus, instr);
             }
             handle_data_processing(regs, bus, instr)
         }
@@ -84,15 +87,17 @@ fn handle_coprocessor_und(regs: &mut CpuRegisters) -> u32 {
     handle_und(regs)
 }
 
-fn handle_data_processing(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    // TODO: barrel_shift + ALU
-    1
+fn handle_data_processing(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::data_processing::handle(regs, bus, instr)
 }
-fn handle_multiply(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    1
+fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::halfword_transfer::handle(regs, bus, instr)
 }
-fn handle_psr(_regs: &mut CpuRegisters, _instr: u32) -> u32 {
-    1
+fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::multiply::handle(regs, bus, instr)
+}
+fn handle_psr(regs: &mut CpuRegisters, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::psr_transfer::handle(regs, instr)
 }
 fn handle_bx(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let rm = (instr & 0xF) as usize;
@@ -103,17 +108,17 @@ fn handle_bx(regs: &mut CpuRegisters, instr: u32) -> u32 {
     regs.set_pc(target & !1);
     3
 }
-fn handle_single_transfer(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    2
+fn handle_single_transfer(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::single_transfer::handle(regs, bus, instr)
 }
-fn handle_block_transfer(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    2
+fn handle_block_transfer(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::block_transfer::handle(regs, bus, instr)
 }
-fn handle_branch(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    3
+fn handle_branch(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::branch::handle(regs, bus, instr)
 }
-fn handle_swi(_regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, _instr: u32) -> u32 {
-    2
+fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::swi::handle(regs, bus, instr)
 }
 
 #[cfg(test)]
