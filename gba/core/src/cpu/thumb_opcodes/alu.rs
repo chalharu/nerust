@@ -186,8 +186,7 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
 }
 
 fn update_nz(regs: &mut CpuRegisters, r: u32) {
-    regs.set_cpsr_n((r >> 31) & 1 != 0);
-    regs.set_cpsr_z(r == 0);
+    crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
 }
 
 pub fn handle_imm(regs: &mut CpuRegisters, instr: u16) -> u32 {
@@ -203,8 +202,7 @@ pub fn handle_imm(regs: &mut CpuRegisters, instr: u16) -> u32 {
         0b01 => {
             let rd_val = regs.r(rd);
             let (r, _) = rd_val.overflowing_sub(imm);
-            regs.set_cpsr_n((r >> 31) & 1 != 0);
-            regs.set_cpsr_z(r == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
             regs.set_cpsr_c(rd_val >= imm);
             regs.set_cpsr_v(((rd_val ^ imm) & (rd_val ^ r) & 0x80000000) != 0);
         }
@@ -212,8 +210,7 @@ pub fn handle_imm(regs: &mut CpuRegisters, instr: u16) -> u32 {
             let rd_val = regs.r(rd);
             let (r, c) = rd_val.overflowing_add(imm);
             regs.set_r(rd, r);
-            regs.set_cpsr_n((r >> 31) & 1 != 0);
-            regs.set_cpsr_z(r == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
             regs.set_cpsr_c(c);
             regs.set_cpsr_v(((rd_val ^ r) & (imm ^ r) & 0x80000000) != 0);
         }
@@ -221,8 +218,7 @@ pub fn handle_imm(regs: &mut CpuRegisters, instr: u16) -> u32 {
             let rd_val = regs.r(rd);
             let (r, _) = rd_val.overflowing_sub(imm);
             regs.set_r(rd, r);
-            regs.set_cpsr_n((r >> 31) & 1 != 0);
-            regs.set_cpsr_z(r == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
             regs.set_cpsr_c(rd_val >= imm);
             regs.set_cpsr_v(((rd_val ^ imm) & (rd_val ^ r) & 0x80000000) != 0);
         }

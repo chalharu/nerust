@@ -15,15 +15,13 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let rs_val = regs.r(rs);
     let result = if op {
         let (r, _) = rs_val.overflowing_sub(rn_val);
-        regs.set_cpsr_n((r >> 31) & 1 != 0);
-        regs.set_cpsr_z(r == 0);
+        crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
         regs.set_cpsr_c(rs_val >= rn_val);
         regs.set_cpsr_v(((rs_val ^ rn_val) & (rs_val ^ r) & 0x80000000) != 0);
         r
     } else {
         let (r, c) = rs_val.overflowing_add(rn_val);
-        regs.set_cpsr_n((r >> 31) & 1 != 0);
-        regs.set_cpsr_z(r == 0);
+        crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
         regs.set_cpsr_c(c);
         regs.set_cpsr_v(((rs_val ^ r) & (rn_val ^ r) & 0x80000000) != 0);
         r
