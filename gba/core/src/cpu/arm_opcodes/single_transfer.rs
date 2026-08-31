@@ -28,48 +28,14 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         instr & 0xFFF
     };
 
-    let base = regs.r(rn);
-    let addr = if p {
-        if u {
-            base.wrapping_add(offset)
-        } else {
-            base.wrapping_sub(offset)
-        }
-    } else {
-        base
-    };
-
-    // Writeback if W or !P
+    let (addr, wb_addr) =
+        crate::cpu::arm_opcodes::helpers::transfer_addresses(regs.r(rn), offset, p, u);
     let writeback = w || !p;
-    let wb_addr = if p {
-        addr
-    } else {
-        if u {
-            base.wrapping_add(offset)
-        } else {
-            base.wrapping_sub(offset)
-        }
-    };
 
     if l {
-        // LDR
-        let val = if b {
-            bus.read8(addr) as u32
-        } else {
-            bus.read32(addr)
-        };
-        regs.set_r(rd, val);
-        if rd == 15 {
-            // LDR PC: pipeline flush handled by caller
-        }
+        regs.set_r(rd, load(bus, addr, b));
     } else {
-        // STR
-        let val = regs.r(rd);
-        if b {
-            bus.write8(addr, (val & 0xFF) as u8);
-        } else {
-            bus.write32(addr, val);
-        }
+        store(bus, addr, regs.r(rd), b);
     }
 
     if writeback && !(l && rd == rn) {
@@ -78,6 +44,22 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     }
 
     if l { 3 } else { 2 }
+}
+
+fn load(bus: &mut GbaMemoryBus, address: u32, byte: bool) -> u32 {
+    if byte {
+        u32::from(bus.read8(address))
+    } else {
+        bus.read32(address)
+    }
+}
+
+fn store(bus: &mut GbaMemoryBus, address: u32, value: u32, byte: bool) {
+    if byte {
+        bus.write8(address, value as u8);
+    } else {
+        bus.write32(address, value);
+    }
 }
 
 #[cfg(test)]

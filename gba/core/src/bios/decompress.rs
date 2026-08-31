@@ -2,172 +2,201 @@ use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 pub fn bit_unpack(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
-    let src = regs.r(0);
-    let dst = regs.r(1);
-    let info_ptr = regs.r(2);
-
-    if !valid_source(src) || info_ptr & 3 != 0 {
+    let Some(spec) = BitUnpackSpec::read(regs, bus) else {
         return;
-    }
-
-    let src_len = bus.read16(info_ptr) as u32;
-    let src_width = bus.read8(info_ptr + 2) as u32;
-    let dst_width = bus.read8(info_ptr + 3) as u32;
-    let offset_and_flag = bus.read32(info_ptr + 4);
-    let offset = offset_and_flag & 0x7FFFFFFF;
-    let zero_flag = (offset_and_flag >> 31) & 1 != 0;
-
-    if src_len == 0
-        || !matches!(src_width, 1 | 2 | 4 | 8)
-        || !matches!(dst_width, 1 | 2 | 4 | 8 | 16 | 32)
-    {
-        return;
-    }
-
-    let src_mask = (1u32 << src_width) - 1;
-    let dst_mask = if dst_width == 32 {
-        u32::MAX
-    } else {
-        (1u32 << dst_width) - 1
     };
-    let mut dst_addr = dst;
+    unpack_bits(bus, spec);
+}
+
+struct BitUnpackSpec {
+    source: u32,
+    destination: u32,
+    source_len: u32,
+    source_width: u32,
+    destination_width: u32,
+    offset: u32,
+    offset_zero: bool,
+}
+
+impl BitUnpackSpec {
+    fn read(regs: &CpuRegisters, bus: &mut GbaMemoryBus) -> Option<Self> {
+        let source = regs.r(0);
+        let info = regs.r(2);
+        if !valid_source(source) || info & 3 != 0 {
+            return None;
+        }
+        let source_len = u32::from(bus.read16(info));
+        let source_width = u32::from(bus.read8(info + 2));
+        let destination_width = u32::from(bus.read8(info + 3));
+        if source_len == 0
+            || !matches!(source_width, 1 | 2 | 4 | 8)
+            || !matches!(destination_width, 1 | 2 | 4 | 8 | 16 | 32)
+        {
+            return None;
+        }
+        let offset = bus.read32(info + 4);
+        Some(Self {
+            source,
+            destination: regs.r(1),
+            source_len,
+            source_width,
+            destination_width,
+            offset: offset & 0x7FFF_FFFF,
+            offset_zero: offset >> 31 != 0,
+        })
+    }
+}
+
+fn unpack_bits(bus: &mut GbaMemoryBus, spec: BitUnpackSpec) {
+    let source_mask = (1u32 << spec.source_width) - 1;
+    let destination_mask = width_mask(spec.destination_width);
+    let mut destination = spec.destination;
     let mut dst_bits = 0u32;
     let mut dst_word = 0u32;
-
-    for src_pos in 0..src_len {
-        let src_byte = u32::from(bus.read8(src + src_pos));
-        for bit in (0..8).step_by(src_width as usize) {
-            let value = (src_byte >> bit) & src_mask;
-            let adjusted = if value != 0 || zero_flag {
-                value.wrapping_add(offset)
-            } else {
-                value
-            } & dst_mask;
+    for position in 0..spec.source_len {
+        let source_byte = u32::from(bus.read8(spec.source + position));
+        for bit in (0..8).step_by(spec.source_width as usize) {
+            let value = (source_byte >> bit) & source_mask;
+            let adjusted = apply_offset(value, spec.offset, spec.offset_zero) & destination_mask;
             dst_word |= adjusted << dst_bits;
-            dst_bits += dst_width;
+            dst_bits += spec.destination_width;
             if dst_bits == 32 {
-                bus.write32(dst_addr, dst_word);
-                dst_addr = dst_addr.wrapping_add(4);
+                bus.write32(destination, dst_word);
+                destination = destination.wrapping_add(4);
                 dst_word = 0;
                 dst_bits = 0;
             }
         }
     }
     if dst_bits > 0 {
-        bus.write32(dst_addr, dst_word);
+        bus.write32(destination, dst_word);
+    }
+}
+
+fn width_mask(width: u32) -> u32 {
+    if width == 32 {
+        u32::MAX
+    } else {
+        (1 << width) - 1
+    }
+}
+
+fn apply_offset(value: u32, offset: u32, include_zero: bool) -> u32 {
+    if value != 0 || include_zero {
+        value.wrapping_add(offset)
+    } else {
+        value
     }
 }
 
 pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) {
     let src = regs.r(0);
-    let dst = regs.r(1);
-
-    if !valid_source(src) {
+    let Some(size) = decompressed_size(bus, src, 0x10) else {
         return;
-    }
-
-    let header = bus.read32(src & !3);
-    let comp_type = header & 0xF0;
-    let decomp_size = header >> 8;
-    if comp_type != 0x10 || decomp_size == 0 {
+    };
+    let Some(output) = decode_lz77(bus, src + 4, size) else {
         return;
-    }
+    };
+    write_output(bus, regs.r(1), &output, width);
+}
 
-    let mut src_pos = src + 4;
-    let mut remaining = decomp_size;
-    let mut output = Vec::with_capacity(decomp_size as usize);
-
-    while remaining > 0 {
-        let flag = bus.read8(src_pos);
-        src_pos += 1;
+fn decode_lz77(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option<Vec<u8>> {
+    let mut output = Vec::with_capacity(size as usize);
+    while output.len() < size as usize {
+        let flag = bus.read8(source);
+        source += 1;
         for i in 0..8 {
-            if remaining == 0 {
+            if output.len() == size as usize {
                 break;
             }
             if (flag >> (7 - i)) & 1 == 0 {
-                let b = bus.read8(src_pos);
-                src_pos += 1;
-                output.push(b);
-                remaining -= 1;
+                output.push(bus.read8(source));
+                source += 1;
             } else {
-                let b0 = bus.read8(src_pos) as u32;
-                let b1 = bus.read8(src_pos + 1) as u32;
-                src_pos += 2;
-                let length = (b0 >> 4) + 3;
-                let disp = ((((b0 & 0xF) << 8) | b1) + 1) as usize;
-                if disp > output.len() {
-                    return;
-                }
-                for _ in 0..length {
-                    if remaining == 0 {
-                        break;
-                    }
-                    let b = output[output.len() - disp];
-                    output.push(b);
-                    remaining -= 1;
-                }
+                source = append_lz_reference(bus, source, size as usize, &mut output)?;
             }
         }
     }
-    write_output(bus, dst, &output, width);
+    Some(output)
+}
+
+fn append_lz_reference(
+    bus: &mut GbaMemoryBus,
+    source: u32,
+    target_len: usize,
+    output: &mut Vec<u8>,
+) -> Option<u32> {
+    let first = u32::from(bus.read8(source));
+    let second = u32::from(bus.read8(source + 1));
+    let length = ((first >> 4) + 3) as usize;
+    let distance = ((((first & 0xF) << 8) | second) + 1) as usize;
+    if distance > output.len() {
+        return None;
+    }
+    for _ in 0..length.min(target_len - output.len()) {
+        output.push(output[output.len() - distance]);
+    }
+    Some(source + 2)
 }
 
 pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let src = regs.r(0);
-    let dst = regs.r(1);
-
-    if !valid_source(src) {
-        return;
-    }
-
     let header = bus.read32(src & !3);
     let data_bits = header & 0xF;
-    let decomp_size = header >> 8;
-    if header & 0xF0 != 0x20 || !matches!(data_bits, 4 | 8) || decomp_size == 0 {
+    let Some(size) = valid_huffman_size(src, header, data_bits) else {
+        return;
+    };
+    let tree = read_huffman_tree(bus, src);
+    if tree.is_empty() {
         return;
     }
+    decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
+}
 
-    let tree_size = bus.read8(src + 4) as u32;
+fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
+    let size = header >> 8;
+    (valid_source(source) && header & 0xF0 == 0x20 && matches!(bits, 4 | 8) && size > 0)
+        .then_some(size)
+}
+
+fn read_huffman_tree(bus: &mut GbaMemoryBus, source: u32) -> Vec<u8> {
+    let tree_size = u32::from(bus.read8(source + 4));
     let tree_bytes = (tree_size + 1) * 2;
     let mut tree_table = vec![0u8; tree_bytes as usize];
     for i in 0..tree_bytes {
-        tree_table[i as usize] = bus.read8(src + 5 + i);
+        tree_table[i as usize] = bus.read8(source + 5 + i);
     }
+    tree_table
+}
 
-    let mut bitstream_pos = (src + 5 + tree_bytes + 3) & !3;
-    let mut bit_buffer = bus.read32(bitstream_pos);
-    let mut bit_pos = 31;
+fn decode_huffman(
+    bus: &mut GbaMemoryBus,
+    source: u32,
+    destination: u32,
+    data_bits: u32,
+    size: u32,
+    tree: &[u8],
+) {
+    let bitstream = (source + 5 + tree.len() as u32 + 3) & !3;
+    let mut reader = BitReader::new(bus, bitstream);
     let mut out_word = 0u32;
     let mut out_bits = 0u32;
-    let target_bits = decomp_size * 8;
-
     let mut node_addr = 0usize;
-    while out_bits < target_bits {
-        let bit = (bit_buffer >> bit_pos) & 1;
-        if bit_pos == 0 {
-            bitstream_pos += 4;
-            bit_buffer = bus.read32(bitstream_pos);
-            bit_pos = 31;
-        } else {
-            bit_pos -= 1;
-        }
-
-        let node = tree_table[node_addr];
+    while out_bits < size * 8 {
+        let bit = reader.next(bus);
+        let node = tree[node_addr];
         let offset = (node & 0x3F) as usize;
-        let is_end0 = node & 0x80 != 0;
-        let is_end1 = node & 0x40 != 0;
-
         let child = (node_addr & !1) + (offset + 1) * 2 + bit as usize;
-        if child >= tree_table.len() {
+        if child >= tree.len() {
             return;
         }
-        let is_leaf = if bit == 0 { is_end0 } else { is_end1 };
+        let is_leaf = node & if bit == 0 { 0x80 } else { 0x40 } != 0;
         if is_leaf {
-            let symbol = u32::from(tree_table[child]) & if data_bits == 4 { 0xF } else { 0xFF };
+            let symbol = u32::from(tree[child]) & width_mask(data_bits);
             out_word |= symbol << (out_bits % 32);
             out_bits += data_bits;
             if out_bits.is_multiple_of(32) {
-                let out_addr = dst + (out_bits / 8) - 4;
+                let out_addr = destination + (out_bits / 8) - 4;
                 bus.write32(out_addr, out_word);
                 out_word = 0;
             }
@@ -177,61 +206,78 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
         }
     }
     if !out_bits.is_multiple_of(32) {
-        bus.write32(dst + (out_bits / 32) * 4, out_word);
+        bus.write32(destination + (out_bits / 32) * 4, out_word);
+    }
+}
+
+struct BitReader {
+    address: u32,
+    value: u32,
+    position: u32,
+}
+
+impl BitReader {
+    fn new(bus: &mut GbaMemoryBus, address: u32) -> Self {
+        Self {
+            address,
+            value: bus.read32(address),
+            position: 31,
+        }
+    }
+
+    fn next(&mut self, bus: &mut GbaMemoryBus) -> u32 {
+        let bit = (self.value >> self.position) & 1;
+        if self.position == 0 {
+            self.address += 4;
+            self.value = bus.read32(self.address);
+            self.position = 31;
+        } else {
+            self.position -= 1;
+        }
+        bit
     }
 }
 
 pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) {
     let src = regs.r(0);
-    let dst = regs.r(1);
-
-    if !valid_source(src) {
+    let Some(size) = decompressed_size(bus, src, 0x30) else {
         return;
-    }
+    };
+    let output = decode_rl(bus, src + 4, size);
+    write_output(bus, regs.r(1), &output, width);
+}
 
-    let header = bus.read32(src & !3);
-    let decomp_size = header >> 8;
-    if header & 0xF0 != 0x30 || decomp_size == 0 {
-        return;
-    }
-
-    let mut src_pos = src + 4;
-    let mut remaining = decomp_size;
-    let mut output = Vec::with_capacity(decomp_size as usize);
-
-    while remaining > 0 {
-        let flag = bus.read8(src_pos);
-        src_pos += 1;
+fn decode_rl(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Vec<u8> {
+    let mut output = Vec::with_capacity(size as usize);
+    while output.len() < size as usize {
+        let flag = bus.read8(source);
+        source += 1;
         let is_compressed = flag & 0x80 != 0;
-        let count = if is_compressed {
-            ((flag & 0x7F) as u32) + 3
-        } else {
-            ((flag & 0x7F) as u32) + 1
-        };
-
+        let count = usize::from(flag & 0x7F) + if is_compressed { 3 } else { 1 };
         if is_compressed {
-            let data = bus.read8(src_pos);
-            src_pos += 1;
-            for _ in 0..count {
-                if remaining == 0 {
-                    break;
-                }
-                output.push(data);
-                remaining -= 1;
-            }
+            let value = bus.read8(source);
+            source += 1;
+            output.extend(std::iter::repeat_n(
+                value,
+                count.min(size as usize - output.len()),
+            ));
         } else {
-            for _ in 0..count {
-                if remaining == 0 {
-                    break;
-                }
-                let data = bus.read8(src_pos);
-                src_pos += 1;
-                output.push(data);
-                remaining -= 1;
+            for _ in 0..count.min(size as usize - output.len()) {
+                output.push(bus.read8(source));
+                source += 1;
             }
         }
     }
-    write_output(bus, dst, &output, width);
+    output
+}
+
+fn decompressed_size(bus: &mut GbaMemoryBus, source: u32, kind: u32) -> Option<u32> {
+    if !valid_source(source) {
+        return None;
+    }
+    let header = bus.read32(source & !3);
+    let size = header >> 8;
+    (header & 0xF0 == kind && size > 0).then_some(size)
 }
 
 fn valid_source(src: u32) -> bool {

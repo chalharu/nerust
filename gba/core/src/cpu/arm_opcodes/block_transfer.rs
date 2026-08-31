@@ -10,44 +10,9 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     let rn = ((instr >> 16) & 0xF) as usize;
     let reg_list = instr & 0xFFFF;
 
-    let mut addr = regs.r(rn);
-    let base = addr;
-    // Calculate start address based on P/U
-    if !u {
-        // Decrement
-        let count = reg_list.count_ones() * 4;
-        if p {
-            addr = addr.wrapping_sub(count);
-        } else {
-            addr = addr.wrapping_sub(count).wrapping_add(4);
-        }
-    } else if p {
-        addr = addr.wrapping_add(4);
-    }
-
-    let mut transferred = 0;
-    for i in 0..16 {
-        if (reg_list >> i) & 1 != 0 {
-            if l {
-                let val = bus.read32(addr);
-                regs.set_r(i, val);
-                if s && i == 15 {
-                    // LDM ^ with PC: CPSR = SPSR
-                    let spsr = regs.spsr();
-                    regs.set_cpsr(spsr);
-                }
-            } else {
-                let mut val = regs.r(i);
-                if i == 15 {
-                    // 実行中命令+8のarchitectural PCに4を加え、PC+12を格納する。
-                    val += 4;
-                }
-                bus.write32(addr, val);
-            }
-            addr = addr.wrapping_add(4);
-            transferred += 1;
-        }
-    }
+    let base = regs.r(rn);
+    let start = start_address(base, reg_list.count_ones(), p, u);
+    let transferred = transfer_registers(regs, bus, reg_list, start, l, s);
 
     if w {
         let wb_val = if u {
@@ -62,14 +27,64 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         }
     }
 
-    let _ = s;
-    // LDM with PC takes additional cycles
-    if l && (reg_list & (1 << 15)) != 0 {
+    transfer_cycles(l, reg_list, transferred)
+}
+
+fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
+    match (up, pre) {
+        (true, true) => base.wrapping_add(4),
+        (true, false) => base,
+        (false, true) => base.wrapping_sub(count * 4),
+        (false, false) => base.wrapping_sub(count * 4).wrapping_add(4),
+    }
+}
+
+fn transfer_registers(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    list: u32,
+    mut address: u32,
+    load: bool,
+    user: bool,
+) -> u32 {
+    let mut transferred = 0;
+    for register in (0..16).filter(|register| list & (1 << register) != 0) {
+        if load {
+            load_register(regs, bus, register, address, user);
+        } else {
+            store_register(regs, bus, register, address);
+        }
+        address = address.wrapping_add(4);
+        transferred += 1;
+    }
+    transferred
+}
+
+fn load_register(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    register: usize,
+    address: u32,
+    restore: bool,
+) {
+    regs.set_r(register, bus.read32(address));
+    if restore && register == 15 {
+        regs.set_cpsr(regs.spsr());
+    }
+}
+
+fn store_register(regs: &CpuRegisters, bus: &mut GbaMemoryBus, register: usize, address: u32) {
+    let value = regs
+        .r(register)
+        .wrapping_add(if register == 15 { 4 } else { 0 });
+    bus.write32(address, value);
+}
+
+fn transfer_cycles(load: bool, list: u32, transferred: u32) -> u32 {
+    if load && list & (1 << 15) != 0 {
         5
-    } else if transferred > 0 {
-        2 + transferred
     } else {
-        2
+        2 + transferred
     }
 }
 

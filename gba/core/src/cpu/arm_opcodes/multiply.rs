@@ -4,49 +4,13 @@ use crate::memory::GbaMemoryBus;
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let is_long = (instr >> 23) & 1 != 0;
     if is_long {
-        // Multiply Long: UMULL/UMLAL/SMULL/SMLAL
-        let signed = (instr >> 22) & 1 != 0;
-        let a = (instr >> 21) & 1 != 0;
-        let s = (instr >> 20) & 1 != 0;
-        let rd_hi = ((instr >> 16) & 0xF) as usize;
-        let rd_lo = ((instr >> 12) & 0xF) as usize;
-        let rs = ((instr >> 8) & 0xF) as usize;
-        let rm = (instr & 0xF) as usize;
-
-        let rs_val = regs.r(rs);
-        let rm_val = regs.r(rm);
-        let (hi, lo) = if !signed {
-            let res = (rm_val as u64).wrapping_mul(rs_val as u64);
-            if a {
-                let lo_val = regs.r(rd_lo) as u64;
-                let hi_val = regs.r(rd_hi) as u64;
-                let acc = (hi_val << 32) | lo_val;
-                let res_acc = res.wrapping_add(acc);
-                ((res_acc >> 32) as u32, res_acc as u32)
-            } else {
-                ((res >> 32) as u32, res as u32)
-            }
-        } else {
-            let res = (rm_val as i32 as i64).wrapping_mul(rs_val as i32 as i64) as u64;
-            if a {
-                let lo_val = regs.r(rd_lo) as u64;
-                let hi_val = regs.r(rd_hi) as u64;
-                let acc = (hi_val << 32) | lo_val;
-                let res_acc = res.wrapping_add(acc);
-                ((res_acc >> 32) as u32, res_acc as u32)
-            } else {
-                ((res >> 32) as u32, res as u32)
-            }
-        };
-        regs.set_r(rd_hi, hi);
-        regs.set_r(rd_lo, lo);
-        if s {
-            regs.set_cpsr_n((hi >> 31) & 1 != 0);
-            regs.set_cpsr_z(hi == 0 && lo == 0);
-        }
-        return multiplier_cycles(rs_val) + 1 + u32::from(a);
+        return handle_long(regs, instr);
     }
 
+    handle_short(regs, instr)
+}
+
+fn handle_short(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let a = (instr >> 21) & 1 != 0; // MLA if 1
     let s = (instr >> 20) & 1 != 0;
     let rd = ((instr >> 16) & 0xF) as usize;
@@ -68,6 +32,43 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
 
     let cycles = multiplier_cycles(rs_val);
     if a { cycles + 1 } else { cycles }
+}
+
+fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
+    let signed = (instr >> 22) & 1 != 0;
+    let accumulate = (instr >> 21) & 1 != 0;
+    let set_flags = (instr >> 20) & 1 != 0;
+    let rd_hi = ((instr >> 16) & 0xF) as usize;
+    let rd_lo = ((instr >> 12) & 0xF) as usize;
+    let rs_value = regs.r(((instr >> 8) & 0xF) as usize);
+    let rm_value = regs.r((instr & 0xF) as usize);
+    let product = multiply_64(rm_value, rs_value, signed);
+    let result = if accumulate {
+        product.wrapping_add(register_pair(regs, rd_hi, rd_lo))
+    } else {
+        product
+    };
+    let hi = (result >> 32) as u32;
+    let lo = result as u32;
+    regs.set_r(rd_hi, hi);
+    regs.set_r(rd_lo, lo);
+    if set_flags {
+        regs.set_cpsr_n(hi >> 31 != 0);
+        regs.set_cpsr_z(result == 0);
+    }
+    multiplier_cycles(rs_value) + 1 + u32::from(accumulate)
+}
+
+fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
+    if signed {
+        (left as i32 as i64).wrapping_mul(right as i32 as i64) as u64
+    } else {
+        u64::from(left).wrapping_mul(u64::from(right))
+    }
+}
+
+fn register_pair(regs: &CpuRegisters, hi: usize, lo: usize) -> u64 {
+    (u64::from(regs.r(hi)) << 32) | u64::from(regs.r(lo))
 }
 
 fn multiplier_cycles(rs_val: u32) -> u32 {
