@@ -1,0 +1,21 @@
+rom_root: ../../roms/gba
+completion_profiles:
+  cycles_only:
+    poll_interval: 256
+    stages: []
+suites:
+  - name: mgba
+    case_patterns:
+      - glob: suite/mgba/arm/*.gba
+        id_prefix: mgba_arm_
+      - glob: suite/mgba/thumb/*.gba
+        id_prefix: mgba_thumb_
+  - name: custom
+    cases:
+      - id: custom_mem_test
+        rom: custom/mem_test.gba
+        cycles: 100000
+        verify:
+          memory:
+            - address: 0x02000000
+              value: 0x01
