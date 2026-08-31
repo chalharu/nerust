@@ -1,0 +1,189 @@
+use std::{path::Path, time::Instant};
+
+use nerust_gba_core::{memory::GbaMemoryBus, system::GbaSystem};
+
+use crate::{
+    error::RomTestError,
+    manifest::{CompletionStage, MemoryCompletion, SelectedCase},
+    report::CaseResult,
+};
+
+pub fn run_manifest(rom_root: &Path, cases: &[SelectedCase<'_>]) -> Vec<CaseResult> {
+    cases.iter().map(|case| run_case(case, rom_root)).collect()
+}
+
+pub fn run_case(selected: &SelectedCase<'_>, rom_root: &Path) -> CaseResult {
+    let started = Instant::now();
+    let mut executed_tcycles = 0;
+    let mut completed_early = false;
+    let result = run_case_inner(
+        selected,
+        rom_root,
+        &mut executed_tcycles,
+        &mut completed_early,
+    );
+    let (checks, error, error_kind) = match result {
+        Ok(checks) => (checks, None, None),
+        Err(error) => (
+            Vec::new(),
+            Some(error.to_string()),
+            Some(error.category().to_string()),
+        ),
+    };
+    let passed = error.is_none() && checks.iter().all(|check| check.passed);
+    CaseResult {
+        id: selected.case.id.clone(),
+        suite: selected.suite.name.clone(),
+        description: selected.case.description.clone(),
+        passed,
+        checks,
+        error,
+        error_kind,
+        executed_tcycles,
+        completed_early,
+        duration_ms: started.elapsed().as_millis() as u64,
+    }
+}
+
+fn run_case_inner(
+    selected: &SelectedCase<'_>,
+    rom_root: &Path,
+    executed_tcycles: &mut usize,
+    completed_early: &mut bool,
+) -> Result<Vec<crate::verify::CheckResult>, RomTestError> {
+    let rom_path = rom_root.join(&selected.suite.name).join(&selected.case.rom);
+    if !rom_path.is_file() {
+        return Err(RomTestError::InvalidManifest(format!(
+            "ROM not found: {}",
+            rom_path.display()
+        )));
+    }
+    let rom = std::fs::read(&rom_path)?;
+    let mut system = GbaSystem::from_rom(rom)
+        .ok_or_else(|| RomTestError::InvalidRom(rom_path.display().to_string()))?;
+
+    let mut completion_tracker = CompletionTracker::default();
+    for cycle in 0..selected.case.cycles {
+        system.step_tcycle();
+        *executed_tcycles = cycle + 1;
+        if let Some(completion) = selected.completion
+            && cycle.is_multiple_of(completion.poll_interval)
+            && completion_tracker.observe(
+                stage_matches(&completion.stages[completion_tracker.stage], &mut system),
+                completion.stages.len(),
+            )
+        {
+            *completed_early = true;
+            break;
+        }
+    }
+
+    selected
+        .case
+        .verify
+        .verify(&mut system.bus, system.cpu.registers())
+}
+
+fn stage_matches(stage: &CompletionStage, system: &mut GbaSystem) -> bool {
+    stage
+        .memory
+        .iter()
+        .all(|condition| memory_matches(condition, &mut system.bus))
+        && stage.registers.matches(system.cpu.registers())
+}
+
+fn memory_matches(condition: &MemoryCompletion, bus: &mut GbaMemoryBus) -> bool {
+    let Ok(address) = crate::verify::parse_hex(&condition.address).map(|value| value as u32) else {
+        return false;
+    };
+    let actual = match condition.width {
+        1 => u32::from(bus.read8(address)),
+        2 => u32::from(bus.read16(address)),
+        4 => bus.read32(address),
+        _ => return false,
+    };
+    if let Some(value) = &condition.value {
+        return crate::verify::parse_hex(value).is_ok_and(|value| u64::from(actual) == value);
+    }
+    condition.not_value.as_ref().is_some_and(|value| {
+        crate::verify::parse_hex(value).is_ok_and(|value| u64::from(actual) != value)
+    })
+}
+
+#[derive(Default)]
+struct CompletionTracker {
+    stage: usize,
+}
+
+impl CompletionTracker {
+    fn observe(&mut self, matches: bool, stage_count: usize) -> bool {
+        if matches {
+            self.stage += 1;
+        }
+        self.stage == stage_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        manifest::RomCase,
+        verify::{MemoryEntry, VerifySpec},
+    };
+    use nerust_gba_core::cartridge::header::finalize_test_gba_rom;
+
+    #[test]
+    fn completion_tracker_requires_ordered_matches() {
+        let mut tracker = CompletionTracker::default();
+        assert!(!tracker.observe(false, 2));
+        assert!(!tracker.observe(true, 2));
+        assert!(tracker.observe(true, 2));
+    }
+
+    #[test]
+    fn executes_rom_and_verifies_memory() {
+        let root = std::env::temp_dir().join(format!("nerust-gba-rom-test-{}", std::process::id()));
+        let suite_dir = root.join("synthetic");
+        std::fs::create_dir_all(&suite_dir).unwrap();
+        let mut rom = vec![0u8; 0x200];
+        rom[0..4].copy_from_slice(&0xEA00_002Eu32.to_le_bytes()); // B 0x080000C0
+        rom[0xC0..0xC4].copy_from_slice(&0xE3A0_0001u32.to_le_bytes()); // MOV R0,#1
+        rom[0xC4..0xC8].copy_from_slice(&0xE3A0_1402u32.to_le_bytes()); // MOV R1,#0x02000000
+        rom[0xC8..0xCC].copy_from_slice(&0xE581_0000u32.to_le_bytes()); // STR R0,[R1]
+        rom[0xCC..0xD0].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes()); // B .
+        finalize_test_gba_rom(&mut rom);
+        std::fs::write(suite_dir.join("pass.gba"), rom).unwrap();
+
+        let suite = crate::manifest::RomSuite {
+            name: "synthetic".into(),
+            cases: Vec::new(),
+            case_patterns: Vec::new(),
+        };
+        let case = RomCase {
+            id: "synthetic_pass".into(),
+            rom: "pass.gba".into(),
+            cycles: 200,
+            completion: None,
+            description: "synthetic ARM program".into(),
+            verify: VerifySpec {
+                memory: vec![MemoryEntry {
+                    address: "0x02000000".into(),
+                    value: "1".into(),
+                    width: 1,
+                }],
+                ..Default::default()
+            },
+        };
+        let selected = SelectedCase {
+            suite: &suite,
+            case: &case,
+            completion: None,
+        };
+        let result = run_case(&selected, &root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(result.passed, "{:?}", result.error);
+        assert_eq!(result.checks.len(), 1);
+        assert!(result.checks[0].passed);
+    }
+}

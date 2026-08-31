@@ -8,57 +8,51 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
         return 1; // 条件不一致 → 1S NOP
     }
 
-    let bits27_25 = (instr >> 25) & 0b111;
-    let _bit4 = (instr >> 4) & 1;
-    let _bit7 = (instr >> 7) & 1;
-
-    // Coprocessor / UND — GBAでは未定義
-    if bits27_25 == 0b110 || bits27_25 == 0b111 && (instr >> 24) & 1 == 0 {
-        // LDC/STC/CDP/MCR/MRC はUND例外 TODO(gba-coprocessor-und)
-        return handle_und(regs);
-    }
-
-    match bits27_25 {
-        0b000 | 0b001 => {
-            // Data Processing / PSR Transfer / Multiply / Halfword / SWP
-            if (instr & 0x0F8000F0) == 0x00800090 {
-                // Multiply Long
-                return handle_multiply(regs, bus, instr);
-            }
-            if (instr & 0x0FC000F0) == 0x00000090 {
-                // Multiply
-                return handle_multiply(regs, bus, instr);
-            }
-            if (instr & 0x0FB00FF0) == 0x01000090 {
-                // SWP/SWPB
-                return handle_swp(regs, bus, instr);
-            }
-            if (instr & 0x0FBF0FFF) == 0x010F0000
-                || (instr & 0x0FB0FFF0) == 0x0120F000
-                || (instr & 0x0FB0F000) == 0x0320F000
-            {
-                return handle_psr(regs, instr);
-            }
-            if (instr & 0x0FFFFFF0) == 0x012FFF10 {
-                return handle_bx(regs, instr);
-            }
-            if (instr & 0x00000090) == 0x00000090 {
-                return handle_halfword(regs, bus, instr);
-            }
-            handle_data_processing(regs, bus, instr)
-        }
+    match (instr >> 25) & 0b111 {
+        0b000 | 0b001 => decode_data_class(regs, bus, instr),
         0b010 | 0b011 => handle_single_transfer(regs, bus, instr),
         0b100 => handle_block_transfer(regs, bus, instr),
         0b101 => handle_branch(regs, bus, instr),
-        0b110 => handle_block_transfer(regs, bus, instr), // LDM/STM already
-        0b111 => {
-            if (instr >> 24) & 1 == 1 {
-                handle_swi(regs, bus, instr)
-            } else {
-                handle_coprocessor_und(regs)
-            }
-        }
+        0b110 => handle_und(regs),
+        0b111 => decode_software_or_coprocessor(regs, bus, instr),
         _ => handle_und(regs),
+    }
+}
+
+fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
+        return handle_multiply(regs, bus, instr);
+    }
+    if (instr & 0x0FB00FF0) == 0x01000090 {
+        return handle_swp(regs, bus, instr);
+    }
+    if is_psr_transfer(instr) {
+        return handle_psr(regs, instr);
+    }
+    if (instr & 0x0FFFFFF0) == 0x012FFF10 {
+        return handle_bx(regs, instr);
+    }
+    if (instr & 0x00000090) == 0x00000090 {
+        return handle_halfword(regs, bus, instr);
+    }
+    handle_data_processing(regs, bus, instr)
+}
+
+fn is_psr_transfer(instr: u32) -> bool {
+    (instr & 0x0FBF0FFF) == 0x010F0000
+        || (instr & 0x0FB0FFF0) == 0x0120F000
+        || (instr & 0x0FB0F000) == 0x0320F000
+}
+
+fn decode_software_or_coprocessor(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    instr: u32,
+) -> u32 {
+    if (instr >> 24) & 1 == 1 {
+        handle_swi(regs, bus, instr)
+    } else {
+        handle_coprocessor_und(regs)
     }
 }
 
