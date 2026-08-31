@@ -4,6 +4,7 @@ use crate::memory::GbaMemoryBus;
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let is_long = (instr >> 23) & 1 != 0;
     if is_long {
+        // UMULL/UMLAL/SMULL/SMLAL produce an RdHi:RdLo pair.
         return handle_long(regs, instr);
     }
 

@@ -8,8 +8,10 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     let s = (instr >> 20) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
+    // Operand2 always passes through the barrel shifter, including immediates.
     let (op2, shifter_carry) = operand2(regs, instr, i);
     let (result, carry, overflow) = execute(opcode, regs.r(rn), op2, shifter_carry, regs.cpsr_c());
+    // TST/TEQ/CMP/CMN update flags without writing Rd.
     let flag_only = matches!(opcode, 0x8..=0xB);
     if !flag_only {
         write_result(regs, rd, result, s);
@@ -17,6 +19,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     if s && !(rd == 15 && !flag_only) {
         update_flags(regs, opcode, result, carry, overflow);
     }
+    // Register-specified shifts consume one additional internal cycle.
     1 + u32::from(!i && ((instr >> 4) & 1) != 0)
 }
 
@@ -48,21 +51,23 @@ fn immediate_operand(value: u32, rotation: u32, carry: bool) -> (u32, bool) {
 }
 
 fn execute(opcode: u8, left: u32, right: u32, shift_carry: bool, carry: bool) -> (u32, bool, bool) {
+    // Opcode map: AND, EOR, SUB, RSB, ADD, ADC, SBC, RSC,
+    // TST, TEQ, CMP, CMN, ORR, MOV, BIC, MVN.
     match opcode {
-        0x0 => (left & right, shift_carry, false),
-        0x1 => (left ^ right, shift_carry, false),
-        0x2 | 0xA => sub_with_flags(left, right),
-        0x3 => sub_with_flags(right, left),
-        0x4 | 0xB => add_with_flags(left, right),
-        0x5 => adc_with_flags(left, right, u32::from(carry)),
-        0x6 => sbc_with_flags(left, right, u32::from(carry)),
-        0x7 => sbc_with_flags(right, left, u32::from(carry)),
-        0x8 => (left & right, shift_carry, false),
-        0x9 => (left ^ right, shift_carry, false),
-        0xC => (left | right, shift_carry, false),
-        0xD => (right, shift_carry, false),
-        0xE => (left & !right, shift_carry, false),
-        0xF => (!right, shift_carry, false),
+        0x0 => (left & right, shift_carry, false), // AND
+        0x1 => (left ^ right, shift_carry, false), // EOR
+        0x2 | 0xA => sub_with_flags(left, right),  // SUB/CMP
+        0x3 => sub_with_flags(right, left),        // RSB
+        0x4 | 0xB => add_with_flags(left, right),  // ADD/CMN
+        0x5 => adc_with_flags(left, right, u32::from(carry)), // ADC
+        0x6 => sbc_with_flags(left, right, u32::from(carry)), // SBC
+        0x7 => sbc_with_flags(right, left, u32::from(carry)), // RSC
+        0x8 => (left & right, shift_carry, false), // TST
+        0x9 => (left ^ right, shift_carry, false), // TEQ
+        0xC => (left | right, shift_carry, false), // ORR
+        0xD => (right, shift_carry, false),        // MOV
+        0xE => (left & !right, shift_carry, false), // BIC
+        0xF => (!right, shift_carry, false),       // MVN
         _ => unreachable!(),
     }
 }
@@ -70,6 +75,7 @@ fn execute(opcode: u8, left: u32, right: u32, shift_carry: bool, carry: bool) ->
 fn write_result(regs: &mut CpuRegisters, destination: usize, result: u32, set_flags: bool) {
     regs.set_r(destination, result);
     if destination == 15 && set_flags {
+        // Data-processing with S and Rd=PC returns from an exception via SPSR.
         regs.set_cpsr(regs.spsr());
     }
 }
@@ -77,6 +83,7 @@ fn write_result(regs: &mut CpuRegisters, destination: usize, result: u32, set_fl
 fn update_flags(regs: &mut CpuRegisters, opcode: u8, result: u32, carry: bool, overflow: bool) {
     crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
     regs.set_cpsr_c(carry);
+    // Logical operations preserve V; arithmetic operations replace it.
     if !matches!(opcode, 0x0 | 0x1 | 0x8 | 0x9 | 0xC..=0xF) {
         regs.set_cpsr_v(overflow);
     }
