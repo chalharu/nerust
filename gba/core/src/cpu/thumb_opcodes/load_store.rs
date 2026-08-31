@@ -11,6 +11,8 @@ pub fn handle_pc_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
 }
 
 pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
+    // TODO(gba-thumb-sign): Format 8 (H/S) for LDRSB/LDRSH/STRH is currently handled as B/L.
+    // Full H/S handling (01011 prefix) will be refined with GBATEK table in follow-up.
     let ro = ((instr >> 6) & 0x7) as usize;
     let rb = ((instr >> 3) & 0x7) as usize;
     let rd = (instr & 0x7) as usize;
