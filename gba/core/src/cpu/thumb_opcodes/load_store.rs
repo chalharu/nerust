@@ -135,34 +135,60 @@ pub fn handle_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
     if rlist == 0 {
         return handle_empty_multiple(regs, bus, rb, l);
     }
+    if l {
+        ldm_multiple(regs, bus, rb, rlist)
+    } else {
+        stm_multiple(regs, bus, rb, rlist)
+    }
+}
+
+fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
-    let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
+    let mut count = 0;
+    for i in 0..8 {
+        if (rlist >> i) & 1 == 0 {
+            continue;
+        }
+        regs.set_r(i, bus.read32(addr));
+        addr = addr.wrapping_add(4);
+        count += 1;
+    }
+    if (rlist >> rb) & 1 == 0 {
+        regs.set_r(rb, addr);
+    }
+    3 + count
+}
+
+fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
+    let mut addr = regs.r(rb);
+    let final_addr = addr.wrapping_add(u32::from(rlist.count_ones()) * 4);
     let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
     for i in 0..8 {
-        if (rlist >> i) & 1 != 0 {
-            if l {
-                regs.set_r(i, bus.read32(addr));
-            } else {
-                let value = if i == rb && rb != first_register {
-                    final_addr
-                } else {
-                    regs.r(i)
-                };
-                bus.write32(addr, value);
-            }
-            addr = addr.wrapping_add(4);
-            count += 1;
+        if (rlist >> i) & 1 == 0 {
+            continue;
         }
+        let value = stm_value(regs, rb, i, first_register, final_addr);
+        bus.write32(addr, value);
+        addr = addr.wrapping_add(4);
+        count += 1;
     }
-    // STM always writes back. LDM suppresses writeback when the base is loaded.
-    if !l || (rlist >> rb) & 1 == 0 {
-        regs.set_r(rb, addr);
-    }
-    if l {
-        3 + count as u32
+    regs.set_r(rb, addr);
+    2 + count
+}
+
+#[inline]
+fn stm_value(
+    regs: &CpuRegisters,
+    rb: usize,
+    i: usize,
+    first_register: usize,
+    final_addr: u32,
+) -> u32 {
+    if i == rb && rb != first_register {
+        final_addr
     } else {
-        2 + count as u32
+        regs.r(i)
     }
 }
 
