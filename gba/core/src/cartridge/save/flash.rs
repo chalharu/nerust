@@ -64,7 +64,7 @@ impl SaveBackend for FlashSave {
     }
 
     fn write(&mut self, addr: u32, width: u8, value: u32) {
-        let low = (addr & 0xFFFF) as u32;
+        let low = addr & 0xFFFF;
         let byte = (value & 0xFF) as u8;
 
         // Program pending (after 0xA0) has priority

@@ -21,17 +21,17 @@ mod tests {
 
     #[test]
     fn default_settings() {
-        let settings = GbaSettings::default();
-        assert!(!settings.requires_live_session_rebuild(&GbaSettings::default()));
+        let settings = GbaSettings;
+        assert!(!settings.requires_live_session_rebuild(&GbaSettings));
     }
 
     #[test]
     fn dyn_clone_preserves_values() {
-        let settings: Box<dyn SystemSettings> = Box::new(GbaSettings::default());
+        let settings: Box<dyn SystemSettings> = Box::new(GbaSettings);
         let cloned = settings.clone();
         let cloned_gba = cloned
             .downcast_ref::<GbaSettings>()
             .expect("cloned should downcast");
-        assert_eq!(cloned_gba, &GbaSettings::default());
+        assert_eq!(cloned_gba, &GbaSettings);
     }
 }

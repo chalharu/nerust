@@ -43,18 +43,22 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
 
     if l {
         let val = match (s, h) {
-            (false, true) => bus.read16(addr) as u32,       // LDRH
-            (true, false) => bus.read8(addr) as i8 as u32,  // LDRSB
-            (true, true) => bus.read16(addr) as i16 as u32, // LDRSH
+            (false, true) => bus.read16(addr) as u32,      // LDRH
+            (true, false) => bus.read8(addr) as i8 as u32, // LDRSB
+            (true, true) => {
+                if addr & 1 != 0 {
+                    bus.read8(addr) as i8 as i32 as u32
+                } else {
+                    bus.read16(addr) as i16 as i32 as u32
+                }
+            } // LDRSH
             _ => bus.read16(addr) as u32,
         };
         regs.set_r(rd, val);
-        3
     } else {
         let val = regs.r(rd);
         bus.write16(addr, (val & 0xFFFF) as u16);
-        2
-    };
+    }
 
     if writeback && !(l && rd == rn) {
         regs.set_r(rn, wb_addr);

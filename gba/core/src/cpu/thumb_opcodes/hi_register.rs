@@ -3,18 +3,15 @@ use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u16) -> u32 {
     let op = (instr >> 8) & 0b11;
-    let h1 = (instr >> 7) & 1 != 0;
-    let h2 = (instr >> 6) & 1 != 0;
-    let rs = ((instr >> 3) & 0x7) as usize + if h1 { 8 } else { 0 };
-    let rd = (instr & 0x7) as usize + if h2 { 8 } else { 0 };
+    let high_destination = (instr >> 7) & 1 != 0;
+    let high_source = (instr >> 6) & 1 != 0;
+    let rs = ((instr >> 3) & 0x7) as usize + if high_source { 8 } else { 0 };
+    let rd = (instr & 0x7) as usize + if high_destination { 8 } else { 0 };
     match op {
         0b00 => {
             // ADD Rd, Rs
             let v = regs.r(rd).wrapping_add(regs.r(rs));
             regs.set_r(rd, v);
-            if rd == 15 {
-                regs.set_cpsr(regs.cpsr() & !(1 << 5)); // stay Thumb? BX handles T
-            }
             1
         }
         0b01 => {

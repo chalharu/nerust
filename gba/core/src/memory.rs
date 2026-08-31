@@ -50,11 +50,13 @@ pub struct GbaMemoryBus {
     // 現状は冗長だが据置。イベントスケジューラ導入時に統合/分離を再検討する。
     last_prefetch: u32,
     open_bus_value: u32,
-    prefetch_queue: VecDeque<u32>,
+    prefetch_queue: VecDeque<()>,
     prefetch_enabled: bool,
     bios_protect: bool,
     current_pc: u32,
     prev_addr: Option<u32>,
+    prev_width: u8,
+    access_wait_cycles: u32,
 
     tick: u64,
 }
@@ -94,6 +96,8 @@ impl GbaMemoryBus {
             bios_protect: true,
             current_pc: 0x08000000,
             prev_addr: None,
+            prev_width: 0,
+            access_wait_cycles: 0,
             tick: 0,
         }
     }
@@ -137,26 +141,35 @@ impl GbaMemoryBus {
         self.read32(addr)
     }
 
-    pub fn cycles_for(&self, addr: u32, _width: u8) -> u8 {
+    pub fn cycles_for(&self, addr: u32, width: u8) -> u8 {
         match addr {
             0x00000000..=0x00003FFF => 1,
-            0x02000000..=0x0203FFFF => self.ewram_wait() as u8 + 1,
+            0x02000000..=0x0203FFFF => {
+                if width == 4 {
+                    6
+                } else {
+                    3
+                }
+            }
             0x03000000..=0x03007FFF => 1,
             0x04000000..=0x040003FE => 1,
             0x05000000..=0x050003FF => 1,
             0x06000000..=0x06017FFF => 1,
             0x07000000..=0x070003FF => 1,
             0x08000000..=0x0DFFFFFF => {
-                if self.is_sequential(addr)
+                if self.is_sequential(addr, width)
                     && self.prefetch_enabled
                     && !self.prefetch_queue.is_empty()
                 {
-                    1
+                    if width == 4 { 2 } else { 1 }
                 } else {
-                    4 // 3+1
+                    self.gamepak_rom_cycles(addr, width)
                 }
             }
-            0x0E000000..=0x0E00FFFF => 1,
+            0x0E000000..=0x0E00FFFF => {
+                const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
+                SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
+            }
             _ => 1,
         }
     }
@@ -167,7 +180,7 @@ impl GbaMemoryBus {
         self.tick = self.tick.wrapping_add(1);
         // 簡易 VCOUNT: 1232 T-cycle / scanline として 280896 T-cycle / frame
         self.vcount = ((self.tick / 1232) % 228) as u16;
-        self.tick % 280896 == 0 && self.tick != 0
+        self.tick != 0 && self.tick.is_multiple_of(280896)
     }
 
     /// 将来イベントスケジューラの入口。Phase 3では no-op。
@@ -180,6 +193,10 @@ impl GbaMemoryBus {
 
     pub fn set_current_pc(&mut self, pc: u32) {
         self.current_pc = pc;
+    }
+
+    pub fn take_access_wait_cycles(&mut self) -> u32 {
+        std::mem::take(&mut self.access_wait_cycles)
     }
 
     pub fn set_cartridge(&mut self, cart: Cartridge) {
@@ -203,23 +220,36 @@ impl GbaMemoryBus {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn ewram_wait(&self) -> u32 {
-        match self.wait_cnt & 0b11 {
-            0b00 => 2,
-            0b01 => 2,
-            0b10 => 1,
-            _ => 0,
-        }
-    }
-
-    fn is_sequential(&self, addr: u32) -> bool {
+    fn is_sequential(&self, addr: u32, _width: u8) -> bool {
         if let Some(prev) = self.prev_addr {
             // 32bit ROM領域で連続アドレスか
             (0x08000000..=0x0DFFFFFF).contains(&addr)
                 && (0x08000000..=0x0DFFFFFF).contains(&prev)
-                && addr == prev + 4
+                && addr == prev.wrapping_add(u32::from(self.prev_width))
         } else {
             false
+        }
+    }
+
+    fn gamepak_rom_cycles(&self, addr: u32, width: u8) -> u8 {
+        const FIRST: [u8; 4] = [4, 3, 2, 8];
+        let (first_shift, second_shift, second_slow) = match addr {
+            0x08000000..=0x09FFFFFF => (2, 4, 2),
+            0x0A000000..=0x0BFFFFFF => (5, 7, 4),
+            _ => (8, 10, 8),
+        };
+        let first = FIRST[((self.wait_cnt >> first_shift) & 0b11) as usize];
+        let second = if (self.wait_cnt >> second_shift) & 1 == 0 {
+            second_slow
+        } else {
+            1
+        };
+        if self.is_sequential(addr, width) {
+            second * if width == 4 { 2 } else { 1 }
+        } else if width == 4 {
+            first + second
+        } else {
+            first
         }
     }
 
@@ -231,8 +261,7 @@ impl GbaMemoryBus {
             }
             2 => {
                 if addr & 1 != 0 {
-                    // Thumb LDRH: 下位1bit 無視 (truncated)
-                    raw & 0xFFFF
+                    u32::from((raw as u16).rotate_right(8))
                 } else {
                     raw & 0xFFFF
                 }
@@ -272,7 +301,6 @@ impl GbaMemoryBus {
             } else if !sequential {
                 self.refill_prefetch_queue(addr);
             }
-            return;
         }
         // Non-ROM, non-I/O accesses keep queue (only ROM non-sequential flushes)
     }
@@ -285,38 +313,35 @@ impl GbaMemoryBus {
         }
         // DMAアクセスでCPUの連続性も破壊
         self.prev_addr = Some(dma_addr);
+        self.prev_width = 0;
     }
 
-    fn refill_prefetch_queue(&mut self, addr: u32) {
+    fn refill_prefetch_queue(&mut self, _addr: u32) {
         self.prefetch_queue.clear();
         if !self.prefetch_enabled {
             return;
         }
-        let rom_len = self
-            .cartridge
-            .as_ref()
-            .map(|c| c.rom.len())
-            .unwrap_or(0x4000);
-        for i in 1..=8 {
-            let next = addr.wrapping_add(i * 4);
-            if (0x08000000..=0x0DFFFFFF).contains(&next) && (next as usize) < rom_len + 0x08000000 {
-                self.prefetch_queue.push_back(0xEAEA_EAEA);
-            }
+        for _ in 0..8 {
+            self.prefetch_queue.push_back(());
         }
     }
 
     fn read_internal(&mut self, addr: u32, width: u8) -> (u32, u8) {
         let wait = self.cycles_for(addr, width);
-        let sequential = self.is_sequential(addr) && self.prefetch_enabled;
+        self.access_wait_cycles += u32::from(wait.saturating_sub(1));
+        let sequential = self.is_sequential(addr, width) && self.prefetch_enabled;
         let raw = self.read_mapped(addr, width);
         self.update_prefetch_queue(addr, sequential);
         self.prev_addr = Some(addr);
+        self.prev_width = width;
         self.last_prefetch = raw;
         self.open_bus_value = raw;
         (raw, wait)
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32) {
+        let wait = self.cycles_for(addr, width);
+        self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         match addr {
             0x02000000..=0x0203FFFF => self.write_ewram(addr, width, value),
             0x03000000..=0x03007FFF => self.write_iwram(addr, width, value),
@@ -333,6 +358,7 @@ impl GbaMemoryBus {
         // 非ROMへの書き込みでプリフェッチはフラッシュしない（ROM連続性のみで判定）
         if (0x08000000..=0x0DFFFFFF).contains(&addr) {
             self.prev_addr = Some(addr);
+            self.prev_width = width;
         }
     }
 
@@ -415,7 +441,7 @@ impl GbaMemoryBus {
             let high: u32 = match high_addr {
                 0x04000002 => 0,
                 0x04000006 => self.vcount as u32,
-                0x04000122 => ((self.siodata32 >> 16) & 0xFFFF) as u32,
+                0x04000122 => (self.siodata32 >> 16) & 0xFFFF,
                 0x04000202 => self.sif as u32,
                 _ => 0,
             };
@@ -612,7 +638,7 @@ mod tests {
         bus.write32(0x02000000, 0x12345678);
         let _ = bus.read32(0x02000000);
         // VCOUNT は RO だが read は可能。未実装レジスタ 0x04000008 は open_bus
-        assert_eq!(bus.read16(0x04000008), 0x5678 as u16 & 0xFFFF | 0); // open_bus lower 16
+        assert_eq!(bus.read16(0x04000008), 0x5678); // open_bus lower 16
         // 正確には open_bus_value の下位16bit
         bus.write32(0x03000000, 0xAABBCCDD);
         let _ = bus.read32(0x03000000);
@@ -620,20 +646,19 @@ mod tests {
     }
 
     #[test]
-    fn waitcnt_ewram_change() {
+    fn ewram_wait_is_fixed() {
         let mut bus = GbaMemoryBus::new();
-        assert_eq!(bus.cycles_for(0x02000000, 2), 3); // 2+1
-        bus.write16(0x04000204, 0x0002); // EWRAM 1 wait
-        assert_eq!(bus.cycles_for(0x02000000, 2), 2);
-        bus.write16(0x04000204, 0x0003); // EWRAM 0 wait
-        assert_eq!(bus.cycles_for(0x02000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x02000000, 2), 3);
+        assert_eq!(bus.cycles_for(0x02000000, 4), 6);
+        bus.write16(0x04000204, 0x0003);
+        assert_eq!(bus.cycles_for(0x02000000, 2), 3);
     }
 
     #[test]
     fn waitcnt_rom_ws() {
         let bus = GbaMemoryBus::new();
-        // デフォルト ROM は 3+1 = 4 cycles
         assert_eq!(bus.cycles_for(0x08000000, 2), 4);
+        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
     }
 
     #[test]
@@ -642,11 +667,11 @@ mod tests {
         bus.write16(0x04000204, 1 << 14); // prefetch enable
         assert!(bus.prefetch_enabled);
         // 非連続 → 通常 wait
-        assert_eq!(bus.cycles_for(0x08000000, 4), 4);
+        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
         // 連続読みでプリフェッチキューが貯まる
         let _ = bus.read32(0x08000000);
         // 次の連続アドレスはプリフェッチヒットで 1 cycle
-        assert_eq!(bus.cycles_for(0x08000004, 4), 1);
+        assert_eq!(bus.cycles_for(0x08000004, 4), 2);
         bus.write16(0x04000204, 0); // disable clears queue
         assert!(!bus.prefetch_enabled);
         assert!(bus.prefetch_queue.is_empty());
@@ -717,7 +742,7 @@ mod tests {
     fn unaligned_ldrh_truncates() {
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x03000000, 0xABCD);
-        // 奇数アドレスの LDRH: 下位1bit 無視で同じ値を返す（簡易 truncate）
-        assert_eq!(bus.read16(0x03000001), 0xABCD);
+        // ARM7TDMIの奇数アドレスLDRHは、整列読出しを8bitローテートする。
+        assert_eq!(bus.read16(0x03000001), 0xCDAB);
     }
 }

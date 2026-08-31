@@ -7,7 +7,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
     let rlist = instr & 0xFF;
     if !l {
         // PUSH {Rlist, LR}
-        let mut count = rlist.count_ones() + if r { 1 } else { 0 };
+        let count = rlist.count_ones() + if r { 1 } else { 0 };
         let mut addr = regs.sp().wrapping_sub(count * 4);
         regs.set_sp(addr);
         for i in 0..8 {
@@ -19,7 +19,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
         if r {
             bus.write32(addr, regs.lr());
         }
-        3 + count as u32
+        3 + count
     } else {
         // POP {Rlist, PC}
         let mut addr = regs.sp();
@@ -35,6 +35,6 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
             addr = addr.wrapping_add(4);
         }
         regs.set_sp(addr);
-        3 + rlist.count_ones() as u32 + if r { 1 } else { 0 }
+        3 + rlist.count_ones() + if r { 1 } else { 0 }
     }
 }

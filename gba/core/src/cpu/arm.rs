@@ -21,6 +21,10 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
     match bits27_25 {
         0b000 | 0b001 => {
             // Data Processing / PSR Transfer / Multiply / Halfword / SWP
+            if (instr & 0x0F8000F0) == 0x00800090 {
+                // Multiply Long
+                return handle_multiply(regs, bus, instr);
+            }
             if (instr & 0x0FC000F0) == 0x00000090 {
                 // Multiply
                 return handle_multiply(regs, bus, instr);
@@ -29,7 +33,10 @@ pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
                 // SWP/SWPB
                 return handle_swp(regs, bus, instr);
             }
-            if (instr & 0x0FBF0FFF) == 0x010F0000 {
+            if (instr & 0x0FBF0FFF) == 0x010F0000
+                || (instr & 0x0FB0FFF0) == 0x0120F000
+                || (instr & 0x0FB0F000) == 0x0320F000
+            {
                 return handle_psr(regs, instr);
             }
             if (instr & 0x0FFFFFF0) == 0x012FFF10 {
@@ -81,10 +88,9 @@ fn check_cond(cpsr: u32, cond: u8) -> bool {
 }
 
 fn handle_und(regs: &mut CpuRegisters) -> u32 {
-    // TODO(gba-coprocessor-und): SPSR_und←CPSR, LR_und←PC+4, CPSR=T=0/M=UND, PC=0x04
-    // Phase 5では空ハンドラとして1サイクルで NOP
-    let _ = regs;
-    1
+    let return_address = regs.pc().wrapping_sub(4);
+    regs.enter_exception(0x1B, 0x04, return_address, false);
+    3
 }
 
 fn handle_coprocessor_und(regs: &mut CpuRegisters) -> u32 {
@@ -148,8 +154,9 @@ fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
 #[cfg(test)]
 mod tests {
     use crate::cpu::registers::CpuRegisters;
+    use crate::memory::GbaMemoryBus;
 
-    use super::check_cond;
+    use super::{check_cond, decode_arm};
 
     #[test]
     fn cond_eq() {
@@ -161,5 +168,30 @@ mod tests {
     #[test]
     fn cond_always() {
         assert!(check_cond(0, 0xE));
+    }
+
+    #[test]
+    fn multiply_long_reaches_multiply_handler() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(0, 3);
+        regs.set_r(1, 4);
+        // UMULL R2,R3,R0,R1
+        decode_arm(&mut regs, &mut bus, 0xE0832190);
+        assert_eq!(regs.r(2), 12);
+        assert_eq!(regs.r(3), 0);
+    }
+
+    #[test]
+    fn coprocessor_enters_undefined_exception() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000008);
+        let old_cpsr = regs.cpsr();
+        let mut bus = GbaMemoryBus::new();
+        decode_arm(&mut regs, &mut bus, 0xEE000010);
+        assert_eq!(regs.cpsr_mode(), 0x1B);
+        assert_eq!(regs.spsr(), old_cpsr);
+        assert_eq!(regs.lr(), 0x08000004);
+        assert_eq!(regs.pc(), 0x04);
     }
 }
