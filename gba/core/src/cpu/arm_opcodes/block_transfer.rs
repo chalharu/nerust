@@ -74,6 +74,7 @@ fn load_register(
 }
 
 fn store_register(regs: &CpuRegisters, bus: &mut GbaMemoryBus, register: usize, address: u32) {
+    // The architectural PC is instruction+8; STM stores instruction+12.
     let value = regs
         .r(register)
         .wrapping_add(if register == 15 { 4 } else { 0 });

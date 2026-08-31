@@ -66,6 +66,7 @@ pub fn update_nz(regs: &mut crate::cpu_registers::CpuRegisters, result: u32) {
     regs.set_cpsr_z(result == 0);
 }
 
+/// Return the effective address and writeback address for ARM pre/post indexing.
 pub fn transfer_addresses(base: u32, offset: u32, pre: bool, up: bool) -> (u32, u32) {
     let offset_address = if up {
         base.wrapping_add(offset)
