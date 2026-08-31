@@ -16,7 +16,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         let rm = (instr & 0xF) as usize;
         let rm_val = regs.r(rm);
         let shift_type = ((instr >> 5) & 0b11) as u8;
-        let shift_imm = ((instr >> 7) & 0x1F) as u32;
+        let shift_imm = (instr >> 7) & 0x1F;
         let (shifted, _) = crate::cpu::arm_opcodes::helpers::barrel_shift(
             rm_val,
             shift_type,
@@ -62,7 +62,6 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         if rd == 15 {
             // LDR PC: pipeline flush handled by caller
         }
-        3
     } else {
         // STR
         let val = regs.r(rd);
@@ -71,8 +70,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         } else {
             bus.write32(addr, val);
         }
-        2
-    };
+    }
 
     if writeback && !(l && rd == rn) {
         // Avoid writeback when Rd == Rn for LDR (UNPREDICTABLE)

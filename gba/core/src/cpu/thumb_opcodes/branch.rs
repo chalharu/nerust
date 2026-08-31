@@ -30,7 +30,7 @@ pub fn handle_cond(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let offset = ((instr & 0xFF) as i8 as i32) << 1;
     if check_cond(regs.cpsr(), cond) {
         let pc = regs.pc();
-        regs.set_pc(pc.wrapping_add(2).wrapping_add(offset as u32 + 2));
+        regs.set_pc(pc.wrapping_add(offset as u32));
         3
     } else {
         1
@@ -39,9 +39,9 @@ pub fn handle_cond(regs: &mut CpuRegisters, instr: u16) -> u32 {
 
 pub fn handle_uncond(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let offset = ((instr & 0x7FF) as i32) << 1;
-    let offset = ((offset << 21) >> 21) as i32; // sign extend 11 bits
+    let offset = (offset << 21) >> 21; // sign extend 11 bits
     let pc = regs.pc();
-    regs.set_pc(pc.wrapping_add(2).wrapping_add(offset as u32 + 2));
+    regs.set_pc(pc.wrapping_add(offset as u32));
     3
 }
 
@@ -50,18 +50,17 @@ pub fn handle_long_bl(regs: &mut CpuRegisters, instr: u16) -> u32 {
     if h == 0 {
         // First half: offset11
         let offset = ((instr & 0x7FF) as i32) << 12;
-        let offset = ((offset << 9) >> 9) as i32; // sign extend
+        let offset = (offset << 9) >> 9; // sign extend
         let pc = regs.pc();
-        let target = pc.wrapping_add(2).wrapping_add(offset as u32);
-        // Save to LR: PC+2 with bit0? Actually BL first half saves PC+2 + offset<<12 to LR
+        let target = pc.wrapping_add(offset as u32);
         regs.set_lr(target);
         1
     } else {
-        // Second half: offset11, LR + offset<<1 +2, set PC, LR = PC+2|1
+        // Second half: target=LR+offset, return address=次命令|1
         let offset = ((instr & 0x7FF) as u32) << 1;
         let lr = regs.lr();
         let target = lr.wrapping_add(offset);
-        let pc_next = regs.pc().wrapping_add(2) | 1;
+        let pc_next = regs.pc().wrapping_sub(2) | 1;
         regs.set_lr(pc_next);
         regs.set_pc(target & !1);
         3
@@ -70,14 +69,14 @@ pub fn handle_long_bl(regs: &mut CpuRegisters, instr: u16) -> u32 {
 
 pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
     let _ = bus;
-    let imm = (instr & 0xFF) as u32;
-    // SWI: SPSR_svc=CPSR, LR_svc=PC, CPSR=SVC|I, PC=0x08
-    let cpsr = regs.cpsr();
-    let pc = regs.pc();
-    regs.set_r(14, pc.wrapping_add(2));
-    // Switch to SVC
-    regs.set_cpsr((cpsr & !(0x1F | (1 << 5))) | 0x13 | (1 << 7));
-    regs.set_spsr(cpsr);
-    regs.set_pc(0x08 + (imm & 0xFF) * 4); // HLE will intercept via SWI number
+    let _swi_number = instr & 0xFF;
+    let return_address = regs.pc().wrapping_sub(2);
+    regs.enter_exception(0x13, 0x08, return_address, true);
+    3
+}
+
+pub fn handle_undefined(regs: &mut CpuRegisters) -> u32 {
+    let return_address = regs.pc().wrapping_sub(2);
+    regs.enter_exception(0x1B, 0x04, return_address, false);
     3
 }

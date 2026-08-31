@@ -11,11 +11,11 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     let reg_list = instr & 0xFFFF;
 
     let mut addr = regs.r(rn);
-    let mut base = addr;
+    let base = addr;
     // Calculate start address based on P/U
     if !u {
         // Decrement
-        let count = reg_list.count_ones() as u32 * 4;
+        let count = reg_list.count_ones() * 4;
         if p {
             addr = addr.wrapping_sub(count);
         } else {
@@ -39,7 +39,8 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
             } else {
                 let mut val = regs.r(i);
                 if i == 15 {
-                    val += 4; // STM with PC stores PC+12?
+                    // 実行中命令+8のarchitectural PCに4を加え、PC+12を格納する。
+                    val += 4;
                 }
                 bus.write32(addr, val);
             }
@@ -66,7 +67,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if l && (reg_list & (1 << 15)) != 0 {
         5
     } else if transferred > 0 {
-        2 + transferred as u32
+        2 + transferred
     } else {
         2
     }

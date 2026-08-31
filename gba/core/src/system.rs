@@ -6,6 +6,7 @@ pub struct GbaSystem {
     pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
     tick: u64,
+    cpu_cycles_remaining: u32,
 }
 
 impl GbaSystem {
@@ -13,7 +14,12 @@ impl GbaSystem {
         let mut cpu = GbaCpu::post_bios();
         let mut bus = GbaMemoryBus::new();
         cpu.reset(&mut bus);
-        Self { cpu, bus, tick: 0 }
+        Self {
+            cpu,
+            bus,
+            tick: 0,
+            cpu_cycles_remaining: 0,
+        }
     }
 
     pub fn from_rom(rom: Vec<u8>) -> Option<Self> {
@@ -25,7 +31,12 @@ impl GbaSystem {
         bus.set_cartridge(cart);
         let mut cpu = GbaCpu::post_bios();
         cpu.reset(&mut bus);
-        Some(Self { cpu, bus, tick: 0 })
+        Some(Self {
+            cpu,
+            bus,
+            tick: 0,
+            cpu_cycles_remaining: 0,
+        })
     }
 
     pub fn bus(&self) -> &GbaMemoryBus {
@@ -44,22 +55,33 @@ impl GbaSystem {
         &mut self.cpu
     }
 
-    /// 1 T-cycle 進行。CPUが消費したサイクル数だけ bus.tick() を進める。
+    /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
-        let cycles = self.cpu.step(&mut self.bus);
-        let mut frame_done = false;
-        for _ in 0..cycles {
-            self.tick = self.tick.wrapping_add(1);
-            if self.bus.tick() {
-                frame_done = true;
-            }
+        if self.cpu_cycles_remaining == 0 {
+            self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
         }
-        frame_done
+        self.cpu_cycles_remaining -= 1;
+        self.tick = self.tick.wrapping_add(1);
+        self.bus.tick()
     }
 }
 
 impl Default for GbaSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn step_tcycle_advances_exactly_one_cycle() {
+        let mut system = GbaSystem::new();
+        assert_eq!(system.tick, 0);
+        system.step_tcycle();
+        assert_eq!(system.tick, 1);
+        assert!(system.cpu_cycles_remaining > 0);
     }
 }

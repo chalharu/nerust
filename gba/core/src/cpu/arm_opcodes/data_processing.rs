@@ -1,4 +1,4 @@
-use crate::cpu::arm_opcodes::helpers::barrel_shift;
+use crate::cpu::arm_opcodes::helpers::{barrel_shift, barrel_shift_register};
 use crate::cpu::registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
@@ -12,7 +12,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
 
     // Operand2
     let (op2, shifter_carry) = if i {
-        let imm = (instr & 0xFF) as u32;
+        let imm = instr & 0xFF;
         let rot = ((instr >> 8) & 0xF) * 2;
         if rot == 0 {
             (imm, regs.cpsr_c())
@@ -29,9 +29,9 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
             let rs = ((instr >> 8) & 0xF) as usize;
             let rs_val = regs.r(rs) & 0xFF;
             // Register shift takes +1 I cycle
-            barrel_shift(rm_val, shift_type, rs_val, regs.cpsr_c())
+            barrel_shift_register(rm_val, shift_type, rs_val, regs.cpsr_c())
         } else {
-            let amount = ((instr >> 7) & 0x1F) as u32;
+            let amount = (instr >> 7) & 0x1F;
             barrel_shift(rm_val, shift_type, amount, regs.cpsr_c())
         }
     };
@@ -134,20 +134,19 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     }
 
     // Flag update
-    if s {
-        if is_flag_only || !matches!(opcode, 0x0 | 0x1 | 0xC | 0xD | 0xE | 0xF) {
-            // Logical ops with S use shifter carry, arithmetic already computed
+    if s && !(rd == 15 && !is_flag_only) {
+        let is_logical = matches!(opcode, 0x0 | 0x1 | 0x8 | 0x9 | 0xC | 0xD | 0xE | 0xF);
+        if is_logical {
+            // 論理演算はVを保持する。
+            regs.set_cpsr_n((result >> 31) & 1 != 0);
+            regs.set_cpsr_z(result == 0);
+            regs.set_cpsr_c(carry);
+        } else {
             regs.set_cpsr_n((result >> 31) & 1 != 0);
             regs.set_cpsr_z(result == 0);
             regs.set_cpsr_c(carry);
             regs.set_cpsr_v(overflow);
-        } else {
-            // Logical: N/Z from result, C from shifter, V unchanged
-            regs.set_cpsr_n((result >> 31) & 1 != 0);
-            regs.set_cpsr_z(result == 0);
-            regs.set_cpsr_c(carry);
         }
-        // Rd==15 with S already handled CPSR restore
     }
 
     // Cycle: +1 I if register shift
@@ -172,7 +171,8 @@ fn adc_with_flags(a: u32, b: u32, c_in: u32) -> (u32, bool, bool) {
     let (r1, c1) = a.overflowing_add(b);
     let (r, c2) = r1.overflowing_add(c_in);
     let c = c1 || c2;
-    let v = ((a ^ r) & (b ^ r) & 0x8000_0000) != 0; // simplified
+    let signed = a as i32 as i64 + b as i32 as i64 + i64::from(c_in);
+    let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
     (r, c, v)
 }
 
@@ -182,7 +182,8 @@ fn sbc_with_flags(a: u32, b: u32, c_in: u32) -> (u32, bool, bool) {
     let (r1, c1) = a.overflowing_sub(b);
     let (r, c2) = r1.overflowing_sub(not_c);
     let c = !(c1 || c2);
-    let v = ((a ^ b) & (a ^ r) & 0x8000_0000) != 0;
+    let signed = a as i32 as i64 - b as i32 as i64 - i64::from(not_c);
+    let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
     (r, c, v)
 }
 
@@ -213,5 +214,15 @@ mod tests {
         let instr = 0xE3A000FFu32;
         handle(&mut regs, &mut bus, instr);
         assert_eq!(regs.r(0), 0xFF);
+    }
+
+    #[test]
+    fn tst_preserves_overflow() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr_v(true);
+        regs.set_r(0, 1);
+        let mut bus = GbaMemoryBus::new();
+        handle(&mut regs, &mut bus, 0xE3100001); // TST R0,#1
+        assert!(regs.cpsr_v());
     }
 }

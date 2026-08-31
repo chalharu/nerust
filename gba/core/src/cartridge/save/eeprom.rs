@@ -16,6 +16,12 @@ impl EepromSave {
     }
 }
 
+impl Default for EepromSave {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SaveBackend for EepromSave {
     fn save_type(&self) -> SaveType {
         // 常時8KB確保のため Eeprom8k を返す
@@ -24,8 +30,8 @@ impl SaveBackend for EepromSave {
 
     fn read(&self, addr: u32, width: u8) -> u32 {
         // GBA EEPROMは 0x0D000000領域でDMA経由のシリアルアクセス。
-        // Phase 4では簡易的に 0x0D000000からのオフセットで直接読む簡易モデル。
-        // 実機のDMAビットバングは Phase 12で精密化。
+        // Phase 4では永続化層を検証するための線形ストレージモデルとする。
+        // TODO(gba-eeprom-phase8.5): DMA実装時にシリアルプロトコルへ置換する。
         let off = (addr & 0x1FFF) as usize;
         read_slice(&self.data, off, width)
     }

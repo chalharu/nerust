@@ -3,9 +3,11 @@
 pub struct CpuRegisters {
     r: [u32; 16],
     cpsr: u32,
-    spsr: [u32; 5],     // FIQ, SVC, ABT, IRQ, UND (SYS/USRはSPSRなし)
-    bank_r13: [u32; 6], // USR/SYS 共用 + FIQ/SVC/ABT/IRQ/UND
+    spsr: [u32; 5],             // FIQ, SVC, ABT, IRQ, UND (SYS/USRはSPSRなし)
+    bank_r8_r12: [[u32; 5]; 2], // USR/SYS/IRQ/SVC/ABT/UND 共用 + FIQ
+    bank_r13: [u32; 6],         // USR/SYS 共用 + FIQ/SVC/ABT/IRQ/UND
     bank_r14: [u32; 6],
+    pc_written: bool,
 }
 
 impl Default for CpuRegisters {
@@ -14,8 +16,10 @@ impl Default for CpuRegisters {
             r: [0; 16],
             cpsr: 0x1F, // SYSモード
             spsr: [0; 5],
+            bank_r8_r12: [[0; 5]; 2],
             bank_r13: [0; 6],
             bank_r14: [0; 6],
+            pc_written: false,
         }
     }
 }
@@ -40,7 +44,16 @@ impl CpuRegisters {
     }
 
     pub fn set_pc(&mut self, v: u32) {
-        self.r[15] = v & !1;
+        self.r[15] = if self.cpsr_t() { v & !1 } else { v & !3 };
+        self.pc_written = true;
+    }
+
+    pub fn clear_pc_written(&mut self) {
+        self.pc_written = false;
+    }
+
+    pub fn take_pc_written(&mut self) -> bool {
+        std::mem::take(&mut self.pc_written)
     }
 
     pub fn sp(&self) -> u32 {
@@ -148,6 +161,24 @@ impl CpuRegisters {
         }
     }
 
+    pub fn enter_exception(
+        &mut self,
+        mode: u8,
+        vector: u32,
+        return_address: u32,
+        disable_irq: bool,
+    ) {
+        let old_cpsr = self.cpsr;
+        let mut new_cpsr = (old_cpsr & !(0x1F | (1 << 5))) | u32::from(mode);
+        if disable_irq {
+            new_cpsr |= 1 << 7;
+        }
+        self.set_cpsr(new_cpsr);
+        self.set_spsr(old_cpsr);
+        self.set_lr(return_address);
+        self.set_pc(vector);
+    }
+
     // -- Mode switch --
 
     fn mode_to_bank_index(mode: u32) -> Option<usize> {
@@ -174,6 +205,15 @@ impl CpuRegisters {
     }
 
     fn switch_bank(&mut self, old_mode: u32, new_mode: u32) {
+        let old_fiq = old_mode == 0x11;
+        let new_fiq = new_mode == 0x11;
+        if old_fiq != new_fiq {
+            let old_idx = usize::from(old_fiq);
+            let new_idx = usize::from(new_fiq);
+            self.bank_r8_r12[old_idx].copy_from_slice(&self.r[8..13]);
+            self.r[8..13].copy_from_slice(&self.bank_r8_r12[new_idx]);
+        }
+
         let old_idx = Self::mode_to_bank_index(old_mode);
         let new_idx = Self::mode_to_bank_index(new_mode);
         if let Some(o) = old_idx {
@@ -203,15 +243,31 @@ mod tests {
     #[test]
     fn bank_switch_fiq() {
         let mut r = CpuRegisters::default();
+        r.set_r(8, 0x8888);
         r.set_r(13, 0x1111);
         r.set_r(14, 0x2222);
         r.set_cpsr(0x11); // FIQ
+        assert_eq!(r.r(8), 0);
         assert_ne!(r.sp(), 0x1111);
+        r.set_r(8, 0x9999);
         r.set_r(13, 0x3333);
         r.set_cpsr(0x1F); // back to SYS
+        assert_eq!(r.r(8), 0x8888);
         assert_eq!(r.sp(), 0x1111);
         r.set_cpsr(0x11);
+        assert_eq!(r.r(8), 0x9999);
         assert_eq!(r.sp(), 0x3333);
+    }
+
+    #[test]
+    fn non_fiq_modes_share_r8_r12() {
+        let mut r = CpuRegisters::default();
+        r.set_r(8, 0x1234);
+        r.set_cpsr(0x12); // IRQ
+        assert_eq!(r.r(8), 0x1234);
+        r.set_r(8, 0x5678);
+        r.set_cpsr(0x13); // SVC
+        assert_eq!(r.r(8), 0x5678);
     }
 
     #[test]

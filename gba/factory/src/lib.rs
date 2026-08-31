@@ -71,7 +71,7 @@ impl CoreFactory for GbaFactory {
     }
 
     fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
-        GbaLoadOptions::default().into()
+        GbaLoadOptions.into()
     }
 
     fn load_options_schema(&self) -> Box<dyn DynSystemLoadOptionsSchema> {
@@ -99,7 +99,7 @@ impl CoreFactory for GbaFactory {
 
 impl SystemDefaults for GbaFactory {
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
-        Some(Box::new(GbaSettings::default()))
+        Some(Box::new(GbaSettings))
     }
 
     fn resolve_label(&self, label_id: &str, language: &str) -> Option<String> {

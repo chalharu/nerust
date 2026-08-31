@@ -4,15 +4,13 @@ use crate::memory::GbaMemoryBus;
 pub fn handle_pc_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
     let rd = ((instr >> 8) & 0x7) as usize;
     let imm = ((instr & 0xFF) as u32) << 2;
-    let addr = (regs.pc() & !2).wrapping_add(imm);
+    let addr = (regs.pc() & !3).wrapping_add(imm);
     let val = bus.read32(addr);
     regs.set_r(rd, val);
     3
 }
 
 pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
-    // TODO(gba-thumb-sign): Format 8 (H/S) for LDRSB/LDRSH/STRH is currently handled as B/L.
-    // Full H/S handling (01011 prefix) will be refined with GBATEK table in follow-up.
     let ro = ((instr >> 6) & 0x7) as usize;
     let rb = ((instr >> 3) & 0x7) as usize;
     let rd = (instr & 0x7) as usize;
@@ -36,6 +34,37 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.write32(addr, val);
         }
         2
+    }
+}
+
+pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
+    let op = (instr >> 10) & 0b11;
+    let ro = ((instr >> 6) & 0x7) as usize;
+    let rb = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+    let addr = regs.r(rb).wrapping_add(regs.r(ro));
+    match op {
+        0b00 => {
+            bus.write16(addr, regs.r(rd) as u16); // STRH
+            2
+        }
+        0b01 => {
+            regs.set_r(rd, bus.read8(addr) as i8 as i32 as u32); // LDRSB
+            3
+        }
+        0b10 => {
+            regs.set_r(rd, bus.read16(addr) as u32); // LDRH
+            3
+        }
+        _ => {
+            let value = if addr & 1 != 0 {
+                bus.read8(addr) as i8 as i32 as u32
+            } else {
+                bus.read16(addr) as i16 as i32 as u32
+            };
+            regs.set_r(rd, value); // LDRSH
+            3
+        }
     }
 }
 
@@ -124,5 +153,24 @@ pub fn handle_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
         3 + count as u32
     } else {
         2 + count as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signed_loads_extend_sign() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 0x03000000);
+        regs.set_r(2, 0);
+        bus.write16(0x03000000, 0x80FF);
+
+        handle_sign_extended(&mut regs, &mut bus, 0x5688); // LDRSB R0,[R1,R2]
+        assert_eq!(regs.r(0), 0xFFFFFFFF);
+        handle_sign_extended(&mut regs, &mut bus, 0x5E88); // LDRSH R0,[R1,R2]
+        assert_eq!(regs.r(0), 0xFFFF80FF);
     }
 }

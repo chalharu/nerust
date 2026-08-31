@@ -5,11 +5,8 @@ use crate::memory::GbaMemoryBus;
 pub fn fill_pipeline(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, pipeline: &mut [u32; 2]) {
     let pc = regs.pc();
     if regs.cpsr_t() {
-        // Thumb: 2 x 16bit
-        let lo0 = bus.fetch16(pc) as u32;
-        let lo1 = bus.fetch16(pc + 2) as u32;
-        pipeline[0] = lo0 | (lo1 << 16);
-        pipeline[1] = bus.fetch32(pc + 4);
+        pipeline[0] = bus.fetch16(pc) as u32;
+        pipeline[1] = bus.fetch16(pc + 2) as u32;
         regs.set_pc(pc + 4);
     } else {
         // ARM: 2 x 32bit
@@ -46,5 +43,15 @@ mod tests {
         let mut pipeline = [0u32; 2];
         fill_pipeline(&mut regs, &mut bus, &mut pipeline);
         assert_eq!(regs.pc(), 0x08000008);
+    }
+
+    #[test]
+    fn fill_thumb_pipeline_sets_pc_plus_4() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        let mut bus = GbaMemoryBus::new();
+        let mut pipeline = [0u32; 2];
+        fill_pipeline(&mut regs, &mut bus, &mut pipeline);
+        assert_eq!(regs.pc(), 0x08000004);
     }
 }

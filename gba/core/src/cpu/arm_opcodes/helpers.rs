@@ -62,15 +62,12 @@ pub fn barrel_shift(rm: u32, shift_type: u8, amount: u32, carry_in: bool) -> (u3
     }
 }
 
-/// N/S/I サイクル算出ヘルパー — Cognitive Complexity 対策
-pub fn calc_cycles(is_sequential: bool, is_internal: bool) -> u32 {
-    if is_internal {
-        1
-    } else if is_sequential {
-        1 // S
-    } else {
-        1 // N — Waitは bus.cycles_for で別途加算
+/// レジスタ指定シフト。Rs下位8bitが0の場合は全タイプで値とCを保持する。
+pub fn barrel_shift_register(rm: u32, shift_type: u8, amount: u32, carry_in: bool) -> (u32, bool) {
+    if amount & 0xFF == 0 {
+        return (rm, carry_in);
     }
+    barrel_shift(rm, shift_type, amount, carry_in)
 }
 
 #[cfg(test)]
@@ -94,5 +91,15 @@ mod tests {
         let (v, c) = barrel_shift(0x8000_0000, 1, 0, false);
         assert_eq!(v, 0);
         assert!(c);
+    }
+
+    #[test]
+    fn register_shift_zero_preserves_value_and_carry() {
+        for shift_type in 0..=3 {
+            assert_eq!(
+                barrel_shift_register(0x81234567, shift_type, 0, true),
+                (0x81234567, true)
+            );
+        }
     }
 }
