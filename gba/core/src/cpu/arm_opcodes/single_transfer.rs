@@ -12,7 +12,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     let rd = ((instr >> 12) & 0xF) as usize;
 
     let offset = if i {
-        // Register offset with shift
+        // Register offsets use the immediate form of the barrel shifter.
         let rm = (instr & 0xF) as usize;
         let rm_val = regs.r(rm);
         let shift_type = ((instr >> 5) & 0b11) as u8;
@@ -30,12 +30,15 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
 
     let (addr, wb_addr) =
         crate::cpu::arm_opcodes::helpers::transfer_addresses(regs.r(rn), offset, p, u);
+    // Post-indexed transfers always write back; pre-indexed transfers use W.
     let writeback = w || !p;
 
     if l {
+        // Writing R15 sets the PC-written latch and causes the pipeline to refill.
         regs.set_r(rd, load(bus, addr, b));
     } else {
-        store(bus, addr, regs.r(rd), b);
+        let value = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
+        store(bus, addr, value, b);
     }
 
     if writeback && !(l && rd == rn) {

@@ -6,6 +6,8 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let rd = (instr & 0x7) as usize;
     let rs_val = regs.r(rs);
     let rd_val = regs.r(rd);
+    // Thumb ALU opcodes: AND/EOR, shifts, ADC/SBC, ROR, TST,
+    // NEG/CMP/CMN, ORR/MUL/BIC/MVN.
     match op {
         0x0 | 0x1 | 0xC..=0xF => logical(regs, rd, op, rd_val, rs_val),
         0x2..=0x4 | 0x7 => shift(regs, rd, op, rd_val, rs_val),
@@ -18,12 +20,12 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
 
 fn logical(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right: u32) -> u32 {
     let result = match op {
-        0x0 => left & right,
-        0x1 => left ^ right,
-        0xC => left | right,
-        0xD => left.wrapping_mul(right),
-        0xE => left & !right,
-        _ => !right,
+        0x0 => left & right,             // AND
+        0x1 => left ^ right,             // EOR
+        0xC => left | right,             // ORR
+        0xD => left.wrapping_mul(right), // MUL
+        0xE => left & !right,            // BIC
+        _ => !right,                     // MVN
     };
     regs.set_r(destination, result);
     update_nz(regs, result);
@@ -31,11 +33,12 @@ fn logical(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right
 }
 
 fn shift(regs: &mut CpuRegisters, destination: usize, op: u8, value: u32, amount: u32) -> u32 {
+    // Register shift amount zero preserves both the value and carry flag.
     let shift_type = match op {
-        0x2 => 0,
-        0x3 => 1,
-        0x4 => 2,
-        _ => 3,
+        0x2 => 0, // LSL
+        0x3 => 1, // LSR
+        0x4 => 2, // ASR
+        _ => 3,   // ROR
     };
     let (result, carry) = crate::cpu::arm_opcodes::helpers::barrel_shift_register(
         value,
@@ -89,6 +92,7 @@ fn subtract_with_carry(left: u32, right: u32, carry_in: u32) -> (u32, bool, bool
 }
 
 fn test(regs: &mut CpuRegisters, left: u32, right: u32) -> u32 {
+    // TST has no shifter operand in Thumb, so C is preserved.
     update_nz(regs, left & right);
     1
 }

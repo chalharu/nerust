@@ -34,9 +34,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy (default members)
-        run: cargo clippy --locked -p nerust_nes_core -p nerust_persistence -p nerust_gba_core -p nerust_gba_rom_test --all-targets --quiet
+        run: |
+          cargo clippy --locked --all-targets --quiet \
+            -p nerust_nes_core -p nerust_persistence \
+            -p nerust_gba_core -p nerust_gba_rom_test
       - name: Unit tests (default members)
-        run: cargo test --locked -p nerust_nes_core -p nerust_persistence -p nerust_gba_core -p nerust_gba_rom_test --quiet
+        run: |
+          cargo test --locked --quiet \
+            -p nerust_nes_core -p nerust_persistence \
+            -p nerust_gba_core -p nerust_gba_rom_test
       - name: Support crate tests
         run: |
           cargo test --locked -p nerust_render_traits --lib --quiet

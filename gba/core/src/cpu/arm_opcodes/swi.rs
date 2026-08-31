@@ -24,7 +24,7 @@ mod tests {
         regs.set_pc(0x08000008);
         let old_cpsr = regs.cpsr();
         let mut bus = GbaMemoryBus::new();
-        handle(&mut regs, &mut bus, 0xEF160000);
+        handle(&mut regs, &mut bus, 0xEFFF0000);
         assert_eq!(regs.cpsr_mode(), 0x13);
         assert_eq!(regs.spsr(), old_cpsr);
         assert_eq!(regs.lr(), 0x08000004);

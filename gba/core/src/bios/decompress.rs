@@ -286,6 +286,7 @@ fn valid_source(src: u32) -> bool {
 
 fn write_output(bus: &mut GbaMemoryBus, dst: u32, output: &[u8], width: u8) {
     if width == 2 {
+        // BIOS VRAM variants write halfwords; a trailing odd byte is not flushed.
         for (i, pair) in output.chunks_exact(2).enumerate() {
             bus.write16(
                 dst.wrapping_add((i as u32) * 2),

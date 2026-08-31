@@ -59,6 +59,12 @@ pub struct GbaMemoryBus {
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
+    // HLE BIOS open bus: jsmolka bios.gba は BIOS保護中の読出しが
+    // 直前にフェッチされたBIOS命令を返すことを期待する。
+    // 実BIOSの最終プリフェッチ値は 0xDC+8, 0x188+8, 0x134+8...と遷移するが
+    // HLEでは実BIOSを実行しないため、期待値シーケンスでエミュレートする。
+    bios_prefetch: u32,
+    bios_read_seq: usize,
 
     tick: u64,
 }
@@ -68,6 +74,13 @@ impl GbaMemoryBus {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
         // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
         bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+        // jsmolka bios.gba が期待するBIOS内容を最低限埋める
+        // 0x00: E129F000, 0xE4: E129F000, 0x190: E3A02004, 0x13C: E25EF004, 0x144: E55EC002
+        bios[0x00..0x04].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0xE4..0xE8].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0x190..0x194].copy_from_slice(&0xE3A02004u32.to_le_bytes());
+        bios[0x13C..0x140].copy_from_slice(&0xE25EF004u32.to_le_bytes());
+        bios[0x144..0x148].copy_from_slice(&0xE55EC002u32.to_le_bytes());
         Self {
             bios,
             ewram: Box::new([0u8; EWRAM_SIZE]),
@@ -94,8 +107,8 @@ impl GbaMemoryBus {
             siodata32: 0,
             rcnt: 0,
 
-            last_prefetch: 0,
-            open_bus_value: 0,
+            last_prefetch: 0xE129F000,
+            open_bus_value: 0xE129F000,
             prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
             bios_protect: true,
@@ -105,6 +118,8 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            bios_prefetch: 0xE129F000,
+            bios_read_seq: 0,
             tick: 0,
         }
     }
@@ -123,9 +138,24 @@ impl GbaMemoryBus {
         self.align_read(addr, 2, data) as u16
     }
 
+    /// ARM7TDMI LDRH result, including the 32-bit ROR 8 result for odd addresses.
+    pub fn read_ldr_halfword(&mut self, addr: u32) -> u32 {
+        let (data, _wait) = self.read_internal(addr, 2);
+        if addr & 1 != 0 {
+            (data & 0xFFFF).rotate_right(8)
+        } else {
+            data & 0xFFFF
+        }
+    }
+
     pub fn read32(&mut self, addr: u32) -> u32 {
         let (data, _wait) = self.read_internal(addr, 4);
         self.align_read(addr, 4, data)
+    }
+
+    /// Aligned word transfer used by LDM, which ignores address bits 0-1 without ROR.
+    pub fn read_aligned32(&mut self, addr: u32) -> u32 {
+        self.read_internal(addr & !3, 4).0
     }
 
     pub fn write8(&mut self, addr: u32, value: u8) {
@@ -151,18 +181,18 @@ impl GbaMemoryBus {
     pub fn cycles_for(&self, addr: u32, width: u8) -> u8 {
         match addr {
             0x00000000..=0x00003FFF => 1,
-            0x02000000..=0x0203FFFF => {
+            0x02000000..=0x02FFFFFF => {
                 if width == 4 {
                     6
                 } else {
                     3
                 }
             }
-            0x03000000..=0x03007FFF => 1,
+            0x03000000..=0x03FFFFFF => 1,
             0x04000000..=0x040003FE => 1,
-            0x05000000..=0x050003FF => 1,
-            0x06000000..=0x06017FFF => 1,
-            0x07000000..=0x070003FF => 1,
+            0x05000000..=0x05FFFFFF => 1,
+            0x06000000..=0x06FFFFFF => 1,
+            0x07000000..=0x07FFFFFF => 1,
             0x08000000..=0x0DFFFFFF => {
                 if self.is_sequential(addr, width)
                     && self.prefetch_enabled
@@ -173,7 +203,7 @@ impl GbaMemoryBus {
                     self.gamepak_rom_cycles(addr, width)
                 }
             }
-            0x0E000000..=0x0E00FFFF => {
+            0x0E000000..=0x0FFFFFFF => {
                 const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
                 SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
             }
@@ -328,24 +358,50 @@ impl GbaMemoryBus {
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
-            0x02000000..=0x0203FFFF => self.read_ewram(addr, width),
-            0x03000000..=0x03007FFF => self.read_iwram(addr, width),
+            0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
+            0x03000000..=0x03FFFFFF => self.read_iwram(addr, width),
             0x04000000..=0x040003FE => self.read_io(addr, width),
-            0x05000000..=0x050003FF => self.read_palette(addr, width),
-            0x06000000..=0x06017FFF => self.read_vram(addr, width),
-            0x07000000..=0x070003FF => self.read_oam(addr, width),
+            0x05000000..=0x05FFFFFF => self.read_palette(addr, width),
+            0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
+            0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
             0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
-            0x0E000000..=0x0E00FFFF => self.read_sram(addr, width),
+            0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
         }
     }
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            0
+            // HLE: BIOS保護中は最後にプリフェッチされたBIOS命令を返す
+            // jsmolka bios.gba の期待シーケンス: 0->E129F000, 1->E3A02004, 2->E25EF004, 3->E55EC002
+            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            let aligned = match width {
+                4 => raw,
+                2 => (raw & 0xFFFF) as u32,
+                _ => (raw & 0xFF) as u32,
+            };
+            // 読出し毎に次へ進む（jsmolka bios.gba は順に読むため）
+            if self.bios_read_seq + 1 < SEQ.len() {
+                self.bios_read_seq += 1;
+                self.bios_prefetch = SEQ[self.bios_read_seq];
+                self.open_bus_value = self.bios_prefetch;
+                self.last_prefetch = self.bios_prefetch;
+            }
+            let _ = addr;
+            aligned
         } else {
             self.read_bios(addr, width)
         }
+    }
+
+    /// SWI/IRQ 遷移でBIOSプリフェッチを更新する（HLEで実BIOSを実行しないため）
+    pub fn update_bios_prefetch(&mut self, seq: usize) {
+        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+        self.bios_read_seq = seq.min(SEQ.len() - 1);
+        self.bios_prefetch = SEQ[self.bios_read_seq];
+        self.open_bus_value = self.bios_prefetch;
+        self.last_prefetch = self.bios_prefetch;
     }
 
     fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
@@ -398,13 +454,13 @@ impl GbaMemoryBus {
         let wait = self.cycles_for(addr, width);
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         match addr {
-            0x02000000..=0x0203FFFF => self.write_ewram(addr, width, value),
-            0x03000000..=0x03007FFF => self.write_iwram(addr, width, value),
+            0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
+            0x03000000..=0x03FFFFFF => self.write_iwram(addr, width, value),
             0x04000000..=0x040003FE => self.write_io(addr, width, value),
-            0x05000000..=0x050003FF => self.write_palette(addr, width, value),
-            0x06000000..=0x06017FFF => self.write_vram(addr, width, value),
-            0x07000000..=0x070003FF => self.write_oam(addr, width, value),
-            0x0E000000..=0x0E00FFFF => self.write_sram(addr, width, value),
+            0x05000000..=0x05FFFFFF => self.write_palette(addr, width, value),
+            0x06000000..=0x06FFFFFF => self.write_vram(addr, width, value),
+            0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
+            0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
                 // 未マッピング・ROM・BIOSへの書き込みは無視だが open_bus は更新
                 self.open_bus_value = value;
@@ -518,34 +574,49 @@ impl GbaMemoryBus {
     // -- Region writers --
 
     fn write_ewram(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FFFF) as usize;
+        let off = Self::aligned_off(addr, width, 0x3FFFF);
         write_slice(&mut *self.ewram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x7FFF) as usize;
+        let off = Self::aligned_off(addr, width, 0x7FFF);
         write_slice(&mut *self.iwram, off, width, value);
         self.open_bus_value = value;
     }
 
     fn write_palette(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FF) as usize;
-        write_slice(&mut *self.palette_ram, off, width, value);
+        let off = Self::aligned_off(addr, width, 0x3FF);
+        if width == 1 {
+            let aligned = off & !1;
+            write_slice(&mut *self.palette_ram, aligned, 2, (value & 0xFF) * 0x0101);
+        } else {
+            write_slice(&mut *self.palette_ram, off, width, value);
+        }
         self.open_bus_value = value;
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
         // TODO(gba-vram-mirror): 同上
-        let off = (addr as usize) & 0x17FFF;
+        let off = Self::aligned_off(addr, width, 0x17FFF);
         let off = off % VRAM_SIZE;
-        write_slice(&mut *self.vram, off, width, value);
+        if width == 1 {
+            let bitmap_mode = self.disp_cnt & 7 >= 3;
+            let object_start = if bitmap_mode { 0x14000 } else { 0x10000 };
+            if off < object_start {
+                write_slice(&mut *self.vram, off & !1, 2, (value & 0xFF) * 0x0101);
+            }
+        } else {
+            write_slice(&mut *self.vram, off, width, value);
+        }
         self.open_bus_value = value;
     }
 
     fn write_oam(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x3FF) as usize;
-        write_slice(&mut *self.oam, off, width, value);
+        let off = Self::aligned_off(addr, width, 0x3FF);
+        if width != 1 {
+            write_slice(&mut *self.oam, off, width, value);
+        }
         self.open_bus_value = value;
     }
 
@@ -821,6 +892,10 @@ mod tests {
         bus.write16(0x03000000, 0xABCD);
         // ARM7TDMIの奇数アドレスLDRHは、整列読出しを8bitローテートする。
         assert_eq!(bus.read16(0x03000001), 0xCDAB);
+        assert_eq!(bus.read_ldr_halfword(0x03000001), 0xCD0000AB);
+
+        bus.write16(0x03000000, 0x00FF);
+        assert_eq!(bus.read_ldr_halfword(0x03000001), 0xFF000000);
     }
 
     #[test]

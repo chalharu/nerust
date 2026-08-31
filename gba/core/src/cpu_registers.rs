@@ -85,6 +85,26 @@ impl CpuRegisters {
         }
     }
 
+    /// Read the User/System register bank while remaining in the current privileged mode.
+    pub fn user_r(&self, idx: usize) -> u32 {
+        match idx & 0xF {
+            8..=12 if self.cpsr_mode() == 0x11 => self.bank_r8_r12[0][idx - 8],
+            13 if !matches!(self.cpsr_mode(), 0x10 | 0x1F) => self.bank_r13[0],
+            14 if !matches!(self.cpsr_mode(), 0x10 | 0x1F) => self.bank_r14[0],
+            register => self.r[register],
+        }
+    }
+
+    /// Write the User/System register bank without switching processor mode.
+    pub fn set_user_r(&mut self, idx: usize, value: u32) {
+        match idx & 0xF {
+            8..=12 if self.cpsr_mode() == 0x11 => self.bank_r8_r12[0][idx - 8] = value,
+            13 if !matches!(self.cpsr_mode(), 0x10 | 0x1F) => self.bank_r13[0] = value,
+            14 if !matches!(self.cpsr_mode(), 0x10 | 0x1F) => self.bank_r14[0] = value,
+            register => self.r[register] = value,
+        }
+    }
+
     // -- CPSR --
 
     pub fn cpsr(&self) -> u32 {
