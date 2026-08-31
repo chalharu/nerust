@@ -66,7 +66,7 @@ impl GbaHeader {
     fn complement_check(rom: &[u8]) -> bool {
         let mut chk: u8 = 0;
         for &b in &rom[0xA0..0xBC] {
-            chk = chk.wrapping_sub(b).wrapping_sub(1);
+            chk = chk.wrapping_sub(b);
         }
         chk = chk.wrapping_sub(0x19);
         chk == rom[0xBD]
@@ -82,7 +82,7 @@ pub fn finalize_test_gba_rom(rom: &mut [u8]) {
     rom[0xB2] = 0x96;
     let mut chk: u8 = 0;
     for &b in &rom[0xA0..0xBC] {
-        chk = chk.wrapping_sub(b).wrapping_sub(1);
+        chk = chk.wrapping_sub(b);
     }
     chk = chk.wrapping_sub(0x19);
     rom[0xBD] = chk;

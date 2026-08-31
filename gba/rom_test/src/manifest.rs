@@ -12,6 +12,9 @@ use crate::{error::RomTestError, verify::VerifySpec};
 pub struct RomManifest {
     pub rom_root: PathBuf,
     pub suites: Vec<RomSuite>,
+    /// Known accuracy failures. A listed case passing is treated as XPASS.
+    #[serde(default)]
+    pub expected_failures: Vec<String>,
     #[serde(default)]
     pub completion_profiles: BTreeMap<String, CompletionSpec>,
 }
@@ -156,7 +159,21 @@ impl RomManifest {
         let mut ids = BTreeSet::new();
         self.suites
             .iter()
-            .try_for_each(|suite| self.validate_suite(suite, &mut ids))
+            .try_for_each(|suite| self.validate_suite(suite, &mut ids))?;
+        self.validate_expected_failures(&ids)
+    }
+
+    fn validate_expected_failures(&self, ids: &BTreeSet<String>) -> Result<(), RomTestError> {
+        if let Some(unknown) = self
+            .expected_failures
+            .iter()
+            .find(|expected| !ids.contains(*expected))
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "expected failure `{unknown}` does not match a case"
+            )));
+        }
+        Ok(())
     }
 
     fn validate_suite(
@@ -224,6 +241,10 @@ impl RomManifest {
                     })
             })
             .collect()
+    }
+
+    pub fn is_expected_failure(&self, id: &str) -> bool {
+        self.expected_failures.iter().any(|expected| expected == id)
     }
 }
 

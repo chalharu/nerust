@@ -8,6 +8,7 @@ pub struct CaseResult {
     pub suite: String,
     pub description: String,
     pub passed: bool,
+    pub expected_failure: bool,
     pub checks: Vec<CheckResult>,
     pub error: Option<String>,
     pub error_kind: Option<String>,
@@ -16,11 +17,19 @@ pub struct CaseResult {
     pub duration_ms: u64,
 }
 
+impl CaseResult {
+    pub fn unexpected(&self) -> bool {
+        self.passed == self.expected_failure
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Summary {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    pub expected_failures: usize,
+    pub unexpected: usize,
 }
 
 impl Summary {
@@ -30,6 +39,11 @@ impl Summary {
             total: results.len(),
             passed,
             failed: results.len() - passed,
+            expected_failures: results
+                .iter()
+                .filter(|result| result.expected_failure)
+                .count(),
+            unexpected: results.iter().filter(|result| result.unexpected()).count(),
         }
     }
 }
@@ -52,6 +66,7 @@ mod tests {
             suite: "suite".into(),
             description: String::new(),
             passed,
+            expected_failure: false,
             checks: Vec::new(),
             error: None,
             error_kind: None,

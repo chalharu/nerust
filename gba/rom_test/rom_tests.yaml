@@ -1,4 +1,9 @@
 rom_root: ../../roms/gba
+expected_failures:
+  # ARM flags test #106: overflow flag behavior remains inaccurate.
+  - jsmolka_arm
+  # Thumb memory test #227: execution advances past the fixed LDRH #211 case.
+  - jsmolka_thumb
 completion_profiles:
   result_ready:
     poll_interval: 256
@@ -34,3 +39,19 @@ suites:
           memory:
             - address: 0x02000000
               value: 0x01
+  - name: jsmolka_gba-tests
+    cases:
+      # These aggregate ROMs leave the first failed test number in R12/R7.
+      # Zero therefore means that every embedded instruction test completed.
+      - id: jsmolka_arm
+        rom: arm/arm.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r12: 0x00
+      - id: jsmolka_thumb
+        rom: thumb/thumb.gba
+        cycles: 1000000
+        verify:
+          registers:
+            r7: 0x00
