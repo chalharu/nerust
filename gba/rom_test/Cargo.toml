@@ -18,8 +18,3 @@ thiserror.workspace = true
 png.workspace = true
 clap.workspace = true
 glob.workspace = true
-
-[build-dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde-saphyr.workspace = true
-glob.workspace = true
