@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::cartridge::Cartridge;
+use crate::cartridge::save::helpers::{read_slice, write_slice};
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
