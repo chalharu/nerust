@@ -3008,6 +3008,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_gba_rom_test"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "crc",
+ "glob",
+ "nerust_gba_core",
+ "nerust_render_traits",
+ "open",
+ "png",
+ "serde",
+ "serde-saphyr",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "nerust_gba_settings"
 version = "0.1.0-dev"
 dependencies = [
