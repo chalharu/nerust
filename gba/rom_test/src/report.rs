@@ -1,5 +1,43 @@
-#[derive(Debug)]
+use serde::Serialize;
+
+use crate::verify::CheckResult;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct CaseResult {
     pub id: String,
+    pub suite: String,
+    pub description: String,
     pub passed: bool,
+    pub checks: Vec<CheckResult>,
+    pub error: Option<String>,
+    pub error_kind: Option<String>,
+    pub executed_tcycles: usize,
+    pub completed_early: bool,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Summary {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+}
+
+impl Summary {
+    pub fn of(results: &[CaseResult]) -> Self {
+        let passed = results.iter().filter(|result| result.passed).count();
+        Self {
+            total: results.len(),
+            passed,
+            failed: results.len() - passed,
+        }
+    }
+}
+
+pub fn write_json(results: &[CaseResult]) -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "summary": Summary::of(results),
+        "results": results,
+    }))
+    .expect("result serialization cannot fail")
 }

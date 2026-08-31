@@ -13,13 +13,11 @@ nerust_gba_core.workspace = true
 nerust_render_traits.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde-saphyr.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 png.workspace = true
-crc.workspace = true
-sha2.workspace = true
 clap.workspace = true
 glob.workspace = true
-open.workspace = true
 
 [build-dependencies]
 serde = { workspace = true, features = ["derive"] }
