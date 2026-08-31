@@ -70,6 +70,11 @@ pub fn barrel_shift_register(rm: u32, shift_type: u8, amount: u32, carry_in: boo
     barrel_shift(rm, shift_type, amount, carry_in)
 }
 
+pub fn update_nz(regs: &mut crate::cpu_registers::CpuRegisters, result: u32) {
+    regs.set_cpsr_n((result >> 31) & 1 != 0);
+    regs.set_cpsr_z(result == 0);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

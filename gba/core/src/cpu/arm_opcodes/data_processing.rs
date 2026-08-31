@@ -138,12 +138,10 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
         let is_logical = matches!(opcode, 0x0 | 0x1 | 0x8 | 0x9 | 0xC | 0xD | 0xE | 0xF);
         if is_logical {
             // 論理演算はVを保持する。
-            regs.set_cpsr_n((result >> 31) & 1 != 0);
-            regs.set_cpsr_z(result == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
             regs.set_cpsr_c(carry);
         } else {
-            regs.set_cpsr_n((result >> 31) & 1 != 0);
-            regs.set_cpsr_z(result == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
             regs.set_cpsr_c(carry);
             regs.set_cpsr_v(overflow);
         }
