@@ -195,6 +195,10 @@ impl GbaMemoryBus {
         self.current_pc = pc;
     }
 
+    pub fn is_bios_addr(&self, addr: u32) -> bool {
+        (0x00000000..=0x00003FFF).contains(&addr)
+    }
+
     pub fn take_access_wait_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.access_wait_cycles)
     }

@@ -68,8 +68,10 @@ pub fn handle_long_bl(regs: &mut CpuRegisters, instr: u16) -> u32 {
 }
 
 pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
-    let _ = bus;
-    let _swi_number = instr & 0xFF;
+    let swi = (instr & 0xFF) as u8;
+    if let Some(cycles) = crate::bios::handle_swi(regs, bus, swi) {
+        return cycles;
+    }
     let return_address = regs.pc().wrapping_sub(2);
     regs.enter_exception(0x13, 0x08, return_address, true);
     3
