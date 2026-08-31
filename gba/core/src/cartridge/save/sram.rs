@@ -1,4 +1,4 @@
-use super::helpers::{read_slice, write_slice};
+use super::helpers::{repeat_byte, selected_write_byte};
 use super::{SaveBackend, SaveType};
 
 const SRAM_SIZE: usize = 0x8000; // 32KB, mirrored to 64KB
@@ -29,12 +29,12 @@ impl SaveBackend for SramSave {
 
     fn read(&self, addr: u32, width: u8) -> u32 {
         let off = (addr & 0x7FFF) as usize;
-        read_slice(&*self.data, off, width)
+        repeat_byte(self.data[off], width)
     }
 
     fn write(&mut self, addr: u32, width: u8, value: u32) {
         let off = (addr & 0x7FFF) as usize;
-        write_slice(&mut *self.data, off, width, value);
+        self.data[off] = selected_write_byte(addr, width, value);
     }
 
     fn ram_data(&self) -> Option<&[u8]> {

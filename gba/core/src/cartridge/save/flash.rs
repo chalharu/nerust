@@ -1,4 +1,4 @@
-use super::helpers::read_slice;
+use super::helpers::{repeat_byte, selected_write_byte};
 use super::{SaveBackend, SaveType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,12 +60,12 @@ impl SaveBackend for FlashSave {
             };
         }
         let off = ((addr & 0xFFFF) as usize) + self.bank_offset();
-        read_slice(&self.data, off, width)
+        repeat_byte(self.data[off], width)
     }
 
-    fn write(&mut self, addr: u32, _width: u8, value: u32) {
+    fn write(&mut self, addr: u32, width: u8, value: u32) {
         let low = addr & 0xFFFF;
-        let byte = (value & 0xFF) as u8;
+        let byte = selected_write_byte(addr, width, value);
         // A0 program data and B0 bank selection take priority over a new unlock sequence.
         if self.finish_program(addr, byte) || self.finish_bank_switch(addr, byte) {
             return;

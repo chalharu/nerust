@@ -188,7 +188,7 @@ impl GbaMemoryBus {
                     self.gamepak_rom_cycles(addr, width)
                 }
             }
-            0x0E000000..=0x0E00FFFF => {
+            0x0E000000..=0x0FFFFFFF => {
                 const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
                 SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
             }
@@ -350,7 +350,7 @@ impl GbaMemoryBus {
             0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
             0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
             0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
-            0x0E000000..=0x0E00FFFF => self.read_sram(addr, width),
+            0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
         }
     }
@@ -419,7 +419,7 @@ impl GbaMemoryBus {
             0x05000000..=0x05FFFFFF => self.write_palette(addr, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(addr, width, value),
             0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
-            0x0E000000..=0x0E00FFFF => self.write_sram(addr, width, value),
+            0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
                 // 未マッピング・ROM・BIOSへの書き込みは無視だが open_bus は更新
                 self.open_bus_value = value;
