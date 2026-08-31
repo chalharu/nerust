@@ -277,6 +277,16 @@ impl GbaMemoryBus {
         // Non-ROM, non-I/O accesses keep queue (only ROM non-sequential flushes)
     }
 
+    /// DMA転送やCPU分岐等の非連続アクセスでプリフェッチを無効化する。
+    /// DMAはCPUとバスを共有するため、ROMからのDMA読み出しはCPUの連続性を破壊する。
+    pub fn invalidate_prefetch_for_dma(&mut self, dma_addr: u32) {
+        if self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&dma_addr) {
+            self.prefetch_queue.clear();
+        }
+        // DMAアクセスでCPUの連続性も破壊
+        self.prev_addr = Some(dma_addr);
+    }
+
     fn refill_prefetch_queue(&mut self, addr: u32) {
         self.prefetch_queue.clear();
         if !self.prefetch_enabled {
@@ -692,6 +702,21 @@ mod tests {
         bus.write16(0x04000204, 0); // disable clears queue
         assert!(!bus.prefetch_enabled);
         assert!(bus.prefetch_queue.is_empty());
+    }
+
+    #[test]
+    fn dma_invalidates_prefetch() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14); // prefetch enable
+        let _ = bus.read32(0x08000000);
+        assert!(!bus.prefetch_queue.is_empty());
+        bus.invalidate_prefetch_for_dma(0x08000004);
+        assert!(bus.prefetch_queue.is_empty());
+        // Non-ROM DMA should not clear (I/O)
+        let _ = bus.read32(0x08000000);
+        assert!(!bus.prefetch_queue.is_empty());
+        bus.invalidate_prefetch_for_dma(0x04000000);
+        assert!(!bus.prefetch_queue.is_empty());
     }
 
     #[test]

@@ -12,9 +12,11 @@ enum FlashState {
 pub struct FlashSave {
     data: Vec<u8>,
     is_128k: bool,
-    bank: usize, // 0 or 1 for 128K
+    bank: usize, // 0 or 1 for 128K — 現在アクティブな64KBバンク
     state: FlashState,
     id_mode: bool,
+    bank_switch_pending: bool, // 0xB0 コマンド後の次回 0x0E000000 書き込み待ち
+    program_pending: bool,     // 0xA0 コマンド後の次回書き込みでデータ反映
 }
 
 impl FlashSave {
@@ -26,6 +28,8 @@ impl FlashSave {
             bank: 0,
             state: FlashState::Ready,
             id_mode: false,
+            bank_switch_pending: false,
+            program_pending: false,
         }
     }
 
@@ -63,13 +67,28 @@ impl SaveBackend for FlashSave {
         let low = (addr & 0xFFFF) as u32;
         let byte = (value & 0xFF) as u8;
 
+        // Program pending (after 0xA0) has priority
+        if self.program_pending {
+            let off = ((addr & 0xFFFF) as usize) + self.bank_offset();
+            if off < self.data.len() {
+                self.data[off] &= byte;
+            }
+            self.program_pending = false;
+            return;
+        }
+        // Bank switch pending (after 0xB0) has priority
+        if self.bank_switch_pending && self.is_128k && addr == 0x0E000000 {
+            if byte == 0x00 || byte == 0x01 {
+                self.bank = (byte & 1) as usize;
+            }
+            self.bank_switch_pending = false;
+            return;
+        }
+
         match self.state {
             FlashState::Ready => {
                 if low == 0x5555 && byte == 0xAA {
                     self.state = FlashState::Unlock1;
-                } else if self.is_128k && addr == 0x0E000000 && (byte == 0x00 || byte == 0x01) {
-                    // Bank switch via B0 command already handled below, but direct write also allowed
-                    self.bank = (byte & 1) as usize;
                 } else {
                     // 未対応コマンドは無視
                 }
@@ -100,11 +119,12 @@ impl SaveBackend for FlashSave {
                     }
                     0xA0 => {
                         // Byte program setup — next write is data
+                        self.program_pending = true;
                         self.state = FlashState::Ready;
-                        // 実際の書き込みは次のwriteで処理されるが、簡易ではこのコマンドを無視
                     }
                     0xB0 => {
-                        // Bank switch — next write to 0x0E000000 selects bank
+                        // Bank switch — next write to 0x0E000000 selects bank (0 or 1)
+                        self.bank_switch_pending = true;
                         self.state = FlashState::Ready;
                     }
                     0x10 => {
@@ -177,6 +197,40 @@ impl SaveBackend for FlashSave {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bank_switch_via_B0() {
+        let mut flash = FlashSave::new(true); // 128K
+        assert_eq!(flash.bank, 0);
+        // Write to bank 0 (AA 55 A0 + data)
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xA0);
+        flash.write(0x0E000000, 1, 0x12);
+        assert_eq!(flash.read(0x0E000000, 1), 0x12);
+        // Switch to bank 1 via B0 sequence
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xB0);
+        flash.write(0x0E000000, 1, 0x01);
+        assert_eq!(flash.bank, 1);
+        // Write to bank 1
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xA0);
+        flash.write(0x0E000000, 1, 0x34);
+        assert_eq!(flash.read(0x0E000000, 1), 0x34);
+        // Switch back to bank 0
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xB0);
+        flash.write(0x0E000000, 1, 0x00);
+        assert_eq!(flash.bank, 0);
+        assert_eq!(flash.read(0x0E000000, 1), 0x12);
+        // Direct write without B0 should not switch (Phase 4 strict)
+        flash.write(0x0E000000, 1, 0x01);
+        assert_eq!(flash.bank, 0); // still 0
+    }
 
     #[test]
     fn sector_erase_clears_4k() {
