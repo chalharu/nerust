@@ -74,7 +74,7 @@ fn expanded_case(
 ) -> Result<ExpandedCase, String> {
     let stem = relative
         .file_stem()
-        .and_then(|value| value.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .ok_or_else(|| "ROM filename must be UTF-8".to_string())?;
     Ok(ExpandedCase {
         pattern_index,

@@ -1,10 +1,11 @@
+use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// ARM命令デコーダ。condチェック後、カテゴリ別ハンドラへ振り分け。
 pub fn decode_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let cond = ((instr >> 28) & 0xF) as u8;
-    if cond != 0xE && !check_cond(regs.cpsr(), cond) {
+    if !condition_passed(regs.cpsr(), cond) {
         return 1; // 条件不一致 → 1S NOP
     }
 
@@ -58,31 +59,6 @@ fn decode_software_or_coprocessor(
         handle_swi(regs, bus, instr)
     } else {
         handle_coprocessor_und(regs)
-    }
-}
-
-fn check_cond(cpsr: u32, cond: u8) -> bool {
-    let n = cpsr & (1 << 31) != 0;
-    let z = cpsr & (1 << 30) != 0;
-    let c = cpsr & (1 << 29) != 0;
-    let v = cpsr & (1 << 28) != 0;
-    match cond {
-        0x0 => z,            // EQ
-        0x1 => !z,           // NE
-        0x2 => c,            // CS
-        0x3 => !c,           // CC
-        0x4 => n,            // MI
-        0x5 => !n,           // PL
-        0x6 => v,            // VS
-        0x7 => !v,           // VC
-        0x8 => c && !z,      // HI
-        0x9 => !c || z,      // LS
-        0xA => n == v,       // GE
-        0xB => n != v,       // LT
-        0xC => !z && n == v, // GT
-        0xD => z || n != v,  // LE
-        0xE => true,         // AL
-        _ => false,          // NV
     }
 }
 
@@ -155,18 +131,19 @@ mod tests {
     use crate::cpu_registers::CpuRegisters;
     use crate::memory::GbaMemoryBus;
 
-    use super::{check_cond, decode_arm};
+    use super::decode_arm;
+    use crate::cpu::arm_opcodes::helpers::condition_passed;
 
     #[test]
     fn cond_eq() {
         let cpsr_z = 1 << 30;
-        assert!(check_cond(cpsr_z, 0x0));
-        assert!(!check_cond(0, 0x0));
+        assert!(condition_passed(cpsr_z, 0x0));
+        assert!(!condition_passed(0, 0x0));
     }
 
     #[test]
     fn cond_always() {
-        assert!(check_cond(0, 0xE));
+        assert!(condition_passed(0, 0xE));
     }
 
     #[test]
