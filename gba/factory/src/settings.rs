@@ -17,7 +17,7 @@ use nerust_gba_settings::{
 const EXPOSED_FIELDS: [GbaSettingField; 0] = [];
 
 pub(crate) fn gba_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
-    let defaults = GbaSettings::default();
+    let defaults = GbaSettings;
     let settings = view
         .system_config
         .as_deref()
@@ -95,7 +95,7 @@ mod tests {
     fn view() -> FactorySettingsView {
         FactorySettingsView {
             language: Language::SystemDefault,
-            system_config: Some(Box::new(GbaSettings::default())),
+            system_config: Some(Box::new(GbaSettings)),
         }
     }
 
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn resolves_with_default_options() {
         let view = view();
-        let resolved = resolve_gba_load_request(&view, GbaLoadOptions::default().into()).unwrap();
+        let resolved = resolve_gba_load_request(&view, GbaLoadOptions.into()).unwrap();
         assert!(resolved.options.downcast_ref::<GbaCoreOptions>().is_some());
     }
 }
