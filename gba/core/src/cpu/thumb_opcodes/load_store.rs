@@ -161,7 +161,7 @@ fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
 
 fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
-    let final_addr = addr.wrapping_add(u32::from(rlist.count_ones()) * 4);
+    let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
     let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
     for i in 0..8 {

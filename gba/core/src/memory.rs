@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
+use crate::ppu::GbaPpu;
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -23,14 +24,12 @@ pub struct GbaMemoryBus {
     palette_ram: Box<[u8; PALETTE_SIZE]>,
     vram: Box<[u8; VRAM_SIZE]>,
     oam: Box<[u8; OAM_SIZE]>,
+    ppu: GbaPpu,
     cartridge: Option<Cartridge>,
     // Fallback SRAM for Phase 3 tests when no cartridge is loaded
     fallback_sram: Box<[u8; 0x10000]>,
 
     // レジスタ — Phase 3 基本16件
-    disp_cnt: u16,
-    disp_stat: u16,
-    vcount: u16,
     wait_cnt: u16,
     ie: u16,
     sif: u16,
@@ -59,14 +58,6 @@ pub struct GbaMemoryBus {
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
-    // HLE BIOS open bus: jsmolka bios.gba は BIOS保護中の読出しが
-    // 直前にフェッチされたBIOS命令を返すことを期待する。
-    // 実BIOSの最終プリフェッチ値は 0xDC+8, 0x188+8, 0x134+8...と遷移するが
-    // HLEでは実BIOSを実行しないため、期待値シーケンスでエミュレートする。
-    bios_prefetch: u32,
-    bios_read_seq: usize,
-
-    tick: u64,
 }
 
 impl GbaMemoryBus {
@@ -74,13 +65,6 @@ impl GbaMemoryBus {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
         // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
         bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
-        // jsmolka bios.gba が期待するBIOS内容を最低限埋める
-        // 0x00: E129F000, 0xE4: E129F000, 0x190: E3A02004, 0x13C: E25EF004, 0x144: E55EC002
-        bios[0x00..0x04].copy_from_slice(&0xE129F000u32.to_le_bytes());
-        bios[0xE4..0xE8].copy_from_slice(&0xE129F000u32.to_le_bytes());
-        bios[0x190..0x194].copy_from_slice(&0xE3A02004u32.to_le_bytes());
-        bios[0x13C..0x140].copy_from_slice(&0xE25EF004u32.to_le_bytes());
-        bios[0x144..0x148].copy_from_slice(&0xE55EC002u32.to_le_bytes());
         Self {
             bios,
             ewram: Box::new([0u8; EWRAM_SIZE]),
@@ -88,12 +72,10 @@ impl GbaMemoryBus {
             palette_ram: Box::new([0u8; PALETTE_SIZE]),
             vram: Box::new([0u8; VRAM_SIZE]),
             oam: Box::new([0u8; OAM_SIZE]),
+            ppu: GbaPpu::new(),
             cartridge: None,
             fallback_sram: Box::new([0u8; 0x10000]),
 
-            disp_cnt: 0x0080, // Force Blank post-BIOS
-            disp_stat: 0,
-            vcount: 0,
             wait_cnt: 0,
             ie: 0,
             sif: 0,
@@ -107,8 +89,8 @@ impl GbaMemoryBus {
             siodata32: 0,
             rcnt: 0,
 
-            last_prefetch: 0xE129F000,
-            open_bus_value: 0xE129F000,
+            last_prefetch: 0,
+            open_bus_value: 0,
             prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
             bios_protect: true,
@@ -118,9 +100,6 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
-            bios_prefetch: 0xE129F000,
-            bios_read_seq: 0,
-            tick: 0,
         }
     }
 
@@ -211,13 +190,19 @@ impl GbaMemoryBus {
         }
     }
 
-    /// 1 T-cycle 進行。VCOUNT を更新し、フレーム境界で true を返す。
-    /// TODO(gba-tick-frame): Phase 3では常に false（PPU未実装）。Phase 8で VCOUNT 0..227 境界で true に拡張。
+    /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
-        self.tick = self.tick.wrapping_add(1);
-        // 簡易 VCOUNT: 1232 T-cycle / scanline として 280896 T-cycle / frame
-        self.vcount = ((self.tick / 1232) % 228) as u16;
-        self.tick != 0 && self.tick.is_multiple_of(280896)
+        let event = self
+            .ppu
+            .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
+        if event.interrupt_mask != 0 {
+            self.request_interrupt(event.interrupt_mask);
+        }
+        event.frame_complete
+    }
+
+    pub fn frame_buffer(&self) -> &[u32] {
+        self.ppu.frame_buffer()
     }
 
     /// 将来イベントスケジューラの入口。Phase 3では no-op。
@@ -264,8 +249,7 @@ impl GbaMemoryBus {
         }
         // Sound registers are introduced in Phase 9; bit 0x40 has no state yet.
         if flags & 0x80 != 0 {
-            self.disp_cnt = 0x0080;
-            self.disp_stat = 0;
+            self.ppu.reset();
             self.ie = 0;
             self.sif = 0;
             self.ime = false;
@@ -372,36 +356,10 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            // HLE: BIOS保護中は最後にプリフェッチされたBIOS命令を返す
-            // jsmolka bios.gba の期待シーケンス: 0->E129F000, 1->E3A02004, 2->E25EF004, 3->E55EC002
-            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
-            let aligned = match width {
-                4 => raw,
-                2 => (raw & 0xFFFF) as u32,
-                _ => (raw & 0xFF) as u32,
-            };
-            // 読出し毎に次へ進む（jsmolka bios.gba は順に読むため）
-            if self.bios_read_seq + 1 < SEQ.len() {
-                self.bios_read_seq += 1;
-                self.bios_prefetch = SEQ[self.bios_read_seq];
-                self.open_bus_value = self.bios_prefetch;
-                self.last_prefetch = self.bios_prefetch;
-            }
-            let _ = addr;
-            aligned
+            0
         } else {
             self.read_bios(addr, width)
         }
-    }
-
-    /// SWI/IRQ 遷移でBIOSプリフェッチを更新する（HLEで実BIOSを実行しないため）
-    pub fn update_bios_prefetch(&mut self, seq: usize) {
-        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-        self.bios_read_seq = seq.min(SEQ.len() - 1);
-        self.bios_prefetch = SEQ[self.bios_read_seq];
-        self.open_bus_value = self.bios_prefetch;
-        self.last_prefetch = self.bios_prefetch;
     }
 
     fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
@@ -496,9 +454,8 @@ impl GbaMemoryBus {
     }
 
     fn read_vram(&self, addr: u32, width: u8) -> u32 {
-        // TODO(gba-vram-mirror): 実機は 0x06018000以降で32KBミラー (&0x1FFFF 説あり)。Phase 3は &0x17FFF で検証。
-        let off = Self::aligned_off(addr, width, 0x17FFF) % VRAM_SIZE;
-        read_slice(&*self.vram, off, width)
+        self.vram_offset(addr, width)
+            .map_or(0, |off| read_slice(&*self.vram, off, width))
     }
 
     fn read_oam(&self, addr: u32, width: u8) -> u32 {
@@ -531,9 +488,10 @@ impl GbaMemoryBus {
         }
         let aligned = addr & !1;
         let val: u16 = match aligned {
-            0x04000000 => self.disp_cnt,
-            0x04000004 => self.disp_stat,
-            0x04000006 => self.vcount,
+            0x04000000 | 0x04000004 | 0x04000006 => self
+                .ppu
+                .read_register(aligned)
+                .expect("readable PPU register"),
             0x04000128 => self.siocnt,
             0x0400012A => self.siodata8 as u16,
             0x04000120 => (self.siodata32 & 0xFFFF) as u16,
@@ -558,7 +516,7 @@ impl GbaMemoryBus {
             let high_addr = aligned + 2;
             let high: u32 = match high_addr {
                 0x04000002 => 0,
-                0x04000006 => self.vcount as u32,
+                0x04000006 => self.ppu.vcount() as u32,
                 0x04000122 => (self.siodata32 >> 16) & 0xFFFF,
                 0x04000202 => self.sif as u32,
                 _ => 0,
@@ -597,11 +555,12 @@ impl GbaMemoryBus {
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
-        // TODO(gba-vram-mirror): 同上
-        let off = Self::aligned_off(addr, width, 0x17FFF);
-        let off = off % VRAM_SIZE;
+        let Some(off) = self.vram_offset(addr, width) else {
+            self.open_bus_value = value;
+            return;
+        };
         if width == 1 {
-            let bitmap_mode = self.disp_cnt & 7 >= 3;
+            let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
             let object_start = if bitmap_mode { 0x14000 } else { 0x10000 };
             if off < object_start {
                 write_slice(&mut *self.vram, off & !1, 2, (value & 0xFF) * 0x0101);
@@ -631,6 +590,11 @@ impl GbaMemoryBus {
     }
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32) {
+        if width == 4 && (0x04000000..=0x04000054).contains(&addr) {
+            self.write_io(addr, 2, value & 0xFFFF);
+            self.write_io(addr + 2, 2, value >> 16);
+            return;
+        }
         if width == 1 {
             match addr {
                 0x04000300 => {
@@ -649,8 +613,9 @@ impl GbaMemoryBus {
         let aligned = addr & !1;
         let v16 = value as u16;
         match aligned {
-            0x04000000 => self.disp_cnt = v16,
-            0x04000004 => self.disp_stat = v16,
+            0x04000000..=0x04000054 if aligned != 0x04000002 && aligned != 0x04000006 => {
+                self.ppu.write_register(aligned, v16);
+            }
             // 0x04000006 VCOUNT は RO
             0x04000128 => self.siocnt = v16,
             0x0400012A => self.siodata8 = (value & 0xFF) as u8,
@@ -698,6 +663,19 @@ impl GbaMemoryBus {
             _ => (addr & mask) as usize,
         }
     }
+
+    fn vram_offset(&self, addr: u32, width: u8) -> Option<usize> {
+        let offset = Self::aligned_off(addr, width, 0x1FFFF);
+        if offset < VRAM_SIZE {
+            return Some(offset);
+        }
+        let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
+        if bitmap_mode && offset < 0x1C000 {
+            None
+        } else {
+            Some(offset - 0x8000)
+        }
+    }
 }
 
 impl Default for GbaMemoryBus {
@@ -733,13 +711,17 @@ mod tests {
     #[test]
     fn read_vram_mirror() {
         let mut bus = GbaMemoryBus::new();
-        bus.write8(0x06000000, 0x11);
-        // TODO(gba-vram-mirror): 0x06018000 mirror — currently &0x17FFF
-        assert_eq!(bus.read8(0x06000000), 0x11);
-        assert_eq!(
-            bus.read8(0x06010000),
-            bus.read8(0x06000000 + (0x10000 & 0x17FFF) as u32)
-        );
+        bus.write16(0x06018000, 0x1111);
+        bus.write16(0x0601C000, 0x2222);
+        assert_eq!(bus.read16(0x06010000), 0x1111);
+        assert_eq!(bus.read16(0x06014000), 0x2222);
+
+        bus.write16(0x04000000, 3);
+        bus.write16(0x06018000, 0x3333);
+        bus.write16(0x0601C000, 0x4444);
+        assert_eq!(bus.read16(0x06018000), 0);
+        assert_eq!(bus.read16(0x06014000), 0x4444);
+        assert_eq!(bus.read16(0x0601C000), 0x4444);
     }
 
     #[test]

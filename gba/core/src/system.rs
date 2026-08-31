@@ -69,6 +69,15 @@ impl GbaSystem {
         &mut self.cpu
     }
 
+    pub fn frame_buffer(&self) -> &[u32] {
+        self.bus.frame_buffer()
+    }
+
+    pub fn run_frame(&mut self) -> &[u32] {
+        while !self.step_tcycle() {}
+        self.frame_buffer()
+    }
+
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
         if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
@@ -109,6 +118,16 @@ mod tests {
             system.step_tcycle();
         }
         assert_eq!(system.cpu.registers().pc(), pc);
+    }
+
+    #[test]
+    fn run_frame_advances_one_lcd_frame() {
+        let mut system = GbaSystem::new();
+        assert_eq!(
+            system.run_frame().len(),
+            crate::ppu::WIDTH * crate::ppu::HEIGHT
+        );
+        assert_eq!(system.tick, 280896);
     }
 
     #[test]
