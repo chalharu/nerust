@@ -1,17 +1,19 @@
 use crate::cartridge::Cartridge;
+use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
 pub struct GbaSystem {
+    pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
     tick: u64,
 }
 
 impl GbaSystem {
     pub fn new() -> Self {
-        Self {
-            bus: GbaMemoryBus::new(),
-            tick: 0,
-        }
+        let mut cpu = GbaCpu::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        cpu.reset(&mut bus);
+        Self { cpu, bus, tick: 0 }
     }
 
     pub fn from_rom(rom: Vec<u8>) -> Option<Self> {
@@ -21,7 +23,9 @@ impl GbaSystem {
         }
         let mut bus = GbaMemoryBus::new();
         bus.set_cartridge(cart);
-        Some(Self { bus, tick: 0 })
+        let mut cpu = GbaCpu::post_bios();
+        cpu.reset(&mut bus);
+        Some(Self { cpu, bus, tick: 0 })
     }
 
     pub fn bus(&self) -> &GbaMemoryBus {
@@ -32,11 +36,25 @@ impl GbaSystem {
         &mut self.bus
     }
 
-    /// 1 T-cycle 進行。VCOUNT 更新は Bus 側に委譲。
-    /// TODO(gba-tick-frame): Phase 3では常に false。Phase 8で frame_done を返す。
+    pub fn cpu(&self) -> &GbaCpu {
+        &self.cpu
+    }
+
+    pub fn cpu_mut(&mut self) -> &mut GbaCpu {
+        &mut self.cpu
+    }
+
+    /// 1 T-cycle 進行。CPUが消費したサイクル数だけ bus.tick() を進める。
     pub fn step_tcycle(&mut self) -> bool {
-        self.tick = self.tick.wrapping_add(1);
-        self.bus.tick()
+        let cycles = self.cpu.step(&mut self.bus);
+        let mut frame_done = false;
+        for _ in 0..cycles {
+            self.tick = self.tick.wrapping_add(1);
+            if self.bus.tick() {
+                frame_done = true;
+            }
+        }
+        frame_done
     }
 }
 
