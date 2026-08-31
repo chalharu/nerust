@@ -293,4 +293,39 @@ mod tests {
         .unwrap();
         assert!(manifest.validate().is_err());
     }
+
+    #[test]
+    fn expands_globs_and_resolves_completion() {
+        let root = std::env::temp_dir().join(format!("gba-manifest-{}", std::process::id()));
+        let suite = root.join("roms/suite");
+        std::fs::create_dir_all(&suite).unwrap();
+        std::fs::write(suite.join("case.gba"), []).unwrap();
+        let manifest_path = root.join("tests.yaml");
+        std::fs::write(
+            &manifest_path,
+            "rom_root: roms\ncompletion_profiles:\n  done:\n    poll_interval: 1\n    stages:\n      - registers: { r0: 1 }\nsuites:\n  - name: suite\n    case_patterns:\n      - glob: '*.gba'\n        id_prefix: test_\n        cycles: 4\n        completion: done\n        verify:\n          registers: { r0: 1 }\n",
+        )
+        .unwrap();
+        let manifest = RomManifest::load(&manifest_path).unwrap();
+        let selected = manifest.select(&["test_case".to_string()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].case.rom, "case.gba");
+        assert!(selected[0].completion.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_ids_and_invalid_completion() {
+        let duplicate: RomManifest = serde_saphyr::from_str(
+            "rom_root: roms\nsuites:\n  - name: x\n    cases:\n      - { id: same, rom: a.gba, cycles: 1, verify: { registers: { r0: 1 } } }\n      - { id: same, rom: b.gba, cycles: 1, verify: { registers: { r0: 1 } } }\n",
+        )
+        .unwrap();
+        assert!(duplicate.validate().is_err());
+
+        let empty_profile: RomManifest = serde_saphyr::from_str(
+            "rom_root: roms\ncompletion_profiles: { bad: { poll_interval: 0, stages: [] } }\nsuites: [{ name: x }]\n",
+        )
+        .unwrap();
+        assert!(empty_profile.validate().is_err());
+    }
 }

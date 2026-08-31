@@ -41,3 +41,33 @@ pub fn write_json(results: &[CaseResult]) -> String {
     }))
     .expect("result serialization cannot fail")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(id: &str, passed: bool) -> CaseResult {
+        CaseResult {
+            id: id.into(),
+            suite: "suite".into(),
+            description: String::new(),
+            passed,
+            checks: Vec::new(),
+            error: None,
+            error_kind: None,
+            executed_tcycles: 1,
+            completed_early: false,
+            duration_ms: 0,
+        }
+    }
+
+    #[test]
+    fn summarizes_and_serializes_results() {
+        let results = [result("pass", true), result("fail", false)];
+        let summary = Summary::of(&results);
+        assert_eq!((summary.total, summary.passed, summary.failed), (2, 1, 1));
+        let json = write_json(&results);
+        assert!(json.contains("\"failed\": 1"));
+        assert!(json.contains("\"id\": \"pass\""));
+    }
+}

@@ -4,38 +4,48 @@ pub fn handle(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let psr = (instr >> 22) & 1 != 0; // 0=CPSR, 1=SPSR
     let is_mrs = (instr >> 21) & 1 == 0 && (instr & 0x0FBF0FFF) == 0x010F0000;
     if is_mrs {
-        // MRS Rd, psr
-        let rd = ((instr >> 12) & 0xF) as usize;
-        let val = if psr { regs.spsr() } else { regs.cpsr() };
-        regs.set_r(rd, val);
+        read_psr(regs, instr, psr);
     } else {
-        let operand = if (instr >> 25) & 1 != 0 {
-            let imm = instr & 0xFF;
-            imm.rotate_right(((instr >> 8) & 0xF) * 2)
-        } else {
-            regs.r((instr & 0xF) as usize)
-        };
-        let mut field_mask = (instr >> 16) & 0xF;
-        let privileged = regs.cpsr_mode() != 0x10;
-        if !privileged {
-            field_mask &= 0x8; // USRは条件フラグのみ変更可能
-        }
-        let mut psr_val = if psr { regs.spsr() } else { regs.cpsr() };
-        // field_mask: bit0=c, bit1=x, bit2=s, bit3=f。
-        // ARM7TDMIで定義されるCPSR/SPSRビットだけを書き換え、予約ビットは保持する。
-        if field_mask & 1 != 0 {
-            psr_val = (psr_val & 0xFFFFFF00) | (operand & 0x000000FF);
-        }
-        if field_mask & 8 != 0 {
-            psr_val = (psr_val & 0x0FFFFFFF) | (operand & 0xF0000000);
-        }
-        if psr {
-            regs.set_spsr(psr_val);
-        } else {
-            regs.set_cpsr(psr_val);
-        }
+        write_psr(regs, instr, psr);
     }
     1
+}
+
+fn read_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
+    let value = if saved { regs.spsr() } else { regs.cpsr() };
+    regs.set_r(((instr >> 12) & 0xF) as usize, value);
+}
+
+fn write_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
+    let operand = psr_operand(regs, instr);
+    let mut field_mask = (instr >> 16) & 0xF;
+    if regs.cpsr_mode() == 0x10 {
+        field_mask &= 0x8;
+    }
+    let current = if saved { regs.spsr() } else { regs.cpsr() };
+    let value = apply_fields(current, operand, field_mask);
+    if saved {
+        regs.set_spsr(value);
+    } else {
+        regs.set_cpsr(value);
+    }
+}
+
+fn psr_operand(regs: &CpuRegisters, instr: u32) -> u32 {
+    if (instr >> 25) & 1 == 0 {
+        return regs.r((instr & 0xF) as usize);
+    }
+    (instr & 0xFF).rotate_right(((instr >> 8) & 0xF) * 2)
+}
+
+fn apply_fields(mut current: u32, operand: u32, mask: u32) -> u32 {
+    if mask & 1 != 0 {
+        current = (current & 0xFFFFFF00) | (operand & 0xFF);
+    }
+    if mask & 8 != 0 {
+        current = (current & 0x0FFFFFFF) | (operand & 0xF0000000);
+    }
+    current
 }
 
 #[cfg(test)]

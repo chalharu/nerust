@@ -7,182 +7,119 @@ pub fn handle(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let rs_val = regs.r(rs);
     let rd_val = regs.r(rd);
     match op {
-        0b0000 => {
-            // AND
-            let r = rd_val & rs_val;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            1
-        }
-        0b0001 => {
-            // EOR
-            let r = rd_val ^ rs_val;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            1
-        }
-        0b0010 => {
-            // LSL Rd, Rs
-            let shift = rs_val & 0xFF;
-            let (r, c) = if shift == 0 {
-                (rd_val, regs.cpsr_c())
-            } else if shift < 32 {
-                let c = (rd_val >> (32 - shift)) & 1 != 0;
-                (rd_val << shift, c)
-            } else if shift == 32 {
-                let c = rd_val & 1 != 0;
-                (0, c)
-            } else {
-                (0, false)
-            };
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            1 + u32::from(shift != 0)
-        }
-        0b0011 => {
-            // LSR Rd, Rs
-            let shift = rs_val & 0xFF;
-            let (r, c) = if shift == 0 {
-                (rd_val, regs.cpsr_c())
-            } else if shift < 32 {
-                let c = (rd_val >> (shift - 1)) & 1 != 0;
-                (rd_val >> shift, c)
-            } else if shift == 32 {
-                let c = (rd_val >> 31) & 1 != 0;
-                (0, c)
-            } else {
-                (0, false)
-            };
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            2
-        }
-        0b0100 => {
-            // ASR Rd, Rs
-            let shift = rs_val & 0xFF;
-            let (r, c) = if shift == 0 {
-                (rd_val, regs.cpsr_c())
-            } else if shift < 32 {
-                let c = (rd_val >> (shift - 1)) & 1 != 0;
-                let v = ((rd_val as i32) >> shift) as u32;
-                (v, c)
-            } else {
-                let c = (rd_val >> 31) & 1 != 0;
-                let v = if c { 0xFFFFFFFF } else { 0 };
-                (v, c)
-            };
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            2
-        }
-        0b0101 => {
-            // ADC Rd, Rs
-            let c_in = regs.cpsr_c() as u32;
-            let (r1, c1) = rd_val.overflowing_add(rs_val);
-            let (r, c2) = r1.overflowing_add(c_in);
-            let c = c1 || c2;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            regs.set_cpsr_v(((rd_val ^ r) & (rs_val ^ r) & 0x80000000) != 0);
-            1
-        }
-        0b0110 => {
-            // SBC Rd, Rs
-            let c_in = regs.cpsr_c() as u32;
-            let not_c = 1 - c_in;
-            let (r1, c1) = rd_val.overflowing_sub(rs_val);
-            let (r, c2) = r1.overflowing_sub(not_c);
-            let c = !(c1 || c2);
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            regs.set_cpsr_v(((rd_val ^ rs_val) & (rd_val ^ r) & 0x80000000) != 0);
-            1
-        }
-        0b0111 => {
-            // ROR Rd, Rs
-            let shift = rs_val & 0xFF;
-            let (r, c) = if shift == 0 {
-                (rd_val, regs.cpsr_c())
-            } else if shift.is_multiple_of(32) {
-                let c = (rd_val >> 31) & 1 != 0;
-                (rd_val, c)
-            } else {
-                let rot = shift % 32;
-                let c = (rd_val >> (rot - 1)) & 1 != 0;
-                (rd_val.rotate_right(rot), c)
-            };
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            2
-        }
-        0b1000 => {
-            // TST
-            let r = rd_val & rs_val;
-            update_nz(regs, r);
-            // C from barrel? For TST, shifter not involved, keep C
-            1
-        }
-        0b1001 => {
-            // NEG Rd, Rs => Rd = 0 - Rs
-            let (r, _) = (0u32).overflowing_sub(rs_val);
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            regs.set_cpsr_c(rs_val == 0);
-            regs.set_cpsr_v(rs_val == 0x80000000);
-            1
-        }
-        0b1010 => {
-            // CMP Rd, Rs
-            let (r, _) = rd_val.overflowing_sub(rs_val);
-            update_nz(regs, r);
-            regs.set_cpsr_c(rd_val >= rs_val);
-            regs.set_cpsr_v(((rd_val ^ rs_val) & (rd_val ^ r) & 0x80000000) != 0);
-            1
-        }
-        0b1011 => {
-            // CMN Rd, Rs
-            let (r, c) = rd_val.overflowing_add(rs_val);
-            update_nz(regs, r);
-            regs.set_cpsr_c(c);
-            regs.set_cpsr_v(((rd_val ^ r) & (rs_val ^ r) & 0x80000000) != 0);
-            1
-        }
-        0b1100 => {
-            // ORR
-            let r = rd_val | rs_val;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            1
-        }
-        0b1101 => {
-            // MUL
-            let r = rd_val.wrapping_mul(rs_val);
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            3 // Thumb MUL takes 3-4 cycles
-        }
-        0b1110 => {
-            // BIC
-            let r = rd_val & !rs_val;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            1
-        }
-        0b1111 => {
-            // MVN
-            let r = !rs_val;
-            regs.set_r(rd, r);
-            update_nz(regs, r);
-            1
-        }
+        0x0 | 0x1 | 0xC..=0xF => logical(regs, rd, op, rd_val, rs_val),
+        0x2..=0x4 | 0x7 => shift(regs, rd, op, rd_val, rs_val),
+        0x5 | 0x6 => carry_arithmetic(regs, rd, op, rd_val, rs_val),
+        0x8 => test(regs, rd_val, rs_val),
+        0x9..=0xB => compare(regs, rd, op, rd_val, rs_val),
         _ => 1,
     }
+}
+
+fn logical(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right: u32) -> u32 {
+    let result = match op {
+        0x0 => left & right,
+        0x1 => left ^ right,
+        0xC => left | right,
+        0xD => left.wrapping_mul(right),
+        0xE => left & !right,
+        _ => !right,
+    };
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    if op == 0xD { 3 } else { 1 }
+}
+
+fn shift(regs: &mut CpuRegisters, destination: usize, op: u8, value: u32, amount: u32) -> u32 {
+    let shift_type = match op {
+        0x2 => 0,
+        0x3 => 1,
+        0x4 => 2,
+        _ => 3,
+    };
+    let (result, carry) = crate::cpu::arm_opcodes::helpers::barrel_shift_register(
+        value,
+        shift_type,
+        amount,
+        regs.cpsr_c(),
+    );
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    if op == 0x2 && amount & 0xFF == 0 {
+        1
+    } else {
+        2
+    }
+}
+
+fn carry_arithmetic(
+    regs: &mut CpuRegisters,
+    destination: usize,
+    op: u8,
+    left: u32,
+    right: u32,
+) -> u32 {
+    let carry_in = u32::from(regs.cpsr_c());
+    let (result, carry, overflow) = if op == 0x5 {
+        add_with_carry(left, right, carry_in)
+    } else {
+        subtract_with_carry(left, right, carry_in)
+    };
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    regs.set_cpsr_v(overflow);
+    1
+}
+
+fn add_with_carry(left: u32, right: u32, carry_in: u32) -> (u32, bool, bool) {
+    let sum = u64::from(left) + u64::from(right) + u64::from(carry_in);
+    let result = sum as u32;
+    let overflow = ((left ^ result) & (right ^ result) & 0x80000000) != 0;
+    (result, sum > u64::from(u32::MAX), overflow)
+}
+
+fn subtract_with_carry(left: u32, right: u32, carry_in: u32) -> (u32, bool, bool) {
+    let borrow = 1 - carry_in;
+    let result = left.wrapping_sub(right).wrapping_sub(borrow);
+    let carry = u64::from(left) >= u64::from(right) + u64::from(borrow);
+    let overflow = ((left ^ right) & (left ^ result) & 0x80000000) != 0;
+    (result, carry, overflow)
+}
+
+fn test(regs: &mut CpuRegisters, left: u32, right: u32) -> u32 {
+    update_nz(regs, left & right);
+    1
+}
+
+fn compare(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right: u32) -> u32 {
+    let (result, carry, overflow) = match op {
+        0x9 => (0u32.wrapping_sub(right), right == 0, right == 0x80000000),
+        0xA => {
+            let result = left.wrapping_sub(right);
+            (
+                result,
+                left >= right,
+                ((left ^ right) & (left ^ result) & 0x80000000) != 0,
+            )
+        }
+        _ => {
+            let (result, carry) = left.overflowing_add(right);
+            (
+                result,
+                carry,
+                ((left ^ result) & (right ^ result) & 0x80000000) != 0,
+            )
+        }
+    };
+    if op == 0x9 {
+        regs.set_r(destination, result);
+    }
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    regs.set_cpsr_v(overflow);
+    1
 }
 
 fn update_nz(regs: &mut CpuRegisters, r: u32) {

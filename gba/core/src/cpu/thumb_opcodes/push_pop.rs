@@ -5,36 +5,41 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
     let l = (instr >> 11) & 1 != 0; // 0=PUSH, 1=POP
     let r = (instr >> 8) & 1 != 0; // PC/LR
     let rlist = instr & 0xFF;
-    if !l {
-        // PUSH {Rlist, LR}
-        let count = rlist.count_ones() + if r { 1 } else { 0 };
-        let mut addr = regs.sp().wrapping_sub(count * 4);
-        regs.set_sp(addr);
-        for i in 0..8 {
-            if (rlist >> i) & 1 != 0 {
-                bus.write32(addr, regs.r(i as usize));
-                addr = addr.wrapping_add(4);
-            }
-        }
-        if r {
-            bus.write32(addr, regs.lr());
-        }
-        3 + count
+    if l {
+        pop(regs, bus, rlist, r)
     } else {
-        // POP {Rlist, PC}
-        let mut addr = regs.sp();
-        for i in 0..8 {
-            if (rlist >> i) & 1 != 0 {
-                regs.set_r(i as usize, bus.read32(addr));
-                addr = addr.wrapping_add(4);
-            }
-        }
-        if r {
-            let val = bus.read32(addr);
-            regs.set_pc(val & !1);
-            addr = addr.wrapping_add(4);
-        }
-        regs.set_sp(addr);
-        3 + rlist.count_ones() + if r { 1 } else { 0 }
+        push(regs, bus, rlist, r)
     }
+}
+
+fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) -> u32 {
+    let count = list.count_ones() + u32::from(link);
+    let mut address = regs.sp().wrapping_sub(count * 4);
+    regs.set_sp(address);
+    for register in selected_registers(list) {
+        bus.write32(address, regs.r(register));
+        address = address.wrapping_add(4);
+    }
+    if link {
+        bus.write32(address, regs.lr());
+    }
+    3 + count
+}
+
+fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
+    let mut address = regs.sp();
+    for register in selected_registers(list) {
+        regs.set_r(register, bus.read32(address));
+        address = address.wrapping_add(4);
+    }
+    if pc {
+        regs.set_pc(bus.read32(address));
+        address = address.wrapping_add(4);
+    }
+    regs.set_sp(address);
+    3 + list.count_ones() + u32::from(pc)
+}
+
+fn selected_registers(list: u16) -> impl Iterator<Item = usize> {
+    (0..8).filter(move |register| list & (1 << register) != 0)
 }

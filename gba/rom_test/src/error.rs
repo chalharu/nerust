@@ -21,3 +21,19 @@ impl RomTestError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn categorizes_errors() {
+        assert_eq!(
+            RomTestError::InvalidManifest("x".into()).category(),
+            "config"
+        );
+        assert_eq!(RomTestError::InvalidRom("x".into()).category(), "rom");
+        let io = std::io::Error::other("x");
+        assert_eq!(RomTestError::from(io).category(), "io");
+    }
+}
