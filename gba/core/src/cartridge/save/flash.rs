@@ -1,3 +1,4 @@
+use super::helpers::read_slice;
 use super::{SaveBackend, SaveType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +112,17 @@ impl SaveBackend for FlashSave {
                         self.data.fill(0xFF);
                         self.state = FlashState::Ready;
                     }
+                    0x30 => {
+                        // Sector erase 4KB (after 80 AA 55 AA 55)
+                        let sector_start =
+                            (((addr & 0xFFFF) as usize) & !0xFFF) + self.bank_offset();
+                        for i in 0..0x1000 {
+                            if sector_start + i < self.data.len() {
+                                self.data[sector_start + i] = 0xFF;
+                            }
+                        }
+                        self.state = FlashState::Ready;
+                    }
                     _ => {
                         // 0xA0の後のデータ書き込みとして扱う（簡易）
                         let off = ((addr & 0xFFFF) as usize) + self.bank_offset();
@@ -162,20 +174,33 @@ impl SaveBackend for FlashSave {
     }
 }
 
-fn read_slice(slice: &[u8], off: usize, width: u8) -> u32 {
-    match width {
-        4 => {
-            let b0 = *slice.get(off).unwrap_or(&0xFF) as u32;
-            let b1 = *slice.get(off + 1).unwrap_or(&0xFF) as u32;
-            let b2 = *slice.get(off + 2).unwrap_or(&0xFF) as u32;
-            let b3 = *slice.get(off + 3).unwrap_or(&0xFF) as u32;
-            b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
-        }
-        2 => {
-            let b0 = *slice.get(off).unwrap_or(&0xFF) as u32;
-            let b1 = *slice.get(off + 1).unwrap_or(&0xFF) as u32;
-            b0 | (b1 << 8)
-        }
-        _ => *slice.get(off).unwrap_or(&0xFF) as u32,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sector_erase_clears_4k() {
+        let mut flash = FlashSave::new(false);
+        // Program a byte
+        flash.data[0x1000] = 0x00;
+        assert_eq!(flash.data[0x1000], 0x00);
+        // Sector erase sequence
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0x80);
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E001000, 1, 0x30);
+        assert_eq!(flash.data[0x1000], 0xFF);
+        assert_eq!(flash.data[0x1FFF], 0xFF);
+        // Adjacent sector should remain (we didn't erase it, but initially FF)
+        flash.data[0x2000] = 0x00;
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0x80);
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E001000, 1, 0x30);
+        assert_eq!(flash.data[0x2000], 0x00); // untouched
     }
 }

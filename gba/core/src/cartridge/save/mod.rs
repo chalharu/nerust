@@ -1,5 +1,6 @@
 pub mod eeprom;
 pub mod flash;
+pub mod helpers;
 pub mod none;
 pub mod sram;
 
