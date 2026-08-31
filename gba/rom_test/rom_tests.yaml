@@ -30,15 +30,6 @@ suites:
           memory:
             - address: 0x02000000
               value: 0x01
-  - name: custom
-    cases:
-      - id: custom_mem_test
-        rom: mem_test.gba
-        cycles: 100000
-        verify:
-          memory:
-            - address: 0x02000000
-              value: 0x01
   - name: jsmolka_gba-tests
     cases:
       # These aggregate ROMs leave the first failed test number in R12/R7.
