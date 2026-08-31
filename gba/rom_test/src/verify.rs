@@ -18,6 +18,8 @@ pub struct VerifySpec {
     pub memory: Vec<MemoryEntry>,
     #[serde(default)]
     pub registers: RegisterVerify,
+    #[serde(default)]
+    pub frame_pixels: Vec<FramePixelEntry>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -27,6 +29,14 @@ pub struct MemoryEntry {
     pub value: String,
     #[serde(default = "default_width")]
     pub width: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct FramePixelEntry {
+    pub x: usize,
+    pub y: usize,
+    pub color: String,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -53,7 +63,7 @@ pub struct RegisterVerify {
 
 impl VerifySpec {
     pub fn is_empty(&self) -> bool {
-        self.memory.is_empty() && self.registers.is_empty()
+        self.memory.is_empty() && self.registers.is_empty() && self.frame_pixels.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), RomTestError> {
@@ -75,6 +85,17 @@ impl VerifySpec {
                 return Err(RomTestError::InvalidManifest(format!(
                     "memory value {} does not fit width {}",
                     entry.value, entry.width
+                )));
+            }
+        }
+        for entry in &self.frame_pixels {
+            if entry.x >= nerust_gba_core::ppu::WIDTH
+                || entry.y >= nerust_gba_core::ppu::HEIGHT
+                || parse_hex(&entry.color)? > 0x7FFF
+            {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "invalid frame pixel at {},{}",
+                    entry.x, entry.y
                 )));
             }
         }
@@ -104,6 +125,24 @@ impl VerifySpec {
             });
         }
         self.registers.verify(registers, &mut checks)?;
+        let frame = bus.frame_buffer();
+        for entry in &self.frame_pixels {
+            let bgr555 = parse_hex(&entry.color)? as u16;
+            let expected = nerust_gba_core::ppu::bgr555_to_rgba8888(bgr555);
+            let actual = frame[entry.y * nerust_gba_core::ppu::WIDTH + entry.x];
+            checks.push(CheckResult {
+                name: format!("frame@{},{}", entry.x, entry.y),
+                expected: format!("0x{bgr555:04X}"),
+                actual: format!(
+                    "rgba({:02X}{:02X}{:02X}{:02X})",
+                    actual.to_le_bytes()[0],
+                    actual.to_le_bytes()[1],
+                    actual.to_le_bytes()[2],
+                    actual.to_le_bytes()[3]
+                ),
+                passed: actual == expected,
+            });
+        }
         Ok(checks)
     }
 }

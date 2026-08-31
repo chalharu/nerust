@@ -8,5 +8,6 @@ pub mod cpu_registers;
 pub mod input_types;
 pub mod math;
 pub mod memory;
+pub mod ppu;
 pub mod rom_identity;
 pub mod system;

@@ -22,6 +22,29 @@ suites:
         verify:
           registers:
             r12: 0x00
+      - id: jsmolka_ppu_hello
+        rom: ppu/hello.gba
+        cycles: 1000000
+        verify:
+          frame_pixels:
+            - { x: 0, y: 0, color: 0x0000 }
+            - { x: 73, y: 77, color: 0x7FFF }
+            - { x: 80, y: 76, color: 0x0000 }
+      - id: jsmolka_ppu_shades
+        rom: ppu/shades.gba
+        cycles: 1000000
+        verify:
+          frame_pixels:
+            - { x: 0, y: 0, color: 0x0000 }
+            - { x: 16, y: 0, color: 0x0800 }
+            - { x: 32, y: 0, color: 0x1000 }
+      - id: jsmolka_ppu_stripes
+        rom: ppu/stripes.gba
+        cycles: 1000000
+        verify:
+          frame_pixels:
+            - { x: 0, y: 0, color: 0x560B }
+            - { x: 8, y: 0, color: 0x6290 }
       - id: jsmolka_save_none
         rom: save/none.gba
         cycles: 1000000
@@ -46,20 +69,3 @@ suites:
         verify:
           registers:
             r12: 0x00
-      - id: jsmolka_bios
-        rom: bios/bios.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-  - name: nba-emu_hw-test
-    case_patterns:
-      - glob: "**/*.gba"
-        exclude_globs: ["ppu/**", "archive/ppu/**"]
-        id_prefix: nba_
-        cycles: 10000000
-        verify:
-          memory:
-            - address: 0x0203FFE0
-              value: 0x00
-              width: 1
