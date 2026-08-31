@@ -63,8 +63,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     regs.set_r(rd, result);
 
     if s {
-        regs.set_cpsr_n((result >> 31) & 1 != 0);
-        regs.set_cpsr_z(result == 0);
+        crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
     }
 
     let cycles = multiplier_cycles(rs_val);

@@ -19,8 +19,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u16) -> u
             let a = regs.r(rd);
             let b = regs.r(rs);
             let (r, _) = a.overflowing_sub(b);
-            regs.set_cpsr_n((r >> 31) & 1 != 0);
-            regs.set_cpsr_z(r == 0);
+            crate::cpu::arm_opcodes::helpers::update_nz(regs, r);
             regs.set_cpsr_c(a >= b);
             regs.set_cpsr_v(((a ^ b) & (a ^ r) & 0x80000000) != 0);
             1

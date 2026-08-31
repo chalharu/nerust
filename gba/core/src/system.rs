@@ -57,10 +57,10 @@ impl GbaSystem {
 
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
-        if self.cpu_cycles_remaining == 0 {
+        if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
             self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
         }
-        self.cpu_cycles_remaining -= 1;
+        self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
         self.bus.tick()
     }
@@ -83,5 +83,16 @@ mod tests {
         system.step_tcycle();
         assert_eq!(system.tick, 1);
         assert!(system.cpu_cycles_remaining > 0);
+    }
+
+    #[test]
+    fn halted_system_does_not_execute_cpu() {
+        let mut system = GbaSystem::new();
+        let pc = system.cpu.registers().pc();
+        system.bus.enter_halt(1);
+        for _ in 0..10 {
+            system.step_tcycle();
+        }
+        assert_eq!(system.cpu.registers().pc(), pc);
     }
 }

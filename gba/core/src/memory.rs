@@ -57,14 +57,19 @@ pub struct GbaMemoryBus {
     prev_addr: Option<u32>,
     prev_width: u8,
     access_wait_cycles: u32,
+    halted: bool,
+    halt_irq_mask: u16,
 
     tick: u64,
 }
 
 impl GbaMemoryBus {
     pub fn new() -> Self {
+        let mut bios = Box::new([0u8; BIOS_SIZE]);
+        // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
+        bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
         Self {
-            bios: Box::new([0u8; BIOS_SIZE]),
+            bios,
             ewram: Box::new([0u8; EWRAM_SIZE]),
             iwram: Box::new([0u8; IWRAM_SIZE]),
             palette_ram: Box::new([0u8; PALETTE_SIZE]),
@@ -98,6 +103,8 @@ impl GbaMemoryBus {
             prev_addr: None,
             prev_width: 0,
             access_wait_cycles: 0,
+            halted: false,
+            halt_irq_mask: 0,
             tick: 0,
         }
     }
@@ -193,6 +200,54 @@ impl GbaMemoryBus {
 
     pub fn set_current_pc(&mut self, pc: u32) {
         self.current_pc = pc;
+    }
+
+    pub fn is_bios_addr(&self, addr: u32) -> bool {
+        (0x00000000..=0x00003FFF).contains(&addr)
+    }
+
+    pub fn enter_halt(&mut self, irq_mask: u16) {
+        self.halted = true;
+        self.halt_irq_mask = irq_mask;
+    }
+
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
+    pub fn request_interrupt(&mut self, mask: u16) {
+        let mask = mask & 0x3FFF;
+        self.sif |= mask;
+        let flags = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) | mask;
+        self.iwram[0x7FF8..0x7FFA].copy_from_slice(&flags.to_le_bytes());
+        if self.ie & self.sif & self.halt_irq_mask != 0 {
+            self.halted = false;
+        }
+    }
+
+    pub fn reset_io_groups(&mut self, flags: u8) {
+        if flags & 0x20 != 0 {
+            self.siocnt = 0;
+            self.siodata8 = 0;
+            self.siodata32 = 0;
+            self.rcnt = 0;
+        }
+        // Sound registers are introduced in Phase 9; bit 0x40 has no state yet.
+        if flags & 0x80 != 0 {
+            self.disp_cnt = 0x0080;
+            self.disp_stat = 0;
+            self.ie = 0;
+            self.sif = 0;
+            self.ime = false;
+            self.wait_cnt = 0;
+            self.keycnt = 0;
+            self.postflg = 0;
+            self.haltcnt = 0;
+            self.prefetch_enabled = false;
+            self.prefetch_queue.clear();
+            self.halted = false;
+            self.halt_irq_mask = 0;
+        }
     }
 
     pub fn take_access_wait_cycles(&mut self) -> u32 {
@@ -411,6 +466,13 @@ impl GbaMemoryBus {
     }
 
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
+        if width == 1 {
+            match addr {
+                0x04000300 => return self.postflg as u32,
+                0x04000301 => return self.haltcnt as u32,
+                _ => {}
+            }
+        }
         let aligned = addr & !1;
         let val: u16 = match aligned {
             0x04000000 => self.disp_cnt,
@@ -498,6 +560,21 @@ impl GbaMemoryBus {
     }
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32) {
+        if width == 1 {
+            match addr {
+                0x04000300 => {
+                    self.postflg = value as u8;
+                    self.open_bus_value = value;
+                    return;
+                }
+                0x04000301 => {
+                    self.haltcnt = value as u8;
+                    self.open_bus_value = value;
+                    return;
+                }
+                _ => {}
+            }
+        }
         let aligned = addr & !1;
         let v16 = value as u16;
         match aligned {
@@ -744,5 +821,26 @@ mod tests {
         bus.write16(0x03000000, 0xABCD);
         // ARM7TDMIの奇数アドレスLDRHは、整列読出しを8bitローテートする。
         assert_eq!(bus.read16(0x03000001), 0xCDAB);
+    }
+
+    #[test]
+    fn haltcnt_byte_access_and_interrupt_wakeup() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write8(0x04000301, 0x80);
+        assert_eq!(bus.read8(0x04000301), 0x80);
+        assert_eq!(bus.read8(0x04000300), 0);
+
+        bus.write16(0x04000200, 1);
+        bus.enter_halt(1);
+        bus.request_interrupt(1);
+        assert!(!bus.is_halted());
+        assert_eq!(bus.read16(0x03007FF8) & 1, 1);
+    }
+
+    #[test]
+    fn svc_vector_contains_safe_loop() {
+        let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x08);
+        assert_eq!(bus.read32(0x08), 0xEAFF_FFFE);
     }
 }

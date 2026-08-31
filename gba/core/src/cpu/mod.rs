@@ -63,6 +63,7 @@ impl GbaCpu {
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
             self.pipeline = [0; 2];
+            bus.set_current_pc(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(4));
@@ -80,6 +81,7 @@ impl GbaCpu {
         let cycles = thumb::decode_thumb(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
             self.pipeline = [0; 2];
+            bus.set_current_pc(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(2));
