@@ -330,6 +330,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
+            setup: Vec::new(),
         };
         let selected = SelectedCase {
             suite: &suite,

@@ -30,7 +30,10 @@ struct DmaChannel {
     delay: u8,
     latch: u32,
     prev_src: u32,
+    prev_dst: u32,
     is_first: bool,
+    pending: u8,
+    stalled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -74,9 +77,12 @@ impl GbaDma {
 
     pub fn trigger(&mut self, trigger: DmaTrigger) {
         for dma in &mut self.channels {
-            if dma.control & 0x8000 != 0 && timing(dma.control) == trigger && !dma.active {
-                dma.active = true;
-                dma.delay = 3;
+            if dma.control & 0x8000 != 0
+                && timing(dma.control) == trigger
+                && !dma.active
+                && dma.pending == 0
+            {
+                dma.pending = 4;
                 dma.is_first = true;
             }
         }
@@ -85,16 +91,35 @@ impl GbaDma {
     pub fn trigger_channel(&mut self, channel: usize, trigger: DmaTrigger) {
         if channel < 4 {
             let dma = &mut self.channels[channel];
-            if dma.control & 0x8000 != 0 && timing(dma.control) == trigger && !dma.active {
-                dma.active = true;
-                dma.delay = 3;
+            if dma.control & 0x8000 != 0
+                && timing(dma.control) == trigger
+                && !dma.active
+                && dma.pending == 0
+            {
+                dma.pending = 4;
                 dma.is_first = true;
             }
         }
     }
 
+    pub fn tick_pending(&mut self) {
+        for dma in &mut self.channels {
+            if dma.pending > 0 {
+                dma.pending -= 1;
+                if dma.pending == 0 && dma.control & 0x8000 != 0 {
+                    dma.active = true;
+                    dma.is_first = true;
+                }
+            }
+        }
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.channels.iter().any(|dma| dma.pending > 0)
+    }
+
     /// Produce at most one bus transfer. Lower-numbered active channels have priority.
-    pub fn step(&mut self) -> Option<DmaTransfer> {
+    pub fn step(&mut self, waitcnt: u16) -> Option<DmaTransfer> {
         let channel = self.channels.iter().position(|dma| dma.active)?;
         let dma = &mut self.channels[channel];
         if dma.delay != 0 {
@@ -104,10 +129,8 @@ impl GbaDma {
         let width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
-        let is_seq = if dma.is_first && (0x08000000..=0x0DFFFFFF).contains(&source) && width == 4 {
+        let is_seq_src = if dma.is_first {
             false
-        } else if dma.is_first {
-            true
         } else {
             let prev = dma.prev_src;
             let cur = source;
@@ -124,18 +147,13 @@ impl GbaDma {
                 seq
             }
         };
-        let base_wait: u32 = match source {
-            0x04000000..=0x040003FE => if width == 4 { 4 } else { 2 },
-            0x02000000..=0x02FFFFFF => 1,
-            0x03000000..=0x03FFFFFF => 1,
-            _ => if width == 4 { 9 } else { 5 },
-        };
-        let extra = if !is_seq && (0x08000000..=0x0DFFFFFF).contains(&source) {
-            2
-        } else {
-            0
-        };
-        let total_wait = base_wait + extra;
+        let is_seq_dst = !dma.is_first;
+        let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt);
+        let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt);
+        let both_gamepak = (0x08000000..=0x0DFFFFFF).contains(&source)
+            && (0x08000000..=0x0DFFFFFF).contains(&destination);
+        let internal: u32 = if both_gamepak { 4 } else { 2 };
+        let _total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         dma.current_destination = advance(
             dma.current_destination,
@@ -144,14 +162,13 @@ impl GbaDma {
             true,
         );
         dma.prev_src = source;
+        dma.prev_dst = destination;
         dma.is_first = false;
         dma.remaining -= 1;
         let finished = dma.remaining == 0;
         let interrupt = finished && dma.control & (1 << 14) != 0;
         if finished {
             finish(dma, channel);
-        } else {
-            dma.delay = (total_wait - 1) as u8;
         }
         Some(DmaTransfer {
             channel,
@@ -196,21 +213,27 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.remaining = effective_count(channel, dma.count);
         dma.is_first = true;
         dma.prev_src = 0;
+        dma.prev_dst = 0;
+        dma.delay = 0;
+        dma.stalled = false;
         if timing(dma.control) == DmaTrigger::Immediate {
-            dma.active = true;
-            let width_is_16 = value & (1 << 10) == 0;
-            let is_single = dma.remaining == 1 && width_is_16;
-            let is_ewram_or_rom = matches!(dma.current_source & 0xFF000000, 0x02000000 | 0x08000000);
-            dma.delay = if is_single && is_ewram_or_rom { 34 } else { 3 };
+            dma.pending = 4;
+            dma.active = false;
         }
     } else if dma.control & 0x8000 == 0 {
         dma.active = false;
+        dma.pending = 4;
+        dma.delay = 0;
+        dma.stalled = false;
     }
 }
 
 fn finish(dma: &mut DmaChannel, channel: usize) {
     let repeat = dma.control & (1 << 9) != 0 && timing(dma.control) != DmaTrigger::Immediate;
     dma.active = false;
+    dma.pending = 4;
+    dma.delay = 0;
+    dma.stalled = false;
     if repeat {
         dma.remaining = effective_count(channel, dma.count);
         dma.is_first = true;
@@ -258,6 +281,47 @@ fn advance(address: u32, mode: u16, width: u8, destination: bool) -> u32 {
     }
 }
 
+fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16) -> u8 {
+    match address {
+        0x00000000..=0x00003FFF => 1,
+        0x02000000..=0x02FFFFFF => {
+            if width == 4 { 6 } else { 3 }
+        }
+        0x03000000..=0x03FFFFFF => 1,
+        0x04000000..=0x040003FE => 1,
+        0x05000000..=0x05FFFFFF => 1,
+        0x06000000..=0x06FFFFFF => 1,
+        0x07000000..=0x07FFFFFF => 1,
+        0x08000000..=0x0DFFFFFF => {
+            const FIRST: [u8; 4] = [4, 3, 2, 8];
+            let (first_shift, second_shift, second_slow) = match address {
+                0x08000000..=0x09FFFFFF => (2, 4, 2),
+                0x0A000000..=0x0BFFFFFF => (5, 7, 4),
+                _ => (8, 10, 8),
+            };
+            let first = FIRST[((waitcnt >> first_shift) & 0b11) as usize];
+            let second = if (waitcnt >> second_shift) & 1 == 0 {
+                second_slow
+            } else {
+                1
+            };
+            if width == 4 {
+                if is_seq { second * 2 } else { first + second }
+            } else if is_seq {
+                second
+            } else {
+                first
+            }
+        }
+        0x0E000000..=0x0FFFFFFF => {
+            const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
+            let base = SRAM_WAIT[(waitcnt & 0b11) as usize];
+            base.saturating_mul(width)
+        }
+        _ => 1,
+    }
+}
+
 fn decode(address: u32) -> Option<(usize, usize)> {
     if !(0x040000B0..=0x040000DE).contains(&address) || address & 1 != 0 {
         return None;
@@ -279,15 +343,27 @@ mod tests {
         dma.write(0x040000DA, 0x0300);
         dma.write(0x040000DC, 2);
         dma.write(0x040000DE, 0xC400);
-        assert!(dma.step().is_none());
-        assert!(dma.step().is_none());
-        assert!(dma.step().is_none());
-        let first = dma.step().unwrap();
+        let mut first = None;
+        for _ in 0..30 {
+            dma.tick_pending();
+            if let Some(t) = dma.step(0) {
+                first = Some(t);
+                break;
+            }
+        }
+        let first = first.expect("first transfer should complete");
         assert_eq!(
             (first.source, first.destination, first.width),
             (0x02001000, 0x03002000, 4)
         );
-        let second = dma.step().unwrap();
+        let mut second = None;
+        for _ in 0..30 {
+            if let Some(t) = dma.step(0) {
+                second = Some(t);
+                break;
+            }
+        }
+        let second = second.expect("second transfer should complete");
         assert!(second.interrupt);
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
     }
