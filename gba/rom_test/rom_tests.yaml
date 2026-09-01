@@ -184,94 +184,107 @@ suites:
     cycles: 3000000
 - name: armwrestler-gba-fixed
   cases:
-  - id: armwrestler_test0
+  - id: armwrestler_arm_alu
+    description: ARM ALU instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x00", width: 1}
+    cycles: 4000000
+    inputs:
+      - {cycle: 100000, buttons: [start]}
+      - {cycle: 480000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test1
+
+  - id: armwrestler_arm_ldr_str
+    description: ARM LDR/STR instruction tests via menu item 1
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x01", width: 1}
+    cycles: 5000000
+    inputs:
+      - {cycle: 100000, buttons: [down]}
+      - {cycle: 300000, buttons: []}
+      - {cycle: 480000, buttons: [start]}
+      - {cycle: 660000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test2
+
+  - id: armwrestler_arm_ldm_stm
+    description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x02", width: 1}
+    cycles: 6000000
+    inputs:
+      - {cycle: 100000, buttons: [down]}
+      - {cycle: 300000, buttons: []}
+      - {cycle: 480000, buttons: [down]}
+      - {cycle: 660000, buttons: []}
+      - {cycle: 760000, buttons: [start]}
+      - {cycle: 940000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test3
+
+  - id: armwrestler_thumb_alu
+    description: THUMB ALU instruction tests via menu item 3
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x03", width: 1}
+    cycles: 7000000
+    inputs:
+      - {cycle: 100000, buttons: [down]}
+      - {cycle: 300000, buttons: []}
+      - {cycle: 480000, buttons: [down]}
+      - {cycle: 660000, buttons: []}
+      - {cycle: 760000, buttons: [down]}
+      - {cycle: 940000, buttons: []}
+      - {cycle: 1040000, buttons: [start]}
+      - {cycle: 1220000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test4
+
+  - id: armwrestler_thumb_ldr_str
+    description: THUMB LDR/STR instruction tests via menu item 4
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x04", width: 1}
+    cycles: 8000000
+    inputs:
+      - {cycle: 100000, buttons: [down]}
+      - {cycle: 300000, buttons: []}
+      - {cycle: 480000, buttons: [down]}
+      - {cycle: 660000, buttons: []}
+      - {cycle: 760000, buttons: [down]}
+      - {cycle: 940000, buttons: []}
+      - {cycle: 1040000, buttons: [down]}
+      - {cycle: 1220000, buttons: []}
+      - {cycle: 1320000, buttons: [start]}
+      - {cycle: 1500000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test5
+
+  - id: armwrestler_thumb_ldm_stm
+    description: THUMB LDM/STM instruction tests via menu item 5
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x05", width: 1}
+    cycles: 9000000
+    inputs:
+      - {cycle: 100000, buttons: [down]}
+      - {cycle: 300000, buttons: []}
+      - {cycle: 480000, buttons: [down]}
+      - {cycle: 660000, buttons: []}
+      - {cycle: 760000, buttons: [down]}
+      - {cycle: 940000, buttons: []}
+      - {cycle: 1040000, buttons: [down]}
+      - {cycle: 1220000, buttons: []}
+      - {cycle: 1320000, buttons: [down]}
+      - {cycle: 1500000, buttons: []}
+      - {cycle: 1600000, buttons: [start]}
+      - {cycle: 1780000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
       - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test6
-    rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x06", width: 1}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test7
-    rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x07", width: 1}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_test8
-    rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
-    setup:
-      - {address: "0x03000008", value: "0x08", width: 1}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
-  - id: armwrestler_menu
-    rom: armwrestler-gba-fixed.gba
-    cycles: 2000000
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x0000}
 - name: PeterLemon-GBA
   cases:
   - id: PeterLemon_HelloWorld
