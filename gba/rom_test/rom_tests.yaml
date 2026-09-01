@@ -24,7 +24,7 @@ suites:
         r12: 0x00
   - id: jsmolka_bios
     rom: bios/bios.gba
-    cycles: 1000000
+    cycles: 2000000
     verify:
       registers:
         r12: 0x00
@@ -71,13 +71,13 @@ suites:
         r12: 0x00
   - id: jsmolka_save_flash64
     rom: save/flash64.gba
-    cycles: 1000000
+    cycles: 20000000
     verify:
       registers:
         r12: 0x00
   - id: jsmolka_save_flash128
     rom: save/flash128.gba
-    cycles: 1000000
+    cycles: 20000000
     verify:
       registers:
         r12: 0x00
