@@ -104,8 +104,10 @@ impl GbaDma {
         let width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
-        let is_seq = if dma.is_first {
+        let is_seq = if dma.is_first && (0x08000000..=0x0DFFFFFF).contains(&source) && width == 4 {
             false
+        } else if dma.is_first {
+            true
         } else {
             let prev = dma.prev_src;
             let cur = source;
@@ -116,10 +118,16 @@ impl GbaDma {
                 0 => cur == prev.wrapping_add(u32::from(width)),
                 _ => false,
             };
-            seq && same_block
+            if (0x08000000..=0x0DFFFFFF).contains(&source) {
+                seq && same_block
+            } else {
+                seq
+            }
         };
         let base_wait: u32 = match source {
             0x04000000..=0x040003FE => if width == 4 { 4 } else { 2 },
+            0x02000000..=0x02FFFFFF => 1,
+            0x03000000..=0x03FFFFFF => 1,
             _ => if width == 4 { 9 } else { 5 },
         };
         let extra = if !is_seq && (0x08000000..=0x0DFFFFFF).contains(&source) {
@@ -279,10 +287,6 @@ mod tests {
             (first.source, first.destination, first.width),
             (0x02001000, 0x03002000, 4)
         );
-        // Second transfer has wait due to is_first/128KB handling (EWRAM->IWRAM 32-bit base 9)
-        for _ in 0..8 {
-            assert!(dma.step().is_none());
-        }
         let second = dma.step().unwrap();
         assert!(second.interrupt);
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
