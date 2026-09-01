@@ -1,13 +1,4 @@
 rom_root: ../../roms/gba
-expected_failures:
-  - nba_archive_ppu_mode2
-  - nba_archive_ppu_mode3
-  - nba_archive_ppu_mode4
-  - nba_ppu_bgpd
-  - nba_ppu_bgx
-  - nba_ppu_dispcnt_latch
-  - nba_ppu_greenswap
-  - nba_ppu_sprite_hmosaic
 suites:
 - name: jsmolka_gba-tests
   cases:

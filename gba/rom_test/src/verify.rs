@@ -230,23 +230,14 @@ pub fn verify_reference(
     expected_label: &str,
     checks: &mut Vec<CheckResult>,
 ) -> Result<Option<Vec<u8>>, RomTestError> {
-    let (rw, rh, mut ref_rgb) = crate::media::decode_png_rgb(ref_png)?;
+    let (rw, rh, ref_rgb) = crate::media::decode_png_rgb(ref_png)?;
     let width = frame.width;
     let height = frame.height;
     let expected = expected_label.to_string();
 
-    // nba-emu expected images are often high-res (e.g. 4000x3000) while frame is 240x160.
-    // Downscale reference to frame size for comparison using nearest neighbour.
+    // 実機写真 (4000x3000等) は headlessの正解にしない。240x160以外はスキップ
     if rw != width || rh != height {
-        let ref_img = image::RgbImage::from_raw(rw, rh, ref_rgb)
-            .ok_or_else(|| RomTestError::InvalidManifest("invalid reference image data".to_string()))?;
-        let resized = image::imageops::resize(
-            &ref_img,
-            width,
-            height,
-            image::imageops::FilterType::Nearest,
-        );
-        ref_rgb = resized.into_raw();
+        return Ok(None);
     }
 
     let mut frame_rgb = Vec::with_capacity(width as usize * height as usize * 3);
