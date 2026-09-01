@@ -1,6 +1,9 @@
+mod affine;
 mod bg;
 mod color;
+mod mosaic;
 mod obj;
+mod window;
 
 pub const WIDTH: usize = 240;
 pub const HEIGHT: usize = 160;
@@ -144,12 +147,12 @@ impl GbaPpu {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
-        for affine in 0..2 {
-            self.internal_x[affine] =
-                self.internal_x[affine].wrapping_add(i32::from(self.registers.pb[affine]));
-            self.internal_y[affine] =
-                self.internal_y[affine].wrapping_add(i32::from(self.registers.pd[affine]));
-        }
+        crate::ppu::affine::advance_line(
+            &mut self.internal_x,
+            &mut self.internal_y,
+            self.registers.pb,
+            self.registers.pd,
+        );
     }
 
     fn advance_vcount(&mut self, event: &mut PpuEvent) {
@@ -351,21 +354,7 @@ impl GbaPpu {
     }
 
     fn window_mask(&self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) -> u8 {
-        let enabled = (self.registers.dispcnt >> 13) & 7;
-        if enabled == 0 {
-            return 0x3F;
-        }
-        if enabled & 1 != 0 && in_window(self.registers.winh[0], self.registers.winv[0], x, y) {
-            return self.registers.winin as u8 & 0x3F;
-        }
-        if enabled & 2 != 0 && in_window(self.registers.winh[1], self.registers.winv[1], x, y) {
-            return (self.registers.winin >> 8) as u8 & 0x3F;
-        }
-        if enabled & 4 != 0 && obj::pixel(&self.registers, vram, palette, oam, x, y, true).is_some()
-        {
-            return (self.registers.winout >> 8) as u8 & 0x3F;
-        }
-        self.registers.winout as u8 & 0x3F
+        window::window_mask(&self.registers, x, y, vram, palette, oam)
     }
 }
 
@@ -381,22 +370,6 @@ fn sign_extend_28(value: u32) -> i32 {
 
 fn layer_rank(layer: u8) -> u8 {
     if layer == 4 { 0 } else { layer + 1 }
-}
-
-fn in_window(horizontal: u16, vertical: u16, x: usize, y: usize) -> bool {
-    let x1 = usize::from(horizontal >> 8);
-    let x2 = usize::from(horizontal & 0xFF);
-    let y1 = usize::from(vertical >> 8);
-    let y2 = usize::from(vertical & 0xFF);
-    range_contains(x1, x2, x) && range_contains(y1, y2, y)
-}
-
-fn range_contains(start: usize, end: usize, value: usize) -> bool {
-    if start <= end {
-        (start..end).contains(&value)
-    } else {
-        value >= start || value < end
-    }
 }
 
 #[cfg(test)]

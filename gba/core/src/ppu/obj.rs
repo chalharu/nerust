@@ -100,7 +100,7 @@ impl Object {
             return None;
         }
         if self.attr0 & (1 << 12) != 0 {
-            apply_mosaic(registers.mosaic, &mut local_x, &mut local_y);
+            crate::ppu::mosaic::apply_obj_mosaic(registers.mosaic, &mut local_x, &mut local_y);
         }
         if self.affine {
             (local_x, local_y) = self.affine_coordinates(oam, local_x, local_y);
@@ -205,13 +205,6 @@ fn signed_origin(value: u16, threshold: i32, modulus: i32) -> i32 {
 
 fn in_bounds(x: i32, y: i32, width: usize, height: usize) -> bool {
     x >= 0 && y >= 0 && x < width as i32 && y < height as i32
-}
-
-fn apply_mosaic(mosaic: u16, x: &mut i32, y: &mut i32) {
-    let horizontal = i32::from((mosaic >> 8) & 0xF) + 1;
-    let vertical = i32::from((mosaic >> 12) & 0xF) + 1;
-    *x -= *x % horizontal;
-    *y -= *y % vertical;
 }
 
 fn read16(data: &[u8], offset: usize) -> u16 {

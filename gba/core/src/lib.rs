@@ -11,5 +11,6 @@ pub mod math;
 pub mod memory;
 pub mod ppu;
 pub mod rom_identity;
+pub mod scheduler;
 pub mod system;
 pub mod timer;

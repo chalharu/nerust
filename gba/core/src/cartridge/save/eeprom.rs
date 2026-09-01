@@ -22,16 +22,22 @@ impl Default for EepromSave {
     }
 }
 
+impl EepromSave {
+    pub fn dma_eeprom_write(&mut self, _src: &[u16], _is_8k: bool) {
+        // TODO: decode 11+14+64+1 bitstream for 8K (9 halfwords) / 11+6+64+1 for 512B
+    }
+
+    pub fn dma_eeprom_read(&self, _dst: &mut [u16], _addr: u16, _is_8k: bool) {
+        // TODO: encode 64-bit read response for DMA length 73/9
+    }
+}
+
 impl SaveBackend for EepromSave {
     fn save_type(&self) -> SaveType {
-        // 常時8KB確保のため Eeprom8k を返す
         SaveType::Eeprom8k
     }
 
     fn read(&self, addr: u32, width: u8) -> u32 {
-        // GBA EEPROMは 0x0D000000領域でDMA経由のシリアルアクセス。
-        // Phase 4では永続化層を検証するための線形ストレージモデルとする。
-        // TODO(gba-eeprom-phase8.5): DMA実装時にシリアルプロトコルへ置換する。
         let off = (addr & 0x1FFF) as usize;
         read_slice(&self.data, off, width)
     }
