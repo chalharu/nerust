@@ -262,3 +262,35 @@ suites:
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
+- name: PeterLemon-GBA
+  cases:
+  - id: PeterLemon_HelloWorld
+    rom: HelloWorld/HelloWorld.gba
+    cycles: 1000000
+  - id: PeterLemon_DCTBlockDecode
+    rom: Compress/DCT/DCTBlockDecode/DCTBlockDecode.gba
+    cycles: 1000000
+  - id: PeterLemon_FastDCTBlockDecode
+    rom: Compress/DCT/FastDCTBlockDecode/FastDCTBlockDecode.gba
+    cycles: 1000000
+  - id: PeterLemon_FastQuantizationBlockDecode
+    rom: Compress/DCT/FastQuantizationBlockDecode/FastQuantizationBlockDecode.gba
+    cycles: 1000000
+  - id: PeterLemon_HUFF8Decode
+    rom: Compress/HUFFMAN/HUFF8Decode/HUFF8Decode.gba
+    cycles: 1000000
+  - id: PeterLemon_LZ77Decode
+    rom: Compress/LZ77/LZ77Decode/LZ77Decode.gba
+    cycles: 1000000
+  - id: PeterLemon_QuantizationBlockDecode
+    rom: Compress/DCT/QuantizationBlockDecode/QuantizationBlockDecode.gba
+    cycles: 1000000
+  - id: PeterLemon_SoundBRRMonoSingleShot
+    rom: Sound/BRR/SingleShot/MONO/SoundBRRMonoSingleShot.gba
+    cycles: 1000000
+  - id: PeterLemon_SoundPCMMono
+    rom: Sound/PCM/Mono/SoundPCMMono.gba
+    cycles: 1000000
+  - id: PeterLemon_SoundPCMStereo
+    rom: Sound/PCM/Stereo/SoundPCMStereo.gba
+    cycles: 1000000
