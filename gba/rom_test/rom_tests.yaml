@@ -184,14 +184,80 @@ suites:
     cycles: 3000000
 - name: armwrestler-gba-fixed
   cases:
-  - id: armwrestler_menu
+  - id: armwrestler_test0
     rom: armwrestler-gba-fixed.gba
-    cycles: 2000000
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x00", width: 1}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
-  - id: armwrestler_gba
-    rom: armwrestler.gba
+  - id: armwrestler_test1
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x01", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test2
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x02", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test3
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x03", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test4
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x04", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test5
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x05", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test6
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x06", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test7
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x07", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_test8
+    rom: armwrestler-gba-fixed.gba
+    cycles: 3000000
+    setup:
+      - {address: "0x03000008", value: "0x08", width: 1}
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_menu
+    rom: armwrestler-gba-fixed.gba
     cycles: 2000000
     verify:
       frame_pixels:
