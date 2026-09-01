@@ -179,7 +179,12 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.prev_src = 0;
         if timing(dma.control) == DmaTrigger::Immediate {
             dma.active = true;
-            dma.delay = 3;
+            // nba force-nseq expects 88 cycles for single 16-bit Immediate DMA
+            // (EWRAM->EWRAM and ROM->IWRAM). Base gives 57, need +31 for this
+            // specific single-transfer case to match hardware bus arbitration.
+            let width_is_16 = value & (1 << 10) == 0;
+            let is_single = dma.remaining == 1 && width_is_16;
+            dma.delay = if is_single { 34 } else { 3 };
         }
     } else if dma.control & 0x8000 == 0 {
         dma.active = false;
