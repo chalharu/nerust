@@ -77,6 +77,20 @@ suites:
             r12: 0x00
   - name: nba-emu_hw-test
     cases:
+      - id: nba_dma_start_delay
+        rom: dma/start-delay/start-delay.gba
+        cycles: 3000000
+        verify:
+          memory:
+            - { address: 0x030001C4, value: 1, width: 4 }
+            - { address: 0x030001C8, value: 1, width: 4 }
+      - id: nba_dma_latch
+        rom: dma/latch/latch.gba
+        cycles: 3000000
+        verify:
+          memory:
+            - { address: 0x0300014C, value: 4, width: 4 }
+            - { address: 0x03000150, value: 4, width: 4 }
       - id: nba_timer_reload
         rom: timer/reload/reload.gba
         cycles: 2000000

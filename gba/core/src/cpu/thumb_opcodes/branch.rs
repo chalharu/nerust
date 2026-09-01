@@ -16,7 +16,7 @@ pub fn handle_cond(regs: &mut CpuRegisters, instr: u16) -> u32 {
 
 pub fn handle_uncond(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let offset = ((instr & 0x7FF) as i32) << 1;
-    let offset = (offset << 21) >> 21; // sign extend 11 bits
+    let offset = (offset << 20) >> 20; // sign extend the shifted 12-bit offset
     let pc = regs.pc();
     regs.set_pc(pc.wrapping_add(offset as u32));
     3
@@ -61,4 +61,22 @@ pub fn handle_undefined(regs: &mut CpuRegisters) -> u32 {
     let return_address = regs.pc().wrapping_sub(2);
     regs.enter_exception(0x1B, 0x04, return_address, false);
     3
+}
+
+#[cfg(test)]
+mod unconditional_tests {
+    use super::*;
+
+    #[test]
+    fn supports_full_positive_and_negative_range() {
+        let mut registers = CpuRegisters::post_bios();
+        registers.set_cpsr(registers.cpsr() | (1 << 5));
+        registers.set_pc(0x08003F08);
+        handle_uncond(&mut registers, 0xE317);
+        assert_eq!(registers.pc(), 0x08004536);
+
+        registers.set_pc(0x08001000);
+        handle_uncond(&mut registers, 0xE7FF);
+        assert_eq!(registers.pc(), 0x08000FFE);
+    }
 }
