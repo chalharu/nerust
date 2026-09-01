@@ -82,6 +82,17 @@ impl GbaDma {
         }
     }
 
+    pub fn trigger_channel(&mut self, channel: usize, trigger: DmaTrigger) {
+        if channel < 4 {
+            let dma = &mut self.channels[channel];
+            if dma.control & 0x8000 != 0 && timing(dma.control) == trigger && !dma.active {
+                dma.active = true;
+                dma.delay = 3;
+                dma.is_first = true;
+            }
+        }
+    }
+
     /// Produce at most one bus transfer. Lower-numbered active channels have priority.
     pub fn step(&mut self) -> Option<DmaTransfer> {
         let channel = self.channels.iter().position(|dma| dma.active)?;

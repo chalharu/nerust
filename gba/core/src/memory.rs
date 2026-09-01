@@ -231,6 +231,11 @@ impl GbaMemoryBus {
                 event_type: EventType::VBlank,
             });
         }
+        // Video Capture DMA3 Special: transfer one halfword per 2 cycles during HDraw
+        // (nba exact-timing expects DMA3 Special to sample DISPSTAT etc)
+        if self.ppu.vcount() < 160 && self.ppu.cycle() % 2 == 0 && self.ppu.cycle() < 960 {
+            self.dma.trigger_channel(3, DmaTrigger::Special);
+        }
         let timer_irq = self.timers.step();
         if timer_irq != 0 {
             for i in 0..4 {
@@ -267,8 +272,6 @@ impl GbaMemoryBus {
                 self.dma
                     .update_latch(transfer.channel, transfer.width, value);
                 value
-            } else if transfer.width == 2 && transfer.destination & 2 != 0 {
-                transfer.latched_value >> 16
             } else {
                 transfer.latched_value
             };
@@ -806,7 +809,7 @@ impl GbaMemoryBus {
             0x04000132 => self.keycnt = v16,
             0x04000134 => self.rcnt = v16,
             0x04000200 => self.ie = v16 & 0x3FFF,
-            0x04000202 => self.sif &= !v16, // 書き込みでクリア（1のbitがクリア）
+            0x04000202 => self.sif &= !v16,
             0x04000204 => {
                 self.wait_cnt = v16;
                 self.prefetch_enabled = (v16 & (1 << 14)) != 0;

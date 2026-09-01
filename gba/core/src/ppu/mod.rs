@@ -182,6 +182,10 @@ impl GbaPpu {
         self.vcount
     }
 
+    pub fn cycle(&self) -> u16 {
+        self.cycle
+    }
+
     pub fn dispcnt(&self) -> u16 {
         self.registers.dispcnt
     }
