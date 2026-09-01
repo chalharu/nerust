@@ -422,14 +422,9 @@ mod tests {
         let palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
         // Before HBLANK_FLAG_CYCLES, flag is 0
-        for _ in 0..HDRAW_CYCLES {
+        for _ in 0..HBLANK_FLAG_CYCLES - 1 {
             ppu.step(&vram, &palette, &oam);
             assert_eq!(ppu.dispstat() & 2, 0, "HBlank flag should be 0 during draw");
-        }
-        // Still 0 until HBLANK_FLAG_CYCLES
-        for _ in HDRAW_CYCLES..HBLANK_FLAG_CYCLES - 1 {
-            ppu.step(&vram, &palette, &oam);
-            assert_eq!(ppu.dispstat() & 2, 0);
         }
         // At HBLANK_FLAG_CYCLES, flag becomes 1
         ppu.step(&vram, &palette, &oam);

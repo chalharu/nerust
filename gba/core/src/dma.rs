@@ -281,6 +281,10 @@ mod tests {
             (first.source, first.destination, first.width),
             (0x02001000, 0x03002000, 4)
         );
+        // Second transfer has wait due to is_first/128KB handling (EWRAM->IWRAM 32-bit base 9)
+        for _ in 0..8 {
+            assert!(dma.step().is_none());
+        }
         let second = dma.step().unwrap();
         assert!(second.interrupt);
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
