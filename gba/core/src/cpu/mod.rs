@@ -42,6 +42,19 @@ impl GbaCpu {
         &mut self.regs
     }
 
+    pub fn service_irq(&mut self, bus: &mut GbaMemoryBus) -> bool {
+        if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
+            return false;
+        }
+        let return_address = self.regs.pc().wrapping_add(4);
+        self.regs
+            .enter_exception(0x12, 0x00000018, return_address, true);
+        self.pipeline = [0; 2];
+        bus.set_current_pc(0x00000018);
+        fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+        true
+    }
+
     /// 1命令実行し、消費T-cycleを返す。
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> u32 {
         bus.take_access_wait_cycles();
@@ -183,5 +196,20 @@ mod tests {
         cpu.step(&mut bus);
         cpu.step(&mut bus);
         assert_eq!(cpu.regs.r(0), 2);
+    }
+
+    #[test]
+    fn irq_enters_vector_with_banked_state() {
+        let mut cpu = GbaCpu::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, 1 << 3);
+        bus.write16(0x04000208, 1);
+        bus.request_interrupt(1 << 3);
+        assert!(cpu.service_irq(&mut bus));
+        assert_eq!(cpu.regs.cpsr_mode(), 0x12);
+        assert_ne!(cpu.regs.cpsr() & (1 << 7), 0);
+        assert_eq!(cpu.regs.spsr() & 0x1F, 0x1F);
+        assert_eq!(cpu.regs.pc(), 0x20);
+        assert_eq!(cpu.regs.lr(), 0x08000004);
     }
 }

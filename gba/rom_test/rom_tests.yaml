@@ -22,6 +22,12 @@ suites:
         verify:
           registers:
             r12: 0x00
+      - id: jsmolka_dma_nes
+        rom: nes/nes.gba
+        cycles: 2000000
+        verify:
+          registers:
+            r12: 0x00
       - id: jsmolka_ppu_hello
         rom: ppu/hello.gba
         cycles: 1000000
@@ -69,3 +75,26 @@ suites:
         verify:
           registers:
             r12: 0x00
+  - name: nba-emu_hw-test
+    cases:
+      - id: nba_timer_reload
+        rom: timer/reload/reload.gba
+        cycles: 2000000
+        verify:
+          memory:
+            - { address: 0x03000424, value: 7, width: 4 }
+            - { address: 0x03000428, value: 7, width: 4 }
+      - id: nba_timer_start_stop
+        rom: timer/start-stop/start-stop.gba
+        cycles: 2000000
+        verify:
+          memory:
+            - { address: 0x03000264, value: 2, width: 4 }
+            - { address: 0x03000268, value: 2, width: 4 }
+      - id: nba_timer_tick_before_reload
+        rom: timer/tick-before-reload/tick-before-reload.gba
+        cycles: 2000000
+        verify:
+          memory:
+            - { address: 0x03000284, value: 2, width: 4 }
+            - { address: 0x03000288, value: 2, width: 4 }

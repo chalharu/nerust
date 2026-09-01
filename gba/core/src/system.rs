@@ -80,8 +80,12 @@ impl GbaSystem {
 
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
-        if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
-            self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+        if !self.bus.is_halted() && !self.bus.dma_active() && self.cpu_cycles_remaining == 0 {
+            if self.cpu.service_irq(&mut self.bus) {
+                self.cpu_cycles_remaining = 3;
+            } else {
+                self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+            }
         }
         self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
