@@ -14,6 +14,7 @@ pub struct DmaTransfer {
     pub destination: u32,
     pub width: u8,
     pub interrupt: bool,
+    pub latched_value: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -27,6 +28,7 @@ struct DmaChannel {
     remaining: u32,
     active: bool,
     delay: u8,
+    latch: u32,
 }
 
 #[derive(Debug, Default)]
@@ -72,7 +74,7 @@ impl GbaDma {
         for dma in &mut self.channels {
             if dma.control & 0x8000 != 0 && timing(dma.control) == trigger && !dma.active {
                 dma.active = true;
-                dma.delay = 2;
+                dma.delay = 3;
             }
         }
     }
@@ -107,7 +109,17 @@ impl GbaDma {
             destination,
             width,
             interrupt,
+            latched_value: dma.latch,
         })
+    }
+
+    pub fn update_latch(&mut self, channel: usize, width: u8, value: u32) {
+        self.channels[channel].latch = if width == 2 {
+            let halfword = value & 0xFFFF;
+            halfword | (halfword << 16)
+        } else {
+            value
+        };
     }
 
     pub fn reset(&mut self) {
@@ -134,7 +146,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.remaining = effective_count(channel, dma.count);
         if timing(dma.control) == DmaTrigger::Immediate {
             dma.active = true;
-            dma.delay = 2;
+            dma.delay = 3;
         }
     } else if dma.control & 0x8000 == 0 {
         dma.active = false;
@@ -211,6 +223,7 @@ mod tests {
         dma.write(0x040000DA, 0x0300);
         dma.write(0x040000DC, 2);
         dma.write(0x040000DE, 0xC400);
+        assert!(dma.step().is_none());
         assert!(dma.step().is_none());
         assert!(dma.step().is_none());
         let first = dma.step().unwrap();

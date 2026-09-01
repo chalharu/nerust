@@ -20,7 +20,7 @@ Each upstream is imported as a squashed Git subtree.
 ## Pass criteria
 
 - `jsmolka_gba-tests` aggregate ROMs (`arm`, `thumb`, `memory`, `save/*`, `bios`) leave the first failed test number in `R12` (`thumb` uses `R7`). `0` means all embedded tests passed. The current matrix runs 8 cases (`jsmolka_arm`, `jsmolka_thumb`, `jsmolka_memory`, `jsmolka_bios`, `jsmolka_save_*`) all passing.
-- `nba-emu/hw-test` non-PPU suites are timing-sensitive (bus, DMA, timers, IRQ, haltcnt). Each ROM prints `PASS`/`FAIL` via `test_expect*` in `lib/source/test.c` and `congratulations!` when all sub-tests pass. The headless runner currently executes them for 10M T-cycles and checks a stable memory location (`0x0203FFE0 == 0x00`) as a smoke check; full timing verification will be tightened when Timer/DMA accuracy improves in Phase 8.5. The current matrix runs 13 cases (`nba_128kb-boundary`, `nba_burst-into-tears`, `nba_force-nseq-access`, `nba_latch`, `nba_start-delay`, `nba_haltcnt`, `nba_irq-delay`, `nba_reload`, `nba_start-stop`, `nba_tick-before-reload`, `nba_cancel-irq-*`) all passing. PPU tests (`ppu/**`, `archive/ppu/**`) are excluded from the headless matrix and require visual comparison against `expected.png`/`expected.jpg`.
+- `nba-emu/hw-test` suites print `PASS`/`FAIL` via `test_expect*` and store `test_count`/`test_pass_count` in IWRAM. The headless matrix verifies those counters for the three Timer ROMs plus `dma/start-delay` and `dma/latch`; all registered sub-tests must pass. `dma/force-nseq-access` and `dma/burst-into-tears` remain unregistered because Game Pak NSEQ restart timing and 128MB-boundary DMA sequencing are not yet accurate. PPU timing ROMs that require HBlank IRQ/DMA remain pending full-frame comparison.
 
 ## Usage
 

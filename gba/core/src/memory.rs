@@ -209,7 +209,17 @@ impl GbaMemoryBus {
         }
         let mut interrupt_mask = event.interrupt_mask | self.timers.step();
         if let Some(transfer) = self.dma.step() {
-            let value = self.read_mapped(transfer.source, transfer.width);
+            let readable_source = transfer.source >= 0x02000000;
+            let value = if readable_source {
+                let value = self.read_dma_source(transfer.source, transfer.width);
+                self.dma
+                    .update_latch(transfer.channel, transfer.width, value);
+                value
+            } else if transfer.width == 2 && transfer.destination & 2 != 0 {
+                transfer.latched_value >> 16
+            } else {
+                transfer.latched_value
+            };
             self.write_dma_value(transfer.destination, transfer.width, value);
             self.invalidate_prefetch_for_dma(transfer.source);
             if transfer.interrupt {
@@ -723,12 +733,34 @@ impl GbaMemoryBus {
             _ => self.open_bus_value = value,
         }
     }
+
+    fn read_dma_source(&mut self, address: u32, width: u8) -> u32 {
+        if is_unreadable_io(address) {
+            let halfword = self.last_prefetch & 0xFFFF;
+            return if width == 4 {
+                halfword | (halfword << 16)
+            } else {
+                halfword
+            };
+        }
+        self.read_mapped(address, width)
+    }
 }
 
 impl Default for GbaMemoryBus {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_unreadable_io(address: u32) -> bool {
+    matches!(
+        address & !1,
+        0x04000002
+            | 0x04000008..=0x04000054
+            | 0x04000060..=0x040000FE
+            | 0x04000110..=0x0400011E
+    )
 }
 
 #[cfg(test)]
@@ -956,7 +988,7 @@ mod tests {
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
         assert!(bus.dma_active());
-        for _ in 0..3 {
+        for _ in 0..4 {
             bus.tick();
         }
         assert_eq!(bus.read32(0x02000000), 0xDEADBEEF);
