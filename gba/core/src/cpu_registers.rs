@@ -32,8 +32,17 @@ impl CpuRegisters {
     pub fn post_bios() -> Self {
         let mut r = Self::default();
         r.r[15] = 0x08000000;
-        r.r[13] = 0x03007F00;
         r.cpsr = 0x0000001F; // SYS, T=0, I/F=0
+        // System/User SP
+        r.r[13] = 0x03007F00;
+        r.bank_r13[0] = 0x03007F00;
+        // Banked stacks as set by real BIOS (GBATEK)
+        r.bank_r13[2] = 0x03007FA0; // IRQ
+        r.bank_r13[3] = 0x03007FE0; // SVC
+        r.bank_r13[4] = 0x03007F00; // ABT
+        r.bank_r13[5] = 0x03007F00; // UND
+        r.bank_r14[2] = 0;
+        r.bank_r14[3] = 0;
         r
     }
 
