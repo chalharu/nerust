@@ -22,6 +22,12 @@ suites:
     verify:
       registers:
         r12: 0x00
+  - id: jsmolka_bios
+    rom: bios/bios.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
   - id: jsmolka_dma_nes
     rom: nes/nes.gba
     cycles: 2000000
