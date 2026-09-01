@@ -109,6 +109,7 @@ rust-version = "1.89"
 version = "0.1.0-dev"
 
 [workspace.dependencies]
+image = { version = "=0.25.6", default-features = false, features = ["png", "jpeg"] }
 android_logger = { version = "=0.15.1" }
 base64 = { version = "=0.22.1" }
 bitflags = { features = ["serde"], version = "=2.13.1" }

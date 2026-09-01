@@ -393,10 +393,11 @@ impl GbaMemoryBus {
 
     fn is_sequential(&self, addr: u32, _width: u8) -> bool {
         if let Some(prev) = self.prev_addr {
-            // 32bit ROM領域で連続アドレスか
+            // 32bit ROM領域で連続アドレスか、かつ128KB境界を跨がない
             (0x08000000..=0x0DFFFFFF).contains(&addr)
                 && (0x08000000..=0x0DFFFFFF).contains(&prev)
                 && addr == prev.wrapping_add(u32::from(self.prev_width))
+                && (addr & !0x1FFFF) == (prev & !0x1FFFF)
         } else {
             false
         }
@@ -648,7 +649,7 @@ impl GbaMemoryBus {
         }
         let aligned = addr & !1;
         let val: u16 = match aligned {
-            0x04000000 | 0x04000004 | 0x04000006 => self
+            0x04000000 | 0x04000002 | 0x04000004 | 0x04000006 => self
                 .ppu
                 .read_register(aligned)
                 .expect("readable PPU register"),
@@ -767,11 +768,14 @@ impl GbaMemoryBus {
         let aligned = addr & !1;
         let v16 = value as u16;
         match aligned {
-            0x04000000..=0x04000054 if aligned != 0x04000002 && aligned != 0x04000006 => {
+            0x04000000..=0x04000054 if aligned != 0x04000006 => {
                 self.ppu.write_register(aligned, v16);
             }
             0x040000B0..=0x040000DE => {
                 self.dma.write(aligned, v16);
+                // force next ROM fetch to NSEQ (GBATEK: STR to DMA CNT forces NSEQ)
+                self.prev_addr = None;
+                self.prev_width = 0;
             }
             0x04000100..=0x0400010E => {
                 self.timers.write(aligned, v16);
@@ -872,8 +876,7 @@ impl Default for GbaMemoryBus {
 fn is_unreadable_io(address: u32) -> bool {
     matches!(
         address & !1,
-        0x04000002
-            | 0x04000008..=0x04000054
+        0x04000008..=0x04000054
             | 0x04000060..=0x040000FE
             | 0x04000110..=0x0400011E
     )

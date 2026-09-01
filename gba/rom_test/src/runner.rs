@@ -208,14 +208,14 @@ fn verify_reference_if_present(
     let rom_path = rom_root.join(&selected.suite.name).join(&selected.case.rom);
     let ref_path = rom_path.with_extension("png");
     // Also try expected.png / expected.jpg in same dir as ROM (for nba-emu)
-    let alt_ref = rom_path
-        .parent()
-        .map(|d| d.join("expected.png"))
-        .unwrap_or_default();
+    let alt_png = rom_path.parent().map(|d| d.join("expected.png")).unwrap_or_default();
+    let alt_jpg = rom_path.parent().map(|d| d.join("expected.jpg")).unwrap_or_default();
     let ref_path = if ref_path.exists() {
         Some(ref_path)
-    } else if alt_ref.exists() {
-        Some(alt_ref)
+    } else if alt_png.exists() {
+        Some(alt_png)
+    } else if alt_jpg.exists() {
+        Some(alt_jpg)
     } else {
         None
     };
