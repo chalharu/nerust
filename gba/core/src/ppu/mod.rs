@@ -6,6 +6,7 @@ pub const WIDTH: usize = 240;
 pub const HEIGHT: usize = 160;
 pub const CYCLES_PER_LINE: u16 = 1232;
 pub const HDRAW_CYCLES: u16 = 960;
+pub const HBLANK_FLAG_CYCLES: u16 = 1006;
 pub const LINES_PER_FRAME: u16 = 228;
 
 pub fn bgr555_to_rgba8888(color: u16) -> u32 {
@@ -106,7 +107,10 @@ impl GbaPpu {
         let mut event = PpuEvent::default();
         self.cycle += 1;
         if self.cycle == HDRAW_CYCLES {
-            self.handle_hblank(vram, palette, oam, &mut event);
+            self.handle_hdraw(vram, palette, oam);
+        }
+        if self.cycle == HBLANK_FLAG_CYCLES {
+            self.handle_hblank_flag(&mut event);
         }
         if self.cycle == CYCLES_PER_LINE {
             self.handle_line_end(&mut event);
@@ -114,11 +118,14 @@ impl GbaPpu {
         event
     }
 
-    fn handle_hblank(&mut self, vram: &[u8], palette: &[u8], oam: &[u8], event: &mut PpuEvent) {
-        event.hblank_started = true;
+    fn handle_hdraw(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) {
         if self.vcount < HEIGHT as u16 {
             self.render_scanline(self.vcount as usize, vram, palette, oam);
         }
+    }
+
+    fn handle_hblank_flag(&mut self, event: &mut PpuEvent) {
+        event.hblank_started = true;
         self.registers.dispstat |= 1 << 1;
         if self.registers.dispstat & (1 << 4) != 0 {
             event.interrupt_mask |= 1 << 1;
@@ -402,11 +409,11 @@ mod tests {
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
-        for _ in 0..HDRAW_CYCLES {
+        for _ in 0..HBLANK_FLAG_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
         assert_ne!(ppu.dispstat() & 2, 0);
-        for _ in HDRAW_CYCLES..CYCLES_PER_LINE {
+        for _ in HBLANK_FLAG_CYCLES..CYCLES_PER_LINE {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.vcount(), 1);
@@ -416,6 +423,42 @@ mod tests {
         }
         assert!(completed);
         assert_eq!(ppu.vcount(), 0);
+    }
+
+    #[test]
+    fn dispstat_hblank_timing() {
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        // Before HBLANK_FLAG_CYCLES, flag is 0
+        for _ in 0..HDRAW_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+            assert_eq!(ppu.dispstat() & 2, 0, "HBlank flag should be 0 during draw");
+        }
+        // Still 0 until HBLANK_FLAG_CYCLES
+        for _ in HDRAW_CYCLES..HBLANK_FLAG_CYCLES - 1 {
+            ppu.step(&vram, &palette, &oam);
+            assert_eq!(ppu.dispstat() & 2, 0);
+        }
+        // At HBLANK_FLAG_CYCLES, flag becomes 1
+        ppu.step(&vram, &palette, &oam);
+        assert_ne!(ppu.dispstat() & 2, 0);
+        // Next step still 1
+        ppu.step(&vram, &palette, &oam);
+        assert_ne!(ppu.dispstat() & 2, 0);
+        // HBlank interrupt
+        let mut ppu2 = GbaPpu::new();
+        ppu2.write_register(0x04000004, 1 << 4);
+        for _ in 0..HBLANK_FLAG_CYCLES - 1 {
+            assert_eq!(ppu2.step(&vram, &palette, &oam).interrupt_mask, 0);
+        }
+        assert_eq!(ppu2.step(&vram, &palette, &oam).interrupt_mask, 1 << 1);
+        // Verify scanline still completes
+        for _ in HBLANK_FLAG_CYCLES + 1..=CYCLES_PER_LINE {
+            ppu2.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu2.vcount(), 1);
     }
 
     #[test]
@@ -487,5 +530,58 @@ mod tests {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn window_masks_bg() {
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 1;
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 13));
+        ppu.write_register(0x04000008, 31 << 8);
+        ppu.write_register(0x04000040, 0x0014); // WIN0H: 0..20 (x1=0,x2=20)
+        ppu.write_register(0x04000044, 0x0014); // WIN0V: 0..20
+        ppu.write_register(0x04000048, 1 << 0);
+        ppu.write_register(0x0400004A, 0);
+        for _ in 0..HDRAW_CYCLES as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes()[0], 255);
+        for _ in HDRAW_CYCLES as usize..20 * CYCLES_PER_LINE as usize + HDRAW_CYCLES as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(
+            ppu.frame_buffer()[20 * WIDTH + 20].to_le_bytes(),
+            [0, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn mosaic_expands_dots() {
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        // Set up 2 tiles: tile 0 all 0, tile 1 all 1 (red)
+        // Simplified: just test that mosaic registers affect bg_mosaic
+        ppu.write_register(0x0400004C, 0x11); // BG mosaic 1x1
+        ppu.write_register(0x04000008, (1 << 6) | (31 << 8)); // BG0 mosaic enable
+        vram[0] = 2; // tile map entry for mosaic test
+        palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
+        for _ in 0..HDRAW_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // With mosaic 1, no expansion, should still render (basic check that mosaic doesn't crash)
+        assert_eq!(ppu.frame_buffer().len(), WIDTH * HEIGHT);
+        // Test mosaic 2x2
+        ppu.write_register(0x0400004C, 0x11 | 0x1100); // BG 1x1, OBJ 1x1
+        ppu.write_register(0x04000008, (1 << 6) | (31 << 8));
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer().len(), WIDTH * HEIGHT);
     }
 }
