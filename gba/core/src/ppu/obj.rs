@@ -142,35 +142,55 @@ impl Object {
         x: usize,
         y: usize,
     ) -> Option<usize> {
-        let color256 = self.attr0 & (1 << 13) != 0;
-        let tile = usize::from(self.attr2 & 0x3FF) & if color256 { !1 } else { usize::MAX };
-        let tiles_per_row = if registers.dispcnt & (1 << 6) != 0 {
+        let color256 = self.is_color256();
+        let tile_number = self.tile_number(registers, x, y, color256);
+        let offset = Self::vram_offset(tile_number, x, y, color256);
+        let packed = *vram.get(offset)?;
+        let index = Self::decode_index(packed, x, color256);
+        if index == 0 {
+            return None;
+        }
+        Some(Self::palette_entry(index, color256, self.attr2))
+    }
+
+    fn is_color256(&self) -> bool {
+        self.attr0 & (1 << 13) != 0
+    }
+
+    fn tile_number(&self, registers: &PpuRegisters, x: usize, y: usize, color256: bool) -> usize {
+        let base = usize::from(self.attr2 & 0x3FF) & if color256 { !1 } else { usize::MAX };
+        let per_row = if registers.dispcnt & (1 << 6) != 0 {
             self.width / 8
         } else {
             32
         };
         let scale = if color256 { 2 } else { 1 };
-        let tile_number = tile + (y / 8 * tiles_per_row + x / 8) * scale;
-        let offset = 0x10000
+        base + (y / 8 * per_row + x / 8) * scale
+    }
+
+    fn vram_offset(tile_number: usize, x: usize, y: usize, color256: bool) -> usize {
+        0x10000
             + tile_number * 32
             + (y & 7) * if color256 { 8 } else { 4 }
-            + (x & 7) / if color256 { 1 } else { 2 };
-        let packed = *vram.get(offset)?;
-        let index = if color256 {
+            + (x & 7) / if color256 { 1 } else { 2 }
+    }
+
+    fn decode_index(packed: u8, x: usize, color256: bool) -> u8 {
+        if color256 {
             packed
         } else if x & 1 == 0 {
             packed & 0xF
         } else {
             packed >> 4
-        };
-        if index == 0 {
-            return None;
         }
-        Some(if color256 {
+    }
+
+    fn palette_entry(index: u8, color256: bool, attr2: u16) -> usize {
+        if color256 {
             256 + usize::from(index)
         } else {
-            256 + usize::from((self.attr2 >> 12) & 0xF) * 16 + usize::from(index)
-        })
+            256 + usize::from((attr2 >> 12) & 0xF) * 16 + usize::from(index)
+        }
     }
 }
 

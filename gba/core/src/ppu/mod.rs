@@ -106,43 +106,60 @@ impl GbaPpu {
         let mut event = PpuEvent::default();
         self.cycle += 1;
         if self.cycle == HDRAW_CYCLES {
-            event.hblank_started = true;
-            if self.vcount < HEIGHT as u16 {
-                self.render_scanline(self.vcount as usize, vram, palette, oam);
-            }
-            self.registers.dispstat |= 1 << 1;
-            if self.registers.dispstat & (1 << 4) != 0 {
-                event.interrupt_mask |= 1 << 1;
-            }
+            self.handle_hblank(vram, palette, oam, &mut event);
         }
         if self.cycle == CYCLES_PER_LINE {
-            self.cycle = 0;
-            self.registers.dispstat &= !(1 << 1);
-            if self.vcount < HEIGHT as u16 {
-                for affine in 0..2 {
-                    self.internal_x[affine] =
-                        self.internal_x[affine].wrapping_add(i32::from(self.registers.pb[affine]));
-                    self.internal_y[affine] =
-                        self.internal_y[affine].wrapping_add(i32::from(self.registers.pd[affine]));
-                }
-            }
-            self.vcount += 1;
-            if self.vcount == HEIGHT as u16 {
-                event.vblank_started = true;
-                self.registers.dispstat |= 1;
-                if self.registers.dispstat & (1 << 3) != 0 {
-                    event.interrupt_mask |= 1;
-                }
-            } else if self.vcount == LINES_PER_FRAME {
-                self.vcount = 0;
-                self.registers.dispstat &= !1;
-                self.internal_x = self.registers.ref_x;
-                self.internal_y = self.registers.ref_y;
-                event.frame_complete = true;
-            }
-            self.update_vcount_match(&mut event);
+            self.handle_line_end(&mut event);
         }
         event
+    }
+
+    fn handle_hblank(&mut self, vram: &[u8], palette: &[u8], oam: &[u8], event: &mut PpuEvent) {
+        event.hblank_started = true;
+        if self.vcount < HEIGHT as u16 {
+            self.render_scanline(self.vcount as usize, vram, palette, oam);
+        }
+        self.registers.dispstat |= 1 << 1;
+        if self.registers.dispstat & (1 << 4) != 0 {
+            event.interrupt_mask |= 1 << 1;
+        }
+    }
+
+    fn handle_line_end(&mut self, event: &mut PpuEvent) {
+        self.cycle = 0;
+        self.registers.dispstat &= !(1 << 1);
+        self.advance_affine();
+        self.advance_vcount(event);
+        self.update_vcount_match(event);
+    }
+
+    fn advance_affine(&mut self) {
+        if self.vcount >= HEIGHT as u16 {
+            return;
+        }
+        for affine in 0..2 {
+            self.internal_x[affine] =
+                self.internal_x[affine].wrapping_add(i32::from(self.registers.pb[affine]));
+            self.internal_y[affine] =
+                self.internal_y[affine].wrapping_add(i32::from(self.registers.pd[affine]));
+        }
+    }
+
+    fn advance_vcount(&mut self, event: &mut PpuEvent) {
+        self.vcount += 1;
+        if self.vcount == HEIGHT as u16 {
+            event.vblank_started = true;
+            self.registers.dispstat |= 1;
+            if self.registers.dispstat & (1 << 3) != 0 {
+                event.interrupt_mask |= 1;
+            }
+        } else if self.vcount == LINES_PER_FRAME {
+            self.vcount = 0;
+            self.registers.dispstat &= !1;
+            self.internal_x = self.registers.ref_x;
+            self.internal_y = self.registers.ref_y;
+            event.frame_complete = true;
+        }
     }
 
     pub fn frame_buffer(&self) -> &[u32] {

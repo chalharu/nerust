@@ -5,44 +5,72 @@ use nerust_gba_core::{memory::GbaMemoryBus, system::GbaSystem};
 use crate::{
     error::RomTestError,
     manifest::{CompletionStage, MemoryCompletion, SelectedCase},
+    media,
     report::CaseResult,
 };
 
-pub fn run_manifest(rom_root: &Path, cases: &[SelectedCase<'_>]) -> Vec<CaseResult> {
-    cases.iter().map(|case| run_case(case, rom_root)).collect()
+pub fn run_manifest(
+    rom_root: &Path,
+    cases: &[SelectedCase<'_>],
+    artifacts_dir: Option<&Path>,
+    expected_failures: &[String],
+) -> Vec<CaseResult> {
+    cases
+        .iter()
+        .map(|case| {
+            let expected = expected_failures.iter().any(|id| id == &case.case.id);
+            run_case(case, rom_root, artifacts_dir, expected)
+        })
+        .collect()
 }
 
-pub fn run_case(selected: &SelectedCase<'_>, rom_root: &Path) -> CaseResult {
+pub fn run_case(
+    selected: &SelectedCase<'_>,
+    rom_root: &Path,
+    artifacts_dir: Option<&Path>,
+    expected_failure: bool,
+) -> CaseResult {
     let started = Instant::now();
     let mut executed_tcycles = 0;
     let mut completed_early = false;
-    let result = run_case_inner(
+    let mut acc = CaseAccumulator::default();
+
+    let (error, error_kind) = match run_case_inner(
         selected,
         rom_root,
         &mut executed_tcycles,
         &mut completed_early,
-    );
-    let (checks, error, error_kind) = match result {
-        Ok(checks) => (checks, None, None),
-        Err(error) => (
-            Vec::new(),
-            Some(error.to_string()),
-            Some(error.category().to_string()),
-        ),
+        artifacts_dir,
+        &mut acc,
+    ) {
+        Ok(()) => (None, None),
+        Err(e) => (Some(e.to_string()), Some(e.category().to_string())),
     };
+
+    let checks = std::mem::take(&mut acc.checks);
     let passed = error.is_none() && checks.iter().all(|check| check.passed);
     CaseResult {
         id: selected.case.id.clone(),
         suite: selected.suite.name.clone(),
         description: selected.case.description.clone(),
         passed,
+        expected_failure,
         checks,
         error,
         error_kind,
+        screenshot: acc.screenshot,
+        diff_image: acc.diff_image,
         executed_tcycles,
         completed_early,
         duration_ms: started.elapsed().as_millis() as u64,
     }
+}
+
+#[derive(Default)]
+struct CaseAccumulator {
+    checks: Vec<crate::verify::CheckResult>,
+    screenshot: Option<String>,
+    diff_image: Option<String>,
 }
 
 fn run_case_inner(
@@ -50,7 +78,9 @@ fn run_case_inner(
     rom_root: &Path,
     executed_tcycles: &mut usize,
     completed_early: &mut bool,
-) -> Result<Vec<crate::verify::CheckResult>, RomTestError> {
+    artifacts_dir: Option<&Path>,
+    acc: &mut CaseAccumulator,
+) -> Result<(), RomTestError> {
     let rom_path = rom_root.join(&selected.suite.name).join(&selected.case.rom);
     if !rom_path.is_file() {
         return Err(RomTestError::InvalidManifest(format!(
@@ -78,10 +108,25 @@ fn run_case_inner(
         }
     }
 
-    selected
+    // Capture screenshot
+    let rendered = render_frame(&system)?;
+    if let Some(dir) = artifacts_dir {
+        let name = format!("{}.png", selected.case.id);
+        save_screenshot(&rendered.png, dir, "screenshots", &name)?;
+        acc.screenshot = Some(name);
+    }
+
+    // Verify reference if present (check for .png next to rom)
+    verify_reference_if_present(selected, rom_root, &rendered, artifacts_dir, acc)?;
+
+    // Verify memory/registers/frame_pixels
+    let mut checks = selected
         .case
         .verify
-        .verify(&mut system.bus, system.cpu.registers())
+        .verify(&mut system.bus, system.cpu.registers())?;
+    // Also verify frame_pixels already includes frame_buffer check, but we also want to verify full frame if needed
+    acc.checks.append(&mut checks);
+    Ok(())
 }
 
 fn stage_matches(stage: &CompletionStage, system: &mut GbaSystem) -> bool {
@@ -122,6 +167,97 @@ impl CompletionTracker {
         }
         self.stage == stage_count
     }
+}
+
+struct RenderedFrame {
+    png: Vec<u8>,
+    rgba: Vec<u8>,
+    width: usize,
+    height: usize,
+}
+
+fn render_frame(system: &GbaSystem) -> Result<RenderedFrame, RomTestError> {
+    use nerust_gba_core::ppu::{HEIGHT, WIDTH};
+
+    let fb = system.frame_buffer();
+    // fb is &[u32] where each u32 is 0xRRGGBBAA in little-endian (rgba8888)
+    // Convert to RGBA bytes
+    let mut rgba = Vec::with_capacity(WIDTH * HEIGHT * 4);
+    for &pixel in fb {
+        rgba.extend_from_slice(&pixel.to_le_bytes());
+    }
+
+    let png = media::encode_rgba_png(WIDTH as u32, HEIGHT as u32, &rgba)?;
+
+    Ok(RenderedFrame {
+        png,
+        rgba,
+        width: WIDTH,
+        height: HEIGHT,
+    })
+}
+
+fn verify_reference_if_present(
+    selected: &SelectedCase<'_>,
+    rom_root: &Path,
+    rendered: &RenderedFrame,
+    artifacts_dir: Option<&Path>,
+    acc: &mut CaseAccumulator,
+) -> Result<(), RomTestError> {
+    // Look for reference PNG next to ROM: same path but .png instead of .gba
+    let rom_path = rom_root.join(&selected.suite.name).join(&selected.case.rom);
+    let ref_path = rom_path.with_extension("png");
+    // Also try expected.png / expected.jpg in same dir as ROM (for nba-emu)
+    let alt_ref = rom_path
+        .parent()
+        .map(|d| d.join("expected.png"))
+        .unwrap_or_default();
+    let ref_path = if ref_path.exists() {
+        Some(ref_path)
+    } else if alt_ref.exists() {
+        Some(alt_ref)
+    } else {
+        None
+    };
+
+    let Some(ref_path) = ref_path else {
+        return Ok(());
+    };
+
+    let ref_png = std::fs::read(&ref_path)?;
+    let mut checks = Vec::new();
+    let diff_png = crate::verify::verify_reference(
+        &crate::verify::FramePixels {
+            rgba: &rendered.rgba,
+            width: rendered.width as u32,
+            height: rendered.height as u32,
+        },
+        &ref_png,
+        &ref_path.display().to_string(),
+        &mut checks,
+    )?;
+    acc.checks.extend(checks);
+    if let (Some(png), Some(dir)) = (diff_png, artifacts_dir) {
+        let name = format!("{}_diff.png", selected.case.id);
+        save_screenshot(&png, dir, "diffs", &name)?;
+        acc.diff_image = Some(name);
+    }
+    Ok(())
+}
+
+fn save_screenshot(
+    png_data: &[u8],
+    root: &Path,
+    subdir: &str,
+    name: &str,
+) -> Result<(), RomTestError> {
+    let dir = root.join(subdir);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        RomTestError::InvalidManifest(format!("failed to create {} dir: {e}", dir.display()))
+    })?;
+    std::fs::write(dir.join(name), png_data)
+        .map_err(|e| RomTestError::InvalidManifest(format!("failed to write screenshot: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -180,7 +316,7 @@ mod tests {
             case: &case,
             completion: None,
         };
-        let result = run_case(&selected, &root);
+        let result = run_case(&selected, &root, None, false);
         let _ = std::fs::remove_dir_all(&root);
         assert!(result.passed, "{:?}", result.error);
         assert_eq!(result.checks.len(), 1);

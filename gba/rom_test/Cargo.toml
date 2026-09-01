@@ -18,6 +18,9 @@ thiserror.workspace = true
 png.workspace = true
 clap.workspace = true
 glob.workspace = true
+open.workspace = true
+crc.workspace = true
+sha2.workspace = true
 
 [build-dependencies]
 glob.workspace = true

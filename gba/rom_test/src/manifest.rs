@@ -14,6 +14,8 @@ pub struct RomManifest {
     pub suites: Vec<RomSuite>,
     #[serde(default)]
     pub completion_profiles: BTreeMap<String, CompletionSpec>,
+    #[serde(default)]
+    pub expected_failures: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,7 +136,30 @@ impl RomManifest {
     pub fn validate(&self) -> Result<(), RomTestError> {
         self.validate_structure()?;
         self.validate_completion_profiles()?;
-        self.validate_suites()
+        self.validate_suites()?;
+        self.validate_expected_failures()
+    }
+
+    fn validate_expected_failures(&self) -> Result<(), RomTestError> {
+        let ids: BTreeSet<String> = self
+            .suites
+            .iter()
+            .flat_map(|suite| &suite.cases)
+            .map(|case| case.id.clone())
+            .collect();
+        for expected in &self.expected_failures {
+            if !ids.contains(expected) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "expected_failures entry `{}` does not match any case",
+                    expected
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_expected_failure(&self, id: &str) -> bool {
+        self.expected_failures.iter().any(|e| e == id)
     }
 
     fn validate_structure(&self) -> Result<(), RomTestError> {

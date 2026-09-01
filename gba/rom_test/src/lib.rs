@@ -14,7 +14,8 @@ fn run_generated_manifest_case(id: &str) {
     let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
     let selected = manifest.select(&[id.to_string()]);
     assert_eq!(selected.len(), 1, "generated case `{id}` must exist");
-    assert_case_passed(runner::run_case(&selected[0], &rom_root));
+    let expected = manifest.is_expected_failure(id);
+    assert_case_passed(runner::run_case(&selected[0], &rom_root, None, expected));
 }
 
 #[cfg(test)]
