@@ -16,6 +16,8 @@ pub fn bgr555_to_rgba8888(color: u16) -> u32 {
 pub struct PpuEvent {
     pub frame_complete: bool,
     pub interrupt_mask: u16,
+    pub hblank_started: bool,
+    pub vblank_started: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -104,6 +106,7 @@ impl GbaPpu {
         let mut event = PpuEvent::default();
         self.cycle += 1;
         if self.cycle == HDRAW_CYCLES {
+            event.hblank_started = true;
             if self.vcount < HEIGHT as u16 {
                 self.render_scanline(self.vcount as usize, vram, palette, oam);
             }
@@ -125,6 +128,7 @@ impl GbaPpu {
             }
             self.vcount += 1;
             if self.vcount == HEIGHT as u16 {
+                event.vblank_started = true;
                 self.registers.dispstat |= 1;
                 if self.registers.dispstat & (1 << 3) != 0 {
                     event.interrupt_mask |= 1;

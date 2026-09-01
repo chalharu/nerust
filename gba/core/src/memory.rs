@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
+use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
+use crate::timer::GbaTimers;
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -25,6 +27,8 @@ pub struct GbaMemoryBus {
     vram: Box<[u8; VRAM_SIZE]>,
     oam: Box<[u8; OAM_SIZE]>,
     ppu: GbaPpu,
+    dma: GbaDma,
+    timers: GbaTimers,
     cartridge: Option<Cartridge>,
     // Fallback SRAM for Phase 3 tests when no cartridge is loaded
     fallback_sram: Box<[u8; 0x10000]>,
@@ -73,6 +77,8 @@ impl GbaMemoryBus {
             vram: Box::new([0u8; VRAM_SIZE]),
             oam: Box::new([0u8; OAM_SIZE]),
             ppu: GbaPpu::new(),
+            dma: GbaDma::default(),
+            timers: GbaTimers::default(),
             cartridge: None,
             fallback_sram: Box::new([0u8; 0x10000]),
 
@@ -195,10 +201,33 @@ impl GbaMemoryBus {
         let event = self
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
-        if event.interrupt_mask != 0 {
-            self.request_interrupt(event.interrupt_mask);
+        if event.hblank_started {
+            self.dma.trigger(DmaTrigger::HBlank);
+        }
+        if event.vblank_started {
+            self.dma.trigger(DmaTrigger::VBlank);
+        }
+        let mut interrupt_mask = event.interrupt_mask | self.timers.step();
+        if let Some(transfer) = self.dma.step() {
+            let value = self.read_mapped(transfer.source, transfer.width);
+            self.write_dma_value(transfer.destination, transfer.width, value);
+            self.invalidate_prefetch_for_dma(transfer.source);
+            if transfer.interrupt {
+                interrupt_mask |= 1 << (8 + transfer.channel);
+            }
+        }
+        if interrupt_mask != 0 {
+            self.request_interrupt(interrupt_mask);
         }
         event.frame_complete
+    }
+
+    pub fn dma_active(&self) -> bool {
+        self.dma.is_active()
+    }
+
+    pub fn irq_pending(&self) -> bool {
+        self.ime && self.ie & self.sif != 0
     }
 
     pub fn frame_buffer(&self) -> &[u32] {
@@ -250,6 +279,8 @@ impl GbaMemoryBus {
         // Sound registers are introduced in Phase 9; bit 0x40 has no state yet.
         if flags & 0x80 != 0 {
             self.ppu.reset();
+            self.dma.reset();
+            self.timers.reset();
             self.ie = 0;
             self.sif = 0;
             self.ime = false;
@@ -479,6 +510,9 @@ impl GbaMemoryBus {
     }
 
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
+        if width == 4 {
+            return self.read_io(addr, 2) | (self.read_io(addr + 2, 2) << 16);
+        }
         if width == 1 {
             match addr {
                 0x04000300 => return self.postflg as u32,
@@ -492,6 +526,8 @@ impl GbaMemoryBus {
                 .ppu
                 .read_register(aligned)
                 .expect("readable PPU register"),
+            0x040000B0..=0x040000DE => self.dma.read(aligned).unwrap_or(0),
+            0x04000100..=0x0400010E => self.timers.read(aligned).unwrap_or(0),
             0x04000128 => self.siocnt,
             0x0400012A => self.siodata8 as u16,
             0x04000120 => (self.siodata32 & 0xFFFF) as u16,
@@ -510,19 +546,7 @@ impl GbaMemoryBus {
                 return self.open_bus_value;
             }
         };
-        if width == 4 {
-            // 32bit読みは隣接レジスタを結合（簡易）
-            let low = val as u32;
-            let high_addr = aligned + 2;
-            let high: u32 = match high_addr {
-                0x04000002 => 0,
-                0x04000006 => self.ppu.vcount() as u32,
-                0x04000122 => (self.siodata32 >> 16) & 0xFFFF,
-                0x04000202 => self.sif as u32,
-                _ => 0,
-            };
-            low | (high << 16)
-        } else if width == 1 && (addr & 1) == 1 {
+        if width == 1 && (addr & 1) == 1 {
             ((val >> 8) & 0xFF) as u32
         } else {
             val as u32
@@ -590,7 +614,11 @@ impl GbaMemoryBus {
     }
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32) {
-        if width == 4 && (0x04000000..=0x04000054).contains(&addr) {
+        if width == 4 && self.timers.write32(addr, value) {
+            self.open_bus_value = value;
+            return;
+        }
+        if width == 4 {
             self.write_io(addr, 2, value & 0xFFFF);
             self.write_io(addr + 2, 2, value >> 16);
             return;
@@ -615,6 +643,12 @@ impl GbaMemoryBus {
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000002 && aligned != 0x04000006 => {
                 self.ppu.write_register(aligned, v16);
+            }
+            0x040000B0..=0x040000DE => {
+                self.dma.write(aligned, v16);
+            }
+            0x04000100..=0x0400010E => {
+                self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
             0x04000128 => self.siocnt = v16,
@@ -674,6 +708,19 @@ impl GbaMemoryBus {
             None
         } else {
             Some(offset - 0x8000)
+        }
+    }
+
+    fn write_dma_value(&mut self, address: u32, width: u8, value: u32) {
+        match address {
+            0x02000000..=0x02FFFFFF => self.write_ewram(address, width, value),
+            0x03000000..=0x03FFFFFF => self.write_iwram(address, width, value),
+            0x04000000..=0x040003FE => self.write_io(address, width, value),
+            0x05000000..=0x05FFFFFF => self.write_palette(address, width, value),
+            0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
+            0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
+            0x0E000000..=0x0FFFFFFF => self.write_sram(address, width, value),
+            _ => self.open_bus_value = value,
         }
     }
 }
@@ -899,5 +946,32 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         bus.set_current_pc(0x08);
         assert_eq!(bus.read32(0x08), 0xEAFF_FFFE);
+    }
+
+    #[test]
+    fn immediate_dma_transfers_memory_and_clears_enable() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x03000000, 0xDEADBEEF);
+        bus.write32(0x040000D4, 0x03000000);
+        bus.write32(0x040000D8, 0x02000000);
+        bus.write32(0x040000DC, 0x84000001);
+        assert!(bus.dma_active());
+        for _ in 0..3 {
+            bus.tick();
+        }
+        assert_eq!(bus.read32(0x02000000), 0xDEADBEEF);
+        assert_eq!(bus.read16(0x040000DE) & 0x8000, 0);
+    }
+
+    #[test]
+    fn timer_overflow_sets_if_and_cascades() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x04000104, 0x00840000);
+        bus.write32(0x04000100, 0x00C0FFFE);
+        for _ in 0..4 {
+            bus.tick();
+        }
+        assert_ne!(bus.read16(0x04000202) & (1 << 3), 0);
+        assert_eq!(bus.read16(0x04000104), 1);
     }
 }
