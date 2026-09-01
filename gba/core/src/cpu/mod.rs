@@ -46,11 +46,20 @@ impl GbaCpu {
         if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
             return false;
         }
+        let vector = bus.read32(0x03007FFC);
+        let target = if vector != 0
+            && ((0x02000000..=0x03007FFF).contains(&vector)
+                || (0x08000000..=0x09FFFFFF).contains(&vector))
+        {
+            vector
+        } else {
+            0x00000018
+        };
         let return_address = self.regs.pc().wrapping_add(4);
         self.regs
-            .enter_exception(0x12, 0x00000018, return_address, true);
+            .enter_exception(0x12, target, return_address, true);
         self.pipeline = [0; 2];
-        bus.set_current_pc(0x00000018);
+        bus.set_current_pc(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         true
     }
