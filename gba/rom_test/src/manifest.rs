@@ -211,12 +211,13 @@ impl RomManifest {
                 case.id
             )));
         }
-        if case.rom.is_empty() || case.cycles == 0 || case.verify.is_empty() {
+        if case.rom.is_empty() || case.cycles == 0 {
             return Err(RomTestError::InvalidManifest(format!(
-                "case `{}` needs rom, positive cycles, and verification",
+                "case `{}` needs rom and positive cycles",
                 case.id
             )));
         }
+        // empty verify is allowed for reference-image tests (expected.png/jpg)
         case.verify.validate()?;
         if case
             .completion

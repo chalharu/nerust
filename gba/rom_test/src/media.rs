@@ -40,6 +40,14 @@ pub fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, 
 
 /// Decode a PNG into 8-bit RGB pixels, expanding palettes and grayscale.
 pub fn decode_png_rgb(data: &[u8]) -> Result<(u32, u32, Vec<u8>), RomTestError> {
+    // Try image crate which handles both PNG and JPEG
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        // JPEG
+        let img = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg)
+            .map_err(|e| RomTestError::InvalidManifest(format!("jpeg decode failed: {e}")))?;
+        let rgb = img.to_rgb8();
+        return Ok((rgb.width(), rgb.height(), rgb.into_raw()));
+    }
     let mut decoder = Decoder::new(Cursor::new(data));
     decoder.set_transformations(Transformations::normalize_to_color8());
     let mut reader = decoder.read_info()?;

@@ -1,4 +1,13 @@
 rom_root: ../../roms/gba
+expected_failures:
+  - nba_archive_ppu_mode2
+  - nba_archive_ppu_mode3
+  - nba_archive_ppu_mode4
+  - nba_ppu_bgpd
+  - nba_ppu_bgx
+  - nba_ppu_dispcnt_latch
+  - nba_ppu_greenswap
+  - nba_ppu_sprite_hmosaic
 suites:
 - name: jsmolka_gba-tests
   cases:
@@ -118,3 +127,67 @@ suites:
       memory:
       - {address: 0x03000284, value: 2, width: 4}
       - {address: 0x03000288, value: 2, width: 4}
+  # --- additional nba-emu tests (Phase 8/8.5 - PPU/DMA/Bus/IRQ) ---
+  - id: nba_irq_delay
+    rom: irq/irq-delay/irq-delay.gba
+    cycles: 3000000
+  - id: nba_haltcnt
+    rom: haltcnt/haltcnt.gba
+    cycles: 3000000
+  - id: nba_ppu_bgpd
+    rom: ppu/bgpd/bgpd.gba
+    cycles: 1000000
+  - id: nba_ppu_sprite_hmosaic
+    rom: ppu/sprite-hmosaic/sprite-hmosaic.gba
+    cycles: 1000000
+  - id: nba_ppu_status_irq_dma
+    rom: ppu/status-irq-dma/status-irq-dma.gba
+    cycles: 3000000
+  - id: nba_ppu_bgx
+    rom: ppu/bgx/bgx.gba
+    cycles: 1000000
+  - id: nba_ppu_dispcnt_latch
+    rom: ppu/dispcnt-latch/dispcnt-latch.gba
+    cycles: 1000000
+  - id: nba_ppu_greenswap
+    rom: ppu/greenswap/greenswap.gba
+    cycles: 1000000
+  - id: nba_ppu_vram_mirror
+    rom: ppu/vram-mirror/vram-mirror.gba
+    cycles: 3000000
+  - id: nba_ppu_ram_access_timing
+    rom: ppu/ram-access-timing/ram-access-timing.gba
+    cycles: 3000000
+  - id: nba_dma_burst_into_tears
+    rom: dma/burst-into-tears/burst-into-tears.gba
+    cycles: 3000000
+  - id: nba_dma_force_nseq
+    rom: dma/force-nseq-access/force-nseq-access.gba
+    cycles: 3000000
+  - id: nba_bus_128kb_boundary
+    rom: bus/128kb-boundary/128kb-boundary.gba
+    cycles: 3000000
+  - id: nba_archive_irq_cancel_ie
+    rom: archive/irq/cancel-irq-ie/cancel-irq-ie.gba
+    cycles: 3000000
+  - id: nba_archive_irq_cancel_if
+    rom: archive/irq/cancel-irq-if/cancel-irq-if.gba
+    cycles: 3000000
+  - id: nba_archive_irq_cancel_ime
+    rom: archive/irq/cancel-irq-ime/cancel-irq-ime.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_mode4
+    rom: archive/ppu/mode4/mode4.gba
+    cycles: 1000000
+  - id: nba_archive_ppu_exact_timing
+    rom: archive/ppu/exact-timing/exact-timing.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_mode3
+    rom: archive/ppu/mode3/mode3.gba
+    cycles: 1000000
+  - id: nba_archive_ppu_mode2
+    rom: archive/ppu/mode2/mode2.gba
+    cycles: 1000000
+  - id: nba_archive_ppu_basic_timing
+    rom: archive/ppu/basic-timing/basic-timing.gba
+    cycles: 3000000
