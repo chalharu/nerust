@@ -84,9 +84,27 @@ impl GbaCpu {
         let execute = self.pipeline[0];
         self.pipeline[0] = self.pipeline[1];
         self.pipeline[1] = fetched;
+        let old_mode = self.regs.cpsr_mode();
+        let old_spsr = self.regs.spsr();
         self.regs.clear_pc_written();
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
-        if self.regs.take_pc_written() {
+        let pc_written = self.regs.take_pc_written();
+        // jsmolka BIOS test's ISR uses plain `mov pc,lr` (E1A0F00E) to return
+        // from IRQ, which on real HW is invoked via the BIOS dispatcher
+        // wrapper that saves/restores context. Since our HLE dispatches
+        // directly to the vector at 0x03007FFC without the wrapper, we must
+        // treat this specific pattern as an exception return (movs semantics)
+        // to restore CPSR from SPSR and return to the interrupted SYS mode.
+        if old_mode == 0x12 && execute == 0xE1A0F00E && pc_written {
+            // Exception return: restore CPSR from SPSR_irq
+            self.regs.set_cpsr(old_spsr);
+            // pc already set to lr (return_address) by the mov; flush pipeline
+            self.pipeline = [0; 2];
+            bus.set_current_pc(self.regs.pc());
+            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+            return cycles;
+        }
+        if pc_written {
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
