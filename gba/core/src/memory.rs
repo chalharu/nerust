@@ -261,9 +261,10 @@ impl GbaMemoryBus {
                 transfer.source,
                 0x02000000..=0x02FFFFFF
                     | 0x03000000..=0x03FFFFFF
+                    | 0x04000000..=0x040003FE
                     | 0x05000000..=0x05FFFFFF
                     | 0x06000000..=0x06FFFFFF
-                    | 0x07000000..=0x070003FF
+                    | 0x07000000..=0x07FFFFFF
                     | 0x08000000..=0x0DFFFFFF
                     | 0x0E000000..=0x0FFFFFFF
             ) && !is_unreadable_io(transfer.source);
