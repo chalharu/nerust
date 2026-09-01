@@ -29,6 +29,8 @@ struct DmaChannel {
     active: bool,
     delay: u8,
     latch: u32,
+    prev_src: u32,
+    is_first: bool,
 }
 
 #[derive(Debug, Default)]
@@ -75,6 +77,7 @@ impl GbaDma {
             if dma.control & 0x8000 != 0 && timing(dma.control) == trigger && !dma.active {
                 dma.active = true;
                 dma.delay = 3;
+                dma.is_first = true;
             }
         }
     }
@@ -90,6 +93,30 @@ impl GbaDma {
         let width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
+        let is_seq = if dma.is_first {
+            false
+        } else {
+            let prev = dma.prev_src;
+            let cur = source;
+            let same_block = (cur & !0x1FFFF) == (prev & !0x1FFFF);
+            let src_mode = source_mode(dma.control);
+            let seq = match src_mode {
+                1 => cur == prev.wrapping_sub(u32::from(width)),
+                0 => cur == prev.wrapping_add(u32::from(width)),
+                _ => false,
+            };
+            seq && same_block
+        };
+        let base_wait: u32 = match source {
+            0x04000000..=0x040003FE => if width == 4 { 4 } else { 2 },
+            _ => if width == 4 { 9 } else { 5 },
+        };
+        let extra = if !is_seq && (0x08000000..=0x0DFFFFFF).contains(&source) {
+            2
+        } else {
+            0
+        };
+        let total_wait = base_wait + extra;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         dma.current_destination = advance(
             dma.current_destination,
@@ -97,11 +124,15 @@ impl GbaDma {
             width,
             true,
         );
+        dma.prev_src = source;
+        dma.is_first = false;
         dma.remaining -= 1;
         let finished = dma.remaining == 0;
         let interrupt = finished && dma.control & (1 << 14) != 0;
         if finished {
             finish(dma, channel);
+        } else {
+            dma.delay = (total_wait - 1) as u8;
         }
         Some(DmaTransfer {
             channel,
@@ -144,6 +175,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
                 0x07FF_FFFF
             };
         dma.remaining = effective_count(channel, dma.count);
+        dma.is_first = true;
+        dma.prev_src = 0;
         if timing(dma.control) == DmaTrigger::Immediate {
             dma.active = true;
             dma.delay = 3;
@@ -158,6 +191,7 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.active = false;
     if repeat {
         dma.remaining = effective_count(channel, dma.count);
+        dma.is_first = true;
         if destination_mode(dma.control) == 3 {
             dma.current_destination = dma.destination;
         }

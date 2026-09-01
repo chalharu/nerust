@@ -8,8 +8,8 @@ mod window;
 pub const WIDTH: usize = 240;
 pub const HEIGHT: usize = 160;
 pub const CYCLES_PER_LINE: u16 = 1232;
-pub const HDRAW_CYCLES: u16 = 960;
-pub const HBLANK_FLAG_CYCLES: u16 = 1006;
+pub const HDRAW_CYCLES: u16 = 1008;
+pub const HBLANK_FLAG_CYCLES: u16 = 1008;
 pub const LINES_PER_FRAME: u16 = 228;
 
 pub fn bgr555_to_rgba8888(color: u16) -> u32 {
