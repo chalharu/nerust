@@ -40,6 +40,8 @@ pub struct RomCase {
     pub description: String,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub setup: Vec<crate::verify::MemoryEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +128,7 @@ impl RomManifest {
                     completion: pattern.completion.clone(),
                     description: case.description,
                     verify: pattern.verify.clone(),
+                    setup: Vec::new(),
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
