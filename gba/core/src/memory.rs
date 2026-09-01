@@ -252,7 +252,16 @@ impl GbaMemoryBus {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
             });
-            let readable_source = transfer.source >= 0x02000000;
+            let readable_source = matches!(
+                transfer.source,
+                0x02000000..=0x02FFFFFF
+                    | 0x03000000..=0x03FFFFFF
+                    | 0x05000000..=0x05FFFFFF
+                    | 0x06000000..=0x06FFFFFF
+                    | 0x07000000..=0x070003FF
+                    | 0x08000000..=0x0DFFFFFF
+                    | 0x0E000000..=0x0FFFFFFF
+            ) && !is_unreadable_io(transfer.source);
             let value = if readable_source {
                 let value = self.read_dma_source(transfer.source, transfer.width);
                 self.dma
@@ -453,7 +462,7 @@ impl GbaMemoryBus {
             0x04000000..=0x040003FE => self.read_io(addr, width),
             0x05000000..=0x05FFFFFF => self.read_palette(addr, width),
             0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
-            0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
+            0x07000000..=0x070003FF => self.read_oam(addr, width),
             0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
             0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
@@ -553,7 +562,7 @@ impl GbaMemoryBus {
             0x04000000..=0x040003FE => self.write_io(addr, width, value),
             0x05000000..=0x05FFFFFF => self.write_palette(addr, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(addr, width, value),
-            0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
+            0x07000000..=0x070003FF => self.write_oam(addr, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
                 self.open_bus_value = value;
@@ -848,7 +857,7 @@ impl GbaMemoryBus {
             0x04000000..=0x040003FE => self.write_io(address, width, value),
             0x05000000..=0x05FFFFFF => self.write_palette(address, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
-            0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
+            0x07000000..=0x070003FF => self.write_oam(address, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(address, width, value),
             _ => self.open_bus_value = value,
         }
