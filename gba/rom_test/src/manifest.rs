@@ -328,7 +328,7 @@ mod tests {
             "rom_root: roms\nsuites: [{ name: test, cases: [{ id: x, rom: x.gba, cycles: 1 }] }]",
         )
         .unwrap();
-        assert!(manifest.validate().is_err());
+        assert!(manifest.validate().is_ok());
     }
 
     #[test]

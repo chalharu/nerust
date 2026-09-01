@@ -211,6 +211,7 @@ impl GbaMemoryBus {
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        self.dma.tick_pending();
         // Schedule next PPU events if needed (for bulk optimization, currently per-cycle)
         // The scheduler is used for Timer/DMA bulk stepping; PPU/HBlank/VBlank are still
         // handled directly via ppu.step for accuracy.
@@ -247,7 +248,7 @@ impl GbaMemoryBus {
             }
         }
         let mut interrupt_mask = event.interrupt_mask | timer_irq;
-        if let Some(transfer) = self.dma.step() {
+        if let Some(transfer) = self.dma.step(self.wait_cnt) {
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
@@ -1106,11 +1107,16 @@ mod tests {
         bus.write32(0x040000D4, 0x03000000);
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
-        assert!(bus.dma_active());
-        for _ in 0..4 {
+        // Immediate DMA has 3-cycle pending (CPU can run) plus transfer wait
+        let mut done = false;
+        for _ in 0..30 {
             bus.tick();
+            if bus.read32(0x02000000) == 0xDEADBEEF {
+                done = true;
+                break;
+            }
         }
-        assert_eq!(bus.read32(0x02000000), 0xDEADBEEF);
+        assert!(done);
         assert_eq!(bus.read16(0x040000DE) & 0x8000, 0);
     }
 
