@@ -222,7 +222,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         }
     } else if dma.control & 0x8000 == 0 {
         dma.active = false;
-        dma.pending = 4;
+        dma.pending = 0;
         dma.delay = 0;
         dma.stalled = false;
     }
@@ -231,7 +231,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
 fn finish(dma: &mut DmaChannel, channel: usize) {
     let repeat = dma.control & (1 << 9) != 0 && timing(dma.control) != DmaTrigger::Immediate;
     dma.active = false;
-    dma.pending = 4;
+    dma.pending = 0;
     dma.delay = 0;
     dma.stalled = false;
     if repeat {
