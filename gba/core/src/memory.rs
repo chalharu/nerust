@@ -465,8 +465,8 @@ impl GbaMemoryBus {
             let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
             let aligned = match width {
                 4 => raw,
-                2 => (raw & 0xFFFF) as u32,
-                _ => (raw & 0xFF) as u32,
+                2 => raw & 0xFFFF,
+                _ => raw & 0xFF,
             };
             if self.bios_read_seq + 1 < SEQ.len() {
                 self.bios_read_seq += 1;

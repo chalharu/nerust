@@ -28,12 +28,17 @@ mod tests {
 
     #[test]
     fn mosaic_expands() {
-        let mut regs = PpuRegisters::default();
-        regs.mosaic = 0x11; // BG 1+1
+        let regs = PpuRegisters {
+            mosaic: 0x11,
+            ..Default::default()
+        };
         assert_eq!(bg_mosaic(&regs, 1 << 6, 5, 7), (4, 6));
         let mut x = 5;
         let mut y = 7;
-        regs.mosaic = 0x1100;
+        let regs = PpuRegisters {
+            mosaic: 0x1100,
+            ..Default::default()
+        };
         apply_obj_mosaic(regs.mosaic, &mut x, &mut y);
         assert_eq!((x, y), (4, 6));
     }
