@@ -92,28 +92,21 @@ fn run_case_inner(
     let mut system = GbaSystem::from_test_rom(rom)
         .ok_or_else(|| RomTestError::InvalidRom(rom_path.display().to_string()))?;
 
-    // For interactive ROMs like armwrestler the initial TESTNUM is written by
-    // the boot code (mov r0,#10 @ MENU). Apply setup after that store has
-    // executed so it is not overwritten. 1000 T-cycles is enough for the
-    // 0x080000C0 init sequence to complete.
-    if !selected.case.setup.is_empty() {
-        for _ in 0..1000 {
-            system.step_tcycle();
-        }
-        for entry in &selected.case.setup {
-            let addr = crate::verify::parse_hex(&entry.address)? as u32;
-            let val = crate::verify::parse_hex(&entry.value)? as u32;
-            match entry.width {
-                1 => system.bus.write8(addr, val as u8),
-                2 => system.bus.write16(addr, val as u16),
-                4 => system.bus.write32(addr, val),
-                _ => {}
-            }
-        }
-    }
-
+    let mut next_input = 0;
     let mut completion_tracker = CompletionTracker::default();
     for cycle in 0..selected.case.cycles {
+        // Apply input at this cycle
+        if next_input < selected.case.inputs.len()
+            && selected.case.inputs[next_input].cycle == cycle
+        {
+            let keyinput = selected.case.inputs[next_input]
+                .buttons
+                .iter()
+                .fold(0x03FFu16, |state, btn| state & !btn.mask());
+            system.bus.set_keyinput(keyinput);
+            next_input += 1;
+        }
+
         system.step_tcycle();
         *executed_tcycles = cycle + 1;
         if let Some(completion) = selected.completion
@@ -330,7 +323,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            setup: Vec::new(),
+            inputs: Vec::new(),
         };
         let selected = SelectedCase {
             suite: &suite,
