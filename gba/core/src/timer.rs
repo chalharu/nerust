@@ -67,51 +67,71 @@ impl GbaTimers {
         let mut irq = 0;
         let mut cascade = false;
         for index in 0..4 {
-            let timer = &mut self.channels[index];
-            if timer.control & 0x80 == 0 {
-                cascade = false;
-                continue;
-            }
-            if timer.start_delay == 1 {
-                timer.counter = timer.reload;
-                timer.start_delay = 0;
-                cascade = false;
-                timer.reload_written = false;
-                continue;
-            }
-            if timer.start_delay == 2 {
-                timer.start_delay = 1;
-                cascade = increment(timer);
-                if cascade && timer.control & (1 << 6) != 0 {
-                    irq |= 1 << (3 + index);
-                }
-                timer.reload_written = false;
-                continue;
-            }
-            let count_up = index != 0 && timer.control & 4 != 0;
-            let tick = if count_up {
-                cascade
-            } else {
-                timer.divider = timer.divider.wrapping_add(1);
-                let period = [1, 64, 256, 1024][usize::from(timer.control & 3)];
-                if timer.divider == period {
-                    timer.divider = 0;
-                    true
-                } else {
-                    false
-                }
-            };
-            cascade = tick && increment(timer);
-            if cascade && timer.control & (1 << 6) != 0 {
-                irq |= 1 << (3 + index);
-            }
-            if let Some(control) = timer.pending_control.take() {
-                timer.control = control;
-                timer.start_delay = 0;
-            }
-            timer.reload_written = false;
+            let (next_cascade, channel_irq) = self.step_channel(index, cascade);
+            cascade = next_cascade;
+            irq |= channel_irq;
         }
         irq
+    }
+
+    fn step_channel(&mut self, index: usize, incoming_cascade: bool) -> (bool, u16) {
+        let timer = &mut self.channels[index];
+        if timer.control & 0x80 == 0 {
+            return (false, 0);
+        }
+        if let Some((c, irq)) = Self::handle_start_delay(timer, index) {
+            return (c, irq);
+        }
+        let tick = Self::should_tick(timer, index, incoming_cascade);
+        let cascade = tick && increment(timer);
+        let irq = if cascade && timer.control & (1 << 6) != 0 {
+            1 << (3 + index)
+        } else {
+            0
+        };
+        if let Some(control) = timer.pending_control.take() {
+            timer.control = control;
+            timer.start_delay = 0;
+        }
+        timer.reload_written = false;
+        (cascade, irq)
+    }
+
+    fn handle_start_delay(timer: &mut TimerChannel, index: usize) -> Option<(bool, u16)> {
+        match timer.start_delay {
+            1 => {
+                timer.counter = timer.reload;
+                timer.start_delay = 0;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
+            2 => {
+                timer.start_delay = 1;
+                let cascade = increment(timer);
+                let irq = if cascade && timer.control & (1 << 6) != 0 {
+                    1 << (3 + index)
+                } else {
+                    0
+                };
+                timer.reload_written = false;
+                Some((cascade, irq))
+            }
+            _ => None,
+        }
+    }
+
+    fn should_tick(timer: &mut TimerChannel, index: usize, cascade: bool) -> bool {
+        if index != 0 && timer.control & 4 != 0 {
+            return cascade;
+        }
+        timer.divider = timer.divider.wrapping_add(1);
+        let period = [1, 64, 256, 1024][usize::from(timer.control & 3)];
+        if timer.divider == period {
+            timer.divider = 0;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn reset(&mut self) {

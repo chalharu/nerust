@@ -218,6 +218,84 @@ impl RegisterVerify {
     }
 }
 
+pub struct FramePixels<'a> {
+    pub rgba: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn verify_reference(
+    frame: &FramePixels<'_>,
+    ref_png: &[u8],
+    expected_label: &str,
+    checks: &mut Vec<CheckResult>,
+) -> Result<Option<Vec<u8>>, RomTestError> {
+    let (rw, rh, ref_rgb) = crate::media::decode_png_rgb(ref_png)?;
+    let width = frame.width;
+    let height = frame.height;
+    let expected = expected_label.to_string();
+
+    if rw != width || rh != height {
+        checks.push(CheckResult {
+            name: "reference".to_string(),
+            expected: format!("{expected} ({}x{})", width, height),
+            actual: format!("reference is {}x{}", rw, rh),
+            passed: false,
+        });
+        return Ok(None);
+    }
+
+    let mut frame_rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for px in frame.rgba.as_chunks::<4>().0 {
+        frame_rgb.extend_from_slice(&px[..3]);
+    }
+    if crc32(&frame_rgb) == crc32(&ref_rgb) {
+        checks.push(CheckResult {
+            name: "reference".to_string(),
+            expected,
+            actual: "exact match".to_string(),
+            passed: true,
+        });
+        return Ok(None);
+    }
+
+    let mut diff_count = 0usize;
+    let mut first = None;
+    for (i, (a, b)) in frame_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(ref_rgb.as_chunks::<3>().0.iter())
+        .enumerate()
+    {
+        if a != b {
+            if first.is_none() {
+                first = Some((i % width as usize, i / width as usize));
+            }
+            diff_count += 1;
+        }
+    }
+    let (fx, fy) = first.unwrap_or((0, 0));
+    let actual = format!("{} differing pixels, first at ({},{})", diff_count, fx, fy);
+    checks.push(CheckResult {
+        name: "reference".to_string(),
+        expected,
+        actual,
+        passed: false,
+    });
+
+    let diff = crate::media::compose_diff_image(&frame_rgb, &ref_rgb, width, height);
+    let png = crate::media::encode_rgba_png(width * 3, height, &diff)?;
+    Ok(Some(png))
+}
+
+pub(crate) fn crc32(data: &[u8]) -> u32 {
+    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+    let mut digest = crc.digest();
+    digest.update(data);
+    digest.finalize()
+}
+
 pub fn parse_hex(value: &str) -> Result<u64, RomTestError> {
     let value = value.trim();
     let digits = value

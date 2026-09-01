@@ -1,114 +1,114 @@
 rom_root: ../../roms/gba
 suites:
-  - name: jsmolka_gba-tests
-    cases:
+- name: jsmolka_gba-tests
+  cases:
       # These aggregate ROMs leave the first failed test number in R12/R7.
       # Zero therefore means that every embedded instruction test completed.
-      - id: jsmolka_arm
-        rom: arm/arm.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_thumb
-        rom: thumb/thumb.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r7: 0x00
-      - id: jsmolka_memory
-        rom: memory/memory.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_dma_nes
-        rom: nes/nes.gba
-        cycles: 2000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_ppu_hello
-        rom: ppu/hello.gba
-        cycles: 1000000
-        verify:
-          frame_pixels:
-            - { x: 0, y: 0, color: 0x0000 }
-            - { x: 73, y: 77, color: 0x7FFF }
-            - { x: 80, y: 76, color: 0x0000 }
-      - id: jsmolka_ppu_shades
-        rom: ppu/shades.gba
-        cycles: 1000000
-        verify:
-          frame_pixels:
-            - { x: 0, y: 0, color: 0x0000 }
-            - { x: 16, y: 0, color: 0x0800 }
-            - { x: 32, y: 0, color: 0x1000 }
-      - id: jsmolka_ppu_stripes
-        rom: ppu/stripes.gba
-        cycles: 1000000
-        verify:
-          frame_pixels:
-            - { x: 0, y: 0, color: 0x560B }
-            - { x: 8, y: 0, color: 0x6290 }
-      - id: jsmolka_save_none
-        rom: save/none.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_sram
-        rom: save/sram.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_flash64
-        rom: save/flash64.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_flash128
-        rom: save/flash128.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-  - name: nba-emu_hw-test
-    cases:
-      - id: nba_dma_start_delay
-        rom: dma/start-delay/start-delay.gba
-        cycles: 3000000
-        verify:
-          memory:
-            - { address: 0x030001C4, value: 1, width: 4 }
-            - { address: 0x030001C8, value: 1, width: 4 }
-      - id: nba_dma_latch
-        rom: dma/latch/latch.gba
-        cycles: 3000000
-        verify:
-          memory:
-            - { address: 0x0300014C, value: 4, width: 4 }
-            - { address: 0x03000150, value: 4, width: 4 }
-      - id: nba_timer_reload
-        rom: timer/reload/reload.gba
-        cycles: 2000000
-        verify:
-          memory:
-            - { address: 0x03000424, value: 7, width: 4 }
-            - { address: 0x03000428, value: 7, width: 4 }
-      - id: nba_timer_start_stop
-        rom: timer/start-stop/start-stop.gba
-        cycles: 2000000
-        verify:
-          memory:
-            - { address: 0x03000264, value: 2, width: 4 }
-            - { address: 0x03000268, value: 2, width: 4 }
-      - id: nba_timer_tick_before_reload
-        rom: timer/tick-before-reload/tick-before-reload.gba
-        cycles: 2000000
-        verify:
-          memory:
-            - { address: 0x03000284, value: 2, width: 4 }
-            - { address: 0x03000288, value: 2, width: 4 }
+  - id: jsmolka_arm
+    rom: arm/arm.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_thumb
+    rom: thumb/thumb.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r7: 0x00
+  - id: jsmolka_memory
+    rom: memory/memory.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_dma_nes
+    rom: nes/nes.gba
+    cycles: 2000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_ppu_hello
+    rom: ppu/hello.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+      - {x: 73, y: 77, color: 0x7FFF}
+      - {x: 80, y: 76, color: 0x0000}
+  - id: jsmolka_ppu_shades
+    rom: ppu/shades.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+      - {x: 16, y: 0, color: 0x0800}
+      - {x: 32, y: 0, color: 0x1000}
+  - id: jsmolka_ppu_stripes
+    rom: ppu/stripes.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x560B}
+      - {x: 8, y: 0, color: 0x6290}
+  - id: jsmolka_save_none
+    rom: save/none.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_sram
+    rom: save/sram.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_flash64
+    rom: save/flash64.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_flash128
+    rom: save/flash128.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+- name: nba-emu_hw-test
+  cases:
+  - id: nba_dma_start_delay
+    rom: dma/start-delay/start-delay.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030001C4, value: 1, width: 4}
+      - {address: 0x030001C8, value: 1, width: 4}
+  - id: nba_dma_latch
+    rom: dma/latch/latch.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x0300014C, value: 4, width: 4}
+      - {address: 0x03000150, value: 4, width: 4}
+  - id: nba_timer_reload
+    rom: timer/reload/reload.gba
+    cycles: 2000000
+    verify:
+      memory:
+      - {address: 0x03000424, value: 7, width: 4}
+      - {address: 0x03000428, value: 7, width: 4}
+  - id: nba_timer_start_stop
+    rom: timer/start-stop/start-stop.gba
+    cycles: 2000000
+    verify:
+      memory:
+      - {address: 0x03000264, value: 2, width: 4}
+      - {address: 0x03000268, value: 2, width: 4}
+  - id: nba_timer_tick_before_reload
+    rom: timer/tick-before-reload/tick-before-reload.gba
+    cycles: 2000000
+    verify:
+      memory:
+      - {address: 0x03000284, value: 2, width: 4}
+      - {address: 0x03000288, value: 2, width: 4}
