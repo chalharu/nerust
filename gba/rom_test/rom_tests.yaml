@@ -182,3 +182,17 @@ suites:
   - id: nba_archive_ppu_basic_timing
     rom: archive/ppu/basic-timing/basic-timing.gba
     cycles: 3000000
+- name: armwrestler-gba-fixed
+  cases:
+  - id: armwrestler_menu
+    rom: armwrestler-gba-fixed.gba
+    cycles: 2000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+  - id: armwrestler_gba
+    rom: armwrestler.gba
+    cycles: 2000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
