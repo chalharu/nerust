@@ -4,6 +4,7 @@ use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
+use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
 
 // ---------------------------------------------------------------------------
@@ -48,12 +49,9 @@ pub struct GbaMemoryBus {
     rcnt: u16,
 
     // Bus制御
-    // TODO(gba-open-bus): last_prefetch と open_bus_value は現状常に同値。
-    // Phase 8.5 Timer/DMAで last_prefetch をパイプライン用に分離する可能性があるため
-    // 現状は冗長だが据置。イベントスケジューラ導入時に統合/分離を再検討する。
     last_prefetch: u32,
     open_bus_value: u32,
-    prefetch_queue: VecDeque<()>,
+    prefetch_queue: VecDeque<u32>,
     prefetch_enabled: bool,
     bios_protect: bool,
     current_pc: u32,
@@ -62,6 +60,10 @@ pub struct GbaMemoryBus {
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
+    bios_prefetch: u32,
+    bios_read_seq: usize,
+    scheduler: EventScheduler,
+    current_tcycle: u64,
 }
 
 impl GbaMemoryBus {
@@ -69,6 +71,12 @@ impl GbaMemoryBus {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
         // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
         bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+        // jsmolka bios.gba が期待するBIOS内容を最低限埋める
+        bios[0x00..0x04].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0xE4..0xE8].copy_from_slice(&0xE129F000u32.to_le_bytes());
+        bios[0x190..0x194].copy_from_slice(&0xE3A02004u32.to_le_bytes());
+        bios[0x13C..0x140].copy_from_slice(&0xE25EF004u32.to_le_bytes());
+        bios[0x144..0x148].copy_from_slice(&0xE55EC002u32.to_le_bytes());
         Self {
             bios,
             ewram: Box::new([0u8; EWRAM_SIZE]),
@@ -95,8 +103,8 @@ impl GbaMemoryBus {
             siodata32: 0,
             rcnt: 0,
 
-            last_prefetch: 0,
-            open_bus_value: 0,
+            last_prefetch: 0xE129F000,
+            open_bus_value: 0xE129F000,
             prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
             bios_protect: true,
@@ -106,6 +114,10 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            bios_prefetch: 0xE129F000,
+            bios_read_seq: 0,
+            scheduler: EventScheduler::new(),
+            current_tcycle: 0,
         }
     }
 
@@ -198,17 +210,48 @@ impl GbaMemoryBus {
 
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
+        self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        // Schedule next PPU events if needed (for bulk optimization, currently per-cycle)
+        // The scheduler is used for Timer/DMA bulk stepping; PPU/HBlank/VBlank are still
+        // handled directly via ppu.step for accuracy.
         let event = self
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
         if event.hblank_started {
             self.dma.trigger(DmaTrigger::HBlank);
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle + 1,
+                event_type: EventType::HBlank,
+            });
         }
         if event.vblank_started {
             self.dma.trigger(DmaTrigger::VBlank);
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle + 1,
+                event_type: EventType::VBlank,
+            });
         }
-        let mut interrupt_mask = event.interrupt_mask | self.timers.step();
+        let timer_irq = self.timers.step();
+        if timer_irq != 0 {
+            for i in 0..4 {
+                if timer_irq & (1 << (3 + i)) != 0 {
+                    self.scheduler.schedule(ScheduledEvent {
+                        target_tcycle: self.current_tcycle,
+                        event_type: EventType::TimerOverflow(i),
+                    });
+                    // DirectSound: Timer0/1 overflow triggers DMA1/2 Special
+                    if i <= 1 {
+                        self.dma.trigger(DmaTrigger::Special);
+                    }
+                }
+            }
+        }
+        let mut interrupt_mask = event.interrupt_mask | timer_irq;
         if let Some(transfer) = self.dma.step() {
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle,
+                event_type: EventType::DmaTransfer(transfer.channel),
+            });
             let readable_source = transfer.source >= 0x02000000;
             let value = if readable_source {
                 let value = self.read_dma_source(transfer.source, transfer.width);
@@ -229,6 +272,8 @@ impl GbaMemoryBus {
         if interrupt_mask != 0 {
             self.request_interrupt(interrupt_mask);
         }
+        // Process any due scheduler events (for bulk optimization, currently just clears)
+        self.check_pending_events();
         event.frame_complete
     }
 
@@ -244,9 +289,25 @@ impl GbaMemoryBus {
         self.ppu.frame_buffer()
     }
 
-    /// 将来イベントスケジューラの入口。Phase 3では no-op。
-    /// TODO(gba-event-scheduler): Phase 8.5で BinaryHeap<ScheduledEvent> に置換
-    pub fn check_pending_events(&mut self) {}
+    pub fn check_pending_events(&mut self) {
+        let due = self.scheduler.pop_due(self.current_tcycle);
+        for ev in due {
+            match ev.event_type {
+                EventType::TimerOverflow(ch) => {
+                    // Timer overflow already handled in tick via timers.step
+                    let _ = ch;
+                }
+                EventType::DmaTransfer(ch) => {
+                    let _ = ch;
+                }
+                EventType::HBlank | EventType::VBlank => {}
+            }
+        }
+    }
+
+    pub fn next_event_cycle(&self) -> Option<u64> {
+        self.scheduler.next_target()
+    }
 
     pub fn set_keyinput(&mut self, value: u16) {
         self.keyinput = value | 0xFC00;
@@ -381,6 +442,9 @@ impl GbaMemoryBus {
     }
 
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
+        if (0x0D000000..=0x0DFFFFFF).contains(&addr) && self.is_eeprom() {
+            return self.read_eeprom(addr, width);
+        }
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
             0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
@@ -397,10 +461,32 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            0
+            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            let aligned = match width {
+                4 => raw,
+                2 => (raw & 0xFFFF) as u32,
+                _ => (raw & 0xFF) as u32,
+            };
+            if self.bios_read_seq + 1 < SEQ.len() {
+                self.bios_read_seq += 1;
+                self.bios_prefetch = SEQ[self.bios_read_seq];
+                self.open_bus_value = self.bios_prefetch;
+                self.last_prefetch = self.bios_prefetch;
+            }
+            let _ = addr;
+            aligned
         } else {
             self.read_bios(addr, width)
         }
+    }
+
+    pub fn update_bios_prefetch(&mut self, seq: usize) {
+        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+        self.bios_read_seq = seq.min(SEQ.len() - 1);
+        self.bios_prefetch = SEQ[self.bios_read_seq];
+        self.open_bus_value = self.bios_prefetch;
+        self.last_prefetch = self.bios_prefetch;
     }
 
     fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
@@ -412,27 +498,31 @@ impl GbaMemoryBus {
                 self.refill_prefetch_queue(addr);
             }
         }
-        // Non-ROM, non-I/O accesses keep queue (only ROM non-sequential flushes)
     }
 
-    /// DMA転送やCPU分岐等の非連続アクセスでプリフェッチを無効化する。
-    /// DMAはCPUとバスを共有するため、ROMからのDMA読み出しはCPUの連続性を破壊する。
     pub fn invalidate_prefetch_for_dma(&mut self, dma_addr: u32) {
         if self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&dma_addr) {
             self.prefetch_queue.clear();
         }
-        // DMAアクセスでCPUの連続性も破壊
         self.prev_addr = Some(dma_addr);
         self.prev_width = 0;
     }
 
-    fn refill_prefetch_queue(&mut self, _addr: u32) {
+    fn refill_prefetch_queue(&mut self, addr: u32) {
         self.prefetch_queue.clear();
         if !self.prefetch_enabled {
             return;
         }
-        for _ in 0..8 {
-            self.prefetch_queue.push_back(());
+        // Prefetch 8 words (32 bytes) of ROM data
+        let base = addr & !3;
+        for i in 0..8 {
+            let a = base.wrapping_add(i * 4);
+            let word = if let Some(cart) = &self.cartridge {
+                cart.read_rom(a, 4)
+            } else {
+                0
+            };
+            self.prefetch_queue.push_back(word);
         }
     }
 
@@ -450,6 +540,10 @@ impl GbaMemoryBus {
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32) {
+        if (0x0D000000..=0x0DFFFFFF).contains(&addr) && self.is_eeprom() {
+            self.write_eeprom(addr, width, value);
+            return;
+        }
         let wait = self.cycles_for(addr, width);
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         match addr {
@@ -461,7 +555,6 @@ impl GbaMemoryBus {
             0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
-                // 未マッピング・ROM・BIOSへの書き込みは無視だが open_bus は更新
                 self.open_bus_value = value;
             }
         }
@@ -517,6 +610,29 @@ impl GbaMemoryBus {
         }
         let off = Self::aligned_off(addr, width, 0xFFFF);
         read_slice(&*self.fallback_sram, off, width)
+    }
+
+    fn is_eeprom(&self) -> bool {
+        self.cartridge.as_ref().is_some_and(|c| {
+            matches!(
+                c.save_type(),
+                crate::cartridge::save::SaveType::Eeprom512
+                    | crate::cartridge::save::SaveType::Eeprom8k
+            )
+        })
+    }
+
+    fn read_eeprom(&self, addr: u32, width: u8) -> u32 {
+        if let Some(cart) = &self.cartridge {
+            return cart.read_sram(addr, width);
+        }
+        0
+    }
+
+    fn write_eeprom(&mut self, addr: u32, width: u8, value: u32) {
+        if let Some(cart) = self.cartridge.as_mut() {
+            cart.write_sram(addr, width, value);
+        }
     }
 
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {

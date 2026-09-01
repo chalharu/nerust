@@ -153,14 +153,7 @@ fn bitmap_pixel(
     }
 }
 
-fn bg_mosaic(registers: &PpuRegisters, cnt: u16, x: usize, y: usize) -> (usize, usize) {
-    if cnt & (1 << 6) == 0 {
-        return (x, y);
-    }
-    let horizontal = usize::from(registers.mosaic & 0xF) + 1;
-    let vertical = usize::from((registers.mosaic >> 4) & 0xF) + 1;
-    (x - x % horizontal, y - y % vertical)
-}
+use crate::ppu::mosaic::bg_mosaic;
 
 fn read16(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]]) & 0x7FFF
