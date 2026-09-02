@@ -770,9 +770,6 @@ impl GbaMemoryBus {
                 0x04000301 => {
                     self.haltcnt = value as u8;
                     self.open_bus_value = value;
-                    if self.haltcnt & 0x80 == 0 {
-                        self.enter_halt(self.ie);
-                    }
                     return;
                 }
                 _ => {}
@@ -1095,6 +1092,7 @@ mod tests {
         bus.write8(0x04000301, 0x80);
         assert_eq!(bus.read8(0x04000301), 0x80);
         assert_eq!(bus.read8(0x04000300), 0);
+        assert!(!bus.is_halted());
 
         bus.write16(0x04000200, 1);
         bus.enter_halt(1);
