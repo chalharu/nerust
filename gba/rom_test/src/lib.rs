@@ -61,6 +61,7 @@ mod tests {
             "armwrestler_arm_alu",
             "armwrestler_arm_alu_part2",
             "armwrestler_arm_ldr_str",
+            "armwrestler_arm_ldr_str_part2",
             "armwrestler_arm_ldm_stm",
             "armwrestler_thumb_alu",
             "armwrestler_thumb_ldr_str",

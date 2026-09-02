@@ -215,6 +215,19 @@ suites:
       - {cycle: 4494336, buttons: [start]}
       - {cycle: 5617920, buttons: []}
 
+  - id: armwrestler_arm_ldr_str_part2
+    description: ARM LDR/STR PART 2 instruction tests via menu item 1
+    rom: armwrestler-gba-fixed.gba
+    cycles: 8988672
+    reference: refs/armwrestler_arm_ldr_str_part2.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [start]}
+      - {cycle: 7865088, buttons: []}
+
   - id: armwrestler_arm_ldm_stm
     description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
