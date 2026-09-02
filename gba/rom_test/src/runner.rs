@@ -139,6 +139,14 @@ fn run_case_inner(
         .verify(&mut system.bus, system.cpu.registers())?;
     // Also verify frame_pixels already includes frame_buffer check, but we also want to verify full frame if needed
     acc.checks.append(&mut checks);
+    if acc.checks.is_empty() {
+        acc.checks.push(crate::verify::CheckResult {
+            name: "verification".into(),
+            expected: "at least one verification check".into(),
+            actual: "none configured".into(),
+            passed: false,
+        });
+    }
     Ok(())
 }
 
@@ -261,6 +269,14 @@ fn verify_reference_if_present(
         &ref_path.display().to_string(),
         &mut checks,
     )?;
+    if checks.is_empty() {
+        checks.push(crate::verify::CheckResult {
+            name: "reference image".into(),
+            expected: ref_path.display().to_string(),
+            actual: "matched".into(),
+            passed: true,
+        });
+    }
     acc.checks.extend(checks);
     if let (Some(png), Some(dir)) = (diff_png, artifacts_dir) {
         let name = format!("{}_diff.png", selected.case.id);
@@ -348,5 +364,41 @@ mod tests {
         assert!(result.passed, "{:?}", result.error);
         assert_eq!(result.checks.len(), 1);
         assert!(result.checks[0].passed);
+    }
+
+    #[test]
+    fn rejects_cases_without_verification() {
+        let root = std::env::temp_dir().join(format!("nerust-gba-rom-test-{}", std::process::id()));
+        let suite_dir = root.join("synthetic");
+        std::fs::create_dir_all(&suite_dir).unwrap();
+        let mut rom = vec![0u8; 0x200];
+        rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
+        finalize_test_gba_rom(&mut rom);
+        std::fs::write(suite_dir.join("unchecked.gba"), rom).unwrap();
+
+        let suite = crate::manifest::RomSuite {
+            name: "synthetic".into(),
+            cases: Vec::new(),
+            case_patterns: Vec::new(),
+        };
+        let case = RomCase {
+            id: "synthetic_unchecked".into(),
+            rom: "unchecked.gba".into(),
+            cycles: 4,
+            completion: None,
+            description: "synthetic ARM program".into(),
+            verify: VerifySpec::default(),
+            inputs: Vec::new(),
+            reference: None,
+        };
+        let selected = SelectedCase {
+            suite: &suite,
+            case: &case,
+            completion: None,
+        };
+        let result = run_case(&selected, &root, None, false);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!result.passed);
+        assert_eq!(result.checks[0].name, "verification");
     }
 }
