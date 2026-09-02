@@ -187,97 +187,85 @@ suites:
   - id: armwrestler_arm_alu
     description: ARM ALU PART 1 instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 3000000
+    cycles: 4400000
     reference: refs/armwrestler_arm_alu.png
     inputs:
-      - {cycle: 2200000, buttons: [start]}
-      - {cycle: 2600000, buttons: []}
+      - {cycle: 2247168, buttons: [start]}
+      - {cycle: 2808960, buttons: []}
 
   - id: armwrestler_arm_alu_part2
     description: ARM ALU PT 2/MISC instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 4000000
+    cycles: 5400000
     reference: refs/armwrestler_arm_alu_part2.png
     inputs:
-      - {cycle: 2200000, buttons: [start]}
-      - {cycle: 2600000, buttons: []}
-      - {cycle: 3200000, buttons: [start]}
-      - {cycle: 3600000, buttons: []}
+      - {cycle: 2247168, buttons: [start]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 4775232, buttons: []}
 
   - id: armwrestler_arm_ldr_str
     description: ARM LDR/STR instruction tests via menu item 1
     rom: armwrestler-gba-fixed.gba
-    cycles: 3200000
+    cycles: 4400000
     reference: refs/armwrestler_arm_ldr_str.png
     inputs:
-      - {cycle: 2200000, buttons: [down]}
-      - {cycle: 2400000, buttons: []}
-      - {cycle: 2600000, buttons: [start]}
-      - {cycle: 3000000, buttons: []}
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 3089856, buttons: [start]}
+      - {cycle: 3651648, buttons: []}
 
   - id: armwrestler_arm_ldm_stm
     description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
-    cycles: 3400000
+    cycles: 4400000
     reference: refs/armwrestler_arm_ldm_stm.png
     inputs:
-      - {cycle: 2200000, buttons: [down]}
-      - {cycle: 2300000, buttons: []}
-      - {cycle: 2400000, buttons: [down]}
-      - {cycle: 2600000, buttons: []}
-      - {cycle: 2800000, buttons: [start]}
-      - {cycle: 3200000, buttons: []}
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 3089856, buttons: [down]}
+      - {cycle: 3651648, buttons: []}
+      - {cycle: 3932544, buttons: [start]}
+      - {cycle: 4213440, buttons: []}
 
   - id: armwrestler_thumb_alu
     description: THUMB ALU instruction tests via menu item 3
     rom: armwrestler-gba-fixed.gba
-    cycles: 4200000
+    cycles: 4400000
     reference: refs/armwrestler_thumb_alu.png
     inputs:
-      - {cycle: 2200000, buttons: [down]}
-      - {cycle: 2300000, buttons: []}
-      - {cycle: 2400000, buttons: [down]}
-      - {cycle: 2500000, buttons: []}
-      - {cycle: 2600000, buttons: [down]}
-      - {cycle: 2800000, buttons: []}
-      - {cycle: 3000000, buttons: [start]}
-      - {cycle: 3800000, buttons: []}
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 3089856, buttons: [down]}
+      - {cycle: 3651648, buttons: []}
+      - {cycle: 3932544, buttons: [down]}
+      - {cycle: 4213440, buttons: []}
 
   - id: armwrestler_thumb_ldr_str
     description: THUMB LDR/STR instruction tests via menu item 4
     rom: armwrestler-gba-fixed.gba
-    cycles: 4600000
+    cycles: 4400000
     reference: refs/armwrestler_thumb_ldr_str.png
     inputs:
-      - {cycle: 2200000, buttons: [down]}
-      - {cycle: 2300000, buttons: []}
-      - {cycle: 2400000, buttons: [down]}
-      - {cycle: 2500000, buttons: []}
-      - {cycle: 2600000, buttons: [down]}
-      - {cycle: 2700000, buttons: []}
-      - {cycle: 2800000, buttons: [down]}
-      - {cycle: 3000000, buttons: []}
-      - {cycle: 3200000, buttons: [start]}
-      - {cycle: 4200000, buttons: []}
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 3089856, buttons: [down]}
+      - {cycle: 3651648, buttons: []}
+      - {cycle: 3932544, buttons: [down]}
+      - {cycle: 4213440, buttons: []}
 
   - id: armwrestler_thumb_ldm_stm
     description: THUMB LDM/STM instruction tests via menu item 5
     rom: armwrestler-gba-fixed.gba
-    cycles: 5000000
+    cycles: 4400000
     reference: refs/armwrestler_thumb_ldm_stm.png
     inputs:
-      - {cycle: 2200000, buttons: [down]}
-      - {cycle: 2300000, buttons: []}
-      - {cycle: 2400000, buttons: [down]}
-      - {cycle: 2500000, buttons: []}
-      - {cycle: 2600000, buttons: [down]}
-      - {cycle: 2700000, buttons: []}
-      - {cycle: 2800000, buttons: [down]}
-      - {cycle: 2900000, buttons: []}
-      - {cycle: 3000000, buttons: [down]}
-      - {cycle: 3200000, buttons: []}
-      - {cycle: 3400000, buttons: [start]}
-      - {cycle: 4600000, buttons: []}
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 2808960, buttons: []}
+      - {cycle: 3089856, buttons: [down]}
+      - {cycle: 3651648, buttons: []}
+      - {cycle: 3932544, buttons: [down]}
+      - {cycle: 4213440, buttons: []}
 - name: PeterLemon-GBA
   cases:
   - id: PeterLemon_HelloWorld
