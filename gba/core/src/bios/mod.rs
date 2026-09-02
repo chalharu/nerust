@@ -346,7 +346,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let mut d = dst;
         for _ in 0..count {
             let v = bus.read16(s) as u32;
-            bus.write16(d, v as u16);
+            bus.write_hle_bios16(d, v as u16);
             if !fixed {
                 s = s.wrapping_add(2);
             }

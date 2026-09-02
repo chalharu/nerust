@@ -167,6 +167,11 @@ impl GbaMemoryBus {
         self.write_internal(addr, 4, value);
     }
 
+    pub fn write_hle_bios16(&mut self, addr: u32, value: u16) {
+        self.write16(addr, value);
+        self.apply_haltcnt_write(addr, 2, u32::from(value));
+    }
+
     pub fn fetch16(&mut self, addr: u32) -> u16 {
         self.read16(addr)
     }
@@ -750,9 +755,6 @@ impl GbaMemoryBus {
             self.postflg = value as u8;
             self.haltcnt = (value >> 8) as u8;
             self.open_bus_value = value;
-            if width > 1 && self.haltcnt & 0x80 == 0 {
-                self.enter_halt(self.ie);
-            }
             return;
         }
         if width == 4 {
@@ -859,6 +861,13 @@ impl GbaMemoryBus {
             0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(address, width, value),
             _ => self.open_bus_value = value,
+        }
+        self.apply_haltcnt_write(address, width, value);
+    }
+
+    fn apply_haltcnt_write(&mut self, addr: u32, width: u8, value: u32) {
+        if width > 1 && addr == 0x04000300 && value & 0x8000 == 0 {
+            self.enter_halt(self.ie);
         }
     }
 
@@ -1102,12 +1111,15 @@ mod tests {
     }
 
     #[test]
-    fn haltcnt_wide_write_enters_halt() {
+    fn hle_bios_haltcnt_write_enters_halt() {
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000300, 0x0001);
 
         assert_eq!(bus.read8(0x04000300), 1);
         assert_eq!(bus.read8(0x04000301), 0);
+        assert!(!bus.is_halted());
+
+        bus.write_hle_bios16(0x04000300, 0x0001);
         assert!(bus.is_halted());
     }
 
