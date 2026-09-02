@@ -188,6 +188,7 @@ suites:
     description: ARM ALU instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
     cycles: 6400000
+    reference: refs/armwrestler_arm_alu.png
     inputs:
       - {cycle: 2200000, buttons: [start]}
       - {cycle: 3000000, buttons: []}
@@ -200,6 +201,7 @@ suites:
     description: ARM LDR/STR instruction tests via menu item 1
     rom: armwrestler-gba-fixed.gba
     cycles: 7000000
+    reference: refs/armwrestler_arm_ldr_str.png
     inputs:
       - {cycle: 2200000, buttons: [down]}
       - {cycle: 3000000, buttons: []}
@@ -212,6 +214,7 @@ suites:
     description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
     cycles: 8000000
+    reference: refs/armwrestler_arm_ldm_stm.png
     inputs:
       - {cycle: 2200000, buttons: [down]}
       - {cycle: 3000000, buttons: []}
@@ -226,6 +229,7 @@ suites:
     description: THUMB ALU instruction tests via menu item 3
     rom: armwrestler-gba-fixed.gba
     cycles: 9000000
+    reference: refs/armwrestler_thumb_alu.png
     inputs:
       - {cycle: 2200000, buttons: [down]}
       - {cycle: 3000000, buttons: []}
@@ -242,6 +246,7 @@ suites:
     description: THUMB LDR/STR instruction tests via menu item 4
     rom: armwrestler-gba-fixed.gba
     cycles: 10000000
+    reference: refs/armwrestler_thumb_ldr_str.png
     inputs:
       - {cycle: 2200000, buttons: [down]}
       - {cycle: 3000000, buttons: []}
@@ -260,6 +265,7 @@ suites:
     description: THUMB LDM/STM instruction tests via menu item 5
     rom: armwrestler-gba-fixed.gba
     cycles: 11000000
+    reference: refs/armwrestler_thumb_ldm_stm.png
     inputs:
       - {cycle: 2200000, buttons: [down]}
       - {cycle: 3000000, buttons: []}

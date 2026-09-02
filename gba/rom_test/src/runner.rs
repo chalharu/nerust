@@ -217,20 +217,32 @@ fn verify_reference_if_present(
     artifacts_dir: Option<&Path>,
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
-    // Look for reference PNG next to ROM: same path but .png instead of .gba
-    let rom_path = rom_root.join(&selected.suite.name).join(&selected.case.rom);
-    let ref_path = rom_path.with_extension("png");
-    // Also try expected.png / expected.jpg in same dir as ROM (for nba-emu)
-    let alt_png = rom_path.parent().map(|d| d.join("expected.png")).unwrap_or_default();
-    let alt_jpg = rom_path.parent().map(|d| d.join("expected.jpg")).unwrap_or_default();
-    let ref_path = if ref_path.exists() {
-        Some(ref_path)
-    } else if alt_png.exists() {
-        Some(alt_png)
-    } else if alt_jpg.exists() {
-        Some(alt_jpg)
+    let suite_dir = rom_root.join(&selected.suite.name);
+    
+    // Check for per-case reference first (highest priority)
+    let ref_path = if let Some(ref_ref) = &selected.case.reference {
+        let case_ref = suite_dir.join(ref_ref);
+        if case_ref.exists() {
+            Some(case_ref)
+        } else {
+            None
+        }
     } else {
-        None
+        // Fall back to ROM-based resolution
+        let rom_path = suite_dir.join(&selected.case.rom);
+        let ref_path = rom_path.with_extension("png");
+        // Also try expected.png / expected.jpg in same dir as ROM (for nba-emu)
+        let alt_png = rom_path.parent().map(|d| d.join("expected.png")).unwrap_or_default();
+        let alt_jpg = rom_path.parent().map(|d| d.join("expected.jpg")).unwrap_or_default();
+        if ref_path.exists() {
+            Some(ref_path)
+        } else if alt_png.exists() {
+            Some(alt_png)
+        } else if alt_jpg.exists() {
+            Some(alt_jpg)
+        } else {
+            None
+        }
     };
 
     let Some(ref_path) = ref_path else {
@@ -324,6 +336,7 @@ mod tests {
                 ..Default::default()
             },
             inputs: Vec::new(),
+            reference: None,
         };
         let selected = SelectedCase {
             suite: &suite,

@@ -42,6 +42,9 @@ pub struct RomCase {
     pub verify: VerifySpec,
     #[serde(default)]
     pub inputs: Vec<InputEvent>,
+    /// Per-case reference image path (relative to suite dir). Overrides ROM-based resolution.
+    #[serde(default)]
+    pub reference: Option<String>,
 }
 
 /// キー入力イベント。GBC の inputs 仕様と同一。
@@ -173,6 +176,7 @@ impl RomManifest {
                     description: case.description,
                     verify: pattern.verify.clone(),
                     inputs: Vec::new(),
+                    reference: None,
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
