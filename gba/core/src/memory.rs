@@ -172,6 +172,11 @@ impl GbaMemoryBus {
         self.apply_haltcnt_write(addr, 2, u32::from(value));
     }
 
+    pub fn write_hle_bios32(&mut self, addr: u32, value: u32) {
+        self.write32(addr, value);
+        self.apply_haltcnt_write(addr, 4, value);
+    }
+
     pub fn fetch16(&mut self, addr: u32) -> u16 {
         self.read16(addr)
     }
@@ -1120,6 +1125,10 @@ mod tests {
         assert!(!bus.is_halted());
 
         bus.write_hle_bios16(0x04000300, 0x0001);
+        assert!(bus.is_halted());
+
+        let mut bus = GbaMemoryBus::new();
+        bus.write_hle_bios32(0x04000300, 0x0000_0001);
         assert!(bus.is_halted());
     }
 
