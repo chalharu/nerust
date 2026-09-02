@@ -121,7 +121,7 @@ fn run_case_inner(
         }
     }
 
-    // Capture screenshot
+    // Capture screenshot — render what's currently in VRAM
     let rendered = render_frame(&system)?;
     if let Some(dir) = artifacts_dir {
         let name = format!("{}.png", selected.case.id);
