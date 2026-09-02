@@ -2,6 +2,8 @@ use crate::cartridge::Cartridge;
 use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
+const IRQ_ENTRY_CYCLES: u32 = 22;
+
 pub struct GbaSystem {
     pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
@@ -81,8 +83,9 @@ impl GbaSystem {
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
         if !self.bus.is_halted() && !self.bus.dma_active() && self.cpu_cycles_remaining == 0 {
+            let irq_source_pc = self.cpu.registers().pc();
             if self.cpu.service_irq(&mut self.bus) {
-                self.cpu_cycles_remaining = 3;
+                self.cpu_cycles_remaining = irq_entry_cycles(irq_source_pc);
             } else {
                 self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
             }
@@ -90,6 +93,14 @@ impl GbaSystem {
         self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
         self.bus.tick()
+    }
+}
+
+const fn irq_entry_cycles(pc: u32) -> u32 {
+    match pc {
+        0x02000000..=0x02FFFFFF => IRQ_ENTRY_CYCLES + 5,
+        0x08000000..=0x0DFFFFFF => IRQ_ENTRY_CYCLES + 17,
+        _ => IRQ_ENTRY_CYCLES,
     }
 }
 
@@ -132,6 +143,13 @@ mod tests {
             crate::ppu::WIDTH * crate::ppu::HEIGHT
         );
         assert_eq!(system.tick, 280896);
+    }
+
+    #[test]
+    fn irq_entry_cycles_include_source_fetch_penalty() {
+        assert_eq!(irq_entry_cycles(0x03000000), 22);
+        assert_eq!(irq_entry_cycles(0x02000000), 27);
+        assert_eq!(irq_entry_cycles(0x08000000), 39);
     }
 
     #[test]

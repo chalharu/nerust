@@ -122,6 +122,10 @@ suites:
   - id: nba_irq_delay
     rom: irq/irq-delay/irq-delay.gba
     cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030003E8, value: 3, width: 4}
+      - {address: 0x030003EC, value: 3, width: 4}
   - id: nba_haltcnt
     rom: haltcnt/haltcnt.gba
     cycles: 3000000
