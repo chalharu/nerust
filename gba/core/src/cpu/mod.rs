@@ -10,10 +10,13 @@ use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
+const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
+
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
     regs: CpuRegisters,
     pipeline: [u32; 2],
+    irq_return_address: Option<u32>,
 }
 
 impl GbaCpu {
@@ -21,6 +24,7 @@ impl GbaCpu {
         Self {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
+            irq_return_address: None,
         }
     }
 
@@ -30,6 +34,7 @@ impl GbaCpu {
 
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
+        self.irq_return_address = None;
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
@@ -58,6 +63,10 @@ impl GbaCpu {
         let return_address = self.regs.pc().wrapping_add(4);
         self.regs
             .enter_exception(0x12, target, return_address, true);
+        if target != 0x00000018 {
+            self.irq_return_address = Some(return_address);
+            self.regs.set_lr(HLE_IRQ_RETURN_TRAMPOLINE);
+        }
         self.pipeline = [0; 2];
         bus.set_current_pc(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
@@ -84,27 +93,16 @@ impl GbaCpu {
         let execute = self.pipeline[0];
         self.pipeline[0] = self.pipeline[1];
         self.pipeline[1] = fetched;
-        let old_mode = self.regs.cpsr_mode();
-        let old_spsr = self.regs.spsr();
         self.regs.clear_pc_written();
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
         let pc_written = self.regs.take_pc_written();
-        // jsmolka BIOS test's ISR uses plain `mov pc,lr` (E1A0F00E) to return
-        // from IRQ, which on real HW is invoked via the BIOS dispatcher
-        // wrapper that saves/restores context. Since our HLE dispatches
-        // directly to the vector at 0x03007FFC without the wrapper, we must
-        // treat this specific pattern as an exception return (movs semantics)
-        // to restore CPSR from SPSR and return to the interrupted SYS mode.
-        if old_mode == 0x12 && execute == 0xE1A0F00E && pc_written {
-            // Exception return: restore CPSR from SPSR_irq
-            self.regs.set_cpsr(old_spsr);
-            // pc already set to lr (return_address) by the mov; flush pipeline
-            self.pipeline = [0; 2];
-            bus.set_current_pc(self.regs.pc());
-            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
-            return cycles;
-        }
         if pc_written {
+            if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
+                && let Some(return_address) = self.irq_return_address.take()
+            {
+                self.regs.set_cpsr(self.regs.spsr());
+                self.regs.set_pc(return_address);
+            }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
@@ -232,11 +230,17 @@ mod tests {
         bus.write16(0x04000200, 1 << 3);
         bus.write16(0x04000208, 1);
         bus.request_interrupt(1 << 3);
+        bus.write32(0x03007FFC, 0x03000000);
+        bus.write32(0x03000000, 0xE1A0_F00E); // MOV PC,LR
         assert!(cpu.service_irq(&mut bus));
         assert_eq!(cpu.regs.cpsr_mode(), 0x12);
         assert_ne!(cpu.regs.cpsr() & (1 << 7), 0);
         assert_eq!(cpu.regs.spsr() & 0x1F, 0x1F);
-        assert_eq!(cpu.regs.pc(), 0x20);
-        assert_eq!(cpu.regs.lr(), 0x08000004);
+        assert_eq!(cpu.regs.pc(), 0x03000008);
+        assert_eq!(cpu.regs.lr(), HLE_IRQ_RETURN_TRAMPOLINE);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.cpsr_mode(), 0x1F);
+        assert_eq!(cpu.regs.pc(), 0x0800000C);
     }
 }
