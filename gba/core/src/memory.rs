@@ -323,8 +323,8 @@ impl GbaMemoryBus {
     }
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
-        self.halted = true;
         self.halt_irq_mask = irq_mask;
+        self.halted = self.ie & self.sif & self.halt_irq_mask == 0;
     }
 
     pub fn is_halted(&self) -> bool {
@@ -746,6 +746,15 @@ impl GbaMemoryBus {
             self.open_bus_value = value;
             return;
         }
+        if width > 1 && addr == 0x04000300 {
+            self.postflg = value as u8;
+            self.haltcnt = (value >> 8) as u8;
+            self.open_bus_value = value;
+            if width > 1 && self.haltcnt & 0x80 == 0 {
+                self.enter_halt(self.ie);
+            }
+            return;
+        }
         if width == 4 {
             self.write_io(addr, 2, value & 0xFFFF);
             self.write_io(addr + 2, 2, value >> 16);
@@ -761,6 +770,9 @@ impl GbaMemoryBus {
                 0x04000301 => {
                     self.haltcnt = value as u8;
                     self.open_bus_value = value;
+                    if self.haltcnt & 0x80 == 0 {
+                        self.enter_halt(self.ie);
+                    }
                     return;
                 }
                 _ => {}
@@ -807,8 +819,6 @@ impl GbaMemoryBus {
                 }
             }
             0x04000208 => self.ime = (v16 & 1) != 0,
-            0x04000300 => self.postflg = (value & 0xFF) as u8,
-            0x04000301 => self.haltcnt = (value & 0xFF) as u8,
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
                 self.open_bus_value = value;
@@ -1091,6 +1101,26 @@ mod tests {
         bus.request_interrupt(1);
         assert!(!bus.is_halted());
         assert_eq!(bus.read16(0x03007FF8) & 1, 1);
+    }
+
+    #[test]
+    fn haltcnt_wide_write_enters_halt() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000300, 0x0001);
+
+        assert_eq!(bus.read8(0x04000300), 1);
+        assert_eq!(bus.read8(0x04000301), 0);
+        assert!(bus.is_halted());
+    }
+
+    #[test]
+    fn halt_with_a_pending_enabled_irq_returns_immediately() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, 1);
+        bus.request_interrupt(1);
+        bus.enter_halt(1);
+
+        assert!(!bus.is_halted());
     }
 
     #[test]
