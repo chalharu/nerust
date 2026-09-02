@@ -189,8 +189,8 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 4000000
     inputs:
-      - {cycle: 100000, buttons: [start]}
-      - {cycle: 480000, buttons: []}
+      - {cycle: 2000000, buttons: [start]}
+      - {cycle: 2200000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -201,10 +201,10 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 5000000
     inputs:
-      - {cycle: 100000, buttons: [down]}
-      - {cycle: 300000, buttons: []}
-      - {cycle: 480000, buttons: [start]}
-      - {cycle: 660000, buttons: []}
+      - {cycle: 2000000, buttons: [down]}
+      - {cycle: 2150000, buttons: []}
+      - {cycle: 2300000, buttons: [start]}
+      - {cycle: 2500000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -215,12 +215,12 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 6000000
     inputs:
-      - {cycle: 100000, buttons: [down]}
-      - {cycle: 300000, buttons: []}
-      - {cycle: 480000, buttons: [down]}
-      - {cycle: 660000, buttons: []}
-      - {cycle: 760000, buttons: [start]}
-      - {cycle: 940000, buttons: []}
+      - {cycle: 2000000, buttons: [down]}
+      - {cycle: 2150000, buttons: []}
+      - {cycle: 2300000, buttons: [down]}
+      - {cycle: 2450000, buttons: []}
+      - {cycle: 2600000, buttons: [start]}
+      - {cycle: 2800000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -231,14 +231,14 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 7000000
     inputs:
-      - {cycle: 100000, buttons: [down]}
-      - {cycle: 300000, buttons: []}
-      - {cycle: 480000, buttons: [down]}
-      - {cycle: 660000, buttons: []}
-      - {cycle: 760000, buttons: [down]}
-      - {cycle: 940000, buttons: []}
-      - {cycle: 1040000, buttons: [start]}
-      - {cycle: 1220000, buttons: []}
+      - {cycle: 2000000, buttons: [down]}
+      - {cycle: 2150000, buttons: []}
+      - {cycle: 2300000, buttons: [down]}
+      - {cycle: 2450000, buttons: []}
+      - {cycle: 2600000, buttons: [down]}
+      - {cycle: 2750000, buttons: []}
+      - {cycle: 2900000, buttons: [start]}
+      - {cycle: 3100000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -249,16 +249,16 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 8000000
     inputs:
-      - {cycle: 100000, buttons: [down]}
-      - {cycle: 300000, buttons: []}
-      - {cycle: 480000, buttons: [down]}
-      - {cycle: 660000, buttons: []}
-      - {cycle: 760000, buttons: [down]}
-      - {cycle: 940000, buttons: []}
-      - {cycle: 1040000, buttons: [down]}
-      - {cycle: 1220000, buttons: []}
-      - {cycle: 1320000, buttons: [start]}
-      - {cycle: 1500000, buttons: []}
+      - {cycle: 2000000, buttons: [down]}
+      - {cycle: 2150000, buttons: []}
+      - {cycle: 2300000, buttons: [down]}
+      - {cycle: 2450000, buttons: []}
+      - {cycle: 2600000, buttons: [down]}
+      - {cycle: 2750000, buttons: []}
+      - {cycle: 2900000, buttons: [down]}
+      - {cycle: 3050000, buttons: []}
+      - {cycle: 3200000, buttons: [start]}
+      - {cycle: 3400000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -269,18 +269,18 @@ suites:
     rom: armwrestler-gba-fixed.gba
     cycles: 9000000
     inputs:
-      - {cycle: 100000, buttons: [down]}
-      - {cycle: 300000, buttons: []}
-      - {cycle: 480000, buttons: [down]}
-      - {cycle: 660000, buttons: []}
-      - {cycle: 760000, buttons: [down]}
-      - {cycle: 940000, buttons: []}
-      - {cycle: 1040000, buttons: [down]}
-      - {cycle: 1220000, buttons: []}
-      - {cycle: 1320000, buttons: [down]}
-      - {cycle: 1500000, buttons: []}
-      - {cycle: 1600000, buttons: [start]}
-      - {cycle: 1780000, buttons: []}
+      - {cycle: 2000000, buttons: [down]}
+      - {cycle: 2150000, buttons: []}
+      - {cycle: 2300000, buttons: [down]}
+      - {cycle: 2450000, buttons: []}
+      - {cycle: 2600000, buttons: [down]}
+      - {cycle: 2750000, buttons: []}
+      - {cycle: 2900000, buttons: [down]}
+      - {cycle: 3050000, buttons: []}
+      - {cycle: 3200000, buttons: [down]}
+      - {cycle: 3350000, buttons: []}
+      - {cycle: 3500000, buttons: [start]}
+      - {cycle: 3700000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
