@@ -66,22 +66,16 @@ mod tests {
             "armwrestler_thumb_ldr_str",
             "armwrestler_thumb_ldm_stm",
         ];
-        
         for id in &armwrestler_ids {
             let selected = manifest.select(&[id.to_string()]);
             assert!(!selected.is_empty(), "Case {} not found", id);
-            
-            // Run with artifacts_dir to save screenshot
             let result = super::runner::run_case(&selected[0], &rom_root, Some(&rom_root), false);
             assert!(result.passed, "Test {} failed: {:?}", id, result.error);
-            
-            // Copy screenshot to refs directory
             if let Some(screenshot) = &result.screenshot {
                 let src = rom_root.join("screenshots").join(screenshot);
                 let dst = refs_dir.join(format!("{}.png", id));
-                assert!(src.exists(), "Screenshot not found: {}", src.display());
                 std::fs::copy(&src, &dst).unwrap();
-                println!("Saved {} to {}", id, dst.display());
+                println!("Saved {}", id);
             } else {
                 panic!("No screenshot saved for {}", id);
             }
