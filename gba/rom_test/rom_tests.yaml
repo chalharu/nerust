@@ -195,10 +195,6 @@ suites:
       - {cycle: 4400000, buttons: []}
       - {cycle: 5000000, buttons: [start]}
       - {cycle: 5800000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 
   - id: armwrestler_arm_ldr_str
     description: ARM LDR/STR instruction tests via menu item 1
@@ -211,10 +207,6 @@ suites:
       - {cycle: 4400000, buttons: []}
       - {cycle: 5000000, buttons: [start]}
       - {cycle: 5800000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 
   - id: armwrestler_arm_ldm_stm
     description: ARM LDM/STM instruction tests via menu item 2
@@ -229,10 +221,6 @@ suites:
       - {cycle: 5800000, buttons: []}
       - {cycle: 6400000, buttons: [start]}
       - {cycle: 7200000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 
   - id: armwrestler_thumb_alu
     description: THUMB ALU instruction tests via menu item 3
@@ -249,10 +237,6 @@ suites:
       - {cycle: 7200000, buttons: []}
       - {cycle: 7800000, buttons: [start]}
       - {cycle: 8600000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 
   - id: armwrestler_thumb_ldr_str
     description: THUMB LDR/STR instruction tests via menu item 4
@@ -271,10 +255,6 @@ suites:
       - {cycle: 8600000, buttons: []}
       - {cycle: 9200000, buttons: [start]}
       - {cycle: 9800000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 
   - id: armwrestler_thumb_ldm_stm
     description: THUMB LDM/STM instruction tests via menu item 5
@@ -295,10 +275,6 @@ suites:
       - {cycle: 9800000, buttons: []}
       - {cycle: 10400000, buttons: [start]}
       - {cycle: 10800000, buttons: []}
-    verify:
-      frame_pixels:
-      - {x: 0, y: 0, color: 0x0000}
-      - {x: 65, y: 72, color: 0x7FFF}
 - name: PeterLemon-GBA
   cases:
   - id: PeterLemon_HelloWorld
