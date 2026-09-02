@@ -4,9 +4,11 @@ use crate::memory::GbaMemoryBus;
 pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let swi = ((instr >> 16) & 0xFF) as u8;
     match crate::bios::handle_swi(regs, bus, swi) {
-        crate::bios::SwiResult::Return(cycles) | crate::bios::SwiResult::Branch(cycles) => {
+        crate::bios::SwiResult::Return(cycles) => {
+            regs.set_pc(regs.pc().wrapping_sub(4));
             return cycles;
         }
+        crate::bios::SwiResult::Branch(cycles) => return cycles,
         crate::bios::SwiResult::Unsupported => {}
     }
     let return_address = regs.pc().wrapping_sub(4);
@@ -39,5 +41,15 @@ mod tests {
         handle(&mut regs, &mut bus, 0xEF0D0000);
         assert_eq!(regs.r(0), 0xBAAE187F);
         assert_eq!(regs.cpsr_mode(), 0x1F);
+    }
+
+    #[test]
+    fn hle_swi_returns_to_the_instruction_after_swi() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x0800000C);
+        let mut bus = GbaMemoryBus::new();
+        handle(&mut regs, &mut bus, 0xEF0D0000);
+        assert_eq!(regs.pc(), 0x08000008);
+        assert!(regs.take_pc_written());
     }
 }

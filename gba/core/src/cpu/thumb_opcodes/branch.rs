@@ -47,9 +47,11 @@ pub fn handle_long_bl(regs: &mut CpuRegisters, instr: u16) -> u32 {
 pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u32 {
     let swi = (instr & 0xFF) as u8;
     match crate::bios::handle_swi(regs, bus, swi) {
-        crate::bios::SwiResult::Return(cycles) | crate::bios::SwiResult::Branch(cycles) => {
+        crate::bios::SwiResult::Return(cycles) => {
+            regs.set_pc(regs.pc().wrapping_sub(2));
             return cycles;
         }
+        crate::bios::SwiResult::Branch(cycles) => return cycles,
         crate::bios::SwiResult::Unsupported => {}
     }
     let return_address = regs.pc().wrapping_sub(2);
@@ -78,5 +80,16 @@ mod unconditional_tests {
         registers.set_pc(0x08001000);
         handle_uncond(&mut registers, 0xE7FF);
         assert_eq!(registers.pc(), 0x08000FFE);
+    }
+
+    #[test]
+    fn hle_swi_returns_to_the_instruction_after_swi() {
+        let mut registers = CpuRegisters::post_bios();
+        registers.set_cpsr(registers.cpsr() | (1 << 5));
+        registers.set_pc(0x08000006);
+        let mut bus = GbaMemoryBus::new();
+        handle_swi(&mut registers, &mut bus, 0xDF0D);
+        assert_eq!(registers.pc(), 0x08000004);
+        assert!(registers.take_pc_written());
     }
 }
