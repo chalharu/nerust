@@ -187,85 +187,97 @@ suites:
   - id: armwrestler_arm_alu
     description: ARM ALU PART 1 instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 4494336
     reference: refs/armwrestler_arm_alu.png
     inputs:
       - {cycle: 2247168, buttons: [start]}
-      - {cycle: 2808960, buttons: []}
+      - {cycle: 3370752, buttons: []}
 
   - id: armwrestler_arm_alu_part2
     description: ARM ALU PT 2/MISC instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 5400000
+    cycles: 6741504
     reference: refs/armwrestler_arm_alu_part2.png
     inputs:
       - {cycle: 2247168, buttons: [start]}
-      - {cycle: 2808960, buttons: []}
+      - {cycle: 3370752, buttons: []}
       - {cycle: 4494336, buttons: [start]}
-      - {cycle: 4775232, buttons: []}
+      - {cycle: 5617920, buttons: []}
 
   - id: armwrestler_arm_ldr_str
     description: ARM LDR/STR instruction tests via menu item 1
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 6741504
     reference: refs/armwrestler_arm_ldr_str.png
     inputs:
       - {cycle: 2247168, buttons: [down]}
-      - {cycle: 2808960, buttons: []}
-      - {cycle: 3089856, buttons: [start]}
-      - {cycle: 3651648, buttons: []}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 5617920, buttons: []}
 
   - id: armwrestler_arm_ldm_stm
     description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 8988672
     reference: refs/armwrestler_arm_ldm_stm.png
     inputs:
       - {cycle: 2247168, buttons: [down]}
-      - {cycle: 2808960, buttons: []}
-      - {cycle: 3089856, buttons: [down]}
-      - {cycle: 3651648, buttons: []}
-      - {cycle: 3932544, buttons: [start]}
-      - {cycle: 4213440, buttons: []}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [start]}
+      - {cycle: 7865088, buttons: []}
 
   - id: armwrestler_thumb_alu
     description: THUMB ALU instruction tests via menu item 3
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 11235840
     reference: refs/armwrestler_thumb_alu.png
     inputs:
       - {cycle: 2247168, buttons: [down]}
-      - {cycle: 2808960, buttons: []}
-      - {cycle: 3089856, buttons: [down]}
-      - {cycle: 3651648, buttons: []}
-      - {cycle: 3932544, buttons: [down]}
-      - {cycle: 4213440, buttons: []}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [start]}
+      - {cycle: 10112256, buttons: []}
 
   - id: armwrestler_thumb_ldr_str
     description: THUMB LDR/STR instruction tests via menu item 4
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 13483008
     reference: refs/armwrestler_thumb_ldr_str.png
     inputs:
       - {cycle: 2247168, buttons: [down]}
-      - {cycle: 2808960, buttons: []}
-      - {cycle: 3089856, buttons: [down]}
-      - {cycle: 3651648, buttons: []}
-      - {cycle: 3932544, buttons: [down]}
-      - {cycle: 4213440, buttons: []}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [down]}
+      - {cycle: 10112256, buttons: []}
+      - {cycle: 11235840, buttons: [start]}
+      - {cycle: 12359424, buttons: []}
 
   - id: armwrestler_thumb_ldm_stm
     description: THUMB LDM/STM instruction tests via menu item 5
     rom: armwrestler-gba-fixed.gba
-    cycles: 4400000
+    cycles: 15730176
     reference: refs/armwrestler_thumb_ldm_stm.png
     inputs:
       - {cycle: 2247168, buttons: [down]}
-      - {cycle: 2808960, buttons: []}
-      - {cycle: 3089856, buttons: [down]}
-      - {cycle: 3651648, buttons: []}
-      - {cycle: 3932544, buttons: [down]}
-      - {cycle: 4213440, buttons: []}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [down]}
+      - {cycle: 10112256, buttons: []}
+      - {cycle: 11235840, buttons: [down]}
+      - {cycle: 12359424, buttons: []}
+      - {cycle: 13483008, buttons: [start]}
+      - {cycle: 14606592, buttons: []}
 - name: PeterLemon-GBA
   cases:
   - id: PeterLemon_HelloWorld

@@ -70,7 +70,7 @@ mod tests {
             let selected = manifest.select(&[id.to_string()]);
             assert!(!selected.is_empty(), "Case {} not found", id);
             let result = super::runner::run_case(&selected[0], &rom_root, Some(&rom_root), false);
-            assert!(result.passed, "Test {} failed: {:?}", id, result.error);
+            assert!(result.error.is_none(), "Test {} failed: {:?}", id, result.error);
             if let Some(screenshot) = &result.screenshot {
                 let src = rom_root.join("screenshots").join(screenshot);
                 let dst = refs_dir.join(format!("{}.png", id));
