@@ -187,10 +187,14 @@ suites:
   - id: armwrestler_arm_alu
     description: ARM ALU instruction tests via menu item 0
     rom: armwrestler-gba-fixed.gba
-    cycles: 6000000
+    cycles: 6400000
     inputs:
-      - {cycle: 3200000, buttons: [start]}
-      - {cycle: 3500000, buttons: []}
+      - {cycle: 2200000, buttons: [start]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [start]}
+      - {cycle: 4400000, buttons: []}
+      - {cycle: 5000000, buttons: [start]}
+      - {cycle: 5800000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -199,12 +203,14 @@ suites:
   - id: armwrestler_arm_ldr_str
     description: ARM LDR/STR instruction tests via menu item 1
     rom: armwrestler-gba-fixed.gba
-    cycles: 8000000
+    cycles: 7000000
     inputs:
-      - {cycle: 3200000, buttons: [down]}
-      - {cycle: 3500000, buttons: []}
-      - {cycle: 3800000, buttons: [start]}
-      - {cycle: 4100000, buttons: []}
+      - {cycle: 2200000, buttons: [down]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [start]}
+      - {cycle: 4400000, buttons: []}
+      - {cycle: 5000000, buttons: [start]}
+      - {cycle: 5800000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -213,14 +219,16 @@ suites:
   - id: armwrestler_arm_ldm_stm
     description: ARM LDM/STM instruction tests via menu item 2
     rom: armwrestler-gba-fixed.gba
-    cycles: 9000000
+    cycles: 8000000
     inputs:
-      - {cycle: 3200000, buttons: [down]}
-      - {cycle: 3500000, buttons: []}
-      - {cycle: 3800000, buttons: [down]}
-      - {cycle: 4100000, buttons: []}
-      - {cycle: 4400000, buttons: [start]}
-      - {cycle: 4700000, buttons: []}
+      - {cycle: 2200000, buttons: [down]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [down]}
+      - {cycle: 4400000, buttons: []}
+      - {cycle: 5000000, buttons: [start]}
+      - {cycle: 5800000, buttons: []}
+      - {cycle: 6400000, buttons: [start]}
+      - {cycle: 7200000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -229,16 +237,18 @@ suites:
   - id: armwrestler_thumb_alu
     description: THUMB ALU instruction tests via menu item 3
     rom: armwrestler-gba-fixed.gba
-    cycles: 10000000
+    cycles: 9000000
     inputs:
-      - {cycle: 3200000, buttons: [down]}
-      - {cycle: 3500000, buttons: []}
-      - {cycle: 3800000, buttons: [down]}
-      - {cycle: 4100000, buttons: []}
-      - {cycle: 4400000, buttons: [down]}
-      - {cycle: 4700000, buttons: []}
-      - {cycle: 5000000, buttons: [start]}
-      - {cycle: 5300000, buttons: []}
+      - {cycle: 2200000, buttons: [down]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [down]}
+      - {cycle: 4400000, buttons: []}
+      - {cycle: 5000000, buttons: [down]}
+      - {cycle: 5800000, buttons: []}
+      - {cycle: 6400000, buttons: [start]}
+      - {cycle: 7200000, buttons: []}
+      - {cycle: 7800000, buttons: [start]}
+      - {cycle: 8600000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -247,18 +257,20 @@ suites:
   - id: armwrestler_thumb_ldr_str
     description: THUMB LDR/STR instruction tests via menu item 4
     rom: armwrestler-gba-fixed.gba
-    cycles: 11000000
+    cycles: 10000000
     inputs:
-      - {cycle: 3200000, buttons: [down]}
-      - {cycle: 3500000, buttons: []}
-      - {cycle: 3800000, buttons: [down]}
-      - {cycle: 4100000, buttons: []}
-      - {cycle: 4400000, buttons: [down]}
-      - {cycle: 4700000, buttons: []}
+      - {cycle: 2200000, buttons: [down]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [down]}
+      - {cycle: 4400000, buttons: []}
       - {cycle: 5000000, buttons: [down]}
-      - {cycle: 5300000, buttons: []}
-      - {cycle: 5600000, buttons: [start]}
-      - {cycle: 5900000, buttons: []}
+      - {cycle: 5800000, buttons: []}
+      - {cycle: 6400000, buttons: [down]}
+      - {cycle: 7200000, buttons: []}
+      - {cycle: 7800000, buttons: [start]}
+      - {cycle: 8600000, buttons: []}
+      - {cycle: 9200000, buttons: [start]}
+      - {cycle: 9800000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
@@ -267,20 +279,22 @@ suites:
   - id: armwrestler_thumb_ldm_stm
     description: THUMB LDM/STM instruction tests via menu item 5
     rom: armwrestler-gba-fixed.gba
-    cycles: 13000000
+    cycles: 11000000
     inputs:
-      - {cycle: 3200000, buttons: [down]}
-      - {cycle: 3500000, buttons: []}
-      - {cycle: 3800000, buttons: [down]}
-      - {cycle: 4100000, buttons: []}
-      - {cycle: 4400000, buttons: [down]}
-      - {cycle: 4700000, buttons: []}
+      - {cycle: 2200000, buttons: [down]}
+      - {cycle: 3000000, buttons: []}
+      - {cycle: 3600000, buttons: [down]}
+      - {cycle: 4400000, buttons: []}
       - {cycle: 5000000, buttons: [down]}
-      - {cycle: 5300000, buttons: []}
-      - {cycle: 5600000, buttons: [down]}
-      - {cycle: 5900000, buttons: []}
-      - {cycle: 6200000, buttons: [start]}
-      - {cycle: 6500000, buttons: []}
+      - {cycle: 5800000, buttons: []}
+      - {cycle: 6400000, buttons: [down]}
+      - {cycle: 7200000, buttons: []}
+      - {cycle: 7800000, buttons: [down]}
+      - {cycle: 8600000, buttons: []}
+      - {cycle: 9200000, buttons: [start]}
+      - {cycle: 9800000, buttons: []}
+      - {cycle: 10400000, buttons: [start]}
+      - {cycle: 10800000, buttons: []}
     verify:
       frame_pixels:
       - {x: 0, y: 0, color: 0x0000}
