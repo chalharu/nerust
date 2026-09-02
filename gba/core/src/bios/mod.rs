@@ -335,7 +335,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let mut d = dst & !3;
         for _ in 0..count {
             let v = bus.read32(s);
-            bus.write32(d, v);
+            bus.write_hle_bios32(d, v);
             if !fixed {
                 s = s.wrapping_add(4);
             }
@@ -374,7 +374,7 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     for _ in (0..count).step_by(8) {
         for _ in 0..8 {
             let v = bus.read32(s);
-            bus.write32(d, v);
+            bus.write_hle_bios32(d, v);
             if !fixed {
                 s = s.wrapping_add(4);
             }
