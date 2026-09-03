@@ -34,11 +34,14 @@ struct DmaChannel {
     is_first: bool,
     pending: u8,
     stalled: bool,
+    completing: bool,
+    completion_interrupt: bool,
 }
 
 #[derive(Debug, Default)]
 pub struct GbaDma {
     channels: [DmaChannel; 4],
+    completion_interrupts: u16,
 }
 
 impl GbaDma {
@@ -124,6 +127,16 @@ impl GbaDma {
         let dma = &mut self.channels[channel];
         if dma.delay != 0 {
             dma.delay -= 1;
+            if dma.delay != 0 {
+                return None;
+            }
+        }
+        if dma.completing {
+            let interrupt = dma.completion_interrupt;
+            finish(dma, channel);
+            if interrupt {
+                self.completion_interrupts |= 1 << (8 + channel);
+            }
             return None;
         }
         let width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
@@ -153,7 +166,8 @@ impl GbaDma {
         let both_gamepak = (0x08000000..=0x0DFFFFFF).contains(&source)
             && (0x08000000..=0x0DFFFFFF).contains(&destination);
         let internal: u32 = if both_gamepak { 4 } else { 2 };
-        let _total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
+        let total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
+        dma.delay = total_wait.saturating_sub(1) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         dma.current_destination = advance(
             dma.current_destination,
@@ -166,18 +180,22 @@ impl GbaDma {
         dma.is_first = false;
         dma.remaining -= 1;
         let finished = dma.remaining == 0;
-        let interrupt = finished && dma.control & (1 << 14) != 0;
         if finished {
-            finish(dma, channel);
+            dma.completing = true;
+            dma.completion_interrupt = dma.control & (1 << 14) != 0;
         }
         Some(DmaTransfer {
             channel,
             source,
             destination,
             width,
-            interrupt,
+            interrupt: false,
             latched_value: dma.latch,
         })
+    }
+
+    pub fn take_completion_interrupts(&mut self) -> u16 {
+        std::mem::take(&mut self.completion_interrupts)
     }
 
     pub fn update_latch(&mut self, channel: usize, width: u8, value: u32) {
@@ -216,6 +234,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.prev_dst = 0;
         dma.delay = 0;
         dma.stalled = false;
+        dma.completing = false;
+        dma.completion_interrupt = false;
         if timing(dma.control) == DmaTrigger::Immediate {
             dma.pending = 4;
             dma.active = false;
@@ -225,6 +245,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.pending = 0;
         dma.delay = 0;
         dma.stalled = false;
+        dma.completing = false;
+        dma.completion_interrupt = false;
     }
 }
 
@@ -234,6 +256,8 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.pending = 0;
     dma.delay = 0;
     dma.stalled = false;
+    dma.completing = false;
+    dma.completion_interrupt = false;
     if repeat {
         dma.remaining = effective_count(channel, dma.count);
         dma.is_first = true;
@@ -285,7 +309,11 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16) -> u8 {
     match address {
         0x00000000..=0x00003FFF => 1,
         0x02000000..=0x02FFFFFF => {
-            if width == 4 { 6 } else { 3 }
+            if width == 4 {
+                6
+            } else {
+                3
+            }
         }
         0x03000000..=0x03FFFFFF => 1,
         0x04000000..=0x040003FE => 1,
@@ -364,7 +392,14 @@ mod tests {
             }
         }
         let second = second.expect("second transfer should complete");
-        assert!(second.interrupt);
+        assert!(!second.interrupt);
+        for _ in 0..30 {
+            if !dma.is_active() {
+                break;
+            }
+            dma.step(0);
+        }
+        assert_eq!(dma.take_completion_interrupts(), 1 << (8 + second.channel));
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
     }
 }
