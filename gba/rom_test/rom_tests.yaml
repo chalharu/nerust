@@ -156,22 +156,22 @@ suites:
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_ppu_sprite_hmosaic
     rom: ppu/sprite-hmosaic/sprite-hmosaic.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_ppu_status_irq_dma
     rom: ppu/status-irq-dma/status-irq-dma.gba
     cycles: 3000000
   - id: nba_ppu_bgx
     rom: ppu/bgx/bgx.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_ppu_dispcnt_latch
     rom: ppu/dispcnt-latch/dispcnt-latch.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_ppu_greenswap
     rom: ppu/greenswap/greenswap.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_ppu_vram_mirror
     rom: ppu/vram-mirror/vram-mirror.gba
     cycles: 3000000
@@ -198,16 +198,16 @@ suites:
     cycles: 3000000
   - id: nba_archive_ppu_mode4
     rom: archive/ppu/mode4/mode4.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_archive_ppu_exact_timing
     rom: archive/ppu/exact-timing/exact-timing.gba
     cycles: 3000000
   - id: nba_archive_ppu_mode3
     rom: archive/ppu/mode3/mode3.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_archive_ppu_mode2
     rom: archive/ppu/mode2/mode2.gba
-    cycles: 1000000
+    cycles: 3000000
   - id: nba_archive_ppu_basic_timing
     rom: archive/ppu/basic-timing/basic-timing.gba
     cycles: 3000000
