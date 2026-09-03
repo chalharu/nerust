@@ -94,7 +94,7 @@ impl GbaMemoryBus {
             ie: 0,
             sif: 0,
             ime: false,
-            postflg: 0,
+            postflg: 1,
             haltcnt: 0,
             keyinput: 0x03FF,
             keycnt: 0,
@@ -757,9 +757,14 @@ impl GbaMemoryBus {
             return;
         }
         if width > 1 && addr == 0x04000300 {
-            self.postflg = value as u8;
+            if value & 1 != 0 {
+                self.postflg = 1;
+            }
             self.haltcnt = (value >> 8) as u8;
             self.open_bus_value = value;
+            if (value >> 8) & 1 == 0 {
+                self.enter_halt(self.ie);
+            }
             return;
         }
         if width == 4 {
@@ -770,13 +775,18 @@ impl GbaMemoryBus {
         if width == 1 {
             match addr {
                 0x04000300 => {
-                    self.postflg = value as u8;
+                    if value & 1 != 0 {
+                        self.postflg = 1;
+                    }
                     self.open_bus_value = value;
                     return;
                 }
                 0x04000301 => {
                     self.haltcnt = value as u8;
                     self.open_bus_value = value;
+                    if value & 1 == 0 {
+                        self.enter_halt(self.ie);
+                    }
                     return;
                 }
                 _ => {}
@@ -871,7 +881,7 @@ impl GbaMemoryBus {
     }
 
     fn apply_haltcnt_write(&mut self, addr: u32, width: u8, value: u32) {
-        if width > 1 && addr == 0x04000300 && value & 0x8000 == 0 {
+        if width > 1 && addr == 0x04000300 && (value >> 8) & 1 == 0 {
             self.enter_halt(self.ie);
         }
     }
@@ -1103,11 +1113,18 @@ mod tests {
     #[test]
     fn haltcnt_byte_access_and_interrupt_wakeup() {
         let mut bus = GbaMemoryBus::new();
-        bus.write8(0x04000301, 0x80);
-        assert_eq!(bus.read8(0x04000301), 0x80);
-        assert_eq!(bus.read8(0x04000300), 0);
+        // Writing 0x81 to HALTCNT: bit 0 = 1 means "Normal" (no halt)
+        bus.write8(0x04000301, 0x81);
+        assert_eq!(bus.read8(0x04000301), 0x81);
+        assert_eq!(bus.read8(0x04000300), 1);
         assert!(!bus.is_halted());
 
+        // Writing 0x80 to HALTCNT: bit 0 = 0 means "Enter HALT state"
+        bus.write8(0x04000301, 0x80);
+        assert!(bus.is_halted());
+
+        // Test interrupt wakeup from halt
+        let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000200, 1);
         bus.enter_halt(1);
         bus.request_interrupt(1);
@@ -1118,12 +1135,20 @@ mod tests {
     #[test]
     fn hle_bios_haltcnt_write_enters_halt() {
         let mut bus = GbaMemoryBus::new();
+        // write16 of 0x0001: POSTFLG=1, HALTCNT=0 (bit0=0 → halt)
         bus.write16(0x04000300, 0x0001);
 
         assert_eq!(bus.read8(0x04000300), 1);
         assert_eq!(bus.read8(0x04000301), 0);
+        assert!(bus.is_halted());
+
+        let mut bus = GbaMemoryBus::new();
+        // write16 of 0x0101: POSTFLG=1, HALTCNT=1 (bit0=1 → no halt)
+        bus.write16(0x04000300, 0x0101);
         assert!(!bus.is_halted());
 
+        // HLE BIOS writes should also trigger halt
+        let mut bus = GbaMemoryBus::new();
         bus.write_hle_bios16(0x04000300, 0x0001);
         assert!(bus.is_halted());
 
