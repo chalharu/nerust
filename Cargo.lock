@@ -1436,7 +1436,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25f420376dbee041b2db374ce4573892a36222bb3f6c0c43e24f0d67eae9b646"
 dependencies = [
  "gdk-pixbuf-sys 0.22.9",
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "libc",
 ]
@@ -1493,7 +1493,7 @@ dependencies = [
  "cairo-rs 0.22.9",
  "gdk-pixbuf 0.22.0",
  "gdk4-sys",
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "libc",
  "pango 0.22.9",
@@ -1507,7 +1507,7 @@ checksum = "42afa6569445e74c7a580eda5c1d0e9adbc9760ef5f05d9ceff46c77469c5c00"
 dependencies = [
  "gdk4",
  "gdk4-macos-sys",
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "libc",
 ]
@@ -1561,7 +1561,7 @@ dependencies = [
  "cairo-rs 0.22.9",
  "gdk4",
  "gdk4-win32-sys",
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "libc",
 ]
@@ -1685,9 +1685,9 @@ dependencies = [
 
 [[package]]
 name = "gio"
-version = "0.22.8"
+version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b3e1f669909c326b9413bde5a742097b8c90a7d78f45326db13668984769ded"
+checksum = "b399f4650bb52c051f3fdf49a234e8a27ab5725c8cd774556c55eee64b2c0350"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2075,7 +2075,7 @@ dependencies = [
  "futures-channel",
  "gdk-pixbuf 0.22.0",
  "gdk4",
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "graphene-rs",
  "gsk4",
@@ -3058,7 +3058,7 @@ dependencies = [
  "gdk4-wayland-sys",
  "gdk4-win32",
  "gdk4-x11-sys",
- "gio 0.22.8",
+ "gio 0.22.9",
  "gtk4",
  "log",
  "nerust_core_traits",
@@ -3997,7 +3997,7 @@ version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b2022dbbd82e1c42bd950a6f1df9b98c796e725dce5ec275e03cbf9772e4efa"
 dependencies = [
- "gio 0.22.8",
+ "gio 0.22.9",
  "glib 0.22.9",
  "pango-sys 0.22.9",
 ]
