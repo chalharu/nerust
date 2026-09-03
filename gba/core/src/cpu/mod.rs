@@ -69,6 +69,7 @@ impl GbaCpu {
         }
         self.pipeline = [0; 2];
         bus.set_current_pc(target);
+        bus.invalidate_prefetch_for_dma(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         true
     }
@@ -105,6 +106,7 @@ impl GbaCpu {
             }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
+            bus.invalidate_prefetch_for_dma(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(4));
@@ -123,6 +125,7 @@ impl GbaCpu {
         if self.regs.take_pc_written() {
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
+            bus.invalidate_prefetch_for_dma(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         } else {
             self.regs.set_pc(pc.wrapping_add(2));

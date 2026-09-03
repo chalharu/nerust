@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
@@ -64,6 +65,7 @@ pub struct GbaMemoryBus {
     bios_read_seq: usize,
     scheduler: EventScheduler,
     current_tcycle: u64,
+    hle_bios: Option<HleBiosOperation>,
 }
 
 impl GbaMemoryBus {
@@ -118,6 +120,7 @@ impl GbaMemoryBus {
             bios_read_seq: 0,
             scheduler: EventScheduler::new(),
             current_tcycle: 0,
+            hle_bios: None,
         }
     }
 
@@ -177,6 +180,25 @@ impl GbaMemoryBus {
         self.apply_haltcnt_write(addr, 4, value);
     }
 
+    pub(crate) fn start_hle_bios(&mut self, operation: HleBiosOperation) {
+        debug_assert!(self.hle_bios.is_none());
+        self.hle_bios = Some(operation);
+    }
+
+    pub(crate) fn hle_bios_active(&self) -> bool {
+        self.hle_bios.is_some()
+    }
+
+    pub(crate) fn step_hle_bios(&mut self) -> u32 {
+        self.take_access_wait_cycles();
+        let mut operation = self.hle_bios.take().expect("active HLE BIOS operation");
+        let step = operation.step(self);
+        if !step.complete {
+            self.hle_bios = Some(operation);
+        }
+        step.cycles + self.take_access_wait_cycles()
+    }
+
     pub fn fetch16(&mut self, addr: u32) -> u16 {
         self.read16(addr)
     }
@@ -207,7 +229,7 @@ impl GbaMemoryBus {
                 {
                     if width == 4 { 2 } else { 1 }
                 } else {
-                    self.gamepak_rom_cycles(addr, width)
+                    self.gamepak_rom_cycles(addr, width, self.is_sequential(addr, width))
                 }
             }
             0x0E000000..=0x0FFFFFFF => {
@@ -215,6 +237,13 @@ impl GbaMemoryBus {
                 SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
             }
             _ => 1,
+        }
+    }
+
+    pub(crate) fn nonsequential_cycles_for(&self, addr: u32, width: u8) -> u8 {
+        match addr {
+            0x08000000..=0x0DFFFFFF => self.gamepak_rom_cycles(addr, width, false),
+            _ => self.cycles_for(addr, width),
         }
     }
 
@@ -280,6 +309,7 @@ impl GbaMemoryBus {
                 interrupt_mask |= 1 << (8 + transfer.channel);
             }
         }
+        interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
             self.request_interrupt(interrupt_mask);
         }
@@ -414,7 +444,7 @@ impl GbaMemoryBus {
         }
     }
 
-    fn gamepak_rom_cycles(&self, addr: u32, width: u8) -> u8 {
+    fn gamepak_rom_cycles(&self, addr: u32, width: u8, sequential: bool) -> u8 {
         const FIRST: [u8; 4] = [4, 3, 2, 8];
         let (first_shift, second_shift, second_slow) = match addr {
             0x08000000..=0x09FFFFFF => (2, 4, 2),
@@ -427,10 +457,10 @@ impl GbaMemoryBus {
         } else {
             1
         };
-        if self.is_sequential(addr, width) {
-            second * if width == 4 { 2 } else { 1 }
+        if sequential {
+            second * if width == 4 { 2 } else { 1 } + if width == 4 { 2 } else { 0 }
         } else if width == 4 {
-            first + second
+            first + second + 2
         } else {
             first
         }
@@ -516,7 +546,7 @@ impl GbaMemoryBus {
         if self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&dma_addr) {
             self.prefetch_queue.clear();
         }
-        self.prev_addr = Some(dma_addr);
+        self.prev_addr = None;
         self.prev_width = 0;
     }
 
@@ -570,11 +600,8 @@ impl GbaMemoryBus {
                 self.open_bus_value = value;
             }
         }
-        // 非ROMへの書き込みでプリフェッチはフラッシュしない（ROM連続性のみで判定）
-        if (0x08000000..=0x0DFFFFFF).contains(&addr) {
-            self.prev_addr = Some(addr);
-            self.prev_width = width;
-        }
+        self.prev_addr = Some(addr);
+        self.prev_width = width;
     }
 
     // -- Region readers --
@@ -1012,7 +1039,7 @@ mod tests {
     fn waitcnt_rom_ws() {
         let bus = GbaMemoryBus::new();
         assert_eq!(bus.cycles_for(0x08000000, 2), 4);
-        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
+        assert_eq!(bus.cycles_for(0x08000000, 4), 8);
     }
 
     #[test]
@@ -1021,7 +1048,7 @@ mod tests {
         bus.write16(0x04000204, 1 << 14); // prefetch enable
         assert!(bus.prefetch_enabled);
         // 非連続 → 通常 wait
-        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
+        assert_eq!(bus.cycles_for(0x08000000, 4), 8);
         // 連続読みでプリフェッチキューが貯まる
         let _ = bus.read32(0x08000000);
         // 次の連続アドレスはプリフェッチヒットで 1 cycle
@@ -1029,6 +1056,15 @@ mod tests {
         bus.write16(0x04000204, 0); // disable clears queue
         assert!(!bus.prefetch_enabled);
         assert!(bus.prefetch_queue.is_empty());
+    }
+
+    #[test]
+    fn pipeline_flush_makes_next_gamepak_access_nonsequential() {
+        let mut bus = GbaMemoryBus::new();
+        bus.read32(0x08000000);
+        bus.invalidate_prefetch_for_dma(0x08000004);
+
+        assert_eq!(bus.cycles_for(0x08000004, 4), 8);
     }
 
     #[test]
@@ -1160,16 +1196,17 @@ mod tests {
         bus.write32(0x040000D4, 0x03000000);
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
-        // Immediate DMA has 3-cycle pending (CPU can run) plus transfer wait
-        let mut done = false;
-        for _ in 0..30 {
+        // Memory is sampled after the 3 CPU-visible startup cycles. The DMA
+        // channel remains active for the transfer cycles after this access.
+        for _ in 0..3 {
             bus.tick();
-            if bus.read32(0x02000000) == 0xDEADBEEF {
-                done = true;
-                break;
-            }
+            assert_eq!(bus.read32(0x02000000), 0);
         }
-        assert!(done);
+        bus.tick();
+        assert_eq!(bus.read32(0x02000000), 0xDEADBEEF);
+        while bus.dma_active() {
+            bus.tick();
+        }
         assert_eq!(bus.read16(0x040000DE) & 0x8000, 0);
     }
 
