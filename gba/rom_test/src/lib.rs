@@ -50,32 +50,6 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn generate_nba_haltcnt_reference() {
-        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rom_tests.yaml");
-        let manifest = super::manifest::RomManifest::load(&manifest_path).expect("manifest must be valid");
-        let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
-        let refs_dir = rom_root.join("nba-emu_hw-test/refs");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-
-        let selected = manifest.select(&["nba_haltcnt".to_string()]);
-        assert!(!selected.is_empty(), "nba_haltcnt not found");
-        let result = super::runner::run_case(&selected[0], &rom_root, Some(&rom_root), false);
-        assert!(result.error.is_none(), "Test failed: {:?}", result.error);
-        for check in &result.checks {
-            println!("check: {} passed={} expected={} actual={}", check.name, check.passed, check.expected, check.actual);
-        }
-        if let Some(screenshot) = &result.screenshot {
-            let src = rom_root.join("screenshots").join(screenshot);
-            let dst = refs_dir.join("nba_haltcnt.png");
-            std::fs::copy(&src, &dst).unwrap();
-            println!("Saved reference image to {:?}", dst);
-        } else {
-            panic!("No screenshot saved");
-        }
-    }
-
-    #[test]
-    #[ignore]
     fn generate_armwrestler_references() {
         let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rom_tests.yaml");
         let manifest = super::manifest::RomManifest::load(&manifest_path).expect("manifest must be valid");
