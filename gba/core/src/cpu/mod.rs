@@ -17,6 +17,7 @@ pub struct GbaCpu {
     regs: CpuRegisters,
     pipeline: [u32; 2],
     irq_return_address: Option<u32>,
+    irq_saved_registers: Option<[u32; 5]>,
 }
 
 impl GbaCpu {
@@ -25,6 +26,7 @@ impl GbaCpu {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
             irq_return_address: None,
+            irq_saved_registers: None,
         }
     }
 
@@ -35,6 +37,7 @@ impl GbaCpu {
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
         self.irq_return_address = None;
+        self.irq_saved_registers = None;
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
@@ -60,11 +63,22 @@ impl GbaCpu {
         } else {
             0x00000018
         };
-        let return_address = self.regs.pc().wrapping_add(4);
+        let resume_address = self
+            .regs
+            .pc()
+            .wrapping_sub(if self.regs.cpsr_t() { 4 } else { 8 });
+        let exception_return_address = resume_address.wrapping_add(4);
         self.regs
-            .enter_exception(0x12, target, return_address, true);
+            .enter_exception(0x12, target, exception_return_address, true);
         if target != 0x00000018 {
-            self.irq_return_address = Some(return_address);
+            self.irq_return_address = Some(resume_address);
+            self.irq_saved_registers = Some([
+                self.regs.r(0),
+                self.regs.r(1),
+                self.regs.r(2),
+                self.regs.r(3),
+                self.regs.r(12),
+            ]);
             self.regs.set_lr(HLE_IRQ_RETURN_TRAMPOLINE);
         }
         self.pipeline = [0; 2];
@@ -102,6 +116,11 @@ impl GbaCpu {
                 && let Some(return_address) = self.irq_return_address.take()
             {
                 self.regs.set_cpsr(self.regs.spsr());
+                if let Some(saved) = self.irq_saved_registers.take() {
+                    for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
+                        self.regs.set_r(register, value);
+                    }
+                }
                 self.regs.set_pc(return_address);
             }
             self.pipeline = [0; 2];
@@ -230,11 +249,17 @@ mod tests {
     fn irq_enters_vector_with_banked_state() {
         let mut cpu = GbaCpu::post_bios();
         let mut bus = GbaMemoryBus::new();
+        let start = 0x02000000;
+        bus.write32(start, 0xE3A00001); // MOV R0,#1
+        cpu.regs.set_pc(start);
+        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+        bus.take_access_wait_cycles();
         bus.write16(0x04000200, 1 << 3);
         bus.write16(0x04000208, 1);
         bus.request_interrupt(1 << 3);
         bus.write32(0x03007FFC, 0x03000000);
-        bus.write32(0x03000000, 0xE1A0_F00E); // MOV PC,LR
+        bus.write32(0x03000000, 0xE3A00002); // MOV R0,#2
+        bus.write32(0x03000004, 0xE1A0_F00E); // MOV PC,LR
         assert!(cpu.service_irq(&mut bus));
         assert_eq!(cpu.regs.cpsr_mode(), 0x12);
         assert_ne!(cpu.regs.cpsr() & (1 << 7), 0);
@@ -243,7 +268,12 @@ mod tests {
         assert_eq!(cpu.regs.lr(), HLE_IRQ_RETURN_TRAMPOLINE);
 
         cpu.step(&mut bus);
+        assert_eq!(cpu.regs.r(0), 2);
+        cpu.step(&mut bus);
         assert_eq!(cpu.regs.cpsr_mode(), 0x1F);
-        assert_eq!(cpu.regs.pc(), 0x0800000C);
+        assert_eq!(cpu.regs.pc(), start + 8);
+        assert_eq!(cpu.regs.r(0), 0);
+        cpu.step(&mut bus);
+        assert_eq!(cpu.regs.r(0), 1);
     }
 }

@@ -111,8 +111,14 @@ impl GbaPpu {
     pub fn step(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) -> PpuEvent {
         let mut event = PpuEvent::default();
         self.cycle += 1;
-        if self.cycle == HDRAW_CYCLES {
-            self.handle_hdraw(vram, palette, oam);
+        if self.vcount < HEIGHT as u16 && self.cycle <= HDRAW_CYCLES && self.cycle % 4 == 0 {
+            self.render_pixel(
+                self.cycle as usize / 4 - 1,
+                self.vcount as usize,
+                vram,
+                palette,
+                oam,
+            );
         }
         if self.cycle == HBLANK_FLAG_CYCLES {
             self.handle_hblank_flag(&mut event);
@@ -121,12 +127,6 @@ impl GbaPpu {
             self.handle_line_end(&mut event);
         }
         event
-    }
-
-    fn handle_hdraw(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) {
-        if self.vcount < HEIGHT as u16 {
-            self.render_scanline(self.vcount as usize, vram, palette, oam);
-        }
     }
 
     fn handle_hblank_flag(&mut self, event: &mut PpuEvent) {
@@ -289,57 +289,54 @@ impl GbaPpu {
         }
     }
 
-    fn render_scanline(&mut self, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
+    fn render_pixel(&mut self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
         if self.registers.dispcnt & (1 << 7) != 0 {
-            self.frame[y * WIDTH..(y + 1) * WIDTH].fill(color::rgba8888(0x7FFF));
+            self.frame[y * WIDTH + x] = color::rgba8888(0x7FFF);
             return;
         }
-        for x in 0..WIDTH {
-            let mask = self.window_mask(x, y, vram, palette, oam);
-            let mut layers = Vec::with_capacity(6);
-            layers.push(LayerPixel {
-                color: color::read_color(palette, 0),
-                priority: 4,
-                layer: 5,
-                semi_transparent: false,
-            });
-            for bg_index in 0..4 {
-                if self.registers.dispcnt & (1 << (8 + bg_index)) != 0
-                    && mask & (1 << bg_index) != 0
-                    && let Some(pixel) = bg::pixel(
-                        &self.registers,
-                        (self.internal_x, self.internal_y),
-                        (vram, palette),
-                        bg_index,
-                        x,
-                        y,
-                    )
-                {
-                    layers.push(pixel);
-                }
-            }
-            if self.registers.dispcnt & (1 << 12) != 0
-                && mask & (1 << 4) != 0
-                && let Some(pixel) = obj::pixel(&self.registers, vram, palette, oam, x, y, false)
+        let mask = self.window_mask(x, y, vram, palette, oam);
+        let mut layers = Vec::with_capacity(6);
+        layers.push(LayerPixel {
+            color: color::read_color(palette, 0),
+            priority: 4,
+            layer: 5,
+            semi_transparent: false,
+        });
+        for bg_index in 0..4 {
+            if self.registers.dispcnt & (1 << (8 + bg_index)) != 0
+                && mask & (1 << bg_index) != 0
+                && let Some(pixel) = bg::pixel(
+                    &self.registers,
+                    (self.internal_x, self.internal_y),
+                    (vram, palette),
+                    bg_index,
+                    x,
+                    y,
+                )
             {
                 layers.push(pixel);
             }
-            layers.sort_by_key(|pixel| (pixel.priority, layer_rank(pixel.layer)));
-            let top = layers[0];
-            let second = layers.get(1).copied();
-            let effects_enabled = mask & (1 << 5) != 0;
-            let output = self.apply_effect(top, second, effects_enabled);
-            let final_color = if self.registers.greenswap & 1 != 0 {
-                // undocumented green swap: exchange G and B
-                let r = output & 0x001F;
-                let g = (output & 0x03E0) << 5;
-                let b = (output & 0x7C00) >> 5;
-                r | g | b
-            } else {
-                output
-            };
-            self.frame[y * WIDTH + x] = color::rgba8888(final_color);
         }
+        if self.registers.dispcnt & (1 << 12) != 0
+            && mask & (1 << 4) != 0
+            && let Some(pixel) = obj::pixel(&self.registers, vram, palette, oam, x, y, false)
+        {
+            layers.push(pixel);
+        }
+        layers.sort_by_key(|pixel| (pixel.priority, layer_rank(pixel.layer)));
+        let top = layers[0];
+        let second = layers.get(1).copied();
+        let effects_enabled = mask & (1 << 5) != 0;
+        let output = self.apply_effect(top, second, effects_enabled);
+        let final_color = if self.registers.greenswap & 1 != 0 {
+            let r = output & 0x001F;
+            let g = (output & 0x03E0) << 5;
+            let b = (output & 0x7C00) >> 5;
+            r | g | b
+        } else {
+            output
+        };
+        self.frame[y * WIDTH + x] = color::rgba8888(final_color);
     }
 
     fn apply_effect(&self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
