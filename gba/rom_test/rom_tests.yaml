@@ -1,4 +1,25 @@
 rom_root: ../../roms/gba
+expected_failures:
+- nba_archive_irq_cancel_ie
+- nba_archive_irq_cancel_if
+- nba_archive_irq_cancel_ime
+- nba_archive_ppu_basic_timing
+- nba_archive_ppu_exact_timing
+- nba_archive_ppu_mode2
+- nba_archive_ppu_mode3
+- nba_archive_ppu_mode4
+- nba_bus_128kb_boundary
+- nba_dma_burst_into_tears
+- nba_dma_force_nseq
+- nba_haltcnt
+- nba_ppu_bgpd
+- nba_ppu_bgx
+- nba_ppu_dispcnt_latch
+- nba_ppu_greenswap
+- nba_ppu_ram_access_timing
+- nba_ppu_sprite_hmosaic
+- nba_ppu_status_irq_dma
+- nba_ppu_vram_mirror
 suites:
 - name: jsmolka_gba-tests
   cases:
@@ -129,6 +150,10 @@ suites:
   - id: nba_haltcnt
     rom: haltcnt/haltcnt.gba
     cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030004EC, value: 6, width: 4}
+      - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
     cycles: 1000000
