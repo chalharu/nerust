@@ -235,8 +235,14 @@ pub fn verify_reference(
     let height = frame.height;
     let expected = expected_label.to_string();
 
-    // 実機写真 (4000x3000等) は headlessの正解にしない。240x160以外はスキップ
+    // 実機写真 (4000x3000等) はpixel比較できないが、未検証をpassにはしない。
     if rw != width || rh != height {
+        checks.push(CheckResult {
+            name: "reference dimensions".to_string(),
+            expected: format!("{}x{}", width, height),
+            actual: format!("{}x{}", rw, rh),
+            passed: false,
+        });
         return Ok(None);
     }
 
@@ -348,5 +354,23 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
+    }
+
+    #[test]
+    fn rejects_reference_with_incomparable_dimensions() {
+        let reference = crate::media::encode_rgba_png(1, 1, &[0, 0, 0, 0xFF]).unwrap();
+        let frame = FramePixels {
+            rgba: &[0, 0, 0, 0xFF, 0, 0, 0, 0xFF],
+            width: 2,
+            height: 1,
+        };
+        let mut checks = Vec::new();
+
+        let diff = verify_reference(&frame, &reference, "reference.png", &mut checks).unwrap();
+
+        assert!(diff.is_none());
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "reference dimensions");
+        assert!(!checks[0].passed);
     }
 }

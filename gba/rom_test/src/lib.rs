@@ -21,19 +21,23 @@ fn run_generated_manifest_case(id: &str) {
 #[cfg(test)]
 fn assert_case_passed(result: report::CaseResult) {
     assert!(
-        result.passed,
+        !result.unexpected(),
         "{}: {}",
         result.id,
-        result.error.unwrap_or_else(|| result
-            .checks
-            .iter()
-            .filter(|check| !check.passed)
-            .map(|check| format!(
-                "{}: expected {}, got {}",
-                check.name, check.expected, check.actual
-            ))
-            .collect::<Vec<_>>()
-            .join("; "))
+        if result.passed {
+            "expected failure unexpectedly passed".to_string()
+        } else {
+            result.error.unwrap_or_else(|| result
+                .checks
+                .iter()
+                .filter(|check| !check.passed)
+                .map(|check| format!(
+                    "{}: expected {}, got {}",
+                    check.name, check.expected, check.actual
+                ))
+                .collect::<Vec<_>>()
+                .join("; "))
+        }
     );
 }
 
