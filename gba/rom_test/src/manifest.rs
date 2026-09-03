@@ -45,6 +45,8 @@ pub struct RomCase {
     /// Per-case reference image path (relative to suite dir). Overrides ROM-based resolution.
     #[serde(default)]
     pub reference: Option<String>,
+    #[serde(default)]
+    pub skip_screenshot: bool,
 }
 
 /// キー入力イベント。GBC の inputs 仕様と同一。
@@ -104,6 +106,8 @@ pub struct RomCasePattern {
     pub completion: Option<String>,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub skip_screenshot: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +181,7 @@ impl RomManifest {
                     verify: pattern.verify.clone(),
                     inputs: Vec::new(),
                     reference: None,
+                    skip_screenshot: pattern.skip_screenshot,
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));

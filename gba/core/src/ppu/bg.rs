@@ -156,7 +156,7 @@ fn bitmap_pixel(
 use crate::ppu::mosaic::bg_mosaic;
 
 fn read16(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([data[offset], data[offset + 1]]) & 0x7FFF
+    u16::from_le_bytes([data[offset], data[offset + 1]])
 }
 
 enum BgKind {
