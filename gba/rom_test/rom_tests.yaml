@@ -19,7 +19,7 @@ expected_failures:
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
-- nba_ppu_vram_mirror
+
 suites:
 - name: jsmolka_gba-tests
   cases:
@@ -175,6 +175,10 @@ suites:
   - id: nba_ppu_vram_mirror
     rom: ppu/vram-mirror/vram-mirror.gba
     cycles: 60000000
+    verify:
+      memory:
+      - {address: 0x030003F4, value: 0x0A, width: 4}
+      - {address: 0x030003F8, value: 0x0A, width: 4}
   - id: nba_ppu_ram_access_timing
     rom: ppu/ram-access-timing/ram-access-timing.gba
     cycles: 3000000
