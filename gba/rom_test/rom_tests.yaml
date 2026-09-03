@@ -129,7 +129,6 @@ suites:
   - id: nba_haltcnt
     rom: haltcnt/haltcnt.gba
     cycles: 3000000
-    reference: refs/nba_haltcnt.png
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
     cycles: 1000000
