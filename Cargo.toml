@@ -186,7 +186,7 @@ objc2-app-kit = { default-features = false, features = [
 objc2-quartz-core = { default-features = false, features = [
   "objc2-core-foundation",
 ], version = "=0.3.2" }
-open = { version = "=5.4.2" }
+open = { version = "=5.4.3" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
