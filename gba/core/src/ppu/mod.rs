@@ -495,13 +495,16 @@ mod tests {
         let mut palette = vec![0; 0x400];
         let mut oam = vec![0; 0x400];
         vram[0] = 1;
+        vram[0xF802..0xF804].copy_from_slice(&0xF000u16.to_le_bytes());
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+        palette[0x1E2..0x1E4].copy_from_slice(&0x7FFFu16.to_le_bytes());
         ppu.write_register(0x04000000, 1 << 8);
         ppu.write_register(0x04000008, 31 << 8);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[8].to_le_bytes(), [255, 255, 255, 255]);
 
         let mut ppu = GbaPpu::new();
         vram[0x10000] = 1;

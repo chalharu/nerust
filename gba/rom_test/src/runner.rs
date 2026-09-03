@@ -125,8 +125,12 @@ fn run_case_inner(
     let rendered = render_frame(&system)?;
     if let Some(dir) = artifacts_dir {
         let name = format!("{}.png", selected.case.id);
-        save_screenshot(&rendered.png, dir, "screenshots", &name)?;
-        acc.screenshot = Some(name);
+        if selected.case.skip_screenshot {
+            let _ = std::fs::remove_file(dir.join("screenshots").join(&name));
+        } else {
+            save_screenshot(&rendered.png, dir, "screenshots", &name)?;
+            acc.screenshot = Some(name);
+        }
     }
 
     // Verify reference if present (check for .png next to rom)
@@ -226,7 +230,7 @@ fn verify_reference_if_present(
     acc: &mut CaseAccumulator,
 ) -> Result<(), RomTestError> {
     let suite_dir = rom_root.join(&selected.suite.name);
-    
+
     // Check for per-case reference first (highest priority)
     let ref_path = if let Some(ref_ref) = &selected.case.reference {
         let case_ref = suite_dir.join(ref_ref);
@@ -240,8 +244,14 @@ fn verify_reference_if_present(
         let rom_path = suite_dir.join(&selected.case.rom);
         let ref_path = rom_path.with_extension("png");
         // Also try expected.png / expected.jpg in same dir as ROM (for nba-emu)
-        let alt_png = rom_path.parent().map(|d| d.join("expected.png")).unwrap_or_default();
-        let alt_jpg = rom_path.parent().map(|d| d.join("expected.jpg")).unwrap_or_default();
+        let alt_png = rom_path
+            .parent()
+            .map(|d| d.join("expected.png"))
+            .unwrap_or_default();
+        let alt_jpg = rom_path
+            .parent()
+            .map(|d| d.join("expected.jpg"))
+            .unwrap_or_default();
         if ref_path.exists() {
             Some(ref_path)
         } else if alt_png.exists() {
@@ -353,6 +363,7 @@ mod tests {
             },
             inputs: Vec::new(),
             reference: None,
+            skip_screenshot: false,
         };
         let selected = SelectedCase {
             suite: &suite,
@@ -375,6 +386,10 @@ mod tests {
         rom[0..4].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
         finalize_test_gba_rom(&mut rom);
         std::fs::write(suite_dir.join("unchecked.gba"), rom).unwrap();
+        let screenshots = root.join("screenshots");
+        std::fs::create_dir_all(&screenshots).unwrap();
+        let stale_screenshot = screenshots.join("synthetic_unchecked.png");
+        std::fs::write(&stale_screenshot, b"stale").unwrap();
 
         let suite = crate::manifest::RomSuite {
             name: "synthetic".into(),
@@ -390,15 +405,18 @@ mod tests {
             verify: VerifySpec::default(),
             inputs: Vec::new(),
             reference: None,
+            skip_screenshot: true,
         };
         let selected = SelectedCase {
             suite: &suite,
             case: &case,
             completion: None,
         };
-        let result = run_case(&selected, &root, None, false);
-        let _ = std::fs::remove_dir_all(&root);
+        let result = run_case(&selected, &root, Some(&root), false);
         assert!(!result.passed);
         assert_eq!(result.checks[0].name, "verification");
+        assert!(result.screenshot.is_none());
+        assert!(!stale_screenshot.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

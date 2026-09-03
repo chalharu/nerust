@@ -120,7 +120,7 @@ suites:
       - {address: 0x03000150, value: 4, width: 4}
   - id: nba_timer_reload
     rom: timer/reload/reload.gba
-    cycles: 2000000
+    cycles: 3000000
     verify:
       memory:
       - {address: 0x03000424, value: 7, width: 4}
@@ -174,7 +174,7 @@ suites:
     cycles: 3000000
   - id: nba_ppu_vram_mirror
     rom: ppu/vram-mirror/vram-mirror.gba
-    cycles: 3000000
+    cycles: 60000000
   - id: nba_ppu_ram_access_timing
     rom: ppu/ram-access-timing/ram-access-timing.gba
     cycles: 3000000
@@ -328,27 +328,36 @@ suites:
   - id: PeterLemon_DCTBlockDecode
     rom: Compress/DCT/DCTBlockDecode/DCTBlockDecode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_FastDCTBlockDecode
     rom: Compress/DCT/FastDCTBlockDecode/FastDCTBlockDecode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_FastQuantizationBlockDecode
     rom: Compress/DCT/FastQuantizationBlockDecode/FastQuantizationBlockDecode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_HUFF8Decode
     rom: Compress/HUFFMAN/HUFF8Decode/HUFF8Decode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_LZ77Decode
     rom: Compress/LZ77/LZ77Decode/LZ77Decode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_QuantizationBlockDecode
     rom: Compress/DCT/QuantizationBlockDecode/QuantizationBlockDecode.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_SoundBRRMonoSingleShot
     rom: Sound/BRR/SingleShot/MONO/SoundBRRMonoSingleShot.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_SoundPCMMono
     rom: Sound/PCM/Mono/SoundPCMMono.gba
     cycles: 1000000
+    skip_screenshot: true
   - id: PeterLemon_SoundPCMStereo
     rom: Sound/PCM/Stereo/SoundPCMStereo.gba
     cycles: 1000000
+    skip_screenshot: true
