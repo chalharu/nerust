@@ -97,26 +97,14 @@ impl GbaTimers {
         (cascade, irq)
     }
 
-    fn handle_start_delay(timer: &mut TimerChannel, index: usize) -> Option<(bool, u16)> {
-        match timer.start_delay {
-            1 => {
-                timer.counter = timer.reload;
-                timer.start_delay = 0;
-                timer.reload_written = false;
-                Some((false, 0))
-            }
-            2 => {
-                timer.start_delay = 1;
-                let cascade = increment(timer);
-                let irq = if cascade && timer.control & (1 << 6) != 0 {
-                    1 << (3 + index)
-                } else {
-                    0
-                };
-                timer.reload_written = false;
-                Some((cascade, irq))
-            }
-            _ => None,
+    fn handle_start_delay(timer: &mut TimerChannel, _index: usize) -> Option<(bool, u16)> {
+        if timer.start_delay == 1 {
+            timer.counter = timer.reload;
+            timer.start_delay = 0;
+            timer.reload_written = false;
+            Some((false, 0))
+        } else {
+            None
         }
     }
 
@@ -144,7 +132,7 @@ fn write_control(timer: &mut TimerChannel, new_control: u16) {
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
-        timer.start_delay = 2;
+        timer.start_delay = 1;
         timer.divider = 0;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
@@ -186,21 +174,28 @@ mod tests {
         timers.write(0x04000104, 0);
         timers.write(0x04000106, 0x0084);
         timers.write(0x04000102, 0x00C0);
-        assert_eq!(timers.step(), 0);
-        assert_eq!(timers.read(0x04000100), Some(1));
+        // Tick 1: start_delay loads reload value
         assert_eq!(timers.step(), 0);
         assert_eq!(timers.read(0x04000100), Some(0xFFFE));
+        // Tick 2: normal counting begins (increment from reload)
         assert_eq!(timers.step(), 0);
+        assert_eq!(timers.read(0x04000100), Some(0xFFFF));
+        // Tick 3: overflow -> reload, cascade to timer 1, IRQ fired
         assert_eq!(timers.step(), 1 << 3);
         assert_eq!(timers.read(0x04000104), Some(1));
         assert_eq!(timers.read(0x04000100), Some(0xFFFE));
+        // Tick 4: normal counting
+        assert_eq!(timers.step(), 0);
+        assert_eq!(timers.read(0x04000100), Some(0xFFFF));
 
         timers.write(0x04000102, 0);
         timers.step();
         timers.write(0x04000100, 0);
         timers.write(0x04000102, 0x0081);
+        // Tick 1: start_delay loads reload value (0)
         timers.step();
-        timers.step();
+        assert_eq!(timers.read(0x04000100), Some(0));
+        // Ticks 2-64: normal counting (prescaler=64)
         for _ in 0..63 {
             timers.step();
         }
