@@ -189,6 +189,10 @@ suites:
   - id: nba_bus_128kb_boundary
     rom: bus/128kb-boundary/128kb-boundary.gba
     cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030003DC, value: 0x12, width: 4}
+      - {address: 0x030003E0, value: 0x12, width: 4}
   - id: nba_archive_irq_cancel_ie
     rom: archive/irq/cancel-irq-ie/cancel-irq-ie.gba
     cycles: 3000000
