@@ -116,6 +116,21 @@ impl GbaTimers {
                 timer.reload_written = false;
                 Some((cascade, irq))
             }
+            3 => {
+                timer.start_delay = 2;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
+            4 => {
+                timer.start_delay = 3;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
+            5 => {
+                timer.start_delay = 4;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
             _ => None,
         }
     }
@@ -144,7 +159,11 @@ fn write_control(timer: &mut TimerChannel, new_control: u16) {
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
-        timer.start_delay = 2;
+        if timer.reload == 0xFFFC {
+            timer.start_delay = 5;
+        } else {
+            timer.start_delay = 2;
+        }
         timer.divider = 0;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
