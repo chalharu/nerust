@@ -6,7 +6,6 @@ expected_failures:
 - nba_archive_ppu_mode2
 - nba_archive_ppu_mode3
 - nba_archive_ppu_mode4
-- nba_bus_128kb_boundary
 - nba_dma_burst_into_tears
 - nba_dma_force_nseq
 - nba_haltcnt
