@@ -1,6 +1,5 @@
 rom_root: ../../roms/gba
 expected_failures:
-- nba_archive_irq_cancel_ie
 - nba_archive_ppu_basic_timing
 - nba_archive_ppu_exact_timing
 - nba_archive_ppu_mode2
@@ -195,6 +194,10 @@ suites:
   - id: nba_archive_irq_cancel_ie
     rom: archive/irq/cancel-irq-ie/cancel-irq-ie.gba
     cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x08011620, value: 0x01000000, width: 4}
+      - {address: 0x08011624, value: 0x01010100, width: 4}
   - id: nba_archive_irq_cancel_if
     rom: archive/irq/cancel-irq-if/cancel-irq-if.gba
     cycles: 3000000
