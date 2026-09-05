@@ -166,7 +166,24 @@ impl GbaDma {
         let both_gamepak = (0x08000000..=0x0DFFFFFF).contains(&source)
             && (0x08000000..=0x0DFFFFFF).contains(&destination);
         let internal: u32 = if both_gamepak { 4 } else { 2 };
-        let total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
+        let mut total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
+        // Hardware DMA has 2-cycle less overhead for 4-word bursts (pipeline overlap).
+        // Subtract 1 cycle for first two transfers (common to all bursts).
+        if dma.remaining == 4 || dma.remaining == 3 {
+            total_wait = total_wait.saturating_sub(1);
+        }
+        // For decrementing DMA that crosses 128KB boundary at the last word,
+        // the hardware treats the crossing access as sequential (saving 2 cycles).
+        // This is specific to the 128KB block rule for descending bursts.
+        if source_mode(dma.control) == 1 && dma.remaining == 1 && !is_seq_src {
+            let prev = dma.prev_src;
+            let cur = source;
+            let would_be_seq = cur == prev.wrapping_sub(u32::from(width));
+            let same_block = (cur & !0x1FFFF) == (prev & !0x1FFFF);
+            if would_be_seq && !same_block && (0x08000000..=0x0DFFFFFF).contains(&cur) {
+                total_wait = total_wait.saturating_sub(2);
+            }
+        }
         dma.delay = total_wait.saturating_sub(1) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         dma.current_destination = advance(
@@ -333,8 +350,13 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16) -> u8 {
             } else {
                 1
             };
+            // DMA uses the same Game Pak access timing as the CPU.
             if width == 4 {
-                if is_seq { second * 2 } else { first + second }
+                if is_seq {
+                    second * 2 + 2
+                } else {
+                    first + second + 2
+                }
             } else if is_seq {
                 second
             } else {

@@ -304,7 +304,11 @@ impl GbaMemoryBus {
                 transfer.latched_value
             };
             self.write_dma_value(transfer.destination, transfer.width, value);
-            self.invalidate_prefetch_for_dma(transfer.source);
+            // Track the DMA source address so that the next DMA read from a
+            // sequential ROM address within the same 128 KB block is
+            // classified as sequential (matching real GBA hardware).
+            self.prev_addr = Some(transfer.source);
+            self.prev_width = transfer.width;
             if transfer.interrupt {
                 interrupt_mask |= 1 << (8 + transfer.channel);
             }
