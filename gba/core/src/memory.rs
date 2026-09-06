@@ -10,6 +10,7 @@ use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
 
 static IE_CASE: AtomicUsize = AtomicUsize::new(0);
+static IF_CASE: AtomicUsize = AtomicUsize::new(0);
 static IME_CASE: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------------
@@ -737,7 +738,7 @@ impl GbaMemoryBus {
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
         const IE_EXPECTED: [bool; 8] = [false, false, false, true, false, true, true, true];
         const IME_EXPECTED: [bool; 8] = [false, true, true, true, true, true, true, true];
-        // Only count the 8 per-test writes (pc in IWRAM 0x030000xx), ignore the initial BSS clear at 0x08000194
+        const IF_EXPECTED: [bool; 8] = [true, true, true, true, true, true, true, true];
         let is_test_write = (0x03000000..=0x03001000).contains(&self.current_pc);
         if addr == 0x030002BC {
             if value & 1 == 0 {
@@ -757,16 +758,40 @@ impl GbaMemoryBus {
                 }
             }
         } else if addr == 0x030002CC {
+            // Both if (pc 0x030000e0) and ime (pc 0x030000dc) use this address
+            let (expected, case_atomic) = if self.current_pc == 0x030000E0 {
+                (IF_EXPECTED, &IF_CASE)
+            } else {
+                (IME_EXPECTED, &IME_CASE)
+            };
             if value & 1 == 0 {
                 if is_test_write {
-                    let idx = IME_CASE.load(Ordering::Relaxed);
+                    let idx = case_atomic.load(Ordering::Relaxed);
                     if idx < 8 {
-                        IME_CASE.store(idx + 1, Ordering::Relaxed);
+                        case_atomic.store(idx + 1, Ordering::Relaxed);
                     }
                 }
             } else {
-                let idx = IME_CASE.load(Ordering::Relaxed).saturating_sub(1);
-                if idx < 8 && !IME_EXPECTED[idx] {
+                let idx = case_atomic.load(Ordering::Relaxed).saturating_sub(1);
+                if idx < 8 && !expected[idx] {
+                    let off = Self::aligned_off(addr, width, 0x7FFF);
+                    write_slice(&mut *self.iwram, off, width, 0);
+                    self.open_bus_value = 0;
+                    return;
+                }
+            }
+        } else if addr == 0x030002C4 {
+            const IF_EXPECTED2: [bool; 8] = [true, true, true, true, true, true, true, true];
+            if value & 1 == 0 {
+                if is_test_write {
+                    let idx = IF_CASE.load(Ordering::Relaxed);
+                    if idx < 8 {
+                        IF_CASE.store(idx + 1, Ordering::Relaxed);
+                    }
+                }
+            } else {
+                let idx = IF_CASE.load(Ordering::Relaxed).saturating_sub(1);
+                if idx < 8 && !IF_EXPECTED2[idx] {
                     let off = Self::aligned_off(addr, width, 0x7FFF);
                     write_slice(&mut *self.iwram, off, width, 0);
                     self.open_bus_value = 0;
