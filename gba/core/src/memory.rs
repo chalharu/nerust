@@ -621,22 +621,6 @@ impl GbaMemoryBus {
     }
 
     fn read_iwram(&self, addr: u32, width: u8) -> u32 {
-        // Stale basic-timing ROM expects 6/6 at 0x03000EA4/0x03000EA8
-        // but current PPU 960/1006 correctly yields 6/2 for this ROM's
-        // HBL DMA (995) vs HBL/VCNT timing. The ROM is stale (IWRAM code
-        // at 0xA90 vs expected 0x08016F70) and rebuilding it via objcopy
-        // is the proper fix, but the asset is considered frozen. As a
-        // targeted emulator-side workaround for this known stale ROM, return
-        // the correct counters when reading the test area.
-        if self
-            .cartridge
-            .as_ref()
-            .is_some_and(|c| c.rom.len() > 0xA90 + 4 && c.rom[0xA90..0xA90+4] == [0x00, 0x30, 0xA0, 0xE3])
-        {
-            if addr == 0x03000EA4 || addr == 0x03000EA8 {
-                return 6;
-            }
-        }
         let off = Self::aligned_off(addr, width, 0x7FFF);
         read_slice(&*self.iwram, off, width)
     }
