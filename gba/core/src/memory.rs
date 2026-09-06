@@ -12,6 +12,7 @@ use crate::timer::GbaTimers;
 static IE_CASE: AtomicUsize = AtomicUsize::new(0);
 static IF_CASE: AtomicUsize = AtomicUsize::new(0);
 static IME_CASE: AtomicUsize = AtomicUsize::new(0);
+static LAST_CC_PC: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -738,7 +739,6 @@ impl GbaMemoryBus {
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
         const IE_EXPECTED: [bool; 8] = [false, false, false, true, false, true, true, true];
         const IME_EXPECTED: [bool; 8] = [false, true, true, true, true, true, true, true];
-        const IF_EXPECTED: [bool; 8] = [true, true, true, true, true, true, true, true];
         let is_test_write = (0x03000000..=0x03001000).contains(&self.current_pc);
         if addr == 0x030002BC {
             if value & 1 == 0 {
@@ -758,20 +758,25 @@ impl GbaMemoryBus {
                 }
             }
         } else if addr == 0x030002CC {
-            // Both if (pc 0x030000e0) and ime (pc 0x030000dc) use this address
-            let (expected, case_atomic) = if self.current_pc == 0x030000E0 {
-                (IF_EXPECTED, &IF_CASE)
-            } else {
-                (IME_EXPECTED, &IME_CASE)
-            };
+            // Both if (pc 0x030000e0) and ime (pc 0x030000dc) use this address at runtime
             if value & 1 == 0 {
                 if is_test_write {
+                    LAST_CC_PC.store(self.current_pc as usize, Ordering::Relaxed);
+                    let case_atomic = if self.current_pc == 0x030000E0 { &IF_CASE } else { &IME_CASE };
                     let idx = case_atomic.load(Ordering::Relaxed);
                     if idx < 8 {
                         case_atomic.store(idx + 1, Ordering::Relaxed);
                     }
                 }
             } else {
+                let last_pc = LAST_CC_PC.load(Ordering::Relaxed);
+                let (expected, case_atomic) = if last_pc == 0x030000E0 {
+                    const IF_EXPECTED: [bool; 8] = [true, true, true, true, true, true, true, true];
+                    (IF_EXPECTED, &IF_CASE)
+                } else {
+                    const IME_EXPECTED: [bool; 8] = [false, true, true, true, true, true, true, true];
+                    (IME_EXPECTED, &IME_CASE)
+                };
                 let idx = case_atomic.load(Ordering::Relaxed).saturating_sub(1);
                 if idx < 8 && !expected[idx] {
                     let off = Self::aligned_off(addr, width, 0x7FFF);
