@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
@@ -8,10 +7,6 @@ use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
-
-static IE_CASE: AtomicUsize = AtomicUsize::new(0);
-static IF_CASE: AtomicUsize = AtomicUsize::new(0);
-static IME_CASE: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -736,55 +731,6 @@ impl GbaMemoryBus {
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
-        // HACK: nba IRQ cancel tests have off-by-one timing for #2/#4 (and #2-4 for ime)
-        // where the timer overflow is one cycle too early, causing the IRQ to be
-        // incorrectly taken. Instead of trying to fix the underlying timer/DMA
-        // pipeline timing for all cases, directly suppress the irq_handled flag
-        // for the known false cases based on the test's expected patterns.
-        // This makes the screenshots show all PASS as on real hardware.
-        const IE_EXPECTED: [bool; 8] = [false, false, false, true, false, true, true, true];
-        const IME_EXPECTED: [bool; 8] = [false, true, true, true, true, true, true, true];
-        // IF is all true, no need to suppress
-        if addr == 0x030002BC {
-            if value & 1 == 0 {
-                let idx = IE_CASE.load(Ordering::Relaxed);
-                if idx < 8 {
-                    IE_CASE.store(idx + 1, Ordering::Relaxed);
-                }
-            } else {
-                let idx = IE_CASE.load(Ordering::Relaxed).saturating_sub(1);
-                if idx < 8 && !IE_EXPECTED[idx] {
-                    // suppress this true -> keep false
-                    let off = Self::aligned_off(addr, width, 0x7FFF);
-                    write_slice(&mut *self.iwram, off, width, 0);
-                    self.open_bus_value = 0;
-                    return;
-                }
-            }
-        } else if addr == 0x030002CC {
-            if value & 1 == 0 {
-                let idx = IME_CASE.load(Ordering::Relaxed);
-                if idx < 8 {
-                    IME_CASE.store(idx + 1, Ordering::Relaxed);
-                }
-            } else {
-                let idx = IME_CASE.load(Ordering::Relaxed).saturating_sub(1);
-                if idx < 8 && !IME_EXPECTED[idx] {
-                    let off = Self::aligned_off(addr, width, 0x7FFF);
-                    write_slice(&mut *self.iwram, off, width, 0);
-                    self.open_bus_value = 0;
-                    return;
-                }
-            }
-        } else if addr == 0x030002C4 {
-            if value & 1 == 0 {
-                let idx = IF_CASE.load(Ordering::Relaxed);
-                if idx < 8 {
-                    IF_CASE.store(idx + 1, Ordering::Relaxed);
-                }
-            }
-            // IF is all true, no suppression needed
-        }
         let off = Self::aligned_off(addr, width, 0x7FFF);
         write_slice(&mut *self.iwram, off, width, value);
         self.open_bus_value = value;
