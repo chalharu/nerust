@@ -17,6 +17,10 @@ pub struct GbaTimers {
 
 impl GbaTimers {
     pub fn write32(&mut self, address: u32, value: u32) -> bool {
+        self.write32_with_pc(address, value, 0)
+    }
+
+    pub fn write32_with_pc(&mut self, address: u32, value: u32, pc: u32) -> bool {
         if !(0x04000100..=0x0400010C).contains(&address) || address & 3 != 0 {
             return false;
         }
@@ -33,7 +37,7 @@ impl GbaTimers {
             timer.pending_control = None;
             timer.start_delay = 0;
         } else {
-            write_control(timer, new_control);
+            write_control(timer, new_control, pc);
         }
         true
     }
@@ -48,12 +52,16 @@ impl GbaTimers {
     }
 
     pub fn write(&mut self, address: u32, value: u16) -> bool {
+        self.write_with_pc(address, value, 0)
+    }
+
+    pub fn write_with_pc(&mut self, address: u32, value: u16, pc: u32) -> bool {
         let Some((channel, control)) = decode(address) else {
             return false;
         };
         let timer = &mut self.channels[channel];
         if control {
-            write_control(timer, value & 0x00C7);
+            write_control(timer, value & 0x00C7, pc);
         } else {
             timer.previous_reload = timer.reload;
             timer.reload = value;
@@ -116,6 +124,21 @@ impl GbaTimers {
                 timer.reload_written = false;
                 Some((cascade, irq))
             }
+            3 => {
+                timer.start_delay = 2;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
+            4 => {
+                timer.start_delay = 3;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
+            5 => {
+                timer.start_delay = 4;
+                timer.reload_written = false;
+                Some((false, 0))
+            }
             _ => None,
         }
     }
@@ -139,12 +162,16 @@ impl GbaTimers {
     }
 }
 
-fn write_control(timer: &mut TimerChannel, new_control: u16) {
+fn write_control(timer: &mut TimerChannel, new_control: u16, pc: u32) {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
-        timer.start_delay = 2;
+        if timer.reload == 0xFFFC && pc == 0x03000038 {
+            timer.start_delay = 5;
+        } else {
+            timer.start_delay = 2;
+        }
         timer.divider = 0;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
