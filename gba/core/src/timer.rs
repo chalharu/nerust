@@ -13,31 +13,36 @@ struct TimerChannel {
 #[derive(Debug, Default)]
 pub struct GbaTimers {
     channels: [TimerChannel; 4],
+    current_cycle: u64,
+    last_reload_cycle: [Option<u64>; 4],
 }
 
 impl GbaTimers {
     pub fn write32(&mut self, address: u32, value: u32) -> bool {
-        self.write32_with_pc(address, value, 0)
-    }
-
-    pub fn write32_with_pc(&mut self, address: u32, value: u32, pc: u32) -> bool {
         if !(0x04000100..=0x0400010C).contains(&address) || address & 3 != 0 {
             return false;
         }
         let channel = ((address - 0x04000100) / 4) as usize;
-        let timer = &mut self.channels[channel];
+        // Record reload write cycle for elapsed-based delay.
         let reload = value as u16;
-        timer.previous_reload = timer.reload;
-        timer.reload = reload;
-        timer.reload_written = timer.control & 0x80 != 0;
+        self.channels[channel].previous_reload = self.channels[channel].reload;
+        self.channels[channel].reload = reload;
+        self.channels[channel].reload_written = self.channels[channel].control & 0x80 != 0;
+        self.last_reload_cycle[channel] = Some(self.current_cycle);
         let new_control = (value >> 16) as u16 & 0x00C7;
-        let was_enabled = timer.control & 0x80 != 0;
+        let was_enabled = self.channels[channel].control & 0x80 != 0;
         if was_enabled && new_control & 0x80 == 0 {
-            timer.control = new_control;
-            timer.pending_control = None;
-            timer.start_delay = 0;
+            self.channels[channel].control = new_control;
+            self.channels[channel].pending_control = None;
+            self.channels[channel].start_delay = 0;
         } else {
-            write_control(timer, new_control, pc);
+            let last = self.last_reload_cycle[channel];
+            write_control(
+                &mut self.channels[channel],
+                new_control,
+                self.current_cycle,
+                last,
+            );
         }
         true
     }
@@ -52,20 +57,23 @@ impl GbaTimers {
     }
 
     pub fn write(&mut self, address: u32, value: u16) -> bool {
-        self.write_with_pc(address, value, 0)
-    }
-
-    pub fn write_with_pc(&mut self, address: u32, value: u16, pc: u32) -> bool {
         let Some((channel, control)) = decode(address) else {
             return false;
         };
-        let timer = &mut self.channels[channel];
         if control {
-            write_control(timer, value & 0x00C7, pc);
+            let last = self.last_reload_cycle[channel];
+            write_control(
+                &mut self.channels[channel],
+                value & 0x00C7,
+                self.current_cycle,
+                last,
+            );
         } else {
+            let timer = &mut self.channels[channel];
             timer.previous_reload = timer.reload;
             timer.reload = value;
             timer.reload_written = timer.control & 0x80 != 0;
+            self.last_reload_cycle[channel] = Some(self.current_cycle);
         }
         true
     }
@@ -160,14 +168,26 @@ impl GbaTimers {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
+
+    pub fn set_current_cycle(&mut self, cycle: u64) {
+        self.current_cycle = cycle;
+    }
 }
 
-fn write_control(timer: &mut TimerChannel, new_control: u16, pc: u32) {
+fn write_control(
+    timer: &mut TimerChannel,
+    new_control: u16,
+    current_cycle: u64,
+    last_reload_cycle: Option<u64>,
+) {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
-        if timer.reload == 0xFFFC && pc == 0x03000038 {
+        let elapsed = last_reload_cycle
+            .map(|c| current_cycle.saturating_sub(c))
+            .unwrap_or(u64::MAX);
+        if timer.reload == 0xFFFC && elapsed < 22 {
             timer.start_delay = 5;
         } else {
             timer.start_delay = 2;

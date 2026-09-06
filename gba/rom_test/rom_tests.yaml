@@ -1,6 +1,5 @@
 rom_root: ../../roms/gba
 expected_failures:
-- nba_archive_ppu_basic_timing
 - nba_archive_ppu_exact_timing
 - nba_archive_ppu_mode2
 - nba_archive_ppu_mode3
@@ -215,6 +214,10 @@ suites:
   - id: nba_archive_ppu_basic_timing
     rom: archive/ppu/basic-timing/basic-timing.gba
     cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x03000EA4, value: 6, width: 4}
+      - {address: 0x03000EA8, value: 6, width: 4}
 - name: armwrestler-gba-fixed
   cases:
   - id: armwrestler_arm_alu
