@@ -14,6 +14,8 @@ pub struct RomManifest {
     pub suites: Vec<RomSuite>,
     #[serde(default)]
     pub completion_profiles: BTreeMap<String, CompletionSpec>,
+    #[serde(default)]
+    pub expected_failures: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +40,57 @@ pub struct RomCase {
     pub description: String,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub inputs: Vec<InputEvent>,
+    /// Per-case reference image path (relative to suite dir). Overrides ROM-based resolution.
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub skip_screenshot: bool,
+}
+
+/// キー入力イベント。GBC の inputs 仕様と同一。
+#[derive(Debug, Clone, Deserialize)]
+pub struct InputEvent {
+    /// 何 T-cycle 経過後に適用するか
+    pub cycle: usize,
+    /// 押下するボタンのリスト。空なら全ボタン離す。
+    #[serde(default)]
+    pub buttons: Vec<GbaButton>,
+}
+
+/// GBA ボタン列挙型。KEYINPUT レジスタの active-low ビットに対応。
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GbaButton {
+    A,
+    B,
+    Select,
+    Start,
+    Right,
+    Left,
+    Up,
+    Down,
+    L,
+    R,
+}
+
+impl GbaButton {
+    /// GBA KEYINPUT active-low mask (bit = 0 when pressed)
+    pub fn mask(self) -> u16 {
+        match self {
+            GbaButton::A => 1 << 0,
+            GbaButton::B => 1 << 1,
+            GbaButton::Select => 1 << 2,
+            GbaButton::Start => 1 << 3,
+            GbaButton::Right => 1 << 4,
+            GbaButton::Left => 1 << 5,
+            GbaButton::Up => 1 << 6,
+            GbaButton::Down => 1 << 7,
+            GbaButton::R => 1 << 8,
+            GbaButton::L => 1 << 9,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,6 +106,8 @@ pub struct RomCasePattern {
     pub completion: Option<String>,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub skip_screenshot: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +179,9 @@ impl RomManifest {
                     completion: pattern.completion.clone(),
                     description: case.description,
                     verify: pattern.verify.clone(),
+                    inputs: Vec::new(),
+                    reference: None,
+                    skip_screenshot: pattern.skip_screenshot,
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
@@ -134,7 +192,30 @@ impl RomManifest {
     pub fn validate(&self) -> Result<(), RomTestError> {
         self.validate_structure()?;
         self.validate_completion_profiles()?;
-        self.validate_suites()
+        self.validate_suites()?;
+        self.validate_expected_failures()
+    }
+
+    fn validate_expected_failures(&self) -> Result<(), RomTestError> {
+        let ids: BTreeSet<String> = self
+            .suites
+            .iter()
+            .flat_map(|suite| &suite.cases)
+            .map(|case| case.id.clone())
+            .collect();
+        for expected in &self.expected_failures {
+            if !ids.contains(expected) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "expected_failures entry `{}` does not match any case",
+                    expected
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_expected_failure(&self, id: &str) -> bool {
+        self.expected_failures.iter().any(|e| e == id)
     }
 
     fn validate_structure(&self) -> Result<(), RomTestError> {
@@ -186,13 +267,25 @@ impl RomManifest {
                 case.id
             )));
         }
-        if case.rom.is_empty() || case.cycles == 0 || case.verify.is_empty() {
+        if case.rom.is_empty() || case.cycles == 0 {
             return Err(RomTestError::InvalidManifest(format!(
-                "case `{}` needs rom, positive cycles, and verification",
+                "case `{}` needs rom and positive cycles",
                 case.id
             )));
         }
+        // empty verify is allowed for reference-image tests (expected.png/jpg)
         case.verify.validate()?;
+        if case
+            .inputs
+            .windows(2)
+            .any(|events| events[0].cycle >= events[1].cycle)
+            || case.inputs.iter().any(|event| event.cycle >= case.cycles)
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` input events must be ordered within its cycle limit",
+                case.id
+            )));
+        }
         if case
             .completion
             .as_ref()
@@ -299,7 +392,7 @@ mod tests {
             "rom_root: roms\nsuites: [{ name: test, cases: [{ id: x, rom: x.gba, cycles: 1 }] }]",
         )
         .unwrap();
-        assert!(manifest.validate().is_err());
+        assert!(manifest.validate().is_ok());
     }
 
     #[test]

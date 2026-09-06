@@ -3,11 +3,121 @@ pub mod decompress;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
+const CPU_SET_SETUP_CYCLES: u32 = 61;
+const CPU_SET_RETURN_CYCLES: u32 = 46;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwiResult {
     Return(u32),
     Branch(u32),
     Unsupported,
+}
+
+pub(crate) struct HleBiosOperation {
+    source: u32,
+    destination: u32,
+    remaining: u32,
+    fixed: bool,
+    width: u8,
+    value: u32,
+    phase: TransferPhase,
+}
+
+#[derive(Clone, Copy)]
+enum TransferPhase {
+    Setup(u32),
+    Read,
+    Write,
+    Complete(u32),
+}
+
+pub(crate) struct HleStep {
+    pub cycles: u32,
+    pub complete: bool,
+}
+
+impl HleBiosOperation {
+    fn cpu_set(source: u32, destination: u32, len_mode: u32) -> Option<Self> {
+        let remaining = len_mode & 0x1F_FFFF;
+        Self::transfer(source, destination, len_mode, remaining)
+    }
+
+    fn cpu_fast_set(source: u32, destination: u32, len_mode: u32) -> Option<Self> {
+        let remaining = (len_mode & 0x1F_FFFF).next_multiple_of(8);
+        Self::transfer(source, destination, len_mode | (1 << 26), remaining)
+    }
+
+    fn transfer(source: u32, destination: u32, len_mode: u32, remaining: u32) -> Option<Self> {
+        if source < 0x0000_4000 || remaining == 0 {
+            return None;
+        }
+        let width = if len_mode & (1 << 26) != 0 { 4 } else { 2 };
+        Some(Self {
+            source: source & !(u32::from(width) - 1),
+            destination: destination & !(u32::from(width) - 1),
+            remaining,
+            fixed: len_mode & (1 << 24) != 0,
+            width,
+            value: 0,
+            phase: TransferPhase::Setup(CPU_SET_SETUP_CYCLES),
+        })
+    }
+
+    pub(crate) fn step(&mut self, bus: &mut GbaMemoryBus) -> HleStep {
+        match self.phase {
+            TransferPhase::Setup(remaining) => {
+                self.phase = if remaining == 1 {
+                    TransferPhase::Read
+                } else {
+                    TransferPhase::Setup(remaining - 1)
+                };
+                HleStep {
+                    cycles: 1,
+                    complete: false,
+                }
+            }
+            TransferPhase::Read => {
+                self.value = if self.width == 4 {
+                    bus.read32(self.source)
+                } else {
+                    u32::from(bus.read16(self.source))
+                };
+                if !self.fixed {
+                    self.source = self.source.wrapping_add(u32::from(self.width));
+                }
+                self.phase = TransferPhase::Write;
+                HleStep {
+                    cycles: 1,
+                    complete: false,
+                }
+            }
+            TransferPhase::Write => {
+                if self.width == 4 {
+                    bus.write_hle_bios32(self.destination, self.value);
+                } else {
+                    bus.write_hle_bios16(self.destination, self.value as u16);
+                }
+                self.destination = self.destination.wrapping_add(u32::from(self.width));
+                self.remaining -= 1;
+                self.phase = if self.remaining == 0 {
+                    TransferPhase::Complete(CPU_SET_RETURN_CYCLES)
+                } else {
+                    TransferPhase::Read
+                };
+                HleStep {
+                    cycles: 1,
+                    complete: false,
+                }
+            }
+            TransferPhase::Complete(remaining) => {
+                self.phase = TransferPhase::Complete(remaining.saturating_sub(1));
+                HleStep {
+                    cycles: 1,
+                    complete: remaining == 1,
+                }
+            }
+        }
+    }
 }
 
 /// HLE BIOS dispatcher.
@@ -322,66 +432,20 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let src = regs.r(0);
     let dst = regs.r(1);
     let len_mode = regs.r(2);
-    let count = len_mode & 0x1FFFFF;
-    let fixed = (len_mode >> 24) & 1 != 0;
-    let is32 = (len_mode >> 26) & 1 != 0;
-
-    if bus.is_bios_addr(src) {
-        return 1;
+    if let Some(operation) = HleBiosOperation::cpu_set(src, dst, len_mode) {
+        bus.start_hle_bios(operation);
     }
-
-    if is32 {
-        let mut s = src & !3;
-        let mut d = dst & !3;
-        for _ in 0..count {
-            let v = bus.read32(s);
-            bus.write32(d, v);
-            if !fixed {
-                s = s.wrapping_add(4);
-            }
-            d = d.wrapping_add(4);
-        }
-    } else {
-        let mut s = src & !1;
-        let mut d = dst & !1;
-        for _ in 0..count {
-            let v = bus.read16(s) as u32;
-            bus.write16(d, v as u16);
-            if !fixed {
-                s = s.wrapping_add(2);
-            }
-            d = d.wrapping_add(2);
-        }
-    }
-    1 + count
+    1
 }
 
 fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let src = regs.r(0);
     let dst = regs.r(1);
     let len_mode = regs.r(2);
-    let mut count = len_mode & 0x1FFFFF;
-    let fixed = (len_mode >> 24) & 1 != 0;
-
-    if bus.is_bios_addr(src) {
-        return 1;
+    if let Some(operation) = HleBiosOperation::cpu_fast_set(src, dst, len_mode) {
+        bus.start_hle_bios(operation);
     }
-
-    // FastSet rounds up to 8 words (32 bytes)
-    count = (count + 7) & !7;
-    let mut s = src & !3;
-    let mut d = dst & !3;
-    for _ in (0..count).step_by(8) {
-        for _ in 0..8 {
-            let v = bus.read32(s);
-            bus.write32(d, v);
-            if !fixed {
-                s = s.wrapping_add(4);
-            }
-            d = d.wrapping_add(4);
-        }
-    }
-    1 + count
+    1
 }
 
 fn bios_checksum(regs: &mut CpuRegisters) {
@@ -447,13 +511,60 @@ mod tests {
         regs.set_r(1, 0x03000000);
         regs.set_r(2, (1 << 26) | 1);
         handle_swi(&mut regs, &mut bus, 0x0B);
+        assert_eq!(bus.read32(0x03000000), 0);
+        while bus.hle_bios_active() {
+            bus.step_hle_bios();
+        }
         assert_eq!(bus.read32(0x03000000), 0x12345678);
 
         regs.set_r(1, 0x03000004);
         regs.set_r(2, (1 << 26) | (1 << 24) | 2);
         handle_swi(&mut regs, &mut bus, 0x0B);
+        while bus.hle_bios_active() {
+            bus.step_hle_bios();
+        }
         assert_eq!(bus.read32(0x03000004), 0x12345678);
         assert_eq!(bus.read32(0x03000008), 0x12345678);
+    }
+
+    #[test]
+    fn cpu_fast_set_rounds_up_to_eight_words() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        for index in 0..8 {
+            bus.write32(0x02000000 + index * 4, 0x1000 + index);
+        }
+        regs.set_r(0, 0x02000000);
+        regs.set_r(1, 0x03000000);
+        regs.set_r(2, 1);
+
+        handle_swi(&mut regs, &mut bus, 0x0C);
+        while bus.hle_bios_active() {
+            bus.step_hle_bios();
+        }
+
+        for index in 0..8 {
+            assert_eq!(bus.read32(0x03000000 + index * 4), 0x1000 + index);
+        }
+    }
+
+    #[test]
+    fn cpu_set_includes_bios_entry_and_return_cycles() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x03000000, 0x1234);
+        let mut operation = HleBiosOperation::cpu_set(0x03000000, 0x03000002, 1).unwrap();
+        let mut cycles = 0;
+
+        loop {
+            let step = operation.step(&mut bus);
+            cycles += step.cycles;
+            if step.complete {
+                break;
+            }
+        }
+
+        assert_eq!(cycles, CPU_SET_SETUP_CYCLES + 2 + CPU_SET_RETURN_CYCLES);
+        assert_eq!(bus.read16(0x03000002), 0x1234);
     }
 
     #[test]

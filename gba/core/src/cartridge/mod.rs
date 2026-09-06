@@ -27,10 +27,14 @@ impl Cartridge {
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
+        // For word loads, the GBA fetches from the word-aligned address and
+        // rotates the result.  Align the ROM offset accordingly so that
+        // `align_read` in the memory bus receives the correct raw data.
+        let aligned_off = if width == 4 { raw_off & !3 } else { raw_off };
         let off = if len.is_power_of_two() {
-            raw_off & (len - 1)
+            aligned_off & (len - 1)
         } else {
-            raw_off % len
+            aligned_off % len
         };
         read_slice(&self.rom, off, width)
     }

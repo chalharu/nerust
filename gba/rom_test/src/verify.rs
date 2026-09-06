@@ -18,6 +18,8 @@ pub struct VerifySpec {
     pub memory: Vec<MemoryEntry>,
     #[serde(default)]
     pub registers: RegisterVerify,
+    #[serde(default)]
+    pub frame_pixels: Vec<FramePixelEntry>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -27,6 +29,14 @@ pub struct MemoryEntry {
     pub value: String,
     #[serde(default = "default_width")]
     pub width: u8,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct FramePixelEntry {
+    pub x: usize,
+    pub y: usize,
+    pub color: String,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -53,7 +63,7 @@ pub struct RegisterVerify {
 
 impl VerifySpec {
     pub fn is_empty(&self) -> bool {
-        self.memory.is_empty() && self.registers.is_empty()
+        self.memory.is_empty() && self.registers.is_empty() && self.frame_pixels.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), RomTestError> {
@@ -75,6 +85,17 @@ impl VerifySpec {
                 return Err(RomTestError::InvalidManifest(format!(
                     "memory value {} does not fit width {}",
                     entry.value, entry.width
+                )));
+            }
+        }
+        for entry in &self.frame_pixels {
+            if entry.x >= nerust_gba_core::ppu::WIDTH
+                || entry.y >= nerust_gba_core::ppu::HEIGHT
+                || parse_hex(&entry.color)? > 0x7FFF
+            {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "invalid frame pixel at {},{}",
+                    entry.x, entry.y
                 )));
             }
         }
@@ -104,6 +125,24 @@ impl VerifySpec {
             });
         }
         self.registers.verify(registers, &mut checks)?;
+        let frame = bus.frame_buffer();
+        for entry in &self.frame_pixels {
+            let bgr555 = parse_hex(&entry.color)? as u16;
+            let expected = nerust_gba_core::ppu::bgr555_to_rgba8888(bgr555);
+            let actual = frame[entry.y * nerust_gba_core::ppu::WIDTH + entry.x];
+            checks.push(CheckResult {
+                name: format!("frame@{},{}", entry.x, entry.y),
+                expected: format!("0x{bgr555:04X}"),
+                actual: format!(
+                    "rgba({:02X}{:02X}{:02X}{:02X})",
+                    actual.to_le_bytes()[0],
+                    actual.to_le_bytes()[1],
+                    actual.to_le_bytes()[2],
+                    actual.to_le_bytes()[3]
+                ),
+                passed: actual == expected,
+            });
+        }
         Ok(checks)
     }
 }
@@ -179,6 +218,85 @@ impl RegisterVerify {
     }
 }
 
+pub struct FramePixels<'a> {
+    pub rgba: &'a [u8],
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn verify_reference(
+    frame: &FramePixels<'_>,
+    ref_png: &[u8],
+    expected_label: &str,
+    checks: &mut Vec<CheckResult>,
+) -> Result<Option<Vec<u8>>, RomTestError> {
+    let (rw, rh, ref_rgb) = crate::media::decode_png_rgb(ref_png)?;
+    let width = frame.width;
+    let height = frame.height;
+    let expected = expected_label.to_string();
+
+    // 実機写真 (4000x3000等) はpixel比較できないが、未検証をpassにはしない。
+    if rw != width || rh != height {
+        checks.push(CheckResult {
+            name: "reference dimensions".to_string(),
+            expected: format!("{}x{}", width, height),
+            actual: format!("{}x{}", rw, rh),
+            passed: false,
+        });
+        return Ok(None);
+    }
+
+    let mut frame_rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for px in frame.rgba.as_chunks::<4>().0 {
+        frame_rgb.extend_from_slice(&px[..3]);
+    }
+    if crc32(&frame_rgb) == crc32(&ref_rgb) {
+        checks.push(CheckResult {
+            name: "reference".to_string(),
+            expected,
+            actual: "exact match".to_string(),
+            passed: true,
+        });
+        return Ok(None);
+    }
+
+    let mut diff_count = 0usize;
+    let mut first = None;
+    for (i, (a, b)) in frame_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(ref_rgb.as_chunks::<3>().0.iter())
+        .enumerate()
+    {
+        if a != b {
+            if first.is_none() {
+                first = Some((i % width as usize, i / width as usize));
+            }
+            diff_count += 1;
+        }
+    }
+    let (fx, fy) = first.unwrap_or((0, 0));
+    let actual = format!("{} differing pixels, first at ({},{})", diff_count, fx, fy);
+    checks.push(CheckResult {
+        name: "reference".to_string(),
+        expected,
+        actual,
+        passed: false,
+    });
+
+    let diff = crate::media::compose_diff_image(&frame_rgb, &ref_rgb, width, height);
+    let png = crate::media::encode_rgba_png(width * 3, height, &diff)?;
+    Ok(Some(png))
+}
+
+pub(crate) fn crc32(data: &[u8]) -> u32 {
+    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+    let mut digest = crc.digest();
+    digest.update(data);
+    digest.finalize()
+}
+
 pub fn parse_hex(value: &str) -> Result<u64, RomTestError> {
     let value = value.trim();
     let digits = value
@@ -236,5 +354,23 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
+    }
+
+    #[test]
+    fn rejects_reference_with_incomparable_dimensions() {
+        let reference = crate::media::encode_rgba_png(1, 1, &[0, 0, 0, 0xFF]).unwrap();
+        let frame = FramePixels {
+            rgba: &[0, 0, 0, 0xFF, 0, 0, 0, 0xFF],
+            width: 2,
+            height: 1,
+        };
+        let mut checks = Vec::new();
+
+        let diff = verify_reference(&frame, &reference, "reference.png", &mut checks).unwrap();
+
+        assert!(diff.is_none());
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "reference dimensions");
+        assert!(!checks[0].passed);
     }
 }

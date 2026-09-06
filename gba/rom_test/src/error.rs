@@ -10,6 +10,10 @@ pub enum RomTestError {
     InvalidManifest(String),
     #[error("invalid GBA ROM: {0}")]
     InvalidRom(String),
+    #[error("PNG encoding error: {0}")]
+    PngEncoding(#[from] png::EncodingError),
+    #[error("PNG decoding error: {0}")]
+    PngDecoding(#[from] png::DecodingError),
 }
 
 impl RomTestError {
@@ -18,6 +22,7 @@ impl RomTestError {
             Self::Io(_) => "io",
             Self::YamlParse(_) | Self::InvalidManifest(_) => "config",
             Self::InvalidRom(_) => "rom",
+            Self::PngEncoding(_) | Self::PngDecoding(_) => "png",
         }
     }
 }

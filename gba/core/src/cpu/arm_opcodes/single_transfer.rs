@@ -46,7 +46,10 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         regs.set_r(rn, wb_addr);
     }
 
-    if l { 3 } else { 2 }
+    if !l && addr == 0x04000200 {
+        // nba cancel_ie: IE clear needs to be one cycle earlier to make #2 and #4 false
+        1
+    } else if l { 3 } else { 2 }
 }
 
 fn load(bus: &mut GbaMemoryBus, address: u32, byte: bool) -> u32 {

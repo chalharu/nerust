@@ -156,12 +156,15 @@ fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
     if (rlist >> rb) & 1 == 0 {
         regs.set_r(rb, addr);
     }
-    3 + count
+    // Thumb LDMIA: nS+1N+1I (GBATEK). The I cycle is accounted here as 2+count
+    // (1N for the first word is handled via waitstates, 1I plus loop overhead).
+    // Previously 3+count overcounted by 1I, causing nba 128KB-boundary LDM timings to be +1.
+    2 + count
 }
 
 fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
-    let final_addr = addr.wrapping_add(u32::from(rlist.count_ones()) * 4);
+    let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
     let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
     for i in 0..8 {

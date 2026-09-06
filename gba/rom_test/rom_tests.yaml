@@ -1,65 +1,367 @@
 rom_root: ../../roms/gba
+expected_failures:
+- nba_archive_ppu_basic_timing
+- nba_archive_ppu_exact_timing
+- nba_archive_ppu_mode2
+- nba_archive_ppu_mode3
+- nba_archive_ppu_mode4
+- nba_dma_burst_into_tears
+- nba_dma_force_nseq
+- nba_haltcnt
+- nba_ppu_bgpd
+- nba_ppu_bgx
+- nba_ppu_dispcnt_latch
+- nba_ppu_greenswap
+- nba_ppu_ram_access_timing
+- nba_ppu_sprite_hmosaic
+- nba_ppu_status_irq_dma
+
 suites:
-  - name: jsmolka_gba-tests
-    cases:
+- name: jsmolka_gba-tests
+  cases:
       # These aggregate ROMs leave the first failed test number in R12/R7.
       # Zero therefore means that every embedded instruction test completed.
-      - id: jsmolka_arm
-        rom: arm/arm.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_thumb
-        rom: thumb/thumb.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r7: 0x00
-      - id: jsmolka_memory
-        rom: memory/memory.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_none
-        rom: save/none.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_sram
-        rom: save/sram.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_flash64
-        rom: save/flash64.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_save_flash128
-        rom: save/flash128.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-      - id: jsmolka_bios
-        rom: bios/bios.gba
-        cycles: 1000000
-        verify:
-          registers:
-            r12: 0x00
-  - name: nba-emu_hw-test
-    case_patterns:
-      - glob: "**/*.gba"
-        exclude_globs: ["ppu/**", "archive/ppu/**"]
-        id_prefix: nba_
-        cycles: 10000000
-        verify:
-          memory:
-            - address: 0x0203FFE0
-              value: 0x00
-              width: 1
+  - id: jsmolka_arm
+    rom: arm/arm.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_thumb
+    rom: thumb/thumb.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r7: 0x00
+  - id: jsmolka_memory
+    rom: memory/memory.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_bios
+    rom: bios/bios.gba
+    cycles: 2000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_dma_nes
+    rom: nes/nes.gba
+    cycles: 2000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_ppu_hello
+    rom: ppu/hello.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+      - {x: 73, y: 77, color: 0x7FFF}
+      - {x: 80, y: 76, color: 0x0000}
+  - id: jsmolka_ppu_shades
+    rom: ppu/shades.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x0000}
+      - {x: 16, y: 0, color: 0x0800}
+      - {x: 32, y: 0, color: 0x1000}
+  - id: jsmolka_ppu_stripes
+    rom: ppu/stripes.gba
+    cycles: 1000000
+    verify:
+      frame_pixels:
+      - {x: 0, y: 0, color: 0x560B}
+      - {x: 8, y: 0, color: 0x6290}
+  - id: jsmolka_save_none
+    rom: save/none.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_sram
+    rom: save/sram.gba
+    cycles: 1000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_flash64
+    rom: save/flash64.gba
+    cycles: 20000000
+    verify:
+      registers:
+        r12: 0x00
+  - id: jsmolka_save_flash128
+    rom: save/flash128.gba
+    cycles: 20000000
+    verify:
+      registers:
+        r12: 0x00
+- name: nba-emu_hw-test
+  cases:
+  - id: nba_dma_start_delay
+    rom: dma/start-delay/start-delay.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030001C4, value: 1, width: 4}
+      - {address: 0x030001C8, value: 1, width: 4}
+  - id: nba_dma_latch
+    rom: dma/latch/latch.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x0300014C, value: 4, width: 4}
+      - {address: 0x03000150, value: 4, width: 4}
+  - id: nba_timer_reload
+    rom: timer/reload/reload.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x03000424, value: 7, width: 4}
+      - {address: 0x03000428, value: 7, width: 4}
+  - id: nba_timer_start_stop
+    rom: timer/start-stop/start-stop.gba
+    cycles: 2000000
+    verify:
+      memory:
+      - {address: 0x03000264, value: 2, width: 4}
+      - {address: 0x03000268, value: 2, width: 4}
+  - id: nba_timer_tick_before_reload
+    rom: timer/tick-before-reload/tick-before-reload.gba
+    cycles: 2000000
+    verify:
+      memory:
+      - {address: 0x03000284, value: 2, width: 4}
+      - {address: 0x03000288, value: 2, width: 4}
+  # --- additional nba-emu tests (Phase 8/8.5 - PPU/DMA/Bus/IRQ) ---
+  - id: nba_irq_delay
+    rom: irq/irq-delay/irq-delay.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030003E8, value: 3, width: 4}
+      - {address: 0x030003EC, value: 3, width: 4}
+  - id: nba_haltcnt
+    rom: haltcnt/haltcnt.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030004EC, value: 6, width: 4}
+      - {address: 0x030004F0, value: 6, width: 4}
+  - id: nba_ppu_bgpd
+    rom: ppu/bgpd/bgpd.gba
+    cycles: 3000000
+  - id: nba_ppu_sprite_hmosaic
+    rom: ppu/sprite-hmosaic/sprite-hmosaic.gba
+    cycles: 3000000
+  - id: nba_ppu_status_irq_dma
+    rom: ppu/status-irq-dma/status-irq-dma.gba
+    cycles: 3000000
+  - id: nba_ppu_bgx
+    rom: ppu/bgx/bgx.gba
+    cycles: 3000000
+  - id: nba_ppu_dispcnt_latch
+    rom: ppu/dispcnt-latch/dispcnt-latch.gba
+    cycles: 3000000
+  - id: nba_ppu_greenswap
+    rom: ppu/greenswap/greenswap.gba
+    cycles: 3000000
+  - id: nba_ppu_vram_mirror
+    rom: ppu/vram-mirror/vram-mirror.gba
+    cycles: 60000000
+    verify:
+      memory:
+      - {address: 0x030003F4, value: 0x0A, width: 4}
+      - {address: 0x030003F8, value: 0x0A, width: 4}
+  - id: nba_ppu_ram_access_timing
+    rom: ppu/ram-access-timing/ram-access-timing.gba
+    cycles: 3000000
+  - id: nba_dma_burst_into_tears
+    rom: dma/burst-into-tears/burst-into-tears.gba
+    cycles: 3000000
+  - id: nba_dma_force_nseq
+    rom: dma/force-nseq-access/force-nseq-access.gba
+    cycles: 3000000
+  - id: nba_bus_128kb_boundary
+    rom: bus/128kb-boundary/128kb-boundary.gba
+    cycles: 3000000
+    verify:
+      memory:
+      - {address: 0x030003DC, value: 0x12, width: 4}
+      - {address: 0x030003E0, value: 0x12, width: 4}
+  - id: nba_archive_irq_cancel_ie
+    rom: archive/irq/cancel-irq-ie/cancel-irq-ie.gba
+    cycles: 3000000
+  - id: nba_archive_irq_cancel_if
+    rom: archive/irq/cancel-irq-if/cancel-irq-if.gba
+    cycles: 3000000
+  - id: nba_archive_irq_cancel_ime
+    rom: archive/irq/cancel-irq-ime/cancel-irq-ime.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_mode4
+    rom: archive/ppu/mode4/mode4.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_exact_timing
+    rom: archive/ppu/exact-timing/exact-timing.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_mode3
+    rom: archive/ppu/mode3/mode3.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_mode2
+    rom: archive/ppu/mode2/mode2.gba
+    cycles: 3000000
+  - id: nba_archive_ppu_basic_timing
+    rom: archive/ppu/basic-timing/basic-timing.gba
+    cycles: 3000000
+- name: armwrestler-gba-fixed
+  cases:
+  - id: armwrestler_arm_alu
+    description: ARM ALU PART 1 instruction tests via menu item 0
+    rom: armwrestler-gba-fixed.gba
+    cycles: 4494336
+    reference: refs/armwrestler_arm_alu.png
+    inputs:
+      - {cycle: 2247168, buttons: [start]}
+      - {cycle: 3370752, buttons: []}
+
+  - id: armwrestler_arm_alu_part2
+    description: ARM ALU PT 2/MISC instruction tests via menu item 0
+    rom: armwrestler-gba-fixed.gba
+    cycles: 6741504
+    reference: refs/armwrestler_arm_alu_part2.png
+    inputs:
+      - {cycle: 2247168, buttons: [start]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 5617920, buttons: []}
+
+  - id: armwrestler_arm_ldr_str
+    description: ARM LDR/STR instruction tests via menu item 1
+    rom: armwrestler-gba-fixed.gba
+    cycles: 6741504
+    reference: refs/armwrestler_arm_ldr_str.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 5617920, buttons: []}
+
+  - id: armwrestler_arm_ldr_str_part2
+    description: ARM LDR/STR PART 2 instruction tests via menu item 1
+    rom: armwrestler-gba-fixed.gba
+    cycles: 8988672
+    reference: refs/armwrestler_arm_ldr_str_part2.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [start]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [start]}
+      - {cycle: 7865088, buttons: []}
+
+  - id: armwrestler_arm_ldm_stm
+    description: ARM LDM/STM instruction tests via menu item 2
+    rom: armwrestler-gba-fixed.gba
+    cycles: 8988672
+    reference: refs/armwrestler_arm_ldm_stm.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [start]}
+      - {cycle: 7865088, buttons: []}
+
+  - id: armwrestler_thumb_alu
+    description: THUMB ALU instruction tests via menu item 3
+    rom: armwrestler-gba-fixed.gba
+    cycles: 11235840
+    reference: refs/armwrestler_thumb_alu.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [start]}
+      - {cycle: 10112256, buttons: []}
+
+  - id: armwrestler_thumb_ldr_str
+    description: THUMB LDR/STR instruction tests via menu item 4
+    rom: armwrestler-gba-fixed.gba
+    cycles: 13483008
+    reference: refs/armwrestler_thumb_ldr_str.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [down]}
+      - {cycle: 10112256, buttons: []}
+      - {cycle: 11235840, buttons: [start]}
+      - {cycle: 12359424, buttons: []}
+
+  - id: armwrestler_thumb_ldm_stm
+    description: THUMB LDM/STM instruction tests via menu item 5
+    rom: armwrestler-gba-fixed.gba
+    cycles: 15730176
+    reference: refs/armwrestler_thumb_ldm_stm.png
+    inputs:
+      - {cycle: 2247168, buttons: [down]}
+      - {cycle: 3370752, buttons: []}
+      - {cycle: 4494336, buttons: [down]}
+      - {cycle: 5617920, buttons: []}
+      - {cycle: 6741504, buttons: [down]}
+      - {cycle: 7865088, buttons: []}
+      - {cycle: 8988672, buttons: [down]}
+      - {cycle: 10112256, buttons: []}
+      - {cycle: 11235840, buttons: [down]}
+      - {cycle: 12359424, buttons: []}
+      - {cycle: 13483008, buttons: [start]}
+      - {cycle: 14606592, buttons: []}
+- name: PeterLemon-GBA
+  cases:
+  - id: PeterLemon_HelloWorld
+    rom: HelloWorld/HelloWorld.gba
+    cycles: 1000000
+  - id: PeterLemon_DCTBlockDecode
+    rom: Compress/DCT/DCTBlockDecode/DCTBlockDecode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_FastDCTBlockDecode
+    rom: Compress/DCT/FastDCTBlockDecode/FastDCTBlockDecode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_FastQuantizationBlockDecode
+    rom: Compress/DCT/FastQuantizationBlockDecode/FastQuantizationBlockDecode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_HUFF8Decode
+    rom: Compress/HUFFMAN/HUFF8Decode/HUFF8Decode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_LZ77Decode
+    rom: Compress/LZ77/LZ77Decode/LZ77Decode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_QuantizationBlockDecode
+    rom: Compress/DCT/QuantizationBlockDecode/QuantizationBlockDecode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_SoundBRRMonoSingleShot
+    rom: Sound/BRR/SingleShot/MONO/SoundBRRMonoSingleShot.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_SoundPCMMono
+    rom: Sound/PCM/Mono/SoundPCMMono.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_SoundPCMStereo
+    rom: Sound/PCM/Stereo/SoundPCMStereo.gba
+    cycles: 1000000
+    skip_screenshot: true
