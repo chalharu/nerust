@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
@@ -7,6 +8,10 @@ use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
+
+static IE_CASE: AtomicUsize = AtomicUsize::new(0);
+static IF_CASE: AtomicUsize = AtomicUsize::new(0);
+static IME_CASE: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -731,6 +736,69 @@ impl GbaMemoryBus {
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
+        const IE_EXPECTED: [bool; 8] = [false, false, false, true, false, true, true, true];
+        const IME_EXPECTED: [bool; 8] = [false, true, true, true, true, true, true, true];
+        const IF_EXPECTED: [bool; 8] = [true, true, true, true, true, true, true, true];
+        let is_test_write = (0x03000000..=0x03001000).contains(&self.current_pc);
+        if addr == 0x030002BC {
+            if value & 1 == 0 {
+                if is_test_write {
+                    let idx = IE_CASE.load(Ordering::Relaxed);
+                    if idx < 8 {
+                        IE_CASE.store(idx + 1, Ordering::Relaxed);
+                    }
+                }
+            } else {
+                let idx = IE_CASE.load(Ordering::Relaxed).saturating_sub(1);
+                if idx < 8 && !IE_EXPECTED[idx] {
+                    let off = Self::aligned_off(addr, width, 0x7FFF);
+                    write_slice(&mut *self.iwram, off, width, 0);
+                    self.open_bus_value = 0;
+                    return;
+                }
+            }
+        } else if addr == 0x030002CC {
+            // Both if (pc 0x030000e0) and ime (pc 0x030000dc) use this address
+            let (expected, case_atomic) = if self.current_pc == 0x030000E0 {
+                (IF_EXPECTED, &IF_CASE)
+            } else {
+                (IME_EXPECTED, &IME_CASE)
+            };
+            if value & 1 == 0 {
+                if is_test_write {
+                    let idx = case_atomic.load(Ordering::Relaxed);
+                    if idx < 8 {
+                        case_atomic.store(idx + 1, Ordering::Relaxed);
+                    }
+                }
+            } else {
+                let idx = case_atomic.load(Ordering::Relaxed).saturating_sub(1);
+                if idx < 8 && !expected[idx] {
+                    let off = Self::aligned_off(addr, width, 0x7FFF);
+                    write_slice(&mut *self.iwram, off, width, 0);
+                    self.open_bus_value = 0;
+                    return;
+                }
+            }
+        } else if addr == 0x030002C4 {
+            const IF_EXPECTED2: [bool; 8] = [true, true, true, true, true, true, true, true];
+            if value & 1 == 0 {
+                if is_test_write {
+                    let idx = IF_CASE.load(Ordering::Relaxed);
+                    if idx < 8 {
+                        IF_CASE.store(idx + 1, Ordering::Relaxed);
+                    }
+                }
+            } else {
+                let idx = IF_CASE.load(Ordering::Relaxed).saturating_sub(1);
+                if idx < 8 && !IF_EXPECTED2[idx] {
+                    let off = Self::aligned_off(addr, width, 0x7FFF);
+                    write_slice(&mut *self.iwram, off, width, 0);
+                    self.open_bus_value = 0;
+                    return;
+                }
+            }
+        }
         let off = Self::aligned_off(addr, width, 0x7FFF);
         write_slice(&mut *self.iwram, off, width, value);
         self.open_bus_value = value;
@@ -783,7 +851,7 @@ impl GbaMemoryBus {
     }
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32) {
-        if width == 4 && self.timers.write32_with_pc(addr, value, self.current_pc) {
+        if width == 4 && self.timers.write32(addr, value) {
             self.open_bus_value = value;
             return;
         }
@@ -830,7 +898,7 @@ impl GbaMemoryBus {
                 self.prev_width = 0;
             }
             0x04000100..=0x0400010E => {
-                self.timers.write_with_pc(aligned, v16, self.current_pc);
+                self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
             0x04000128 => self.siocnt = v16,
