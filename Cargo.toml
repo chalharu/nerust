@@ -132,7 +132,7 @@ iced = { default-features = false, features = [
   "wayland",
   "x11",
 ], version = "=0.14.0" }
-iced_tiny_skia = { version = "=0.14.0" }
+iced_tiny_skia = { version = "=0.14.1" }
 iced_winit = { version = "=0.14.0" }
 jni = { version = "=0.22.4" }
 inventory = { version = "=0.3.24" }
