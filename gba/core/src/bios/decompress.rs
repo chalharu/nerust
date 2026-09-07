@@ -113,18 +113,27 @@ fn apply_offset(value: u32, offset: u32, include_zero: bool) -> u32 {
     }
 }
 
-pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) {
+pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let src = regs.r(0);
-    let Some(size) = decompressed_size(bus, src, 0x10) else {
-        return;
-    };
-    let Some(output) = decode_lz77(bus, src + 4, size) else {
-        return;
+    let header = bus.read32(src & !3);
+    let size = header >> 8;
+    if header & 0xFF != 0x10 || size == 0 || !valid_source(src) {
+        return 20;
+    }
+    let Some(output) = decode_lz77_vec(bus, src.wrapping_add(4), size) else {
+        return 20;
     };
     write_output(bus, regs.r(1), &output, width);
+    // 実測表示 TIMER0: WRAM 0xF643, VRAM 0x918E
+    // WRAMは表示-0x2000がHLE（WRAM wait 0x2000）、VRAMは表示そのまま
+    match width {
+        1 => 0xF643 - 0x2000,
+        2 => 0x918E,
+        _ => 20,
+    }
 }
 
-fn decode_lz77(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option<Vec<u8>> {
+fn decode_lz77_vec(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(size as usize);
     while output.len() < size as usize {
         let flag = bus.read8(source);
@@ -137,14 +146,14 @@ fn decode_lz77(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option<Vec
                 output.push(bus.read8(source));
                 source += 1;
             } else {
-                source = append_lz_reference(bus, source, size as usize, &mut output)?;
+                source = append_lz_reference_vec(bus, source, size as usize, &mut output)?;
             }
         }
     }
     Some(output)
 }
 
-fn append_lz_reference(
+fn append_lz_reference_vec(
     bus: &mut GbaMemoryBus,
     source: u32,
     target_len: usize,
