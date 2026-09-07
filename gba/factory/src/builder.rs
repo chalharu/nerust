@@ -7,7 +7,9 @@ use nerust_gba_settings::GbaSettings;
 use nerust_input_traits::{
     ControllerCollection, EmuInput, GuiInput, InputAssignments, InputSystemFactory,
 };
-use nerust_render_traits::{VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize};
+use nerust_render_traits::{
+    VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
+};
 
 use crate::input_profiles::GBA_ATTACHMENT;
 
@@ -38,14 +40,19 @@ pub(crate) fn create_core_and_adapter(
 
     let controllers =
         ControllerCollection::new(vec![Box::new(nerust_gba_device::StandardPad::new())]);
-    let resources = <crate::GbaFactory as InputSystemFactory>::create_split(
-        &crate::GbaFactory,
-        &controllers,
-    )
-    .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let resources =
+        <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
+            .map_err(|e| FactoryError::Create(e.to_string()))?;
     let gui_input = GuiInput::from_split(&resources.split);
     let emu_input = EmuInput::from_split(&resources.split);
-    create_core_and_adapter_with_inputs(view, speaker, gui_input, emu_input, resources.field_map, controllers)
+    create_core_and_adapter_with_inputs(
+        view,
+        speaker,
+        gui_input,
+        emu_input,
+        resources.field_map,
+        controllers,
+    )
 }
 
 pub(crate) fn create_core_and_adapter_with_inputs(
@@ -53,7 +60,13 @@ pub(crate) fn create_core_and_adapter_with_inputs(
     speaker: Box<dyn AudioBackend>,
     gui_input: GuiInput,
     emu_input: EmuInput,
-    field_map: std::collections::HashMap<(nerust_input_traits::AttachmentId, nerust_input_traits::DigitalControlId), usize>,
+    field_map: std::collections::HashMap<
+        (
+            nerust_input_traits::AttachmentId,
+            nerust_input_traits::DigitalControlId,
+        ),
+        usize,
+    >,
     _controller_collection: ControllerCollection,
 ) -> Result<CoreParts, FactoryError> {
     let logical_size = LogicalSize {
@@ -93,8 +106,7 @@ mod tests {
             system_config: Some(Box::new(GbaSettings::default())),
         };
         let assignments = crate::GbaFactory.default_assignments();
-        let parts =
-            create_core_and_adapter(&view, Box::new(NullAudio), &assignments).unwrap();
+        let parts = create_core_and_adapter(&view, Box::new(NullAudio), &assignments).unwrap();
         assert_eq!(parts.render_profile.source_logical_size.width, 240);
         assert_eq!(parts.render_profile.source_logical_size.height, 160);
         assert_eq!(parts.render_profile.frame_format, VideoFrameFormat::Rgba);

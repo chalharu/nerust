@@ -37,7 +37,12 @@ impl EepromSave {
             while off < src.len() && src[off] == 0 {
                 off += 1;
             }
-            if off + total_bits <= src.len() && src[off] == 1 && src[off + 1] == 0 && src[off + 2] == 1 && src[off + 3] == 0 {
+            if off + total_bits <= src.len()
+                && src[off] == 1
+                && src[off + 1] == 0
+                && src[off + 2] == 1
+                && src[off + 3] == 0
+            {
                 let mut addr = 0usize;
                 for i in 0..addr_bits {
                     addr = (addr << 1) | (src[off + 4 + i] as usize & 1);

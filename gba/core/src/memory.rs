@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
+use crate::apu::GbaApu;
 use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
-use crate::apu::GbaApu;
 use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
@@ -460,7 +460,7 @@ impl GbaMemoryBus {
 
     pub fn bios_checksum(&self) -> u32 {
         let mut sum = 0u32;
-        for chunk in self.bios.chunks_exact(4) {
+        for chunk in self.bios.as_chunks::<4>().0 {
             let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             sum = sum.wrapping_add(w);
         }

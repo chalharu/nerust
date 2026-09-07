@@ -142,12 +142,18 @@ fn generate_tests(
                 .join(suite)
                 .join(&case.rom)
                 .parent()
-                .is_some_and(|dir| dir.join("expected.png").is_file() || dir.join("expected.jpg").is_file());
+                .is_some_and(|dir| {
+                    dir.join("expected.png").is_file() || dir.join("expected.jpg").is_file()
+                });
         let ignore = !case.has_verify && !has_reference;
         writeln!(
             generated,
             "#[test]{}\nfn {}() {{ crate::run_generated_manifest_case({:?}); }}\n",
-            if ignore { "\n#[ignore = \"case has no verification\"]" } else { "" },
+            if ignore {
+                "\n#[ignore = \"case has no verification\"]"
+            } else {
+                ""
+            },
             test_name(index, &case.id),
             case.id
         )?;
