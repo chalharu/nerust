@@ -210,10 +210,22 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             decompress::rl(regs, bus, 2);
             SwiResult::Return(18)
         }
+        0x16 => {
+            // Diff8bitUnFilterWram: HLE 0xD051 + 0x2000 wait = 0xF051
+            decompress::diff8_wram(regs, bus, 1);
+            SwiResult::Return(0xD051)
+        }
+        0x17 => {
+            // Diff8bitUnFilterVram: VRAM dest, no extra wait beyond HLE
+            decompress::diff8_wram(regs, bus, 2);
+            SwiResult::Return(0x3853)
+        }
+        0x18 => {
+            // Diff16bitUnFilter: HLE 0x6851 + 0x1000 wait = 0x7851
+            decompress::diff16(regs, bus);
+            SwiResult::Return(0x6851)
+        }
         0x03
-        | 0x16
-        | 0x17
-        | 0x18
         | 0x19
         | 0x1A
         | 0x1B
@@ -222,7 +234,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         | 0x1E
         | 0x1F
         | 0x20..=0x2F => {
-            // Sound / Diff / Stop / MultiBoot etc — no-op for HLE minimal
+            // Sound / Stop / MultiBoot etc — no-op for HLE minimal
             SwiResult::Return(1)
         }
         _ => SwiResult::Unsupported,
