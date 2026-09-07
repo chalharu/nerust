@@ -199,8 +199,8 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(25)
         }
         0x13 => {
-            decompress::huff(regs, bus);
-            SwiResult::Return(30)
+            let cycles = decompress::huff(regs, bus);
+            SwiResult::Return(cycles)
         }
         0x14 => {
             decompress::rl(regs, bus, 1);
