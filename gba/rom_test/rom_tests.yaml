@@ -380,3 +380,6 @@ suites:
   - id: PeterLemon_BIOSBIT1BPP
     rom: BIOS/Decompress/BIT/1BPP/BIOSBIT1BPP.gba
     cycles: 3000000
+  - id: PeterLemon_BIOSBIT2BPP
+    rom: BIOS/Decompress/BIT/2BPP/BIOSBIT2BPP.gba
+    cycles: 3000000

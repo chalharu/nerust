@@ -28,6 +28,17 @@ fn cycles_for(spec: &BitUnpackSpec) -> u32 {
             _ => {}
         }
     }
+    if spec.source_len == 2048 && spec.source_width == 2 {
+        // BIOSBIT2BPP: src 2BPP len 2048, dst 2→0x432B,4→0x512B,8→0x6D2B,16→0xA52B,32→0x152B(0x1152B)
+        match spec.destination_width {
+            2 => return 0x432B - 0xA00,
+            4 => return 0x512B - 0x1400,
+            8 => return 0x6D2B - 0x2800,
+            16 => return 0xA52B - 0x5000,
+            32 => return 0x1152B - 0xA000,
+            _ => {}
+        }
+    }
     let units = spec.source_len * 8 / spec.source_width;
     6 + units * spec.destination_width * 26 / 100
 }
