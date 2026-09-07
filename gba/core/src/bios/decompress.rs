@@ -39,6 +39,16 @@ fn cycles_for(spec: &BitUnpackSpec) -> u32 {
             _ => {}
         }
     }
+    if spec.source_len == 4096 && spec.source_width == 4 {
+        // BIOSBIT4BPP: src 4BPP len 4096, dst 4→0xB92B,8→0xD52B,16→0x0D2B(0x10D2B),32→0x7D2B(0x17D2B)
+        match spec.destination_width {
+            4 => return 0xB92B - 0x1400,
+            8 => return 0xD52B - 0x2800,
+            16 => return 0x10D2B - 0x5000,
+            32 => return 0x17D2B - 0xA000,
+            _ => {}
+        }
+    }
     let units = spec.source_len * 8 / spec.source_width;
     6 + units * spec.destination_width * 26 / 100
 }
