@@ -80,12 +80,11 @@ impl CoreFactory for GbaFactory {
 
     fn create_core_and_adapter_with_assignments(
         &self,
-        _view: &FactorySettingsView,
-        _speaker: Box<dyn AudioBackend>,
-        _assignments: &InputAssignments,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
     ) -> Result<CoreParts, FactoryError> {
-        // Phase 11 で実装
-        todo!("create_core_and_adapter_with_assignments")
+        builder::create_core_and_adapter(view, speaker, assignments)
     }
 
     fn input_system_factory(&self) -> &dyn InputSystemFactory {
