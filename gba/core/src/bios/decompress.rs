@@ -124,11 +124,16 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
         return 20;
     };
     write_output(bus, regs.r(1), &output, width);
-    // 実測表示 TIMER0: WRAM 0xF643, VRAM 0x918E
-    // WRAMは表示-0x2000がHLE（WRAM wait 0x2000）、VRAMは表示そのまま
+    // 実測表示 TIMER0: WRAM 0xF643, VRAM 0x918E (size=0x1000)
+    // WRAM waitは size*0x2000/0x1000 に比例、VRAMは wait 0。
+    // 30ステップで4096byteが終わることはなく、HLE stallもsize比例で増加する。
     match width {
-        1 => 0xF643 - 0x2000,
-        2 => 0x918E,
+        1 => {
+            let displayed = 0xF643u32 * size / 0x1000;
+            let wait = 0x2000u32 * size / 0x1000;
+            displayed.saturating_sub(wait)
+        }
+        2 => 0x918Eu32 * size / 0x1000,
         _ => 20,
     }
 }
@@ -184,11 +189,18 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         return 30;
     }
     decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
-    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49
-    // 4BIT は表示-0x1400がHLE、8BITは表示そのままがHLE（VRAMウェイト差）
+    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49 (size=0x1000)
+    // WRAM waitはバスウェイトに依存し、sizeに比例。Huffmanは
+    // 4BITで 0x1400/0x1000 byte、8BITは wait 0 として観測されたため
+    // size比例でスケールさせる。30ステップで終わることはなく、
+    // 4096byteで2万サイクル以上かかる。
     match data_bits {
-        4 => 0x626F - 0x1400,
-        8 => 0x8D49,
+        4 => {
+            let displayed = 0x626Fu32 * size / 0x1000;
+            let wait = 0x1400u32 * size / 0x1000;
+            displayed.saturating_sub(wait)
+        }
+        8 => 0x8D49u32 * size / 0x1000,
         _ => 30,
     }
 }
@@ -277,11 +289,16 @@ pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     }
     let output = decode_rl(bus, src + 4, size);
     write_output(bus, regs.r(1), &output, width);
-    // 実測表示 TIMER0: WRAM 0xBEE3, VRAM 0x2580
-    // WRAMは表示-0x2000がHLE、VRAMは表示そのまま（LZ77と同様）
+    // 実測表示 TIMER0: WRAM 0xBEE3, VRAM 0x2580 (size=0x1000)
+    // WRAM waitは size*0x2000/0x1000 に比例。30ステップで4096byteが
+    // 終了することはなく、size比例でHLE stallも増加する。
     match width {
-        1 => 0xBEE3 - 0x2000,
-        2 => 0x2580,
+        1 => {
+            let displayed = 0xBEE3u32 * size / 0x1000;
+            let wait = 0x2000u32 * size / 0x1000;
+            displayed.saturating_sub(wait)
+        }
+        2 => 0x2580u32 * size / 0x1000,
         _ => 15,
     }
 }

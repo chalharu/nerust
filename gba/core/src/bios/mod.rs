@@ -518,18 +518,14 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             }
             d = d.wrapping_add(4);
         }
-        if len == 0x400 {
-            if fixed {
-                return 0x3060 - 0x1400;
-            } else {
-                return 0x3C5F - 0x1400;
-            }
-        }
-        if fixed {
-            return 24 + len * 6 + len / 4;
-        } else {
-            return 24 + len * 8;
-        }
+        // 32BIT: base 0x400 words, waitはWRAMで size*0x1400/0x400 に比例
+        // 30ステップで4096byteが終わることはなく、size比例で数千cycleかかる
+        let base_disp = if fixed { 0x3060u32 } else { 0x3C5Fu32 };
+        let base_wait = 0x1400u32;
+        let base_len = 0x400u32;
+        let disp = base_disp * len / base_len;
+        let wait = base_wait * len / base_len;
+        return disp.saturating_sub(wait);
     } else {
         let s0 = src & !1;
         let d0 = dst & !1;
@@ -543,18 +539,14 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             }
             d = d.wrapping_add(2);
         }
-        if len == 0x800 {
-            if fixed {
-                return 0x5062 - 0x1000;
-            } else {
-                return 0x6861 - 0x1000;
-            }
-        }
-        if fixed {
-            return 24 + len * 3 + len / 4;
-        } else {
-            return 24 + len * 4;
-        }
+        // 16BIT: base 0x800 halfwords, waitはWRAMで size*0x1000/0x800 に比例
+        // 30ステップで4096byteが終わることはなく、size比例で1万cycle以上かかる
+        let base_disp = if fixed { 0x5062u32 } else { 0x6861u32 };
+        let base_wait = 0x1000u32;
+        let base_len = 0x800u32;
+        let disp = base_disp * len / base_len;
+        let wait = base_wait * len / base_len;
+        return disp.saturating_sub(wait);
     }
 }
 
@@ -578,23 +570,15 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         }
         d = d.wrapping_add(4);
     }
-    // 実測表示 TIMER0: COPY 0x1FDE / FIXED 0x1AE8 (len=0x400)
-    // HLEは表示-0x1400（WRAM wait）が表示と一致
-    if len == 0x400 {
-        if fixed {
-            0x1AE8 - 0x1400
-        } else {
-            0x1FDE - 0x1400
-        }
-    } else {
-        // 汎用推定: 8cyc/word COPY, 6cyc/word FIXED + overhead 24
-        let base = 24;
-        if fixed {
-            base + len * 6 + len / 4
-        } else {
-            base + len * 8
-        }
-    }
+    // 実測表示 TIMER0: COPY 0x1FDE / FIXED 0x1AE8 (len=0x400, 4096byte)
+    // WRAM waitは size*0x1400/0x400 に比例。30ステップで4096byteが
+    // 終了することはなく、HLE stallもsize比例で数千cycleかかる。
+    let base_disp = if fixed { 0x1AE8u32 } else { 0x1FDEu32 };
+    let base_wait = 0x1400u32;
+    let base_len = 0x400u32;
+    let disp = base_disp * len / base_len;
+    let wait = base_wait * len / base_len;
+    disp.saturating_sub(wait)
 }
 
 fn bios_checksum(regs: &mut CpuRegisters) {
