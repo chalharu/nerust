@@ -118,10 +118,11 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let header = bus.read32(src & !3);
     let size = header >> 8;
     if header & 0xFF != 0x10 || size == 0 || !valid_source(src) {
-        return 20;
+        // 不正ヘッダは最小コストで早期リターン（固定20は根拠なし）
+        return 1 + size / 0x100;
     }
     let Some(output) = decode_lz77_vec(bus, src.wrapping_add(4), size) else {
-        return 20;
+        return 1 + size / 0x100;
     };
     write_output(bus, regs.r(1), &output, width);
     // 実測表示 TIMER0: WRAM 0xF643, VRAM 0x918E (size=0x1000)
@@ -134,7 +135,7 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
             displayed.saturating_sub(wait)
         }
         2 => 0x918Eu32 * size / 0x1000,
-        _ => 20,
+        _ => 1 + size / 0x100,
     }
 }
 
@@ -182,11 +183,11 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let header = bus.read32(src & !3);
     let data_bits = header & 0xF;
     let Some(size) = valid_huffman_size(src, header, data_bits) else {
-        return 30;
+        return 1 + (header >> 8) / 0x100;
     };
     let tree = read_huffman_tree(bus, src);
     if tree.is_empty() {
-        return 30;
+        return 1 + size / 0x100;
     }
     decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
     // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49 (size=0x1000)
@@ -201,7 +202,7 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             displayed.saturating_sub(wait)
         }
         8 => 0x8D49u32 * size / 0x1000,
-        _ => 30,
+        _ => 1 + size / 0x100,
     }
 }
 
@@ -285,7 +286,7 @@ pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let header = bus.read32(src & !3);
     let size = header >> 8;
     if header & 0xFF != 0x30 || size == 0 || !valid_source(src) {
-        return 15;
+        return 1 + size / 0x100;
     }
     let output = decode_rl(bus, src + 4, size);
     write_output(bus, regs.r(1), &output, width);
@@ -299,7 +300,7 @@ pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
             displayed.saturating_sub(wait)
         }
         2 => 0x2580u32 * size / 0x1000,
-        _ => 15,
+        _ => 1 + size / 0x100,
     }
 }
 
