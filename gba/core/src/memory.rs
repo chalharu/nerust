@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
+use crate::apu::GbaApu;
 use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::GbaPpu;
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
@@ -31,6 +32,7 @@ pub struct GbaMemoryBus {
     ppu: GbaPpu,
     dma: GbaDma,
     timers: GbaTimers,
+    apu: GbaApu,
     cartridge: Option<Cartridge>,
     // Fallback SRAM for Phase 3 tests when no cartridge is loaded
     fallback_sram: Box<[u8; 0x10000]>,
@@ -52,21 +54,6 @@ pub struct GbaMemoryBus {
     joy_recv: u32,
     joy_trans: u32,
     joystat: u16,
-    sound1cnt_lo: u16,
-    sound1cnt_hi: u16,
-    sound1cnt_x: u16,
-    sound2cnt_lo: u16,
-    sound2cnt_hi: u16,
-    sound3cnt_lo: u16,
-    sound3cnt_hi: u16,
-    sound3cnt_x: u16,
-    sound4cnt_lo: u16,
-    sound4cnt_hi: u16,
-    soundcnt_lo: u16,
-    soundcnt_hi: u16,
-    soundcnt_x: u16,
-    soundbias: u16,
-    wave_ram: Box<[u8; 0x20]>,
 
     // Bus制御
     last_prefetch: u32,
@@ -108,6 +95,7 @@ impl GbaMemoryBus {
             ppu: GbaPpu::new(),
             dma: GbaDma::default(),
             timers: GbaTimers::default(),
+            apu: GbaApu::new(),
             cartridge: None,
             fallback_sram: Box::new([0u8; 0x10000]),
 
@@ -127,21 +115,6 @@ impl GbaMemoryBus {
             joy_recv: 0,
             joy_trans: 0,
             joystat: 0,
-            sound1cnt_lo: 0,
-            sound1cnt_hi: 0,
-            sound1cnt_x: 0,
-            sound2cnt_lo: 0,
-            sound2cnt_hi: 0,
-            sound3cnt_lo: 0,
-            sound3cnt_hi: 0,
-            sound3cnt_x: 0,
-            sound4cnt_lo: 0,
-            sound4cnt_hi: 0,
-            soundcnt_lo: 0,
-            soundcnt_hi: 0,
-            soundcnt_x: 0,
-            soundbias: 0x200,
-            wave_ram: Box::new([0u8; 0x20]),
 
             last_prefetch: 0xE129F000,
             open_bus_value: 0xE129F000,
@@ -437,22 +410,7 @@ impl GbaMemoryBus {
             self.joystat = 0;
         }
         if flags & 0x40 != 0 {
-            // mGBA sound clear
-            self.sound1cnt_lo = 0;
-            self.sound1cnt_hi = 0;
-            self.sound1cnt_x = 0;
-            self.sound2cnt_lo = 0;
-            self.sound2cnt_hi = 0;
-            self.sound3cnt_lo = 0;
-            self.sound3cnt_hi = 0;
-            self.sound3cnt_x = 0;
-            self.sound4cnt_lo = 0;
-            self.sound4cnt_hi = 0;
-            self.soundcnt_lo = 0;
-            self.soundcnt_hi = 0;
-            self.soundcnt_x = 0;
-            self.soundbias = 0x200;
-            self.wave_ram.fill(0);
+            self.apu.reset_sound();
         }
         if flags & 0x80 != 0 {
             // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts
@@ -765,32 +723,32 @@ impl GbaMemoryBus {
                 .expect("readable PPU register"),
             0x040000B0..=0x040000DE => self.dma.read(aligned).unwrap_or(0),
             0x04000100..=0x0400010E => self.timers.read(aligned).unwrap_or(0),
-            0x04000060 => self.sound1cnt_lo,
-            0x04000062 => self.sound1cnt_hi,
-            0x04000064 => self.sound1cnt_x,
-            0x04000068 => self.sound2cnt_lo,
-            0x0400006C => self.sound2cnt_hi,
-            0x04000070 => self.sound3cnt_lo,
-            0x04000072 => self.sound3cnt_hi,
-            0x04000074 => self.sound3cnt_x,
-            0x04000078 => self.sound4cnt_lo,
-            0x0400007C => self.sound4cnt_hi,
-            0x04000080 => self.soundcnt_lo,
-            0x04000082 => self.soundcnt_hi,
-            0x04000084 => self.soundcnt_x,
-            0x04000088 => self.soundbias,
-            0x04000090 => u16::from_le_bytes([self.wave_ram[0], self.wave_ram[1]]),
-            0x04000092 => u16::from_le_bytes([self.wave_ram[2], self.wave_ram[3]]),
-            0x04000094 => u16::from_le_bytes([self.wave_ram[4], self.wave_ram[5]]),
-            0x04000096 => u16::from_le_bytes([self.wave_ram[6], self.wave_ram[7]]),
-            0x04000098 => u16::from_le_bytes([self.wave_ram[8], self.wave_ram[9]]),
-            0x0400009A => u16::from_le_bytes([self.wave_ram[10], self.wave_ram[11]]),
-            0x0400009C => u16::from_le_bytes([self.wave_ram[12], self.wave_ram[13]]),
-            0x0400009E => u16::from_le_bytes([self.wave_ram[14], self.wave_ram[15]]),
-            0x040000A0 => u16::from_le_bytes([self.wave_ram[16], self.wave_ram[17]]),
-            0x040000A2 => u16::from_le_bytes([self.wave_ram[18], self.wave_ram[19]]),
-            0x040000A4 => u16::from_le_bytes([self.wave_ram[20], self.wave_ram[21]]),
-            0x040000A6 => u16::from_le_bytes([self.wave_ram[22], self.wave_ram[23]]),
+            0x04000060 => self.apu.sound1cnt_lo,
+            0x04000062 => self.apu.sound1cnt_hi,
+            0x04000064 => self.apu.sound1cnt_x,
+            0x04000068 => self.apu.sound2cnt_lo,
+            0x0400006C => self.apu.sound2cnt_hi,
+            0x04000070 => self.apu.sound3cnt_lo,
+            0x04000072 => self.apu.sound3cnt_hi,
+            0x04000074 => self.apu.sound3cnt_x,
+            0x04000078 => self.apu.sound4cnt_lo,
+            0x0400007C => self.apu.sound4cnt_hi,
+            0x04000080 => self.apu.soundcnt_lo,
+            0x04000082 => self.apu.soundcnt_hi,
+            0x04000084 => self.apu.soundcnt_x,
+            0x04000088 => self.apu.soundbias,
+            0x04000090 => u16::from_le_bytes([self.apu.wave_ram[0], self.apu.wave_ram[1]]),
+            0x04000092 => u16::from_le_bytes([self.apu.wave_ram[2], self.apu.wave_ram[3]]),
+            0x04000094 => u16::from_le_bytes([self.apu.wave_ram[4], self.apu.wave_ram[5]]),
+            0x04000096 => u16::from_le_bytes([self.apu.wave_ram[6], self.apu.wave_ram[7]]),
+            0x04000098 => u16::from_le_bytes([self.apu.wave_ram[8], self.apu.wave_ram[9]]),
+            0x0400009A => u16::from_le_bytes([self.apu.wave_ram[10], self.apu.wave_ram[11]]),
+            0x0400009C => u16::from_le_bytes([self.apu.wave_ram[12], self.apu.wave_ram[13]]),
+            0x0400009E => u16::from_le_bytes([self.apu.wave_ram[14], self.apu.wave_ram[15]]),
+            0x040000A0 => u16::from_le_bytes([self.apu.wave_ram[16], self.apu.wave_ram[17]]),
+            0x040000A2 => u16::from_le_bytes([self.apu.wave_ram[18], self.apu.wave_ram[19]]),
+            0x040000A4 => u16::from_le_bytes([self.apu.wave_ram[20], self.apu.wave_ram[21]]),
+            0x040000A6 => u16::from_le_bytes([self.apu.wave_ram[22], self.apu.wave_ram[23]]),
             0x04000128 => self.siocnt,
             0x0400012A => self.siodata8 as u16,
             0x04000120 => (self.siodata32 & 0xFFFF) as u16,
@@ -934,68 +892,68 @@ impl GbaMemoryBus {
                 self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
-            0x04000060 => self.sound1cnt_lo = v16,
-            0x04000062 => self.sound1cnt_hi = v16,
-            0x04000064 => self.sound1cnt_x = v16,
-            0x04000068 => self.sound2cnt_lo = v16,
-            0x0400006C => self.sound2cnt_hi = v16,
-            0x04000070 => self.sound3cnt_lo = v16,
-            0x04000072 => self.sound3cnt_hi = v16,
-            0x04000074 => self.sound3cnt_x = v16,
-            0x04000078 => self.sound4cnt_lo = v16,
-            0x0400007C => self.sound4cnt_hi = v16,
-            0x04000080 => self.soundcnt_lo = v16,
-            0x04000082 => self.soundcnt_hi = v16,
-            0x04000084 => self.soundcnt_x = v16,
-            0x04000088 => self.soundbias = v16,
+            0x04000060 => self.apu.sound1cnt_lo = v16,
+            0x04000062 => self.apu.sound1cnt_hi = v16,
+            0x04000064 => self.apu.sound1cnt_x = v16,
+            0x04000068 => self.apu.sound2cnt_lo = v16,
+            0x0400006C => self.apu.sound2cnt_hi = v16,
+            0x04000070 => self.apu.sound3cnt_lo = v16,
+            0x04000072 => self.apu.sound3cnt_hi = v16,
+            0x04000074 => self.apu.sound3cnt_x = v16,
+            0x04000078 => self.apu.sound4cnt_lo = v16,
+            0x0400007C => self.apu.sound4cnt_hi = v16,
+            0x04000080 => self.apu.soundcnt_lo = v16,
+            0x04000082 => self.apu.soundcnt_hi = v16,
+            0x04000084 => self.apu.soundcnt_x = v16,
+            0x04000088 => self.apu.soundbias = v16,
             0x04000090 => {
-                self.wave_ram[0] = (v16 & 0xFF) as u8;
-                self.wave_ram[1] = (v16 >> 8) as u8;
+                self.apu.wave_ram[0] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[1] = (v16 >> 8) as u8;
             }
             0x04000092 => {
-                self.wave_ram[2] = (v16 & 0xFF) as u8;
-                self.wave_ram[3] = (v16 >> 8) as u8;
+                self.apu.wave_ram[2] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[3] = (v16 >> 8) as u8;
             }
             0x04000094 => {
-                self.wave_ram[4] = (v16 & 0xFF) as u8;
-                self.wave_ram[5] = (v16 >> 8) as u8;
+                self.apu.wave_ram[4] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[5] = (v16 >> 8) as u8;
             }
             0x04000096 => {
-                self.wave_ram[6] = (v16 & 0xFF) as u8;
-                self.wave_ram[7] = (v16 >> 8) as u8;
+                self.apu.wave_ram[6] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[7] = (v16 >> 8) as u8;
             }
             0x04000098 => {
-                self.wave_ram[8] = (v16 & 0xFF) as u8;
-                self.wave_ram[9] = (v16 >> 8) as u8;
+                self.apu.wave_ram[8] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[9] = (v16 >> 8) as u8;
             }
             0x0400009A => {
-                self.wave_ram[10] = (v16 & 0xFF) as u8;
-                self.wave_ram[11] = (v16 >> 8) as u8;
+                self.apu.wave_ram[10] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[11] = (v16 >> 8) as u8;
             }
             0x0400009C => {
-                self.wave_ram[12] = (v16 & 0xFF) as u8;
-                self.wave_ram[13] = (v16 >> 8) as u8;
+                self.apu.wave_ram[12] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[13] = (v16 >> 8) as u8;
             }
             0x0400009E => {
-                self.wave_ram[14] = (v16 & 0xFF) as u8;
-                self.wave_ram[15] = (v16 >> 8) as u8;
+                self.apu.wave_ram[14] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[15] = (v16 >> 8) as u8;
             }
             0x040000A0 => {
                 // FIFO_A mirrors wave RAM upper bank on GBA, but for reset just store to wave
-                self.wave_ram[16] = (v16 & 0xFF) as u8;
-                self.wave_ram[17] = (v16 >> 8) as u8;
+                self.apu.wave_ram[16] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[17] = (v16 >> 8) as u8;
             }
             0x040000A2 => {
-                self.wave_ram[18] = (v16 & 0xFF) as u8;
-                self.wave_ram[19] = (v16 >> 8) as u8;
+                self.apu.wave_ram[18] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[19] = (v16 >> 8) as u8;
             }
             0x040000A4 => {
-                self.wave_ram[20] = (v16 & 0xFF) as u8;
-                self.wave_ram[21] = (v16 >> 8) as u8;
+                self.apu.wave_ram[20] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[21] = (v16 >> 8) as u8;
             }
             0x040000A6 => {
-                self.wave_ram[22] = (v16 & 0xFF) as u8;
-                self.wave_ram[23] = (v16 >> 8) as u8;
+                self.apu.wave_ram[22] = (v16 & 0xFF) as u8;
+                self.apu.wave_ram[23] = (v16 >> 8) as u8;
             }
             0x04000128 => self.siocnt = v16,
             0x0400012A => self.siodata8 = (value & 0xFF) as u8,
