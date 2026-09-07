@@ -235,6 +235,8 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     });
 }
 
+pub static mut REGISTER_RAM_RESET_OFFSET: i32 = 16081;
+
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
     let mut cycles: u32 = 0;
@@ -292,6 +294,10 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     if flags & 0x80 != 0 {
         // OTHER (DISPSTAT etc) 0x01AB
         cycles += 0x01ABu32;
+    }
+    let offset = unsafe { REGISTER_RAM_RESET_OFFSET };
+    if offset != 0 {
+        cycles = (cycles as i32).wrapping_add(offset) as u32;
     }
     bus.reset_io_groups(flags);
     regs.set_r(0, 0);
