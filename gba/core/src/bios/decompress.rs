@@ -304,6 +304,84 @@ fn decompressed_size(bus: &mut GbaMemoryBus, source: u32, kind: u32) -> Option<u
     (header & 0xF0 == kind && size > 0).then_some(size)
 }
 
+pub fn diff8_wram(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, dest_width: u8) {
+    let src = regs.r(0);
+    let dst = regs.r(1);
+    let header = bus.read32(src & !3);
+    let kind = header & 0xFF;
+    if kind != 0x81 && kind != 0x82 {
+        return;
+    }
+    let size = header >> 8;
+    if size == 0 {
+        return;
+    }
+    decode_diff8(bus, src + 4, dst, size, dest_width);
+}
+
+pub fn diff16(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    let src = regs.r(0);
+    let dst = regs.r(1);
+    let header = bus.read32(src & !3);
+    if (header & 0xFF) != 0x82 {
+        return;
+    }
+    let size = header >> 8;
+    if size == 0 {
+        return;
+    }
+    decode_diff16(bus, src + 4, dst, size);
+}
+
+fn decode_diff8(bus: &mut GbaMemoryBus, mut src: u32, mut dst: u32, size: u32, dest_width: u8) {
+    let mut prev: u8 = 0;
+    let mut pending: Option<u8> = None;
+    if dest_width == 1 {
+        for i in 0..size {
+            let cur = bus.read8(src);
+            src += 1;
+            let val = if i == 0 { cur } else { prev.wrapping_add(cur) };
+            prev = val;
+            bus.write8(dst, val);
+            dst = dst.wrapping_add(1);
+        }
+    } else {
+        for i in 0..size {
+            let cur = bus.read8(src);
+            src += 1;
+            let val = if i == 0 { cur } else { prev.wrapping_add(cur) };
+            prev = val;
+            if let Some(prev_byte) = pending.take() {
+                let half = u16::from_le_bytes([prev_byte, val]);
+                bus.write16(dst, half);
+                dst = dst.wrapping_add(2);
+            } else {
+                pending = Some(val);
+            }
+        }
+        if let Some(last) = pending {
+            bus.write8(dst, last);
+        }
+    }
+}
+
+fn decode_diff16(bus: &mut GbaMemoryBus, mut src: u32, mut dst: u32, size: u32) {
+    let mut prev: u16 = 0;
+    for i in 0..(size / 2) {
+        let cur = bus.read16(src);
+        src += 2;
+        let val = if i == 0 { cur } else { prev.wrapping_add(cur) };
+        prev = val;
+        bus.write16(dst, val);
+        dst = dst.wrapping_add(2);
+    }
+    if size % 2 != 0 {
+        let cur = bus.read8(src);
+        let val = prev.wrapping_add(cur as u16);
+        bus.write8(dst, val as u8);
+    }
+}
+
 fn valid_source(src: u32) -> bool {
     (0x02000000..=0x0FFFFFFF).contains(&src)
 }
