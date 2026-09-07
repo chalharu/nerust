@@ -34,6 +34,7 @@ expected_failures:
 - PeterLemon_BIOSSoundDriverVSync
 - PeterLemon_BIOSSoundGetJumpList
 - PeterLemon_BIOSMidiKey2Freq
+- PeterLemon_Timers
 
 suites:
 - name: jsmolka_gba-tests
@@ -469,4 +470,7 @@ suites:
     cycles: 3000000
   - id: PeterLemon_BIOSOBJAFFINESET
     rom: BIOS/RotationScaling/OBJAffineSet/BIOSOBJAFFINESET.gba
+    cycles: 3000000
+  - id: PeterLemon_Timers
+    rom: Timers/Timers.gba
     cycles: 3000000
