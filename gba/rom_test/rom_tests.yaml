@@ -25,6 +25,14 @@ expected_failures:
 - PeterLemon_SoundBRRMonoSingleShot
 - PeterLemon_SoundPCMMono
 - PeterLemon_SoundPCMStereo
+- PeterLemon_BIOSSoundBias
+- PeterLemon_BIOSSoundChannelClear
+- PeterLemon_BIOSSoundDriverInit
+- PeterLemon_BIOSSoundDriverMain
+- PeterLemon_BIOSSoundDriverMode
+- PeterLemon_BIOSSoundDriverVSync
+- PeterLemon_BIOSSoundGetJumpList
+- PeterLemon_BIOSMidiKey2Freq
 
 suites:
 - name: jsmolka_gba-tests
@@ -373,6 +381,38 @@ suites:
     skip_screenshot: true
   - id: PeterLemon_SoundPCMStereo
     rom: Sound/PCM/Stereo/SoundPCMStereo.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundBias
+    rom: BIOS/Sound/Bias/BIOSSoundBias.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundChannelClear
+    rom: BIOS/Sound/ChannelClear/BIOSSoundChannelClear.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundDriverInit
+    rom: BIOS/Sound/DriverInit/BIOSSoundDriverInit.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundDriverMain
+    rom: BIOS/Sound/DriverMain/BIOSSoundDriverMain.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundDriverMode
+    rom: BIOS/Sound/DriverMode/BIOSSoundDriverMode.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundDriverVSync
+    rom: BIOS/Sound/DriverVSync/BIOSSoundDriverVSync.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSSoundGetJumpList
+    rom: BIOS/Sound/GetJumpList/BIOSSoundGetJumpList.gba
+    cycles: 1000000
+    skip_screenshot: true
+  - id: PeterLemon_BIOSMidiKey2Freq
+    rom: BIOS/Sound/MidiKey2Freq/BIOSMidiKey2Freq.gba
     cycles: 1000000
     skip_screenshot: true
   - id: PeterLemon_FastLine
