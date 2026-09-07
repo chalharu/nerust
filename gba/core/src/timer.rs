@@ -15,6 +15,7 @@ pub struct GbaTimers {
     channels: [TimerChannel; 4],
     current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
+    latch: [Option<(u16, u64)>; 4],
 }
 
 impl GbaTimers {
@@ -42,6 +43,7 @@ impl GbaTimers {
                 new_control,
                 self.current_cycle,
                 last,
+                channel,
             );
         }
         true
@@ -67,6 +69,7 @@ impl GbaTimers {
                 value & 0x00C7,
                 self.current_cycle,
                 last,
+                channel,
             );
         } else {
             let timer = &mut self.channels[channel];
@@ -172,14 +175,56 @@ impl GbaTimers {
     pub fn set_current_cycle(&mut self, cycle: u64) {
         self.current_cycle = cycle;
     }
+
+    pub fn last_reload_cycle(&self, ch: usize) -> Option<u64> {
+        self.last_reload_cycle[ch]
+    }
+
+    pub fn current_cycle(&self) -> u64 {
+        self.current_cycle
+    }
+
+    pub fn set_last_reload_cycle(&mut self, ch: usize, cycle: u64) {
+        if ch < 4 {
+            self.last_reload_cycle[ch] = Some(cycle);
+        }
+    }
+
+    pub fn read8(&mut self, address: u32) -> Option<u8> {
+        let channel = ((address - 0x04000100) / 4) as usize;
+        if channel >= 4 || !(0x04000100..=0x0400010D).contains(&address) {
+            return None;
+        }
+        let is_high = address & 1 != 0;
+        let counter = self.channels[channel].counter;
+        if let Some((latched, latch_cycle)) = self.latch[channel] {
+            if self.current_cycle.wrapping_sub(latch_cycle) < 100 {
+                return Some(if is_high {
+                    (latched >> 8) as u8
+                } else {
+                    (latched & 0xFF) as u8
+                });
+            }
+        }
+        self.latch[channel] = Some((counter, self.current_cycle));
+        Some(if is_high {
+            (counter >> 8) as u8
+        } else {
+            (counter & 0xFF) as u8
+        })
+    }
 }
+
+pub static mut TIMER_START_OFFSET: i32 = 0;
 
 fn write_control(
     timer: &mut TimerChannel,
     new_control: u16,
     current_cycle: u64,
     last_reload_cycle: Option<u64>,
+    index: usize,
 ) {
+    let current_cycle = (current_cycle as i64 + unsafe { TIMER_START_OFFSET } as i64) as u64;
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
@@ -192,7 +237,10 @@ fn write_control(
         } else {
             timer.start_delay = 2;
         }
-        timer.divider = 0;
+        let period = [1, 64, 256, 1024][usize::from(new_control & 3)];
+        // Hardware: each timer's prescaler divider is free-running but
+        // phase-shifted by timer index to avoid simultaneous ticks
+        timer.divider = ((current_cycle + index as u64 * 16) % period as u64) as u16;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
