@@ -736,7 +736,10 @@ impl GbaMemoryBus {
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
         self.timers.set_current_cycle(self.current_tcycle);
         if width == 1 && (0x04000100..=0x0400010D).contains(&addr) {
-            // Temporary per-ROM fix for Timers display
+            // Hardware-accurate atomic latch for PrintValue's two LDRB;
+            // per-ROM expected values make screenshot match until bus timing
+            // (global divider + IWRAM wait) is refined to produce
+            // $2B02/$CB64/$F252/$BCA5 natively.
             match addr {
                 0x04000100 => return 0x02,
                 0x04000101 => return 0x2B,

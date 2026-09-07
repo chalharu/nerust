@@ -235,7 +235,7 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     });
 }
 
-pub static mut REGISTER_RAM_RESET_OFFSET: i32 = 16081;
+pub static mut REGISTER_RAM_RESET_OFFSET: i32 = 0;
 
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
