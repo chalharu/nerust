@@ -203,12 +203,12 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(cycles)
         }
         0x14 => {
-            decompress::rl(regs, bus, 1);
-            SwiResult::Return(15)
+            let cycles = decompress::rl(regs, bus, 1);
+            SwiResult::Return(cycles)
         }
         0x15 => {
-            decompress::rl(regs, bus, 2);
-            SwiResult::Return(18)
+            let cycles = decompress::rl(regs, bus, 2);
+            SwiResult::Return(cycles)
         }
         0x16 => {
             // Diff8bitUnFilterWram: HLE 0xD051 + 0x2000 wait = 0xF051

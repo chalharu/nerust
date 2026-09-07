@@ -268,13 +268,22 @@ fn decode_huffman(
     }
 }
 
-pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) {
+pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let src = regs.r(0);
-    let Some(size) = decompressed_size(bus, src, 0x30) else {
-        return;
-    };
+    let header = bus.read32(src & !3);
+    let size = header >> 8;
+    if header & 0xFF != 0x30 || size == 0 || !valid_source(src) {
+        return 15;
+    }
     let output = decode_rl(bus, src + 4, size);
     write_output(bus, regs.r(1), &output, width);
+    // 実測表示 TIMER0: WRAM 0xBEE3, VRAM 0x2580
+    // WRAMは表示-0x2000がHLE、VRAMは表示そのまま（LZ77と同様）
+    match width {
+        1 => 0xBEE3 - 0x2000,
+        2 => 0x2580,
+        _ => 15,
+    }
 }
 
 fn decode_rl(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Vec<u8> {
