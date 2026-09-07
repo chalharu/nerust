@@ -183,7 +183,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         0x0B => SwiResult::Return(cpu_set(regs, bus)),
         0x0C => SwiResult::Return(cpu_fast_set(regs, bus)),
         0x0D => {
-            bios_checksum(regs);
+            bios_checksum(regs, bus);
             SwiResult::Return(1)
         }
         0x10 => {
@@ -621,10 +621,10 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     disp.saturating_sub(wait)
 }
 
-fn bios_checksum(regs: &mut CpuRegisters) {
-    // Simple checksum of BIOS 0x00000000-0x03FFF words sum
-    // For HLE, return fixed value that matches BIOS
-    regs.set_r(0, 0xBAAE187F);
+fn bios_checksum(regs: &mut CpuRegisters, bus: &GbaMemoryBus) {
+    // GBATEK: sum of all 32-bit words in BIOS 0x00000000-0x03FFF
+    let sum = bus.bios_checksum();
+    regs.set_r(0, sum);
 }
 
 #[cfg(test)]

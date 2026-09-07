@@ -458,6 +458,15 @@ impl GbaMemoryBus {
         self.cartridge.take()
     }
 
+    pub fn bios_checksum(&self) -> u32 {
+        let mut sum = 0u32;
+        for chunk in self.bios.chunks_exact(4) {
+            let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            sum = sum.wrapping_add(w);
+        }
+        sum
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
