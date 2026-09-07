@@ -365,3 +365,6 @@ suites:
     rom: Sound/PCM/Stereo/SoundPCMStereo.gba
     cycles: 1000000
     skip_screenshot: true
+  - id: PeterLemon_FastLine
+    rom: FastLine/FastLine.gba
+    cycles: 1000000
