@@ -328,15 +328,19 @@ impl GbaPpu {
         let second = layers.get(1).copied();
         let effects_enabled = mask & (1 << 5) != 0;
         let output = self.apply_effect(top, second, effects_enabled);
-        let final_color = if self.registers.greenswap & 1 != 0 {
-            let r = output & 0x001F;
-            let g = (output & 0x03E0) << 5;
-            let b = (output & 0x7C00) >> 5;
-            r | g | b
-        } else {
-            output
-        };
-        self.frame[y * WIDTH + x] = color::rgba8888(final_color);
+        self.frame[y * WIDTH + x] = color::rgba8888(output);
+        if self.registers.greenswap & 1 != 0 && x % 2 == 1 {
+            let prev_idx = y * WIDTH + x - 1;
+            let curr_idx = y * WIDTH + x;
+            let prev_rgba = self.frame[prev_idx];
+            let curr_rgba = self.frame[curr_idx];
+            let prev_b = prev_rgba.to_le_bytes();
+            let curr_b = curr_rgba.to_le_bytes();
+            self.frame[prev_idx] =
+                u32::from_le_bytes([prev_b[0], curr_b[1], prev_b[2], prev_b[3]]);
+            self.frame[curr_idx] =
+                u32::from_le_bytes([curr_b[0], prev_b[1], curr_b[2], curr_b[3]]);
+        }
     }
 
     fn apply_effect(&self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
