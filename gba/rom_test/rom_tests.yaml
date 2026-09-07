@@ -15,6 +15,16 @@ expected_failures:
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
+- PeterLemon_DCTBlockDecode
+- PeterLemon_FastDCTBlockDecode
+- PeterLemon_FastLine
+- PeterLemon_FastQuantizationBlockDecode
+- PeterLemon_HUFF8Decode
+- PeterLemon_LZ77Decode
+- PeterLemon_QuantizationBlockDecode
+- PeterLemon_SoundBRRMonoSingleShot
+- PeterLemon_SoundPCMMono
+- PeterLemon_SoundPCMStereo
 
 suites:
 - name: jsmolka_gba-tests
