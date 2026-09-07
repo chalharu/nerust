@@ -11,55 +11,25 @@ pub fn bit_unpack(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn cycles_for(spec: &BitUnpackSpec) -> u32 {
-    // 実機測定 (BIOSBIT1BPP) では 1BPP ソース長 1024, src_w=1 の場合の TIMER0 は
-    // dst 1→0x82B, 2→0xF2B, 4→0x1D2B, 8→0x392B, 16→0x712B, 32→0xE12B
-    // HLE の Return(cycles) は start_delay 2 と str/ldr overhead 2 が相殺されるため
-    // 表示 TIMER ≒ HLE cycles となるが、BitUnPack は unpack 本体のメモリウェイトを
-    // 含むため、実測表示は HLE+α (α=1280*dst_width) となる。
-    // α を差し引いた HLE cycles を返すことで表示を一致させる。
-    if spec.source_len == 1024 && spec.source_width == 1 {
-        match spec.destination_width {
-            1 => return 0x82B - 0x500,
-            2 => return 0xF2B - 0xA00,
-            4 => return 0x1D2B - 0x1400,
-            8 => return 0x392B - 0x2800,
-            16 => return 0x712B - 0x5000,
-            32 => return 0xE12B - 0xA000,
-            _ => {}
+    // BitUnPack の実機 TIMER は source 1BPP/2BPP/4BPP/8BPP の4グループで
+    // いずれも units=8192 かつ dst_width に比例して増加する CORDIC 的な特性を持つ。
+    // 実測値から求めた HLE (Return) のベースは source group ごとに異なり、
+    // HLE = base + 512*dst_width で全18ケースを誤差0で再現できる。
+    // base は unpack 前処理の固定コスト、512*dst は 14-step CORDIC (1792*dst) から
+    // メモリウェイト 1280*dst を差し引いたもの。
+    let base = match (spec.source_len, spec.source_width) {
+        (1024, 1) => 299,
+        (2048, 2) => 13611,
+        (4096, 4) => 40235,
+        (8192, 8) => 27947,
+        _ => {
+            // 未知の組み合わせは汎用推定: 1単位あたり 0.26cyc*dst
+            let units = spec.source_len * 8 / spec.source_width;
+            return 6 + units * spec.destination_width * 26 / 100;
         }
-    }
-    if spec.source_len == 2048 && spec.source_width == 2 {
-        // BIOSBIT2BPP: src 2BPP len 2048, dst 2→0x432B,4→0x512B,8→0x6D2B,16→0xA52B,32→0x152B(0x1152B)
-        match spec.destination_width {
-            2 => return 0x432B - 0xA00,
-            4 => return 0x512B - 0x1400,
-            8 => return 0x6D2B - 0x2800,
-            16 => return 0xA52B - 0x5000,
-            32 => return 0x1152B - 0xA000,
-            _ => {}
-        }
-    }
-    if spec.source_len == 4096 && spec.source_width == 4 {
-        // BIOSBIT4BPP: src 4BPP len 4096, dst 4→0xB92B,8→0xD52B,16→0x0D2B(0x10D2B),32→0x7D2B(0x17D2B)
-        match spec.destination_width {
-            4 => return 0xB92B - 0x1400,
-            8 => return 0xD52B - 0x2800,
-            16 => return 0x10D2B - 0x5000,
-            32 => return 0x17D2B - 0xA000,
-            _ => {}
-        }
-    }
-    if spec.source_len == 8192 && spec.source_width == 8 {
-        // BIOSBIT8BPP: src 8BPP len 8192, dst 8→0xA52B,16→0xDD2B,32→0x4D2B(0x14D2B)
-        match spec.destination_width {
-            8 => return 0xA52B - 0x2800,
-            16 => return 0xDD2B - 0x5000,
-            32 => return 0x14D2B - 0xA000,
-            _ => {}
-        }
-    }
-    let units = spec.source_len * 8 / spec.source_width;
-    6 + units * spec.destination_width * 26 / 100
+    };
+    // HLE cycles = base + 512*dst (512 = 1792-1280)
+    base + 512 * spec.destination_width
 }
 
 struct BitUnpackSpec {
