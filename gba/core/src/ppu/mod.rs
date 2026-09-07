@@ -240,9 +240,14 @@ impl GbaPpu {
             }
             0x04000028..=0x0400002E | 0x04000038..=0x0400003E => {
                 self.write_reference(address, value);
-                let affine = usize::from(address >= 0x04000038);
-                self.internal_x[affine] = self.registers.ref_x[affine];
-                self.internal_y[affine] = self.registers.ref_y[affine];
+                // GBATEK: outside VBlank the write is copied to internal immediately
+                // and affects the current scanline; inside VBlank it is latched
+                // for the next frame (internal is reloaded at vcount 0).
+                if self.vcount < 160 {
+                    let affine = usize::from(address >= 0x04000038);
+                    self.internal_x[affine] = self.registers.ref_x[affine];
+                    self.internal_y[affine] = self.registers.ref_y[affine];
+                }
             }
             0x04000040 => self.registers.winh[0] = value,
             0x04000042 => self.registers.winh[1] = value,
