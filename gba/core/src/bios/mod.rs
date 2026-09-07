@@ -257,6 +257,8 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
     let mut cycles: u32 = 0;
+    // mGBA _RegisterRamReset: always DISPCNT=0x0080
+    bus.write16(0x04000000, 0x0080);
     // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
     // 実測 TIMER0 (size=full) から求めた base を size比でスケールする。
     // mGBA _RegisterRamReset 準拠の範囲を正確に再現する。
@@ -299,11 +301,11 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // SIO/SOUND/OTHER はレジスタクリアで size小、実測値をそのまま加算
     // これらも size (レジスタ数) に比例し、30ステップで終わらない
     if flags & 0x20 != 0 {
-        // SIO 0x0154
+        // SIO 0x0154 (mGBA: SIOCNT/RCNT/JOYCNT/JOY_RECV/TRANS)
         cycles += 0x0154u32;
     }
     if flags & 0x40 != 0 {
-        // SOUND 0x0185
+        // SOUND 0x0185 (mGBA: 14 sound regs + wave RAM)
         cycles += 0x0185u32;
     }
     if flags & 0x80 != 0 {
