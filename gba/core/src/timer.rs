@@ -108,8 +108,8 @@ impl GbaTimers {
         } else {
             0
         };
-        if let Some(control) = timer.pending_control.take() {
-            timer.control = control;
+        if let Some(pending) = timer.pending_control.take() {
+            timer.control = pending;
             timer.start_delay = 0;
         }
         timer.reload_written = false;
@@ -216,6 +216,7 @@ impl GbaTimers {
 }
 
 pub static mut TIMER_START_OFFSET: i32 = 0;
+pub static mut TIMER_PHASE: u64 = 0;
 
 fn write_control(
     timer: &mut TimerChannel,
@@ -237,10 +238,13 @@ fn write_control(
         } else {
             timer.start_delay = 2;
         }
-        let period = [1, 64, 256, 1024][usize::from(new_control & 3)];
-        // Hardware: each timer's prescaler divider is free-running but
-        // phase-shifted by timer index to avoid simultaneous ticks
-        timer.divider = ((current_cycle + index as u64 * 16) % period as u64) as u16;
+        let phase = unsafe { TIMER_PHASE };
+        let period = [1, 64, 256, 1024][usize::from(new_control & 3)] as u64;
+        if phase != 0 && period != 1 {
+            timer.divider = ((current_cycle + index as u64 * phase) % period) as u16;
+        } else {
+            timer.divider = 0;
+        }
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
