@@ -27,16 +27,20 @@ fn assert_case_passed(result: report::CaseResult) {
         if result.passed {
             "expected failure unexpectedly passed".to_string()
         } else {
-            result.error.unwrap_or_else(|| result
-                .checks
-                .iter()
-                .filter(|check| !check.passed)
-                .map(|check| format!(
-                    "{}: expected {}, got {}",
-                    check.name, check.expected, check.actual
-                ))
-                .collect::<Vec<_>>()
-                .join("; "))
+            result.error.unwrap_or_else(|| {
+                result
+                    .checks
+                    .iter()
+                    .filter(|check| !check.passed)
+                    .map(|check| {
+                        format!(
+                            "{}: expected {}, got {}",
+                            check.name, check.expected, check.actual
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
         }
     );
 }
@@ -56,11 +60,12 @@ mod tests {
     #[ignore]
     fn generate_armwrestler_references() {
         let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rom_tests.yaml");
-        let manifest = super::manifest::RomManifest::load(&manifest_path).expect("manifest must be valid");
+        let manifest =
+            super::manifest::RomManifest::load(&manifest_path).expect("manifest must be valid");
         let rom_root = manifest_path.parent().unwrap().join(&manifest.rom_root);
         let refs_dir = rom_root.join("armwrestler-gba-fixed/refs");
         std::fs::create_dir_all(&refs_dir).unwrap();
-        
+
         let armwrestler_ids = [
             "armwrestler_arm_alu",
             "armwrestler_arm_alu_part2",
@@ -75,7 +80,12 @@ mod tests {
             let selected = manifest.select(&[id.to_string()]);
             assert!(!selected.is_empty(), "Case {} not found", id);
             let result = super::runner::run_case(&selected[0], &rom_root, Some(&rom_root), false);
-            assert!(result.error.is_none(), "Test {} failed: {:?}", id, result.error);
+            assert!(
+                result.error.is_none(),
+                "Test {} failed: {:?}",
+                id,
+                result.error
+            );
             if let Some(screenshot) = &result.screenshot {
                 let src = rom_root.join("screenshots").join(screenshot);
                 let dst = refs_dir.join(format!("{}.png", id));

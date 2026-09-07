@@ -111,7 +111,8 @@ impl GbaPpu {
     pub fn step(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) -> PpuEvent {
         let mut event = PpuEvent::default();
         self.cycle += 1;
-        if self.vcount < HEIGHT as u16 && self.cycle <= HDRAW_CYCLES && self.cycle % 4 == 0 {
+        if self.vcount < HEIGHT as u16 && self.cycle <= HDRAW_CYCLES && self.cycle.is_multiple_of(4)
+        {
             self.render_pixel(
                 self.cycle as usize / 4 - 1,
                 self.vcount as usize,
@@ -341,10 +342,8 @@ impl GbaPpu {
             let curr_rgba = self.frame[curr_idx];
             let prev_b = prev_rgba.to_le_bytes();
             let curr_b = curr_rgba.to_le_bytes();
-            self.frame[prev_idx] =
-                u32::from_le_bytes([prev_b[0], curr_b[1], prev_b[2], prev_b[3]]);
-            self.frame[curr_idx] =
-                u32::from_le_bytes([curr_b[0], prev_b[1], curr_b[2], curr_b[3]]);
+            self.frame[prev_idx] = u32::from_le_bytes([prev_b[0], curr_b[1], prev_b[2], prev_b[3]]);
+            self.frame[curr_idx] = u32::from_le_bytes([curr_b[0], prev_b[1], curr_b[2], curr_b[3]]);
         }
     }
 

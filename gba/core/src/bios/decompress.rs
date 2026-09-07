@@ -325,15 +325,6 @@ fn decode_rl(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Vec<u8> {
     output
 }
 
-fn decompressed_size(bus: &mut GbaMemoryBus, source: u32, kind: u32) -> Option<u32> {
-    if !valid_source(source) {
-        return None;
-    }
-    let header = bus.read32(source & !3);
-    let size = header >> 8;
-    (header & 0xF0 == kind && size > 0).then_some(size)
-}
-
 pub fn diff8_wram(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, dest_width: u8) {
     let src = regs.r(0);
     let dst = regs.r(1);
@@ -405,7 +396,7 @@ fn decode_diff16(bus: &mut GbaMemoryBus, mut src: u32, mut dst: u32, size: u32) 
         bus.write16(dst, val);
         dst = dst.wrapping_add(2);
     }
-    if size % 2 != 0 {
+    if !size.is_multiple_of(2) {
         let cur = bus.read8(src);
         let val = prev.wrapping_add(cur as u16);
         bus.write8(dst, val as u8);

@@ -7,10 +7,7 @@ use nerust_core_traits::{
 use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use crate::{
-    input_types::GbaInputBuffer, rom_identity::GbaRomIdentity, rom_identity::GbaSystemId,
-    system::GbaSystem,
-};
+use crate::{input_types::GbaInputBuffer, rom_identity::GbaRomIdentity, system::GbaSystem};
 
 #[derive(Debug, thiserror::Error)]
 enum GbaCoreError {
@@ -65,10 +62,6 @@ impl GbaConsoleCore {
     fn loaded_ref(&self) -> Result<&LoadedGba, CoreError> {
         self.loaded.as_ref().ok_or(CoreError::NoRomLoaded)
     }
-
-    fn loaded_mut(&mut self) -> Result<&mut LoadedGba, CoreError> {
-        self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
-    }
 }
 
 impl ConsoleCore for GbaConsoleCore {
@@ -105,9 +98,8 @@ impl ConsoleCore for GbaConsoleCore {
         let dst = frame_slot.as_mut();
         for y in 0..160 {
             let src_row = &fb[y * 240..(y + 1) * 240];
-            let src_bytes = unsafe {
-                std::slice::from_raw_parts(src_row.as_ptr() as *const u8, 240 * 4)
-            };
+            let src_bytes =
+                unsafe { std::slice::from_raw_parts(src_row.as_ptr() as *const u8, 240 * 4) };
             let dst_offset = y * stride;
             dst[dst_offset..dst_offset + 240 * 4].copy_from_slice(src_bytes);
         }
@@ -162,7 +154,7 @@ impl ConsoleCore for GbaConsoleCore {
         if data.len() < 4 + len || len != loaded.rom.len() {
             return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
         }
-        if &data[4..4 + len] != &*loaded.rom {
+        if data[4..4 + len] != *loaded.rom {
             return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
         }
         // For minimal implementation, reload from ROM (full bus state not yet serialized)
@@ -259,8 +251,21 @@ mod tests {
     #[test]
     fn load_render_and_state_round_trip() {
         let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
-        core.load(&rom(), &CoreConfig { region: None, bios_paths: HashMap::new(), controllers: HashMap::new(), core_options: None }).unwrap();
-        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(240, 160, nerust_render_traits::PixelFormat::Rgba);
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
         core.render_frame(&mut frame).unwrap();
         assert_eq!((frame.width(), frame.height()), (240, 160));
         let state = core.save_state().unwrap();
@@ -270,13 +275,31 @@ mod tests {
     #[test]
     fn rejects_machine_state_from_another_rom() {
         let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
-        a.load(&rom(), &CoreConfig { region: None, bios_paths: HashMap::new(), controllers: HashMap::new(), core_options: None }).unwrap();
+        a.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
         let state = a.save_state().unwrap();
         let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
         let mut rom2 = rom();
         rom2[0x100] ^= 1;
         crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
-        b.load(&rom2, &CoreConfig { region: None, bios_paths: HashMap::new(), controllers: HashMap::new(), core_options: None }).unwrap();
+        b.load(
+            &rom2,
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
         assert!(b.load_state(&state).is_err());
     }
 }

@@ -42,11 +42,6 @@ impl HleBiosOperation {
         Self::transfer(source, destination, len_mode, remaining)
     }
 
-    fn cpu_fast_set(source: u32, destination: u32, len_mode: u32) -> Option<Self> {
-        let remaining = (len_mode & 0x1F_FFFF).next_multiple_of(8);
-        Self::transfer(source, destination, len_mode | (1 << 26), remaining)
-    }
-
     fn transfer(source: u32, destination: u32, len_mode: u32, remaining: u32) -> Option<Self> {
         if source < 0x0000_4000 || remaining == 0 {
             return None;
@@ -219,15 +214,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             decompress::diff16(regs, bus);
             SwiResult::Return(0x6851)
         }
-        0x03
-        | 0x19
-        | 0x1A
-        | 0x1B
-        | 0x1C
-        | 0x1D
-        | 0x1E
-        | 0x1F
-        | 0x20..=0x2F => {
+        0x03 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D | 0x1E | 0x1F | 0x20..=0x2F => {
             // Sound / Stop / MultiBoot etc — no-op for HLE minimal
             SwiResult::Return(1)
         }
@@ -559,7 +546,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let base_len = 0x400u32;
         let disp = base_disp * len / base_len;
         let wait = base_wait * len / base_len;
-        return disp.saturating_sub(wait);
+        disp.saturating_sub(wait)
     } else {
         let s0 = src & !1;
         let d0 = dst & !1;
@@ -580,7 +567,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let base_len = 0x800u32;
         let disp = base_disp * len / base_len;
         let wait = base_wait * len / base_len;
-        return disp.saturating_sub(wait);
+        disp.saturating_sub(wait)
     }
 }
 
