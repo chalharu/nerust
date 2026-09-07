@@ -195,6 +195,14 @@ impl GbaPpu {
         self.registers.dispstat
     }
 
+    pub fn bgcnt(&self, bg: usize) -> u16 {
+        self.registers.bgcnt[bg]
+    }
+
+    pub fn hofs(&self, bg: usize) -> u16 {
+        self.registers.hofs[bg]
+    }
+
     pub fn reset(&mut self) {
         *self = Self::new();
     }

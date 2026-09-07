@@ -345,6 +345,14 @@ impl GbaMemoryBus {
         self.ppu.frame_buffer()
     }
 
+    pub fn ppu_bgcnt(&self, bg: usize) -> u16 {
+        self.ppu.bgcnt(bg)
+    }
+
+    pub fn ppu_hofs(&self, bg: usize) -> u16 {
+        self.ppu.hofs(bg)
+    }
+
     pub fn check_pending_events(&mut self) {
         let due = self.scheduler.pop_due(self.current_tcycle);
         for ev in due {
