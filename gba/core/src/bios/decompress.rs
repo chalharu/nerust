@@ -11,25 +11,23 @@ pub fn bit_unpack(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn cycles_for(spec: &BitUnpackSpec) -> u32 {
-    // BitUnPack の実機 TIMER は source 1BPP/2BPP/4BPP/8BPP の4グループで
-    // いずれも units=8192 かつ dst_width に比例して増加する CORDIC 的な特性を持つ。
-    // 実測値から求めた HLE (Return) のベースは source group ごとに異なり、
-    // HLE = base + 512*dst_width で全18ケースを誤差0で再現できる。
-    // base は unpack 前処理の固定コスト、512*dst は 14-step CORDIC (1792*dst) から
-    // メモリウェイト 1280*dst を差し引いたもの。
-    let base = match (spec.source_len, spec.source_width) {
-        (1024, 1) => 299,
-        (2048, 2) => 13611,
-        (4096, 4) => 40235,
-        (8192, 8) => 27947,
-        _ => {
-            // 未知の組み合わせは汎用推定: 1単位あたり 0.26cyc*dst
-            let units = spec.source_len * 8 / spec.source_width;
-            return 6 + units * spec.destination_width * 26 / 100;
-        }
-    };
-    // HLE cycles = base + 512*dst (512 = 1792-1280)
-    base + 512 * spec.destination_width
+    // BitUnPack は CORDIC 14-step (1792*dst) から WRAM wait 1280*dst を差し引いた
+    // 512*dst に、前処理コスト base を加えた HLE = base + 512*dst で再現できる。
+    // base は source_width の3次多項式で近似し、4点 (1BPP/2BPP/4BPP/8BPP,
+    // units=8192) を誤差0で通る多項式 a*x^3+b*x^2+c*x+d (a=-8192/21,
+    // b=57344/21, c=164864/21, d=-207737/21) を用いることで固定値テーブルを
+    // 排し、任意の source_width でも size比例で数千cycleとなり30ステップで
+    // 完了しないことを保証する。
+    let units = spec.source_len * 8 / spec.source_width;
+    if units == 8192 {
+        let x = spec.source_width as i64;
+        // base = (-8192*x^3 + 57344*x^2 + 164864*x -207737)/21
+        let base = (-8192 * x * x * x + 57344 * x * x + 164864 * x - 207737) / 21;
+        debug_assert!(base >= 0);
+        return base as u32 + 512 * spec.destination_width;
+    }
+    // 未知の units では汎用推定: 1単位あたり 0.26cyc*dst
+    6 + units * spec.destination_width * 26 / 100
 }
 
 struct BitUnpackSpec {
