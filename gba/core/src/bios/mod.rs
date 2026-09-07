@@ -144,12 +144,16 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(1)
         }
         0x06 => {
+            // Div は 32bit 符号付除算。実測では TIMER0 0xE2(226) を観測
+            // (mgba suite でも 0xE0-0xF0 付近)。14ステップ CORDIC と同様に
+            // 入力によらず固定サイクルとする。
             div(regs);
-            SwiResult::Return(10)
+            SwiResult::Return(0xE2)
         }
         0x07 => {
+            // DivArm は r0/r1 入替版。Div より 3cyc 遅く 0xE5(229)
             div_arm(regs);
-            SwiResult::Return(10)
+            SwiResult::Return(0xE5)
         }
         0x08 => {
             sqrt(regs);
@@ -661,6 +665,56 @@ mod tests {
             bus.tick();
         }
         assert_eq!(bus.read16(0x04000100), 0x006A);
+    }
+
+    #[test]
+    fn div_e2() {
+        // SWI 0x06 Div: TIMER0=0x00E2
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000100, 0);
+        bus.write16(0x04000102, 0x0080);
+        regs.set_r(0, 0x12345678);
+        regs.set_r(1, 0x1000);
+        let ret = handle_swi(&mut regs, &mut bus, 0x06);
+        let cycles = match ret {
+            SwiResult::Return(c) => c,
+            _ => 0,
+        };
+        assert_eq!(cycles, 0xE2);
+        for _ in 0..cycles {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x00E0);
+        for _ in 0..2 {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x00E2);
+    }
+
+    #[test]
+    fn div_arm_e5() {
+        // SWI 0x07 DivArm: TIMER0=0x00E5 (Divより3cyc増)
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000100, 0);
+        bus.write16(0x04000102, 0x0080);
+        regs.set_r(0, 0x1000);
+        regs.set_r(1, 0x12345678);
+        let ret = handle_swi(&mut regs, &mut bus, 0x07);
+        let cycles = match ret {
+            SwiResult::Return(c) => c,
+            _ => 0,
+        };
+        assert_eq!(cycles, 0xE5);
+        for _ in 0..cycles {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x00E3);
+        for _ in 0..2 {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x00E5);
     }
 
     #[test]
