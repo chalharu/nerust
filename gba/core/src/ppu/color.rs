@@ -4,9 +4,9 @@ pub(crate) fn read_color(palette: &[u8], index: usize) -> u16 {
 }
 
 pub(crate) fn rgba8888(color: u16) -> u32 {
-    let r = ((color & 0x1F) * 255 / 31) as u8;
-    let g = (((color >> 5) & 0x1F) * 255 / 31) as u8;
-    let b = (((color >> 10) & 0x1F) * 255 / 31) as u8;
+    let r = ((((color) & 0x1F) << 3) | (((color) & 0x1F) >> 2)) as u8;
+    let g = ((((color >> 5) & 0x1F) << 3) | (((color >> 5) & 0x1F) >> 2)) as u8;
+    let b = ((((color >> 10) & 0x1F) << 3) | (((color >> 10) & 0x1F) >> 2)) as u8;
     u32::from_le_bytes([r, g, b, 0xFF])
 }
 
