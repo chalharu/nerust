@@ -187,8 +187,8 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(1)
         }
         0x10 => {
-            decompress::bit_unpack(regs, bus);
-            SwiResult::Return(6)
+            let cycles = decompress::bit_unpack(regs, bus);
+            SwiResult::Return(cycles)
         }
         0x11 => {
             decompress::lz77(regs, bus, 1);
