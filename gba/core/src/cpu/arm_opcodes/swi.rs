@@ -38,8 +38,9 @@ mod tests {
         let mut regs = CpuRegisters::post_bios();
         regs.set_pc(0x08000008);
         let mut bus = GbaMemoryBus::new();
+        let expected = bus.bios_checksum();
         handle(&mut regs, &mut bus, 0xEF0D0000);
-        assert_eq!(regs.r(0), 0xBAAE187F);
+        assert_eq!(regs.r(0), expected);
         assert_eq!(regs.cpsr_mode(), 0x1F);
     }
 
