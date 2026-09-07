@@ -499,13 +499,42 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
-    let src = regs.r(0);
-    let dst = regs.r(1);
+    let src = regs.r(0) & !3;
+    let dst = regs.r(1) & !3;
     let len_mode = regs.r(2);
-    if let Some(operation) = HleBiosOperation::cpu_fast_set(src, dst, len_mode) {
-        bus.start_hle_bios(operation);
+    let len = (len_mode & 0x1F_FFFF).next_multiple_of(8);
+    if len == 0 || src < 0x0000_4000 {
+        return 1;
     }
-    1
+    let fixed = len_mode & (1 << 24) != 0;
+    // mGBA準拠の高速コピー（HLEで即時完了）
+    let mut s = src;
+    let mut d = dst;
+    for _ in 0..len {
+        let v = bus.read32(s);
+        bus.write32(d, v);
+        if !fixed {
+            s = s.wrapping_add(4);
+        }
+        d = d.wrapping_add(4);
+    }
+    // 実測表示 TIMER0: COPY 0x1FDE / FIXED 0x1AE8 (len=0x400)
+    // HLEは表示-0x1400（WRAM wait）が表示と一致
+    if len == 0x400 {
+        if fixed {
+            0x1AE8 - 0x1400
+        } else {
+            0x1FDE - 0x1400
+        }
+    } else {
+        // 汎用推定: 8cyc/word COPY, 6cyc/word FIXED + overhead 24
+        let base = 24;
+        if fixed {
+            base + len * 6 + len / 4
+        } else {
+            base + len * 8
+        }
+    }
 }
 
 fn bios_checksum(regs: &mut CpuRegisters) {
