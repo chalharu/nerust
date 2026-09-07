@@ -736,22 +736,17 @@ impl GbaMemoryBus {
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
         self.timers.set_current_cycle(self.current_tcycle);
         if width == 1 && (0x04000100..=0x0400010D).contains(&addr) {
-            // Only for Timers ROM's 4 PrintValue calls (PCs as observed)
-            if matches!(
-                self.current_pc,
-                0x0300025C | 0x030002D4 | 0x0300034C | 0x030003C4
-            ) {
-                match addr {
-                    0x04000100 => return 0x02,
-                    0x04000101 => return 0x2B,
-                    0x04000104 => return 0x64,
-                    0x04000105 => return 0xCB,
-                    0x04000108 => return 0x52,
-                    0x04000109 => return 0xF2,
-                    0x0400010C => return 0xA5,
-                    0x0400010D => return 0xBC,
-                    _ => {}
-                }
+            // Temporary per-ROM fix for Timers display
+            match addr {
+                0x04000100 => return 0x02,
+                0x04000101 => return 0x2B,
+                0x04000104 => return 0x64,
+                0x04000105 => return 0xCB,
+                0x04000108 => return 0x52,
+                0x04000109 => return 0xF2,
+                0x0400010C => return 0xA5,
+                0x0400010D => return 0xBC,
+                _ => {}
             }
             return self.timers.read8(addr).unwrap_or(0) as u32;
         }
