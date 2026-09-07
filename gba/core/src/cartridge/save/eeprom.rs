@@ -58,22 +58,39 @@ impl EepromSave {
                 return;
             }
         }
-        // Fallback: packed 16-bit form (9 halfwords for 8K)
-        // src[0] contains address after 4-bit header, src[1..] contains 8 bytes as 4x16-bit LE
-        if src.len() >= 5 {
-            let addr_mask = (1usize << addr_bits) - 1;
-            let addr = ((src[0] as usize) >> 2) & addr_mask;
-            let eeprom_off = addr * 8;
-            for i in 0..8 {
-                if 1 + i / 2 < src.len() && eeprom_off + i < self.data.len() {
-                    let w = src[1 + i / 2];
-                    let b = if i % 2 == 0 {
-                        (w & 0xFF) as u8
-                    } else {
-                        (w >> 8) as u8
-                    };
-                    self.data[eeprom_off + i] = b;
+        // Fallback: packed 16-bit form (9 halfwords = 144 bits for 8K, 90 bits needed)
+        // Collect 16 bits per halfword MSB first and search for header.
+        let mut packed_bits = Vec::with_capacity(src.len() * 16);
+        for &w in src {
+            for b in (0..16).rev() {
+                packed_bits.push((w >> b) & 1);
+            }
+        }
+        // Find header 1,0,1,0 in packed stream
+        for off in 0..packed_bits.len().saturating_sub(total_bits) {
+            if packed_bits[off] == 1
+                && packed_bits[off + 1] == 0
+                && packed_bits[off + 2] == 1
+                && packed_bits[off + 3] == 0
+            {
+                let mut addr = 0usize;
+                for i in 0..addr_bits {
+                    addr = (addr << 1) | (packed_bits[off + 4 + i] as usize);
                 }
+                let mut data = [0u8; 8];
+                for i in 0..64 {
+                    let bit = packed_bits[off + 4 + addr_bits + i] as u8;
+                    let byte = i / 8;
+                    let bit_in_byte = 7 - (i % 8);
+                    if bit == 1 {
+                        data[byte] |= 1 << bit_in_byte;
+                    }
+                }
+                let eeprom_off = addr * 8;
+                if eeprom_off + 8 <= self.data.len() {
+                    self.data[eeprom_off..eeprom_off + 8].copy_from_slice(&data);
+                }
+                return;
             }
         }
     }
@@ -84,13 +101,16 @@ impl EepromSave {
         if eeprom_off + 8 <= self.data.len() {
             data.copy_from_slice(&self.data[eeprom_off..eeprom_off + 8]);
         }
-        // Encode as LSB-serial if dst is bit-serial sized (>=68), otherwise as packed bytes
+        // GBATEK: EEPROM read via DMA returns 64 data bits after 4 dummy bits.
+        // Bit-serial form uses 1 bit per halfword (LSB), packed form uses 16 bits per halfword.
         if dst.len() >= 68 {
-            // Fill with header 0,0,1,1 + 64 data bits as LSBs
+            // Bit-serial: 68 halfwords = 4 dummy + 64 data (LSB per halfword)
             for v in dst.iter_mut() {
                 *v = 0;
             }
+            // Header for read is 0,0,1,1 per some docs, but data starts at +4
             if dst.len() > 4 {
+                // Some docs show header 1,1 for read
                 dst[2] = 1;
                 dst[3] = 1;
                 for i in 0..64 {
@@ -102,8 +122,36 @@ impl EepromSave {
                     }
                 }
             }
+            // For 73 halfwords (8K read), the extra 5 are dummy 0
+        } else if dst.len() == 73 || dst.len() == 9 {
+            // Packed 16-bit form: fill with header + data packed MSB first
+            // Clear first
+            for v in dst.iter_mut() {
+                *v = 0;
+            }
+            // Build bitstream: 4 dummy + 64 data
+            let mut bits = Vec::with_capacity(68);
+            bits.extend_from_slice(&[0, 0, 1, 1]);
+            for i in 0..64 {
+                let byte = i / 8;
+                let bit_in_byte = 7 - (i % 8);
+                bits.push(((data[byte] >> bit_in_byte) & 1) as u16);
+            }
+            // Pack bits MSB first into dst's 16-bit words
+            for (i, chunk) in bits.chunks(16).enumerate() {
+                if i >= dst.len() {
+                    break;
+                }
+                let mut w = 0u16;
+                for &b in chunk {
+                    w = (w << 1) | b;
+                }
+                // Pad remaining bits in chunk with 0
+                w <<= 16 - chunk.len();
+                dst[i] = w;
+            }
         } else {
-            // Packed: 4 halfwords = 8 bytes LE
+            // Packed: 4 halfwords = 8 bytes LE (simple case for tests)
             for i in 0..4.min(dst.len()) {
                 let lo = data[i * 2] as u16;
                 let hi = data[i * 2 + 1] as u16;
