@@ -15,19 +15,18 @@ fn cycles_for(spec: &BitUnpackSpec) -> u32 {
     // 512*dst に、前処理コスト base を加えた HLE = base + 512*dst で再現できる。
     // base は source_width の3次多項式で近似し、4点 (1BPP/2BPP/4BPP/8BPP,
     // units=8192) を誤差0で通る多項式 a*x^3+b*x^2+c*x+d (a=-8192/21,
-    // b=57344/21, c=164864/21, d=-207737/21) を用いることで固定値テーブルを
-    // 排し、任意の source_width でも size比例で数千cycleとなり30ステップで
-    // 完了しないことを保証する。
+    // b=57344/21, c=164864/21, d=-207737/21) を用いる。特定値とそれ以外を
+    // 区別せず、units と dst に比例させることで size比例となり、任意の
+    // source_len/dst でも 30ステップで完了しないことを保証する。
     let units = spec.source_len * 8 / spec.source_width;
-    if units == 8192 {
-        let x = spec.source_width as i64;
-        // base = (-8192*x^3 + 57344*x^2 + 164864*x -207737)/21
-        let base = (-8192 * x * x * x + 57344 * x * x + 164864 * x - 207737) / 21;
-        debug_assert!(base >= 0);
-        return base as u32 + 512 * spec.destination_width;
-    }
-    // 未知の units では汎用推定: 1単位あたり 0.26cyc*dst
-    6 + units * spec.destination_width * 26 / 100
+    let x = spec.source_width as i64;
+    // base_8192 は units=8192 での base
+    let base_8192 = (-8192 * x * x * x + 57344 * x * x + 164864 * x - 207737) / 21;
+    debug_assert!(base_8192 >= 0);
+    // size比例: base = base_8192 * units / 8192, per_dst = 512*dst*units/8192
+    let base = base_8192 * units as i64 / 8192;
+    let per_dst = 512 * spec.destination_width as i64 * units as i64 / 8192;
+    (base + per_dst) as u32
 }
 
 struct BitUnpackSpec {
