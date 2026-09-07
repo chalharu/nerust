@@ -371,3 +371,6 @@ suites:
   - id: PeterLemon_BIOSARCTAN
     rom: BIOS/Arithmetic/ARCTAN/BIOSARCTAN.gba
     cycles: 2000000
+  - id: PeterLemon_BIOSDIV
+    rom: BIOS/Arithmetic/DIV/BIOSDIV.gba
+    cycles: 2000000
