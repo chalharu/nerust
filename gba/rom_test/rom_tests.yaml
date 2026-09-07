@@ -374,3 +374,6 @@ suites:
   - id: PeterLemon_BIOSDIV
     rom: BIOS/Arithmetic/DIV/BIOSDIV.gba
     cycles: 2000000
+  - id: PeterLemon_BIOSSQRT
+    rom: BIOS/Arithmetic/SQRT/BIOSSQRT.gba
+    cycles: 2000000
