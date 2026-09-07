@@ -164,12 +164,15 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(0xC8)
         }
         0x0E => {
+            let count = regs.r(2);
             bg_affine_set(regs, bus);
-            SwiResult::Return(10)
+            // GBATEK: ~8 cycles per affine set plus 10 entry
+            SwiResult::Return(10 + count.saturating_mul(8))
         }
         0x0F => {
+            let count = regs.r(2);
             obj_affine_set(regs, bus);
-            SwiResult::Return(10)
+            SwiResult::Return(10 + count.saturating_mul(8))
         }
         0x0B => SwiResult::Return(cpu_set(regs, bus)),
         0x0C => SwiResult::Return(cpu_fast_set(regs, bus)),
