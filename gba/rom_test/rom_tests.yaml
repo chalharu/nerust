@@ -392,6 +392,9 @@ suites:
   - id: PeterLemon_BIOSHUFFMAN
     rom: BIOS/Decompress/HUFFMAN/BIOSHUFFMAN.gba
     cycles: 3000000
+  - id: PeterLemon_BIOSLZ77
+    rom: BIOS/Decompress/LZ77/BIOSLZ77.gba
+    cycles: 3000000
   - id: PeterLemon_BIOSDIFF
     rom: BIOS/Decompress/DIFF/BIOSDIFF.gba
     cycles: 3000000
