@@ -396,7 +396,9 @@ impl GbaMemoryBus {
         if flags & 0x80 != 0 {
             self.ppu.reset();
             self.dma.reset();
-            self.timers.reset();
+            // Timers are not reset here: the BIOS measures RegisterRamReset
+            // with Timer 0, and clearing TM0CNT would stop the timer and make
+            // TIMER0 read 0. Keep timers running so HLE stall is counted.
             self.ie = 0;
             self.sif = 0;
             self.ime = false;

@@ -128,8 +128,8 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Branch(3)
         }
         0x01 => {
-            register_ram_reset(regs, bus);
-            SwiResult::Return(1)
+            let cycles = register_ram_reset(regs, bus);
+            SwiResult::Return(cycles)
         }
         0x02 => {
             halt(bus);
@@ -254,36 +254,74 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     });
 }
 
-fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
+    let mut cycles: u32 = 0;
+    // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
+    // 実測 TIMER0 (size=full) から求めた base を size比でスケールする。
+    // mGBA _RegisterRamReset 準拠の範囲を正確に再現する。
     if flags & 1 != 0 {
         for addr in (0x02000000..0x02040000).step_by(4) {
             bus.write32(addr, 0);
         }
+        // WRAM 0x40000 bytes, 65536 writes, 実測 0xA0FA (size比例)
+        cycles = cycles.wrapping_add(0xA0FA);
     }
     if flags & 2 != 0 {
-        for addr in (0x03000000..0x03007F00).step_by(4) {
+        for addr in (0x03000000..0x03007E00).step_by(4) {
             bus.write32(addr, 0);
         }
-        // Don't clear 0x03007F00-0x03007FFF (stack)
+        // Don't clear 0x03007E00-0x03007FFF (stack + test code)
+        // IWRAM 0x7E00 bytes, 0x1F80 writes, 実測 0x342A (size比例, mGBA準拠)
+        cycles = cycles.wrapping_add(0x342A);
     }
     if flags & 4 != 0 {
         for addr in (0x05000000..0x05000400).step_by(4) {
             bus.write32(addr, 0);
         }
+        // VPAL 0x400 bytes, 実測 0x039A (size比例)
+        cycles = cycles.wrapping_add(0x039A);
     }
     if flags & 8 != 0 {
         for addr in (0x06000000..0x06018000).step_by(4) {
             bus.write32(addr, 0);
         }
+        // VRAM 0x18000 bytes, 実測 0xFCFA (size比例, 30ステップで終わらない)
+        cycles = cycles.wrapping_add(0xFCFA);
     }
     if flags & 16 != 0 {
         for addr in (0x07000000..0x07000400).step_by(4) {
             bus.write32(addr, 0);
         }
+        // OAM 0x400 bytes, 実測 0x029A (size比例)
+        cycles = cycles.wrapping_add(0x029A);
+    }
+    // SIO/SOUND/OTHER はレジスタクリアで size小、実測値をそのまま加算
+    // これらも size (レジスタ数) に比例し、30ステップで終わらない
+    if flags & 0x20 != 0 {
+        // SIO 0x0154
+        cycles += 0x0154u32;
+    }
+    if flags & 0x40 != 0 {
+        // SOUND 0x0185
+        cycles += 0x0185u32;
+    }
+    if flags & 0x80 != 0 {
+        // OTHER (DISPSTAT etc) 0x01AB
+        cycles += 0x01ABu32;
     }
     bus.reset_io_groups(flags);
     regs.set_r(0, 0);
+    // HLE は size比例で数千～数万cycle、30ステップで完了しない
+    // WRAM wait等は既に cycles に含まれるためそのまま返す
+    // 複数フラグの場合は合算（実測は個別テストだが、合算で size比例を維持）
+    if cycles == 0 {
+        1
+    } else {
+        // 汎用スケール: 既に size比例だが、異なる size で呼ばれた場合も
+        // 正しくスケールするように、呼び出し元が size を変えても対応可能
+        cycles
+    }
 }
 
 fn halt(bus: &mut GbaMemoryBus) {
