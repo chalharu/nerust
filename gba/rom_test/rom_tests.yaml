@@ -386,3 +386,6 @@ suites:
   - id: PeterLemon_BIOSBIT4BPP
     rom: BIOS/Decompress/BIT/4BPP/BIOSBIT4BPP.gba
     cycles: 3000000
+  - id: PeterLemon_BIOSBIT8BPP
+    rom: BIOS/Decompress/BIT/8BPP/BIOSBIT8BPP.gba
+    cycles: 3000000
