@@ -395,6 +395,9 @@ suites:
   - id: PeterLemon_BIOSLZ77
     rom: BIOS/Decompress/LZ77/BIOSLZ77.gba
     cycles: 3000000
+  - id: PeterLemon_BIOSCPUSET
+    rom: BIOS/MemoryCopy/CPUSET/BIOSCPUSET.gba
+    cycles: 3000000
   - id: PeterLemon_BIOSCPUFASTSET
     rom: BIOS/MemoryCopy/CPUFASTSET/BIOSCPUFASTSET.gba
     cycles: 3000000
