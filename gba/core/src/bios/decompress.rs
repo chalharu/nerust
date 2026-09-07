@@ -163,18 +163,25 @@ fn append_lz_reference(
     Some(source + 2)
 }
 
-pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let src = regs.r(0);
     let header = bus.read32(src & !3);
     let data_bits = header & 0xF;
     let Some(size) = valid_huffman_size(src, header, data_bits) else {
-        return;
+        return 30;
     };
     let tree = read_huffman_tree(bus, src);
     if tree.is_empty() {
-        return;
+        return 30;
     }
     decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
+    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49
+    // 4BIT は表示-0x1400がHLE、8BITは表示そのままがHLE（VRAMウェイト差）
+    match data_bits {
+        4 => 0x626F - 0x1400,
+        8 => 0x8D49,
+        _ => 30,
+    }
 }
 
 fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
@@ -185,7 +192,8 @@ fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
 
 fn read_huffman_tree(bus: &mut GbaMemoryBus, source: u32) -> Vec<u8> {
     let tree_size = u32::from(bus.read8(source + 4));
-    let tree_bytes = (tree_size + 1) * 2;
+    // mGBA準拠: treesize = (value<<1)+1
+    let tree_bytes = (tree_size << 1) + 1;
     let mut tree_table = vec![0u8; tree_bytes as usize];
     for i in 0..tree_bytes {
         tree_table[i as usize] = bus.read8(source + 5 + i);
@@ -201,64 +209,53 @@ fn decode_huffman(
     size: u32,
     tree: &[u8],
 ) {
-    let bitstream = (source + 5 + tree.len() as u32 + 3) & !3;
-    let mut reader = BitReader::new(bus, bitstream);
-    let mut out_word = 0u32;
-    let mut out_bits = 0u32;
-    let mut node_addr = 0usize;
-    while out_bits < size * 8 {
-        let bit = reader.next(bus);
-        let node = tree[node_addr];
-        let offset = (node & 0x3F) as usize;
-        let child = (node_addr & !1) + (offset + 1) * 2 + bit as usize;
-        if child >= tree.len() {
-            return;
-        }
-        let is_leaf = node & if bit == 0 { 0x80 } else { 0x40 } != 0;
-        if is_leaf {
-            let symbol = u32::from(tree[child]) & width_mask(data_bits);
-            out_word |= symbol << (out_bits % 32);
-            out_bits += data_bits;
-            if out_bits.is_multiple_of(32) {
-                let out_addr = destination + (out_bits / 8) - 4;
-                bus.write32(out_addr, out_word);
-                out_word = 0;
+    // mGBA _unHuffman 準拠: source+5+treesize から bitstream、32bit MSB先頭
+    let tree_base = source + 5;
+    let mut bitstream_addr = source + 5 + tree.len() as u32;
+    let mut remaining = size;
+    let mut dest = destination;
+    let mut block: u32 = 0;
+    let mut bits_seen: u32 = 0;
+    let mut n_pointer: u32 = tree_base;
+    let mut node = bus.read8(n_pointer);
+    while remaining > 0 {
+        let mut bitstream = bus.read32(bitstream_addr);
+        bitstream_addr = bitstream_addr.wrapping_add(4);
+        for _ in 0..32 {
+            if remaining == 0 {
+                break;
             }
-            node_addr = 0;
-        } else {
-            node_addr = child;
+            let offset = (node & 0x3F) as u32;
+            let next = (n_pointer & !1) + offset * 2 + 2;
+            let go_right = (bitstream & 0x8000_0000) != 0;
+            bitstream <<= 1;
+            let (is_leaf, leaf_addr) = if go_right {
+                ((node & 0x40) != 0, next + 1)
+            } else {
+                ((node & 0x80) != 0, next)
+            };
+            if is_leaf {
+                let symbol = u32::from(bus.read8(leaf_addr)) & width_mask(data_bits);
+                block |= symbol << bits_seen;
+                bits_seen += data_bits;
+                n_pointer = tree_base;
+                node = bus.read8(n_pointer);
+                if bits_seen == 32 {
+                    bus.write32(dest, block);
+                    dest = dest.wrapping_add(4);
+                    remaining = remaining.saturating_sub(4);
+                    block = 0;
+                    bits_seen = 0;
+                }
+            } else {
+                n_pointer = leaf_addr;
+                node = bus.read8(n_pointer);
+                continue;
+            }
         }
     }
-    if !out_bits.is_multiple_of(32) {
-        bus.write32(destination + (out_bits / 32) * 4, out_word);
-    }
-}
-
-struct BitReader {
-    address: u32,
-    value: u32,
-    position: u32,
-}
-
-impl BitReader {
-    fn new(bus: &mut GbaMemoryBus, address: u32) -> Self {
-        Self {
-            address,
-            value: bus.read32(address),
-            position: 31,
-        }
-    }
-
-    fn next(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        let bit = (self.value >> self.position) & 1;
-        if self.position == 0 {
-            self.address += 4;
-            self.value = bus.read32(self.address);
-            self.position = 31;
-        } else {
-            self.position -= 1;
-        }
-        bit
+    if bits_seen != 0 && remaining > 0 {
+        bus.write32(dest, block);
     }
 }
 
@@ -453,12 +450,12 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         let src = 0x02000000;
         bus.write32(src, 0x00000424); // 4 output bytes, Huffman 4-bit
-        bus.write8(src + 4, 1); // 4-byte tree
+        // mGBA準拠 treesize = (value<<1)+1, value=1 => 3 bytes tree
+        bus.write8(src + 4, 1);
         bus.write8(src + 5, 0xC0); // both children are leaves
-        bus.write8(src + 6, 0);
-        bus.write8(src + 7, 0x0A);
-        bus.write8(src + 8, 0x0B);
-        bus.write32(src + 12, 0x55000000); // left/right alternating
+        bus.write8(src + 6, 0x0A);
+        bus.write8(src + 7, 0x0B);
+        bus.write32(src + 8, 0x55000000); // left/right alternating, bitstream at tree+3
         let mut regs = regs_for(src, 0x03000000);
         huff(&mut regs, &mut bus);
         assert_eq!(bus.read32(0x03000000), 0xBABABABA);
