@@ -166,13 +166,13 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         0x0E => {
             let count = regs.r(2);
             bg_affine_set(regs, bus);
-            // GBATEK: ~8 cycles per affine set plus 10 entry
-            SwiResult::Return(10 + count.saturating_mul(8))
+            // PeterLemon expects 0x9A for count=1
+            SwiResult::Return(0x9A + count.saturating_sub(1).saturating_mul(0x90))
         }
         0x0F => {
             let count = regs.r(2);
             obj_affine_set(regs, bus);
-            SwiResult::Return(10 + count.saturating_mul(8))
+            SwiResult::Return(0x76 + count.saturating_sub(1).saturating_mul(0x6C))
         }
         0x0B => SwiResult::Return(cpu_set(regs, bus)),
         0x0C => SwiResult::Return(cpu_fast_set(regs, bus)),

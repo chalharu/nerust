@@ -420,3 +420,9 @@ suites:
   - id: PeterLemon_BIOSDIFF
     rom: BIOS/Decompress/DIFF/BIOSDIFF.gba
     cycles: 3000000
+  - id: PeterLemon_BIOSBGAFFINESET
+    rom: BIOS/RotationScaling/BGAffineSet/BIOSBGAFFINESET.gba
+    cycles: 3000000
+  - id: PeterLemon_BIOSOBJAFFINESET
+    rom: BIOS/RotationScaling/OBJAffineSet/BIOSOBJAFFINESET.gba
+    cycles: 3000000
