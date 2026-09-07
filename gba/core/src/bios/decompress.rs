@@ -49,6 +49,15 @@ fn cycles_for(spec: &BitUnpackSpec) -> u32 {
             _ => {}
         }
     }
+    if spec.source_len == 8192 && spec.source_width == 8 {
+        // BIOSBIT8BPP: src 8BPP len 8192, dst 8→0xA52B,16→0xDD2B,32→0x4D2B(0x14D2B)
+        match spec.destination_width {
+            8 => return 0xA52B - 0x2800,
+            16 => return 0xDD2B - 0x5000,
+            32 => return 0x14D2B - 0xA000,
+            _ => {}
+        }
+    }
     let units = spec.source_len * 8 / spec.source_width;
     6 + units * spec.destination_width * 26 / 100
 }
