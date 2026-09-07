@@ -18,6 +18,7 @@ expected_failures:
 - PeterLemon_DCTBlockDecode
 - PeterLemon_FastDCTBlockDecode
 - PeterLemon_FastLine
+- PeterLemon_FastLineClip
 - PeterLemon_FastQuantizationBlockDecode
 - PeterLemon_HUFF8Decode
 - PeterLemon_LZ77Decode
@@ -417,6 +418,9 @@ suites:
     skip_screenshot: true
   - id: PeterLemon_FastLine
     rom: FastLine/FastLine.gba
+    cycles: 1000000
+  - id: PeterLemon_FastLineClip
+    rom: FastLineClip/FastLineClip.gba
     cycles: 1000000
   - id: PeterLemon_BIOSARCTAN
     rom: BIOS/Arithmetic/ARCTAN/BIOSARCTAN.gba
