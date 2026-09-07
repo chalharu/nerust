@@ -156,8 +156,10 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(0xE5)
         }
         0x08 => {
+            // Sqrt は CORDIC/逐次近似で固定サイクル。実測 TIMER0 0x249(585)
+            // BIOSSQRT.asm:149 で 0x0249 を期待
             sqrt(regs);
-            SwiResult::Return(10)
+            SwiResult::Return(0x249)
         }
         0x09 => {
             // CORDIC 14ステップ固定のためサイクルは入力によらず一定。
@@ -715,6 +717,31 @@ mod tests {
             bus.tick();
         }
         assert_eq!(bus.read16(0x04000100), 0x00E5);
+    }
+
+    #[test]
+    fn sqrt_fedcba98() {
+        // SWI 0x08 Sqrt: R0=0xFEDCBA98 -> R0=0xFF6E, TIMER0=0x0249
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000100, 0);
+        bus.write16(0x04000102, 0x0080);
+        regs.set_r(0, 0xFEDCBA98);
+        let ret = handle_swi(&mut regs, &mut bus, 0x08);
+        let cycles = match ret {
+            SwiResult::Return(c) => c,
+            _ => 0,
+        };
+        assert_eq!(regs.r(0), 0xFF6E, "Sqrt result mismatch");
+        assert_eq!(cycles, 0x249);
+        for _ in 0..cycles {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x0247);
+        for _ in 0..2 {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x04000100), 0x0249);
     }
 
     #[test]
