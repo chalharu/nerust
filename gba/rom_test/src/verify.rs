@@ -280,14 +280,6 @@ pub fn verify_reference(
         });
         return Ok(None);
     }
-    // BGR 差はデバッグ用に残すが、判定は BGR555 完全一致のみで行う。
-    // BGRotZoomMode2 は PPU 側で pa/pd を 1636 に補正することで
-    // BGR555 完全一致 (0 差) となるため、閾値による per-ROM ハックは不要。
-    let _bgr_diff = frame_bgr
-        .iter()
-        .zip(ref_bgr.iter())
-        .filter(|(a, b)| a != b)
-        .count();
 
     let mut diff_count = 0usize;
     let mut first = None;

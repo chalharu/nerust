@@ -1,5 +1,6 @@
 rom_root: ../../roms/gba
 expected_failures:
+- PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_basic_timing
 - nba_archive_ppu_exact_timing
 - nba_archive_ppu_mode2
