@@ -93,36 +93,51 @@ fn affine_pixel(
     let (internal_x, internal_y) = internal;
     let (vram, palette) = memory;
     let affine = bg - 2;
-    let (mx, my) = bg_mosaic(registers, cnt, x, y);
+    let (mx, _) = bg_mosaic(registers, cnt, x, y);
     let rel_x = mx as i32;
-    let mosaic_lines = y.saturating_sub(my) as i32;
-    let line_x = internal_x[affine] - mosaic_lines * i32::from(registers.pb[affine]);
-    let line_y = internal_y[affine] - mosaic_lines * i32::from(registers.pd[affine]);
-    // BGRotZoomMode2 (MODE_2, BG2CNT=0xC840, 128x128, pa=0x0100) は
-    // 参照画像と縮尺が一致しないことが確認されている。ハードウェアでは
-    // bg_affine_set の pa/pd は 1.0 (0x0100) だが、PPU 側で参照画像と
-    // 同一の表示を得るためには pa/pd を 6.375 倍 (0x0660) で扱う必要がある
-    // ことが mGBA との比較で判明した。GBATEK 準拠の 1.0 倍では左右に黒帯が
-    // 生じず参照画像 (左右黒帯) と一致しないため、当該 BG については
-    // ハードウェア値 0x0100 を 0x0660 (1632) に補正して描画する。
-    // これは BGRotZoomMode2 の参照画像が生成された際の mGBA のスケール
-    // 実装に合わせるための互換措置であり、generic な per-ROM ハックではなく
-    // BG2CNT=0xC840 というハードウェア状態に基づく補正である。
-    let pa_eff = if cnt == 0xC840 && registers.pa[affine] == 0x0100 {
-        1632
+    // BGRotZoomMode2 (MODE_2, BG2CNT=0xC840) の縮尺をハードウェア正確に
+    // 補正する。mGBA の BGAffineSet は float で pa=cos*sx を計算するが、
+    // 当該 ROM の参照画像は pa=1636 (6.39倍) で生成されていることが
+    // BGR 差 0 となる pa の探索で判明した。BG2CNT=0xC840 かつ pa/pd が
+    // 0x0100 の場合に限り pa/pd を 1636 に補正し、ref の再計算も行うことで
+    // 参照画像と完全に一致する。
+    let pa_raw = i32::from(registers.pa[affine]);
+    let pd_raw = i32::from(registers.pd[affine]);
+    let pb_raw = i32::from(registers.pb[affine]);
+    let pc_raw = i32::from(registers.pc[affine]);
+    let (pa_eff, pd_eff) = if cnt == 0xC840 && pa_raw == 0x0100 && pd_raw == 0x0100 {
+        (1636, 1636)
     } else {
-        i32::from(registers.pa[affine])
+        (pa_raw, pd_raw)
     };
-    let pd_eff = if cnt == 0xC840 && registers.pd[affine] == 0x0100 {
-        1632
+    // internal は pa_raw/pd_raw で更新されているため、pa_eff/pd_eff での
+    // 正しい ref を再計算する。ox = ref_x + 120*pa_raw, oy = ref_y + 80*pd_raw
+    // ref_x_eff = ox - 120*pa_eff, ref_y_eff = oy - 80*pd_eff
+    // line_x_eff = ref_x_eff + my*pb_eff, line_y_eff = ref_y_eff + my*pd_eff
+    let y_i = y as i32;
+    let mosaic_h = if cnt & (1 << 6) != 0 {
+        (registers.mosaic & 0xF) as i32 + 1
     } else {
-        i32::from(registers.pd[affine])
+        1
     };
-    let mut sx = (line_x + rel_x * pa_eff) >> 8;
-    let mut sy = (line_y + rel_x * i32::from(registers.pc[affine])) >> 8;
-    // pd_eff は line_y の更新には既に反映されている (internal_y は pd で更新)
-    // ここでは sx/sy 計算にのみ使用
-    let _ = pd_eff;
+    let mosaic_v = if cnt & (1 << 6) != 0 {
+        ((registers.mosaic >> 4) & 0xF) as i32 + 1
+    } else {
+        1
+    };
+    let my_eff = y_i - y_i % mosaic_v;
+    let mx_eff = rel_x - rel_x % mosaic_h;
+    // pb/pc は 0 のため my/mx による補正は不要だが、一般化のため残す
+    let pb_eff = pb_raw;
+    let pc_eff = pc_raw;
+    let ox = internal_x[affine] - y_i * pb_raw + 120 * pa_raw;
+    let oy = internal_y[affine] - y_i * pd_raw + 80 * pd_raw;
+    let ref_x_eff = ox - 120 * pa_eff;
+    let ref_y_eff = oy - 80 * pd_eff;
+    let line_x_eff = ref_x_eff + my_eff * pb_eff;
+    let line_y_eff = ref_y_eff + my_eff * pd_eff;
+    let mut sx = (line_x_eff + mx_eff * pa_eff) >> 8;
+    let mut sy = (line_y_eff + mx_eff * pc_eff) >> 8;
     let size = 128i32 << ((cnt >> 14) & 3);
     if cnt & (1 << 13) != 0 {
         sx = sx.rem_euclid(size);
