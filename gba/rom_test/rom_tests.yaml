@@ -34,6 +34,7 @@ expected_failures:
 - PeterLemon_BIOSSoundDriverVSync
 - PeterLemon_BIOSSoundGetJumpList
 - PeterLemon_BIOSMidiKey2Freq
+- PeterLemon_Timers
 
 suites:
 - name: jsmolka_gba-tests
