@@ -169,6 +169,9 @@ impl GbaPpu {
             if self.registers.dispstat & (1 << 3) != 0 {
                 event.interrupt_mask |= 1;
             }
+        } else if self.vcount == LINES_PER_FRAME - 1 {
+            // GBATEK DISPSTAT Bit 0: V-Blank flag set in lines 160..226, not 227.
+            self.registers.dispstat &= !1;
         } else if self.vcount == LINES_PER_FRAME {
             self.vcount = 0;
             self.registers.dispstat &= !1;
@@ -216,21 +219,48 @@ impl GbaPpu {
             0x04000002 => Some(self.registers.greenswap),
             0x04000004 => Some(self.registers.dispstat),
             0x04000006 => Some(self.vcount),
+            0x04000008..=0x0400000E => {
+                Some(self.registers.bgcnt[((address - 0x04000008) / 2) as usize])
+            }
+            0x04000048 => Some(self.registers.winin),
+            0x0400004A => Some(self.registers.winout),
+            0x04000050 => Some(self.registers.bldcnt),
+            0x04000052 => Some(self.registers.bldalpha),
             _ => None,
         }
     }
 
-    pub fn write_register(&mut self, address: u32, value: u16) {
+    pub fn write_register(&mut self, address: u32, value: u16) -> u16 {
         match address {
-            0x04000000 => self.registers.dispcnt = value,
-            0x04000002 => self.registers.greenswap = value & 1,
+            0x04000000 => {
+                // GBATEK DISPCNT Bit 3 (CGB Mode): can be set only by BIOS opcodes.
+                // CPU writes must not change it, so preserve the old bit.
+                let old = self.registers.dispcnt;
+                self.registers.dispcnt = (value & !(1 << 3)) | (old & (1 << 3));
+                0
+            }
+            0x04000002 => {
+                self.registers.greenswap = value & 1;
+                0
+            }
             0x04000004 => {
+                let old = self.registers.dispstat;
+                let old_match = old & (1 << 2) != 0;
+                let old_enable = old & (1 << 5) != 0;
                 self.registers.dispstat = (self.registers.dispstat & 7) | (value & 0xFF38);
-                let mut event = PpuEvent::default();
-                self.update_vcount_match(&mut event);
+                let is_match = self.vcount == self.registers.dispstat >> 8;
+                self.registers.dispstat =
+                    (self.registers.dispstat & !(1 << 2)) | (u16::from(is_match) * 4);
+                let new_enable = self.registers.dispstat & (1 << 5) != 0;
+                if is_match && new_enable && (!old_match || !old_enable) {
+                    1 << 2
+                } else {
+                    0
+                }
             }
             0x04000008..=0x0400000E => {
                 self.registers.bgcnt[((address - 0x04000008) / 2) as usize] = value;
+                0
             }
             0x04000010..=0x0400001E => {
                 let index = ((address - 0x04000010) / 4) as usize;
@@ -239,6 +269,7 @@ impl GbaPpu {
                 } else {
                     self.registers.vofs[index] = value & 0x1FF;
                 }
+                0
             }
             0x04000020..=0x04000026 | 0x04000030..=0x04000036 => {
                 let affine = usize::from(address >= 0x04000030);
@@ -249,6 +280,7 @@ impl GbaPpu {
                     3 => self.registers.pd[affine] = value as i16,
                     _ => {}
                 }
+                0
             }
             0x04000028..=0x0400002E | 0x04000038..=0x0400003E => {
                 let affine = usize::from(address >= 0x04000038);
@@ -263,18 +295,49 @@ impl GbaPpu {
                         self.ref_written[affine] = true;
                     }
                 }
+                0
             }
-            0x04000040 => self.registers.winh[0] = value,
-            0x04000042 => self.registers.winh[1] = value,
-            0x04000044 => self.registers.winv[0] = value,
-            0x04000046 => self.registers.winv[1] = value,
-            0x04000048 => self.registers.winin = value,
-            0x0400004A => self.registers.winout = value,
-            0x0400004C => self.registers.mosaic = value,
-            0x04000050 => self.registers.bldcnt = value & 0x3FFF,
-            0x04000052 => self.registers.bldalpha = value & 0x1F1F,
-            0x04000054 => self.registers.bldy = value & 0x1F,
-            _ => {}
+            0x04000040 => {
+                self.registers.winh[0] = value;
+                0
+            }
+            0x04000042 => {
+                self.registers.winh[1] = value;
+                0
+            }
+            0x04000044 => {
+                self.registers.winv[0] = value;
+                0
+            }
+            0x04000046 => {
+                self.registers.winv[1] = value;
+                0
+            }
+            0x04000048 => {
+                self.registers.winin = value;
+                0
+            }
+            0x0400004A => {
+                self.registers.winout = value;
+                0
+            }
+            0x0400004C => {
+                self.registers.mosaic = value;
+                0
+            }
+            0x04000050 => {
+                self.registers.bldcnt = value & 0x3FFF;
+                0
+            }
+            0x04000052 => {
+                self.registers.bldalpha = value & 0x1F1F;
+                0
+            }
+            0x04000054 => {
+                self.registers.bldy = value & 0x1F;
+                0
+            }
+            _ => 0,
         }
     }
 
@@ -590,5 +653,74 @@ mod tests {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer().len(), WIDTH * HEIGHT);
+    }
+
+    #[test]
+    fn vblank_flag_cleared_on_line_227() {
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        // Advance to VBlank start (line 160).
+        for _ in 0..CYCLES_PER_LINE as usize * 160 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.vcount(), 160);
+        assert_ne!(ppu.dispstat() & 1, 0);
+        // Advance to line 226: flag still set.
+        for _ in 0..CYCLES_PER_LINE as usize * 66 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.vcount(), 226);
+        assert_ne!(ppu.dispstat() & 1, 0);
+        // Line 227: GBATEK says flag is 0.
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.vcount(), 227);
+        assert_eq!(ppu.dispstat() & 1, 0);
+    }
+
+    #[test]
+    fn vcounter_irq_on_dispstat_write() {
+        let mut ppu = GbaPpu::new();
+        // VCOUNT=0, write LYC=0 with enable -> immediate IRQ.
+        let irq = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        assert_eq!(irq, 1 << 2);
+        assert_ne!(ppu.dispstat() & (1 << 2), 0);
+        // Same write again (already matching, already enabled) -> no repeat IRQ.
+        let irq2 = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        assert_eq!(irq2, 0);
+        // Enable rising while already matching -> IRQ.
+        ppu.write_register(0x04000004, 0 << 8); // disable, LYC=0 still match, no IRQ
+        assert_eq!(ppu.dispstat() & (1 << 2), 0 | 4);
+        let irq3 = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        assert_eq!(irq3, 1 << 2);
+    }
+
+    #[test]
+    fn rw_registers_are_readable() {
+        let mut ppu = GbaPpu::new();
+        ppu.write_register(0x04000008, 0x1234);
+        assert_eq!(ppu.read_register(0x04000008), Some(0x1234));
+        ppu.write_register(0x04000048, 0x00FF);
+        assert_eq!(ppu.read_register(0x04000048), Some(0x00FF));
+        ppu.write_register(0x0400004A, 0x0F0F);
+        assert_eq!(ppu.read_register(0x0400004A), Some(0x0F0F));
+        ppu.write_register(0x04000050, 0xFFFF);
+        assert_eq!(ppu.read_register(0x04000050), Some(0x3FFF));
+        ppu.write_register(0x04000052, 0xFFFF);
+        assert_eq!(ppu.read_register(0x04000052), Some(0x1F1F));
+        // W registers stay unreadable.
+        assert_eq!(ppu.read_register(0x0400004C), None);
+        assert_eq!(ppu.read_register(0x04000054), None);
+    }
+
+    #[test]
+    fn dispcnt_bit3_preserved_on_cpu_write() {
+        let mut ppu = GbaPpu::new();
+        assert_eq!(ppu.dispcnt() & (1 << 3), 0);
+        ppu.write_register(0x04000000, 0xFFFF);
+        assert_eq!(ppu.dispcnt() & (1 << 3), 0);
     }
 }
