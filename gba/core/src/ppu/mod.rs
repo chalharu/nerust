@@ -598,6 +598,51 @@ mod tests {
     }
 
     #[test]
+    fn bg_tile_past_64k_is_transparent() {
+        // BG tile fetches cannot reach OBJ charblocks: CBB=3 + tile 512
+        // lands exactly on 0x10000 and must be transparent (mGBA guard),
+        // not wrapped to tile 0.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        for b in vram.iter_mut().take(0x20) {
+            *b = 0x11; // tile 0 (wrap target): palette index 1
+        }
+        vram[0..2].copy_from_slice(&512u16.to_le_bytes()); // map: tile 512
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        ppu.write_register(0x04000000, 1 << 8);
+        ppu.write_register(0x04000008, 3 << 2); // CBB=3, SBB=0, 4bpp, 32x32
+        for _ in 0..HDRAW_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn large_bg_map_reads_past_64k() {
+        // 64x64 map at SBB=31 scrolled to (256,256) fetches its entry from
+        // 0x11000 (physical read), not wrapped to 0x1000.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0x11000..0x11002].copy_from_slice(&1u16.to_le_bytes()); // tile 1
+        for b in vram.iter_mut().skip(0x20).take(0x20) {
+            *b = 0x11; // tile 1: palette index 1
+        }
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
+        ppu.write_register(0x04000000, 1 << 8);
+        ppu.write_register(0x04000008, (31 << 8) | (3 << 14)); // SBB=31, 64x64
+        ppu.write_register(0x04000010, 256); // hofs
+        ppu.write_register(0x04000012, 256); // vofs
+        for _ in 0..HDRAW_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
+    }
+
+    #[test]
     fn text_bg_and_obj_render_palette_entries() {
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];

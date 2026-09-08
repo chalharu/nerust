@@ -55,7 +55,9 @@ fn text_pixel(
     let screen_block = tile_x / 32 + (tile_y / 32) * blocks_per_row;
     let map_base = usize::from((cnt >> 8) & 0x1F) * 0x800;
     let map_index = (tile_y % 32) * 32 + tile_x % 32;
-    let entry_offset = (map_base + screen_block * 0x800 + map_index * 2) & 0xFFFF;
+    // Physical read: large maps at high SBB reach past 0xFFFF into OBJ VRAM
+    // (max ~0x117FE, inside the 96K VRAM slice). mGBA has no wrap guard here.
+    let entry_offset = map_base + screen_block * 0x800 + map_index * 2;
     let entry = read16(vram, entry_offset);
     let mut px = sx & 7;
     let mut py = sy & 7;
@@ -67,16 +69,22 @@ fn text_pixel(
     }
     let char_base = usize::from((cnt >> 2) & 3) * 0x4000;
     let tile = usize::from(entry & 0x3FF);
-    // NOTE: fetches past 0xFFFF (high CBB + high tile) wrap here, but real
-    // hardware forbids BG use of OBJ charblocks with undocumented ("defies
-    // explanation", Tonc cbb_demo) output. Unverifiable without HW tests.
+    // BG tile fetches cannot reach OBJ charblocks: at/above 0x10000 the
+    // hardware yields transparent (mGBA `charBase >= 0x10000` guard), it does
+    // not wrap around into BG VRAM.
     if cnt & (1 << 7) != 0 {
         let offset = char_base + tile * 64 + py * 8 + px;
-        let index = vram[offset & 0xFFFF];
+        if offset >= 0x10000 {
+            return None;
+        }
+        let index = vram[offset];
         (index != 0).then(|| read_color(palette, usize::from(index)))
     } else {
         let offset = char_base + tile * 32 + py * 4 + px / 2;
-        let packed = vram[offset & 0xFFFF];
+        if offset >= 0x10000 {
+            return None;
+        }
+        let packed = vram[offset];
         let index = if px & 1 == 0 {
             packed & 0xF
         } else {
@@ -118,7 +126,8 @@ fn affine_pixel(
     let tiles_per_row = size as usize / 8;
     let map_base = usize::from((cnt >> 8) & 0x1F) * 0x800;
     let map_index = sy as usize / 8 * tiles_per_row + sx as usize / 8;
-    let tile = usize::from(vram[(map_base + map_index) & 0xFFFF]);
+    // Physical read like the text map above (max ~0x137FF, inside VRAM).
+    let tile = usize::from(vram[map_base + map_index]);
     let char_base = usize::from((cnt >> 2) & 3) * 0x4000;
     let offset = char_base + tile * 64 + (sy as usize & 7) * 8 + (sx as usize & 7);
     let index = vram[offset & 0xFFFF];
