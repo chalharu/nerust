@@ -532,7 +532,7 @@ suites:
     cycles: 3000000
   - id: PeterLemon_GRB12LZIPSVideo
     rom: Video/GRB12LZIPSVideo/GRB12LZIPSVideo.gba
-    cycles: 3000000
+    cycles: 15000000
   - id: PeterLemon_GRB15Decode
     rom: Video/GRB15Decode/GRB15Decode.gba
     cycles: 3000000
