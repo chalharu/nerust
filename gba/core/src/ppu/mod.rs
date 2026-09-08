@@ -33,6 +33,7 @@ pub struct PpuEvent {
     pub interrupt_mask: u16,
     pub hblank_started: bool,
     pub vblank_started: bool,
+    pub line_started: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,6 +107,9 @@ pub struct GbaPpu {
     vcount: u16,
     frame: Box<[u32]>,
     ref_written: [bool; 2],
+    /// Last sub-boundary BG VRAM halfword (NBA `vram_bg_latch`): BG fetches
+    /// at/above the OBJ boundary return this instead of physical VRAM.
+    bg_latch: u16,
 }
 
 impl GbaPpu {
@@ -118,6 +122,7 @@ impl GbaPpu {
             vcount: 0,
             frame: vec![color::rgba8888(0x7FFF); WIDTH * HEIGHT].into_boxed_slice(),
             ref_written: [false; 2],
+            bg_latch: 0,
         }
     }
 
@@ -153,6 +158,7 @@ impl GbaPpu {
 
     fn handle_line_end(&mut self, event: &mut PpuEvent) {
         self.cycle = 0;
+        event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
         self.advance_vcount(event);
@@ -270,7 +276,11 @@ impl GbaPpu {
                 }
             }
             0x04000008..=0x0400000E => {
-                self.registers.bgcnt[((address - 0x04000008) / 2) as usize] = value;
+                let bg = ((address - 0x04000008) / 2) as usize;
+                // NBA registers.cc: display-area-overflow (bit 13) exists
+                // only on BG2/BG3; writes to BG0/BG1 ignore it.
+                let mask = if bg < 2 { !(1 << 13) } else { u16::MAX };
+                self.registers.bgcnt[bg] = value & mask;
                 0
             }
             0x04000010..=0x0400001E => {
@@ -325,11 +335,12 @@ impl GbaPpu {
                 0
             }
             0x04000048 => {
-                self.registers.winin = value;
+                // NBA WindowLayerSelect: only 6 bits per byte are stored.
+                self.registers.winin = value & 0x3F3F;
                 0
             }
             0x0400004A => {
-                self.registers.winout = value;
+                self.registers.winout = value & 0x3F3F;
                 0
             }
             0x0400004C => {
@@ -406,6 +417,7 @@ impl GbaPpu {
                     bg_index,
                     x,
                     y,
+                    &mut self.bg_latch,
                 )
             {
                 layers.push(pixel);
@@ -609,40 +621,40 @@ mod tests {
     }
 
     #[test]
-    fn bg_tile_past_64k_is_transparent() {
-        // BG tile fetches cannot reach OBJ charblocks: CBB=3 + tile 512
-        // lands exactly on 0x10000 and must be transparent (mGBA guard),
-        // not wrapped to tile 0.
+    fn bg_overfetch_reads_latch() {
+        // CBB=3 + tile 513 lands the tile fetch on 0x10020 (>= boundary):
+        // it reads the latched map entry (0x0201) low byte -> index 1 (red).
+        // Neither transparent nor wrapped tile data.
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];
         let mut palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
         for b in vram.iter_mut().take(0x20) {
-            *b = 0x11; // tile 0 (wrap target): palette index 1
+            *b = 0x11; // tile 0 (would-be wrap target): palette index 1
         }
-        vram[0..2].copy_from_slice(&512u16.to_le_bytes()); // map: tile 512
+        vram[0..2].copy_from_slice(&513u16.to_le_bytes()); // map: tile 513
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
         ppu.write_register(0x04000000, 1 << 8);
         ppu.write_register(0x04000008, 3 << 2); // CBB=3, SBB=0, 4bpp, 32x32
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
-        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
     }
 
     #[test]
-    fn large_bg_map_reads_past_64k() {
+    fn large_bg_map_past_64k_reads_latch() {
         // 64x64 map at SBB=31 scrolled to (256,256) fetches its entry from
-        // 0x11000 (physical read), not wrapped to 0x1000.
+        // 0x11000 (>= boundary): the initial latch (0) is returned, so the
+        // pixel is backdrop. Physical VRAM at 0x11000 must not be read.
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];
-        let mut palette = vec![0; 0x400];
+        let palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
         vram[0x11000..0x11002].copy_from_slice(&1u16.to_le_bytes()); // tile 1
         for b in vram.iter_mut().skip(0x20).take(0x20) {
             *b = 0x11; // tile 1: palette index 1
         }
-        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
         ppu.write_register(0x04000000, 1 << 8);
         ppu.write_register(0x04000008, (31 << 8) | (3 << 14)); // SBB=31, 64x64
         ppu.write_register(0x04000010, 256); // hofs
@@ -650,7 +662,7 @@ mod tests {
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
-        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 0, 255]);
     }
 
     #[test]
@@ -784,7 +796,7 @@ mod tests {
         ppu.write_register(0x04000008, 0x1234);
         assert_eq!(ppu.read_register(0x04000008), Some(0x1234));
         ppu.write_register(0x04000048, 0x00FF);
-        assert_eq!(ppu.read_register(0x04000048), Some(0x00FF));
+        assert_eq!(ppu.read_register(0x04000048), Some(0x003F));
         ppu.write_register(0x0400004A, 0x0F0F);
         assert_eq!(ppu.read_register(0x0400004A), Some(0x0F0F));
         ppu.write_register(0x04000050, 0xFFFF);
@@ -794,6 +806,21 @@ mod tests {
         // W registers stay unreadable.
         assert_eq!(ppu.read_register(0x0400004C), None);
         assert_eq!(ppu.read_register(0x04000054), None);
+    }
+
+    #[test]
+    fn write_masks_follow_hardware() {
+        let mut ppu = GbaPpu::new();
+        // BG0/BG1 have no bit-13 overflow flag (NBA registers.cc).
+        ppu.write_register(0x04000008, 0xFFFF);
+        assert_eq!(ppu.read_register(0x04000008), Some(0xDFFF));
+        ppu.write_register(0x0400000C, 0xFFFF);
+        assert_eq!(ppu.read_register(0x0400000C), Some(0xFFFF));
+        // WININ/WINOUT store 6 bits per byte.
+        ppu.write_register(0x04000048, 0xFFFF);
+        assert_eq!(ppu.read_register(0x04000048), Some(0x3F3F));
+        ppu.write_register(0x0400004A, 0xFFFF);
+        assert_eq!(ppu.read_register(0x0400004A), Some(0x3F3F));
     }
 
     #[test]
