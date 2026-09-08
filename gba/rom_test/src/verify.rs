@@ -260,6 +260,37 @@ pub fn verify_reference(
         return Ok(None);
     }
 
+    // BGR555 tolerance: GBAは15bit(5bit/channel)なので、8bit展開差(<<3 vs <<3|>>2)は
+    // 同一BGR555に丸めれば一致する。参照PNGが単純<<3で生成されていても
+    // エミュレータのハードウェア正確な展開と一致とみなす。
+    let to_bgr555 = |rgb: &[u8; 3]| {
+        let r = u16::from(rgb[0] >> 3);
+        let g = u16::from(rgb[1] >> 3);
+        let b = u16::from(rgb[2] >> 3);
+        (b << 10) | (g << 5) | r
+    };
+    let frame_bgr: Vec<u16> = frame_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| to_bgr555(c.try_into().unwrap()))
+        .collect();
+    let ref_bgr: Vec<u16> = ref_rgb
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|c| to_bgr555(c.try_into().unwrap()))
+        .collect();
+    if frame_bgr == ref_bgr {
+        checks.push(CheckResult {
+            name: "reference".to_string(),
+            expected,
+            actual: "BGR555 match (8bit expansion tolerant)".to_string(),
+            passed: true,
+        });
+        return Ok(None);
+    }
+
     let mut diff_count = 0usize;
     let mut first = None;
     for (i, (a, b)) in frame_rgb
@@ -276,6 +307,11 @@ pub fn verify_reference(
             diff_count += 1;
         }
     }
+    let _bgr_diff = frame_bgr
+        .iter()
+        .zip(ref_bgr.iter())
+        .filter(|(a, b)| a != b)
+        .count();
     let (fx, fy) = first.unwrap_or((0, 0));
     let actual = format!("{} differing pixels, first at ({},{})", diff_count, fx, fy);
     checks.push(CheckResult {

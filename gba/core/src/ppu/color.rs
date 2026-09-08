@@ -3,6 +3,14 @@ pub(crate) fn read_color(palette: &[u8], index: usize) -> u16 {
     u16::from_le_bytes([palette[offset], palette[offset + 1]]) & 0x7FFF
 }
 
+/// BGR555(5bit/channel) -> RGBA8888 展開
+/// GBAは15bitカラーだが、現代の8bit/channelへ展開する際は
+/// 単純な `v<<3` (0-248) ではなく、ハードウェアのDAC特性に近い
+/// `v*255/31` の近似である `(v<<3)|(v>>2)` (0-255) を用いる。
+/// これは `v*255/31` と最大1の差で、mGBA等でも採用される。
+/// 例: 31->255, 0->0, 4->33, 9->74, 6->49
+/// 参照PNGが `v<<3` (例: 4->32)で生成されていても、15bitレベルでは同一なため
+/// 検証側でBGR555に丸めて比較する (verify.rsのBGR555 tolerant)。
 pub(crate) fn rgba8888(color: u16) -> u32 {
     let r = ((((color) & 0x1F) << 3) | (((color) & 0x1F) >> 2)) as u8;
     let g = ((((color >> 5) & 0x1F) << 3) | (((color >> 5) & 0x1F) >> 2)) as u8;
