@@ -184,26 +184,23 @@ impl Object {
     }
 
     fn tile_number(&self, registers: &PpuRegisters, x: usize, y: usize, color256: bool) -> usize {
-        // GBATEK: in 256-color mode the lower tile bit is ignored only in
-        // 2D mapping (mGBA masks with `256color && !1D` too); 1D keeps it.
-        let two_dimensional = registers.dispcnt & (1 << 6) == 0;
-        let base = usize::from(self.attr2 & 0x3FF)
-            & if color256 && two_dimensional {
-                !1
+        // NBA sprite.cc: rows and columns wrap independently in 2D mapping
+        // (32x32-tile matrix), 1D wraps the whole number at 10 bits.
+        // The 256-color lower-bit mask applies to 2D only (GBATEK/mGBA/NBA).
+        let block_x = x / 8;
+        let block_y = y / 8;
+        let base = usize::from(self.attr2 & 0x3FF);
+        if registers.dispcnt & (1 << 6) != 0 {
+            if color256 {
+                (base + block_y * (self.width >> 2) + (block_x << 1)) & 0x3FF
             } else {
-                usize::MAX
-            };
-        // GBATEK OBJ VRAM Mapping: 2D 256-color mode is 16x32 tiles (128x256px),
-        // not 32x32. 16-color 2D is 32x32, 1D is width/8 in both depths.
-        let per_row = if registers.dispcnt & (1 << 6) != 0 {
-            self.width / 8
+                (base + block_y * (self.width >> 3) + block_x) & 0x3FF
+            }
         } else if color256 {
-            16
+            ((base + (block_y << 5)) & 0x3E0) | (((base & !1) + (block_x << 1)) & 0x1F)
         } else {
-            32
-        };
-        let scale = if color256 { 2 } else { 1 };
-        base + (y / 8 * per_row + x / 8) * scale
+            ((base + (block_y << 5)) & 0x3E0) | ((base + block_x) & 0x1F)
+        }
     }
 
     fn vram_offset(tile_number: usize, x: usize, y: usize, color256: bool) -> usize {
@@ -397,6 +394,44 @@ mod tests {
         // ...while 2D mapping ignores it.
         regs.dispcnt &= !(1 << 6);
         assert_eq!(obj.tile_number(&regs, 0, 0, true), 0);
+    }
+
+    #[test]
+    fn tile_2d_wraps_rows_and_columns_independently() {
+        // 16x16 4bpp at base 31: column wraps within the 32-tile row,
+        // the row part does not carry (NBA sprite.cc 2D formulas).
+        let regs = regs_2d();
+        let mut oam = vec![0u8; 0x400];
+        oam[0..2].copy_from_slice(&0u16.to_le_bytes()); // square
+        oam[2..4].copy_from_slice(&0x4000u16.to_le_bytes()); // 16x16
+        oam[4..6].copy_from_slice(&31u16.to_le_bytes()); // base tile 31
+        let obj = decode_object(&oam, 0, false).expect("object");
+        assert!(!obj.is_color256());
+        assert_eq!(obj.tile_number(&regs, 0, 0, false), 31);
+        assert_eq!(obj.tile_number(&regs, 8, 0, false), 0);
+        assert_eq!(obj.tile_number(&regs, 0, 8, false), 63);
+        assert_eq!(obj.tile_number(&regs, 8, 8, false), 32);
+    }
+
+    #[test]
+    fn tile_1d_wraps_at_10_bits() {
+        // 64x64 4bpp/8bpp 1D at high bases wrap mod 1024 (NBA masking).
+        let mut regs = regs_2d();
+        regs.dispcnt |= 1 << 6; // 1D
+        let mut oam = vec![0u8; 0x400];
+        oam[0..2].copy_from_slice(&0u16.to_le_bytes()); // square 4bpp
+        oam[2..4].copy_from_slice(&0xC000u16.to_le_bytes()); // 64x64
+        oam[4..6].copy_from_slice(&1000u16.to_le_bytes());
+        let obj = decode_object(&oam, 0, false).expect("object");
+        assert_eq!(obj.tile_number(&regs, 56, 56, false), (1000 + 63) & 0x3FF);
+        // 8bpp keeps the odd base and wraps the scaled sum.
+        oam[0..2].copy_from_slice(&0x2000u16.to_le_bytes()); // 256-color
+        oam[4..6].copy_from_slice(&1001u16.to_le_bytes());
+        let obj = decode_object(&oam, 0, false).expect("object");
+        assert_eq!(
+            obj.tile_number(&regs, 56, 56, true),
+            (1001 + 112 + 14) & 0x3FF
+        );
     }
 
     #[test]
