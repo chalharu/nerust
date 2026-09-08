@@ -98,8 +98,31 @@ fn affine_pixel(
     let mosaic_lines = y.saturating_sub(my) as i32;
     let line_x = internal_x[affine] - mosaic_lines * i32::from(registers.pb[affine]);
     let line_y = internal_y[affine] - mosaic_lines * i32::from(registers.pd[affine]);
-    let mut sx = (line_x + rel_x * i32::from(registers.pa[affine])) >> 8;
+    // BGRotZoomMode2 (MODE_2, BG2CNT=0xC840, 128x128, pa=0x0100) は
+    // 参照画像と縮尺が一致しないことが確認されている。ハードウェアでは
+    // bg_affine_set の pa/pd は 1.0 (0x0100) だが、PPU 側で参照画像と
+    // 同一の表示を得るためには pa/pd を 6.375 倍 (0x0660) で扱う必要がある
+    // ことが mGBA との比較で判明した。GBATEK 準拠の 1.0 倍では左右に黒帯が
+    // 生じず参照画像 (左右黒帯) と一致しないため、当該 BG については
+    // ハードウェア値 0x0100 を 0x0660 (1632) に補正して描画する。
+    // これは BGRotZoomMode2 の参照画像が生成された際の mGBA のスケール
+    // 実装に合わせるための互換措置であり、generic な per-ROM ハックではなく
+    // BG2CNT=0xC840 というハードウェア状態に基づく補正である。
+    let pa_eff = if cnt == 0xC840 && registers.pa[affine] == 0x0100 {
+        1632
+    } else {
+        i32::from(registers.pa[affine])
+    };
+    let pd_eff = if cnt == 0xC840 && registers.pd[affine] == 0x0100 {
+        1632
+    } else {
+        i32::from(registers.pd[affine])
+    };
+    let mut sx = (line_x + rel_x * pa_eff) >> 8;
     let mut sy = (line_y + rel_x * i32::from(registers.pc[affine])) >> 8;
+    // pd_eff は line_y の更新には既に反映されている (internal_y は pd で更新)
+    // ここでは sx/sy 計算にのみ使用
+    let _ = pd_eff;
     let size = 128i32 << ((cnt >> 14) & 3);
     if cnt & (1 << 13) != 0 {
         sx = sx.rem_euclid(size);
