@@ -1,4 +1,13 @@
 /// BG mosaic: compress (x,y) to the origin of its mosaic block.
+///
+/// The compressed screen coordinate is used *before* the scroll offset is
+/// added (`(x - x % h) + hofs` in `bg.rs`), i.e. mosaic is screen-fixed.
+/// This matches hardware: horizontal mosaic is a post-process output latch on
+/// screen pixels, and vertical mosaic holds the rendered source line
+/// (RadDad772 "Notes on GBA PPU: How mosaic works"; Tonc gfx.htm: the
+/// top-left pixel of each block fills the block). A scroll-inclusive variant
+/// (`(x + hofs) - (x + hofs) % h`) would shift mosaic blocks with scrolling
+/// and does not match hardware for the static-scroll case.
 pub fn bg_mosaic(
     registers: &crate::ppu::PpuRegisters,
     cnt: u16,
