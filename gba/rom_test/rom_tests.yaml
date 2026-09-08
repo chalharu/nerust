@@ -35,7 +35,6 @@ expected_failures:
 - PeterLemon_BIOSSoundGetJumpList
 - PeterLemon_BIOSMidiKey2Freq
 - PeterLemon_Timers
-- PeterLemon_GRB12LZDIFFRLEVideo
 - PeterLemon_Rickroll
 - PeterLemon_GRB15LZVideo
 - PeterLemon_GRB12LZVideo
