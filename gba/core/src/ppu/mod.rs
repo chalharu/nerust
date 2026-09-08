@@ -94,6 +94,7 @@ pub struct GbaPpu {
     cycle: u16,
     vcount: u16,
     frame: Box<[u32]>,
+    ref_written: [bool; 2],
 }
 
 impl GbaPpu {
@@ -105,6 +106,7 @@ impl GbaPpu {
             cycle: 0,
             vcount: 0,
             frame: vec![color::rgba8888(0x7FFF); WIDTH * HEIGHT].into_boxed_slice(),
+            ref_written: [false; 2],
         }
     }
 
@@ -150,12 +152,16 @@ impl GbaPpu {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
-        crate::ppu::affine::advance_line(
-            &mut self.internal_x,
-            &mut self.internal_y,
-            self.registers.pb,
-            self.registers.pd,
-        );
+        for affine in 0..2 {
+            if self.ref_written[affine] {
+                self.ref_written[affine] = false;
+                continue;
+            }
+            let pb = self.registers.pb[affine];
+            let pd = self.registers.pd[affine];
+            self.internal_x[affine] = self.internal_x[affine].wrapping_add(pb as i32);
+            self.internal_y[affine] = self.internal_y[affine].wrapping_add(pd as i32);
+        }
     }
 
     fn advance_vcount(&mut self, event: &mut PpuEvent) {
@@ -248,14 +254,17 @@ impl GbaPpu {
                 }
             }
             0x04000028..=0x0400002E | 0x04000038..=0x0400003E => {
+                let affine = usize::from(address >= 0x04000038);
                 self.write_reference(address, value);
-                // GBATEK: outside VBlank the write is copied to internal immediately
-                // and affects the current scanline; inside VBlank it is latched
-                // for the next frame (internal is reloaded at vcount 0).
+                // GBATEK: outside VBlank the write is copied to internal immediately.
+                // For per-scanline affine (BGMode7) the HBlank write must not be
+                // incremented again at line end, so mark dirty to skip advance.
                 if self.vcount < 160 {
-                    let affine = usize::from(address >= 0x04000038);
                     self.internal_x[affine] = self.registers.ref_x[affine];
                     self.internal_y[affine] = self.registers.ref_y[affine];
+                    if self.cycle >= HBLANK_FLAG_CYCLES {
+                        self.ref_written[affine] = true;
+                    }
                 }
             }
             0x04000040 => self.registers.winh[0] = value,
