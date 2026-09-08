@@ -197,16 +197,6 @@ impl GbaTimers {
         }
         let is_high = address & 1 != 0;
         let counter = self.channels[channel].counter;
-        if let Some((latched, latch_cycle)) = self.latch[channel] {
-            if self.current_cycle.wrapping_sub(latch_cycle) < 100 {
-                return Some(if is_high {
-                    (latched >> 8) as u8
-                } else {
-                    (latched & 0xFF) as u8
-                });
-            }
-        }
-        self.latch[channel] = Some((counter, self.current_cycle));
         Some(if is_high {
             (counter >> 8) as u8
         } else {
