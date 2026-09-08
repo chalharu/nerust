@@ -165,6 +165,11 @@ impl GbaDma {
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt);
         let both_gamepak = (0x08000000..=0x0DFFFFFF).contains(&source)
             && (0x08000000..=0x0DFFFFFF).contains(&destination);
+        // NOTE: this per-unit internal overhead plus the two quirks below
+        // jointly fit nba 128kb-boundary's 18 HW constants (reverting to a
+        // purely GBATEK-formula model regresses it 18/18 -> 8/18).
+        // basic-timing's 2.0 cycles/unit burst rate therefore needs a joint
+        // DMA-timing re-fit (dedicated follow-up), not a constant tweak.
         let internal: u32 = if both_gamepak { 4 } else { 2 };
         let mut total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
         // Hardware DMA has 2-cycle less overhead for 4-word bursts (pipeline overlap).
