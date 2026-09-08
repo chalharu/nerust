@@ -16,6 +16,17 @@ pub fn bgr555_to_rgba8888(color: u16) -> u32 {
     color::rgba8888(color & 0x7FFF)
 }
 
+/// GBA LCD color emulation for presentation (see `color` docs).
+/// Not applied to the core framebuffer; frontends opt in at display time.
+pub fn gba_lcd_rgba8888(color: u16) -> u32 {
+    color::gba_lcd_rgba8888(color)
+}
+
+/// In-place GBA LCD filter over an RGBA8888 framebuffer.
+pub fn apply_gba_lcd_filter(frame: &mut [u32]) {
+    color::apply_gba_lcd_filter(frame);
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PpuEvent {
     pub frame_complete: bool,
