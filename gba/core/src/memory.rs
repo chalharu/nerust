@@ -5,7 +5,7 @@ use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
-use crate::ppu::GbaPpu;
+use crate::ppu::{GbaPpu, HBLANK_FLAG_CYCLES};
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
 
@@ -230,9 +230,9 @@ impl GbaMemoryBus {
             }
             0x03000000..=0x03FFFFFF => 1,
             0x04000000..=0x040003FE => 1,
-            0x05000000..=0x05FFFFFF => 1,
-            0x06000000..=0x06FFFFFF => 1,
-            0x07000000..=0x07FFFFFF => 1,
+            0x05000000..=0x05FFFFFF => 1 + self.display_stall(addr),
+            0x06000000..=0x06FFFFFF => 1 + self.display_stall(addr),
+            0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
                 if self.is_sequential(addr, width)
                     && self.prefetch_enabled
@@ -255,6 +255,41 @@ impl GbaMemoryBus {
         match addr {
             0x08000000..=0x0DFFFFFF => self.gamepak_rom_cycles(addr, width, false),
             _ => self.cycles_for(addr, width),
+        }
+    }
+
+    /// Extra wait cycle when the CPU touches video memory while the LCD
+    /// controller is fetching it. GBATEK ("VRAM, OAM, and Palette RAM Access")
+    /// and Tonc agree: the CPU may access at any time and data is never
+    /// corrupted (unlike the GBC); a waitstate is inserted automatically on
+    /// contention. This mirrors mGBA's `GBAMemoryStallVRAM`/`stallMask` in
+    /// simplified form: +1 cycle while the controller is actively drawing,
+    /// 0 during blanks or forced blank (controller idle, fast access).
+    fn display_stall(&self, addr: u32) -> u8 {
+        let dispcnt = self.ppu.dispcnt();
+        if (dispcnt & (1 << 7)) != 0 {
+            return 0;
+        }
+        if self.ppu.vcount() >= 160 {
+            return 0;
+        }
+        // BG/palette data is fetched during draw only. OAM stays busy through
+        // HBlank too, unless H-Blank Interval Free (DISPCNT bit 5) idles it.
+        let in_hblank = self.ppu.cycle() >= HBLANK_FLAG_CYCLES;
+        let oam_busy = !in_hblank || ((dispcnt & (1 << 5)) == 0);
+        match addr {
+            0x05000000..=0x05FFFFFF => u8::from(!in_hblank),
+            0x06000000..=0x06FFFFFF => {
+                let bitmap_mode = (dispcnt & 7) >= 3;
+                let bg_limit = if bitmap_mode { 0x14000 } else { 0x10000 };
+                if (addr & 0x1FFFF) < bg_limit {
+                    u8::from(!in_hblank)
+                } else {
+                    u8::from(oam_busy)
+                }
+            }
+            0x07000000..=0x07FFFFFF => u8::from(oam_busy),
+            _ => 0,
         }
     }
 
@@ -1063,6 +1098,10 @@ impl GbaMemoryBus {
         }
     }
 
+    /// VRAM is 96 KiB at 06000000-06017FFF; 06018000-0601FFFF mirrors
+    /// 06010000-06017FFF (`offset - 0x8000`). In bitmap BG modes (3-5) the
+    /// 06018000-0601BFFF window reads as 0 (bad access), matching mGBA's
+    /// `GBALoad16/32` (`(addr & 0x1C000) == 0x18000 && mode >= 3 -> 0`).
     fn vram_offset(&self, addr: u32, width: u8) -> Option<usize> {
         let offset = Self::aligned_off(addr, width, 0x1FFFF);
         if offset < VRAM_SIZE {
@@ -1293,6 +1332,29 @@ mod tests {
         // VCOUNT は RO
         bus.write16(0x04000006, 0x1234);
         assert_eq!(bus.read16(0x04000006), 0);
+    }
+
+    #[test]
+    fn display_stall_inserts_wait_during_draw() {
+        let mut bus = GbaMemoryBus::new();
+        // Reset state keeps forced blank set (DISPCNT=0x0080): no contention.
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        // Clear forced blank and draw mode 0: contention adds one wait.
+        bus.write16(0x04000000, 0);
+        assert_eq!(bus.cycles_for(0x06000000, 2), 2);
+        assert_eq!(bus.cycles_for(0x05000000, 2), 2);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 2);
+        // HBlank: BG/palette idle, OAM still busy (H-Blank Interval Free off).
+        for _ in 0..1006 {
+            bus.tick();
+        }
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x05000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 2);
+        // Forced blank idles the controller: no stalls anywhere.
+        bus.write16(0x04000000, 1 << 7);
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 1);
     }
 
     #[test]
