@@ -35,6 +35,14 @@ expected_failures:
 - PeterLemon_BIOSSoundGetJumpList
 - PeterLemon_BIOSMidiKey2Freq
 - PeterLemon_Timers
+- PeterLemon_BGMode0
+- PeterLemon_BGMode7
+- PeterLemon_BGRotZoomMode2
+- PeterLemon_BGRotZoomMode3
+- PeterLemon_BGRotZoomMode4
+- PeterLemon_BGRotZoomMode5
+- PeterLemon_OBJRotZoom4BPP
+- PeterLemon_OBJRotZoom8BPP
 
 suites:
 - name: jsmolka_gba-tests
@@ -474,3 +482,27 @@ suites:
   - id: PeterLemon_Timers
     rom: Timers/Timers.gba
     cycles: 3000000
+  - id: PeterLemon_BGMode0
+    rom: LCD/BG/BGMode0/BGMode0.gba
+    cycles: 1000000
+  - id: PeterLemon_BGMode7
+    rom: LCD/BG/BGMode7/BGMode7.gba
+    cycles: 1000000
+  - id: PeterLemon_BGRotZoomMode2
+    rom: LCD/BG/BGRotZoomMode2/BGRotZoomMode2.gba
+    cycles: 1000000
+  - id: PeterLemon_BGRotZoomMode3
+    rom: LCD/BG/BGRotZoomMode3/BGRotZoomMode3.gba
+    cycles: 1000000
+  - id: PeterLemon_BGRotZoomMode4
+    rom: LCD/BG/BGRotZoomMode4/BGRotZoomMode4.gba
+    cycles: 1000000
+  - id: PeterLemon_BGRotZoomMode5
+    rom: LCD/BG/BGRotZoomMode5/BGRotZoomMode5.gba
+    cycles: 1000000
+  - id: PeterLemon_OBJRotZoom4BPP
+    rom: LCD/OBJ/OBJRotZoom4BPP/OBJRotZoom4BPP.gba
+    cycles: 1000000
+  - id: PeterLemon_OBJRotZoom8BPP
+    rom: LCD/OBJ/OBJRotZoom8BPP/OBJRotZoom8BPP.gba
+    cycles: 1000000
