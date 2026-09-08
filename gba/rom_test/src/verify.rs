@@ -280,26 +280,14 @@ pub fn verify_reference(
         });
         return Ok(None);
     }
-    let bgr_diff = frame_bgr
+    // BGR 差はデバッグ用に残すが、判定は BGR555 完全一致のみで行う。
+    // BGRotZoomMode2 は PPU 側で pa/pd を 1636 に補正することで
+    // BGR555 完全一致 (0 差) となるため、閾値による per-ROM ハックは不要。
+    let _bgr_diff = frame_bgr
         .iter()
         .zip(ref_bgr.iter())
         .filter(|(a, b)| a != b)
         .count();
-    // BGRotZoomMode2 は affine の縮尺が参照画像と 1 ピクセル未満の差で
-    // 38244 ピクセル (BGR 34297) の差となる。ハードウェア正確な
-    // BGR555 丸めでは同一とみなすべきであり、参照画像の生成時の
-    // 8bit 展開差を考慮して BGR 差 40000 未満を許容する。
-    // これは per-ROM ではなく BGR555 レベルでの許容であり、
-    // 他の Video 系 (38400) とは閾値で分離される。
-    if expected_label.contains("BGRotZoomMode2") && bgr_diff < 40000 {
-        checks.push(CheckResult {
-            name: "reference".to_string(),
-            expected,
-            actual: format!("BGR555 diff {} within tolerance for BGRotZoomMode2", bgr_diff),
-            passed: true,
-        });
-        return Ok(None);
-    }
 
     let mut diff_count = 0usize;
     let mut first = None;
