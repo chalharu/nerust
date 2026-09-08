@@ -15,7 +15,6 @@ pub struct GbaTimers {
     channels: [TimerChannel; 4],
     current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
-    latch: [Option<(u16, u64)>; 4],
 }
 
 impl GbaTimers {
