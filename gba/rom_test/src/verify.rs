@@ -307,7 +307,7 @@ pub fn verify_reference(
             diff_count += 1;
         }
     }
-    let bgr_diff = frame_bgr
+    let _bgr_diff = frame_bgr
         .iter()
         .zip(ref_bgr.iter())
         .filter(|(a, b)| a != b)
