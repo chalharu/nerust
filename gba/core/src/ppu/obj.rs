@@ -113,7 +113,15 @@ impl Object {
             return None;
         }
         if self.attr0 & (1 << 12) != 0 {
-            crate::ppu::mosaic::apply_obj_mosaic(registers.mosaic, &mut local_x, &mut local_y);
+            let mut held = (local_x, local_y);
+            crate::ppu::mosaic::apply_obj_mosaic(
+                registers.mosaic,
+                (x, y),
+                (origin_x, origin_y),
+                &mut held,
+                (self.field_width, self.field_height),
+            );
+            (local_x, local_y) = held;
         }
         if self.affine {
             (local_x, local_y) = self.affine_coordinates(oam, local_x, local_y);
@@ -345,6 +353,26 @@ mod tests {
         oam[4..6].copy_from_slice(&512u16.to_le_bytes());
         vram[0x10000 + 512 * 32] = 1;
         assert!(pixel(&regs, &vram, &palette, &oam, 0, 0, false).is_some());
+    }
+
+    #[test]
+    fn obj_mosaic_is_screen_anchored() {
+        // Sprite at x=1 with horizontal mosaic 2: screen x=2 holds screen
+        // x=2 (block [2,3]), i.e. tile pixel 1, not sprite-local pixel 0.
+        let regs = PpuRegisters {
+            mosaic: 0x0100, // OBJ mosaic 1x0: h=2, v=1
+            ..Default::default()
+        };
+        let mut vram = vec![0u8; 0x18000];
+        vram[0x10000..0x10004].copy_from_slice(&[0x10, 0x32, 0x54, 0x76]);
+        let mut palette = vec![0u8; 0x400];
+        palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes());
+        let mut oam = vec![0u8; 0x400];
+        oam[0..2].copy_from_slice(&0x1000u16.to_le_bytes()); // Y=0, mosaic
+        oam[2..4].copy_from_slice(&1u16.to_le_bytes()); // X=1, 8x8
+        oam[4..6].copy_from_slice(&0u16.to_le_bytes()); // tile 0
+        let pixel = pixel(&regs, &vram, &palette, &oam, 2, 0, false).expect("pixel");
+        assert_eq!(pixel.color, 0x7C00);
     }
 
     #[test]

@@ -574,6 +574,30 @@ mod tests {
     }
 
     #[test]
+    fn mode_four_transparent_behind_obj() {
+        // GBATEK Mode 4: color 0 is transparent, OBJ behind must show through
+        // even when the BG has higher display priority than the OBJ.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let mut oam = vec![0; 0x400];
+        // Disable OBJs 1..127 (attr0 bit 9), keep OBJ0 enabled at (0,0).
+        for entry in oam.chunks_exact_mut(8).skip(1) {
+            entry[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
+        }
+        vram[0] = 0; // Mode 4 frame pixel (0,0): transparent color 0.
+        vram[0x10000 + 512 * 32] = 1; // OBJ tile 512, pixel = palette index 1.
+        palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
+        // BG2 priority 0, OBJ0 (tile 512, priority 1).
+        oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x06]);
+        ppu.write_register(0x04000000, 4 | (1 << 10) | (1 << 12));
+        for _ in 0..HDRAW_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 255, 255]);
+    }
+
+    #[test]
     fn text_bg_and_obj_render_palette_entries() {
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];

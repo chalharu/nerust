@@ -40,6 +40,9 @@ fn text_pixel(
     x: usize,
     y: usize,
 ) -> Option<u16> {
+    // Mosaic-held screen coords feed both the tile lookup and the sub-pixel
+    // (output-latch equivalent: the whole block shows the origin pixel,
+    // flip included). Scroll is added after, so blocks stay screen-fixed.
     let (mosaic_x, mosaic_y) = bg_mosaic(registers, cnt, x, y);
     let size = (cnt >> 14) & 3;
     let width = if size & 1 != 0 { 512 } else { 256 };
@@ -64,6 +67,9 @@ fn text_pixel(
     }
     let char_base = usize::from((cnt >> 2) & 3) * 0x4000;
     let tile = usize::from(entry & 0x3FF);
+    // NOTE: fetches past 0xFFFF (high CBB + high tile) wrap here, but real
+    // hardware forbids BG use of OBJ charblocks with undocumented ("defies
+    // explanation", Tonc cbb_demo) output. Unverifiable without HW tests.
     if cnt & (1 << 7) != 0 {
         let offset = char_base + tile * 64 + py * 8 + px;
         let index = vram[offset & 0xFFFF];
@@ -145,8 +151,10 @@ fn bitmap_pixel(
             Some(read16(vram, (sy as usize * 240 + sx as usize) * 2))
         }
         4 if (0..240).contains(&sx) && (0..160).contains(&sy) => {
+            // GBATEK Mode 4: color 0 is transparent (backdrop), so OBJs may
+            // show behind the bitmap. Modes 3/5 are direct-color (opaque).
             let index = usize::from(vram[page + sy as usize * 240 + sx as usize]);
-            Some(read_color(palette, index))
+            (index != 0).then(|| read_color(palette, index))
         }
         5 if (0..160).contains(&sx) && (0..128).contains(&sy) => {
             Some(read16(vram, page + (sy as usize * 160 + sx as usize) * 2))
