@@ -72,6 +72,8 @@ pub struct GbaMemoryBus {
     scheduler: EventScheduler,
     current_tcycle: u64,
     hle_bios: Option<HleBiosOperation>,
+    video_armed: bool,
+    video_countdown: u8,
 }
 
 impl GbaMemoryBus {
@@ -132,6 +134,8 @@ impl GbaMemoryBus {
             scheduler: EventScheduler::new(),
             current_tcycle: 0,
             hle_bios: None,
+            video_armed: false,
+            video_countdown: 0,
         }
     }
 
@@ -297,6 +301,12 @@ impl GbaMemoryBus {
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
         self.dma.tick_pending();
+        if self.video_countdown > 0 {
+            self.video_countdown -= 1;
+            if self.video_countdown == 0 {
+                self.dma.trigger_channel(3, DmaTrigger::Special);
+            }
+        }
         // Schedule next PPU events if needed (for bulk optimization, currently per-cycle)
         // The scheduler is used for Timer/DMA bulk stepping; PPU/HBlank/VBlank are still
         // handled directly via ppu.step for accuracy.
@@ -304,7 +314,10 @@ impl GbaMemoryBus {
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
         if event.hblank_started {
-            self.dma.trigger(DmaTrigger::HBlank);
+            // Tonc/NBA: HBlank DMA fires on visible lines only (paused in VBlank).
+            if self.ppu.vcount() < 160 {
+                self.dma.trigger(DmaTrigger::HBlank);
+            }
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle + 1,
                 event_type: EventType::HBlank,
@@ -317,6 +330,21 @@ impl GbaMemoryBus {
                 event_type: EventType::VBlank,
             });
         }
+        if event.line_started {
+            // NBA model: DMA3 video-capture is latched at vcount==162 (a
+            // stale still-running transfer is stopped) and fires 3 cycles
+            // into each line of vcount in [2, 162).
+            let vcount = self.ppu.vcount();
+            if vcount == 162 {
+                if self.video_armed {
+                    self.dma.stop_video_transfer();
+                }
+                self.video_armed = self.dma.has_video_transfer();
+            }
+            if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
+                self.video_countdown = 3;
+            }
+        }
         let timer_irq = self.timers.step();
         if timer_irq != 0 {
             for i in 0..4 {
@@ -326,8 +354,9 @@ impl GbaMemoryBus {
                         event_type: EventType::TimerOverflow(i),
                     });
                     // DirectSound: Timer0/1 overflow triggers DMA1/2 Special
+                    // (per-channel: must not trigger an armed DMA3 video).
                     if i <= 1 {
-                        self.dma.trigger(DmaTrigger::Special);
+                        self.dma.trigger_channel(i, DmaTrigger::Special);
                     }
                 }
             }
@@ -478,6 +507,8 @@ impl GbaMemoryBus {
             // near the end of the function after most cycles have elapsed.
             self.ppu.reset();
             self.dma.reset();
+            self.video_armed = false;
+            self.video_countdown = 0;
             self.ie = 0;
             self.sif = 0;
             self.ime = false;
@@ -1374,6 +1405,70 @@ mod tests {
         assert_eq!(bus.read16(0x04000130) & 0xFC00, 0xFC00);
         bus.set_keyinput(0x03FF);
         assert_eq!(bus.read16(0x04000130), 0x03FF | 0xFC00);
+    }
+
+    #[test]
+    fn hblank_dma_skips_vblank_lines() {
+        // HBlank DMA with repeat fires on visible lines only (Tonc/NBA):
+        // one full frame must transfer exactly 160 units, not 228.
+        let mut bus = GbaMemoryBus::new();
+        for i in 0..256u16 {
+            bus.write16(0x03000000 + u32::from(i) * 2, 0xABCD);
+        }
+        bus.write32(0x040000B0, 0x03000000); // DMA0SAD
+        bus.write32(0x040000B4, 0x03001000); // DMA0DAD
+        bus.write16(0x040000B8, 1); // count 1
+        // ENABLE | REPEAT | HBLANK | 16-bit (DMA0CNT_H)
+        bus.write16(0x040000BA, 0x8000 | (1 << 9) | (2 << 12));
+        let mut frames = 0;
+        for _ in 0..300000 {
+            if bus.tick() {
+                frames += 1;
+                break;
+            }
+        }
+        assert_eq!(frames, 1);
+        let written = (0..256u16)
+            .filter(|&i| bus.read16(0x03001000 + u32::from(i) * 2) != 0)
+            .count();
+        assert_eq!(written, 160);
+    }
+
+    #[test]
+    fn video_dma_runs_after_line_162_latch() {
+        // DMA3 video-capture: latched at vcount==162, runs on lines [2,162)
+        // of the next frame (NBA model). Must not transfer before the latch.
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x03000000, 0x1111);
+        bus.write16(0x03000002, 0x2222);
+        bus.write16(0x03000004, 0x3333);
+        bus.write16(0x03000006, 0x4444);
+        bus.write32(0x040000D4, 0x03000000); // DMA3SAD
+        bus.write32(0x040000D8, 0x03001000); // DMA3DAD
+        bus.write16(0x040000DC, 4); // count 4
+        // ENABLE | SPECIAL | 16-bit
+        bus.write16(0x040000DE, 0x8000 | (3 << 12));
+        for _ in 0..100000 {
+            bus.tick();
+        }
+        // Still frame 0, before the line-162 latch: nothing transferred.
+        assert_eq!(bus.read16(0x03001000), 0);
+        // Run until the transfer completes (must happen, capped).
+        let mut done = false;
+        for _ in 0..500000 {
+            bus.tick();
+            if bus.read16(0x040000DE) & 0x8000 == 0 {
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "video DMA never completed");
+        assert_eq!(bus.read16(0x03001000), 0x1111);
+        assert_eq!(bus.read16(0x03001002), 0x2222);
+        assert_eq!(bus.read16(0x03001004), 0x3333);
+        assert_eq!(bus.read16(0x03001006), 0x4444);
+        // Completed early in the next frame (lines 2..3), not mid-frame 0.
+        assert!(bus.read16(0x04000006) < 10);
     }
 
     #[test]

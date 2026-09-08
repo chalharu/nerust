@@ -215,6 +215,26 @@ impl GbaDma {
         std::mem::take(&mut self.completion_interrupts)
     }
 
+    /// DMA3 video-capture (special) transfer armed (enabled + special timing).
+    pub fn has_video_transfer(&self) -> bool {
+        let dma = &self.channels[3];
+        dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special
+    }
+
+    /// Stop a DMA3 video transfer (NBA `StopVideoTransferDMA`).
+    pub fn stop_video_transfer(&mut self) {
+        let dma = &mut self.channels[3];
+        if dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special {
+            dma.control &= !0x8000;
+            dma.active = false;
+            dma.pending = 0;
+            dma.delay = 0;
+            dma.stalled = false;
+            dma.completing = false;
+            dma.completion_interrupt = false;
+        }
+    }
+
     pub fn update_latch(&mut self, channel: usize, width: u8, value: u32) {
         self.channels[channel].latch = if width == 2 {
             let halfword = value & 0xFFFF;
