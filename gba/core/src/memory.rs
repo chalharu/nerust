@@ -750,10 +750,15 @@ impl GbaMemoryBus {
         }
         let aligned = addr & !1;
         let val: u16 = match aligned {
-            0x04000000 | 0x04000002 | 0x04000004 | 0x04000006 => self
-                .ppu
-                .read_register(aligned)
-                .expect("readable PPU register"),
+            0x04000000..=0x04000006 | 0x04000008..=0x0400000E | 0x04000048..=0x04000052 => {
+                match self.ppu.read_register(aligned) {
+                    Some(v) => v,
+                    None => {
+                        // Write-only register (MOSAIC, BLDY, HOFS, affine, WINH/V, ...)
+                        return self.open_bus_value;
+                    }
+                }
+            }
             0x040000B0..=0x040000DE => self.dma.read(aligned).unwrap_or(0),
             0x04000100..=0x0400010E => self.timers.read(aligned).unwrap_or(0),
             0x04000060 => self.apu.sound1cnt_lo,
@@ -913,7 +918,10 @@ impl GbaMemoryBus {
         let v16 = value as u16;
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000006 => {
-                self.ppu.write_register(aligned, v16);
+                let irq = self.ppu.write_register(aligned, v16);
+                if irq != 0 {
+                    self.request_interrupt(irq);
+                }
             }
             0x040000B0..=0x040000DE => {
                 self.dma.write(aligned, v16);
@@ -1110,7 +1118,9 @@ impl Default for GbaMemoryBus {
 fn is_unreadable_io(address: u32) -> bool {
     matches!(
         address & !1,
-        0x04000008..=0x04000054
+        0x04000010..=0x04000046
+            | 0x0400004C
+            | 0x04000054
             | 0x04000060..=0x040000FE
             | 0x04000110..=0x0400011E
     )
@@ -1199,12 +1209,17 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         bus.write32(0x02000000, 0x12345678);
         let _ = bus.read32(0x02000000);
-        // VCOUNT は RO だが read は可能。未実装レジスタ 0x04000008 は open_bus
-        assert_eq!(bus.read16(0x04000008), 0x5678); // open_bus lower 16
-        // 正確には open_bus_value の下位16bit
+        // BG0CNT (0x04000008) is R/W, so it returns the register value (default 0).
+        assert_eq!(bus.read16(0x04000008), 0);
+        bus.write16(0x04000008, 0x1234);
+        assert_eq!(bus.read16(0x04000008), 0x1234);
+        // Write-only MOSAIC (0x0400004C) still returns open_bus.
+        bus.write32(0x02000000, 0x12345678);
+        let _ = bus.read32(0x02000000);
+        assert_eq!(bus.read16(0x0400004C), 0x5678); // open_bus lower 16
         bus.write32(0x03000000, 0xAABBCCDD);
         let _ = bus.read32(0x03000000);
-        assert_eq!(bus.read16(0x04000008), 0xCCDD);
+        assert_eq!(bus.read16(0x0400004C), 0xCCDD);
     }
 
     #[test]
