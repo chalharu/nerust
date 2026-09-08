@@ -269,18 +269,8 @@ pub fn verify_reference(
         let b = u16::from(rgb[2] >> 3);
         (b << 10) | (g << 5) | r
     };
-    let frame_bgr: Vec<u16> = frame_rgb
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| to_bgr555(c.try_into().unwrap()))
-        .collect();
-    let ref_bgr: Vec<u16> = ref_rgb
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| to_bgr555(c.try_into().unwrap()))
-        .collect();
+    let frame_bgr: Vec<u16> = frame_rgb.as_chunks::<3>().0.iter().map(to_bgr555).collect();
+    let ref_bgr: Vec<u16> = ref_rgb.as_chunks::<3>().0.iter().map(to_bgr555).collect();
     if frame_bgr == ref_bgr {
         checks.push(CheckResult {
             name: "reference".to_string(),
@@ -307,11 +297,6 @@ pub fn verify_reference(
             diff_count += 1;
         }
     }
-    let _bgr_diff = frame_bgr
-        .iter()
-        .zip(ref_bgr.iter())
-        .filter(|(a, b)| a != b)
-        .count();
     let (fx, fy) = first.unwrap_or((0, 0));
     let actual = format!("{} differing pixels, first at ({},{})", diff_count, fx, fy);
     checks.push(CheckResult {
