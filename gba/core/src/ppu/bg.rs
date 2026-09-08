@@ -95,6 +95,8 @@ fn affine_pixel(
     let affine = bg - 2;
     let (mx, my) = bg_mosaic(registers, cnt, x, y);
     let rel_x = mx as i32;
+    // Vertical mosaic renders the held source line `my`: rewind the internal
+    // reference (already advanced to line `y`) by the per-line increments.
     let mosaic_lines = y.saturating_sub(my) as i32;
     let line_x = internal_x[affine] - mosaic_lines * i32::from(registers.pb[affine]);
     let line_y = internal_y[affine] - mosaic_lines * i32::from(registers.pd[affine]);
