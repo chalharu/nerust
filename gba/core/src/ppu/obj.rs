@@ -184,7 +184,15 @@ impl Object {
     }
 
     fn tile_number(&self, registers: &PpuRegisters, x: usize, y: usize, color256: bool) -> usize {
-        let base = usize::from(self.attr2 & 0x3FF) & if color256 { !1 } else { usize::MAX };
+        // GBATEK: in 256-color mode the lower tile bit is ignored only in
+        // 2D mapping (mGBA masks with `256color && !1D` too); 1D keeps it.
+        let two_dimensional = registers.dispcnt & (1 << 6) == 0;
+        let base = usize::from(self.attr2 & 0x3FF)
+            & if color256 && two_dimensional {
+                !1
+            } else {
+                usize::MAX
+            };
         // GBATEK OBJ VRAM Mapping: 2D 256-color mode is 16x32 tiles (128x256px),
         // not 32x32. 16-color 2D is 32x32, 1D is width/8 in both depths.
         let per_row = if registers.dispcnt & (1 << 6) != 0 {
@@ -373,6 +381,22 @@ mod tests {
         oam[4..6].copy_from_slice(&0u16.to_le_bytes()); // tile 0
         let pixel = pixel(&regs, &vram, &palette, &oam, 2, 0, false).expect("pixel");
         assert_eq!(pixel.color, 0x7C00);
+    }
+
+    #[test]
+    fn tile_1d_256color_keeps_odd_base() {
+        // 1D mapping keeps the lower tile bit in 256-color mode...
+        let mut regs = regs_2d();
+        regs.dispcnt |= 1 << 6; // 1D
+        let mut oam = vec![0u8; 0x400];
+        oam[0..2].copy_from_slice(&0x2000u16.to_le_bytes()); // 256-color
+        oam[2..4].copy_from_slice(&0u16.to_le_bytes()); // 8x8
+        oam[4..6].copy_from_slice(&1u16.to_le_bytes()); // odd base tile
+        let obj = decode_object(&oam, 0, false).expect("object");
+        assert_eq!(obj.tile_number(&regs, 0, 0, true), 1);
+        // ...while 2D mapping ignores it.
+        regs.dispcnt &= !(1 << 6);
+        assert_eq!(obj.tile_number(&regs, 0, 0, true), 0);
     }
 
     #[test]
