@@ -152,16 +152,13 @@ impl GbaPpu {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
-        for affine in 0..2 {
-            if self.ref_written[affine] {
-                self.ref_written[affine] = false;
-                continue;
-            }
-            let pb = self.registers.pb[affine];
-            let pd = self.registers.pd[affine];
-            self.internal_x[affine] = self.internal_x[affine].wrapping_add(pb as i32);
-            self.internal_y[affine] = self.internal_y[affine].wrapping_add(pd as i32);
-        }
+        crate::ppu::affine::advance_line(
+            &mut self.internal_x,
+            &mut self.internal_y,
+            self.registers.pb,
+            self.registers.pd,
+            &mut self.ref_written,
+        );
     }
 
     fn advance_vcount(&mut self, event: &mut PpuEvent) {
