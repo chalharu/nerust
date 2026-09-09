@@ -82,6 +82,38 @@ impl GbaApu {
         self.fifo_b.clear();
     }
 
+    /// Remaining bytes in a DirectSound FIFO.
+    pub fn fifo_len(&self, fifo_b: bool) -> usize {
+        if fifo_b {
+            self.fifo_b.len()
+        } else {
+            self.fifo_a.len()
+        }
+    }
+
+    /// Move one byte from FIFO to the (unmodeled) DAC on timer overflow
+    /// (GBATEK "DMA-Sound Playback Procedure").
+    pub fn drain_fifo(&mut self, fifo_b: bool) {
+        let fifo = if fifo_b {
+            &mut self.fifo_b
+        } else {
+            &mut self.fifo_a
+        };
+        let _ = fifo.pop_front();
+    }
+
+    /// SOUNDCNT_H write: store the value and honor the FIFO reset bits
+    /// (bit 11 = reset FIFO A, bit 15 = reset FIFO B).
+    pub fn write_soundcnt_hi(&mut self, value: u16) {
+        self.soundcnt_hi = value;
+        if value & (1 << 11) != 0 {
+            self.fifo_a.clear();
+        }
+        if value & (1 << 15) != 0 {
+            self.fifo_b.clear();
+        }
+    }
+
     /// Push bytes into a DirectSound FIFO (max 32 bytes; overflow is dropped,
     /// approximating full-FIFO HW where extra writes have no effect).
     /// `bytes` are appended LSB-first from `value` for `width` bytes.

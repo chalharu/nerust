@@ -139,7 +139,14 @@ impl GbaDma {
             }
             return None;
         }
-        let width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
+        let raw_width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
+        let raw_dest = dma.current_destination & !(u32::from(raw_width) - 1);
+        // Sound-FIFO DMA always moves 32-bit units (GBATEK DMA).
+        let width = if sound_dma(dma.control, raw_dest) {
+            4
+        } else {
+            raw_width
+        };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
         let is_seq_src = if dma.is_first {
@@ -192,12 +199,17 @@ impl GbaDma {
         }
         dma.delay = total_wait.saturating_sub(1) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
-        dma.current_destination = advance(
-            dma.current_destination,
-            destination_mode(dma.control),
-            width,
-            true,
-        );
+        if sound_dma(dma.control, destination) {
+            // GBATEK DMA: sound FIFO transfers never increment the
+            // destination; the 4x32-bit burst always lands in the FIFO.
+        } else {
+            dma.current_destination = advance(
+                dma.current_destination,
+                destination_mode(dma.control),
+                width,
+                true,
+            );
+        }
         dma.prev_src = source;
         dma.prev_dst = destination;
         dma.is_first = false;
@@ -219,6 +231,18 @@ impl GbaDma {
 
     pub fn take_completion_interrupts(&mut self) -> u16 {
         std::mem::take(&mut self.completion_interrupts)
+    }
+
+    /// Find an enabled Special channel (1 or 2) targeting a sound FIFO,
+    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H).
+    pub fn sound_channel_for_fifo(&self, fifo_b: bool) -> Option<usize> {
+        let want = if fifo_b { 0x0400_00A4 } else { 0x0400_00A0 };
+        [1, 2].into_iter().find(|&channel| {
+            let dma = &self.channels[channel];
+            dma.control & 0x8000 != 0
+                && timing(dma.control) == DmaTrigger::Special
+                && (dma.destination & !3) == want
+        })
     }
 
     /// DMA3 video-capture (special) transfer armed (enabled + special timing).
@@ -271,7 +295,13 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
             } else {
                 0x07FF_FFFF
             };
-        dma.remaining = effective_count(channel, dma.count);
+        dma.remaining = if sound_dma(dma.control, dma.destination) {
+            // GBATEK DMA: sound transfers ignore CNT_L and always move
+            // 4x32-bit per timer overflow.
+            4
+        } else {
+            effective_count(channel, dma.count)
+        };
         dma.is_first = true;
         dma.prev_src = 0;
         dma.prev_dst = 0;
@@ -294,8 +324,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
 }
 
 fn finish(dma: &mut DmaChannel, channel: usize) {
-    let repeat =
-        dma.control & (1 << 9) != 0 && timing_for(channel, dma.control) != DmaTrigger::Immediate;
+    let repeat = dma.control & (1 << 9) != 0;
     dma.active = false;
     dma.pending = 0;
     dma.delay = 0;
@@ -303,10 +332,25 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.completing = false;
     dma.completion_interrupt = false;
     if repeat {
-        dma.remaining = effective_count(channel, dma.count);
+        dma.remaining = if sound_dma(dma.control, dma.destination) {
+            4
+        } else {
+            effective_count(channel, dma.count)
+        };
         dma.is_first = true;
         if destination_mode(dma.control) == 3 {
-            dma.current_destination = dma.destination;
+            // Reload with the same masking as enable-time latching.
+            dma.current_destination = dma.destination
+                & if channel == 3 {
+                    0x0FFF_FFFF
+                } else {
+                    0x07FF_FFFF
+                };
+        }
+        if timing_for(channel, dma.control) == DmaTrigger::Immediate {
+            // GBATEK DMA: restart whenever the start condition is true;
+            // for Immediate that is always, so re-pend at once.
+            dma.pending = 4;
         }
     } else {
         dma.control &= !0x8000;
@@ -314,12 +358,16 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
 }
 
 fn effective_count(channel: usize, count: u16) -> u32 {
-    if count != 0 {
-        u32::from(count)
-    } else if channel == 3 {
-        0x1_0000
+    // GBATEK DMA: channels 0-2 count 14 bits (0 = 0x4000), channel 3 16 bits.
+    if channel == 3 {
+        if count != 0 {
+            u32::from(count)
+        } else {
+            0x1_0000
+        }
     } else {
-        0x4000
+        let masked = u32::from(count & 0x3FFF);
+        if masked != 0 { masked } else { 0x4000 }
     }
 }
 
@@ -341,6 +389,16 @@ fn timing_for(channel: usize, control: u16) -> DmaTrigger {
     } else {
         timing
     }
+}
+
+/// Sound-FIFO DMA (GBATEK "DMA-Sound Playback Procedure"): a Special-timed
+/// transfer targeting FIFO_A/B always moves 4x32-bit with a fixed destination.
+fn sound_dma(control: u16, destination: u32) -> bool {
+    timing(control) == DmaTrigger::Special && is_fifo_dest(destination)
+}
+
+fn is_fifo_dest(destination: u32) -> bool {
+    matches!(destination & !3, 0x0400_00A0 | 0x0400_00A4)
 }
 
 fn source_mode(control: u16) -> u16 {
@@ -466,5 +524,39 @@ mod tests {
         }
         assert_eq!(dma.take_completion_interrupts(), 1 << (8 + second.channel));
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
+    }
+
+    #[test]
+    fn sound_dma_ignores_count_and_fixes_destination() {
+        // GBATEK DMA: Special FIFO transfers always move 4x32-bit with a
+        // fixed destination, regardless of CNT_L/width/mode bits.
+        let mut dma = GbaDma::default();
+        dma.write(0x040000BC, 0x1000);
+        dma.write(0x040000BE, 0x0200);
+        dma.write(0x040000C0, 0x00A0);
+        dma.write(0x040000C2, 0x0400);
+        dma.write(0x040000C4, 100); // CNT_L ignored for sound
+        // 16-bit + dst increment + repeat + IRQ + Special + enable
+        dma.write(0x040000C6, 0x8000 | 0x3000 | 0x4000 | 0x0200 | (2 << 5));
+        // Special timing waits for its trigger (here: timer overflow).
+        dma.trigger_channel(1, DmaTrigger::Special);
+        let mut units = Vec::new();
+        for _ in 0..60 {
+            dma.tick_pending();
+            if let Some(t) = dma.step(0) {
+                units.push((t.source, t.destination, t.width));
+            }
+            if !dma.is_active() && !dma.has_pending() && units.len() >= 4 {
+                break;
+            }
+        }
+        assert_eq!(units.len(), 4);
+        for (src, dst, width) in &units {
+            assert_eq!(*width, 4);
+            assert_eq!(*dst, 0x0400_00A0);
+            let _ = src;
+        }
+        // Sources advance by 4 despite the 16-bit control bit.
+        assert_eq!(units[1].0 - units[0].0, 4);
     }
 }
