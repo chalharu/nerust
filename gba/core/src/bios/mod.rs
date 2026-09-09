@@ -672,7 +672,9 @@ fn bg_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let dst = regs.r(1);
     let count = regs.r(2) as usize;
     for i in 0..count {
-        let base_src = src + i as u32 * 20;
+        // GBATEK BgAffineSet: source entries are 18 bytes
+        // (s32 cx/cy + 2x u16 display + 2x u16 scale + u16 angle).
+        let base_src = src + i as u32 * 18;
         let base_dst = dst + i as u32 * 16;
         let cx = bus.read32(base_src) as i32;
         let cy = bus.read32(base_src + 4) as i32;
@@ -855,6 +857,47 @@ fn bios_checksum(regs: &mut CpuRegisters, bus: &GbaMemoryBus) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bg_affine_set_multi_entry_stride_is_18() {
+        // GBATEK BgAffineSet: source entries are 18 bytes (4+4+2+2+2+2+2),
+        // not 20. The second entry must be read at src+18. (Entries are
+        // halfword-laid-out here: real tables are byte-packed and entries
+        // past the first are never word-aligned, so 32-bit stores would
+        // hit the bus align-down path instead of the intended bytes.)
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        let src = 0x03000000;
+        // Entry 0: identity (scale 1, no rotation, zero centers).
+        for (off, v) in [(12, 0x100u16), (14, 0x100)] {
+            bus.write16(src + off, v);
+        }
+        // Entry 1 at src+18: cx=0x1000, cy=0x2000, disp=(3,5), scale 1.
+        let e1 = src + 18;
+        bus.write16(e1, 0x1000);
+        bus.write16(e1 + 2, 0x0000);
+        bus.write16(e1 + 4, 0x2000);
+        bus.write16(e1 + 6, 0x0000);
+        bus.write16(e1 + 8, 3);
+        bus.write16(e1 + 10, 5);
+        bus.write16(e1 + 12, 0x100);
+        bus.write16(e1 + 14, 0x100);
+        bus.write16(e1 + 16, 0);
+        regs.set_r(0, src);
+        regs.set_r(1, 0x03000100);
+        regs.set_r(2, 2);
+        handle_swi(&mut regs, &mut bus, 0x0E);
+        // Entry 0 outputs.
+        assert_eq!(bus.read16(0x03000100), 0x100);
+        assert_eq!(bus.read32(0x03000108), 0);
+        // Entry 1 outputs: pa=0x100, start=(0x1000-3*0x100, 0x2000-5*0x100).
+        assert_eq!(bus.read16(0x03000110), 0x100);
+        assert_eq!(bus.read16(0x03000112), 0);
+        assert_eq!(bus.read16(0x03000114), 0);
+        assert_eq!(bus.read16(0x03000116), 0x100);
+        assert_eq!(bus.read32(0x03000118), 0xD00);
+        assert_eq!(bus.read32(0x0300011C), 0x1B00);
+    }
 
     #[test]
     fn protected_bios_latch_tracks_swi() {
