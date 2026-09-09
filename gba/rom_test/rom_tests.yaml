@@ -1,12 +1,19 @@
 rom_root: ../../roms/gba
 expected_failures:
+- nba_dma_burst_into_tears
+- nba_dma_force_nseq
+# nba_dma_start_delay wants 20, model yields 19: the result is captured
+# MID-burst (xfer tick = enable + pending(3, mGBA + 18 fit constants +
+# sweep phases) + prologue(18, ARM-exact per binary decode)). HW is one
+# tick later with no spare degree of freedom (pending=4 breaks 18 fit
+# constants + sweep phases; timer/prologue/CPU costs are LDM-anchored).
+# A future fix flips this to unexpected-pass.
+- nba_dma_start_delay
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
 - nba_archive_ppu_mode2
 - nba_archive_ppu_mode3
 - nba_archive_ppu_mode4
-- nba_dma_burst_into_tears
-- nba_dma_force_nseq
 - nba_haltcnt
 - nba_ppu_bgpd
 - nba_ppu_bgx
@@ -201,18 +208,27 @@ suites:
     cycles: 3000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 3/0): TIME=41 plus the two
-      # OAM value checks. Listed in expected_failures until the burst
-      # source-ahead quirk is modeled; a fix flips this to unexpected-pass.
+      # All three test_expects ran (count=3); the two OAM value checks pass
+      # via the 16-bit ROM-src read-ahead quirk (unit N latches unit N+1's
+      # data). TIME=41 needs draw-phase OAM stalls (+3); this build measures
+      # in VBlank (no BIOS boot phase modeled) so pass_count stays 2: the
+      # 0x238==3 goal below keeps this case failing until phase alignment
+      # (or the residual TIME gap) is resolved.
       - {address: 0x03000234, value: 3, width: 4}
+      - {address: 0x070003FE, value: 0xEA00, width: 2}
+      - {address: 0x070003FC, value: 0xFF24, width: 2}
       - {address: 0x03000238, value: 3, width: 4}
   - id: nba_dma_force_nseq
     rom: dma/force-nseq-access/force-nseq-access.gba
     cycles: 3000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 2/0): EWRAM/ROM DMA both 88.
-      # Listed in expected_failures until the force-NSEQ cost model is found.
+      # Counters (this .gba's layout; the stale .elf disagrees): test_count
+      # @0x0300014C (=2, both subtests run), test_pass_count @0x03000150
+      # (=0; both read 70/69 instead of 88). The +18 gap is ROM-code-path
+      # costs: DMA span ruled out (slope-1 sensitivity), boot phase ruled
+      # out (no video traffic), ROM fetch tables pinned by 128kb-LDM, and
+      # code/data split unjustified. Goal oracle for a future fix.
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
