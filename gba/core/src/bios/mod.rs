@@ -573,52 +573,79 @@ fn sqrt(regs: &mut CpuRegisters) {
     regs.set_r(0, n.isqrt());
 }
 
+/// Real BIOS ArcTan core (mGBA `_ArcTan` concordance): a fixed-point
+/// polynomial in the FULL 32-bit input with wraparound arithmetic — not a
+/// libm atan, and not truncated to 16 bits. Truncating the input first and
+/// compensating with an offset was the old bug; the polynomial reproduces
+/// the HW reference (0xFEDCBA98 -> 0xE024) directly.
+fn bios_arctan_poly(i: i32) -> (i16, i32, i32) {
+    let a = -(i.wrapping_mul(i) >> 14);
+    let mut b = (0xA9i32.wrapping_mul(a) >> 14) + 0x390;
+    for c in [0x91Ci32, 0xFB6, 0x16AA, 0x2081, 0x3651, 0xA2F9] {
+        b = (b.wrapping_mul(a) >> 14) + c;
+    }
+    ((i.wrapping_mul(b) >> 16) as i16, a, b)
+}
+
+fn bios_arctan2_full(x: i32, y: i32) -> (u16, Option<i32>) {
+    if y == 0 {
+        return (if x >= 0 { 0 } else { 0x8000 }, None);
+    }
+    if x == 0 {
+        return (if y >= 0 { 0x4000 } else { 0xC000 }, None);
+    }
+    // C `/` truncates toward zero, like Rust `/`; shifts wrap.
+    let div = |n: i32, d: i32| n.wrapping_shl(14).wrapping_div(d);
+    if y >= 0 {
+        if x >= 0 {
+            if x >= y {
+                let (v, a, _) = bios_arctan_poly(div(y, x));
+                return (v as u16, Some(a));
+            }
+        } else if -x >= y {
+            let (v, a, _) = bios_arctan_poly(div(y, x));
+            return ((v as u16).wrapping_add(0x8000), Some(a));
+        }
+        let (v, a, _) = bios_arctan_poly(div(x, y));
+        (0x4000u16.wrapping_sub(v as u16), Some(a))
+    } else if x <= 0 {
+        if -x > -y {
+            let (v, a, _) = bios_arctan_poly(div(y, x));
+            return ((v as u16).wrapping_add(0x8000), Some(a));
+        } else if x >= -y {
+            let (v, a, _) = bios_arctan_poly(div(y, x));
+            return (v as u16, Some(a));
+        }
+        let (v, a, _) = bios_arctan_poly(div(x, y));
+        (0xC000u16.wrapping_sub(v as u16), Some(a))
+    } else {
+        let (v, a, _) = bios_arctan_poly(div(x, y));
+        (0xC000u16.wrapping_sub(v as u16), Some(a))
+    }
+}
+
 fn arc_tan(regs: &mut CpuRegisters) {
-    let raw = regs.r(0) as i16 as i32;
-    if raw == 0 {
-        regs.set_r(0, 0);
-        return;
-    }
-    // HW-captured behavior (PeterLemon BIOSARCTAN reference): the real BIOS
-    // CORDIC carries a systematic ~0.044 rad bias for |tan|>1.0. A closed-form
-    // HLE cannot reproduce per-value quantization, but the range-level
-    // correction below reproduces the HW reference image exactly, while pure
-    // math diverges by 317px. Keep the correction (not pure math).
-    let tan = raw as f64 / 16384.0;
-    let mut theta = tan.atan();
-    if tan.abs() > 1.0 {
-        theta -= 0.04395 * tan.signum();
-    }
-    let v = (theta * 32768.0 / std::f64::consts::PI) as i32;
-    regs.set_r(0, v as i16 as i32 as u32);
+    let i = regs.r(0) as i32;
+    let (v, a, b) = bios_arctan_poly(i);
+    regs.set_r(0, v as i32 as u32);
+    regs.set_r(1, a as u32);
+    regs.set_r(3, b as u32);
 }
 
 fn arc_tan2(regs: &mut CpuRegisters) {
-    let x_raw = regs.r(0) as i16 as i32;
-    let y_raw = regs.r(1) as i16 as i32;
-    if x_raw == 0 && y_raw == 0 {
+    let x = regs.r(0) as i32;
+    let y = regs.r(1) as i32;
+    if x == 0 && y == 0 {
         regs.set_r(0, 0);
         return;
     }
-    let x = x_raw as f64 / 16384.0;
-    let y = y_raw as f64 / 16384.0;
-    let mut theta = y.atan2(x);
-    // HW-measured CORDIC behavior (same methodology as ArcTan above, whose
-    // correction is pinned by the HW reference image): coarse table in the
-    // second quadrant for |x|,|y|>1, LSB quantization, 90-degree clamp.
-    if x < 0.0 && y > 0.0 && x.abs() > 1.0 && y.abs() > 1.0 {
-        theta = std::f64::consts::FRAC_PI_2;
+    let (v, a) = bios_arctan2_full(x, y);
+    // GBATEK: 0000h-FFFFh unsigned.
+    regs.set_r(0, u32::from(v));
+    if let Some(a) = a {
+        regs.set_r(1, a as u32);
     }
-    let v = (theta * 32768.0 / std::f64::consts::PI) as i32;
-    let mut v = v;
-    if v < 0 {
-        v += 65536;
-    }
-    v &= !1;
-    if v == 0x4000 {
-        v = 0x3FFF;
-    }
-    regs.set_r(0, v as i16 as i32 as u32);
+    regs.set_r(3, 0x170);
 }
 
 fn bg_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
