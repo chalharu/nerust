@@ -386,6 +386,13 @@ impl GbaMemoryBus {
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        if self.stopped {
+            // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
+            // are frozen; only an interrupt request wakes the machine.
+            // (Wake-source subset and IF-not-set are not modeled.)
+            self.check_pending_events();
+            return false;
+        }
         self.dma.tick_pending();
         if self.video_countdown > 0 {
             self.video_countdown -= 1;
@@ -650,6 +657,12 @@ impl GbaMemoryBus {
         self.halted = self.ie & self.sif & self.halt_irq_mask == 0;
     }
 
+    /// SWI Stop / HALTCNT-stop: park the CPU with clocks down.
+    pub fn enter_stop(&mut self) {
+        self.stopped = true;
+        self.enter_halt(self.ie);
+    }
+
     pub fn is_halted(&self) -> bool {
         self.halted
     }
@@ -705,16 +718,13 @@ impl GbaMemoryBus {
             self.apu.reset_sound();
         }
         if flags & 0x80 != 0 {
-            // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts
-            // Timers are logically cleared (TMxCNT 0) but for HLE timing test the
-            // TIMER0 is used to measure this very call, so clearing it before the
-            // stall would make the read 0 instead of 0x01AB. Keep timers running
-            // during the stall; the counter value after the stall (0x01AB) is the
-            // expected result and the subsequent explicit TM_DISABLE in the test
-            // will stop it. This matches real hardware where the timer is cleared
-            // near the end of the function after most cycles have elapsed.
+            // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts.
+            // GBATEK bit7 resets all other registers, which includes the
+            // timers: clear them (a TIMER0 running across the reset would
+            // observe phantom time).
             self.ppu.reset();
             self.dma.reset();
+            self.timers.reset();
             self.video_armed = false;
             self.video_countdown = 0;
             self.ie = 0;
@@ -1771,10 +1781,11 @@ mod tests {
         // Reset state keeps forced blank set (DISPCNT=0x0080): no contention.
         assert_eq!(bus.cycles_for(0x06000000, 2), 1);
         // Mode 0, BG0 on: the enable propagates through the 3-stage
-        // DISPCNT latch (shifts at +40 cycles/line), then BG-VRAM stalls
-        // during the fetch window and palette during pixel output.
+        // DISPCNT latch (shifts at +40 cycles/line, shared per-line
+        // reference), then BG-VRAM stalls during the fetch window and
+        // palette during pixel output.
         bus.write16(0x04000000, 0x0100);
-        for _ in 0..2600 {
+        for _ in 0..4000 {
             bus.tick();
         }
         assert_eq!(bus.cycles_for(0x06000000, 2), 2);

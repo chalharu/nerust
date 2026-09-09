@@ -276,7 +276,12 @@ fn decode_huffman(
         }
     }
     if bits_seen != 0 && remaining > 0 {
-        bus.write32(dest, block);
+        // Trailing partial word: write only the declared bytes, never a
+        // full word past the buffer end.
+        let bytes = (remaining as usize).min((bits_seen / 8) as usize);
+        for i in 0..bytes {
+            bus.write8(dest.wrapping_add(i as u32), (block >> (i * 8)) as u8);
+        }
     }
 }
 
@@ -332,7 +337,9 @@ pub fn diff8_wram(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, dest_width: u
     let dst = regs.r(1);
     let header = bus.read32(src & !3);
     let kind = header & 0xFF;
-    if kind != 0x81 && kind != 0x82 {
+    // GBATEK Diff8bit filters take header 81h; 82h is the Diff16 header
+    // and must be rejected, not decoded as bytes.
+    if kind != 0x81 {
         return;
     }
     let size = header >> 8;
