@@ -50,6 +50,23 @@ impl GbaCpu {
         &mut self.regs
     }
 
+    /// Test-only jump: set PC/mode registers and refill the pipeline so that
+    /// hijacked ROM code executes faithfully (used by DMA timing fits).
+    #[cfg(test)]
+    pub(crate) fn test_jump(&mut self, bus: &mut GbaMemoryBus, pc: u32, thumb: bool) {
+        let mut cpsr = self.regs.cpsr();
+        if thumb {
+            cpsr |= 1 << 5;
+        } else {
+            cpsr &= !(1 << 5);
+        }
+        self.regs.set_cpsr(cpsr);
+        self.regs.set_pc(pc);
+        self.pipeline = [0; 2];
+        fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+        bus.take_access_wait_cycles();
+    }
+
     pub fn service_irq(&mut self, bus: &mut GbaMemoryBus) -> bool {
         if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
             return false;

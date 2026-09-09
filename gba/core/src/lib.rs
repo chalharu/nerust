@@ -7,6 +7,8 @@ pub mod cpu;
 pub mod cpu_pipeline;
 pub mod cpu_registers;
 pub mod dma;
+#[cfg(test)]
+mod dma_fit;
 pub mod input_types;
 pub mod math;
 pub mod memory;
