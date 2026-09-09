@@ -178,7 +178,10 @@ impl GbaDma {
                 seq
             }
         };
-        let is_seq_dst = !dma.is_first;
+        // GBATEK N/S semantics: only incrementing/decrementing runs after
+        // the first unit are sequential; a fixed destination re-accesses the
+        // same address, so every unit is non-sequential.
+        let is_seq_dst = !dma.is_first && destination_mode(dma.control) != 2;
         let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
         // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
@@ -236,13 +239,15 @@ impl GbaDma {
     }
 
     /// Find an enabled Special channel (1 or 2) targeting a sound FIFO,
-    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H).
+    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H). Like the
+    /// transfer path, a Repeat-less channel is not FIFO DMA.
     pub fn sound_channel_for_fifo(&self, fifo_b: bool) -> Option<usize> {
         let want = if fifo_b { 0x0400_00A4 } else { 0x0400_00A0 };
         [1, 2].into_iter().find(|&channel| {
             let dma = &self.channels[channel];
             dma.control & 0x8000 != 0
                 && timing(dma.control) == DmaTrigger::Special
+                && dma.control & (1 << 9) != 0
                 && (dma.destination & !3) == want
         })
     }

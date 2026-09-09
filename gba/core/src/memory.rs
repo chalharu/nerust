@@ -855,19 +855,16 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            // mGBA biosPrefetch: a protected read returns the latched last
+            // BIOS-fetched value held constant (not a cycling sequence).
+            let raw = self.bios_prefetch;
             let aligned = match width {
                 4 => raw,
                 2 => raw & 0xFFFF,
                 _ => raw & 0xFF,
             };
-            if self.bios_read_seq + 1 < SEQ.len() {
-                self.bios_read_seq += 1;
-                self.bios_prefetch = SEQ[self.bios_read_seq];
-                self.open_bus_value = self.bios_prefetch;
-                self.last_prefetch = self.bios_prefetch;
-            }
+            self.open_bus_value = raw;
+            self.last_prefetch = raw;
             let _ = addr;
             aligned
         } else {
@@ -1075,13 +1072,12 @@ impl GbaMemoryBus {
     }
 
     /// Feed EEPROM serial bits for a DMA write burst to 0D000000h.
-    /// Each 16-bit unit carries one bit; 32-bit units carry two (LSB first).
+    /// Each 16-bit unit carries one bit (GBATEK). Wider units are
+    /// undefined on hardware; only bit 0 is consumed.
     fn feed_eeprom_write(&mut self, width: u8, value: u32) {
         if let Some(cart) = self.cartridge.as_mut() {
             cart.eeprom_write_bit(value & 1 != 0);
-            if width == 4 {
-                cart.eeprom_write_bit(value & 0x0001_0000 != 0);
-            }
+            let _ = width;
             self.eeprom_burst_open = true;
         }
     }

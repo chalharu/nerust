@@ -210,8 +210,9 @@ fn handle_empty_multiple(
         regs.set_pc(target);
         19
     } else {
-        // Empty STM stores the PC value observed by the following Thumb instruction.
-        bus.write32(address, regs.pc().wrapping_add(2));
+        // Empty STM stores the R15 value observed at execute time
+        // (fetch address = instruction + 4 in Thumb state).
+        bus.write32(address, regs.pc());
         regs.set_r(base_register, address.wrapping_add(0x40));
         18
     }
@@ -252,6 +253,7 @@ mod tests {
         regs.set_r(0, 0x03000000);
         handle_multiple(&mut regs, &mut bus, 0xC000);
         assert_eq!(regs.r(0), 0x03000040);
-        assert_eq!(bus.read32(0x03000000), 0x08000306);
+        // ARM ARM: an empty STM stores R15 (instruction + 4 in Thumb).
+        assert_eq!(bus.read32(0x03000000), 0x08000304);
     }
 }
