@@ -1,6 +1,8 @@
+pub mod gpio;
 pub mod header;
 pub mod save;
 
+use self::gpio::Gpio;
 use self::header::GbaHeader;
 use self::save::helpers::read_slice;
 use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
@@ -10,6 +12,7 @@ pub struct Cartridge {
     pub header: GbaHeader,
     pub rom: Vec<u8>,
     pub save: Box<dyn SaveBackend>,
+    pub gpio: Gpio,
 }
 
 impl Cartridge {
@@ -17,7 +20,12 @@ impl Cartridge {
         let header = GbaHeader::parse(&rom)?;
         let save_type = detect_save_type(&rom);
         let save = create_save_backend(save_type);
-        Some(Self { header, rom, save })
+        Some(Self {
+            header,
+            rom,
+            save,
+            gpio: Gpio::new(),
+        })
     }
 
     pub fn read_rom(&self, addr: u32, width: u8) -> u32 {

@@ -993,6 +993,15 @@ impl GbaMemoryBus {
             0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
+                // Attached GPIO registers overlay ROM (see read_rom).
+                if let Some(cart) = self.cartridge.as_mut()
+                    && cart.gpio.write(addr, width, value)
+                {
+                    self.open_bus_value = value;
+                    self.prev_addr = Some(addr);
+                    self.prev_width = width;
+                    return;
+                }
                 self.open_bus_value = value;
             }
         }
@@ -1034,12 +1043,22 @@ impl GbaMemoryBus {
 
     fn read_rom(&self, addr: u32, width: u8) -> u32 {
         if let Some(cart) = &self.cartridge {
+            // Attached GPIO registers overlay ROM (GBATEK cartridge GPIO).
+            if let Some(value) = cart.gpio.read(addr, width) {
+                return value;
+            }
             return cart.read_rom(addr, width);
         }
         self.open_bus_value
     }
 
     fn read_sram(&self, addr: u32, width: u8) -> u32 {
+        // GBATEK backup detection order starts with an SRAM probe: on
+        // EEPROM carts there is no 0E window, so CPU reads see open bus
+        // (only the DMA3 serial protocol reaches the chip).
+        if self.is_eeprom() {
+            return self.open_bus_value;
+        }
         if let Some(cart) = &self.cartridge {
             return cart.read_sram(addr, width);
         }
@@ -1226,6 +1245,11 @@ impl GbaMemoryBus {
     }
 
     fn write_sram(&mut self, addr: u32, width: u8, value: u32) {
+        // No 0E window on EEPROM carts (see read_sram): stores go nowhere.
+        if self.is_eeprom() {
+            self.open_bus_value = value;
+            return;
+        }
         if let Some(cart) = &mut self.cartridge {
             cart.write_sram(addr, width, value);
         } else {
@@ -1912,6 +1936,42 @@ mod tests {
             }
         }
         assert_eq!(got, data);
+    }
+
+    #[test]
+    fn eeprom_cart_has_no_cpu_sram_window() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // GBATEK backup detection: an SRAM probe on an EEPROM cart must
+        // fail (open bus), not read back a phantom direct window.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        bus.write32(0x02000000, 0x12345678);
+        bus.write16(0x0E000000, 0xBEEF);
+        // Re-point open bus at EWRAM, then prove 0E stored nothing.
+        assert_eq!(bus.read32(0x02000000), 0x12345678);
+        assert_eq!(bus.read16(0x0E000000), 0x5678);
+    }
+
+    #[test]
+    fn gpio_overlay_attaches_on_control_write() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // Plain ROM data shows through until the first GPIO enable.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0xC4] = 0x12;
+        rom[0xC5] = 0x34;
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        assert_eq!(bus.read16(0x080000C4), 0x3412);
+        bus.write16(0x080000C8, 1);
+        bus.write16(0x080000C6, 0b1010);
+        bus.write16(0x080000C4, 0b1111);
+        assert_eq!(bus.read16(0x080000C4), 0b1010);
     }
 
     #[test]
