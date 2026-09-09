@@ -95,7 +95,6 @@ pub struct GbaMemoryBus {
     /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
     wake_clear_mask: u16,
     bios_prefetch: u32,
-    bios_read_seq: usize,
     scheduler: EventScheduler,
     current_tcycle: u64,
     hle_bios: Option<HleBiosOperation>,
@@ -211,7 +210,6 @@ impl GbaMemoryBus {
             stopped: false,
             wake_clear_mask: 0,
             bios_prefetch: 0xE129F000,
-            bios_read_seq: 0,
             scheduler: EventScheduler::new(),
             current_tcycle: 0,
             hle_bios: None,
@@ -719,10 +717,11 @@ impl GbaMemoryBus {
         }
         if flags & 0x80 != 0 {
             // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts.
-            // GBATEK bit7 resets all other registers, but the HW-captured
-            // RegisterRamReset reference shows timer state surviving the
-            // call (PeterLemon screenshot pins it), so timers are kept
-            // running across the reset.
+            // Timers are deliberately NOT cleared: the HW-calibrated
+            // RegisterRamReset ROM starts TIMER0 across the call and
+            // requires the full count ($01AB), proving the timer runs
+            // through the reset on hardware (mGBA clears it and cannot
+            // reproduce this).
             self.ppu.reset();
             self.dma.reset();
             self.video_armed = false;
@@ -865,21 +864,20 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            // Protected BIOS reads return successive prefetch-pipeline
-            // words (jsmolka bios.gba test #2 pins the cycling sequence).
-            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            // mGBA biosPrefetch concordance, pinned by jsmolka bios.gba
+            // (whose four tests read the live prefetch after boot / SWI /
+            // IRQ / IRQ-return): a protected read returns the latched last
+            // BIOS-fetched opcode, the SAME value on repeat reads. The latch
+            // is refreshed when BIOS-region execution is left (HLE: after
+            // each SWI, at IRQ entry, at IRQ return).
+            let raw = self.bios_prefetch;
             let aligned = match width {
                 4 => raw,
                 2 => raw & 0xFFFF,
                 _ => raw & 0xFF,
             };
-            if self.bios_read_seq + 1 < SEQ.len() {
-                self.bios_read_seq += 1;
-                self.bios_prefetch = SEQ[self.bios_read_seq];
-                self.open_bus_value = self.bios_prefetch;
-                self.last_prefetch = self.bios_prefetch;
-            }
+            self.open_bus_value = raw;
+            self.last_prefetch = raw;
             let _ = addr;
             aligned
         } else {
@@ -887,12 +885,12 @@ impl GbaMemoryBus {
         }
     }
 
-    pub fn update_bios_prefetch(&mut self, seq: usize) {
-        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-        self.bios_read_seq = seq.min(SEQ.len() - 1);
-        self.bios_prefetch = SEQ[self.bios_read_seq];
-        self.open_bus_value = self.bios_prefetch;
-        self.last_prefetch = self.bios_prefetch;
+    /// Latch a new BIOS prefetch value (HLE synthesis of mGBA's
+    /// region-leave update).
+    pub fn set_bios_prefetch(&mut self, value: u32) {
+        self.bios_prefetch = value;
+        self.open_bus_value = value;
+        self.last_prefetch = value;
     }
 
     fn update_prefetch_queue(&mut self, addr: u32, width: u8, sequential: bool, is_opcode: bool) {

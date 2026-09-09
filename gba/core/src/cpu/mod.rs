@@ -87,6 +87,10 @@ impl GbaCpu {
         let exception_return_address = resume_address.wrapping_add(4);
         self.regs
             .enter_exception(0x12, target, exception_return_address, true);
+        // The real BIOS IRQ prologue runs at 0x128+ before reaching the
+        // user vector; its last fetched opcode (0xE25EF004) is what a
+        // protected BIOS read observes during the ISR (jsmolka t003).
+        bus.set_bios_prefetch(0xE25EF004);
         if target != 0x00000018 {
             self.irq_return_address = Some(resume_address);
             self.irq_saved_registers = Some([
@@ -138,6 +142,9 @@ impl GbaCpu {
                         self.regs.set_r(register, value);
                     }
                 }
+                // IRQ round-trip complete: the BIOS epilogue's last opcode
+                // (0xE55EC002) is latched for protected reads (jsmolka t004).
+                bus.set_bios_prefetch(0xE55EC002);
                 self.regs.set_pc(return_address);
             }
             self.pipeline = [0; 2];
