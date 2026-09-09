@@ -9,7 +9,16 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
         0x0000..=0x17FF => thumb_opcodes::move_shifted::handle(regs, instr),
         0x1800..=0x1FFF => thumb_opcodes::add_sub::handle(regs, instr),
         0x2000..=0x3FFF => thumb_opcodes::alu::handle_imm(regs, instr),
-        0x4000..=0x43FF => thumb_opcodes::alu::handle(regs, instr),
+        0x4000..=0x43FF => {
+            let cycles = thumb_opcodes::alu::handle(regs, instr);
+            // Register shifts (LSL/LSR/ASR/ROR) and MUL take an internal
+            // cycle (GBATEK "Prefetch Disable Bug").
+            let op = ((instr >> 6) & 0xF) as u8;
+            if matches!(op, 0x2..=0x4 | 0x7 | 0xD) {
+                bus.note_internal_cycle();
+            }
+            cycles
+        }
         0x4400..=0x47FF => thumb_opcodes::hi_register::handle(regs, bus, instr),
         0x4800..=0x4FFF => thumb_opcodes::load_store::handle_pc_relative(regs, bus, instr),
         0x5000..=0x51FF | 0x5400..=0x55FF | 0x5800..=0x59FF | 0x5C00..=0x5DFF => {

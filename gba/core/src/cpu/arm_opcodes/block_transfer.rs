@@ -132,10 +132,9 @@ fn load_register(
     if user_bank {
         regs.set_user_r(register, value);
     } else {
-        if register == 15 {
-            // ARMv4T LDM with R15 interworks: loaded bit 0 selects the state.
-            regs.set_cpsr_t(value & 1 != 0);
-        }
+        // ARMv4 (ARM7TDMI) LDM to PC leaves CPSR.T unchanged (GBATEK ARM
+        // block transfer); interworking LDM-PC arrived with ARMv5T. (Thumb
+        // POP/LDM still interwork via their own handlers.)
         regs.set_r(register, value);
     }
     if restore && register == 15 {
