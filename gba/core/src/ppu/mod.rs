@@ -121,6 +121,14 @@ pub struct GbaPpu {
     /// `latch[0] & live`, forced blank on `latch[0] | live` (NBA `Merge.cc`,
     /// `PPU.hh::ForcedBlank`). Window enables stay live.
     dispcnt_latch: [u16; 3],
+    /// Forced-blank restart (GBATEK DISPCNT: when a forced blank during a
+    /// display period is cancelled, the display restarts from the beginning
+    /// after two vertical lines). Counts down line_ends after a blank 1->0
+    /// transition with vcount<160; at zero the scanline counter resets.
+    blank_restart: u8,
+    /// Effective forced-blank state at the previous line end, for edge
+    /// detection above.
+    was_blanked: bool,
     /// Line-deferred render latch: OAM bytes and the MOSAIC register sampled
     /// at the first pixel of each scanline. Mid-scanline writes take effect
     /// on the next line. HBlank/VBlank writes (IRQ handlers, HBlank DMA, the
@@ -175,6 +183,8 @@ impl GbaPpu {
             ref_written: [false; 2],
             bg_latch: 0,
             dispcnt_latch: [0; 3],
+            blank_restart: 0,
+            was_blanked: false,
             line: LineLatch::new(),
         }
     }
@@ -227,6 +237,21 @@ impl GbaPpu {
         event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
+        // Forced-blank restart edge: blanked 1->0 with vcount<160 restarts
+        // the frame after two more vertical lines (GBATEK DISPCNT).
+        let blanked = self.forced_blank();
+        if self.was_blanked && !blanked && self.vcount < HEIGHT as u16 {
+            self.blank_restart = 2;
+        }
+        self.was_blanked = blanked;
+        if self.blank_restart > 0 {
+            self.blank_restart -= 1;
+            if self.blank_restart == 0 {
+                // Restart the frame: the next scanline rendered is line 0.
+                self.vcount = 0;
+                return;
+            }
+        }
         self.advance_vcount(event);
         self.update_vcount_match(event);
     }
@@ -235,12 +260,19 @@ impl GbaPpu {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
+        // NBA #177: internal affine registers advance only while their BG
+        // is enabled (BG2 -> affine 0, BG3 -> affine 1).
+        let enabled = [
+            self.registers.dispcnt & (1 << 10) != 0,
+            self.registers.dispcnt & (1 << 11) != 0,
+        ];
         crate::ppu::affine::advance_line(
             &mut self.internal_x,
             &mut self.internal_y,
             self.registers.pb,
             self.registers.pd,
             &mut self.ref_written,
+            enabled,
         );
     }
 
@@ -258,8 +290,13 @@ impl GbaPpu {
         } else if self.vcount == LINES_PER_FRAME {
             self.vcount = 0;
             self.registers.dispstat &= !1;
-            self.internal_x = self.registers.ref_x;
-            self.internal_y = self.registers.ref_y;
+            // NBA #177: VBlank internal copy, per enabled BG.
+            for affine in 0..2 {
+                if self.registers.dispcnt & (1 << (10 + affine)) != 0 {
+                    self.internal_x[affine] = self.registers.ref_x[affine];
+                    self.internal_y[affine] = self.registers.ref_y[affine];
+                }
+            }
             event.frame_complete = true;
         }
     }
@@ -387,7 +424,9 @@ impl GbaPpu {
                 // GBATEK: outside VBlank the write is copied to internal immediately.
                 // For per-scanline affine (BGMode7) the HBlank write must not be
                 // incremented again at line end, so mark dirty to skip advance.
-                if self.vcount < 160 {
+                if self.vcount < 160
+                    && self.registers.dispcnt & (1 << (10 + affine)) != 0
+                {
                     self.internal_x[affine] = self.registers.ref_x[affine];
                     self.internal_y[affine] = self.registers.ref_y[affine];
                     if self.cycle >= HBLANK_FLAG_CYCLES {
@@ -489,6 +528,9 @@ impl GbaPpu {
             return;
         }
         // NBA Background/Merge: layer enables gate on latched AND live.
+        // OBJ is the exception: its fetch keys off the LIVE enable only
+        // (NBA LatchDISPCNT: latched DISPCNT disregarded for OBJ), so it
+        // reacts to HBlank toggling immediately while BGs lag 3 lines.
         let enables = self.line.enable & self.registers.dispcnt;
         let mask = self.window_mask(x, y, vram, palette);
         let mut layers = Vec::with_capacity(6);
@@ -514,7 +556,7 @@ impl GbaPpu {
                 layers.push(pixel);
             }
         }
-        if enables & (1 << 12) != 0
+        if self.registers.dispcnt & (1 << 12) != 0
             && mask & (1 << 4) != 0
             && let Some(pixel) = obj::pixel(
                 &self.registers,
@@ -1057,3 +1099,4 @@ mod tests {
         assert_eq!(ppu.dispcnt() & (1 << 3), 0);
     }
 }
+

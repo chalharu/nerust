@@ -21,10 +21,14 @@ pub(crate) fn rgba8888(color: u16) -> u32 {
 }
 
 pub(crate) fn alpha_blend(first: u16, second: u16, eva: u8, evb: u8) -> u16 {
+    // NBA Merge: blend rounds to nearest (not truncation). The hardware
+    // also keeps a 6th green bit through the blend; its exact source
+    // (palette bit layout) is unconfirmed, so only rounding is modeled
+    // here — recorded as residual P14 investigation.
     let blend = |shift: u32| {
         let a = u32::from((first >> shift) & 0x1F);
         let b = u32::from((second >> shift) & 0x1F);
-        (((a * u32::from(eva) + b * u32::from(evb)) >> 4).min(31) as u16) << shift
+        (((a * u32::from(eva) + b * u32::from(evb) + 8) >> 4).min(31) as u16) << shift
     };
     blend(0) | blend(5) | blend(10)
 }
