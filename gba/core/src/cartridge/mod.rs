@@ -51,6 +51,21 @@ impl Cartridge {
         self.save.save_type()
     }
 
+    /// Feed one EEPROM serial bit (DMA write burst to 0D000000h).
+    pub fn eeprom_write_bit(&mut self, bit: bool) {
+        self.save.eeprom_write_bit(bit);
+    }
+
+    /// Pop one EEPROM response bit (DMA read from 0D000000h).
+    pub fn eeprom_read_bit(&mut self) -> bool {
+        self.save.eeprom_read_bit()
+    }
+
+    /// End of a DMA burst touching the backup chip.
+    pub fn eeprom_end_burst(&mut self) {
+        self.save.eeprom_end_burst();
+    }
+
     pub fn has_battery(&self) -> bool {
         self.save.has_battery()
     }

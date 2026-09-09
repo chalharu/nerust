@@ -168,7 +168,7 @@ fn bitmap_pixel(ctx: &mut BgContext<'_>, mode: usize, x: usize, y: usize) -> Opt
     let (mx, my) = bg_mosaic(ctx.mosaic, ctx.registers.bgcnt[2], x, y);
     let mosaic_lines = y.saturating_sub(my) as i32;
     let line_x = ctx.internal.0[0] - mosaic_lines * i32::from(ctx.registers.pb[0]);
-    let line_y = ctx.internal.1[0] - mosaic_lines * i32::from(ctx.registers.pc[0]);
+    let line_y = ctx.internal.1[0] - mosaic_lines * i32::from(ctx.registers.pd[0]);
     let sx = (line_x + mx as i32 * i32::from(ctx.registers.pa[0])) >> 8;
     let sy = (line_y + mx as i32 * i32::from(ctx.registers.pc[0])) >> 8;
     let page = if ctx.registers.dispcnt & (1 << 4) != 0 {

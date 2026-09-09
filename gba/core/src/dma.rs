@@ -79,9 +79,9 @@ impl GbaDma {
     }
 
     pub fn trigger(&mut self, trigger: DmaTrigger) {
-        for dma in &mut self.channels {
+        for (channel, dma) in self.channels.iter_mut().enumerate() {
             if dma.control & 0x8000 != 0
-                && timing(dma.control) == trigger
+                && timing_for(channel, dma.control) == trigger
                 && !dma.active
                 && dma.pending == 0
             {
@@ -95,7 +95,7 @@ impl GbaDma {
         if channel < 4 {
             let dma = &mut self.channels[channel];
             if dma.control & 0x8000 != 0
-                && timing(dma.control) == trigger
+                && timing_for(channel, dma.control) == trigger
                 && !dma.active
                 && dma.pending == 0
             {
@@ -279,7 +279,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.stalled = false;
         dma.completing = false;
         dma.completion_interrupt = false;
-        if timing(dma.control) == DmaTrigger::Immediate {
+        if timing_for(channel, dma.control) == DmaTrigger::Immediate {
             dma.pending = 4;
             dma.active = false;
         }
@@ -294,7 +294,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
 }
 
 fn finish(dma: &mut DmaChannel, channel: usize) {
-    let repeat = dma.control & (1 << 9) != 0 && timing(dma.control) != DmaTrigger::Immediate;
+    let repeat =
+        dma.control & (1 << 9) != 0 && timing_for(channel, dma.control) != DmaTrigger::Immediate;
     dma.active = false;
     dma.pending = 0;
     dma.delay = 0;
@@ -328,6 +329,17 @@ fn timing(control: u16) -> DmaTrigger {
         2 => DmaTrigger::HBlank,
         3 => DmaTrigger::Special,
         _ => DmaTrigger::Immediate,
+    }
+}
+
+/// Per-channel start timing. GBATEK DMA: DMA0 has no Special source, so a
+/// Special setting on channel 0 behaves as Immediate.
+fn timing_for(channel: usize, control: u16) -> DmaTrigger {
+    let timing = timing(control);
+    if channel == 0 && timing == DmaTrigger::Special {
+        DmaTrigger::Immediate
+    } else {
+        timing
     }
 }
 

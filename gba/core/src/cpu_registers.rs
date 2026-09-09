@@ -144,6 +144,14 @@ impl CpuRegisters {
     pub fn cpsr_t(&self) -> bool {
         self.cpsr & (1 << 5) != 0
     }
+
+    pub fn set_cpsr_t(&mut self, thumb: bool) {
+        if thumb {
+            self.cpsr |= 1 << 5;
+        } else {
+            self.cpsr &= !(1 << 5);
+        }
+    }
     pub fn cpsr_mode(&self) -> u8 {
         (self.cpsr & 0x1F) as u8
     }

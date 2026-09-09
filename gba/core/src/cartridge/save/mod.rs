@@ -23,6 +23,14 @@ pub trait SaveBackend: std::fmt::Debug + Send {
     fn save_type(&self) -> SaveType;
     fn read(&self, addr: u32, width: u8) -> u32;
     fn write(&mut self, addr: u32, width: u8, value: u32);
+    /// Feed one serial bit of a DMA write burst (EEPROM bit-serial protocol).
+    fn eeprom_write_bit(&mut self, _bit: bool) {}
+    /// Pop one response bit for a DMA read (EEPROM bit-serial protocol).
+    fn eeprom_read_bit(&mut self) -> bool {
+        true
+    }
+    /// End of a DMA burst touching the backup chip.
+    fn eeprom_end_burst(&mut self) {}
     fn has_battery(&self) -> bool {
         !matches!(self.save_type(), SaveType::None)
     }

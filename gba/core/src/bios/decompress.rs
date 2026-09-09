@@ -205,7 +205,9 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 
 fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
     let size = header >> 8;
-    (valid_source(source) && header & 0xF0 == 0x20 && matches!(bits, 4 | 8) && size > 0)
+    // GBATEK: data size "normally 4 or 8" — the format itself supports
+    // 1/2/4/8 and the decoder below is width-parametric, so accept all.
+    (valid_source(source) && header & 0xF0 == 0x20 && matches!(bits, 1 | 2 | 4 | 8) && size > 0)
         .then_some(size)
 }
 

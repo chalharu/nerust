@@ -1,6 +1,9 @@
 /// GBA APU - Phase 9
-/// Handles GBA sound registers 0x04000060-0x040000A6 and wave RAM.
+/// Handles GBA sound registers 0x04000060-0x0400009F and wave RAM.
 /// PSG/FIFO mixing is still stubbed, but registers are now owned here instead of GbaMemoryBus latch.
+/// FIFO_A/B (0x040000A0/A4) are 32-byte streaming buffers fed by DMA
+/// Special (DMA1/DMA2, 4x32-bit bursts); without a sound backend they are
+/// stored but never drained (no periodic drain is modeled).
 #[derive(Debug)]
 pub struct GbaApu {
     pub sound1cnt_lo: u16,
@@ -17,7 +20,9 @@ pub struct GbaApu {
     pub soundcnt_hi: u16,
     pub soundcnt_x: u16,
     pub soundbias: u16,
-    pub wave_ram: Box<[u8; 0x20]>,
+    pub wave_ram: Box<[u8; 0x10]>,
+    pub fifo_a: std::collections::VecDeque<u8>,
+    pub fifo_b: std::collections::VecDeque<u8>,
 }
 
 impl Default for GbaApu {
@@ -37,7 +42,9 @@ impl Default for GbaApu {
             soundcnt_hi: 0,
             soundcnt_x: 0,
             soundbias: 0x200,
-            wave_ram: Box::new([0u8; 0x20]),
+            wave_ram: Box::new([0u8; 0x10]),
+            fifo_a: std::collections::VecDeque::with_capacity(32),
+            fifo_b: std::collections::VecDeque::with_capacity(32),
         }
     }
 }
@@ -71,6 +78,25 @@ impl GbaApu {
         self.soundcnt_x = 0;
         self.soundbias = 0x200;
         self.wave_ram.fill(0);
+        self.fifo_a.clear();
+        self.fifo_b.clear();
+    }
+
+    /// Push bytes into a DirectSound FIFO (max 32 bytes; overflow is dropped,
+    /// approximating full-FIFO HW where extra writes have no effect).
+    /// `bytes` are appended LSB-first from `value` for `width` bytes.
+    pub fn push_fifo(&mut self, fifo_b: bool, value: u32, width: u8) {
+        let fifo = if fifo_b {
+            &mut self.fifo_b
+        } else {
+            &mut self.fifo_a
+        };
+        for i in 0..width.min(4) {
+            if fifo.len() >= 32 {
+                break;
+            }
+            fifo.push_back((value >> (i * 8)) as u8);
+        }
     }
 
     pub fn read(&self, addr: u32) -> Option<u16> {
@@ -97,10 +123,7 @@ impl GbaApu {
             0x0400009A => u16::from_le_bytes([self.wave_ram[10], self.wave_ram[11]]),
             0x0400009C => u16::from_le_bytes([self.wave_ram[12], self.wave_ram[13]]),
             0x0400009E => u16::from_le_bytes([self.wave_ram[14], self.wave_ram[15]]),
-            0x040000A0 => u16::from_le_bytes([self.wave_ram[16], self.wave_ram[17]]),
-            0x040000A2 => u16::from_le_bytes([self.wave_ram[18], self.wave_ram[19]]),
-            0x040000A4 => u16::from_le_bytes([self.wave_ram[20], self.wave_ram[21]]),
-            0x040000A6 => u16::from_le_bytes([self.wave_ram[22], self.wave_ram[23]]),
+            // FIFO_A/B (A0/A4) are write-only streaming buffers; reads are open bus.
             _ => return None,
         })
     }
@@ -153,22 +176,7 @@ impl GbaApu {
                 self.wave_ram[14] = (value & 0xFF) as u8;
                 self.wave_ram[15] = (value >> 8) as u8;
             }
-            0x040000A0 => {
-                self.wave_ram[16] = (value & 0xFF) as u8;
-                self.wave_ram[17] = (value >> 8) as u8;
-            }
-            0x040000A2 => {
-                self.wave_ram[18] = (value & 0xFF) as u8;
-                self.wave_ram[19] = (value >> 8) as u8;
-            }
-            0x040000A4 => {
-                self.wave_ram[20] = (value & 0xFF) as u8;
-                self.wave_ram[21] = (value >> 8) as u8;
-            }
-            0x040000A6 => {
-                self.wave_ram[22] = (value & 0xFF) as u8;
-                self.wave_ram[23] = (value >> 8) as u8;
-            }
+            // FIFO handled by the bus (needs byte-lane info); ignore here.
             _ => return false,
         }
         true
