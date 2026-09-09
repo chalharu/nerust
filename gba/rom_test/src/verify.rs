@@ -282,12 +282,14 @@ pub fn verify_reference(
     }
 
     let mut diff_count = 0usize;
+    let mut bgr_diff_count = 0usize;
     let mut first = None;
-    for (i, (a, b)) in frame_rgb
+    for (i, ((a, b), (fa, fb))) in frame_rgb
         .as_chunks::<3>()
         .0
         .iter()
         .zip(ref_rgb.as_chunks::<3>().0.iter())
+        .zip(frame_bgr.iter().zip(ref_bgr.iter()))
         .enumerate()
     {
         if a != b {
@@ -296,9 +298,18 @@ pub fn verify_reference(
             }
             diff_count += 1;
         }
+        if fa != fb {
+            bgr_diff_count += 1;
+        }
     }
     let (fx, fy) = first.unwrap_or((0, 0));
-    let actual = format!("{} differing pixels, first at ({},{})", diff_count, fx, fy);
+    // Report both counts: strict RGB (8-bit expansion sensitive) and BGR555
+    // (real color differences, e.g. wrong texels). Old-emu references using
+    // v<<3 expansion inflate the strict count even when geometry matches.
+    let actual = format!(
+        "{} differing pixels ({} after BGR555 rounding), first at ({},{})",
+        diff_count, bgr_diff_count, fx, fy
+    );
     checks.push(CheckResult {
         name: "reference".to_string(),
         expected,
