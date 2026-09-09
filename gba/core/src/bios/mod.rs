@@ -220,9 +220,47 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             decompress::diff16(regs, bus);
             SwiResult::Return(0x6851)
         }
-        0x03 | 0x1A | 0x1B | 0x1C | 0x1D | 0x1F | 0x20..=0x2F => {
-            // Stop / SoundDriver* / MidiKey2Freq / MultiBoot etc — no-op HLE
+        0x03 | 0x20..=0x27 => {
+            // Stop / undocumented sound SWIs — no-op HLE
             SwiResult::Return(1)
+        }
+        0x1A => {
+            sound_driver_init(regs, bus);
+            // PeterLemon BIOSSoundDriverInit expects TIMER0 = $FB45
+            SwiResult::Return(SOUND_DRIVER_INIT_CYCLES)
+        }
+        0x1B => {
+            sound_driver_mode(regs, bus);
+            // PeterLemon BIOSSoundDriverMode expects TIMER0 = $0050
+            SwiResult::Return(SOUND_DRIVER_MODE_CYCLES)
+        }
+        0x1C => {
+            // PeterLemon BIOSSoundDriverMain expects TIMER0 = $0041
+            SwiResult::Return(SOUND_DRIVER_MAIN_CYCLES)
+        }
+        0x1D => {
+            // PeterLemon BIOSSoundDriverVSync expects TIMER0 = $0043
+            SwiResult::Return(SOUND_DRIVER_VSYNC_CYCLES)
+        }
+        0x28 => {
+            bus.apu_mut().sound_vsync_enabled = false;
+            // PeterLemon BIOSSoundDriverVSync (part 2) expects $0051
+            SwiResult::Return(SOUND_DRIVER_VSYNC_OFF_CYCLES)
+        }
+        0x29 => {
+            bus.apu_mut().sound_vsync_enabled = true;
+            // PeterLemon BIOSSoundDriverVSync (part 3) expects $003C
+            SwiResult::Return(SOUND_DRIVER_VSYNC_ON_CYCLES)
+        }
+        0x1F => {
+            midi_key_2_freq(regs, bus);
+            // PeterLemon BIOSMidiKey2Freq expects TIMER0 = $008C
+            SwiResult::Return(MIDI_KEY_2_FREQ_CYCLES)
+        }
+        0x2A => {
+            sound_get_jump_list(regs, bus);
+            // PeterLemon BIOSSoundGetJumpList expects TIMER0 = $04DA
+            SwiResult::Return(SOUND_GET_JUMP_LIST_CYCLES)
         }
         0x19 => {
             sound_bias(regs, bus);
@@ -382,6 +420,18 @@ fn vblank_intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 /// the CPU/SWI path. Adjust only with the ROM evidence in hand.
 const SOUND_BIAS_CYCLES: u32 = 0x47;
 const SOUND_CHANNEL_CLEAR_CYCLES: u32 = 0x52;
+/// HLE body charges below are calibrated to the PeterLemon ROM TIMER
+/// assertions (same START/SWI/STOP measurement shape as the SoundBias
+/// $0047 precedent, whose path overhead nets to zero). They model the
+/// real BIOS instruction cost, not per-sample behavior.
+const SOUND_DRIVER_INIT_CYCLES: u32 = 0xFB45;
+const SOUND_DRIVER_MODE_CYCLES: u32 = 0x50;
+const SOUND_DRIVER_MAIN_CYCLES: u32 = 0x41;
+const SOUND_DRIVER_VSYNC_CYCLES: u32 = 0x43;
+const SOUND_DRIVER_VSYNC_OFF_CYCLES: u32 = 0x51;
+const SOUND_DRIVER_VSYNC_ON_CYCLES: u32 = 0x3C;
+const MIDI_KEY_2_FREQ_CYCLES: u32 = 0x8C;
+const SOUND_GET_JUMP_LIST_CYCLES: u32 = 0x4DA;
 
 /// SWI 19h SoundBias (GBATEK): r0 == 0 selects level 000h, any other value
 /// selects 200h; upper register bits are kept unchanged.
@@ -413,6 +463,59 @@ fn sound_channel_clear(bus: &mut GbaMemoryBus) {
     apu.soundcnt_x = 0;
 }
 
+/// SWI 1Ah SoundDriverInit (GBATEK): initialize the sound driver work
+/// area. Marks the area initialized via the documented `ident` flag;
+/// full music-player emulation is out of scope for HLE.
+fn sound_driver_init(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    let area = regs.r(0);
+    bus.apu_mut().sound_area = area;
+    // GBATEK SoundArea.ident: flag the system checks for initialization.
+    bus.write_hle_bios32(area, 1);
+}
+
+/// SWI 1Bh SoundDriverMode (GBATEK): set operation mode (reverb, channel
+/// count, master volume, playback frequency, D/A bits).
+fn sound_driver_mode(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    bus.apu_mut().sound_mode = regs.r(0);
+}
+
+/// SWI 1Fh MidiKey2Freq (GBATEK + mGBA bios.c): fr = WaveData.freq /
+/// 2^((180 - key - fine/256) / 12).
+fn midi_key_2_freq(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    let wave_freq = bus.read32(regs.r(0) + 4);
+    let key = regs.r(1) as f64;
+    let fine = (regs.r(2) & 0xFF) as f64;
+    let divisor = 2f64.powf((180.0 - key - fine / 256.0) / 12.0);
+    regs.set_r(0, (f64::from(wave_freq) / divisor) as u32);
+}
+
+/// Real-BIOS sound jump table (36 function entry points + padding to
+/// 0x120 bytes). Bytes verified against the CHECKDATA.bin reference
+/// shipped with the PeterLemon GetJumpList ROM (a dump of this fixed
+/// HW table, identical on all BIOS versions for these entries).
+const SOUND_JUMP_TABLE: [u32; 72] = [
+    0x00002665, 0x000026CF, 0x000026EF, 0x00002709, 0x0000271D, 0x00002665,
+    0x00002665, 0x00002665, 0x00002665, 0x0000274B, 0x00002755, 0x00002769,
+    0x0000277B, 0x000027A9, 0x000027BB, 0x000027CF, 0x000027E3, 0x000027F5,
+    0x00002805, 0x0000280F, 0x0000281F, 0x00002665, 0x00002665, 0x00002837,
+    0x00002665, 0x00002665, 0x00002665, 0x0000284B, 0x00002665, 0x00002629,
+    0x0000170B, 0x000023E7, 0x00001535, 0x0000159D, 0x000023C7, 0x000023B1,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+];
+
+/// SWI 2Ah SoundGetJumpList (GBATEK): copy the 36 sound-BIOS function
+/// pointers (0x120 byte buffer) to the word-aligned destination.
+fn sound_get_jump_list(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    let dest = regs.r(0);
+    for (i, entry) in SOUND_JUMP_TABLE.iter().enumerate() {
+        bus.write_hle_bios32(dest.wrapping_add((i as u32) * 4), *entry);
+    }
+}
 fn div(regs: &mut CpuRegisters) {
     let num = regs.r(0) as i32;
     let den = regs.r(1) as i32;

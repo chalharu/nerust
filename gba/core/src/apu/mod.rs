@@ -23,6 +23,10 @@ pub struct GbaApu {
     pub wave_ram: Box<[u8; 0x10]>,
     pub fifo_a: std::collections::VecDeque<u8>,
     pub fifo_b: std::collections::VecDeque<u8>,
+    /// Minimal sound-driver HLE state (GBATEK BIOS Sound Functions).
+    pub sound_area: u32,
+    pub sound_mode: u32,
+    pub sound_vsync_enabled: bool,
 }
 
 impl Default for GbaApu {
@@ -45,6 +49,9 @@ impl Default for GbaApu {
             wave_ram: Box::new([0u8; 0x10]),
             fifo_a: std::collections::VecDeque::with_capacity(32),
             fifo_b: std::collections::VecDeque::with_capacity(32),
+            sound_area: 0,
+            sound_mode: 0,
+            sound_vsync_enabled: false,
         }
     }
 }
