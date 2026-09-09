@@ -43,6 +43,13 @@ impl EepromSave {
     fn commit_read_request(&mut self, addr: usize) {
         self.read_queue.clear();
         // 4 dummy bits (ignored by games) + 64 data bits, MSB first.
+        // GBATEK: 8KB EEPROMs use only the lower 10 address bits (upper 4
+        // must be zero); mask so aliased addresses read the same block.
+        let addr = if self.size_8k == Some(true) {
+            addr & 0x3FF
+        } else {
+            addr
+        };
         self.read_queue.extend_from_slice(&[false; 4]);
         let base = addr * 8;
         for i in 0..64 {
@@ -135,6 +142,8 @@ impl EepromSave {
                             data[i / 8] |= 1 << (7 - (i % 8));
                         }
                     }
+                    // 10-bit alias for 8KB (see commit_read_request).
+                    let addr = if width == 16 { addr & 0x3FF } else { addr };
                     let base = addr * 8;
                     if base + 8 <= self.data.len() {
                         self.data[base..base + 8].copy_from_slice(&data);
