@@ -187,7 +187,8 @@ fn handle_empty_list(
             );
         }
         regs.set_pc(target);
-        5
+        // Empty list transfers 16 words including PC: 4+16.
+        20
     } else {
         bus.write32(address, regs.pc().wrapping_add(4));
         if spec.writeback {
@@ -200,16 +201,24 @@ fn handle_empty_list(
                 },
             );
         }
-        18
+        // Empty list stores 16 words: 1+16.
+        17
     }
 }
 
 fn transfer_cycles(load: bool, list: u32, transferred: u32) -> u32 {
-    // Loading PC also incurs the pipeline refill cost.
-    if load && list & (1 << 15) != 0 {
-        5
+    // GBATEK ARM cycle times: LDM = nS+1N+1I (+1S+1N if R15 loaded),
+    // STM = (n-1)S+2N. Bus waits ride separately via access_wait_cycles;
+    // the handler carries the 1-cycle-memory internal part: LDM = 2+n
+    // (+2 refill when PC is loaded), STM = 1+n.
+    if load {
+        if list & (1 << 15) != 0 {
+            4 + transferred
+        } else {
+            2 + transferred
+        }
     } else {
-        2 + transferred
+        1 + transferred
     }
 }
 

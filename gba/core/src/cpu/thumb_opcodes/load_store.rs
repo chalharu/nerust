@@ -177,7 +177,8 @@ fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
         count += 1;
     }
     regs.set_r(rb, addr);
-    2 + count
+    // Thumb STMIA: (n-1)S+2N (GBATEK), i.e. 1+count at 1-cycle memory.
+    1 + count
 }
 
 #[inline]
