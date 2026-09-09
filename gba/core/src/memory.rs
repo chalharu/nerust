@@ -106,6 +106,53 @@ pub struct GbaMemoryBus {
     eeprom_burst_open: bool,
 }
 
+
+/// Snapshot of the PPU state relevant to display-controller contention.
+/// Lets DMA cost computation query contention without borrowing the bus
+/// while a DMA channel is mutably borrowed.
+#[derive(Clone, Copy)]
+struct DisplayStallSnapshot {
+    forced_blank: bool,
+    vcount: u16,
+    cycle: u16,
+    dispcnt: u16,
+    bg_fetch_active: bool,
+}
+
+impl DisplayStallSnapshot {
+    fn stall(self, addr: u32) -> u8 {
+        if self.forced_blank {
+            return 0;
+        }
+        if self.vcount >= 160 {
+            return 0;
+        }
+        // BG/palette data is fetched during draw only. OAM stays busy
+        // through HBlank too, unless H-Blank Interval Free idles it.
+        let in_hblank = self.cycle >= HBLANK_FLAG_CYCLES;
+        // BG fetch clock (archive/ppu/mode3): contention only while the
+        // fetcher runs and a BG is enabled (latched AND live).
+        let in_fetch = (32..989).contains(&self.cycle) && self.bg_fetch_active;
+        // Palette feeds every rendered pixel (backdrop included).
+        let in_draw = self.cycle <= HDRAW_CYCLES;
+        let oam_busy = !in_hblank || ((self.dispcnt & (1 << 5)) == 0);
+        match addr {
+            0x05000000..=0x05FFFFFF => u8::from(in_draw),
+            0x06000000..=0x06FFFFFF => {
+                let bitmap_mode = (self.dispcnt & 7) >= 3;
+                let bg_limit = if bitmap_mode { 0x14000 } else { 0x10000 };
+                if (addr & 0x1FFFF) < bg_limit {
+                    u8::from(in_fetch)
+                } else {
+                    u8::from(oam_busy)
+                }
+            }
+            0x07000000..=0x07FFFFFF => u8::from(oam_busy),
+            _ => 0,
+        }
+    }
+}
+
 impl GbaMemoryBus {
     pub fn new() -> Self {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
@@ -324,38 +371,17 @@ impl GbaMemoryBus {
     /// contention. This mirrors mGBA's `GBAMemoryStallVRAM`/`stallMask` in
     /// simplified form: +1 cycle while the controller is actively drawing,
     /// 0 during blanks or forced blank (controller idle, fast access).
+    /// Display-controller contention snapshot (usable without borrowing
+    /// the bus, e.g. for DMA costs while a channel is mutably borrowed).
     fn display_stall(&self, addr: u32) -> u8 {
-        if self.ppu.forced_blank() {
-            return 0;
+        DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
         }
-        if self.ppu.vcount() >= 160 {
-            return 0;
-        }
-        // BG/palette data is fetched during draw only. OAM stays busy through
-        // HBlank too, unless H-Blank Interval Free (DISPCNT bit 5) idles it.
-        let cycle = self.ppu.cycle();
-        let in_hblank = cycle >= HBLANK_FLAG_CYCLES;
-        // BG fetch clock (archive/ppu/mode3: pixel x fetched at 32+4x):
-        // BG-VRAM contention only while the fetcher runs and a BG is
-        // enabled (latched AND live, NBA Background gating).
-        let in_fetch = (32..989).contains(&cycle) && self.ppu.bg_fetch_active();
-        // Palette feeds every rendered pixel (backdrop included).
-        let in_draw = cycle <= HDRAW_CYCLES;
-        let oam_busy = !in_hblank || ((self.ppu.dispcnt() & (1 << 5)) == 0);
-        match addr {
-            0x05000000..=0x05FFFFFF => u8::from(in_draw),
-            0x06000000..=0x06FFFFFF => {
-                let bitmap_mode = (self.ppu.dispcnt() & 7) >= 3;
-                let bg_limit = if bitmap_mode { 0x14000 } else { 0x10000 };
-                if (addr & 0x1FFFF) < bg_limit {
-                    u8::from(in_fetch)
-                } else {
-                    u8::from(oam_busy)
-                }
-            }
-            0x07000000..=0x07FFFFFF => u8::from(oam_busy),
-            _ => 0,
-        }
+        .stall(addr)
     }
 
     /// Advance the LCD controller by exactly one T-cycle.
@@ -403,7 +429,10 @@ impl GbaMemoryBus {
                 self.video_armed = self.dma.has_video_transfer();
             }
             if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
-                self.video_countdown = 3;
+                // Fires 2 cycles into the line: the burst-start xI (+2 on
+                // the first unit) carries the sweep phase, so no extra
+                // countdown offset is needed here.
+                self.video_countdown = 2;
             }
         }
         let timer_irq = self.timers.step();
@@ -442,7 +471,17 @@ impl GbaMemoryBus {
             }
         }
         let mut interrupt_mask = event.interrupt_mask | timer_irq;
-        if let Some(transfer) = self.dma.step(self.wait_cnt) {
+        let stall_snapshot = DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
+        };
+        if let Some(transfer) = self
+            .dma
+            .step(self.wait_cnt, &|addr| stall_snapshot.stall(addr))
+        {
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
@@ -463,7 +502,21 @@ impl GbaMemoryBus {
                     bit
                 }
             } else if readable_source {
-                let value = self.read_dma_source(transfer.source, transfer.width);
+                // nba burst-into-tears (HW-pinned): 16-bit DMA reads from
+                // GamePak ROM transfer mem[source+2] — the burst reads one
+                // unit ahead (unit N latches unit N+1's data; visible when
+                // the first read falls outside ROM). 32-bit ROM reads are
+                // unaffected (nba 128kb-boundary times would shift), as are
+                // I/O, WRAM and OAM sources (latch/start-delay/HBlank/video
+                // tests pin exact data) and the EEPROM serial path above.
+                let read_addr = if transfer.width == 2
+                    && (0x08000000..=0x0DFFFFFF).contains(&transfer.source)
+                {
+                    transfer.source.wrapping_add(2)
+                } else {
+                    transfer.source
+                };
+                let value = self.read_dma_source(read_addr, transfer.width);
                 self.dma
                     .update_latch(transfer.channel, transfer.width, value);
                 value
@@ -717,6 +770,11 @@ impl GbaMemoryBus {
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
 
     fn is_sequential(&self, addr: u32, _width: u8) -> bool {
         if let Some(prev) = self.prev_addr {
@@ -1054,7 +1112,12 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => self.dma.read(aligned).unwrap_or(0),
-            0x04000100..=0x0400010E => self.timers.read(aligned).unwrap_or(0),
+            0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
+                    eprintln!("T tmread @{}", self.current_tcycle);
+                }
+                self.timers.read(aligned).unwrap_or(0)
+            }
             0x04000060 => self.apu.sound1cnt_lo,
             0x04000062 => self.apu.sound1cnt_hi,
             0x04000064 => self.apu.sound1cnt_x,
@@ -1251,6 +1314,9 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => {
+                if std::env::var("GBA_TTRACE").is_ok() && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) && v16 & 0x8000 != 0 {
+                    eprintln!("T dmaen ch{} @{}", (aligned - 0xB0) / 12, self.current_tcycle);
+                }
                 self.dma.write(aligned, v16);
                 // force next ROM fetch to NSEQ (GBATEK: STR to DMA CNT forces NSEQ)
                 self.prev_addr = None;
@@ -1258,6 +1324,9 @@ impl GbaMemoryBus {
                 self.prefetch_queue.clear();
             }
             0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
+                    eprintln!("T start @{}", self.current_tcycle);
+                }
                 self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
@@ -2001,9 +2070,10 @@ mod tests {
         bus.write32(0x040000D4, 0x03000000);
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
-        // Memory is sampled after the 3 CPU-visible startup cycles. The DMA
-        // channel remains active for the transfer cycles after this access.
-        for _ in 0..3 {
+        // Memory is sampled after the 2 CPU-visible startup cycles
+        // (mGBA `when = now + 3` start latency). The channel remains
+        // active for the transfer cycles after this access.
+        for _ in 0..2 {
             bus.tick();
             assert_eq!(bus.read32(0x02000000), 0);
         }
