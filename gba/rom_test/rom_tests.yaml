@@ -8,9 +8,18 @@ expected_failures:
 # cancel-ie i=2/i=4 then need a tick that contradicts those pins). The previous
 # pass relied on a stale counter overflowing mid-startup (phase luck, broken
 # by any timing change). True resolution needs sub-tick store-landing /
-# entry-sampling research. (cancel-ime already passes with the stale-tick
-# timer fix and is NOT listed.)
+# entry-sampling research.
 - nba_archive_irq_cancel_ie
+# nba_archive_irq_cancel_ime: boundary row i=0 flips to served (FAIL 91/111/119
+# class: measured -1 from GBATEK-correct STM, then the i=0 race itself). With
+# correct CPU costs (ADD PC = 2S+1N, PUSH = (n-1)S+2N) the timer overflow tick
+# (S+4/S+5) lands strictly before the IME-clear store completes, so the
+# once-per-instruction entry check always serves; real hardware reports no IRQ
+# for i=0. The previous pass relied on the ADD-PC undercharge (1 instead of 3)
+# placing the post-branch check exactly on the unset-IF side of the tick edge
+# (wrong-cost phase luck, same class as cancel-ie). Needs the same sub-tick
+# entry-commit / timer-edge research; do NOT re-break CPU timings to chase it.
+- nba_archive_irq_cancel_ime
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
 # The 8 image cases below ship PHOTOGRAPHS of real hardware as reference
@@ -180,8 +189,9 @@ suites:
     verify:
       memory:
       - {address: 0x030004EC, value: 6, width: 4}
-      # True goal is 6/6 (currently 6/4: CPUSET-DMA -2 and TIME-ROM -12 are
-      # quantitative HLE-model gaps). Listed in expected_failures until then.
+      # True goal is 6/6 (currently 6/4: CPUSET-DMA -2 and TIME-ROM -10 are
+      # quantitative HLE-model gaps; GBATEK-correct CPU costs narrowed
+      # TIME-ROM from -12). Listed in expected_failures until then.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -233,10 +243,13 @@ suites:
       memory:
       # Counters (this .gba's layout; the stale .elf disagrees): test_count
       # @0x0300014C (=2, both subtests run), test_pass_count @0x03000150
-      # (=0; both read 70/69 instead of 88). The +18 gap is ROM-code-path
+      # (=0; both read 72/71 instead of 88). The +16/+17 gap is ROM-code-path
       # costs: DMA span ruled out (slope-1 sensitivity), boot phase ruled
       # out (no video traffic), ROM fetch tables pinned by 128kb-LDM, and
-      # code/data split unjustified. Goal oracle for a future fix.
+      # code/data split unjustified. GBATEK-correct LDM-PC/LDR-PC/MOVS-PC and
+      # STM/PUSH costs closed the gap from +18 (reads were 70/69) to +16/+17;
+      # the residual needs branch-refill and remaining ROM-path costs.
+      # Goal oracle for a future fix.
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
@@ -263,7 +276,7 @@ suites:
     cycles: 20000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 7/5): full pass when the
+      # Upstream-known-correct goals (currently 7/4): full pass when the
       # video-DMA absolute phase model is fixed. Listed in expected_failures
       # until then; a fix flips this to unexpected-pass.
       - {address: 0x0300062C, value: 7, width: 4}

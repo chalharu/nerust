@@ -2,7 +2,17 @@ use crate::cartridge::Cartridge;
 use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
-const IRQ_ENTRY_CYCLES: u32 = 22;
+/// HLE IRQ entry cost. Hardware runs the real BIOS IRQ prologue
+/// (exception entry 2S+1N plus the BIOS handler at 0x18: register save,
+/// IntrCheck dispatch to the user vector) before the first user handler
+/// instruction; the HLE trampoline skips that prologue and charges this
+/// fitted constant instead. Calibrated against the nba irq-delay
+/// ROM-observed totals (92/112/120 timer ticks for IWRAM/EWRAM/ROM):
+/// with GBATEK-correct CPU costs (notably STM = (n-1)S+2N, which the
+/// libgba master ISR prologue STMFD executes once on the measurement
+/// path) the skip stands in for 23 cycles. Recalibrate against those
+/// three ROM pins if anything else on the entry path changes.
+const IRQ_ENTRY_CYCLES: u32 = 23;
 
 pub struct GbaSystem {
     pub cpu: GbaCpu,

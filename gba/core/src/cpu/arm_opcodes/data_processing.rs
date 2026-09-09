@@ -23,7 +23,8 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if flag_only && rd == 15 && s {
         // Unpredictable on later ARM cores; ARM7TDMI restores CPSR without writing PC.
         regs.set_cpsr(regs.spsr());
-        return 1 + u32::from(register_shift);
+        // Exception return: pipeline refill (+1S+1N).
+        return 3 + u32::from(register_shift);
     }
     if !flag_only {
         write_result(regs, rd, result, s);
@@ -31,8 +32,13 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if s && !(rd == 15 && !flag_only) {
         update_flags(regs, opcode, result, carry, overflow);
     }
-    // Register-specified shifts consume one additional internal cycle.
-    1 + u32::from(register_shift)
+    // GBATEK: data processing = 1S (+1I if SHIFT(Rs), +1S+1N if R15
+    // written — pipeline refill, same convention as B).
+    let mut cycles = 1 + u32::from(register_shift);
+    if rd == 15 && !flag_only {
+        cycles += 2;
+    }
+    cycles
 }
 
 fn operand2(regs: &CpuRegisters, instr: u32, immediate: bool) -> (u32, bool) {
