@@ -34,7 +34,9 @@ fn handle_short(regs: &mut CpuRegisters, instr: u32) -> u32 {
     }
 
     let cycles = multiplier_cycles(rs_val);
-    if a { cycles + 1 } else { cycles }
+    // GBATEK/ARM ARM: MUL=1S+mI, MLA=1S+mI+1I (the 1S is the execute cycle;
+    // the opcode fetch is charged separately by the bus).
+    if a { cycles + 2 } else { cycles + 1 }
 }
 
 fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
@@ -59,7 +61,8 @@ fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
         regs.set_cpsr_n(hi >> 31 != 0);
         regs.set_cpsr_z(result == 0);
     }
-    multiplier_cycles(rs_value) + 1 + u32::from(accumulate)
+    // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
+    multiplier_cycles(rs_value) + 2 + u32::from(accumulate)
 }
 
 fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
@@ -74,7 +77,7 @@ fn register_pair(regs: &CpuRegisters, hi: usize, lo: usize) -> u64 {
     (u64::from(regs.r(hi)) << 32) | u64::from(regs.r(lo))
 }
 
-fn multiplier_cycles(rs_val: u32) -> u32 {
+pub(crate) fn multiplier_cycles(rs_val: u32) -> u32 {
     if rs_val & 0xFFFFFF00 == 0 || rs_val & 0xFFFFFF00 == 0xFFFFFF00 {
         1
     } else if rs_val & 0xFFFF0000 == 0 || rs_val & 0xFFFF0000 == 0xFFFF0000 {

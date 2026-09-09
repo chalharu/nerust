@@ -82,25 +82,30 @@ impl GbaSystem {
 
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {
-        if !self.bus.is_halted() && !self.bus.dma_active() && self.cpu_cycles_remaining == 0 {
-            if self.bus.hle_bios_active() {
-                self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
-            } else {
-                let irq_source_pc = self.cpu.registers().pc();
-                let irq_entry_cycles = IRQ_ENTRY_CYCLES
-                    + u32::from(
-                        self.bus
-                            .nonsequential_cycles_for(irq_source_pc, 4)
-                            .saturating_sub(1),
-                    );
-                if self.cpu.service_irq(&mut self.bus) {
-                    self.cpu_cycles_remaining = irq_entry_cycles;
+        if self.bus.dma_active() {
+            // HW/mGBA cpuBlocked: the CPU is stalled for the whole burst;
+            // only the bus advances, the in-flight op resumes afterwards.
+        } else {
+            if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+                if self.bus.hle_bios_active() {
+                    self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
                 } else {
-                    self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+                    let irq_source_pc = self.cpu.registers().pc();
+                    let irq_entry_cycles = IRQ_ENTRY_CYCLES
+                        + u32::from(
+                            self.bus
+                                .nonsequential_cycles_for(irq_source_pc, 4)
+                                .saturating_sub(1),
+                        );
+                    if self.cpu.service_irq(&mut self.bus) {
+                        self.cpu_cycles_remaining = irq_entry_cycles;
+                    } else {
+                        self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+                    }
                 }
             }
+            self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         }
-        self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
         self.bus.tick()
     }
