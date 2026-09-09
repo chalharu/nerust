@@ -35,7 +35,10 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
         address = address.wrapping_add(4);
     }
     if pc {
-        regs.set_pc(bus.read32(address));
+        let target = bus.read32(address);
+        // Thumb POP {PC} (LDM) interworks on ARMv4T: bit 0 selects the state.
+        regs.set_cpsr_t(target & 1 != 0);
+        regs.set_pc(target);
         address = address.wrapping_add(4);
     }
     regs.set_sp(address);

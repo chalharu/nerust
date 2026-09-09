@@ -74,6 +74,9 @@ pub struct GbaMemoryBus {
     hle_bios: Option<HleBiosOperation>,
     video_armed: bool,
     video_countdown: u8,
+    /// A DMA burst is currently feeding the EEPROM serial chip; closed when
+    /// no DMA channel is active or pending (frame decoded at burst end).
+    eeprom_burst_open: bool,
 }
 
 impl GbaMemoryBus {
@@ -136,6 +139,7 @@ impl GbaMemoryBus {
             hle_bios: None,
             video_armed: false,
             video_countdown: 0,
+            eeprom_burst_open: false,
         }
     }
 
@@ -353,10 +357,11 @@ impl GbaMemoryBus {
                         target_tcycle: self.current_tcycle,
                         event_type: EventType::TimerOverflow(i),
                     });
-                    // DirectSound: Timer0/1 overflow triggers DMA1/2 Special
+                    // DirectSound: Timer0 overflow triggers DMA1 Special,
+                    // Timer1 overflow triggers DMA2 Special (GBATEK DMA).
                     // (per-channel: must not trigger an armed DMA3 video).
                     if i <= 1 {
-                        self.dma.trigger_channel(i, DmaTrigger::Special);
+                        self.dma.trigger_channel(i + 1, DmaTrigger::Special);
                     }
                 }
             }
@@ -367,8 +372,19 @@ impl GbaMemoryBus {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
             });
+            let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
+            let use_eeprom = self.is_eeprom()
+                && (in_eeprom_range(transfer.source) || in_eeprom_range(transfer.destination));
             let readable_source = transfer.source >= 0x02000000;
-            let value = if readable_source {
+            let value = if use_eeprom && in_eeprom_range(transfer.source) {
+                // EEPROM DMA read: one response bit per 16-bit unit.
+                let bit = self.next_eeprom_read_bit();
+                if transfer.width == 4 {
+                    bit | bit << 16
+                } else {
+                    bit
+                }
+            } else if readable_source {
                 let value = self.read_dma_source(transfer.source, transfer.width);
                 self.dma
                     .update_latch(transfer.channel, transfer.width, value);
@@ -378,7 +394,12 @@ impl GbaMemoryBus {
             } else {
                 transfer.latched_value
             };
-            self.write_dma_value(transfer.destination, transfer.width, value);
+            if use_eeprom && in_eeprom_range(transfer.destination) {
+                // EEPROM DMA write: each unit carries serial bit(s).
+                self.feed_eeprom_write(transfer.width, value);
+            } else {
+                self.write_dma_value(transfer.destination, transfer.width, value);
+            }
             // Track the DMA source address so that the next DMA read from a
             // sequential ROM address within the same 128 KB block is
             // classified as sequential (matching real GBA hardware).
@@ -391,6 +412,14 @@ impl GbaMemoryBus {
         interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
             self.request_interrupt(interrupt_mask);
+        }
+        // Close an EEPROM serial burst once no DMA is in flight: the
+        // buffered frame is decoded (and 512B/8KB latched) at burst end.
+        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
+            self.eeprom_burst_open = false;
+            if let Some(cart) = self.cartridge.as_mut() {
+                cart.eeprom_end_burst();
+            }
         }
         // Process any due scheduler events (for bulk optimization, currently just clears)
         self.check_pending_events();
@@ -451,6 +480,29 @@ impl GbaMemoryBus {
 
     pub fn set_keyinput(&mut self, value: u16) {
         self.keyinput = value | 0xFC00;
+        self.check_keycnt();
+    }
+
+    /// GBATEK KEYCNT: with bit 14 set, a keypad condition (bit 15:
+    /// 0 = any selected key pressed, 1 = all selected keys pressed;
+    /// KEYINPUT bits are 0 when pressed) raises IF bit 12.
+    fn check_keycnt(&mut self) {
+        if self.keycnt & (1 << 14) == 0 {
+            return;
+        }
+        let mask = self.keycnt & 0x3FF;
+        if mask == 0 {
+            return;
+        }
+        let pressed = !self.keyinput & 0x3FF;
+        let hit = if self.keycnt & (1 << 15) != 0 {
+            pressed & mask == mask
+        } else {
+            pressed & mask != 0
+        };
+        if hit {
+            self.request_interrupt(1 << 12);
+        }
     }
 
     pub fn set_current_pc(&mut self, pc: u32) {
@@ -471,7 +523,7 @@ impl GbaMemoryBus {
     }
 
     pub fn request_interrupt(&mut self, mask: u16) {
-        let mask = mask & 0x3FFF;
+        let mask = mask & 0x1FFF;
         self.sif |= mask;
         let flags = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) | mask;
         self.iwram[0x7FF8..0x7FFA].copy_from_slice(&flags.to_le_bytes());
@@ -609,9 +661,8 @@ impl GbaMemoryBus {
     }
 
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
-        if (0x0D000000..=0x0DFFFFFF).contains(&addr) && self.is_eeprom() {
-            return self.read_eeprom(addr, width);
-        }
+        // GBATEK Backup Media / EEPROM: the chip is DMA-only bit-serial;
+        // CPU loads from 0D000000h see open bus, never EEPROM contents.
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
             0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
@@ -707,10 +758,8 @@ impl GbaMemoryBus {
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32) {
-        if (0x0D000000..=0x0DFFFFFF).contains(&addr) && self.is_eeprom() {
-            self.write_eeprom(addr, width, value);
-            return;
-        }
+        // GBATEK Backup Media / EEPROM: CPU stores to 0D000000h are open bus;
+        // only DMA bursts reach the serial chip (handled in the tick loop).
         let wait = self.cycles_for(addr, width);
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         match addr {
@@ -786,16 +835,24 @@ impl GbaMemoryBus {
         })
     }
 
-    fn read_eeprom(&self, addr: u32, width: u8) -> u32 {
-        if let Some(cart) = &self.cartridge {
-            return cart.read_sram(addr, width);
+    /// Feed EEPROM serial bits for a DMA write burst to 0D000000h.
+    /// Each 16-bit unit carries one bit; 32-bit units carry two (LSB first).
+    fn feed_eeprom_write(&mut self, width: u8, value: u32) {
+        if let Some(cart) = self.cartridge.as_mut() {
+            cart.eeprom_write_bit(value & 1 != 0);
+            if width == 4 {
+                cart.eeprom_write_bit(value & 0x0001_0000 != 0);
+            }
+            self.eeprom_burst_open = true;
         }
-        0
     }
 
-    fn write_eeprom(&mut self, addr: u32, width: u8, value: u32) {
+    /// Pop one EEPROM response bit for a DMA read from 0D000000h.
+    fn next_eeprom_read_bit(&mut self) -> u32 {
         if let Some(cart) = self.cartridge.as_mut() {
-            cart.write_sram(addr, width, value);
+            u32::from(cart.eeprom_read_bit())
+        } else {
+            1
         }
     }
 
@@ -849,10 +906,7 @@ impl GbaMemoryBus {
             0x0400009A => u16::from_le_bytes([self.apu.wave_ram[10], self.apu.wave_ram[11]]),
             0x0400009C => u16::from_le_bytes([self.apu.wave_ram[12], self.apu.wave_ram[13]]),
             0x0400009E => u16::from_le_bytes([self.apu.wave_ram[14], self.apu.wave_ram[15]]),
-            0x040000A0 => u16::from_le_bytes([self.apu.wave_ram[16], self.apu.wave_ram[17]]),
-            0x040000A2 => u16::from_le_bytes([self.apu.wave_ram[18], self.apu.wave_ram[19]]),
-            0x040000A4 => u16::from_le_bytes([self.apu.wave_ram[20], self.apu.wave_ram[21]]),
-            0x040000A6 => u16::from_le_bytes([self.apu.wave_ram[22], self.apu.wave_ram[23]]),
+            // FIFO_A/B (A0/A4) are write-only; reads return open bus.
             0x04000128 => self.siocnt,
             0x0400012A => self.siodata8 as u16,
             0x04000120 => (self.siodata32 & 0xFFFF) as u16,
@@ -1045,23 +1099,11 @@ impl GbaMemoryBus {
                 self.apu.wave_ram[14] = (v16 & 0xFF) as u8;
                 self.apu.wave_ram[15] = (v16 >> 8) as u8;
             }
-            0x040000A0 => {
-                // FIFO_A mirrors wave RAM upper bank on GBA, but for reset just store to wave
-                self.apu.wave_ram[16] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[17] = (v16 >> 8) as u8;
-            }
-            0x040000A2 => {
-                self.apu.wave_ram[18] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[19] = (v16 >> 8) as u8;
-            }
-            0x040000A4 => {
-                self.apu.wave_ram[20] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[21] = (v16 >> 8) as u8;
-            }
-            0x040000A6 => {
-                self.apu.wave_ram[22] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[23] = (v16 >> 8) as u8;
-            }
+            // FIFO_A/B are write-only streaming buffers (GBATEK Sound FIFO):
+            // each access appends its bytes; 32-bit writes split above into
+            // two halfword pushes in LSB-first order, matching DMA bursts.
+            0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
+            0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
             0x04000128 => self.siocnt = v16,
             0x0400012A => self.siodata8 = (value & 0xFF) as u8,
             0x04000120 => {
@@ -1075,7 +1117,10 @@ impl GbaMemoryBus {
                 self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
             }
             // 0x04000130 KEYINPUT は RO
-            0x04000132 => self.keycnt = v16,
+            0x04000132 => {
+                self.keycnt = v16 & 0xC3FF;
+                self.check_keycnt();
+            }
             0x04000134 => self.rcnt = v16,
             0x04000140 => self.joycnt = v16,
             0x04000150 => {
@@ -1099,7 +1144,7 @@ impl GbaMemoryBus {
                 self.joy_trans = (self.joy_trans & 0x0000FFFF) | ((v16 as u32) << 16);
             }
             0x04000158 => self.joystat = v16,
-            0x04000200 => self.ie = v16 & 0x3FFF,
+            0x04000200 => self.ie = v16 & 0x1FFF,
             0x04000202 => self.sif &= !v16, // 書き込みでクリア（1のbitがクリア）
             0x04000204 => {
                 self.wait_cnt = v16;
@@ -1405,6 +1450,118 @@ mod tests {
         assert_eq!(bus.read16(0x04000130) & 0xFC00, 0xFC00);
         bus.set_keyinput(0x03FF);
         assert_eq!(bus.read16(0x04000130), 0x03FF | 0xFC00);
+    }
+
+    #[test]
+    fn fifo_writes_append_bytes() {
+        // GBATEK Sound FIFO: writes append to the 32-byte buffer;
+        // reads are open bus (not wave RAM).
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x040000A0, 0x04030201);
+        assert_eq!(bus.apu.fifo_a.len(), 4);
+        assert_eq!(
+            bus.apu.fifo_a.iter().copied().collect::<Vec<_>>(),
+            vec![0x01, 0x02, 0x03, 0x04]
+        );
+        bus.write16(0x040000A4, 0x0B0A);
+        assert_eq!(
+            bus.apu.fifo_b.iter().copied().collect::<Vec<_>>(),
+            vec![0x0A, 0x0B]
+        );
+        bus.write16(0x04000090, 0x1234);
+        assert_eq!(bus.apu.wave_ram[0], 0x34);
+    }
+
+    #[test]
+    fn keycnt_raises_keypad_interrupt() {
+        // GBATEK KEYCNT: enable + OR over button A; pressing A sets IF bit 12.
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000132, (1 << 14) | (1 << 0));
+        bus.set_keyinput(0x03FF); // nothing pressed
+        assert_eq!(bus.sif & (1 << 12), 0);
+        bus.set_keyinput(0x03FE); // A pressed (bit 0 = 0)
+        assert_ne!(bus.sif & (1 << 12), 0);
+    }
+
+    #[test]
+    fn eeprom_dma_bitstream_roundtrip() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // EEPROM-detected cart: CPU access must not touch EEPROM contents.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        bus.write8(0x0D000000, 0x42);
+        assert_eq!(bus.read8(0x0D000000) & 0x42, bus.read8(0x0D000000) & 0x42);
+        // DMA write burst: 8K frame (start, write-op, 14-bit addr 0, data, stop).
+        let data = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04];
+        let mut bits = vec![true, false];
+        bits.extend_from_slice(&[false; 14]);
+        for byte in data {
+            for i in (0..8).rev() {
+                bits.push((byte >> i) & 1 != 0);
+            }
+        }
+        bits.push(false);
+        assert_eq!(bits.len(), 81);
+        // Program the source in IWRAM, then DMA it to 0D000000h.
+        for (i, bit) in bits.iter().enumerate() {
+            bus.write16(0x03000000 + (i as u32) * 2, u16::from(*bit));
+        }
+        bus.write32(0x040000D4, 0x03000000); // DMA3 SAD
+        bus.write32(0x040000D8, 0x0D000000); // DMA3 DAD
+        bus.write16(0x040000DC, bits.len() as u16); // count
+        bus.write16(0x040000DE, 0x8000); // enable, 16-bit, immediate
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        for _ in 0..10 {
+            bus.tick();
+        }
+        let cart = bus.cartridge().unwrap();
+        assert_eq!(&cart.ram_data().unwrap()[0..8], &data);
+        // DMA read back: request (start, read-op, addr 0) then 68-unit read.
+        let mut req = vec![true, true];
+        req.extend_from_slice(&[false; 14]);
+        for (i, bit) in req.iter().enumerate() {
+            bus.write16(0x03001000 + (i as u32) * 2, u16::from(*bit));
+        }
+        bus.write32(0x040000D4, 0x03001000);
+        bus.write32(0x040000D8, 0x0D000000);
+        bus.write16(0x040000DC, req.len() as u16);
+        bus.write16(0x040000DE, 0x8000);
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        for _ in 0..10 {
+            bus.tick();
+        }
+        bus.write32(0x040000D4, 0x0D000000);
+        bus.write32(0x040000D8, 0x03002000);
+        bus.write16(0x040000DC, 68);
+        bus.write16(0x040000DE, 0x8000);
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        let mut got = [0u8; 8];
+        for i in 0..64 {
+            let bit = bus.read16(0x03002000 + 8 + (i as u32) * 2) & 1;
+            if bit != 0 {
+                got[i / 8] |= 1 << (7 - (i % 8));
+            }
+        }
+        assert_eq!(got, data);
     }
 
     #[test]

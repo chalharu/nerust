@@ -19,8 +19,8 @@ pub const SIN_TABLE: [i16; 256] = [
 ];
 
 /// 実行時に sin テーブルを参照（固定小数点 8.8）
-/// GBA BIOSは下位8bitを無視するが、HLEでは正確性のため下位も反映する。
 /// GBATEK: angle 0..FFFFh => 0..360deg, BIOSは上位8bitのみ参照。
+/// HLEもそれに合わせ、下位8bitは無視する。
 pub fn sin_fixed(angle: u16) -> i16 {
     // GBA BIOS テーブルは 0x00000100 に 256 * i16 の sin値を持つ
     // BIOSは angle>>8 でインデックスするため、上位8bitでテーブル参照

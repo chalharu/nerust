@@ -206,6 +206,7 @@ fn handle_empty_multiple(
     if load {
         let target = bus.read32(address);
         regs.set_r(base_register, address.wrapping_add(0x40));
+        regs.set_cpsr_t(target & 1 != 0);
         regs.set_pc(target);
         19
     } else {
