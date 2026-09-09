@@ -30,8 +30,15 @@ expected_failures:
 # no-input harness can never reach: BGRotZoomMode2 zoomed-out (~0.55x, no
 # rigid zoom/pan reproduces it), Velocity/Acceleration with rotated sprites
 # (angle 0 at rest renders correctly; the bullet is then exactly occluded by
-# the cannon) plus old-emu colors (whole-frame off-white). Keep listed; a
-# harness that presses L/R/B could graduate them.
+# the cannon) plus old-emu colors (whole-frame off-white). The input harness
+# already supports every button (A/B/L/R/directions); only the exact
+# interaction sequences were missing. Velocity (169xL + B + 22 flights) and
+# Acceleration (48xLeft) now drive their reference states (see per-case
+# comments) and bottom out at ~90 old-emu edge-rounding pixels
+# (neighboring-texel flips; matrix and sampler match mGBA plus the HW-pinned
+# $1234 values, and a round-half-up experiment made it strictly worse:
+# 95 -> 850). BGRotZoomMode2 has no reproducible rigid state (full-screen
+# affine: edge noise would dominate anyway).
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
 # The 8 image cases below ship PHOTOGRAPHS of real hardware as reference
@@ -720,7 +727,30 @@ suites:
     cycles: 1000000
   - id: PeterLemon_Velocity
     rom: Physics/2D/Velocity/Velocity.gba
-    cycles: 1000000
+    # Reproduction of the interacted reference state: hold shoulder-L for
+    # 169 loop iterations (cannon rotation advances 256/frame; the release
+    # lands one frame late by construction, so the effective angle is
+    # 170 steps = 0xAA00), then B for one Control read (fires the bullet),
+    # then 22 flight frames. Frame = 280896 T-cycles, loops phase-lock to
+    # VBlank (release/press mid-frame at +140000 is safely between reads).
+    # Result matches the reference except ~90 old-emu edge-rounding pixels
+    # (neighboring-texel flips; our matrix/sampler match mGBA and the
+    # HW-pinned $1234 check values). Stays in expected_failures.
+    cycles: 54430048
+    inputs:
+    - {cycle: 0, buttons: [l]}
+    - {cycle: 47808544, buttons: []}
+    - {cycle: 48089440, buttons: [b]}
+    - {cycle: 48470336, buttons: []}
   - id: PeterLemon_Acceleration
     rom: Physics/2D/Acceleration/Acceleration.gba
-    cycles: 1000000
+    # Reproduction of the interacted reference state: hold D-pad Left for
+    # 48 loop iterations (car rotation advances 512/frame; effective angle
+    # is 49 steps = 0x6200 by the same one-frame-late release). The car
+    # never moves (no A/B), so rotation is the only degree of freedom.
+    # Result matches except ~95 old-emu edge-rounding pixels (same class
+    # as Velocity). Stays in expected_failures.
+    cycles: 14381920
+    inputs:
+    - {cycle: 0, buttons: [left]}
+    - {cycle: 13820128, buttons: []}
