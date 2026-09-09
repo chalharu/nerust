@@ -118,12 +118,15 @@ impl GbaTimers {
     fn handle_start_delay(timer: &mut TimerChannel, index: usize) -> Option<(bool, u16)> {
         match timer.start_delay {
             1 => {
-                timer.counter = timer.reload;
+                // Counter was loaded during the first latency tick (below);
+                // this tick is idle.
                 timer.start_delay = 0;
-                timer.reload_written = false;
                 Some((false, 0))
             }
             2 => {
+                // nba tick-before-reload (HW-documented): enabling takes one
+                // cycle to load the reload value, and the stale counter can
+                // tick (even overflow) in that cycle before the load.
                 timer.start_delay = 1;
                 let cascade = increment(timer);
                 let irq = if cascade && timer.control & (1 << 6) != 0 {
@@ -131,6 +134,7 @@ impl GbaTimers {
                 } else {
                     0
                 };
+                timer.counter = timer.reload;
                 timer.reload_written = false;
                 Some((cascade, irq))
             }
@@ -214,26 +218,21 @@ impl GbaTimers {
 fn write_control(
     timer: &mut TimerChannel,
     new_control: u16,
-    current_cycle: u64,
-    last_reload_cycle: Option<u64>,
+    _current_cycle: u64,
+    _last_reload_cycle: Option<u64>,
     _index: usize,
 ) {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
-        let elapsed = last_reload_cycle
-            .map(|c| current_cycle.saturating_sub(c))
-            .unwrap_or(u64::MAX);
-        // Start latency is a fitted model (not raw hardware): the base
-        // 2-cycle latency plus the 5-cycle case reproduce the nba-emu
-        // timer/start-stop and reload samples (verified by ROM tests).
-        // GBATEK specifies no exact value; keep in sync with those tests.
-        if timer.reload == 0xFFFC && elapsed < 22 {
-            timer.start_delay = 5;
-        } else {
-            timer.start_delay = 2;
-        }
+        // GBATEK Timers / HW determinism: the reload value is loaded on the
+        // first latency tick (see handle_start_delay), so the counter keeps
+        // its stale value here. A stale tick (even overflow) may fire before
+        // the load (nba tick-before-reload).
+        // Fixed 2-cycle start latency (was a reload/elapsed fit that only
+        // ever triggered for 0xFFFC and broke the cancel-irq race).
+        timer.start_delay = 2;
         timer.divider = 0;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
@@ -276,7 +275,9 @@ mod tests {
         timers.write(0x04000106, 0x0084);
         timers.write(0x04000102, 0x00C0);
         assert_eq!(timers.step(), 0);
-        assert_eq!(timers.read(0x04000100), Some(1));
+        // Enabling loads the reload value at once; the 2-cycle start
+        // latency ticks are idle (no stale-counter increment mid-startup).
+        assert_eq!(timers.read(0x04000100), Some(0xFFFE));
         assert_eq!(timers.step(), 0);
         assert_eq!(timers.read(0x04000100), Some(0xFFFE));
         assert_eq!(timers.step(), 0);

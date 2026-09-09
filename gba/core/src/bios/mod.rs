@@ -222,8 +222,8 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         }
         0x03 => {
             // GBATEK Stop: park the CPU like HALTCNT-stop (clocks down).
-            // Wake-source subset (keypad/cart/SIO only) is not modeled;
-            // any enabled IRQ wakes, same as Halt.
+            // Wake-source subset (keypad/cart/SIO only) is enforced in
+            // enter_stop; other IRQs cannot wake.
             bus.enter_stop();
             SwiResult::Return(1)
         }
@@ -749,6 +749,13 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     }
     let fixed = len_mode & (1 << 24) != 0;
     let width_32 = len_mode & (1 << 26) != 0;
+    // GBATEK: silently reject when the source start or end reaches into
+    // the BIOS area (mirrors the FastSet end check below).
+    let unit = if width_32 { 4u64 } else { 2u64 };
+    let end = src as u64 + len as u64 * unit;
+    if end - unit < 0x0000_4000 {
+        return 1;
+    }
     if width_32 {
         let s0 = src & !3;
         let d0 = dst & !3;

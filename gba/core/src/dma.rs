@@ -318,7 +318,11 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.completing = false;
         dma.completion_interrupt = false;
         if timing_for(channel, dma.control) == DmaTrigger::Immediate {
-            dma.pending = 3;
+            // GBATEK/mGBA startup + the enabling bus cycle: event-triggered
+            // DMA starts 3 cycles after its trigger (pending=3), but an
+            // Immediate channel pays one more cycle for the CNT_H enabling
+            // write itself (nba start-delay reads 20, not 19).
+            dma.pending = 4;
             dma.active = false;
         }
     } else if dma.control & 0x8000 == 0 {
@@ -443,8 +447,9 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) 
         }
         0x03000000..=0x03FFFFFF => 1,
         0x04000000..=0x040003FE => 1,
-        0x05000000..=0x05FFFFFF => 1 + stall,
-        0x06000000..=0x06FFFFFF => 1 + stall,
+        // GBATEK bus widths: Palette/VRAM 16bit=1, 32bit=2 (+display stall).
+        0x05000000..=0x05FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
+        0x06000000..=0x06FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
         // DMA owns the bus but still contends with the display controller
         // on video memory (nba burst-into-tears: 3 draw-phase OAM accesses
         // stall +1 each; without them TIME reads 38 instead of 41).

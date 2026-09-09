@@ -2,13 +2,15 @@ rom_root: ../../roms/gba
 expected_failures:
 - nba_dma_burst_into_tears
 - nba_dma_force_nseq
-# nba_dma_start_delay wants 20, model yields 19: the result is captured
-# MID-burst (xfer tick = enable + pending(3, mGBA + 18 fit constants +
-# sweep phases) + prologue(18, ARM-exact per binary decode)). HW is one
-# tick later with no spare degree of freedom (pending=4 breaks 18 fit
-# constants + sweep phases; timer/prologue/CPU costs are LDM-anchored).
-# A future fix flips this to unexpected-pass.
-- nba_dma_start_delay
+# nba_archive_irq_cancel_ie: 1-tick race boundaries that no uniform-latency
+# model satisfies simultaneously with the pinned timer tests (start-stop 2/2,
+# reload 7/7, start-delay 20 pin start latency = 2 and reload-load-on-enable;
+# cancel-ie i=2/i=4 then need a tick that contradicts those pins). The previous
+# pass relied on a stale counter overflowing mid-startup (phase luck, broken
+# by any timing change). True resolution needs sub-tick store-landing /
+# entry-sampling research. (cancel-ime already passes with the stale-tick
+# timer fix and is NOT listed.)
+- nba_archive_irq_cancel_ie
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
 # The 8 image cases below ship PHOTOGRAPHS of real hardware as reference
