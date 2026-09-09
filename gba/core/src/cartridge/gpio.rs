@@ -1,12 +1,10 @@
 /// GamePak GPIO (General-Purpose I/O) port overlay at 080000C4h-C8h.
 ///
 /// GBATEK `#gbacartioportgpio`: 4-bit bidirectional port used by RTC
-/// (S3511), solar sensor (Boktai), tilt/gyro/rumble carts. Registers:
-/// - 080000C4h data (R/W): bits 0-3 pin levels
-/// - 080000C6h direction (R/W): bit=1 output, 0 input
-/// - 080000C8h control (R/W): bit 0 = port enable
-/// Data/direction are only accessible while control bit 0 is set;
-/// otherwise reads return 00h and writes are ignored.
+/// (S3511), solar sensor (Boktai), tilt/gyro/rumble carts. Data at C4h,
+/// direction at C6h, control at C8h (bit 0 = port enable). Data and
+/// direction are only accessible while control bit 0 is set; otherwise
+/// reads return 00h and writes are ignored.
 ///
 /// Attachment is lazy: the overlay stays dormant (reads return ROM data,
 /// writes latch open bus as before) until the first control write with

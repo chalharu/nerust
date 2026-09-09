@@ -33,8 +33,12 @@ impl Cartridge {
         if len == 0 {
             // No cartridge: the bus returns the incrementing
             // (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable Things").
-            let half = ((addr >> 1) & 0xFFFF) as u32;
-            return if width == 4 { half | (half << 16) } else { half };
+            let half = (addr >> 1) & 0xFFFF;
+            return if width == 4 {
+                half | (half << 16)
+            } else {
+                half
+            };
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
