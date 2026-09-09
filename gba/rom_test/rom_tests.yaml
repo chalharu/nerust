@@ -15,17 +15,8 @@ expected_failures:
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
-- PeterLemon_DCTBlockDecode
-- PeterLemon_FastDCTBlockDecode
 - PeterLemon_FastLine
 - PeterLemon_FastLineClip
-- PeterLemon_FastQuantizationBlockDecode
-- PeterLemon_HUFF8Decode
-- PeterLemon_LZ77Decode
-- PeterLemon_QuantizationBlockDecode
-- PeterLemon_SoundBRRMonoSingleShot
-- PeterLemon_SoundPCMMono
-- PeterLemon_SoundPCMStereo
 - PeterLemon_BIOSSoundDriverInit
 - PeterLemon_BIOSSoundDriverMain
 - PeterLemon_BIOSSoundDriverMode
@@ -390,38 +381,116 @@ suites:
     rom: Compress/DCT/DCTBlockDecode/DCTBlockDecode.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # Plain S.16 IDCT of DCT[0]=950/DCT[63]=500 block, host-replicated
+      # bit-exact (ARM MUL low-32 + ASR semantics).
+      - {address: 0x02000000, value: 0x007A, width: 2}
+      - {address: 0x02000022, value: 0x003B, width: 2}
+      - {address: 0x02000042, value: 0x0031, width: 2}
+      - {address: 0x0200007E, value: 0x007A, width: 2}
   - id: PeterLemon_FastDCTBlockDecode
     rom: Compress/DCT/FastDCTBlockDecode/FastDCTBlockDecode.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # AAN fast IDCT of DCT[0]=950/DCT[63]=500 block, host-replicated
+      # bit-exact (32-bit wrap on every add/sub/mul).
+      - {address: 0x02000000, value: 0x007B, width: 2}
+      - {address: 0x02000022, value: 0x003D, width: 2}
+      - {address: 0x02000042, value: 0x0032, width: 2}
+      - {address: 0x0200007E, value: 0x007B, width: 2}
   - id: PeterLemon_FastQuantizationBlockDecode
     rom: Compress/DCT/FastQuantizationBlockDecode/FastQuantizationBlockDecode.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # In-place result: dequant words are overwritten by the AAN passes,
+      # so only the final IDCT block is checked (host-replicated bit-exact).
+      - {address: 0x02000000, value: 0x0003, width: 2}
+      - {address: 0x02000022, value: 0xFFF3, width: 2}
+      - {address: 0x02000042, value: 0x00B2, width: 2}
+      - {address: 0x0200007E, value: 0x0006, width: 2}
   - id: PeterLemon_HUFF8Decode
     rom: Compress/HUFFMAN/HUFF8Decode/HUFF8Decode.gba
-    cycles: 1000000
+    cycles: 8000000
     skip_screenshot: true
+    verify:
+      memory:
+      # Host-decoded BG.h8 prefix (GBATEK HUFF8 tree walk). The full
+      # 76800-byte stream needs ~90M cycles on this N/S model (random
+      # tree accesses, prefetch off); the 3K prefix proves the tree walk
+      # bit-exact, and full-image equivalence is covered by LZ77Decode
+      # (both streams decode to identical bytes, verified at 3 points).
+      - {address: 0x02000000, value: 0x62714E0E, width: 4}
+      - {address: 0x02000400, value: 0x190814E8, width: 4}
+      - {address: 0x02000800, value: 0x4DCC51CC, width: 4}
+      - {address: 0x02000C00, value: 0x1A581A59, width: 4}
   - id: PeterLemon_LZ77Decode
     rom: Compress/LZ77/LZ77Decode/LZ77Decode.gba
-    cycles: 1000000
+    cycles: 20000000
     skip_screenshot: true
+    verify:
+      memory:
+      # Host-decoded BG.lz (GBATEK LZ77); 76800 bytes to EWRAM base.
+      - {address: 0x02000000, value: 0x62714E0E, width: 4}
+      - {address: 0x02009600, value: 0x10E90884, width: 4}
+      - {address: 0x02012BFC, value: 0x1A541A54, width: 4}
   - id: PeterLemon_QuantizationBlockDecode
     rom: Compress/DCT/QuantizationBlockDecode/QuantizationBlockDecode.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # Dequant block at WRAM+128 (Q*DCTQ) plus S.16 IDCT at WRAM,
+      # both host-replicated bit-exact.
+      - {address: 0x02000080, value: 0x0260, width: 2}
+      - {address: 0x020000A2, value: 0x0000, width: 2}
+      - {address: 0x020000C2, value: 0x0000, width: 2}
+      - {address: 0x020000FE, value: 0x0000, width: 2}
+      - {address: 0x02000000, value: 0xFFEC, width: 2}
+      - {address: 0x02000022, value: 0xFFE5, width: 2}
+      - {address: 0x02000042, value: 0x00A9, width: 2}
+      - {address: 0x0200007E, value: 0xFFFE, width: 2}
   - id: PeterLemon_SoundBRRMonoSingleShot
     rom: Sound/BRR/SingleShot/MONO/SoundBRRMonoSingleShot.gba
-    cycles: 1000000
+    cycles: 3000000
     skip_screenshot: true
+    verify:
+      memory:
+      # BRR decode prefix in EWRAM (host BRRDecode.py, strb low bytes).
+      # Full 235216-sample decode exceeds the budget; the 1K prefix proves
+      # the nibble/filter pipeline runs bit-exact.
+      - {address: 0x02000000, value: 0x00000000, width: 4}
+      - {address: 0x02000040, value: 0x00000000, width: 4}
+      - {address: 0x02000100, value: 0x00000000, width: 4}
+      - {address: 0x02000400, value: 0xE7E7E8E9, width: 4}
   - id: PeterLemon_SoundPCMMono
     rom: Sound/PCM/Mono/SoundPCMMono.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # PlaySoundA @48kHz setup: SoundA FIFO reset + L/R + 100%,
+      # master enable, and the repeat/special DMA itself enabled.
+      # (TM0CNT_L is a free-running counter, not a setup constant.)
+      - {address: 0x040000C6, value: 0xB640, width: 2}
+      - {address: 0x04000082, value: 0x0B04, width: 2}
+      - {address: 0x04000084, value: 0x80, width: 1}
   - id: PeterLemon_SoundPCMStereo
     rom: Sound/PCM/Stereo/SoundPCMStereo.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # PlaySoundAB @48kHz: both sound DMAs enabled, SoundA timer0 +
+      # SoundB timer1 enables in SOUNDCNT_H.
+      - {address: 0x040000C6, value: 0xB640, width: 2}
+      - {address: 0x040000D2, value: 0xB640, width: 2}
+      - {address: 0x04000082, value: 0xDA0C, width: 2}
+      - {address: 0x04000084, value: 0x80, width: 1}
   - id: PeterLemon_BIOSSoundBias
     rom: BIOS/Sound/Bias/BIOSSoundBias.gba
     cycles: 1000000
