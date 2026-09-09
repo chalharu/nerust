@@ -1,5 +1,10 @@
 /// BG mosaic: compress (x,y) to the origin of its mosaic block.
 ///
+/// `mosaic` is the line-latched MOSAIC register (sampled at line start, see
+/// `GbaPpu::capture_line_latch`): mid-scanline writes take effect on the next
+/// line. HBlank/VBlank writes (IRQ, HBlank DMA, `sprite-hmosaic` style) still
+/// apply to the next line exactly as before.
+///
 /// The compressed screen coordinate is used *before* the scroll offset is
 /// added (`(x - x % h) + hofs` in `bg.rs`), i.e. mosaic is screen-fixed.
 /// This matches hardware: horizontal mosaic is a post-process output latch on
@@ -8,17 +13,12 @@
 /// top-left pixel of each block fills the block). A scroll-inclusive variant
 /// (`(x + hofs) - (x + hofs) % h`) would shift mosaic blocks with scrolling
 /// and does not match hardware for the static-scroll case.
-pub fn bg_mosaic(
-    registers: &crate::ppu::PpuRegisters,
-    cnt: u16,
-    x: usize,
-    y: usize,
-) -> (usize, usize) {
+pub fn bg_mosaic(mosaic: u16, cnt: u16, x: usize, y: usize) -> (usize, usize) {
     if cnt & (1 << 6) == 0 {
         return (x, y);
     }
-    let h = usize::from(registers.mosaic & 0xF) + 1;
-    let v = usize::from((registers.mosaic >> 4) & 0xF) + 1;
+    let h = usize::from(mosaic & 0xF) + 1;
+    let v = usize::from((mosaic >> 4) & 0xF) + 1;
     (x - x % h, y - y % v)
 }
 
@@ -44,23 +44,14 @@ pub fn apply_obj_mosaic(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ppu::PpuRegisters;
 
     #[test]
     fn mosaic_expands() {
-        let regs = PpuRegisters {
-            mosaic: 0x11,
-            ..Default::default()
-        };
-        assert_eq!(bg_mosaic(&regs, 1 << 6, 5, 7), (4, 6));
+        assert_eq!(bg_mosaic(0x11, 1 << 6, 5, 7), (4, 6));
         // Screen-anchored: sprite at origin (1, 1), screen (5, 7), mosaic 2x2
         // holds screen (4, 6) -> local (3, 5).
         let mut local = (4, 6);
-        let regs = PpuRegisters {
-            mosaic: 0x1100,
-            ..Default::default()
-        };
-        apply_obj_mosaic(regs.mosaic, (5, 7), (1, 1), &mut local, (8, 8));
+        apply_obj_mosaic(0x1100, (5, 7), (1, 1), &mut local, (8, 8));
         assert_eq!(local, (3, 5));
     }
 }

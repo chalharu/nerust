@@ -8,6 +8,7 @@ pub fn window_mask(
     vram: &[u8],
     palette: &[u8],
     oam: &[u8],
+    mosaic: u16,
 ) -> u8 {
     let enabled = (registers.dispcnt >> 13) & 7;
     if enabled == 0 {
@@ -19,7 +20,8 @@ pub fn window_mask(
     if enabled & 2 != 0 && in_window(registers.winh[1], registers.winv[1], x, y) {
         return (registers.winin >> 8) as u8 & 0x3F;
     }
-    if enabled & 4 != 0 && obj::pixel(registers, vram, palette, oam, x, y, true).is_some() {
+    if enabled & 4 != 0 && obj::pixel(registers, vram, palette, oam, (x, y), true, mosaic).is_some()
+    {
         return (registers.winout >> 8) as u8 & 0x3F;
     }
     registers.winout as u8 & 0x3F
