@@ -166,7 +166,10 @@ impl GbaDma {
             let seq = match src_mode {
                 1 => cur == prev.wrapping_sub(u32::from(width)),
                 0 => cur == prev.wrapping_add(u32::from(width)),
-                _ => false,
+                // GBATEK transfer rate ("Except for the first data unit,
+                // all units are transferred by sequential reads and writes",
+                // mGBA dma.c caches Seq for every later unit).
+                _ => true,
             };
             if (0x08000000..=0x0DFFFFFF).contains(&source) {
                 // 128K blocks force N (GBATEK GamePak Prefetch), except the
@@ -178,10 +181,11 @@ impl GbaDma {
                 seq
             }
         };
-        // GBATEK N/S semantics: only incrementing/decrementing runs after
-        // the first unit are sequential; a fixed destination re-accesses the
-        // same address, so every unit is non-sequential.
-        let is_seq_dst = !dma.is_first && destination_mode(dma.control) != 2;
+        // GBATEK transfer rate ("Except for the first data unit, all
+        // units are transferred by sequential reads and writes", mGBA
+        // dma.c caches Seq for every later unit): every destination mode,
+        // including fixed, is sequential after the first unit.
+        let is_seq_dst = !dma.is_first;
         let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
         // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
@@ -467,7 +471,8 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) 
             } else {
                 1
             };
-            // DMA uses the same Game Pak access timing as the CPU.
+            // DMA uses the same Game Pak access timing as the CPU
+            // (1 base + waits: N16=5/S16=3 at WS0 defaults).
             if width == 4 {
                 if is_seq {
                     second * 2 + 2
@@ -475,9 +480,9 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) 
                     first + second + 2
                 }
             } else if is_seq {
-                second
+                second + 1
             } else {
-                first
+                first + 1
             }
         }
         0x0E000000..=0x0FFFFFFF => {

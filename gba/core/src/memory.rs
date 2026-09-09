@@ -829,11 +829,15 @@ impl GbaMemoryBus {
             1
         };
         if sequential {
-            second * if width == 4 { 2 } else { 1 } + if width == 4 { 2 } else { 0 }
+            second * if width == 4 { 2 } else { 1 } + if width == 4 { 2 } else { 1 }
         } else if width == 4 {
             first + second + 2
         } else {
-            first
+            // GBATEK WAITCNT: "the actual access time is 1 clock cycle PLUS
+            // the number of waitstates" — sub-32-bit totals carry the +1
+            // base (N16=5/S16=3 at WS0 defaults, matching mGBA's
+            // waitstatesNonseq16/Seq16 + 1).
+            first + 1
         }
     }
 
@@ -1727,7 +1731,8 @@ mod tests {
     #[test]
     fn waitcnt_rom_ws() {
         let bus = GbaMemoryBus::new();
-        assert_eq!(bus.cycles_for(0x08000000, 2), 4);
+        // GBATEK WAITCNT totals (1 base + waits): N16=5, N32=8 at defaults.
+        assert_eq!(bus.cycles_for(0x08000000, 2), 5);
         assert_eq!(bus.cycles_for(0x08000000, 4), 8);
     }
 
@@ -1780,15 +1785,15 @@ mod tests {
         // sequential fetches keep S timing.
         let mut bus = GbaMemoryBus::new();
         assert!(!bus.prefetch_enabled);
-        // Plain sequential fetches: S timing (WS0: 2 cycles/halfword).
+        // Plain sequential fetches: S timing (WS0: 3 cycles/halfword total).
         let _ = bus.fetch16(0x08000000);
-        assert_eq!(bus.opcode_cycles_for(0x08000002, 2), 2);
-        // A data read arms the penalty: next fetch costs N.
+        assert_eq!(bus.opcode_cycles_for(0x08000002, 2), 3);
+        // A data read arms the penalty: next fetch costs N (5 total).
         let _ = bus.read16(0x08000004);
-        assert_eq!(bus.opcode_cycles_for(0x08000006, 2), 4);
+        assert_eq!(bus.opcode_cycles_for(0x08000006, 2), 5);
         // Penalty is consumed exactly once: following fetch is S again.
         let _ = bus.fetch16(0x08000006);
-        assert_eq!(bus.opcode_cycles_for(0x08000008, 2), 2);
+        assert_eq!(bus.opcode_cycles_for(0x08000008, 2), 3);
     }
 
     #[test]
@@ -1801,7 +1806,7 @@ mod tests {
         assert!(!bus.prefetch_enabled);
         let _ = bus.fetch16(0x03000000);
         let _ = bus.read16(0x08000002);
-        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 2);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 3);
     }
 
     #[test]
