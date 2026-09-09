@@ -29,7 +29,12 @@ fn logical(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right
     };
     regs.set_r(destination, result);
     update_nz(regs, result);
-    if op == 0xD { 3 } else { 1 }
+    // GBATEK/ARM ARM: Thumb MUL is 1S+mI like ARM (m from Rs size).
+    if op == 0xD {
+        1 + crate::cpu::arm_opcodes::multiply::multiplier_cycles(right)
+    } else {
+        1
+    }
 }
 
 fn shift(regs: &mut CpuRegisters, destination: usize, op: u8, value: u32, amount: u32) -> u32 {
@@ -49,11 +54,9 @@ fn shift(regs: &mut CpuRegisters, destination: usize, op: u8, value: u32, amount
     regs.set_r(destination, result);
     update_nz(regs, result);
     regs.set_cpsr_c(carry);
-    if op == 0x2 && amount & 0xFF == 0 {
-        1
-    } else {
-        2
-    }
+    // ARM ARM: a register-specified shift with Rs[7:0]==0 performs no shift
+    // and costs 1S regardless of shift type (not just LSL).
+    if amount & 0xFF == 0 { 1 } else { 2 }
 }
 
 fn carry_arithmetic(
