@@ -123,7 +123,7 @@ impl HleBiosOperation {
 
 /// HLE BIOS dispatcher.
 pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> SwiResult {
-    match swi {
+    let result = match swi {
         0x00 => {
             soft_reset(regs, bus);
             SwiResult::Branch(3)
@@ -295,7 +295,13 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(SOUND_CHANNEL_CLEAR_CYCLES)
         }
         _ => SwiResult::Unsupported,
+    };
+    // mGBA concordance: leaving the BIOS region latches the last fetched
+    // opcode for protected reads (jsmolka bios t002).
+    if !matches!(result, SwiResult::Unsupported) {
+        bus.set_bios_prefetch(0xE3A02004);
     }
+    result
 }
 
 fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
@@ -831,6 +837,22 @@ fn bios_checksum(regs: &mut CpuRegisters, bus: &GbaMemoryBus) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_bios_latch_tracks_swi() {
+        // jsmolka bios t001/t002 mechanism: protected reads return the
+        // latched prefetch (repeat reads identical); an HLE SWI
+        // re-latches 0xE3A02004. A cycling model fails the repeat check.
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x08000000);
+        assert_eq!(bus.read32(0), 0xE129F000);
+        assert_eq!(bus.read32(0), 0xE129F000);
+        regs.set_r(0, 0x1000);
+        let _ = handle_swi(&mut regs, &mut bus, 0x08);
+        assert_eq!(bus.read32(0), 0xE3A02004);
+        assert_eq!(bus.read32(0), 0xE3A02004);
+    }
 
     #[test]
     fn soft_reset_clears_iwram_and_branches() {
