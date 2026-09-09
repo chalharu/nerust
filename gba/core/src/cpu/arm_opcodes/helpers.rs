@@ -45,6 +45,10 @@ fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
     }
     let rotation = amount % 32;
     if rotation == 0 {
+        // Register ROR with a multiple of 32 (but nonzero low byte): the
+        // 5-bit rotate amount is 0, so the result is unchanged, but carry
+        // is set to bit 31 (mGBA/NBA agree; jsmolka_thumb pins this).
+        // Only a zero low *byte* preserves carry (handled above).
         (value, value >> 31 != 0)
     } else {
         (
@@ -134,5 +138,19 @@ mod tests {
                 (0x81234567, true)
             );
         }
+    }
+
+    #[test]
+    fn register_ror_multiple_of_32_sets_carry_from_bit31() {
+        // Register ROR by 32/64/...: result unchanged, carry = bit 31
+        // (NOT preserved). Only a zero low byte preserves carry.
+        assert_eq!(
+            barrel_shift_register(0x81234567, 3, 32, false),
+            (0x81234567, true)
+        );
+        assert_eq!(
+            barrel_shift_register(0x01234567, 3, 64, true),
+            (0x01234567, false)
+        );
     }
 }

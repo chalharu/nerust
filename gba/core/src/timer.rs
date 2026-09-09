@@ -194,13 +194,20 @@ impl GbaTimers {
         if channel >= 4 || !(0x04000100..=0x0400010D).contains(&address) {
             return None;
         }
-        let is_high = address & 1 != 0;
-        let counter = self.channels[channel].counter;
-        Some(if is_high {
-            (counter >> 8) as u8
+        // +0/+1: CNT_L counter bytes; +2/+3: CNT_H control bytes (GBATEK).
+        let local = (address - 0x04000100) % 4;
+        if local < 2 {
+            let counter = self.channels[channel].counter;
+            Some(if local == 1 {
+                (counter >> 8) as u8
+            } else {
+                (counter & 0xFF) as u8
+            })
+        } else if local == 2 {
+            Some((self.channels[channel].control & 0xFF) as u8)
         } else {
-            (counter & 0xFF) as u8
-        })
+            Some(0)
+        }
     }
 }
 
@@ -289,5 +296,19 @@ mod tests {
         assert_eq!(timers.read(0x04000100), Some(0));
         timers.step();
         assert_eq!(timers.read(0x04000100), Some(1));
+    }
+
+    #[test]
+    fn byte_reads_distinguish_counter_and_control() {
+        let mut timers = GbaTimers::default();
+        timers.write(0x04000100, 0xFEAB);
+        timers.write(0x04000102, 0x00C1);
+        // CNT_H bytes read the control register (masked 0xC7 on write).
+        assert_eq!(timers.read8(0x04000102), Some(0xC1));
+        assert_eq!(timers.read8(0x04000103), Some(0x00));
+        // CNT_L bytes track the 16-bit counter view.
+        let counter = timers.read(0x04000100).unwrap();
+        assert_eq!(timers.read8(0x04000100), Some((counter & 0xFF) as u8));
+        assert_eq!(timers.read8(0x04000101), Some((counter >> 8) as u8));
     }
 }

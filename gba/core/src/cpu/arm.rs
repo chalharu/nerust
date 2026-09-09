@@ -64,7 +64,7 @@ fn decode_software_or_coprocessor(
 
 fn handle_und(regs: &mut CpuRegisters) -> u32 {
     let return_address = regs.pc().wrapping_sub(4);
-    regs.enter_exception(0x1B, 0x04, return_address, false);
+    regs.enter_exception(0x1B, 0x04, return_address, true);
     3
 }
 
