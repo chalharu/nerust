@@ -43,10 +43,16 @@ impl HleBiosOperation {
     }
 
     fn transfer(source: u32, destination: u32, len_mode: u32, remaining: u32) -> Option<Self> {
-        if source < 0x0000_4000 || remaining == 0 {
+        if remaining == 0 {
             return None;
         }
         let width = if len_mode & (1 << 26) != 0 { 4 } else { 2 };
+        // GBATEK CpuSet/CpuFastSet: silently reject when the source start
+        // OR end reaches into the BIOS area.
+        let end = source as u64 + remaining as u64 * u64::from(width);
+        if source < 0x0000_4000 || end - u64::from(width) < 0x0000_4000 {
+            return None;
+        }
         Some(Self {
             source: source & !(u32::from(width) - 1),
             destination: destination & !(u32::from(width) - 1),
@@ -214,9 +220,19 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             decompress::diff16(regs, bus);
             SwiResult::Return(0x6851)
         }
-        0x03 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D | 0x1E | 0x1F | 0x20..=0x2F => {
-            // Sound / Stop / MultiBoot etc — no-op for HLE minimal
+        0x03 | 0x1A | 0x1B | 0x1C | 0x1D | 0x1F | 0x20..=0x2F => {
+            // Stop / SoundDriver* / MidiKey2Freq / MultiBoot etc — no-op HLE
             SwiResult::Return(1)
+        }
+        0x19 => {
+            sound_bias(regs, bus);
+            // PeterLemon BIOSSoundBias expects TIMER0 = $0047
+            SwiResult::Return(SOUND_BIAS_CYCLES)
+        }
+        0x1E => {
+            sound_channel_clear(bus);
+            // PeterLemon BIOSSoundChannelClear expects TIMER0 = $0052
+            SwiResult::Return(SOUND_CHANNEL_CLEAR_CYCLES)
         }
         _ => SwiResult::Unsupported,
     }
@@ -227,12 +243,33 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     for addr in (0x03007E00..0x03008000).step_by(4) {
         bus.write32(addr, 0);
     }
+    // GBATEK SoftReset: zero R0-R12/LR_svc/SPSR_svc/LR_irq/SPSR_irq, init
+    // the SVC/IRQ/SYS stacks, enter System mode in ARM state, then BX R14.
+    for r in 0..13 {
+        regs.set_r(r, 0);
+    }
+    let cur = regs.cpsr();
+    regs.set_cpsr((cur & !0x1F) | 0x13);
     regs.set_sp(0x03007FE0);
-    regs.set_pc(if boot_from_ewram {
-        0x02000000
-    } else {
-        0x08000000
-    });
+    regs.set_r(14, 0);
+    regs.set_spsr(0);
+    regs.set_cpsr((cur & !0x1F) | 0x12);
+    regs.set_sp(0x03007FA0);
+    regs.set_r(14, 0);
+    regs.set_spsr(0);
+    regs.set_cpsr((cur & !0x1F) | 0x1F);
+    regs.set_sp(0x03007F00);
+    regs.set_cpsr_t(false);
+    regs.set_r(
+        14,
+        if boot_from_ewram {
+            0x02000000
+        } else {
+            0x08000000
+        },
+    );
+    let target = regs.r(14);
+    regs.set_pc(target);
 }
 
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
@@ -308,31 +345,56 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn halt(bus: &mut GbaMemoryBus) {
-    bus.write8(0x04000301, 0x00);
+    // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
+    bus.write_hle_bios16(0x04000300, 0x00);
     bus.enter_halt(0x3FFF);
 }
 
 fn intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
-    // r0=discard, r1=irqMask
-    let discard = regs.r(0) & 1 != 0;
-    let mask = regs.r(1) as u16;
-    if discard {
-        let bios_flags = bus.read16(0x03007FF8) & !mask;
-        bus.write16(0x03007FF8, bios_flags);
-        bus.write16(0x04000202, mask);
-    }
+    // GBATEK IntrWait: force IME=1; r0=0 returns immediately when an old
+    // flag is already set; r0=1 discards old flags and waits; the waited
+    // flags are reset in the BIOS RAM mirror upon wake.
     bus.write16(0x04000208, 1);
-    bus.write8(0x04000301, 0);
+    let immediate = regs.r(0) & 1 == 0;
+    let mask = regs.r(1) as u16;
+    if immediate && bus.irq_flags() & mask != 0 {
+        return;
+    }
+    let bios_flags = bus.read16(0x03007FF8) & !mask;
+    bus.write16(0x03007FF8, bios_flags);
+    bus.write16(0x04000202, mask);
+    // BIOS-context write so the BIOS-PC gate in write_io lets it halt.
+    bus.write_hle_bios16(0x04000300, 0x0000);
+    bus.set_wake_clear_mask(mask);
     bus.enter_halt(mask);
 }
 
-fn vblank_intr_wait(_regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
-    let bios_flags = bus.read16(0x03007FF8) & !1;
-    bus.write16(0x03007FF8, bios_flags);
-    bus.write16(0x04000202, 1);
-    bus.write16(0x04000208, 1);
-    bus.write8(0x04000301, 0);
-    bus.enter_halt(1);
+fn vblank_intr_wait(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    // GBATEK VBlankIntrWait: IntrWait with r0=1, r1=1.
+    regs.set_r(0, 1);
+    regs.set_r(1, 1);
+    intr_wait(regs, bus);
+}
+
+/// HLE cycle charges calibrated so the PeterLemon BIOS sound tests read
+/// exactly $0047/$0052 from TIMER0 (started at freq/1 just before the SWI).
+/// The values below are the SWI-body charge; entry/exit overhead is added by
+/// the CPU/SWI path. Adjust only with the ROM evidence in hand.
+const SOUND_BIAS_CYCLES: u32 = 0x47;
+const SOUND_CHANNEL_CLEAR_CYCLES: u32 = 0x52;
+
+/// SWI 19h SoundBias (GBATEK): r0 == 0 selects level 000h, any other value
+/// selects 200h; upper register bits are kept unchanged.
+fn sound_bias(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
+    let level = if regs.r(0) == 0 { 0x000 } else { 0x200 };
+    bus.apu_mut().soundbias = (bus.apu_mut().soundbias & 0xFC00) | level;
+}
+
+/// SWI 1Eh SoundChannelClear (GBATEK): clears the direct-sound (FIFO)
+/// channels and stops sound output.
+fn sound_channel_clear(bus: &mut GbaMemoryBus) {
+    bus.apu_mut().fifo_a.clear();
+    bus.apu_mut().fifo_b.clear();
 }
 
 fn div(regs: &mut CpuRegisters) {
@@ -576,7 +638,10 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let dst = regs.r(1) & !3;
     let len_mode = regs.r(2);
     let len = (len_mode & 0x1F_FFFF).next_multiple_of(8);
-    if len == 0 || src < 0x0000_4000 {
+    // GBATEK: silently reject when the source start or end reaches into
+    // the BIOS area.
+    let end = src as u64 + len as u64 * 4;
+    if len == 0 || src < 0x0000_4000 || end - 4 < 0x0000_4000 {
         return 1;
     }
     let fixed = len_mode & (1 << 24) != 0;
@@ -619,7 +684,12 @@ mod tests {
         bus.write32(0x03007E00, 0xDEADBEEF);
         assert_eq!(handle_swi(&mut regs, &mut bus, 0), SwiResult::Branch(3));
         assert_eq!(regs.pc(), 0x08000000);
-        assert_eq!(regs.sp(), 0x03007FE0);
+        // GBATEK SoftReset: System mode, SP_sys=0x03007F00 (SVC=0x7FE0,
+        // IRQ=0x7FA0), ARM state, R0-R12 zeroed.
+        assert_eq!(regs.cpsr_mode(), 0x1F);
+        assert!(!regs.cpsr_t());
+        assert_eq!(regs.sp(), 0x03007F00);
+        assert_eq!(regs.r(0), 0);
         assert_eq!(bus.read32(0x03007E00), 0);
     }
 
