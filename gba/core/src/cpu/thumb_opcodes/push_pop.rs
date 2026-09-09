@@ -25,7 +25,8 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
     if link {
         bus.write32(address, regs.lr());
     }
-    3 + count
+    // Thumb PUSH: (n-1)S+2N (GBATEK STM formula), i.e. 1+count.
+    1 + count
 }
 
 fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
@@ -42,7 +43,8 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
         address = address.wrapping_add(4);
     }
     regs.set_sp(address);
-    3 + list.count_ones() + u32::from(pc)
+    // Thumb POP: nS+1N+1I (GBATEK LDM formula), i.e. 2+count.
+    2 + list.count_ones() + u32::from(pc)
 }
 
 fn selected_registers(list: u16) -> impl Iterator<Item = usize> {

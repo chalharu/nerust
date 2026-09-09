@@ -540,7 +540,12 @@ impl GbaMemoryBus {
                 // EEPROM DMA write: each unit carries serial bit(s).
                 self.feed_eeprom_write(transfer.width, value);
             } else {
-                self.write_dma_value(transfer.destination, transfer.width, value);
+                self.write_dma_value(
+                    transfer.channel,
+                    transfer.destination,
+                    transfer.width,
+                    value,
+                );
             }
             // DMA owns the bus between CPU accesses: the CPU's next access
             // is non-sequential (GBATEK DMA owns the bus; the prefetch
@@ -1099,6 +1104,16 @@ impl GbaMemoryBus {
         })
     }
 
+    fn is_flash(&self) -> bool {
+        self.cartridge.as_ref().is_some_and(|c| {
+            matches!(
+                c.save_type(),
+                crate::cartridge::save::SaveType::Flash64
+                    | crate::cartridge::save::SaveType::Flash128
+            )
+        })
+    }
+
     /// Feed EEPROM serial bits for a DMA write burst to 0D000000h.
     /// Each 16-bit unit carries one bit (GBATEK). Wider units are
     /// undefined on hardware; only bit 0 is consumed.
@@ -1522,7 +1537,7 @@ impl GbaMemoryBus {
         }
     }
 
-    fn write_dma_value(&mut self, address: u32, width: u8, value: u32) {
+    fn write_dma_value(&mut self, channel: usize, address: u32, width: u8, value: u32) {
         match address {
             0x02000000..=0x02FFFFFF => self.write_ewram(address, width, value),
             0x03000000..=0x03FFFFFF => self.write_iwram(address, width, value),
@@ -1531,9 +1546,19 @@ impl GbaMemoryBus {
             0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
             0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
             // GBATEK Memory Map: GamePak SRAM is CPU-only (bytewise); DMA
-            // stores to the SRAM window go nowhere.
+            // stores to the SRAM window go nowhere — except DMA3, which may
+            // program backup Flash (GBATEK DMA Transfer Channels). Forward
+            // DMA3 stores to an attached Flash backend through the same
+            // command parser as CPU writes; all other DMA SRAM stores drop.
             0x0E000000..=0x0FFFFFFF => {
-                self.open_bus_value = value;
+                if channel == 3
+                    && self.is_flash()
+                    && let Some(cart) = self.cartridge.as_mut()
+                {
+                    cart.write_sram(address, width, value);
+                } else {
+                    self.open_bus_value = value;
+                }
             }
             _ => self.open_bus_value = value,
         }

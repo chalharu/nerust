@@ -13,10 +13,61 @@ enum FlashState {
     EraseUnlock2, // after erase-setup 55 at 2AAA
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashChip {
+    Panasonic64,
+    Sst64,
+    Macronix64,
+    Atmel64,
+    Sanyo128,
+    Macronix128,
+}
+
+impl FlashChip {
+    /// GBATEK FlashROM Device Types (ID = device+maker, MSB first):
+    /// D4BFh SST 64K, 1CC2h Macronix 64K, 1B32h Panasonic 64K,
+    /// 3D1Fh Atmel 64K, 1362h Sanyo 128K, 09C2h Macronix 128K.
+    pub fn manufacturer(self) -> u8 {
+        match self {
+            FlashChip::Panasonic64 => 0x32,
+            FlashChip::Sst64 => 0xBF,
+            FlashChip::Macronix64 => 0xC2,
+            FlashChip::Atmel64 => 0x1F,
+            FlashChip::Sanyo128 => 0x62,
+            FlashChip::Macronix128 => 0xC2,
+        }
+    }
+
+    pub fn device(self) -> u8 {
+        match self {
+            FlashChip::Panasonic64 => 0x1B,
+            FlashChip::Sst64 => 0xD4,
+            FlashChip::Macronix64 => 0x1C,
+            FlashChip::Atmel64 => 0x3D,
+            FlashChip::Sanyo128 => 0x13,
+            FlashChip::Macronix128 => 0x09,
+        }
+    }
+
+    pub fn is_128k(self) -> bool {
+        matches!(self, FlashChip::Sanyo128 | FlashChip::Macronix128)
+    }
+
+    /// Erase sector granularity: 4KB for all GBATEK 64K/128K types
+    /// except Atmel (512x128-byte sectors).
+    pub fn sector_size(self) -> usize {
+        match self {
+            FlashChip::Atmel64 => 128,
+            _ => 0x1000,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct FlashSave {
     data: Vec<u8>,
     is_128k: bool,
+    chip: FlashChip,
     bank: usize, // 0 or 1 for 128K — 現在アクティブな64KBバンク
     state: FlashState,
     id_mode: bool,
@@ -25,13 +76,32 @@ pub struct FlashSave {
 impl FlashSave {
     pub fn new(is_128k: bool) -> Self {
         let size = if is_128k { 0x20000 } else { 0x10000 };
+        let chip = if is_128k {
+            FlashChip::Sanyo128
+        } else {
+            FlashChip::Panasonic64
+        };
         Self {
             data: vec![0xFF; size],
             is_128k,
+            chip,
             bank: 0,
             state: FlashState::Ready,
             id_mode: false,
         }
+    }
+
+    /// Select the emulated Flash chip (e.g. from settings). Only
+    /// size-compatible chips are accepted; anything else is ignored so
+    /// the backend can never disagree with its storage size.
+    pub fn set_chip(&mut self, chip: FlashChip) {
+        if chip.is_128k() == self.is_128k {
+            self.chip = chip;
+        }
+    }
+
+    pub fn chip(&self) -> FlashChip {
+        self.chip
     }
 
     fn bank_offset(&self) -> usize {
@@ -51,10 +121,9 @@ impl SaveBackend for FlashSave {
     fn read(&self, addr: u32, width: u8) -> u32 {
         if self.id_mode {
             let off = (addr & 1) as usize;
-            // GBATEK Device Types (MSB=device, LSB=manufacturer):
-            // 1B32h Panasonic 64K, 1362h Sanyo 128K.
-            let manufacturer = if self.is_128k { 0x62 } else { 0x32 };
-            let device = if self.is_128k { 0x13 } else { 0x1B };
+            // GBATEK Device Types (MSB=device, LSB=manufacturer).
+            let manufacturer = self.chip.manufacturer();
+            let device = self.chip.device();
             let val = if off == 0 { manufacturer } else { device };
             return match width {
                 4 => val as u32 | ((val as u32) << 8) | ((val as u32) << 16) | ((val as u32) << 24),
@@ -95,17 +164,20 @@ impl SaveBackend for FlashSave {
     }
 
     fn serialize_state(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.data.len() + 4);
+        let mut out = Vec::with_capacity(self.data.len() + 5);
         out.extend_from_slice(&self.data);
         out.push(self.bank as u8);
         out.push(u8::from(self.id_mode));
         out.push(self.state as u8);
         out.push(if self.is_128k { 1 } else { 0 });
+        out.push(self.chip as u8);
         out
     }
 
     fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        if data.len() != self.data.len() + 4 {
+        // Current format appends one chip byte; older states (data+4)
+        // fall back to the size-default chip.
+        if data.len() != self.data.len() + 5 && data.len() != self.data.len() + 4 {
             return Err(format!("Flash state size mismatch: {}", data.len()));
         }
         let (ram, tail) = data.split_at(self.data.len());
@@ -122,6 +194,19 @@ impl SaveBackend for FlashSave {
             7 => FlashState::EraseUnlock2,
             _ => FlashState::Ready,
         };
+        if tail.len() == 5 {
+            let chip = match tail[4] {
+                1 => FlashChip::Sst64,
+                2 => FlashChip::Macronix64,
+                3 => FlashChip::Atmel64,
+                4 => FlashChip::Sanyo128,
+                5 => FlashChip::Macronix128,
+                _ => FlashChip::Panasonic64,
+            };
+            if chip.is_128k() == self.is_128k {
+                self.chip = chip;
+            }
+        }
         Ok(())
     }
 }
@@ -203,8 +288,9 @@ impl FlashSave {
     }
 
     fn erase_sector(&mut self, address: u32) {
-        let start = ((address & 0xFFFF) as usize & !0xFFF) + self.bank_offset();
-        let end = (start + 0x1000).min(self.data.len());
+        let sector = self.chip.sector_size();
+        let start = ((address & 0xFFFF) as usize & !(sector - 1)) + self.bank_offset();
+        let end = (start + sector).min(self.data.len());
         self.data[start..end].fill(0xFF);
     }
 }
@@ -239,6 +325,53 @@ mod tests {
         flash.write(0x0E005555, 1, 0x90);
         assert_eq!(flash.read(0x0E000000, 1), 0x32);
         assert_eq!(flash.read(0x0E000001, 1), 0x1B);
+    }
+
+    #[test]
+    fn all_gbatek_chip_ids_reported() {
+        // GBATEK FlashROM Device Types, MSB=device LSB=manufacturer.
+        let cases = [
+            (false, FlashChip::Panasonic64, 0x32, 0x1B),
+            (false, FlashChip::Sst64, 0xBF, 0xD4),
+            (false, FlashChip::Macronix64, 0xC2, 0x1C),
+            (false, FlashChip::Atmel64, 0x1F, 0x3D),
+            (true, FlashChip::Sanyo128, 0x62, 0x13),
+            (true, FlashChip::Macronix128, 0xC2, 0x09),
+        ];
+        for (is_128k, chip, maker, device) in cases {
+            let mut flash = FlashSave::new(is_128k);
+            flash.set_chip(chip);
+            assert_eq!(flash.chip(), chip);
+            flash.write(0x0E005555, 1, 0xAA);
+            flash.write(0x0E002AAA, 1, 0x55);
+            flash.write(0x0E005555, 1, 0x90);
+            assert_eq!(flash.read(0x0E000000, 1), maker, "{chip:?}");
+            assert_eq!(flash.read(0x0E000001, 1), device, "{chip:?}");
+        }
+    }
+
+    #[test]
+    fn set_chip_rejects_size_mismatch() {
+        let mut flash = FlashSave::new(false);
+        flash.set_chip(FlashChip::Sanyo128);
+        assert_eq!(flash.chip(), FlashChip::Panasonic64);
+    }
+
+    #[test]
+    fn atmel_erases_128b_sectors() {
+        let mut flash = FlashSave::new(false);
+        flash.set_chip(FlashChip::Atmel64);
+        flash.data[0x100] = 0x00;
+        flash.data[0x180] = 0x00;
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0x80);
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        // 0x100 is inside sector 0x100-0x17F; 0x180 must survive.
+        flash.write(0x0E000100, 1, 0x30);
+        assert_eq!(flash.data[0x100], 0xFF);
+        assert_eq!(flash.data[0x180], 0x00);
     }
 
     #[test]
