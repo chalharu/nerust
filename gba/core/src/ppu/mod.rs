@@ -11,6 +11,12 @@ pub const CYCLES_PER_LINE: u16 = 1232;
 pub const HDRAW_CYCLES: u16 = 960;
 pub const HBLANK_FLAG_CYCLES: u16 = 1006;
 pub const LINES_PER_FRAME: u16 = 228;
+/// BG fetch clock (nba hw-test archive/ppu/mode3): the PPU fetches pixel x
+/// at 32+4x cycles into the scanline, one pixel every four cycles.
+pub const FETCH_START_CYCLES: u16 = 32;
+pub const FETCH_END_CYCLES: u16 = 988;
+/// DISPCNT latch shift point (NBA `LatchDISPCNT`, +40 cycles into the line).
+pub const DISPCNT_LATCH_CYCLES: u16 = 40;
 
 pub fn bgr555_to_rgba8888(color: u16) -> u32 {
     color::rgba8888(color & 0x7FFF)
@@ -110,6 +116,11 @@ pub struct GbaPpu {
     /// Last sub-boundary BG VRAM halfword (NBA `vram_bg_latch`): BG fetches
     /// at/above the OBJ boundary return this instead of physical VRAM.
     bg_latch: u16,
+    /// DISPCNT 3-stage shift latch (NBA `dispcnt_latch`, HW-confirmed):
+    /// shifted at +40 cycles of every scanline. BG/OBJ enables gate on
+    /// `latch[0] & live`, forced blank on `latch[0] | live` (NBA `Merge.cc`,
+    /// `PPU.hh::ForcedBlank`). Window enables stay live.
+    dispcnt_latch: [u16; 3],
     /// Line-deferred render latch: OAM bytes and the MOSAIC register sampled
     /// at the first pixel of each scanline. Mid-scanline writes take effect
     /// on the next line. HBlank/VBlank writes (IRQ handlers, HBlank DMA, the
@@ -131,6 +142,9 @@ pub struct GbaPpu {
 struct LineLatch {
     mosaic: u16,
     oam: Box<[u8; 1024]>,
+    /// `dispcnt_latch[0]` sampled at the first fetch of the line (cycle 32,
+    /// before the +40 shift): the enable/blank reference for this scanline.
+    enable: u16,
 }
 
 impl LineLatch {
@@ -138,12 +152,14 @@ impl LineLatch {
         Self {
             mosaic: 0,
             oam: Box::new([0; 1024]),
+            enable: 0,
         }
     }
 
-    fn capture(&mut self, mosaic: u16, oam: &[u8]) {
+    fn capture(&mut self, mosaic: u16, oam: &[u8], enable: u16) {
         self.mosaic = mosaic;
         self.oam.copy_from_slice(oam);
+        self.enable = enable;
     }
 }
 
@@ -158,6 +174,7 @@ impl GbaPpu {
             frame: vec![color::rgba8888(0x7FFF); WIDTH * HEIGHT].into_boxed_slice(),
             ref_written: [false; 2],
             bg_latch: 0,
+            dispcnt_latch: [0; 3],
             line: LineLatch::new(),
         }
     }
@@ -165,15 +182,28 @@ impl GbaPpu {
     pub fn step(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) -> PpuEvent {
         let mut event = PpuEvent::default();
         self.cycle += 1;
-        if self.vcount < HEIGHT as u16 && self.cycle <= HDRAW_CYCLES && self.cycle.is_multiple_of(4)
+        // Fetch clock (archive/ppu/mode3): pixel x is fetched at 32+4x, so
+        // the pixel rendered from live VRAM at cycle C is x = C/4-1-7.
+        // Mid-line VRAM writes (HBlank DMA races) become visible exactly
+        // when the fetcher passes them; static lines render identically.
+        if self.vcount < HEIGHT as u16
+            && self.cycle >= FETCH_START_CYCLES
+            && self.cycle <= FETCH_END_CYCLES
+            && self.cycle.is_multiple_of(4)
         {
             self.render_pixel(
-                self.cycle as usize / 4 - 1,
+                self.cycle as usize / 4 - 1 - 7,
                 self.vcount as usize,
                 vram,
                 palette,
                 oam,
             );
+        }
+        if self.cycle == DISPCNT_LATCH_CYCLES {
+            // NBA LatchDISPCNT: 3-stage shift of the DISPCNT enable latch.
+            self.dispcnt_latch[0] = self.dispcnt_latch[1];
+            self.dispcnt_latch[1] = self.dispcnt_latch[2];
+            self.dispcnt_latch[2] = self.registers.dispcnt;
         }
         if self.cycle == HBLANK_FLAG_CYCLES {
             self.handle_hblank_flag(&mut event);
@@ -248,6 +278,18 @@ impl GbaPpu {
 
     pub fn dispcnt(&self) -> u16 {
         self.registers.dispcnt
+    }
+
+    /// NBA `ForcedBlank`: blanked when the bit is set in the latched OR the
+    /// live DISPCNT.
+    pub fn forced_blank(&self) -> bool {
+        (self.dispcnt_latch[0] | self.registers.dispcnt) & (1 << 7) != 0
+    }
+
+    /// Any BG layer enabled in both the latched and the live DISPCNT
+    /// (NBA Background/Merge gating); gates BG-VRAM fetch contention.
+    pub fn bg_fetch_active(&self) -> bool {
+        self.dispcnt_latch[0] & self.registers.dispcnt & 0x0F00 != 0
     }
 
     pub fn dispstat(&self) -> u16 {
@@ -435,15 +477,19 @@ impl GbaPpu {
             // Line-start sample: HBlank/VBlank-period writes are already in
             // `oam`/registers and apply to this line; writes later in this
             // line's draw period defer to the next line. Sampling at the
-            // first pixel (rather than the previous line end) also seeds the
-            // very first frame and keeps the latch fresh across VBlank lines
-            // (which never render) and forced-blank lines (see early return).
-            self.line.capture(self.registers.mosaic, oam);
+            // first fetch (cycle 32, before the +40 DISPCNT shift) also seeds
+            // the very first frame and keeps the latch fresh across VBlank
+            // lines (which never render) and forced-blank lines.
+            self.line
+                .capture(self.registers.mosaic, oam, self.dispcnt_latch[0]);
         }
-        if self.registers.dispcnt & (1 << 7) != 0 {
+        // NBA ForcedBlank: latched OR live.
+        if (self.line.enable | self.registers.dispcnt) & (1 << 7) != 0 {
             self.frame[y * WIDTH + x] = color::rgba8888(0x7FFF);
             return;
         }
+        // NBA Background/Merge: layer enables gate on latched AND live.
+        let enables = self.line.enable & self.registers.dispcnt;
         let mask = self.window_mask(x, y, vram, palette);
         let mut layers = Vec::with_capacity(6);
         layers.push(LayerPixel {
@@ -453,7 +499,7 @@ impl GbaPpu {
             semi_transparent: false,
         });
         for bg_index in 0..4 {
-            if self.registers.dispcnt & (1 << (8 + bg_index)) != 0
+            if enables & (1 << (8 + bg_index)) != 0
                 && mask & (1 << bg_index) != 0
                 && let Some(pixel) = bg::pixel(
                     &self.registers,
@@ -468,7 +514,7 @@ impl GbaPpu {
                 layers.push(pixel);
             }
         }
-        if self.registers.dispcnt & (1 << 12) != 0
+        if enables & (1 << 12) != 0
             && mask & (1 << 4) != 0
             && let Some(pixel) = obj::pixel(
                 &self.registers,
@@ -559,6 +605,14 @@ fn layer_rank(layer: u8) -> u8 {
 mod tests {
     use super::*;
 
+    /// Write DISPCNT with the enable latch pre-propagated (steady state).
+    /// Render tests use this to skip the 3-line hardware enable pipeline;
+    /// latch propagation itself is covered by `dispcnt_enable_latch_delays`.
+    fn steady_dispcnt(ppu: &mut GbaPpu, value: u16) {
+        ppu.write_register(0x04000000, value);
+        ppu.dispcnt_latch = [value; 3];
+    }
+
     #[test]
     fn timing_sets_status_and_completes_frame() {
         let mut ppu = GbaPpu::new();
@@ -619,7 +673,7 @@ mod tests {
         let palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
         vram[..2].copy_from_slice(&0x001Fu16.to_le_bytes());
-        ppu.write_register(0x04000000, 3 | 1 << 10);
+        steady_dispcnt(&mut ppu, 3 | 1 << 10);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -634,7 +688,7 @@ mod tests {
         let oam = vec![0; 0x400];
         vram[0] = 1;
         palette[2..4].copy_from_slice(&0x03E0u16.to_le_bytes());
-        ppu.write_register(0x04000000, 4 | 1 << 10);
+        steady_dispcnt(&mut ppu, 4 | 1 << 10);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -643,7 +697,7 @@ mod tests {
         let mut ppu = GbaPpu::new();
         vram[(127 * 160 + 159) * 2..(127 * 160 + 159) * 2 + 2]
             .copy_from_slice(&0x7C00u16.to_le_bytes());
-        ppu.write_register(0x04000000, 5 | 1 << 10);
+        steady_dispcnt(&mut ppu, 5 | 1 << 10);
         for _ in 0..CYCLES_PER_LINE as usize * 127 + HDRAW_CYCLES as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -674,7 +728,7 @@ mod tests {
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
         // BG2 priority 0, OBJ0 (tile 512, priority 1).
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x06]);
-        ppu.write_register(0x04000000, 4 | (1 << 10) | (1 << 12));
+        steady_dispcnt(&mut ppu, 4 | (1 << 10) | (1 << 12));
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -695,7 +749,7 @@ mod tests {
         }
         vram[0..2].copy_from_slice(&513u16.to_le_bytes()); // map: tile 513
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
-        ppu.write_register(0x04000000, 1 << 8);
+        steady_dispcnt(&mut ppu, 1 << 8);
         ppu.write_register(0x04000008, 3 << 2); // CBB=3, SBB=0, 4bpp, 32x32
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
@@ -716,7 +770,7 @@ mod tests {
         for b in vram.iter_mut().skip(0x20).take(0x20) {
             *b = 0x11; // tile 1: palette index 1
         }
-        ppu.write_register(0x04000000, 1 << 8);
+        steady_dispcnt(&mut ppu, 1 << 8);
         ppu.write_register(0x04000008, (31 << 8) | (3 << 14)); // SBB=31, 64x64
         ppu.write_register(0x04000010, 256); // hofs
         ppu.write_register(0x04000012, 256); // vofs
@@ -736,7 +790,7 @@ mod tests {
         vram[0xF802..0xF804].copy_from_slice(&0xF000u16.to_le_bytes());
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
         palette[0x1E2..0x1E4].copy_from_slice(&0x7FFFu16.to_le_bytes());
-        ppu.write_register(0x04000000, 1 << 8);
+        steady_dispcnt(&mut ppu, 1 << 8);
         ppu.write_register(0x04000008, 31 << 8);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
@@ -748,7 +802,7 @@ mod tests {
         vram[0x10000] = 1;
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes());
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0, 0]);
-        ppu.write_register(0x04000000, (1 << 12) | (1 << 6));
+        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6));
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -763,7 +817,7 @@ mod tests {
         let oam = vec![0; 0x400];
         vram[0] = 1;
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 13));
+        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 13));
         ppu.write_register(0x04000008, 31 << 8);
         ppu.write_register(0x04000040, 0x0014); // WIN0H: 0..20 (x1=0,x2=20)
         ppu.write_register(0x04000044, 0x0014); // WIN0V: 0..20
@@ -779,6 +833,41 @@ mod tests {
         assert_eq!(
             ppu.frame_buffer()[20 * WIDTH + 20].to_le_bytes(),
             [0, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn dispcnt_enable_latch_delays_and_blank_is_or() {
+        // NBA HW-confirmed model: BG enables gate on latched AND live
+        // (3-stage shift at +40 cycles/line), forced blank on latched OR live.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 1;
+        // BG0 on written mid-frame: still gated off until the latch shifts
+        // through (renders backdrop), then appears.
+        ppu.write_register(0x04000000, 1 << 8);
+        ppu.write_register(0x04000008, 31 << 8);
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes()[0], 0);
+        for _ in 0..CYCLES_PER_LINE as usize * 3 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        // Latch propagated through the 3-stage shift: BG0 enable visible.
+        assert_ne!(ppu.dispcnt_latch[0] & (1 << 8), 0);
+        assert_ne!(ppu.line.enable & (1 << 8), 0);
+        // Forced blank applies immediately (OR semantics, no latency):
+        // the line drawn after the write is white.
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 7));
+        for _ in 0..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(
+            ppu.frame_buffer()[4 * WIDTH].to_le_bytes(),
+            [255, 255, 255, 255]
         );
     }
 
@@ -823,12 +912,13 @@ mod tests {
         vram[0x10000 + 512 * 32..0x10000 + 512 * 32 + 8].fill(0x11);
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x02]);
-        ppu.write_register(0x04000000, (1 << 12) | (1 << 6));
-        for _ in 0..16 {
+        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6));
+        // Write after the first fetch (cycle 32): line 0 keeps the sprite.
+        for _ in 0..64 {
             ppu.step(&vram, &palette, &oam);
         }
         oam[0..2].copy_from_slice(&0x0200u16.to_le_bytes()); // disable OBJ0
-        for _ in 16..CYCLES_PER_LINE as usize {
+        for _ in 64..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 255, 255]);
@@ -856,14 +946,15 @@ mod tests {
         palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
         palette[6..8].copy_from_slice(&0x7C00u16.to_le_bytes());
         palette[8..10].copy_from_slice(&0x7FFFu16.to_le_bytes());
-        ppu.write_register(0x04000000, 1 << 8);
+        steady_dispcnt(&mut ppu, 1 << 8);
         ppu.write_register(0x04000008, (31 << 8) | (1 << 6)); // SBB=31, mosaic
         ppu.write_register(0x0400004C, 0x01); // BG mosaic h=2, v=1
-        for _ in 0..16 {
+        // Clear after the first fetch (cycle 32): line 0 keeps mosaic.
+        for _ in 0..64 {
             ppu.step(&vram, &palette, &oam);
         }
         ppu.write_register(0x0400004C, 0x00); // clear mid-draw
-        for _ in 16..CYCLES_PER_LINE as usize {
+        for _ in 64..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
