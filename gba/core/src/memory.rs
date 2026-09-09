@@ -106,7 +106,6 @@ pub struct GbaMemoryBus {
     eeprom_burst_open: bool,
 }
 
-
 /// Snapshot of the PPU state relevant to display-controller contention.
 /// Lets DMA cost computation query contention without borrowing the bus
 /// while a DMA channel is mutably borrowed.
@@ -775,7 +774,6 @@ impl GbaMemoryBus {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-
     fn is_sequential(&self, addr: u32, _width: u8) -> bool {
         if let Some(prev) = self.prev_addr {
             // 32bit ROM領域で連続アドレスか、かつ128KB境界を跨がない
@@ -1338,8 +1336,15 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => {
-                if std::env::var("GBA_TTRACE").is_ok() && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) && v16 & 0x8000 != 0 {
-                    eprintln!("T dmaen ch{} @{}", (aligned - 0xB0) / 12, self.current_tcycle);
+                if std::env::var("GBA_TTRACE").is_ok()
+                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+                    && v16 & 0x8000 != 0
+                {
+                    eprintln!(
+                        "T dmaen ch{} @{}",
+                        (aligned - 0xB0) / 12,
+                        self.current_tcycle
+                    );
                 }
                 self.dma.write(aligned, v16);
                 // force next ROM fetch to NSEQ (GBATEK: STR to DMA CNT forces NSEQ)

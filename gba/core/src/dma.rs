@@ -180,8 +180,7 @@ impl GbaDma {
         };
         let is_seq_dst = !dma.is_first;
         let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
-        let dst_wait =
-            dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
+        let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
         // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
         // cost is N/S waits only. The xI internal overhead is a SINGLE
         // per-burst term (2I, 4I when both ends are GamePak), charged with
@@ -399,9 +398,7 @@ fn timing_for(channel: usize, control: u16) -> DmaTrigger {
 /// transfer with Repeat set, targeting FIFO_A/B, always moves 4x32-bit
 /// with a fixed destination.
 fn sound_dma(control: u16, destination: u32) -> bool {
-    timing(control) == DmaTrigger::Special
-        && control & (1 << 9) != 0
-        && is_fifo_dest(destination)
+    timing(control) == DmaTrigger::Special && control & (1 << 9) != 0 && is_fifo_dest(destination)
 }
 
 fn is_fifo_dest(destination: u32) -> bool {
@@ -429,13 +426,7 @@ fn advance(address: u32, mode: u16, width: u8, destination: bool) -> u32 {
     }
 }
 
-fn dma_bus_wait(
-    address: u32,
-    width: u8,
-    is_seq: bool,
-    waitcnt: u16,
-    stall: u8,
-) -> u8 {
+fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) -> u8 {
     match address {
         0x00000000..=0x00003FFF => 1,
         0x02000000..=0x02FFFFFF => {
