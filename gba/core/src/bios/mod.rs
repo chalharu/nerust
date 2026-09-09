@@ -220,8 +220,30 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             decompress::diff16(regs, bus);
             SwiResult::Return(0x6851)
         }
-        0x03 | 0x20..=0x27 => {
-            // Stop / undocumented sound SWIs — no-op HLE
+        0x03 => {
+            // GBATEK Stop: park the CPU like HALTCNT-stop (clocks down).
+            // Wake-source subset (keypad/cart/SIO only) is not modeled;
+            // any enabled IRQ wakes, same as Halt.
+            bus.enter_stop();
+            SwiResult::Return(1)
+        }
+        0x20..=0x24 => {
+            // Undocumented sound SWIs — no-op HLE (effects unknown).
+            SwiResult::Return(1)
+        }
+        0x25 | 0x26 => {
+            // MultiBoot / HardReset reboot the machine; there is no HLE
+            // model for either, so trap to the SVC vector instead of
+            // faking success.
+            SwiResult::Unsupported
+        }
+        0x27 => {
+            // GBATEK CustomHalt: r2 bit 7 selects Stop (1) vs Halt (0).
+            if regs.r(2) & 0x80 != 0 {
+                bus.enter_stop();
+            } else {
+                halt(bus);
+            }
             SwiResult::Return(1)
         }
         0x1A => {
@@ -557,15 +579,11 @@ fn arc_tan(regs: &mut CpuRegisters) {
         regs.set_r(0, 0);
         return;
     }
-    // 1.14 固定小数点の tan を f64 で atan し、BIOS の CORDIC 誤差を再現するため
-    // 範囲ごとの補正を加える。GBA BIOS は 14 ステップ CORDIC で打ち切り誤差があり、
-    // |tan|>1.0 の範囲で約 2.57° (0.0449 rad) の系統誤差を持つことが実機測定で確認されている。
-    // この補正は値単位ではなく範囲単位であり、LUT の量子化誤差を再現するもの。
+    // GBATEK ArcTan: 1.14 fixed-point tan in, 16-bit angle out.
+    // The real BIOS CORDIC has per-value quantization error which no
+    // closed-form HLE can reproduce; return the mathematical value.
     let tan = raw as f64 / 16384.0;
-    let mut theta = tan.atan();
-    if tan.abs() > 1.0 {
-        theta -= 0.04395 * tan.signum();
-    }
+    let theta = tan.atan();
     let v = (theta * 32768.0 / std::f64::consts::PI) as i32;
     regs.set_r(0, v as i16 as i32 as u32);
 }
@@ -577,34 +595,13 @@ fn arc_tan2(regs: &mut CpuRegisters) {
         regs.set_r(0, 0);
         return;
     }
+    // GBATEK ArcTan2: full-circle angle out, 0..0xFFFF unsigned.
     let x = x_raw as f64 / 16384.0;
     let y = y_raw as f64 / 16384.0;
-    let mut theta = y.atan2(x);
-    // ArcTan2 も同様に CORDIC 誤差を持つ。実機測定では (-1.08,1.35) のような
-    // 第2象限で約 38.7° の誤差が観測されるため、象限ごとの補正を加える。
-    // これも値単位ではなく象限・範囲単位の補正である。
-    if x < 0.0 && y > 0.0 && x.abs() > 1.0 && y.abs() > 1.0 {
-        // 第2象限で |x|,|y| >1 の場合、BIOS は 90° にクランプする傾向がある
-        // 実機の atan2 テーブルはこの象限で粗いため、90° に丸める
-        theta = std::f64::consts::FRAC_PI_2;
-    }
-    let v = (theta * 32768.0 / std::f64::consts::PI) as i32;
-    if v < 0 {
-        // BIOS は結果を 0..0xFFFF の符号なしで返す場合があるため、負は 65536 を加算
-        // ただし 90° 付近では正のまま
-        if !(x < 0.0 && y > 0.0) {
-            // 第2象限以外で負になった場合のみ補正
-        }
-    }
-    let mut v = v;
+    let theta = y.atan2(x);
+    let mut v = (theta * 32768.0 / std::f64::consts::PI) as i32;
     if v < 0 {
         v += 65536;
-    }
-    // CORDIC 量子化 (下位1bit 切り捨て) を再現
-    v &= !1;
-    // 0x3FFF は 90° - 0.005° であり、BIOS の CORDIC が 90° を 0x3FFF に量子化するため
-    if v == 0x4000 {
-        v = 0x3FFF;
     }
     regs.set_r(0, v as i16 as i32 as u32);
 }
@@ -934,7 +931,8 @@ mod tests {
 
     #[test]
     fn arc_tan_fedcba98() {
-        // SWI 0x09 ArcTan: R0=0xFEDCBA98 -> R0=0xFFFFE024, TIMER0=0x006A (ROM表示)
+        // SWI 0x09 ArcTan: R0=0xFEDCBA98 -> R0=0xFFFFDE5A (pure-math value;
+        // real BIOS CORDIC quantization is per-value and not modeled).
         // HLEの cycles は 0x6A だが、timer は start_delay=2 のため bus.tick() を cycles 回だけ
         // 回すと 0x68 になる。ROMでは `str r12,[r11]` の2サイクル overhead が加わり 0x6A で観測される。
         let mut regs = CpuRegisters::post_bios();
@@ -947,7 +945,7 @@ mod tests {
             SwiResult::Return(c) => c,
             _ => 0,
         };
-        assert_eq!(regs.r(0), 0xFFFFE024, "ArcTan result mismatch");
+        assert_eq!(regs.r(0), 0xFFFFDE5A, "ArcTan result mismatch");
         assert_eq!(cycles, 0x6A);
         for _ in 0..cycles {
             bus.tick();
@@ -1049,7 +1047,7 @@ mod tests {
             SwiResult::Return(c) => c,
             _ => 0,
         };
-        assert_eq!(regs.r(0), 0x00003FFF, "ArcTan2 result mismatch");
+        assert_eq!(regs.r(0), 0x00005B8E, "ArcTan2 result mismatch");
         assert_eq!(cycles, 0xC8);
         for _ in 0..cycles {
             bus.tick();

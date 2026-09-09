@@ -234,6 +234,12 @@ impl GbaPpu {
 
     fn handle_line_end(&mut self, event: &mut PpuEvent) {
         self.cycle = 0;
+        // Refresh the per-line enable/blank reference from the latch for
+        // the upcoming scanline (all lines, including VBlank): the
+        // renderer (x==0 capture) and forced_blank()/bg_fetch_active()
+        // share this value, so mid-line DISPCNT writes defer to the next
+        // line in both paths identically.
+        self.line.enable = self.dispcnt_latch[0];
         event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
@@ -318,15 +324,17 @@ impl GbaPpu {
     }
 
     /// NBA `ForcedBlank`: blanked when the bit is set in the latched OR the
-    /// live DISPCNT.
+    /// live DISPCNT. The latched half is the per-line reference shared with
+    /// the renderer (refreshed every line end), so render and stall paths
+    /// can never disagree by a line.
     pub fn forced_blank(&self) -> bool {
-        (self.dispcnt_latch[0] | self.registers.dispcnt) & (1 << 7) != 0
+        (self.line.enable | self.registers.dispcnt) & (1 << 7) != 0
     }
 
     /// Any BG layer enabled in both the latched and the live DISPCNT
     /// (NBA Background/Merge gating); gates BG-VRAM fetch contention.
     pub fn bg_fetch_active(&self) -> bool {
-        self.dispcnt_latch[0] & self.registers.dispcnt & 0x0F00 != 0
+        self.line.enable & self.registers.dispcnt & 0x0F00 != 0
     }
 
     pub fn dispstat(&self) -> u16 {
