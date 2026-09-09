@@ -26,8 +26,6 @@ expected_failures:
 - PeterLemon_SoundBRRMonoSingleShot
 - PeterLemon_SoundPCMMono
 - PeterLemon_SoundPCMStereo
-- PeterLemon_BIOSSoundBias
-- PeterLemon_BIOSSoundChannelClear
 - PeterLemon_BIOSSoundDriverInit
 - PeterLemon_BIOSSoundDriverMain
 - PeterLemon_BIOSSoundDriverMode
@@ -182,6 +180,8 @@ suites:
     verify:
       memory:
       - {address: 0x030004EC, value: 6, width: 4}
+      # True goal is 6/6 (currently 6/4: CPUSET-DMA -2 and TIME-ROM -12 are
+      # quantitative HLE-model gaps). Listed in expected_failures until then.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -214,9 +214,22 @@ suites:
   - id: nba_dma_burst_into_tears
     rom: dma/burst-into-tears/burst-into-tears.gba
     cycles: 3000000
+    verify:
+      memory:
+      # Upstream-known-correct goals (currently 3/0): TIME=41 plus the two
+      # OAM value checks. Listed in expected_failures until the burst
+      # source-ahead quirk is modeled; a fix flips this to unexpected-pass.
+      - {address: 0x03000234, value: 3, width: 4}
+      - {address: 0x03000238, value: 3, width: 4}
   - id: nba_dma_force_nseq
     rom: dma/force-nseq-access/force-nseq-access.gba
     cycles: 3000000
+    verify:
+      memory:
+      # Upstream-known-correct goals (currently 2/0): EWRAM/ROM DMA both 88.
+      # Listed in expected_failures until the force-NSEQ cost model is found.
+      - {address: 0x0300014C, value: 2, width: 4}
+      - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
     rom: bus/128kb-boundary/128kb-boundary.gba
     cycles: 3000000
@@ -238,7 +251,14 @@ suites:
     cycles: 3000000
   - id: nba_archive_ppu_exact_timing
     rom: archive/ppu/exact-timing/exact-timing.gba
-    cycles: 3000000
+    cycles: 20000000
+    verify:
+      memory:
+      # Upstream-known-correct goals (currently 7/5): full pass when the
+      # video-DMA absolute phase model is fixed. Listed in expected_failures
+      # until then; a fix flips this to unexpected-pass.
+      - {address: 0x0300062C, value: 7, width: 4}
+      - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
     rom: archive/ppu/mode3/mode3.gba
     cycles: 3000000
@@ -406,10 +426,18 @@ suites:
     rom: BIOS/Sound/Bias/BIOSSoundBias.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      # TIMER var stores full TM0CNT (high half echoes CNT_H); the ROM
+      # itself checks only the low 16 bits against $0047.
+      - {address: 0x03000584, value: 0x47, width: 2}
   - id: PeterLemon_BIOSSoundChannelClear
     rom: BIOS/Sound/ChannelClear/BIOSSoundChannelClear.gba
     cycles: 1000000
     skip_screenshot: true
+    verify:
+      memory:
+      - {address: 0x03000468, value: 0x52, width: 2}
   - id: PeterLemon_BIOSSoundDriverInit
     rom: BIOS/Sound/DriverInit/BIOSSoundDriverInit.gba
     cycles: 1000000
