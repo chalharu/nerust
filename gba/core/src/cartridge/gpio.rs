@@ -32,16 +32,31 @@ impl Gpio {
     /// fall through to ROM (dormant, misaligned, or disabled-control read
     /// of data/direction which returns 00h per GBATEK — still `Some(0)`).
     pub fn read(&self, addr: u32, width: u8) -> Option<u32> {
-        if width != 2 || !matches!(addr, 0x080000C4 | 0x080000C6 | 0x080000C8) {
+        // GBATEK cartridge GPIO: the C4/C6/C8 registers mirror across the
+        // WS0/WS1/WS2 ROM regions (08/0A/0C).
+        if width != 2
+            || !matches!(
+                addr,
+                0x080000C4
+                    | 0x080000C6
+                    | 0x080000C8
+                    | 0x0A0000C4
+                    | 0x0A0000C6
+                    | 0x0A0000C8
+                    | 0x0C0000C4
+                    | 0x0C0000C6
+                    | 0x0C0000C8
+            )
+        {
             return None;
         }
         if !self.attached {
             return None;
         }
-        Some(match addr {
-            0x080000C8 => u32::from(self.control),
+        Some(match addr & 0xFF {
+            0xC8 => u32::from(self.control),
             _ if self.control & 1 == 0 => 0,
-            0x080000C4 => u32::from(self.data & self.direction),
+            0xC4 => u32::from(self.data & self.direction),
             _ => u32::from(self.direction & 0xF),
         })
     }
@@ -49,11 +64,24 @@ impl Gpio {
     /// CPU write to the GPIO window. Returns true when consumed (control
     /// writes always attach on bit 0; data/direction writes need enable).
     pub fn write(&mut self, addr: u32, width: u8, value: u32) -> bool {
-        if width != 2 || !matches!(addr, 0x080000C4 | 0x080000C6 | 0x080000C8) {
+        if width != 2
+            || !matches!(
+                addr,
+                0x080000C4
+                    | 0x080000C6
+                    | 0x080000C8
+                    | 0x0A0000C4
+                    | 0x0A0000C6
+                    | 0x0A0000C8
+                    | 0x0C0000C4
+                    | 0x0C0000C6
+                    | 0x0C0000C8
+            )
+        {
             return false;
         }
         let v = (value & 0xFFFF) as u16;
-        if addr == 0x080000C8 {
+        if addr & 0xFF == 0xC8 {
             self.control = v & 1;
             if self.control & 1 != 0 {
                 self.attached = true;
@@ -64,7 +92,7 @@ impl Gpio {
             return false;
         }
         self.attached = true;
-        if addr == 0x080000C4 {
+        if addr & 0xFF == 0xC4 {
             self.data = v & 0xF;
         } else {
             self.direction = v & 0xF;

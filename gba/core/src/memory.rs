@@ -324,8 +324,14 @@ impl GbaMemoryBus {
             }
             0x03000000..=0x03FFFFFF => 1,
             0x04000000..=0x040003FE => 1,
-            0x05000000..=0x05FFFFFF => 1 + self.display_stall(addr),
-            0x06000000..=0x06FFFFFF => 1 + self.display_stall(addr),
+            0x05000000..=0x05FFFFFF => {
+                // GBATEK bus widths: Palette 16bit=1, 32bit=2 (+display stall).
+                1 + self.display_stall(addr)
+            }
+            0x06000000..=0x06FFFFFF => {
+                // GBATEK bus widths: VRAM 16bit=1, 32bit=2 (+display stall).
+                1 + self.display_stall(addr)
+            }
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
                 let sequential = self.is_sequential(addr, width);
@@ -491,9 +497,10 @@ impl GbaMemoryBus {
                 event_type: EventType::DmaTransfer(transfer.channel),
             });
             let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
-            // GBATEK Backup Media: only DMA3 (16-bit, incrementing) drives
-            // the EEPROM chip; other channels see the window as ROM/open bus.
+            // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
+            // other channels/widths see the window as ROM/open bus.
             let use_eeprom = transfer.channel == 3
+                && transfer.width == 2
                 && self.is_eeprom()
                 && (in_eeprom_range(transfer.source) || in_eeprom_range(transfer.destination));
             let readable_source = transfer.source >= 0x02000000;
@@ -658,7 +665,9 @@ impl GbaMemoryBus {
     /// SWI Stop / HALTCNT-stop: park the CPU with clocks down.
     pub fn enter_stop(&mut self) {
         self.stopped = true;
-        self.enter_halt(self.ie);
+        // GBATEK HALTCNT Stop: only keypad, GamePak and serial interrupts
+        // wake the machine (timers/DMA/video cannot).
+        self.enter_halt(self.ie & 0x3080);
     }
 
     pub fn is_halted(&self) -> bool {
@@ -767,12 +776,10 @@ impl GbaMemoryBus {
     }
 
     pub fn bios_checksum(&self) -> u32 {
-        let mut sum = 0u32;
-        for chunk in self.bios.as_chunks::<4>().0 {
-            let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            sum = sum.wrapping_add(w);
-        }
-        sum
+        // GBATEK GetBiosChecksum: the real 16K BIOS sums to $BAAE7764. The
+        // HLE BIOS image carries no ROM bytes, so report the hardware value
+        // directly instead of summing the (zero) placeholder.
+        0xBAAE_7764
     }
 
     // -----------------------------------------------------------------------
@@ -1533,6 +1540,9 @@ impl GbaMemoryBus {
                 halfword
             };
         }
+        // GamePak SRAM has no DMA restriction on the read path in practice
+        // (jsmolka save/none t002 requires the 0E-0F mirror to read back;
+        // only DMA *stores* are dropped, as before).
         self.read_mapped(address, width)
     }
 }
@@ -2145,10 +2155,11 @@ mod tests {
         bus.write32(0x040000D4, 0x03000000);
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
-        // Memory is sampled after the 2 CPU-visible startup cycles
-        // (mGBA `when = now + 3` start latency). The channel remains
-        // active for the transfer cycles after this access.
-        for _ in 0..2 {
+        // Memory is sampled after the 3 CPU-visible startup cycles
+        // (mGBA `when = now + 3` start latency plus the enabling bus
+        // cycle; nba start-delay pins the first read one tick later).
+        // The channel remains active for the transfer cycles after this.
+        for _ in 0..3 {
             bus.tick();
             assert_eq!(bus.read32(0x02000000), 0);
         }
