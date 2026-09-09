@@ -341,6 +341,13 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
     let mut cycles: u32 = 0;
+    // HLE charge self-calibration (same pattern as Huff): the fixed display
+    // totals below assume zero bus waits for Palette/VRAM 32-bit clears, but
+    // GBATEK bus widths charge 1 extra wait each (VRAM/Palette 32bit=2).
+    // Subtract the actually incurred waits so the wall total always equals
+    // the HW-measured display value. EWRAM/IWRAM/OAM keep fixed charges:
+    // EWRAM's 65536 writes vanish mod 0x10000 for any uniform wait, and the
+    // others incur zero waits (GBATEK 1-cycle regions).
     // mGBA _RegisterRamReset: always DISPCNT=0x0080
     bus.write16(0x04000000, 0x0080);
     // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
@@ -362,18 +369,22 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         cycles = cycles.wrapping_add(0x342A);
     }
     if flags & 4 != 0 {
+        let w_before = bus.accumulated_wait_cycles();
         for addr in (0x05000000..0x05000400).step_by(4) {
             bus.write32(addr, 0);
         }
-        // VPAL 0x400 bytes, 実測 0x039A (size比例)
-        cycles = cycles.wrapping_add(0x039A);
+        // VPAL 0x400 bytes, HW display total 0x039A (size比例)
+        let incurred = bus.accumulated_wait_cycles().saturating_sub(w_before);
+        cycles = cycles.wrapping_add(0x039Au32.saturating_sub(incurred));
     }
     if flags & 8 != 0 {
+        let w_before = bus.accumulated_wait_cycles();
         for addr in (0x06000000..0x06018000).step_by(4) {
             bus.write32(addr, 0);
         }
-        // VRAM 0x18000 bytes, 実測 0xFCFA (size比例, 30ステップで終わらない)
-        cycles = cycles.wrapping_add(0xFCFA);
+        // VRAM 0x18000 bytes, HW display total 0xFCFA (size比例, 30ステップで終わらない)
+        let incurred = bus.accumulated_wait_cycles().saturating_sub(w_before);
+        cycles = cycles.wrapping_add(0xFCFAu32.saturating_sub(incurred));
     }
     if flags & 16 != 0 {
         for addr in (0x07000000..0x07000400).step_by(4) {
