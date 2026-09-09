@@ -110,6 +110,41 @@ pub struct GbaPpu {
     /// Last sub-boundary BG VRAM halfword (NBA `vram_bg_latch`): BG fetches
     /// at/above the OBJ boundary return this instead of physical VRAM.
     bg_latch: u16,
+    /// Line-deferred render latch: OAM bytes and the MOSAIC register sampled
+    /// at the first pixel of each scanline. Mid-scanline writes take effect
+    /// on the next line. HBlank/VBlank writes (IRQ handlers, HBlank DMA, the
+    /// standard raster techniques) land before the next line starts, so they
+    /// behave exactly as before; only cycle-timed mid-draw writes change
+    /// behavior (from tearing the current line to applying on the next line).
+    ///
+    /// Model note: mGBA (`video.c:_startHblank`) renders each scanline at
+    /// HBlank start from live state, so mid-draw writes there apply to the
+    /// whole current line retroactively; GBATEK/Tonc document no sampling
+    /// point and no hw-test in tree pins the real mid-draw behavior down.
+    /// The line-start latch is the deterministic choice consistent with the
+    /// per-line OBJ cycle budget and line-held vertical mosaic. DISPCNT,
+    /// BGxCNT, scroll and window registers stay live (out of scope).
+    line: LineLatch,
+}
+
+#[derive(Debug)]
+struct LineLatch {
+    mosaic: u16,
+    oam: Box<[u8; 1024]>,
+}
+
+impl LineLatch {
+    fn new() -> Self {
+        Self {
+            mosaic: 0,
+            oam: Box::new([0; 1024]),
+        }
+    }
+
+    fn capture(&mut self, mosaic: u16, oam: &[u8]) {
+        self.mosaic = mosaic;
+        self.oam.copy_from_slice(oam);
+    }
 }
 
 impl GbaPpu {
@@ -123,6 +158,7 @@ impl GbaPpu {
             frame: vec![color::rgba8888(0x7FFF); WIDTH * HEIGHT].into_boxed_slice(),
             ref_written: [false; 2],
             bg_latch: 0,
+            line: LineLatch::new(),
         }
     }
 
@@ -395,11 +431,20 @@ impl GbaPpu {
     }
 
     fn render_pixel(&mut self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
+        if x == 0 {
+            // Line-start sample: HBlank/VBlank-period writes are already in
+            // `oam`/registers and apply to this line; writes later in this
+            // line's draw period defer to the next line. Sampling at the
+            // first pixel (rather than the previous line end) also seeds the
+            // very first frame and keeps the latch fresh across VBlank lines
+            // (which never render) and forced-blank lines (see early return).
+            self.line.capture(self.registers.mosaic, oam);
+        }
         if self.registers.dispcnt & (1 << 7) != 0 {
             self.frame[y * WIDTH + x] = color::rgba8888(0x7FFF);
             return;
         }
-        let mask = self.window_mask(x, y, vram, palette, oam);
+        let mask = self.window_mask(x, y, vram, palette);
         let mut layers = Vec::with_capacity(6);
         layers.push(LayerPixel {
             color: color::read_color(palette, 0),
@@ -415,9 +460,9 @@ impl GbaPpu {
                     (self.internal_x, self.internal_y),
                     (vram, palette),
                     bg_index,
-                    x,
-                    y,
+                    (x, y),
                     &mut self.bg_latch,
+                    self.line.mosaic,
                 )
             {
                 layers.push(pixel);
@@ -425,7 +470,15 @@ impl GbaPpu {
         }
         if self.registers.dispcnt & (1 << 12) != 0
             && mask & (1 << 4) != 0
-            && let Some(pixel) = obj::pixel(&self.registers, vram, palette, oam, x, y, false)
+            && let Some(pixel) = obj::pixel(
+                &self.registers,
+                vram,
+                palette,
+                &self.line.oam[..],
+                (x, y),
+                false,
+                self.line.mosaic,
+            )
         {
             layers.push(pixel);
         }
@@ -475,8 +528,16 @@ impl GbaPpu {
         top.color
     }
 
-    fn window_mask(&self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) -> u8 {
-        window::window_mask(&self.registers, x, y, vram, palette, oam)
+    fn window_mask(&self, x: usize, y: usize, vram: &[u8], palette: &[u8]) -> u8 {
+        window::window_mask(
+            &self.registers,
+            x,
+            y,
+            vram,
+            palette,
+            &self.line.oam[..],
+            self.line.mosaic,
+        )
     }
 }
 
@@ -745,6 +806,80 @@ mod tests {
             ppu.step(&vram, &palette, &oam);
         }
         assert_eq!(ppu.frame_buffer().len(), WIDTH * HEIGHT);
+    }
+
+    #[test]
+    fn oam_mid_line_write_defers_to_next_line() {
+        // OBJ0 8x8 at (0,0), tile 512; disable it mid-draw on line 0.
+        // The remainder of line 0 still shows the sprite (line-deferred),
+        // line 1 hides it.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let mut oam = vec![0; 0x400];
+        for entry in oam.as_chunks_mut::<8>().0.iter_mut().skip(1) {
+            entry[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
+        }
+        vram[0x10000 + 512 * 32..0x10000 + 512 * 32 + 8].fill(0x11);
+        palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
+        oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x02]);
+        ppu.write_register(0x04000000, (1 << 12) | (1 << 6));
+        for _ in 0..16 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        oam[0..2].copy_from_slice(&0x0200u16.to_le_bytes()); // disable OBJ0
+        for _ in 16..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [0, 0, 255, 255]);
+        assert_eq!(ppu.frame_buffer()[5].to_le_bytes(), [0, 0, 255, 255]);
+        for _ in CYCLES_PER_LINE as usize..2 * CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[WIDTH].to_le_bytes(), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn mosaic_mid_line_write_defers_to_next_line() {
+        // BG0 4bpp tile 0 with distinct pixels, horizontal mosaic 2 from line
+        // start; clearing MOSAIC mid-draw keeps mosaic for the rest of line 0
+        // and disables it on line 1.
+        let mut ppu = GbaPpu::new();
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let oam = vec![0; 0x400];
+        vram[0] = 0x21; // px0=1 red, px1=2 green
+        vram[2] = 0x43; // px4=3 blue, px5=4 white
+        vram[4] = 0x21;
+        vram[6] = 0x43;
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+        palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
+        palette[6..8].copy_from_slice(&0x7C00u16.to_le_bytes());
+        palette[8..10].copy_from_slice(&0x7FFFu16.to_le_bytes());
+        ppu.write_register(0x04000000, 1 << 8);
+        ppu.write_register(0x04000008, (31 << 8) | (1 << 6)); // SBB=31, mosaic
+        ppu.write_register(0x0400004C, 0x01); // BG mosaic h=2, v=1
+        for _ in 0..16 {
+            ppu.step(&vram, &palette, &oam);
+        }
+        ppu.write_register(0x0400004C, 0x00); // clear mid-draw
+        for _ in 16..CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(ppu.frame_buffer()[0].to_le_bytes(), [255, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[1].to_le_bytes(), [255, 0, 0, 255]);
+        assert_eq!(ppu.frame_buffer()[5].to_le_bytes(), [0, 0, 255, 255]);
+        for _ in CYCLES_PER_LINE as usize..2 * CYCLES_PER_LINE as usize {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert_eq!(
+            ppu.frame_buffer()[WIDTH + 1].to_le_bytes(),
+            [0, 255, 0, 255]
+        );
+        assert_eq!(
+            ppu.frame_buffer()[WIDTH + 5].to_le_bytes(),
+            [255, 255, 255, 255]
+        );
     }
 
     #[test]
