@@ -391,10 +391,26 @@ fn sound_bias(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 }
 
 /// SWI 1Eh SoundChannelClear (GBATEK): clears the direct-sound (FIFO)
-/// channels and stops sound output.
+/// channels and stops sound output: FIFOs drained, all PSG/channel
+/// control registers zeroed (SOUNDBIAS, a PWM-level register owned by the
+/// separate SoundBias SWI, is kept).
 fn sound_channel_clear(bus: &mut GbaMemoryBus) {
-    bus.apu_mut().fifo_a.clear();
-    bus.apu_mut().fifo_b.clear();
+    let apu = bus.apu_mut();
+    apu.fifo_a.clear();
+    apu.fifo_b.clear();
+    apu.sound1cnt_lo = 0;
+    apu.sound1cnt_hi = 0;
+    apu.sound1cnt_x = 0;
+    apu.sound2cnt_lo = 0;
+    apu.sound2cnt_hi = 0;
+    apu.sound3cnt_lo = 0;
+    apu.sound3cnt_hi = 0;
+    apu.sound3cnt_x = 0;
+    apu.sound4cnt_lo = 0;
+    apu.sound4cnt_hi = 0;
+    apu.soundcnt_lo = 0;
+    apu.soundcnt_hi = 0;
+    apu.soundcnt_x = 0;
 }
 
 fn div(regs: &mut CpuRegisters) {

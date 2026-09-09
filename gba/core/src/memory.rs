@@ -76,6 +76,10 @@ pub struct GbaMemoryBus {
     /// fetch, which costs 1N instead of 1S when taken from GamePak ROM with
     /// prefetch disabled.
     icycle_fetch_penalty: bool,
+    /// Address of the most recently fetched opcode. The Disable Bug only
+    /// applies to "Opcodes in GamePak ROM" (GBATEK), so data reads arm the
+    /// penalty only when the owning opcode lives in ROM.
+    last_opcode_addr: Option<u32>,
     bios_protect: bool,
     current_pc: u32,
     prev_addr: Option<u32>,
@@ -83,6 +87,10 @@ pub struct GbaMemoryBus {
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
+    /// Stop mode latched (HALTCNT bit 7, GBATEK "System Control"): the CPU
+    /// stays parked until an interrupt, like Halt. Timers/PPU keep ticking
+    /// (full Stop power-down is not modeled).
+    stopped: bool,
     /// IntrWait/VBlankIntrWait wake-clear mask (GBATEK: waited flags are
     /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
     wake_clear_mask: u16,
@@ -146,6 +154,7 @@ impl GbaMemoryBus {
             prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
             icycle_fetch_penalty: false,
+            last_opcode_addr: None,
             bios_protect: true,
             current_pc: 0x08000000,
             prev_addr: None,
@@ -153,6 +162,7 @@ impl GbaMemoryBus {
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            stopped: false,
             wake_clear_mask: 0,
             bios_prefetch: 0xE129F000,
             bios_read_seq: 0,
@@ -593,7 +603,7 @@ impl GbaMemoryBus {
     }
 
     pub fn request_interrupt(&mut self, mask: u16) {
-        let mask = mask & 0x1FFF;
+        let mask = mask & 0x3FFF;
         self.sif |= mask;
         let flags = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) | mask;
         self.iwram[0x7FF8..0x7FFA].copy_from_slice(&flags.to_le_bytes());
@@ -609,6 +619,7 @@ impl GbaMemoryBus {
                 }
             }
             self.halted = false;
+            self.stopped = false;
         }
     }
 
@@ -869,12 +880,20 @@ impl GbaMemoryBus {
         let wait = self.cycles_for_access(addr, width, is_opcode);
         if is_opcode {
             self.icycle_fetch_penalty = false;
+            self.last_opcode_addr = Some(addr);
         } else {
             // Any CPU data read implies an I-cycle (load opcodes LDR/LDM/
             // POP/SWP per GBATEK); arm the Disable-Bug penalty for the next
-            // opcode fetch. Multiplies and register-shifts call
-            // `note_internal_cycle` explicitly from their opcode handlers.
-            self.icycle_fetch_penalty = true;
+            // opcode fetch, but only for ROM-resident opcodes (GBATEK scopes
+            // the bug to "Opcodes in GamePak ROM"). Multiplies and
+            // register-shifts call `note_internal_cycle` explicitly from
+            // their opcode handlers.
+            if self
+                .last_opcode_addr
+                .is_some_and(|pc| (0x08000000..=0x0DFFFFFF).contains(&pc))
+            {
+                self.icycle_fetch_penalty = true;
+            }
         }
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
         let sequential = self.is_sequential(addr, width) && self.prefetch_enabled;
@@ -892,7 +911,13 @@ impl GbaMemoryBus {
     /// then costs 1N instead of 1S when prefetch is disabled (GBATEK
     /// "Prefetch Disable Bug"). Loads set this implicitly via their data read.
     pub fn note_internal_cycle(&mut self) {
-        self.icycle_fetch_penalty = true;
+        // Scoped to ROM-resident opcodes like the data-read arming above.
+        if self
+            .last_opcode_addr
+            .is_some_and(|pc| (0x08000000..=0x0DFFFFFF).contains(&pc))
+        {
+            self.icycle_fetch_penalty = true;
+        }
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
@@ -1072,8 +1097,12 @@ impl GbaMemoryBus {
             0x04000208 => self.ime as u16,
             0x04000300 => (self.postflg as u16) | (self.open_bus_value & 0xFF00) as u16,
             _ => {
-                // 未実装/ライト専用レジスタは open_bus を返す
-                return self.open_bus_value;
+                // Unimplemented/write-only registers return the recently
+                // prefetched opcode, not the last written value (GBATEK
+                // "Unpredictable Things": open bus tracks the prefetch,
+                // with a zero-mix rule for partially-readable ports that
+                // is not modeled here).
+                return self.last_prefetch & 0xFFFF;
             }
         };
         if width == 1 && (addr & 1) == 1 {
@@ -1162,15 +1191,20 @@ impl GbaMemoryBus {
         if width > 1 && addr == 0x04000300 {
             // POSTFLG/HALTCNT are BIOS-gated (NBA/mGBA HW behavior, confirmed
             // by nba haltcnt): CPU writes from outside the BIOS are ignored;
-            // HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT
-            // halts in Halt mode (Stop unmodeled, latched only).
+            // HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT bit
+            // 7 = 0 halts, bit 7 = 1 stops (CPU parked until IRQ in both).
             let gated = bios || self.current_pc <= 0x3FFF;
             if gated {
                 self.postflg |= (value & 1) as u8;
             }
             self.haltcnt = (value >> 8) as u8;
-            if gated && value & 0x8000 == 0 {
-                self.enter_halt(self.ie);
+            if gated {
+                if value & 0x8000 == 0 {
+                    self.enter_halt(self.ie);
+                } else {
+                    self.stopped = true;
+                    self.enter_halt(self.ie);
+                }
             }
             self.open_bus_value = value;
             return;
@@ -1193,8 +1227,13 @@ impl GbaMemoryBus {
                 0x04000301 => {
                     let gated = bios || self.current_pc <= 0x3FFF;
                     self.haltcnt = value as u8;
-                    if gated && value & 0x80 == 0 {
-                        self.enter_halt(self.ie);
+                    if gated {
+                        if value & 0x80 == 0 {
+                            self.enter_halt(self.ie);
+                        } else {
+                            self.stopped = true;
+                            self.enter_halt(self.ie);
+                        }
                     }
                     self.open_bus_value = value;
                     return;
@@ -1313,10 +1352,11 @@ impl GbaMemoryBus {
                 self.joy_trans = (self.joy_trans & 0x0000FFFF) | ((v16 as u32) << 16);
             }
             0x04000158 => self.joystat = v16,
-            0x04000200 => self.ie = v16 & 0x1FFF,
+            0x04000200 => self.ie = v16 & 0x3FFF,
             0x04000202 => self.sif &= !v16, // 書き込みでクリア（1のbitがクリア）
             0x04000204 => {
-                self.wait_cnt = v16;
+                // Bit 15 (GamePak type) and bit 13 are read-only/unused.
+                self.wait_cnt = v16 & !(0x8000 | 0x2000);
                 self.prefetch_enabled = (v16 & (1 << 14)) != 0;
                 if !self.prefetch_enabled {
                     self.prefetch_queue.clear();
@@ -1424,6 +1464,22 @@ mod tests {
         bus.write8(0x0203FFFF, 0xCD);
         assert_eq!(bus.read8(0x02000000), 0xAB);
         assert_eq!(bus.read8(0x0203FFFF), 0xCD);
+    }
+
+    #[test]
+    fn waitcnt_type_flag_and_reserved_bits_are_read_only() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 0xFFFF);
+        // Bit 15 (GamePak type, GBATEK read-only) and bit 13 (unused)
+        // never stick; everything else does.
+        assert_eq!(bus.read16(0x04000204), 0x5FFF);
+    }
+
+    #[test]
+    fn interrupt_enable_covers_gamepak_irq_bit() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, 0xFFFF);
+        assert_eq!(bus.read16(0x04000200) & 0x3FFF, 0x3FFF);
     }
 
     #[test]
@@ -1583,6 +1639,19 @@ mod tests {
         // Penalty is consumed exactly once: following fetch is S again.
         let _ = bus.fetch16(0x08000006);
         assert_eq!(bus.opcode_cycles_for(0x08000008, 2), 2);
+    }
+
+    #[test]
+    fn prefetch_disable_bug_ignores_ram_resident_opcodes() {
+        // GBATEK scopes the bug to "Opcodes in GamePak ROM": a data read
+        // issued by IWRAM-resident code must not N-ify the next ROM fetch.
+        // (The data read sits at the contiguous ROM address so the fetch
+        // would look sequential; only the penalty decides S vs N.)
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.prefetch_enabled);
+        let _ = bus.fetch16(0x03000000);
+        let _ = bus.read16(0x08000002);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 2);
     }
 
     #[test]

@@ -61,7 +61,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -
 
 pub fn handle_undefined(regs: &mut CpuRegisters) -> u32 {
     let return_address = regs.pc().wrapping_sub(2);
-    regs.enter_exception(0x1B, 0x04, return_address, false);
+    regs.enter_exception(0x1B, 0x04, return_address, true);
     3
 }
 
