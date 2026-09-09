@@ -326,11 +326,11 @@ impl GbaMemoryBus {
             0x04000000..=0x040003FE => 1,
             0x05000000..=0x05FFFFFF => {
                 // GBATEK bus widths: Palette 16bit=1, 32bit=2 (+display stall).
-                1 + self.display_stall(addr)
+                (if width == 4 { 2 } else { 1 }) + self.display_stall(addr)
             }
             0x06000000..=0x06FFFFFF => {
                 // GBATEK bus widths: VRAM 16bit=1, 32bit=2 (+display stall).
-                1 + self.display_stall(addr)
+                (if width == 4 { 2 } else { 1 }) + self.display_stall(addr)
             }
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
@@ -752,6 +752,14 @@ impl GbaMemoryBus {
 
     pub fn take_access_wait_cycles(&mut self) -> u32 {
         std::mem::take(&mut self.access_wait_cycles)
+    }
+
+    /// HLE charge self-calibration: waits accumulated so far (the HLE
+    /// body reads this before/after its bus accesses and subtracts the
+    /// actual incurred waits from its displayed cycle count, so the total
+    /// stays correct under any bus-wait model).
+    pub fn accumulated_wait_cycles(&self) -> u32 {
+        self.access_wait_cycles
     }
 
     pub fn set_cartridge(&mut self, cart: Cartridge) {

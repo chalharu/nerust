@@ -176,6 +176,8 @@ fn append_lz_reference_vec(
 }
 
 pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
+    // HLE開始前の蓄積waitを控除し、HLE実行分だけを測定する。
+    let entry_waits = bus.accumulated_wait_cycles();
     let src = regs.r(0);
     let header = bus.read32(src & !3);
     let data_bits = header & 0xF;
@@ -187,20 +189,18 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         return 1 + size / 0x100;
     }
     decode_huffman(bus, src, regs.r(1), data_bits, size, &tree);
-    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49 (size=0x1000)
-    // WRAM waitはバスウェイトに依存し、sizeに比例。Huffmanは
-    // 4BITで 0x1400/0x1000 byte、8BITは wait 0 として観測されたため
-    // size比例でスケールさせる。30ステップで終わることはなく、
-    // 4096byteで2万サイクル以上かかる。
-    match data_bits {
-        4 => {
-            let displayed = 0x626Fu32 * size / 0x1000;
-            let wait = 0x1400u32 * size / 0x1000;
-            displayed.saturating_sub(wait)
-        }
+    // 実測表示 TIMER0: 4BIT 0x626F, 8BIT 0x8D49 (size=0x1000)。
+    // HLE実行中に実際に生じたバスウェイトを差し引いて返すことで、
+    // 呼び出し側のwait再加算と合わせて表示値に一致させる。固定の
+    // 引き算（旧 4BIT 0x1400、8BIT 0）はバスモデル依存で脆く、
+    // VRAM 32bit=2cyc化のような正当な修正で崩れるため、実測引きを採用。
+    let incurred = bus.accumulated_wait_cycles().saturating_sub(entry_waits);
+    let displayed = match data_bits {
+        4 => 0x626Fu32 * size / 0x1000,
         8 => 0x8D49u32 * size / 0x1000,
-        _ => 1 + size / 0x100,
-    }
+        _ => return 1 + size / 0x100,
+    };
+    displayed.saturating_sub(incurred)
 }
 
 fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
