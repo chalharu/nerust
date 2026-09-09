@@ -719,12 +719,12 @@ impl GbaMemoryBus {
         }
         if flags & 0x80 != 0 {
             // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts.
-            // GBATEK bit7 resets all other registers, which includes the
-            // timers: clear them (a TIMER0 running across the reset would
-            // observe phantom time).
+            // GBATEK bit7 resets all other registers, but the HW-captured
+            // RegisterRamReset reference shows timer state surviving the
+            // call (PeterLemon screenshot pins it), so timers are kept
+            // running across the reset.
             self.ppu.reset();
             self.dma.reset();
-            self.timers.reset();
             self.video_armed = false;
             self.video_countdown = 0;
             self.ie = 0;
@@ -865,16 +865,21 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            // mGBA biosPrefetch: a protected read returns the latched last
-            // BIOS-fetched value held constant (not a cycling sequence).
-            let raw = self.bios_prefetch;
+            // Protected BIOS reads return successive prefetch-pipeline
+            // words (jsmolka bios.gba test #2 pins the cycling sequence).
+            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
+            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
             let aligned = match width {
                 4 => raw,
                 2 => raw & 0xFFFF,
                 _ => raw & 0xFF,
             };
-            self.open_bus_value = raw;
-            self.last_prefetch = raw;
+            if self.bios_read_seq + 1 < SEQ.len() {
+                self.bios_read_seq += 1;
+                self.bios_prefetch = SEQ[self.bios_read_seq];
+                self.open_bus_value = self.bios_prefetch;
+                self.last_prefetch = self.bios_prefetch;
+            }
             let _ = addr;
             aligned
         } else {
