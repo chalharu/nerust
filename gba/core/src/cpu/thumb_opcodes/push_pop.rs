@@ -43,8 +43,10 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
         address = address.wrapping_add(4);
     }
     regs.set_sp(address);
-    // Thumb POP: nS+1N+1I (GBATEK LDM formula), i.e. 2+count.
-    2 + list.count_ones() + u32::from(pc)
+    // Thumb POP: nS+1N+1I (2+count); with PC: (n+1)S+2N+1I (4+count),
+    // n including PC (GBATEK THUMB cycle times).
+    let count = list.count_ones() + u32::from(pc);
+    if pc { 4 + count } else { 2 + count }
 }
 
 fn selected_registers(list: u16) -> impl Iterator<Item = usize> {

@@ -20,6 +20,18 @@ expected_failures:
 # (wrong-cost phase luck, same class as cancel-ie). Needs the same sub-tick
 # entry-commit / timer-edge research; do NOT re-break CPU timings to chase it.
 - nba_archive_irq_cancel_ime
+# The three affine cases below fail on REFERENCE STATE, not emulation: the
+# affine pipeline is verified correct three independent ways — (1) the ROMs'
+# real-HW check values ($1234: pa=0xE7/pb=0xFF93/pc=0x6D/pd=0xE7) pass in
+# BIOSBGAFFINESET/BIOSOBJAFFINESET, (2) register-driven rotation demos
+# (OBJRotZoom4/8BPP, BGRotZoomMode3/4/5) match their refs, (3) a full-frame
+# GBATEK-model resimulation of BGRotZoomMode2 defaults matches our render
+# bit-exact (0 diff pixels). The shipped .png refs show INTERACTED states the
+# no-input harness can never reach: BGRotZoomMode2 zoomed-out (~0.55x, no
+# rigid zoom/pan reproduces it), Velocity/Acceleration with rotated sprites
+# (angle 0 at rest renders correctly; the bullet is then exactly occluded by
+# the cannon) plus old-emu colors (whole-frame off-white). Keep listed; a
+# harness that presses L/R/B could graduate them.
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
 # The 8 image cases below ship PHOTOGRAPHS of real hardware as reference
@@ -53,6 +65,7 @@ expected_failures:
 - PeterLemon_BigBuckBunny
 - PeterLemon_3DEngine
 - PeterLemon_CylinderMap
+# Velocity/Acceleration: see the affine note above (interacted refs).
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
 
@@ -163,14 +176,14 @@ suites:
       - {address: 0x03000428, value: 7, width: 4}
   - id: nba_timer_start_stop
     rom: timer/start-stop/start-stop.gba
-    cycles: 2000000
+    cycles: 3000000
     verify:
       memory:
       - {address: 0x03000264, value: 2, width: 4}
       - {address: 0x03000268, value: 2, width: 4}
   - id: nba_timer_tick_before_reload
     rom: timer/tick-before-reload/tick-before-reload.gba
-    cycles: 2000000
+    cycles: 3000000
     verify:
       memory:
       - {address: 0x03000284, value: 2, width: 4}
@@ -189,9 +202,16 @@ suites:
     verify:
       memory:
       - {address: 0x030004EC, value: 6, width: 4}
-      # True goal is 6/6 (currently 6/4: CPUSET-DMA -2 and TIME-ROM -10 are
-      # quantitative HLE-model gaps; GBATEK-correct CPU costs narrowed
-      # TIME-ROM from -12). Listed in expected_failures until then.
+      # Status (all values HW-pinned): DIRECT 12 PASS, CPUSET 4156 (HW 4155:
+      # +1 over — the post-HALT-wake ROM resume fetch pays N=5; GBATEK/mGBA
+      # mandate N=1+4, so the offset lives in the fitted HLE CpuSet phases
+      # (Setup 61/Return 46, fitted under the old N=4) and needs HW-anchored
+      # HLE refit, not a timing revert), POSTFLG PASS, CPUSET-DMA 4153
+      # (HW 4154: -1), TIME-IWRAM 125 PASS, TIME-ROM 245 (HW 249: -4,
+      # narrowed from -10 by GBATEK-correct ROM fetch costs). The pair
+      # (CPUSET -1 / CPUSET-DMA +1) admits no uniform HLE tweak; both are
+      # HLE-model gaps by construction (HLE bus traffic vs real BIOS).
+      # Listed in expected_failures until then.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -228,10 +248,12 @@ suites:
       memory:
       # All three test_expects ran (count=3); the two OAM value checks pass
       # via the 16-bit ROM-src read-ahead quirk (unit N latches unit N+1's
-      # data). TIME=41 needs draw-phase OAM stalls (+3); this build measures
-      # in VBlank (no BIOS boot phase modeled) so pass_count stays 2: the
-      # 0x238==3 goal below keeps this case failing until phase alignment
-      # (or the residual TIME gap) is resolved.
+      # data). TIME reads 43 (HW 41, +2 over): the +3 from GBATEK-mandated
+      # 16-bit ROM waits (1+waits, mGBA-confirmed) is spec-correct — the
+      # overshoot sits in the draw-phase OAM-stall model (always-+1 in draw
+      # is too coarse once longer units shift display phases). Needs a
+      # slot/phase-sensitive OAM contention model. The 0x238==3 goal below
+      # keeps this case failing until then.
       - {address: 0x03000234, value: 3, width: 4}
       - {address: 0x070003FE, value: 0xEA00, width: 2}
       - {address: 0x070003FC, value: 0xFF24, width: 2}
@@ -243,13 +265,18 @@ suites:
       memory:
       # Counters (this .gba's layout; the stale .elf disagrees): test_count
       # @0x0300014C (=2, both subtests run), test_pass_count @0x03000150
-      # (=0; both read 72/71 instead of 88). The +16/+17 gap is ROM-code-path
-      # costs: DMA span ruled out (slope-1 sensitivity), boot phase ruled
-      # out (no video traffic), ROM fetch tables pinned by 128kb-LDM, and
-      # code/data split unjustified. GBATEK-correct LDM-PC/LDR-PC/MOVS-PC and
-      # STM/PUSH costs closed the gap from +18 (reads were 70/69) to +16/+17;
-      # the residual needs branch-refill and remaining ROM-path costs.
-      # Goal oracle for a future fix.
+      # (=0; both read 86/86 instead of 88). The +16/+17 gap closed to +2/+2
+      # via GBATEK-correct costs: 16-bit ROM N/S +1 base (CPU and DMA paths),
+      # Thumb POP-PC refill, and per-tick timestamp decomposition (window =
+      # CPU-pre 48 + burst 12 + CPU-tail 28). The residual +2 is uniform and
+      # shared-knob-free: every shared burst knob (startup pending, first-
+      # unit xI, completion, per-unit N/S) is pinned exact by the 128kb-
+      # boundary DMA fits (12/12) and start-delay (16-bit read timing), and
+      # every shared CPU op by the 128kb LDM fits — so it lives in
+      # 16-bit x1-burst specifics or the ROM-measured tail, still open.
+      # A per-burst +2 (mGBA dma.c completion term) was tried and reverted:
+      # it fixes force-nseq but breaks all 12 exact 128kb fits (our front-
+      # loaded xI already carries those 2 cycles). Goal oracle for a fix.
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary

@@ -209,13 +209,15 @@ fn handle_empty_multiple(
         regs.set_r(base_register, address.wrapping_add(0x40));
         regs.set_cpsr_t(target & 1 != 0);
         regs.set_pc(target);
-        19
+        // Empty LDM = 16 words incl. PC: (16+1)S+2N+1I, same as ARM.
+        20
     } else {
         // Empty STM stores the R15 value observed at execute time
         // (fetch address = instruction + 4 in Thumb state).
         bus.write32(address, regs.pc());
         regs.set_r(base_register, address.wrapping_add(0x40));
-        18
+        // Empty STM = 16 words: (16-1)S+2N, same as ARM.
+        17
     }
 }
 
