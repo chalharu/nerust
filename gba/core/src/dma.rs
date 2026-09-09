@@ -166,10 +166,11 @@ impl GbaDma {
         let both_gamepak = (0x08000000..=0x0DFFFFFF).contains(&source)
             && (0x08000000..=0x0DFFFFFF).contains(&destination);
         // NOTE: this per-unit internal overhead plus the two quirks below
-        // jointly fit nba 128kb-boundary's 18 HW constants (reverting to a
-        // purely GBATEK-formula model regresses it 18/18 -> 8/18).
-        // basic-timing's 2.0 cycles/unit burst rate therefore needs a joint
-        // DMA-timing re-fit (dedicated follow-up), not a constant tweak.
+        // jointly fit nba 128kb-boundary's 18 HW constants. basic-timing's
+        // 2.0 cycles/unit HBlank burst rate is fitted separately by the
+        // zero-wait I/O region in dma_bus_wait (joint-fit finding: the only
+        // single-constant change keeping all 18 green; an IWRAM-sequential
+        // alternative is indistinguishable with current data).
         let internal: u32 = if both_gamepak { 4 } else { 2 };
         let mut total_wait = u32::from(src_wait) + u32::from(dst_wait) + internal;
         // Hardware DMA has 2-cycle less overhead for 4-word bursts (pipeline overlap).
@@ -358,7 +359,12 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16) -> u8 {
             }
         }
         0x03000000..=0x03FFFFFF => 1,
-        0x04000000..=0x040003FE => 1,
+        // DMA to/from I/O registers does not incur the CPU's I/O wait
+        // (joint-fit finding: with the CPU's 1-cycle wait the HBlank/video
+        // sampling bursts run at 3.0 cycles/unit, but hardware measures
+        // exactly 2.0; zeroing it fits those plus all 128kb-boundary
+        // constants, which use no I/O traffic and stay green).
+        0x04000000..=0x040003FE => 0,
         0x05000000..=0x05FFFFFF => 1,
         0x06000000..=0x06FFFFFF => 1,
         0x07000000..=0x07FFFFFF => 1,

@@ -605,7 +605,7 @@ mod tests {
         let mut palette = vec![0; 0x400];
         let mut oam = vec![0; 0x400];
         // Disable OBJs 1..127 (attr0 bit 9), keep OBJ0 enabled at (0,0).
-        for entry in oam.chunks_exact_mut(8).skip(1) {
+        for entry in oam.as_chunks_mut::<8>().0.iter_mut().skip(1) {
             entry[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
         }
         vram[0] = 0; // Mode 4 frame pixel (0,0): transparent color 0.
@@ -777,16 +777,16 @@ mod tests {
     fn vcounter_irq_on_dispstat_write() {
         let mut ppu = GbaPpu::new();
         // VCOUNT=0, write LYC=0 with enable -> immediate IRQ.
-        let irq = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        let irq = ppu.write_register(0x04000004, 1 << 5);
         assert_eq!(irq, 1 << 2);
         assert_ne!(ppu.dispstat() & (1 << 2), 0);
         // Same write again (already matching, already enabled) -> no repeat IRQ.
-        let irq2 = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        let irq2 = ppu.write_register(0x04000004, 1 << 5);
         assert_eq!(irq2, 0);
         // Enable rising while already matching -> IRQ.
         ppu.write_register(0x04000004, 0 << 8); // disable, LYC=0 still match, no IRQ
-        assert_eq!(ppu.dispstat() & (1 << 2), 0 | 4);
-        let irq3 = ppu.write_register(0x04000004, (1 << 5) | (0 << 8));
+        assert_eq!(ppu.dispstat() & (1 << 2), 4);
+        let irq3 = ppu.write_register(0x04000004, 1 << 5);
         assert_eq!(irq3, 1 << 2);
     }
 

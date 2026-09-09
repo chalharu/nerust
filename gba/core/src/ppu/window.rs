@@ -59,7 +59,7 @@ mod tests {
         // GBATEK: X1>X2 is garbage interpreted as X2=240 (no wrap to [0,X2)).
         // X1=200,X2=100 -> [200,240); x=50 must be outside.
         let horizontal = (200u16 << 8) | 100u16;
-        let vertical = (0u16 << 8) | 160u16;
+        let vertical = 160u16;
         assert!(in_window(horizontal, vertical, 210, 10));
         assert!(!in_window(horizontal, vertical, 50, 10));
         assert!(!in_window(horizontal, vertical, 210, 170));
