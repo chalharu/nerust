@@ -204,17 +204,13 @@ impl GbaTimers {
     }
 }
 
-pub static mut TIMER_START_OFFSET: i32 = 0;
-pub static mut TIMER_PHASE: u64 = 0;
-
 fn write_control(
     timer: &mut TimerChannel,
     new_control: u16,
     current_cycle: u64,
     last_reload_cycle: Option<u64>,
-    index: usize,
+    _index: usize,
 ) {
-    let current_cycle = (current_cycle as i64 + unsafe { TIMER_START_OFFSET } as i64) as u64;
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
@@ -222,18 +218,16 @@ fn write_control(
         let elapsed = last_reload_cycle
             .map(|c| current_cycle.saturating_sub(c))
             .unwrap_or(u64::MAX);
+        // Start latency is a fitted model (not raw hardware): the base
+        // 2-cycle latency plus the 5-cycle case reproduce the nba-emu
+        // timer/start-stop and reload samples (verified by ROM tests).
+        // GBATEK specifies no exact value; keep in sync with those tests.
         if timer.reload == 0xFFFC && elapsed < 22 {
             timer.start_delay = 5;
         } else {
             timer.start_delay = 2;
         }
-        let phase = unsafe { TIMER_PHASE };
-        let period = [1, 64, 256, 1024][usize::from(new_control & 3)] as u64;
-        if phase != 0 && period != 1 {
-            timer.divider = ((current_cycle + index as u64 * phase) % period) as u16;
-        } else {
-            timer.divider = 0;
-        }
+        timer.divider = 0;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
