@@ -12,10 +12,11 @@ pub(crate) fn pixel(
     vram: &[u8],
     palette: &[u8],
     oam: &[u8],
-    x: usize,
-    y: usize,
+    pos: (usize, usize),
     window_only: bool,
+    mosaic: u16,
 ) -> Option<LayerPixel> {
+    let (x, y) = pos;
     let dropped = cycle_drop_mask(registers, oam, y);
     let mut best: Option<(LayerPixel, usize)> = None;
     for index in (0..128).rev() {
@@ -25,7 +26,7 @@ pub(crate) fn pixel(
         let Some(object) = decode_object(oam, index, window_only) else {
             continue;
         };
-        let Some((local_x, local_y)) = object.coordinates(registers, oam, x, y) else {
+        let Some((local_x, local_y)) = object.coordinates(oam, x, y, mosaic) else {
             continue;
         };
         let Some(palette_index) = object.palette_index(registers, vram, local_x, local_y) else {
@@ -89,13 +90,7 @@ fn decode_object(oam: &[u8], index: usize, window_only: bool) -> Option<Object> 
 }
 
 impl Object {
-    fn coordinates(
-        &self,
-        registers: &PpuRegisters,
-        oam: &[u8],
-        x: usize,
-        y: usize,
-    ) -> Option<(usize, usize)> {
+    fn coordinates(&self, oam: &[u8], x: usize, y: usize, mosaic: u16) -> Option<(usize, usize)> {
         let origin_x = signed_origin(self.attr1 & 0x1FF, 256, 512);
         // GBATEK OAM Attr0 Caution: very large OBJ (128px vertical, i.e. 64px
         // in Double Size) at Y>128 is treated as Y>-128 (8-bit adder overflow).
@@ -115,7 +110,7 @@ impl Object {
         if self.attr0 & (1 << 12) != 0 {
             let mut held = (local_x, local_y);
             crate::ppu::mosaic::apply_obj_mosaic(
-                registers.mosaic,
+                mosaic,
                 (x, y),
                 (origin_x, origin_y),
                 &mut held,
@@ -353,11 +348,11 @@ mod tests {
         let mut oam = vec![0u8; 0x400];
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0, 0]); // 8x8 at (0,0), tile 0
         // Tile 0 in mode 3 must be ignored.
-        assert!(pixel(&regs, &vram, &palette, &oam, 0, 0, false).is_none());
+        assert!(pixel(&regs, &vram, &palette, &oam, (0, 0), false, regs.mosaic).is_none());
         // Tile 512 must be displayed.
         oam[4..6].copy_from_slice(&512u16.to_le_bytes());
         vram[0x10000 + 512 * 32] = 1;
-        assert!(pixel(&regs, &vram, &palette, &oam, 0, 0, false).is_some());
+        assert!(pixel(&regs, &vram, &palette, &oam, (0, 0), false, regs.mosaic).is_some());
     }
 
     #[test]
@@ -376,7 +371,7 @@ mod tests {
         oam[0..2].copy_from_slice(&0x1000u16.to_le_bytes()); // Y=0, mosaic
         oam[2..4].copy_from_slice(&1u16.to_le_bytes()); // X=1, 8x8
         oam[4..6].copy_from_slice(&0u16.to_le_bytes()); // tile 0
-        let pixel = pixel(&regs, &vram, &palette, &oam, 2, 0, false).expect("pixel");
+        let pixel = pixel(&regs, &vram, &palette, &oam, (2, 0), false, regs.mosaic).expect("pixel");
         assert_eq!(pixel.color, 0x7C00);
     }
 
@@ -437,7 +432,6 @@ mod tests {
     #[test]
     fn tall_obj_wraps_above_128() {
         // 64x64 double-size (128px field) at Y=140 must appear at top, not bottom.
-        let regs = regs_2d();
         let mut oam = vec![0u8; 0x400];
         // attr0: affine (bit8) + double (bit9) + square (shape 0); Y=140
         oam[0..2].copy_from_slice(&(140u16 | (1 << 8) | (1 << 9)).to_le_bytes());
@@ -447,7 +441,7 @@ mod tests {
         let obj = decode_object(&oam, 0, false).expect("object");
         assert_eq!(obj.field_height, 128);
         // y=5 (top) is inside wrapped field [-116,12); y=150 (bottom) is outside.
-        assert!(obj.coordinates(&regs, &oam, 0, 5).is_some() || line_cost(&oam, 0, 5) > 2);
+        assert!(obj.coordinates(&oam, 0, 5, 0).is_some() || line_cost(&oam, 0, 5) > 2);
         // Direct coordinate check via pixel path would need identity matrix;
         // verify origin logic: y_max=(140+128)&255=12 <140 -> origin -116.
         let y_raw = 140u32;

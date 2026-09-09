@@ -3,7 +3,8 @@ use crate::ppu::color::read_color;
 use crate::ppu::mosaic::bg_mosaic;
 
 /// Per-pixel BG render context: registers, affine accumulators, memories,
-/// and the hardware BG VRAM fetch latch (NBA `vram_bg_latch`).
+/// the hardware BG VRAM fetch latch (NBA `vram_bg_latch`), and the
+/// line-latched MOSAIC value (mid-scanline MOSAIC writes defer to next line).
 struct BgContext<'a> {
     registers: &'a PpuRegisters,
     internal: ([i32; 2], [i32; 2]),
@@ -11,6 +12,7 @@ struct BgContext<'a> {
     palette: &'a [u8],
     latch: &'a mut u16,
     boundary: usize,
+    mosaic: u16,
 }
 
 impl BgContext<'_> {
@@ -50,10 +52,11 @@ pub(crate) fn pixel(
     internal: ([i32; 2], [i32; 2]),
     memory: (&[u8], &[u8]),
     bg: usize,
-    x: usize,
-    y: usize,
+    pos: (usize, usize),
     latch: &mut u16,
+    mosaic: u16,
 ) -> Option<LayerPixel> {
+    let (x, y) = pos;
     let (vram, palette) = memory;
     let mode = (registers.dispcnt & 7) as usize;
     let kind = match (mode, bg) {
@@ -73,6 +76,7 @@ pub(crate) fn pixel(
         palette,
         latch,
         boundary,
+        mosaic,
     };
     let color = match kind {
         BgKind::Text => text_pixel(&mut ctx, bg, cnt, x, y)?,
@@ -91,7 +95,7 @@ fn text_pixel(ctx: &mut BgContext<'_>, bg: usize, cnt: u16, x: usize, y: usize) 
     // Mosaic-held screen coords feed both the tile lookup and the sub-pixel
     // (output-latch equivalent: the whole block shows the origin pixel,
     // flip included). Scroll is added after, so blocks stay screen-fixed.
-    let (mosaic_x, mosaic_y) = bg_mosaic(ctx.registers, cnt, x, y);
+    let (mosaic_x, mosaic_y) = bg_mosaic(ctx.mosaic, cnt, x, y);
     let size = (cnt >> 14) & 3;
     let width = if size & 1 != 0 { 512 } else { 256 };
     let height = if size & 2 != 0 { 512 } else { 256 };
@@ -134,7 +138,7 @@ fn text_pixel(ctx: &mut BgContext<'_>, bg: usize, cnt: u16, x: usize, y: usize) 
 
 fn affine_pixel(ctx: &mut BgContext<'_>, bg: usize, cnt: u16, x: usize, y: usize) -> Option<u16> {
     let affine = bg - 2;
-    let (mx, my) = bg_mosaic(ctx.registers, cnt, x, y);
+    let (mx, my) = bg_mosaic(ctx.mosaic, cnt, x, y);
     let rel_x = mx as i32;
     // Vertical mosaic renders the held source line `my`: rewind the internal
     // reference (already advanced to line `y`) by the per-line increments.
@@ -161,7 +165,7 @@ fn affine_pixel(ctx: &mut BgContext<'_>, bg: usize, cnt: u16, x: usize, y: usize
 }
 
 fn bitmap_pixel(ctx: &mut BgContext<'_>, mode: usize, x: usize, y: usize) -> Option<u16> {
-    let (mx, my) = bg_mosaic(ctx.registers, ctx.registers.bgcnt[2], x, y);
+    let (mx, my) = bg_mosaic(ctx.mosaic, ctx.registers.bgcnt[2], x, y);
     let mosaic_lines = y.saturating_sub(my) as i32;
     let line_x = ctx.internal.0[0] - mosaic_lines * i32::from(ctx.registers.pb[0]);
     let line_y = ctx.internal.1[0] - mosaic_lines * i32::from(ctx.registers.pc[0]);
