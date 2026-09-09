@@ -17,7 +17,7 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
             let op = ((instr >> 6) & 0xF) as u8;
             let takes_icycle = matches!(op, 0xD)
                 || (matches!(op, 0x2..=0x4 | 0x7)
-                    && regs.r((((instr >> 3) & 0x7)) as usize) & 0xFF != 0);
+                    && regs.r(((instr >> 3) & 0x7) as usize) & 0xFF != 0);
             if takes_icycle {
                 bus.note_internal_cycle();
             }
