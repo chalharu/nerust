@@ -11,6 +11,12 @@ expected_failures:
 - nba_dma_start_delay
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
+# The 8 image cases below ship PHOTOGRAPHS of real hardware as reference
+# (4000x3000 etc., never 240x160), so the harness fails them on dimensions
+# before any pixel is compared: no emulator rendering can pass. Their PPU
+# mechanisms are fixed and verified separately (OBJ-live enables, affine
+# enable-gating, forced-blank restart, mid-line DMA visibility proven via
+# targeted probes; structured outputs confirmed sane).
 - nba_archive_ppu_mode2
 - nba_archive_ppu_mode3
 - nba_archive_ppu_mode4

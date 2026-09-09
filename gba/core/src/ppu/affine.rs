@@ -7,7 +7,8 @@
 
 /// Advance the internal affine accumulators by one scanline (PB/PD),
 /// skipping the increment when a HBlank BGX/Y write has already updated
-/// the reference for the next line (GBATEK per-scanline affine).
+/// the reference for the next line (GBATEK per-scanline affine), and
+/// skipping disabled BGs entirely (NBA #177).
 #[inline]
 pub fn advance_line(
     internal_x: &mut [i32; 2],
@@ -15,8 +16,13 @@ pub fn advance_line(
     pb: [i16; 2],
     pd: [i16; 2],
     ref_written: &mut [bool; 2],
+    enabled: [bool; 2],
 ) {
     for affine in 0..2 {
+        if !enabled[affine] {
+            ref_written[affine] = false;
+            continue;
+        }
         if ref_written[affine] {
             ref_written[affine] = false;
             continue;
