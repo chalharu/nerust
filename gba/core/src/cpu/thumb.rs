@@ -12,9 +12,13 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
         0x4000..=0x43FF => {
             let cycles = thumb_opcodes::alu::handle(regs, instr);
             // Register shifts (LSL/LSR/ASR/ROR) and MUL take an internal
-            // cycle (GBATEK "Prefetch Disable Bug").
+            // cycle (GBATEK "Prefetch Disable Bug"), but a zero shift
+            // amount costs no internal cycle (ARM7TDMI).
             let op = ((instr >> 6) & 0xF) as u8;
-            if matches!(op, 0x2..=0x4 | 0x7 | 0xD) {
+            let takes_icycle = matches!(op, 0xD)
+                || (matches!(op, 0x2..=0x4 | 0x7)
+                    && regs.r((((instr >> 3) & 0x7)) as usize) & 0xFF != 0);
+            if takes_icycle {
                 bus.note_internal_cycle();
             }
             cycles
