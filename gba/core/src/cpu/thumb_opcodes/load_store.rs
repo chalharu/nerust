@@ -149,7 +149,7 @@ fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
         if (rlist >> i) & 1 == 0 {
             continue;
         }
-        regs.set_r(i, bus.read32(addr));
+        regs.set_r(i, bus.read_aligned32(addr));
         addr = addr.wrapping_add(4);
         count += 1;
     }

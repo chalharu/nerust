@@ -292,6 +292,12 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
     let was_enabled = dma.control & 0x8000 != 0;
     // GBATEK DMA: DRQ (bit 11) exists on DMA3 only (mGBA masks 0xF7E0 below).
     dma.control = value & if channel == 3 { 0xFFE0 } else { 0xF7E0 };
+    // GBATEK DMA3: "Repeat must be zero if Bit11 (DRQ) is set". Enforce by
+    // clearing Repeat when DRQ is written, so a DRQ+Repeat combo cannot arm
+    // a repeat channel the hardware would refuse.
+    if channel == 3 && dma.control & 0x0800 != 0 {
+        dma.control &= !0x0200;
+    }
     if dma.control & 0x8000 != 0 && !was_enabled {
         dma.current_source = dma.source
             & if channel == 0 {

@@ -12,11 +12,16 @@ pub enum EventType {
 pub struct ScheduledEvent {
     pub target_tcycle: u64,
     pub event_type: EventType,
+    /// Insertion sequence stamped by `schedule`: broken ties pop FIFO so
+    /// same-tick dispatch order is principled, not heap-accidental.
+    pub seq: u64,
 }
 
 impl Ord for ScheduledEvent {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.target_tcycle.cmp(&other.target_tcycle)
+        self.target_tcycle
+            .cmp(&other.target_tcycle)
+            .then(self.seq.cmp(&other.seq))
     }
 }
 
@@ -29,16 +34,21 @@ impl PartialOrd for ScheduledEvent {
 #[derive(Debug, Default)]
 pub struct EventScheduler {
     heap: BinaryHeap<Reverse<ScheduledEvent>>,
+    next_seq: u64,
 }
 
 impl EventScheduler {
     pub fn new() -> Self {
         Self {
             heap: BinaryHeap::new(),
+            next_seq: 0,
         }
     }
 
     pub fn schedule(&mut self, event: ScheduledEvent) {
+        let mut event = event;
+        event.seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
         self.heap.push(Reverse(event));
     }
 
@@ -81,10 +91,12 @@ mod tests {
         sched.schedule(ScheduledEvent {
             target_tcycle: 100,
             event_type: EventType::HBlank,
+            seq: 0,
         });
         sched.schedule(ScheduledEvent {
             target_tcycle: 50,
             event_type: EventType::VBlank,
+            seq: 0,
         });
         assert_eq!(sched.peek().unwrap().target_tcycle, 50);
         let due = sched.pop_due(60);

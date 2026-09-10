@@ -103,8 +103,10 @@ pub struct GbaMemoryBus {
     halted: bool,
     halt_irq_mask: u16,
     /// Stop mode latched (HALTCNT bit 7, GBATEK "System Control"): the CPU
-    /// stays parked until an interrupt, like Halt. Timers/PPU keep ticking
-    /// (full Stop power-down is not modeled).
+    /// stays parked until a wake interrupt arrives. GBATEK SWI 03h stops the
+    /// CPU, system clock, sound, video, SIO-shift clock, DMAs and timers, so
+    /// the PPU/timers/DMA are frozen here too (see `tick`'s stopped branch);
+    /// only the IRQ pipeline keeps running so a wake request can land.
     stopped: bool,
     /// IntrWait/VBlankIntrWait wake-clear mask (GBATEK: waited flags are
     /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
@@ -452,6 +454,7 @@ impl GbaMemoryBus {
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle + 1,
                 event_type: EventType::HBlank,
+                seq: 0,
             });
         }
         if event.vblank_started {
@@ -459,6 +462,7 @@ impl GbaMemoryBus {
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle + 1,
                 event_type: EventType::VBlank,
+                seq: 0,
             });
         }
         if event.line_started {
@@ -489,6 +493,7 @@ impl GbaMemoryBus {
                     self.scheduler.schedule(ScheduledEvent {
                         target_tcycle: self.current_tcycle,
                         event_type: EventType::TimerOverflow(i),
+                        seq: 0,
                     });
                     // DirectSound (GBATEK SOUNDCNT_H + "DMA-Sound Playback
                     // Procedure"): the overflowing timer clocks one sample
@@ -532,6 +537,7 @@ impl GbaMemoryBus {
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
+                seq: 0,
             });
             let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
             // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
@@ -640,6 +646,14 @@ impl GbaMemoryBus {
                 self.ie = ie;
                 self.ime = ime;
                 self.sif = sif;
+                // GBATEK Stop wake sources are "as far as enabled in IE
+                // register" (present tense): while stopped, track IE edits
+                // instead of keeping enter_stop's entry-time snapshot.
+                // (Plain Halt never sets `stopped`, so its IntrWait mask is
+                // unaffected.)
+                if self.stopped {
+                    self.halt_irq_mask = ie & 0x3080;
+                }
                 // BIOS IRQ-flags mirror follows the effective IF.
                 self.iwram[0x7FF8..0x7FFA].copy_from_slice(&sif.to_le_bytes());
                 let avail = ie & sif != 0;
@@ -909,10 +923,12 @@ impl GbaMemoryBus {
     }
 
     pub fn bios_checksum(&self) -> u32 {
-        // GBATEK GetBiosChecksum: the real 16K BIOS sums to $BAAE7764. The
-        // HLE BIOS image carries no ROM bytes, so report the hardware value
-        // directly instead of summing the (zero) placeholder.
-        0xBAAE_7764
+        // GBATEK GetBiosChecksum: the real 16K BIOS sums to $BAAE187F (GBA /
+        // GBA SP; $BAAE1880 on NDS/3DS-in-GBA-mode). The HLE BIOS image
+        // carries no ROM bytes, so report the hardware value directly
+        // instead of summing the (zero) placeholder. Pinned by the
+        // PeterLemon BIOSCHECKSUM ROM's in-ROM `cmp r0,$BAAE187F` check.
+        0xBAAE_187F
     }
 
     // -----------------------------------------------------------------------
