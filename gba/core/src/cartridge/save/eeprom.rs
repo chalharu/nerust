@@ -99,6 +99,17 @@ impl EepromSave {
                 return None;
             }
             if is_read {
+                // GBATEK EEPROM read request: `11` + addr(6/14) + `0`
+                // (9/17 bits). Accept the trailing stop bit or its omission
+                // (both seen in the wild), but reject overlong frames.
+                let exact = 2 + addr_bits;
+                let with_stop = exact + 1;
+                if frame.len() != exact && frame.len() != with_stop {
+                    return None;
+                }
+                if frame.len() == with_stop && frame[exact] {
+                    return None;
+                }
                 let mut addr = 0usize;
                 for i in 0..addr_bits {
                     addr = (addr << 1) | usize::from(frame[2 + i]);

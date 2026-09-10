@@ -33,54 +33,78 @@ impl Gpio {
     /// of data/direction which returns 00h per GBATEK — still `Some(0)`).
     pub fn read(&self, addr: u32, width: u8) -> Option<u32> {
         // GBATEK cartridge GPIO: the C4/C6/C8 registers mirror across the
-        // WS0/WS1/WS2 ROM regions (08/0A/0C).
-        if width != 2
-            || !matches!(
-                addr,
-                0x080000C4
-                    | 0x080000C6
-                    | 0x080000C8
-                    | 0x0A0000C4
-                    | 0x0A0000C6
-                    | 0x0A0000C8
-                    | 0x0C0000C4
-                    | 0x0C0000C6
-                    | 0x0C0000C8
-            )
-        {
+        // WS0/WS1/WS2 ROM regions (08/0A/0C). ROM-bus accesses are 16/32-bit
+        // (STRB opcodes ignored); a 32-bit read composes two halves.
+        match width {
+            2 => self.read_half(addr).map(u32::from),
+            4 => {
+                let lo = self.read_half(addr)?;
+                let hi = self.read_half(addr.wrapping_add(2)).unwrap_or(0);
+                Some(lo as u32 | ((hi as u32) << 16))
+            }
+            _ => None,
+        }
+    }
+
+    fn read_half(&self, addr: u32) -> Option<u16> {
+        if !matches!(
+            addr,
+            0x080000C4
+                | 0x080000C6
+                | 0x080000C8
+                | 0x0A0000C4
+                | 0x0A0000C6
+                | 0x0A0000C8
+                | 0x0C0000C4
+                | 0x0C0000C6
+                | 0x0C0000C8
+        ) {
             return None;
         }
         if !self.attached {
             return None;
         }
         Some(match addr & 0xFF {
-            0xC8 => u32::from(self.control),
+            0xC8 => self.control,
             _ if self.control & 1 == 0 => 0,
-            0xC4 => u32::from(self.data & self.direction),
-            _ => u32::from(self.direction & 0xF),
+            0xC4 => self.data & self.direction,
+            _ => self.direction & 0xF,
         })
     }
 
     /// CPU write to the GPIO window. Returns true when consumed (control
     /// writes always attach on bit 0; data/direction writes need enable).
     pub fn write(&mut self, addr: u32, width: u8, value: u32) -> bool {
-        if width != 2
-            || !matches!(
-                addr,
-                0x080000C4
-                    | 0x080000C6
-                    | 0x080000C8
-                    | 0x0A0000C4
-                    | 0x0A0000C6
-                    | 0x0A0000C8
-                    | 0x0C0000C4
-                    | 0x0C0000C6
-                    | 0x0C0000C8
-            )
-        {
+        match width {
+            2 => self.write_half(addr, (value & 0xFFFF) as u16),
+            // A 32-bit write splits into two halfword writes; consumed if
+            // either half hits a register.
+            4 => {
+                let lo = self.write_half(addr, (value & 0xFFFF) as u16);
+                let hi = self.write_half(addr.wrapping_add(2), (value >> 16) as u16);
+                lo || hi
+            }
+            _ => false,
+        }
+    }
+
+    fn write_half(&mut self, addr: u32, v: u16) -> bool {
+        // Only exact C4/C6/C8 halfwords (per mirror) are registers; other
+        // halves of a split 32-bit write fall through to ROM.
+        if !matches!(
+            addr,
+            0x080000C4
+                | 0x080000C6
+                | 0x080000C8
+                | 0x0A0000C4
+                | 0x0A0000C6
+                | 0x0A0000C8
+                | 0x0C0000C4
+                | 0x0C0000C6
+                | 0x0C0000C8
+        ) {
             return false;
         }
-        let v = (value & 0xFFFF) as u16;
         if addr & 0xFF == 0xC8 {
             self.control = v & 1;
             if self.control & 1 != 0 {
@@ -148,7 +172,23 @@ mod tests {
     #[test]
     fn wrong_width_or_address_falls_through() {
         let gpio = Gpio::new();
-        assert_eq!(gpio.read(0x080000C4, 4), None);
+        assert_eq!(gpio.read(0x080000C4, 1), None);
         assert_eq!(gpio.read(0x080000C0, 2), None);
+        // Dormant 32-bit reads fall through as well.
+        assert_eq!(gpio.read(0x080000C4, 4), None);
+    }
+
+    #[test]
+    fn thirty_two_bit_access_composes_halves() {
+        // GBATEK: ROM-bus GPIO works with 16/32-bit accesses (STRB ignored).
+        let mut gpio = Gpio::new();
+        assert!(gpio.write(0x080000C8, 4, 0x0000_0001));
+        assert!(gpio.is_attached());
+        assert!(gpio.write(0x080000C4, 4, 0xFFFF_FFFF));
+        // Low half (C4) = data&direction, high half (C6) = direction.
+        assert_eq!(gpio.read(0x080000C6, 2), Some(0xF));
+        assert_eq!(gpio.read(0x080000C4, 4), Some(0x000F_000F));
+        // Control composes with the zero-filled byte past C8.
+        assert_eq!(gpio.read(0x080000C8, 4), Some(0x0000_0001));
     }
 }
