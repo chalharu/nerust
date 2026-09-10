@@ -106,6 +106,19 @@ impl GbaTimers {
             return (false, 0);
         }
         if let Some((c, irq)) = Self::handle_start_delay(timer, index) {
+            // mGBA GBATimerUpdate cascades synchronously: a lower timer's
+            // overflow still clocks this counter during enable latency
+            // (applied after the state's own action, so the state-2 reload
+            // load keeps mGBA's preload-then-++ order).
+            if incoming_cascade {
+                let cascade_out = increment(timer);
+                let cascade_irq = if cascade_out && timer.control & (1 << 6) != 0 {
+                    1 << (3 + index)
+                } else {
+                    0
+                };
+                return (c || cascade_out, irq | cascade_irq);
+            }
             return (c, irq);
         }
         let tick = Self::should_tick(timer, index, incoming_cascade);

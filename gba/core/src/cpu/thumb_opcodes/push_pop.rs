@@ -32,11 +32,12 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
 fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
     let mut address = regs.sp();
     for register in selected_registers(list) {
-        regs.set_r(register, bus.read32(address));
+        // GBATEK forces align for PUSH/POP (mGBA LoadMultiple aligns).
+        regs.set_r(register, bus.read_aligned32(address));
         address = address.wrapping_add(4);
     }
     if pc {
-        let target = bus.read32(address);
+        let target = bus.read_aligned32(address);
         // GBATEK THUMB.14: POP {PC} ignores the LSB — the processor remains
         // in Thumb state even if bit0 was cleared (LSB-switch is ARM9-only;
         // use POP/BX to switch). set_pc masks bit0 in Thumb state.
