@@ -145,10 +145,16 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(1)
         }
         0x06 => {
+            // Fixed charge: the ROM itself pins TIMER0=0xE2 for
+            // ($FEDCBA98, $1234), identical to our ($12345678, $1000) pin
+            // despite wildly different magnitudes — the loop is effectively
+            // constant-length, so no operand-dependent model (a variable
+            // slope demonstrably breaks the BIOSDIV screenshot).
             div(regs);
             SwiResult::Return(0xE2)
         }
         0x07 => {
+            // Same: ROM pins TIMER0=0xE5 for DivArm($1234, $FEDCBA98).
             div_arm(regs);
             SwiResult::Return(0xE5)
         }

@@ -209,8 +209,8 @@ fn handle_empty_multiple(
         regs.set_r(base_register, address.wrapping_add(0x40));
         // GBATEK THUMB.14: like POP {PC}, the LSB is ignored on ARMv4T.
         regs.set_pc(target);
-        // Empty LDM = 16 words incl. PC: (16+1)S+2N+1I, same as ARM.
-        20
+        // GBATEK: empty list loads R15 only (n=1): (n+1)S+2N+1I = 5.
+        5
     } else {
         // Empty STM stores R15+2 in Thumb state (mGBA GBAStoreMultiple:
         // +WORD_SIZE_THUMB; ARM uses +WORD_SIZE_ARM) — pinned by jsmolka
@@ -218,8 +218,8 @@ fn handle_empty_multiple(
         // `mov r1, pc` one instruction later.
         bus.write32(address, regs.pc().wrapping_add(2));
         regs.set_r(base_register, address.wrapping_add(0x40));
-        // Empty STM = 16 words: (16-1)S+2N, same as ARM.
-        17
+        // GBATEK: empty list stores R15 only (n=1): (n-1)S+2N = 2.
+        2
     }
 }
 

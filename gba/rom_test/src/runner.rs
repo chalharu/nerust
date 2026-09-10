@@ -134,6 +134,11 @@ fn run_case_inner(
     }
 
     // Verify reference if present (check for .png next to rom)
+    // NOTE: `skip_screenshot` only suppresses saving the artifact screenshot
+    // above; the reference compare below still runs when a sibling .png /
+    // expected.png(.jpg) exists. That compare is load-bearing: cases with no
+    // `verify:` block (e.g. the six BIOSSound* driver cases) rely on it as
+    // their only check, since an empty check list is a hard failure below.
     verify_reference_if_present(selected, rom_root, &rendered, artifacts_dir, acc)?;
 
     // Verify memory/registers/frame_pixels

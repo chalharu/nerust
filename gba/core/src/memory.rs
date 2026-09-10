@@ -1450,8 +1450,10 @@ impl GbaMemoryBus {
                 if value & 0x8000 == 0 {
                     self.enter_halt(self.ie);
                 } else {
-                    self.stopped = true;
-                    self.enter_halt(self.ie);
+                    // Direct Stop uses the same restricted wake mask as SWI
+                    // Stop (keypad/GamePak/serial only): timers, DMA and
+                    // video are paused in Stop mode and cannot wake it.
+                    self.enter_stop();
                 }
             }
             self.open_bus_value = value;
@@ -1479,8 +1481,8 @@ impl GbaMemoryBus {
                         if value & 0x80 == 0 {
                             self.enter_halt(self.ie);
                         } else {
-                            self.stopped = true;
-                            self.enter_halt(self.ie);
+                            // Same restricted wake mask as SWI Stop (see above).
+                            self.enter_stop();
                         }
                     }
                     self.open_bus_value = value;

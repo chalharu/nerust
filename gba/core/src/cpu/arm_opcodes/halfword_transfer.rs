@@ -29,7 +29,9 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if l {
         regs.set_r(rd, load(bus, addr, s, h));
     } else {
-        let val = regs.r(rd);
+        // Like single_transfer: Rn=R15 stores PC+12 (r(15) already holds
+        // PC+8), only the low halfword reaches the bus.
+        let val = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
         bus.write16(addr, (val & 0xFFFF) as u16);
     }
 
