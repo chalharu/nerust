@@ -501,10 +501,13 @@ impl GbaMemoryBus {
                     });
                     // DirectSound (GBATEK SOUNDCNT_H + "DMA-Sound Playback
                     // Procedure"): the overflowing timer clocks one sample
-                    // byte out of each FIFO selecting it; a FIFO holding 16
-                    // bytes or fewer requests its Special DMA channel.
+                    // byte out of each FIFO selecting it. GBATEK SOUNDCNT_X:
+                    // with master-enable bit 7 clear, PSG and FIFO sounds
+                    // are disabled entirely, so no drain or DMA request runs.
+                    // A FIFO holding 12 bytes or fewer requests its Special
+                    // DMA channel (mGBA audio.c: free words > 4 of 8).
                     // (per-channel: must not trigger an armed DMA3 video).
-                    if i <= 1 {
+                    if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
                         for (fifo_b, select_bit, enable_mask) in
                             [(false, 10, 0x0300), (true, 14, 0x3000)]
                         {
@@ -516,7 +519,7 @@ impl GbaMemoryBus {
                                 continue;
                             }
                             self.apu.drain_fifo(fifo_b);
-                            if self.apu.fifo_len(fifo_b) <= 16
+                            if self.apu.fifo_len(fifo_b) <= 12
                                 && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
                             {
                                 self.dma.trigger_channel(ch, DmaTrigger::Special);
@@ -1355,14 +1358,7 @@ impl GbaMemoryBus {
             0x04000082 => self.apu.soundcnt_hi,
             0x04000084 => self.apu.soundcnt_x,
             0x04000088 => self.apu.soundbias,
-            0x04000090 => u16::from_le_bytes([self.apu.wave_ram[0], self.apu.wave_ram[1]]),
-            0x04000092 => u16::from_le_bytes([self.apu.wave_ram[2], self.apu.wave_ram[3]]),
-            0x04000094 => u16::from_le_bytes([self.apu.wave_ram[4], self.apu.wave_ram[5]]),
-            0x04000096 => u16::from_le_bytes([self.apu.wave_ram[6], self.apu.wave_ram[7]]),
-            0x04000098 => u16::from_le_bytes([self.apu.wave_ram[8], self.apu.wave_ram[9]]),
-            0x0400009A => u16::from_le_bytes([self.apu.wave_ram[10], self.apu.wave_ram[11]]),
-            0x0400009C => u16::from_le_bytes([self.apu.wave_ram[12], self.apu.wave_ram[13]]),
-            0x0400009E => u16::from_le_bytes([self.apu.wave_ram[14], self.apu.wave_ram[15]]),
+            0x04000090..=0x0400009E => self.apu.wave_read(aligned),
             // FIFO_A/B (A0/A4) are write-only; reads return open bus.
             0x04000128 => self.siocnt,
             0x0400012A => self.siodata8 as u16,
@@ -1596,40 +1592,9 @@ impl GbaMemoryBus {
             0x0400007C => self.apu.sound4cnt_hi = v16,
             0x04000080 => self.apu.soundcnt_lo = v16,
             0x04000082 => self.apu.write_soundcnt_hi(v16),
-            0x04000084 => self.apu.soundcnt_x = v16,
+            0x04000084 => self.apu.write_soundcnt_x(v16),
             0x04000088 => self.apu.soundbias = v16,
-            0x04000090 => {
-                self.apu.wave_ram[0] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[1] = (v16 >> 8) as u8;
-            }
-            0x04000092 => {
-                self.apu.wave_ram[2] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[3] = (v16 >> 8) as u8;
-            }
-            0x04000094 => {
-                self.apu.wave_ram[4] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[5] = (v16 >> 8) as u8;
-            }
-            0x04000096 => {
-                self.apu.wave_ram[6] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[7] = (v16 >> 8) as u8;
-            }
-            0x04000098 => {
-                self.apu.wave_ram[8] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[9] = (v16 >> 8) as u8;
-            }
-            0x0400009A => {
-                self.apu.wave_ram[10] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[11] = (v16 >> 8) as u8;
-            }
-            0x0400009C => {
-                self.apu.wave_ram[12] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[13] = (v16 >> 8) as u8;
-            }
-            0x0400009E => {
-                self.apu.wave_ram[14] = (v16 & 0xFF) as u8;
-                self.apu.wave_ram[15] = (v16 >> 8) as u8;
-            }
+            0x04000090..=0x0400009E => self.apu.wave_write(aligned, v16),
             // FIFO_A/B are write-only streaming buffers (GBATEK Sound FIFO):
             // each access appends its bytes; 32-bit writes split above into
             // two halfword pushes in LSB-first order, matching DMA bursts.
@@ -2116,7 +2081,14 @@ mod tests {
             vec![0x0A, 0x0B]
         );
         bus.write16(0x04000090, 0x1234);
-        assert_eq!(bus.apu.wave_ram[0], 0x34);
+        // Default NR30 selects bank 0 for playback, so the CPU sees bank 1.
+        assert_eq!(bus.apu.wave_ram[16], 0x34);
+        assert_eq!(bus.read16(0x04000090), 0x1234);
+        // Selecting bank 1 flips the CPU window to bank 0.
+        bus.write16(0x04000070, 1 << 6);
+        bus.write16(0x04000090, 0x5678);
+        assert_eq!(bus.apu.wave_ram[0], 0x78);
+        assert_eq!(bus.read16(0x04000090), 0x5678);
     }
 
     #[test]

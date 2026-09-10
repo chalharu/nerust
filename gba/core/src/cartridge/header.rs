@@ -16,6 +16,29 @@ const NINTENDO_LOGO_GBA: [u8; LOGO_SIZE] = [
     0xD6, 0x25, 0xE4, 0x8B, 0x38, 0x0A, 0xAC, 0x72, 0x21, 0xD4, 0xF8, 0x07,
 ];
 
+/// GBATEK header logo bytes that vary per cartridge and must be masked
+/// out of the validity check: 09Ch bit 2,7 (debugging enable) and 09Eh
+/// bit 0,1 (cartridge key MSBs). Real HW boots these carts.
+const LOGO_VAR_MASKS: [(usize, u8); 2] = [(0x9C, 0b1000_0100), (0x9E, 0b0000_0011)];
+
+fn logo_matches(rom: &[u8]) -> bool {
+    if rom.len() < LOGO_OFFSET + LOGO_SIZE {
+        return false;
+    }
+    for (i, &expected) in NINTENDO_LOGO_GBA.iter().enumerate() {
+        let addr = LOGO_OFFSET + i;
+        let mut var = 0u8;
+        for (offset, mask) in LOGO_VAR_MASKS {
+            if addr == offset {
+                var |= mask;
+            }
+        }
+        if rom[addr] & !var != expected & !var {
+            return false;
+        }
+    }
+    true
+}
 #[derive(Debug, Clone)]
 pub struct GbaHeader {
     pub entry_point: u32,
@@ -34,7 +57,7 @@ impl GbaHeader {
             return None;
         }
         let entry_point = u32::from_le_bytes([rom[0x00], rom[0x01], rom[0x02], rom[0x03]]);
-        let logo_valid = rom[LOGO_OFFSET..LOGO_OFFSET + LOGO_SIZE] == NINTENDO_LOGO_GBA;
+        let logo_valid = logo_matches(rom);
         let mut title = [0u8; 12];
         title.copy_from_slice(&rom[0xA0..0xAC]);
         let mut game_code = [0u8; 4];
@@ -57,10 +80,7 @@ impl GbaHeader {
     }
 
     pub fn has_valid_logo(rom: &[u8]) -> bool {
-        if rom.len() < LOGO_OFFSET + LOGO_SIZE {
-            return false;
-        }
-        rom[LOGO_OFFSET..LOGO_OFFSET + LOGO_SIZE] == NINTENDO_LOGO_GBA
+        logo_matches(rom)
     }
 
     fn complement_check(rom: &[u8]) -> bool {
@@ -145,6 +165,28 @@ mod tests {
         finalize_test_gba_rom(&mut rom);
         assert!(GbaHeader::has_valid_logo(&rom));
         assert!(GbaHeader::parse(&rom).unwrap().complement_valid);
+    }
+
+    #[test]
+    fn logo_ignores_documented_variable_bits() {
+        // GBATEK header: 09Ch bit 2,7 (debug) and 09Eh bit 0,1 (key MSBs)
+        // vary per cartridge; HW boots them.
+        let mut rom = vec![0u8; 0xC0];
+        finalize_test_gba_rom(&mut rom);
+        assert!(GbaHeader::parse(&rom).unwrap().logo_valid);
+        rom[0x9C] |= 0b1000_0100;
+        rom[0x9E] |= 0b0000_0011;
+        // Complement must be recomputed: 09Ch/09Eh sit inside its range.
+        let mut chk: u8 = 0;
+        for &b in &rom[0xA0..=0xBC] {
+            chk = chk.wrapping_sub(b);
+        }
+        rom[0xBD] = chk.wrapping_sub(0x19);
+        let h = GbaHeader::parse(&rom).unwrap();
+        assert!(h.logo_valid);
+        // Other logo corruptions still fail.
+        rom[0x50] ^= 0xFF;
+        assert!(!GbaHeader::parse(&rom).unwrap().logo_valid);
     }
 
     #[test]

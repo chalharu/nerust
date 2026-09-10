@@ -205,7 +205,9 @@ fn handle_empty_multiple(
 ) -> u32 {
     let address = regs.r(base_register);
     if load {
-        let target = bus.read32(address);
+        // Empty LDM ignores addr[1:0] like every other LDM (forced align,
+        // matching the ARM empty path and the non-empty path above).
+        let target = bus.read_aligned32(address);
         regs.set_r(base_register, address.wrapping_add(0x40));
         // GBATEK THUMB.14: like POP {PC}, the LSB is ignored on ARMv4T.
         regs.set_pc(target);

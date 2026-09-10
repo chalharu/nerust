@@ -816,10 +816,14 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     if width_32 {
         let s0 = src & !3;
         let d0 = dst & !3;
+        // GBATEK memfill: a fixed source is sampled once (single LDR) and
+        // the same unit is stored repeatedly; re-reading per unit would
+        // diverge on volatile/mapped sources.
+        let fill = bus.read32(s0);
         let mut s = s0;
         let mut d = d0;
         for _ in 0..len {
-            let v = bus.read32(s);
+            let v = if fixed { fill } else { bus.read32(s) };
             bus.write32(d, v);
             if !fixed {
                 s = s.wrapping_add(4);
@@ -837,10 +841,12 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     } else {
         let s0 = src & !1;
         let d0 = dst & !1;
+        // Same single-sample rule for 16-bit fills (see above).
+        let fill = bus.read16(s0);
         let mut s = s0;
         let mut d = d0;
         for _ in 0..len {
-            let v = bus.read16(s);
+            let v = if fixed { fill } else { bus.read16(s) };
             bus.write16(d, v);
             if !fixed {
                 s = s.wrapping_add(2);
@@ -870,11 +876,12 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         return 1;
     }
     let fixed = len_mode & (1 << 24) != 0;
-    // mGBA準拠の高速コピー（HLEで即時完了）
+    // mGBA準拠の高速コピー（HLEで即時完了）。固定fillは単発サンプル。
+    let fill = bus.read32(src);
     let mut s = src;
     let mut d = dst;
     for _ in 0..len {
-        let v = bus.read32(s);
+        let v = if fixed { fill } else { bus.read32(s) };
         bus.write32(d, v);
         if !fixed {
             s = s.wrapping_add(4);
