@@ -504,7 +504,10 @@ impl GbaMemoryBus {
             if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
                 // Fires 2 cycles into the line: the burst-start xI (+2 on
                 // the first unit) carries the sweep phase, so no extra
-                // countdown offset is needed here.
+                // countdown offset is needed here. (A uniform +3 offset
+                // fixes the XFER absolute tick but shifts the sweep pins
+                // by -2 indices, so no shared knob fits both; the residual
+                // needs a first-burst-only latency. See rom_tests.yaml.)
                 self.video_countdown = 2;
             }
         }
