@@ -660,14 +660,20 @@ impl GbaMemoryBus {
                 if line != line_cur {
                     self.line_queue.push((line, now + 2));
                 }
+                // Halt wake on the effective IE/IF registers (GBATEK Halt:
+                // paused while (IE AND IF)=0): this restores the wake phase
+                // for halt-context measurements (nba haltcnt CPUSET-DMA is
+                // HW-exact this way), while CPU IRQ entry still uses the
+                // delayed line. Evaluated again on delayed availability
+                // below, so no wake is lost either way.
+                if ie & sif & self.halt_irq_mask != 0 {
+                    self.evaluate_halt_wake();
+                }
             }
         }
         while self.avail_queue.first().is_some_and(|(_, at)| *at <= now) {
             let (avail, _) = self.avail_queue.remove(0);
             self.irq_available = avail;
-            if avail {
-                self.evaluate_halt_wake();
-            }
         }
         while self.line_queue.first().is_some_and(|(_, at)| *at <= now) {
             let (line, _) = self.line_queue.remove(0);

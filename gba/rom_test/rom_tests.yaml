@@ -225,16 +225,17 @@ suites:
     verify:
       memory:
       - {address: 0x030004EC, value: 6, width: 4}
-      # Status (all values HW-pinned): DIRECT 12 PASS, CPUSET 4156 (HW 4155:
-      # +1 over — the post-HALT-wake ROM resume fetch pays N=5; GBATEK/mGBA
+      # Status (all values HW-pinned): DIRECT 12 PASS, CPUSET 4157 (HW 4155:
+      # +2 over — the post-HALT-wake ROM resume fetch pays N=5; GBATEK/mGBA
       # mandate N=1+4, so the offset lives in the fitted HLE CpuSet phases
       # (Setup 61/Return 46, fitted under the old N=4) and needs HW-anchored
-      # HLE refit, not a timing revert), POSTFLG PASS, CPUSET-DMA 4153
-      # (HW 4154: -1), TIME-IWRAM 125 PASS, TIME-ROM 245 (HW 249: -4,
-      # narrowed from -10 by GBATEK-correct ROM fetch costs). The pair
-      # (CPUSET -1 / CPUSET-DMA +1) admits no uniform HLE tweak; both are
-      # HLE-model gaps by construction (HLE bus traffic vs real BIOS).
-      # Listed in expected_failures until then.
+      # HLE refit, not a timing revert), POSTFLG PASS, CPUSET-DMA 4154
+      # (HW 4154: EXACT — halt wake on the effective IE/IF registers, per
+      # GBATEK Halt "paused while (IE AND IF)=0", restores the phase the
+      # delayed-availability wake had shifted by +2), TIME-IWRAM 125 PASS,
+      # TIME-ROM 245 (HW 249: -4, narrowed from -10 by GBATEK-correct ROM
+      # fetch costs). Listed in expected_failures until the HLE phases are
+      # HW-anchored.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
