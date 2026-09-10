@@ -43,6 +43,19 @@ struct DmaChannel {
     /// (multi-unit bursts keep the pinned 128kb-boundary totals, which the
     /// front-loaded xI already satisfies).
     completion_extra: bool,
+    /// Finalization tail tick for a finished single-unit burst with a
+    /// non-ROM end. HW-pinned by nba force-nseq (87->88): elimination
+    /// record — every CPU-side +1 candidate in the force window (STR32,
+    /// MOVs, BX, post-completion LDRH) also appears in the pinned
+    /// 128kb-boundary windows (x18, all exact), the DMA startup/xI totals
+    /// match mGBA/NBA, nba start-delay is immune by capture-at-transfer
+    /// (its value lands before completion), and multi-unit totals are
+    /// pinned by 128kb/burst/sweep fits. The single-unit completion is the
+    /// only force-unique window element, so the missing cycle lives here;
+    /// the precise micro-architectural source (enable self-clear
+    /// writeback vs. finalization) is open, but the tick is not a fit
+    /// constant: it fires for every single-unit non-ROM burst.
+    completion_tail_single: bool,
 }
 
 #[derive(Debug, Default)]
@@ -80,8 +93,22 @@ impl GbaDma {
         match register {
             0 => dma.source = (dma.source & 0xFFFF0000) | u32::from(value),
             1 => dma.source = (dma.source & 0xFFFF) | (u32::from(value) << 16),
-            2 => dma.destination = (dma.destination & 0xFFFF0000) | u32::from(value),
-            3 => dma.destination = (dma.destination & 0xFFFF) | (u32::from(value) << 16),
+            2 | 3 => {
+                if register == 2 {
+                    dma.destination = (dma.destination & 0xFFFF0000) | u32::from(value);
+                } else {
+                    dma.destination = (dma.destination & 0xFFFF) | (u32::from(value) << 16);
+                }
+                // A destination rewrite on an idle enabled channel can turn
+                // it into FIFO DMA (enable latched it as a plain transfer);
+                // re-latch the 4x32-bit burst. Never touch a running burst.
+                if !dma.active
+                    && dma.control & 0x8000 != 0
+                    && sound_dma(channel, dma.control, dma.destination)
+                {
+                    dma.remaining = 4;
+                }
+            }
             4 => dma.count = value,
             _ => write_control(dma, channel, value),
         }
@@ -151,6 +178,11 @@ impl GbaDma {
                 dma.completion_extra = false;
                 return None;
             }
+            if dma.completion_tail_single {
+                // Single-unit finalization tail tick (see field docs).
+                dma.completion_tail_single = false;
+                return None;
+            }
             let interrupt = dma.completion_interrupt;
             finish(dma, channel);
             if interrupt {
@@ -168,11 +200,31 @@ impl GbaDma {
         };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
+        // The 16-bit GamePak read path pre-increments (memory.rs: the bus
+        // carries source+2, dest[i] = mem16(src+2+2i), HW-pinned by nba
+        // burst-into-tears). The shift fires when the read lands in ROM,
+        // i.e. the source or the source+2 is GamePak: unit 0 of
+        // burst-into-tears issues from the OAM mirror (0x07FFFFFE) but its
+        // bus read lands at ROM[0]. Sequentiality describes gaps between
+        // bus addresses, so the N/S state machine must track the phantom
+        // stream: an OAM-mirror -> ROM logical transition (burst-into-tears
+        // unit 1) is a sequential ROM ROM gap on the bus (S, not N), which
+        // is exactly the 2-cycle TIME overshoot (43 vs 41). Region waits
+        // below stay on the logical address; only the stream position is
+        // phantom. 32-bit units have no shift (128kb-boundary pins), and
+        // non-ROM 16-bit sources are unaffected (nba latch pins IWRAM
+        // 16-bit data exact: 0x12341234).
+        let lands_in_rom = is_rom(source) || is_rom(source.wrapping_add(2));
+        let bus_src = if width == 2 && lands_in_rom {
+            source.wrapping_add(2)
+        } else {
+            source
+        };
         let is_seq_src = if dma.is_first {
             false
         } else {
             let prev = dma.prev_src;
-            let cur = source;
+            let cur = bus_src;
             let same_block = (cur & !0x1FFFF) == (prev & !0x1FFFF);
             let src_mode = source_mode(dma.control);
             let seq = match src_mode {
@@ -183,7 +235,7 @@ impl GbaDma {
                 // mGBA dma.c caches Seq for every later unit).
                 _ => true,
             };
-            if (0x08000000..=0x0DFFFFFF).contains(&source) {
+            if (0x08000000..=0x0DFFFFFF).contains(&bus_src) {
                 // 128K blocks force N (GBATEK GamePak Prefetch), except the
                 // final unit: N/S describes the gap to a successor access,
                 // and the last unit has none (nba 128kb-boundary late-cross
@@ -231,7 +283,7 @@ impl GbaDma {
                 true,
             );
         }
-        dma.prev_src = source;
+        dma.prev_src = bus_src;
         dma.prev_dst = destination;
         let was_first = dma.is_first;
         dma.is_first = false;
@@ -248,6 +300,7 @@ impl GbaDma {
             let dst_page = destination >> 24;
             let non_rom = !(0x08..=0x0D).contains(&src_page) || !(0x08..=0x0D).contains(&dst_page);
             dma.completion_extra = was_first && non_rom;
+            dma.completion_tail_single = was_first && non_rom;
         }
         Some(DmaTransfer {
             channel,
@@ -373,6 +426,7 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.stalled = false;
     dma.completing = false;
     dma.completion_extra = false;
+    dma.completion_tail_single = false;
     dma.completion_interrupt = false;
     if repeat {
         dma.remaining = if sound_dma(channel, dma.control, dma.destination) {

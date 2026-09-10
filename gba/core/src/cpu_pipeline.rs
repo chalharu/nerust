@@ -16,20 +16,6 @@ pub fn fill_pipeline(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, pipeline: 
     }
 }
 
-pub fn flush_pipeline(
-    regs: &mut CpuRegisters,
-    bus: &mut GbaMemoryBus,
-    pipeline: &mut [u32; 2],
-    new_pc: u32,
-) {
-    regs.set_pc(new_pc);
-    bus.invalidate_prefetch_for_dma(new_pc);
-    // prev_addrクリアは bus 側で invalidate が担当
-    pipeline[0] = 0;
-    pipeline[1] = 0;
-    fill_pipeline(regs, bus, pipeline);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

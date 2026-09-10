@@ -1,7 +1,19 @@
 rom_root: ../../roms/gba
 expected_failures:
-- nba_dma_burst_into_tears
-- nba_dma_force_nseq
+# nba_dma_burst_into_tears GRADUATED 3/3: the 16-bit GamePak read path
+# pre-increments (dest[i] = mem16(src+2+2i), proven from the test's own
+# main.c: 0x07FFFFFE inc -> 0x08000000 dec delivers ROM[2]/ROM[4] to
+# OAM[0x3FE]/[0x3FC]) and the N/S state machine tracks the phantom bus
+# stream (OAM-mirror -> ROM logical transition is a sequential ROM gap:
+# TIME 43 -> 41). The shift fires only when the read lands in ROM
+# (source or source+2 is GamePak); IWRAM 16-bit data stays exact per the
+# nba latch test.
+# nba_dma_force_nseq GRADUATED 2/2 (87->88 both subtests): single-unit
+# non-ROM bursts carry a finalization tail tick beyond completing+extra.
+# Elimination record: every CPU-side candidate (STR32, MOVs, BX,
+# post-completion LDRH) also appears in the exact 128kb-boundary windows,
+# startup/xI match mGBA/NBA, start-delay is immune by capture-at-transfer,
+# multi-unit totals pinned. See DmaChannel::completion_tail_single.
 # nba_archive_irq_cancel_ie: rows 0,1,3,5,6,7 pass; rows 2 and 4 fail on
 # 1-tick race boundaries that no uniform-latency model satisfies
 # simultaneously with the pinned timer tests (start-stop 2/2, reload 7/7,
@@ -278,14 +290,8 @@ suites:
     cycles: 3000000
     verify:
       memory:
-      # All three test_expects ran (count=3); the two OAM value checks pass
-      # via the 16-bit ROM-src read-ahead quirk (unit N latches unit N+1's
-      # data). TIME reads 43 (HW 41, +2 over): the +3 from GBATEK-mandated
-      # 16-bit ROM waits (1+waits, mGBA-confirmed) is spec-correct — the
-      # overshoot sits in the draw-phase OAM-stall model (always-+1 in draw
-      # is too coarse once longer units shift display phases). Needs a
-      # slot/phase-sensitive OAM contention model. The 0x238==3 goal below
-      # keeps this case failing until then.
+      # Graduated 3/3 (see header note): pre-increment 16-bit GamePak reads
+      # plus phantom-stream N/S give values and TIME 41 exactly.
       - {address: 0x03000234, value: 3, width: 4}
       - {address: 0x070003FE, value: 0xEA00, width: 2}
       - {address: 0x070003FC, value: 0xFF24, width: 2}
@@ -297,23 +303,17 @@ suites:
       memory:
       # Counters (this .gba's layout; the stale .elf disagrees): test_count
       # @0x0300014C (=2, both subtests run), test_pass_count @0x03000150
-      # (=0; both read 87/87 instead of 88 after the single-unit tail;
-      # 86/86 before it). The +16/+17 gap closed via GBATEK-correct costs:
-      # 16-bit ROM N/S +1 base (CPU and DMA paths), Thumb POP-PC refill,
-      # per-tick timestamp decomposition (window = CPU-pre 48 + burst 13
-      # + CPU-tail 28), N/S fetch+data stream split, and the single-unit
-      # non-ROM completion tail (mGBA/NBA-conformant). The residual +1 is
-      # uniform and shared-knob-free: every shared burst knob (startup
-      # pending, first-unit xI, completion, per-unit N/S) is pinned exact
-      # by the 128kb-boundary DMA fits (12/12) and start-delay (16-bit
-      # read timing), timer loss (2) by start-stop/start-delay, and every
-      # shared CPU op by the 128kb LDM fits plus per-tick ROM tracing
-      # (post-start wall 88/88, every handler GBATEK-exact) — so it lives
-      # in a single ROM-wall rule (one fetch N/S or handler +/-1), still
-      # open. A per-burst +2 (mGBA dma.c completion term) was tried and
+      # (=2: both read 88/88 with the single-unit finalization tail;
+      # 87/87 with completing+extra only, 86/86 before that). The +16/+17
+      # gap closed via GBATEK-correct costs: 16-bit ROM N/S +1 base (CPU
+      # and DMA paths), Thumb POP-PC refill, per-tick timestamp
+      # decomposition, N/S fetch+data stream split, the single-unit
+      # non-ROM completion tail (mGBA/NBA-conformant), and the single-unit
+      # finalization tick (elimination-pinned: the only force-unique
+      # window element; see header note and completion_tail_single).
+      # A per-burst +2 (mGBA dma.c completion term) was tried and
       # reverted: it fixes force-nseq but breaks all 12 exact 128kb fits
-      # (our front-loaded xI already carries those 2 cycles). Goal oracle
-      # for a fix.
+      # (our front-loaded xI already carries those 2 cycles).
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
