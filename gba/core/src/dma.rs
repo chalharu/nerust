@@ -148,7 +148,7 @@ impl GbaDma {
         let raw_width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
         let raw_dest = dma.current_destination & !(u32::from(raw_width) - 1);
         // Sound-FIFO DMA always moves 32-bit units (GBATEK DMA).
-        let width = if sound_dma(dma.control, raw_dest) {
+        let width = if sound_dma(channel, dma.control, raw_dest) {
             4
         } else {
             raw_width
@@ -207,7 +207,7 @@ impl GbaDma {
         };
         dma.delay = (total_wait + internal) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
-        if sound_dma(dma.control, destination) {
+        if sound_dma(channel, dma.control, destination) {
             // GBATEK DMA: sound FIFO transfers never increment the
             // destination; the 4x32-bit burst always lands in the FIFO.
         } else {
@@ -305,7 +305,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
             } else {
                 0x07FF_FFFF
             };
-        dma.remaining = if sound_dma(dma.control, dma.destination) {
+        dma.remaining = if sound_dma(channel, dma.control, dma.destination) {
             // GBATEK DMA: sound transfers ignore CNT_L and always move
             // 4x32-bit per timer overflow.
             4
@@ -346,7 +346,7 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.completing = false;
     dma.completion_interrupt = false;
     if repeat {
-        dma.remaining = if sound_dma(dma.control, dma.destination) {
+        dma.remaining = if sound_dma(channel, dma.control, dma.destination) {
             4
         } else {
             effective_count(channel, dma.count)
@@ -407,9 +407,14 @@ fn timing_for(channel: usize, control: u16) -> DmaTrigger {
 
 /// Sound-FIFO DMA (GBATEK "DMA-Sound Playback Procedure"): a Special-timed
 /// transfer with Repeat set, targeting FIFO_A/B, always moves 4x32-bit
-/// with a fixed destination.
-fn sound_dma(control: u16, destination: u32) -> bool {
-    timing(control) == DmaTrigger::Special && control & (1 << 9) != 0 && is_fifo_dest(destination)
+/// with a fixed destination. GBATEK restricts sound DMA to channels 1/2
+/// (DMA0 Special is Prohibited, DMA3 Special is Video Capture), so the
+/// channel gates the quirk: other channels fall through to normal timing.
+fn sound_dma(channel: usize, control: u16, destination: u32) -> bool {
+    (channel == 1 || channel == 2)
+        && timing(control) == DmaTrigger::Special
+        && control & (1 << 9) != 0
+        && is_fifo_dest(destination)
 }
 
 fn is_fifo_dest(destination: u32) -> bool {

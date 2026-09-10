@@ -72,14 +72,11 @@ impl GbaCpu {
             return false;
         }
         let vector = bus.read32(0x03007FFC);
-        let target = if vector != 0
-            && ((0x02000000..=0x03007FFF).contains(&vector)
-                || (0x08000000..=0x09FFFFFF).contains(&vector))
-        {
-            vector
-        } else {
-            0x00000018
-        };
+        // The real BIOS jumps to [03007FFCh] blindly; a handler can live in
+        // any executable memory (IWRAM/EWRAM, any ROM mirror 08-0D, SRAM).
+        // Only a null vector (nothing installed yet) falls back to the
+        // exception vector, preserving boot-time behavior.
+        let target = if vector != 0 { vector } else { 0x00000018 };
         let resume_address = self
             .regs
             .pc()
