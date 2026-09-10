@@ -169,11 +169,22 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
-        let _loaded = self.loaded_ref()?;
-        Ok(None)
+        let loaded = self.loaded_ref()?;
+        // Battery-backed backup media (SRAM/Flash/EEPROM) persists via the
+        // generic .sav sidecar; NoneSave reports no data (Ok(None)).
+        Ok(loaded
+            .system
+            .bus
+            .cartridge()
+            .and_then(|cart| cart.save.ram_data())
+            .map(<[u8]>::to_vec))
     }
 
-    fn import_mapper_save(&mut self, _data: &[u8]) -> Result<(), CoreError> {
+    fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        if let Some(cart) = loaded.system.bus.cartridge_mut() {
+            cart.save.ram_restore(data);
+        }
         Ok(())
     }
 
@@ -246,6 +257,46 @@ mod tests {
         let core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
         let caps = core.capabilities();
         assert_eq!(caps.output_formats.len(), 1);
+    }
+
+    #[test]
+    fn mapper_save_round_trips_backup_ram() {
+        use nerust_core_traits::ConsoleCore;
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            // Backup-ID scan finds SRAM_V (word-aligned) -> Sram backend.
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let rom_data = sram_rom();
+        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        a.load(&rom_data, &config).unwrap();
+        // No backup chip on the plain header ROM -> no save payload.
+        let mut plain = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        plain.load(&rom(), &config).unwrap();
+        assert_eq!(plain.mapper_save().unwrap(), None);
+        // SRAM chip: write, export, re-import into a fresh core, read back.
+        a.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x5A);
+        let payload = a.mapper_save().unwrap().expect("SRAM save payload");
+        let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        b.load(&rom_data, &config).unwrap();
+        b.import_mapper_save(&payload).unwrap();
+        assert_eq!(
+            b.loaded.as_mut().unwrap().system.bus.read8(0x0E000123),
+            0x5A
+        );
     }
 
     #[test]
