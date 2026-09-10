@@ -1037,6 +1037,9 @@ mod tests {
         handle_swi(&mut regs, &mut bus, 2);
         assert!(bus.is_halted());
         bus.request_interrupt(1);
+        // Wake arrives once availability propagates (apply +1, avail +1).
+        bus.tick();
+        bus.tick();
         assert!(!bus.is_halted());
     }
 
@@ -1046,9 +1049,14 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000200, 3);
         bus.request_interrupt(3);
+        // Let IE/IF reach the effective registers before the SWI samples.
+        bus.tick();
+        bus.tick();
         regs.set_r(0, 1);
         regs.set_r(1, 1);
         handle_swi(&mut regs, &mut bus, 4);
+        // The SWI's IF-ack applies 1 tick later (delayed pipeline).
+        bus.tick();
         assert_eq!(bus.read16(0x04000202), 2);
         assert_eq!(bus.read16(0x03007FF8), 2);
         assert!(bus.is_halted());

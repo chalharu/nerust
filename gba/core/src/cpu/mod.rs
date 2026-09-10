@@ -284,6 +284,11 @@ mod tests {
         bus.write32(0x03007FFC, 0x03000000);
         bus.write32(0x03000000, 0xE3A00002); // MOV R0,#2
         bus.write32(0x03000004, 0xE1A0_F00E); // MOV PC,LR
+        // Let the delayed interrupt pipeline propagate (apply +1,
+        // availability +1, CPU line +2) before sampling IRQ entry.
+        for _ in 0..4 {
+            bus.tick();
+        }
         assert!(cpu.service_irq(&mut bus));
         assert_eq!(cpu.regs.cpsr_mode(), 0x12);
         assert_ne!(cpu.regs.cpsr() & (1 << 7), 0);
