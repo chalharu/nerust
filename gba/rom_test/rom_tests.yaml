@@ -625,6 +625,12 @@ suites:
   - id: PeterLemon_BIOSDIV
     rom: BIOS/Arithmetic/DIV/BIOSDIV.gba
     cycles: 2000000
+  # BIOSCHECKSUM pins B1 (GetBiosChecksum $BAAE187F) twice: the ROM's embedded
+  # `cmp r0,$BAAE187F` prints PASS/FAIL, the TIMER0 self-check pins the HLE
+  # $A033 charge, and the sibling BIOSCHECKSUM.png (PASS/PASS) is auto-compared.
+  - id: PeterLemon_BIOSCHECKSUM
+    rom: BIOS/Misc/CHECKSUM/BIOSCHECKSUM.gba
+    cycles: 2000000
   - id: PeterLemon_BIOSSQRT
     rom: BIOS/Arithmetic/SQRT/BIOSSQRT.gba
     cycles: 2000000

@@ -185,7 +185,10 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         0x0C => SwiResult::Return(cpu_fast_set(regs, bus)),
         0x0D => {
             bios_checksum(regs, bus);
-            SwiResult::Return(1)
+            // HLE wall-clock fit: the PeterLemon BIOSCHECKSUM ROM's embedded
+            // TIMER0 self-check expects exactly $A033 for the 16K word sum,
+            // same convention as the Div $E2/$E5 and other ROM-fitted charges.
+            SwiResult::Return(0xA033)
         }
         0x10 => {
             let cycles = decompress::bit_unpack(regs, bus);
