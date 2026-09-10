@@ -6,8 +6,11 @@ struct TimerChannel {
     divider: u16,
     start_delay: u8,
     pending_control: Option<u16>,
-    previous_reload: u16,
-    reload_written: bool,
+    /// CNT_L writes land with a one-tick delay (nba timer/reload 7/7: an
+    /// overwrite in the last cycle before overflow still loads the OLD
+    /// reload; earlier overwrites use the new value). Applied at the end of
+    /// the next tick; flushed immediately on enable so start loads it.
+    reload_pending: Option<u16>,
 }
 
 #[derive(Debug, Default)]
@@ -25,9 +28,7 @@ impl GbaTimers {
         let channel = ((address - 0x04000100) / 4) as usize;
         // Record reload write cycle for elapsed-based delay.
         let reload = value as u16;
-        self.channels[channel].previous_reload = self.channels[channel].reload;
-        self.channels[channel].reload = reload;
-        self.channels[channel].reload_written = self.channels[channel].control & 0x80 != 0;
+        self.channels[channel].reload_pending = Some(reload);
         self.last_reload_cycle[channel] = Some(self.current_cycle);
         let new_control = (value >> 16) as u16 & 0x00C7;
         let was_enabled = self.channels[channel].control & 0x80 != 0;
@@ -71,10 +72,11 @@ impl GbaTimers {
                 channel,
             );
         } else {
+            // GBATEK Timers: writing CNT_L initializes the reload value only
+            // (never the running counter); it lands with a one-tick delay
+            // (see reload_pending).
             let timer = &mut self.channels[channel];
-            timer.previous_reload = timer.reload;
-            timer.reload = value;
-            timer.reload_written = timer.control & 0x80 != 0;
+            timer.reload_pending = Some(value);
             self.last_reload_cycle[channel] = Some(self.current_cycle);
         }
         true
@@ -111,7 +113,11 @@ impl GbaTimers {
             timer.control = pending;
             timer.start_delay = 0;
         }
-        timer.reload_written = false;
+        // A CNT_L write lands one tick after it is issued: an overwrite in
+        // the last cycle before overflow still loads the old reload.
+        if let Some(reload) = timer.reload_pending.take() {
+            timer.reload = reload;
+        }
         (cascade, irq)
     }
 
@@ -124,9 +130,12 @@ impl GbaTimers {
                 Some((false, 0))
             }
             2 => {
-                // nba tick-before-reload (HW-documented): enabling takes one
-                // cycle to load the reload value, and the stale counter can
-                // tick (even overflow) in that cycle before the load.
+                // Enabling takes one cycle to load the reload value, and
+                // the stale counter ticks (even overflows) in that cycle
+                // before the load — for 16- AND 32-bit enables alike (nba
+                // tick-before-reload uses 32-bit REG_TM0CNT writes; GBATEK's
+                // "new reload recognized" note only pins the post-load
+                // value, which the load below provides).
                 timer.start_delay = 1;
                 let cascade = increment(timer);
                 let irq = if cascade && timer.control & (1 << 6) != 0 {
@@ -135,22 +144,18 @@ impl GbaTimers {
                     0
                 };
                 timer.counter = timer.reload;
-                timer.reload_written = false;
                 Some((cascade, irq))
             }
             3 => {
                 timer.start_delay = 2;
-                timer.reload_written = false;
                 Some((false, 0))
             }
             4 => {
                 timer.start_delay = 3;
-                timer.reload_written = false;
                 Some((false, 0))
             }
             5 => {
                 timer.start_delay = 4;
-                timer.reload_written = false;
                 Some((false, 0))
             }
             _ => None,
@@ -226,6 +231,11 @@ fn write_control(
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {
         timer.control = new_control;
+        // A reload written together with (or just before) the enable is
+        // visible to the startup load: flush the one-tick landing delay.
+        if let Some(reload) = timer.reload_pending.take() {
+            timer.reload = reload;
+        }
         // GBATEK Timers / HW determinism: the reload value is loaded on the
         // first latency tick (see handle_start_delay), so the counter keeps
         // its stale value here. A stale tick (even overflow) may fire before
@@ -237,7 +247,10 @@ fn write_control(
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
+        // Any direct control write supersedes a deferred stop: leaving a
+        // stale pending stop would kill a later start on the next tick.
         timer.control = new_control;
+        timer.pending_control = None;
         if !enabled {
             timer.start_delay = 0;
         }
@@ -246,12 +259,9 @@ fn write_control(
 
 fn increment(timer: &mut TimerChannel) -> bool {
     let (value, overflow) = timer.counter.overflowing_add(1);
-    let reload = if timer.reload_written {
-        timer.previous_reload
-    } else {
-        timer.reload
-    };
-    timer.counter = if overflow { reload } else { value };
+    // GBATEK Timers: the CURRENT reload value is copied into the counter on
+    // overflow. A mid-run CNT_L write only retargets future overflows.
+    timer.counter = if overflow { timer.reload } else { value };
     overflow
 }
 
