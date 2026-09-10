@@ -21,6 +21,18 @@ pub(crate) struct HleBiosOperation {
     width: u8,
     value: u32,
     phase: TransferPhase,
+    /// The pre-mask source was odd. A 16-bit CpuSet from an odd address
+    /// copies zero-extended bytes (mgba-suite "ROM load swi B 16
+    /// (unaligned)" pins 0x00DE00BE): each unit reads the odd byte, not
+    /// the aligned halfword. Parity is stable (stride 2), so one flag
+    /// covers the whole transfer. 32-bit mode aligns down (pinned),
+    /// except odd SRAM sources (see below).
+    src_odd: bool,
+    /// 32-bit CpuSet to an odd SRAM address stores nothing (mgba-suite
+    /// "SRAM store swi B 32 (unaligned)" pins residue): the destination
+    /// mask would hide the oddness, so it is captured up front.
+    /// Other regions keep the masked write (pinned).
+    dst_odd_sram_drop: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -53,14 +65,37 @@ impl HleBiosOperation {
         if source < 0x0000_4000 || end - u64::from(width) < 0x0000_4000 {
             return None;
         }
+        // mgba-suite "Out-of-bounds load swi B/C" pins zeros: a CpuSet
+        // from unmapped memory (below EWRAM, outside BIOS) performs no
+        // copy — unlike DMA, which exposes the last bus value. CPU loads
+        // from the same addresses still see open bus.
+        if (0x0000_4000..0x0200_0000).contains(&source) {
+            return None;
+        }
+        // 16-bit sources keep their odd address (each unit reads the odd
+        // byte, see `src_odd`); 32-bit sources align down (pinned),
+        // except odd SRAM sources: the 8-bit SRAM bus replicates the
+        // odd byte (mgba-suite "SRAM load swi B 32 (unaligned)" pins
+        // 0x61616161), which masking would destroy.
+        let src_odd = width == 2 && source & 1 != 0;
+        let sram_src = (0x0E00_0000..0x1000_0000).contains(&source);
+        let keep_src = src_odd || (width == 4 && sram_src && source & 3 != 0);
         Some(Self {
-            source: source & !(u32::from(width) - 1),
+            source: if keep_src {
+                source
+            } else {
+                source & !(u32::from(width) - 1)
+            },
             destination: destination & !(u32::from(width) - 1),
             remaining,
             fixed: len_mode & (1 << 24) != 0,
             width,
             value: 0,
             phase: TransferPhase::Setup(CPU_SET_SETUP_CYCLES),
+            src_odd,
+            dst_odd_sram_drop: width == 4
+                && destination & 3 != 0
+                && (0x0E00_0000..0x1000_0000).contains(&destination),
         })
     }
 
@@ -80,6 +115,8 @@ impl HleBiosOperation {
             TransferPhase::Read => {
                 self.value = if self.width == 4 {
                     bus.read32(self.source)
+                } else if self.src_odd {
+                    u32::from(bus.read8(self.source))
                 } else {
                     u32::from(bus.read16(self.source))
                 };
@@ -93,10 +130,17 @@ impl HleBiosOperation {
                 }
             }
             TransferPhase::Write => {
-                if self.width == 4 {
-                    bus.write_hle_bios32(self.destination, self.value);
-                } else {
-                    bus.write_hle_bios16(self.destination, self.value as u16);
+                // mgba-suite "SRAM store swi B 32 (unaligned)" pins
+                // residue: a 32-bit CpuSet to an odd SRAM address stores
+                // nothing (the 8-bit SRAM bus drops unaligned word
+                // stores); other regions keep the masked write (pinned).
+                let sram_odd_drop = self.dst_odd_sram_drop;
+                if !sram_odd_drop {
+                    if self.width == 4 {
+                        bus.write_hle_bios32(self.destination, self.value);
+                    } else {
+                        bus.write_hle_bios16(self.destination, self.value as u16);
+                    }
                 }
                 self.destination = self.destination.wrapping_add(u32::from(self.width));
                 self.remaining -= 1;
@@ -865,14 +909,27 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
-    let src = regs.r(0) & !3;
-    let dst = regs.r(1) & !3;
+    let raw_src = regs.r(0);
+    let raw_dst = regs.r(1);
+    // 32-bit sources align down, except SRAM sources: the 8-bit SRAM
+    // bus replicates the exact byte (mgba-suite "SRAM load swi C 32
+    // (unaligned)" pins 0x61616161/0x6D6D6D6D), which any masking would
+    // destroy. Replication is rotation-invariant, so the odd read32 is
+    // safe through `align_read`.
+    let sram_src = (0x0E00_0000..0x1000_0000).contains(&raw_src);
+    let src = if sram_src { raw_src } else { raw_src & !3 };
+    let dst = raw_dst & !3;
     let len_mode = regs.r(2);
     let len = (len_mode & 0x1F_FFFF).next_multiple_of(8);
     // GBATEK: silently reject when the source start or end reaches into
-    // the BIOS area.
+    // the BIOS area; unmapped non-BIOS sources perform no copy either
+    // (mgba-suite "Out-of-bounds load swi C 32" pins zeros, like CpuSet).
     let end = src as u64 + len as u64 * 4;
-    if len == 0 || src < 0x0000_4000 || end - 4 < 0x0000_4000 {
+    if len == 0
+        || src < 0x0000_4000
+        || end - 4 < 0x0000_4000
+        || (0x0000_4000..0x0200_0000).contains(&src)
+    {
         return 1;
     }
     let fixed = len_mode & (1 << 24) != 0;
@@ -880,9 +937,14 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let fill = bus.read32(src);
     let mut s = src;
     let mut d = dst;
+    // Unaligned word stores to SRAM drop (see the CpuSet Write phase);
+    // the reads still happen, only the stores are skipped.
+    let sram_odd_drop = (0x0E00_0000..0x1000_0000).contains(&raw_dst) && raw_dst & 3 != 0;
     for _ in 0..len {
         let v = if fixed { fill } else { bus.read32(s) };
-        bus.write32(d, v);
+        if !sram_odd_drop {
+            bus.write32(d, v);
+        }
         if !fixed {
             s = s.wrapping_add(4);
         }

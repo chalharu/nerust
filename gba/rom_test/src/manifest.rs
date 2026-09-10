@@ -47,6 +47,30 @@ pub struct RomCase {
     pub reference: Option<String>,
     #[serde(default)]
     pub skip_screenshot: bool,
+    /// Headless input script for menu-driven multi-test ROMs
+    /// (mgba-emu/suite): when non-empty, the fixed-cycle loop is replaced
+    /// by scripted press-and-wait steps (see [`ScriptStep`]).
+    #[serde(default)]
+    pub script: Vec<ScriptStep>,
+    /// Subtest names (suite-log check names) allowed to fail without
+    /// failing the case. Case-level pass/fail stays in `expected_failures`.
+    #[serde(default)]
+    pub expected_checks: Vec<String>,
+}
+
+/// One headless-driver step: hold `press` buttons until a fresh debug-log
+/// line contains `until_log`, or for `wait_frames` video frames (exactly
+/// one of the two must be set). Buttons are released after the step plus
+/// a short settle so the guest observes key transitions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScriptStep {
+    #[serde(default)]
+    pub press: Vec<GbaButton>,
+    #[serde(default)]
+    pub until_log: Option<String>,
+    #[serde(default)]
+    pub wait_frames: Option<u64>,
 }
 
 /// キー入力イベント。GBC の inputs 仕様と同一。
@@ -182,6 +206,8 @@ impl RomManifest {
                     inputs: Vec::new(),
                     reference: None,
                     skip_screenshot: pattern.skip_screenshot,
+                    script: Vec::new(),
+                    expected_checks: Vec::new(),
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
@@ -275,6 +301,14 @@ impl RomManifest {
         }
         // empty verify is allowed for reference-image tests (expected.png/jpg)
         case.verify.validate()?;
+        for (index, step) in case.script.iter().enumerate() {
+            if step.until_log.is_some() == step.wait_frames.is_some() {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "case `{}` script step {index} needs exactly one of until_log, wait_frames",
+                    case.id
+                )));
+            }
+        }
         if case
             .inputs
             .windows(2)

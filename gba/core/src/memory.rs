@@ -129,6 +129,23 @@ pub struct GbaMemoryBus {
     /// A DMA burst is currently feeding the EEPROM serial chip; closed when
     /// no DMA channel is active or pending (frame decoded at burst end).
     eeprom_burst_open: bool,
+    /// mGBA debug-log MMIO (mgba-emu/suite harness, src/mgba.c):
+    /// 0x04FFF600-0x04FFF6FF string buffer, 0x04FFF700 flags (bit 8 =
+    /// send, low 3 bits = level), 0x04FFF780 enable (0xC0DE -> on, reads
+    /// back 0x1DEA). No hardware counterpart exists, so accesses cost
+    /// zero waits and never touch prefetch / N-S / Disable-Bug state.
+    mgba_debug_enable: bool,
+    mgba_debug_buf: [u8; 256],
+    mgba_debug_logs: Vec<MgbaDebugLog>,
+}
+
+/// One committed mGBA debug-log line (`mgba_printf` in suite sources).
+#[derive(Debug, Clone)]
+pub struct MgbaDebugLog {
+    /// `MGBA_LOG_*` level from the flags write (`INFO = 3`, `DEBUG = 4`).
+    pub level: u8,
+    /// NUL-terminated string buffer content at commit time.
+    pub text: String,
 }
 
 /// Snapshot of the PPU state relevant to display-controller contention.
@@ -260,6 +277,9 @@ impl GbaMemoryBus {
             video_armed: false,
             video_countdown: 0,
             eeprom_burst_open: false,
+            mgba_debug_enable: false,
+            mgba_debug_buf: [0; 256],
+            mgba_debug_logs: Vec::new(),
         }
     }
 
@@ -618,15 +638,18 @@ impl GbaMemoryBus {
                 // delivers ROM[2] to OAM[0x3FE] and ROM[4] to OAM[0x3FC],
                 // i.e. dest[i] = mem16(src+2+2i): the 16-bit GamePak read
                 // path pre-increments, latching unit N+1's data into unit
-                // N (with a phantom read past the end). The shift fires
-                // when the read lands in ROM (source or source+2 is
-                // GamePak: unit 0 issues from the OAM mirror but lands at
-                // ROM[0]). 32-bit ROM reads are unaffected (nba
-                // 128kb-boundary times pin their addresses), and non-ROM
-                // 16-bit sources are unaffected (nba latch pins IWRAM
-                // 16-bit data exact: 0x12341234).
+                // N (with a phantom read past the end). The shift is a
+                // multi-unit pipeline effect: single-unit 16-bit reads
+                // land on the aligned source (mgba-suite "ROM load DMA1
+                // 16" pins 0xBEEF). It fires when the read lands in ROM
+                // (source or source+2 is GamePak: unit 0 issues from the
+                // OAM mirror but lands at ROM[0]). 32-bit ROM reads are
+                // unaffected (nba 128kb-boundary times pin their
+                // addresses), and non-ROM 16-bit sources are unaffected
+                // (nba latch pins IWRAM 16-bit data exact: 0x12341234).
                 let src = transfer.source;
                 let read_addr = if transfer.width == 2
+                    && !transfer.single_unit
                     && ((0x08000000..=0x0DFFFFFF).contains(&src)
                         || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))
                 {
@@ -1190,6 +1213,14 @@ impl GbaMemoryBus {
     }
 
     fn read_internal(&mut self, addr: u32, width: u8, is_opcode: bool) -> (u32, u8) {
+        // mGBA debug MMIO has no hardware counterpart: zero waits, no
+        // prefetch / N-S / Disable-Bug side effects (see field docs).
+        if !is_opcode && (0x04FFF600..=0x04FFF7FF).contains(&addr) {
+            let raw = self.read_mgba_debug(addr, width);
+            self.last_prefetch = raw;
+            self.open_bus_value = raw;
+            return (raw, 0);
+        }
         // The timing query observes the Disable-Bug penalty armed by the
         // previous I-cycle opcode; an opcode fetch consumes it exactly once.
         let wait = self.cycles_for_access(addr, width, is_opcode);
@@ -1247,6 +1278,14 @@ impl GbaMemoryBus {
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
+        // mGBA debug MMIO (see field docs): zero waits, no bus-state
+        // side effects beyond the debug buffer itself.
+        if (0x04FFF600..=0x04FFF7FF).contains(&addr) {
+            self.write_mgba_debug(addr, width, value);
+            self.prev_addr = Some(addr);
+            self.prev_width = width;
+            return;
+        }
         // GBATEK Backup Media / EEPROM: CPU stores to 0D000000h are open bus;
         // only DMA bursts reach the serial chip (handled in the tick loop).
         let wait = self.cycles_for(addr, width);
@@ -1278,6 +1317,84 @@ impl GbaMemoryBus {
     }
 
     // -- Region readers --
+
+    /// Drain committed mGBA debug-log lines (oldest first).
+    pub fn drain_mgba_debug_logs(&mut self) -> Vec<MgbaDebugLog> {
+        std::mem::take(&mut self.mgba_debug_logs)
+    }
+
+    /// Whether the guest enabled the mGBA debug interface (`mgba_open`).
+    pub fn mgba_debug_enabled(&self) -> bool {
+        self.mgba_debug_enable
+    }
+
+    /// mGBA debug-log MMIO write (mgba-emu/suite `src/mgba.c`):
+    /// `strncpy` into `REG_DEBUG_STRING`, commit on a `REG_DEBUG_FLAGS`
+    /// write with bit 8 set, enable on `REG_DEBUG_ENABLE = 0xC0DE`
+    /// (`mgba_close` writes 0). Byte-granular so any store width works.
+    fn write_mgba_debug(&mut self, addr: u32, width: u8, value: u32) {
+        match addr {
+            0x04FFF600..=0x04FFF6FF => {
+                let bytes = value.to_le_bytes();
+                for (i, byte) in bytes.iter().enumerate().take(usize::from(width)) {
+                    let off = (addr as usize).wrapping_sub(0x4FFF600) + i;
+                    if off < self.mgba_debug_buf.len() {
+                        self.mgba_debug_buf[off] = *byte;
+                    }
+                }
+            }
+            0x04FFF700 => {
+                if width >= 2 && value & 0x100 != 0 {
+                    let len = self
+                        .mgba_debug_buf
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(self.mgba_debug_buf.len());
+                    let text = String::from_utf8_lossy(&self.mgba_debug_buf[..len]).into_owned();
+                    self.mgba_debug_logs.push(MgbaDebugLog {
+                        level: (value & 7) as u8,
+                        text,
+                    });
+                    self.mgba_debug_buf = [0; 256];
+                }
+            }
+            0x04FFF780 if width >= 2 => {
+                self.mgba_debug_enable = match (value & 0xFFFF) as u16 {
+                    0xC0DE => true,
+                    0 => false,
+                    _ => self.mgba_debug_enable,
+                };
+            }
+            _ => {}
+        }
+        self.open_bus_value = value;
+    }
+
+    /// mGBA debug-log MMIO read: buffer bytes, or `0x1DEA` from
+    /// `REG_DEBUG_ENABLE` while enabled (`mgba_open` handshake);
+    /// disabled reads fall through to open bus (prior behavior).
+    fn read_mgba_debug(&mut self, addr: u32, width: u8) -> u32 {
+        match addr {
+            0x04FFF600..=0x04FFF6FF => {
+                let off = (addr as usize).wrapping_sub(0x4FFF600);
+                let mut bytes = [0u8; 4];
+                for (i, byte) in bytes.iter_mut().enumerate().take(usize::from(width)) {
+                    if off + i < self.mgba_debug_buf.len() {
+                        *byte = self.mgba_debug_buf[off + i];
+                    }
+                }
+                u32::from_le_bytes(bytes)
+            }
+            0x04FFF780 => {
+                if self.mgba_debug_enable {
+                    0x1DEA
+                } else {
+                    self.open_bus_value
+                }
+            }
+            _ => self.open_bus_value,
+        }
+    }
 
     fn read_bios(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FFF);
@@ -1340,16 +1457,6 @@ impl GbaMemoryBus {
                 c.save_type(),
                 crate::cartridge::save::SaveType::Eeprom512
                     | crate::cartridge::save::SaveType::Eeprom8k
-            )
-        })
-    }
-
-    fn is_flash(&self) -> bool {
-        self.cartridge.as_ref().is_some_and(|c| {
-            matches!(
-                c.save_type(),
-                crate::cartridge::save::SaveType::Flash64
-                    | crate::cartridge::save::SaveType::Flash128
             )
         })
     }
@@ -1813,15 +1920,20 @@ impl GbaMemoryBus {
             0x05000000..=0x05FFFFFF => self.write_palette(address, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
             0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
-            // GBATEK Memory Map: GamePak SRAM is CPU-only (bytewise); DMA
-            // stores to the SRAM window go nowhere — except DMA3, which may
-            // program backup Flash (GBATEK DMA Transfer Channels). Forward
-            // DMA3 stores to an attached Flash backend through the same
-            // command parser as CPU writes; all other DMA SRAM stores drop.
+            // GBATEK Memory Map: GamePak SRAM is CPU-only (bytewise) for
+            // DMA0-2 — their stores go nowhere. DMA3 is the backup-media
+            // channel: it programs Flash (parsed as commands, as before)
+            // and plain SRAM (mgba-suite "SRAM store DMA3" pins the
+            // written bytes readable back) alike. EEPROM cartridges have
+            // no SRAM window, so DMA3 stores there still drop.
             0x0E000000..=0x0FFFFFFF => {
                 if channel == 3
-                    && self.is_flash()
                     && let Some(cart) = self.cartridge.as_mut()
+                    && !matches!(
+                        cart.save_type(),
+                        crate::cartridge::save::SaveType::Eeprom512
+                            | crate::cartridge::save::SaveType::Eeprom8k
+                    )
                 {
                     cart.write_sram(address, width, value);
                 } else {
@@ -1874,6 +1986,28 @@ fn is_unreadable_io(address: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mgba_debug_handshake_and_log_commit() {
+        // mgba-emu/suite `mgba_open` handshake + `mgba_printf` commit.
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.mgba_debug_enabled());
+        bus.write16(0x04FFF780, 0xC0DE);
+        assert!(bus.mgba_debug_enabled());
+        assert_eq!(bus.read16(0x04FFF780), 0x1DEA);
+        for (i, &b) in b"PASS: x".iter().enumerate() {
+            bus.write8(0x04FFF600 + i as u32, b);
+        }
+        bus.write8(0x04FFF600 + 7, 0);
+        bus.write16(0x04FFF700, 4 | 0x100);
+        let logs = bus.drain_mgba_debug_logs();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].level, 4);
+        assert_eq!(logs[0].text, "PASS: x");
+        assert!(bus.drain_mgba_debug_logs().is_empty());
+        bus.write16(0x04FFF780, 0);
+        assert!(!bus.mgba_debug_enabled());
+    }
 
     #[test]
     fn read_wram_bounds() {
