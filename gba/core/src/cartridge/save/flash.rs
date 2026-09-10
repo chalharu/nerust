@@ -7,6 +7,12 @@ enum FlashState {
     Unlock1,      // after AA at 5555
     Unlock2,      // after 55 at 2AAA
     ProgramArmed, // after A0: next write is program data
+    /// Atmel 128-byte sector program in progress (base = 80h-aligned sector
+    /// start, remaining = bytes still expected in this sector burst).
+    ProgramAtmel {
+        base: u32,
+        remaining: u8,
+    },
     BankArmed,    // after B0: next write at 0E000000 selects the bank
     EraseSetup,   // after 80: erase command, needs a fresh AA/55 unlock
     EraseUnlock1, // after erase-setup AA at 5555
@@ -147,6 +153,7 @@ impl SaveBackend for FlashSave {
             FlashState::Unlock1 => self.accept_unlock2(low, byte),
             FlashState::Unlock2 => self.execute_command(byte),
             FlashState::ProgramArmed => self.finish_program(addr, byte),
+            FlashState::ProgramAtmel { .. } => self.program_atmel(addr, byte),
             FlashState::BankArmed => self.finish_bank_switch(addr, byte),
             FlashState::EraseSetup => self.accept_erase_unlock(low, byte),
             FlashState::EraseUnlock1 => self.accept_erase_unlock2(low, byte),
@@ -168,7 +175,19 @@ impl SaveBackend for FlashSave {
         out.extend_from_slice(&self.data);
         out.push(self.bank as u8);
         out.push(u8::from(self.id_mode));
-        out.push(self.state as u8);
+        // A mid-burst Atmel program never survives a state boundary: it
+        // restores as Ready (the 128 writes are instantaneous here anyway).
+        out.push(match self.state {
+            FlashState::Ready => 0,
+            FlashState::Unlock1 => 1,
+            FlashState::Unlock2 => 2,
+            FlashState::ProgramArmed => 3,
+            FlashState::BankArmed => 4,
+            FlashState::EraseSetup => 5,
+            FlashState::EraseUnlock1 => 6,
+            FlashState::EraseUnlock2 => 7,
+            FlashState::ProgramAtmel { .. } => 0,
+        });
         out.push(if self.is_128k { 1 } else { 0 });
         out.push(self.chip as u8);
         out
@@ -213,11 +232,51 @@ impl SaveBackend for FlashSave {
 
 impl FlashSave {
     fn finish_program(&mut self, address: u32, value: u8) {
+        if self.chip == FlashChip::Atmel64 {
+            // GBATEK "Erase-and-Write 128 Bytes Sector (only Atmel)": after
+            // the A0 command, 128 bytes at an 80h-aligned address are
+            // written (each programs 1->0 only); poll reads complete
+            // immediately in this model.
+            let base = address & !0x7F;
+            self.program_byte(address, value);
+            self.state = FlashState::ProgramAtmel {
+                base,
+                remaining: 127,
+            };
+            return;
+        }
         self.state = FlashState::Ready;
+        self.program_byte(address, value);
+    }
+
+    fn program_byte(&mut self, address: u32, value: u8) {
         let offset = (address & 0xFFFF) as usize + self.bank_offset();
         if let Some(byte) = self.data.get_mut(offset) {
             *byte &= value;
         }
+    }
+
+    fn program_atmel(&mut self, address: u32, value: u8) {
+        let (base, remaining) = if let FlashState::ProgramAtmel { base, remaining } = self.state {
+            (base, remaining)
+        } else {
+            return;
+        };
+        if address.wrapping_sub(base) >= 0x80 {
+            // Outside the latched sector: abort the burst.
+            self.state = FlashState::Ready;
+            self.accept_unlock(address & 0xFFFF, value);
+            return;
+        }
+        self.program_byte(address, value);
+        self.state = if remaining <= 1 {
+            FlashState::Ready
+        } else {
+            FlashState::ProgramAtmel {
+                base,
+                remaining: remaining - 1,
+            }
+        };
     }
 
     fn finish_bank_switch(&mut self, address: u32, value: u8) {
@@ -388,6 +447,32 @@ mod tests {
         flash.write(0x0E002AAA, 1, 0x55);
         flash.write(0x0E005555, 1, 0x10);
         assert_eq!(flash.data[0x1000], 0x00);
+    }
+
+    #[test]
+    fn atmel_programs_128b_sector_burst() {
+        // GBATEK Atmel: unlock, A0, then 128 bytes at an 80h-aligned
+        // address (each programs 1->0 only).
+        let mut flash = FlashSave::new(false);
+        flash.set_chip(FlashChip::Atmel64);
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xA0);
+        for i in 0..128u32 {
+            flash.write(0x0E000100 + i, 1, i & 0xFF);
+        }
+        for i in 0..128u32 {
+            assert_eq!(flash.data[0x100 + i as usize], (i & 0xFF) as u8);
+        }
+        // Burst ended after 128: further writes need a fresh A0.
+        flash.write(0x0E000180, 1, 0x00);
+        assert_eq!(flash.data[0x180], 0xFF);
+        // 1->0 only: programming over programmed bytes clears bits.
+        flash.write(0x0E005555, 1, 0xAA);
+        flash.write(0x0E002AAA, 1, 0x55);
+        flash.write(0x0E005555, 1, 0xA0);
+        flash.write(0x0E000100, 1, 0x0F);
+        assert_eq!(flash.data[0x100], 0x00);
     }
 
     #[test]
