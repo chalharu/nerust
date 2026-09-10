@@ -368,9 +368,10 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
                 };
         }
         if timing_for(channel, dma.control) == DmaTrigger::Immediate {
-            // GBATEK DMA: restart whenever the start condition is true;
-            // for Immediate that is always, so re-pend at once.
-            dma.pending = 3;
+            // Immediate has no recurring start condition, so Repeat cannot
+            // re-arm it (mGBA dma.c forces noRepeat for TIMING_NOW):
+            // clear Enable like the non-repeat path instead of looping.
+            dma.control &= !0x8000;
         }
     } else {
         dma.control &= !0x8000;

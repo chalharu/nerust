@@ -240,10 +240,17 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             // Undocumented sound SWIs — no-op HLE (effects unknown).
             SwiResult::Return(1)
         }
-        0x25 | 0x26 => {
-            // MultiBoot / HardReset reboot the machine; there is no HLE
-            // model for either, so trap to the SVC vector instead of
-            // faking success.
+        0x25 => {
+            // MultiBoot without link hardware: the handshake can never
+            // succeed, so report GBATEK's defined failure (r0=1) instead
+            // of trapping to the SVC vector.
+            regs.set_r(0, 1);
+            SwiResult::Return(1)
+        }
+        0x26 => {
+            // HardReset reboots the machine; there is no HLE model for it
+            // (a reset needs system scope, unavailable in BIOS context),
+            // so trap to the SVC vector instead of faking success.
             SwiResult::Unsupported
         }
         0x27 => {
@@ -270,6 +277,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(SOUND_DRIVER_MAIN_CYCLES)
         }
         0x1D => {
+            sound_driver_vsync(bus);
             // PeterLemon BIOSSoundDriverVSync expects TIMER0 = $0043
             SwiResult::Return(SOUND_DRIVER_VSYNC_CYCLES)
         }
@@ -519,19 +527,42 @@ fn sound_driver_init(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     bus.apu_mut().sound_area = area;
     // GBATEK SoundArea.ident: flag the system checks for initialization.
     bus.write_hle_bios32(area, 1);
+    // The driver-owned header (DmaCount, reverb, d1) starts clean; full
+    // music-player emulation is out of scope for HLE.
+    bus.write_hle_bios16(area.wrapping_add(4), 0);
+    bus.write_hle_bios16(area.wrapping_add(6), 0);
 }
 
 /// SWI 1Bh SoundDriverMode (GBATEK): set operation mode (reverb, channel
 /// count, master volume, playback frequency, D/A bits).
 fn sound_driver_mode(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
-    bus.apu_mut().sound_mode = regs.r(0);
+    let mode = regs.r(0);
+    bus.apu_mut().sound_mode = mode;
+    // GBATEK bit 7 applies the bit 0-6 reverb value into SoundArea.reverb
+    // (area+5); otherwise the stored reverb is left alone.
+    if mode & (1 << 7) != 0 {
+        let area = bus.apu().sound_area;
+        bus.write_hle_bios8(area.wrapping_add(5), (mode & 0x7F) as u8);
+    }
+}
+
+/// SWI 1Dh SoundDriverVSync (GBATEK): per-frame driver tick. The HLE has no
+/// music player, but the driver-owned DmaCount (SoundArea+4) advances like
+/// the real driver's VBlank routine so its liveness is observable.
+fn sound_driver_vsync(bus: &mut GbaMemoryBus) {
+    let area = bus.apu().sound_area;
+    if area != 0 {
+        let count = bus.read8(area.wrapping_add(4));
+        bus.write_hle_bios8(area.wrapping_add(4), count.wrapping_add(1));
+    }
 }
 
 /// SWI 1Fh MidiKey2Freq (GBATEK + mGBA bios.c): fr = WaveData.freq /
 /// 2^((180 - key - fine/256) / 12).
 fn midi_key_2_freq(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let wave_freq = bus.read32(regs.r(0) + 4);
-    let key = regs.r(1) as f64;
+    // GBATEK: r1 = u8 key (mk), r2 = u8 fine (fp) — mask both.
+    let key = (regs.r(1) & 0xFF) as f64;
     let fine = (regs.r(2) & 0xFF) as f64;
     let divisor = 2f64.powf((180.0 - key - fine / 256.0) / 12.0);
     regs.set_r(0, (f64::from(wave_freq) / divisor) as u32);
@@ -565,9 +596,12 @@ fn div(regs: &mut CpuRegisters) {
     let num = regs.r(0) as i32;
     let den = regs.r(1) as i32;
     if den == 0 {
-        regs.set_r(0, -1i32 as u32);
+        // mGBA _Div concordance (GBATEK Div by zero): r0 = sign(num),
+        // r1 = num, r3 = 1. (Charges unchanged: operand-dependent stall
+        // would break the ROM-pinned $E2/$E5 TIMER0 values.)
+        regs.set_r(0, if num < 0 { -1i32 as u32 } else { 1 });
         regs.set_r(1, num as u32);
-        regs.set_r(3, num.unsigned_abs());
+        regs.set_r(3, 1);
     } else {
         let (quotient, overflow) = num.overflowing_div(den);
         let remainder = if overflow { 0 } else { num % den };
@@ -582,9 +616,10 @@ fn div_arm(regs: &mut CpuRegisters) {
     let den = regs.r(0) as i32;
     let num = regs.r(1) as i32;
     if den == 0 {
-        regs.set_r(0, -1i32 as u32);
+        // Same div-by-zero convention as Div (mGBA _Div).
+        regs.set_r(0, if num < 0 { -1i32 as u32 } else { 1 });
         regs.set_r(1, num as u32);
-        regs.set_r(3, num.unsigned_abs());
+        regs.set_r(3, 1);
     } else {
         let (q, o) = num.overflowing_div(den);
         let r = if o { 0 } else { num % den };
@@ -963,6 +998,7 @@ mod tests {
 
     #[test]
     fn div_by_zero_uses_documented_result() {
+        // mGBA _Div concordance: r0 = sign(num), r1 = num, r3 = 1.
         let mut regs = CpuRegisters::post_bios();
         let mut bus = GbaMemoryBus::new();
         regs.set_r(0, -7i32 as u32);
@@ -970,7 +1006,13 @@ mod tests {
         handle_swi(&mut regs, &mut bus, 6);
         assert_eq!(regs.r(0), u32::MAX);
         assert_eq!(regs.r(1), -7i32 as u32);
-        assert_eq!(regs.r(3), 7);
+        assert_eq!(regs.r(3), 1);
+        regs.set_r(0, 7);
+        regs.set_r(1, 0);
+        handle_swi(&mut regs, &mut bus, 6);
+        assert_eq!(regs.r(0), 1);
+        assert_eq!(regs.r(1), 7);
+        assert_eq!(regs.r(3), 1);
     }
 
     #[test]

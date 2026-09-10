@@ -178,6 +178,11 @@ impl EepromSave {
         self.read_queue.remove(0)
     }
 
+    /// Peek the response level without consuming (for CPU loads).
+    pub fn serial_peek_bit(&self) -> bool {
+        self.read_queue.first().copied().unwrap_or(true)
+    }
+
     /// Number of address bits currently assumed (latched or 14-bit default).
     pub fn assumed_addr_bits(&self) -> u8 {
         self.addr_bits()
@@ -206,6 +211,10 @@ impl SaveBackend for EepromSave {
 
     fn eeprom_read_bit(&mut self) -> bool {
         self.serial_read_bit()
+    }
+
+    fn eeprom_peek_bit(&self) -> bool {
+        self.serial_peek_bit()
     }
 
     fn eeprom_end_burst(&mut self) {

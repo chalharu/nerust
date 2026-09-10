@@ -144,8 +144,12 @@ fn load_register(
         regs.set_r(register, value);
     }
     if restore && register == 15 {
-        // LDM^ including PC returns from an exception and restores CPSR from SPSR.
-        regs.set_cpsr(regs.spsr());
+        // LDM^ including PC returns from an exception and restores CPSR
+        // from SPSR — but USR/SYS have no SPSR (mGBA _ARMModeHasSPSR
+        // guard): skip instead of zeroing CPSR into an invalid mode.
+        if !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+            regs.set_cpsr(regs.spsr());
+        }
     }
 }
 
