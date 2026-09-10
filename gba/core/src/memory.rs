@@ -42,6 +42,21 @@ pub struct GbaMemoryBus {
     ie: u16,
     sif: u16,
     ime: bool,
+    /// NBA-model delayed interrupt state (nba-emu/NanoBoyAdvance hw/irq):
+    /// IE/IME/IF writes and IRQ raises land in pending levels, applied to
+    /// the effective registers 1 tick later; irq_available (IE&IF) follows
+    /// 1 tick after that; the CPU irq_line (IME && available) 2 ticks after
+    /// that. A late IE/IME clear can therefore still cancel an IRQ whose IF
+    /// was already set (nba cancel-irq-ie/ime), and the CPU observes the
+    /// line ~3 ticks after the request. Reads return effective values.
+    pending_ie: u16,
+    pending_ime: bool,
+    pending_if: u16,
+    pending_at: Option<u64>,
+    irq_available: bool,
+    avail_queue: Vec<(bool, u64)>,
+    irq_line: bool,
+    line_queue: Vec<(bool, u64)>,
     postflg: u8,
     /// Write-only HALTCNT latch (GBATEK System Control). Reads return open
     /// bus; bit 7 selects Stop mode (wake mask IE&0x3080, SIO+Keypad+Pak).
@@ -212,6 +227,14 @@ impl GbaMemoryBus {
             halt_irq_mask: 0,
             stopped: false,
             wake_clear_mask: 0,
+            pending_ie: 0,
+            pending_ime: false,
+            pending_if: 0,
+            pending_at: None,
+            irq_available: false,
+            avail_queue: Vec::new(),
+            irq_line: false,
+            line_queue: Vec::new(),
             bios_prefetch: 0xE129F000,
             scheduler: EventScheduler::new(),
             current_tcycle: 0,
@@ -398,6 +421,9 @@ impl GbaMemoryBus {
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        // Delayed interrupt pipeline first: yesterday's IE/IME/IF writes
+        // and IRQ raises become effective before devices run this tick.
+        self.process_irq_pipeline();
         if self.stopped {
             // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
             // are frozen; only an interrupt request wakes the machine.
@@ -453,7 +479,10 @@ impl GbaMemoryBus {
                 self.video_countdown = 2;
             }
         }
-        let timer_irq = self.timers.step();
+        let timer_irq = {
+            self.timers.set_current_cycle(self.current_tcycle);
+            self.timers.step()
+        };
         if timer_irq != 0 {
             for i in 0..4 {
                 if timer_irq & (1 << (3 + i)) != 0 {
@@ -587,7 +616,63 @@ impl GbaMemoryBus {
     }
 
     pub fn irq_pending(&self) -> bool {
-        self.ime && self.ie & self.sif != 0
+        // Delayed CPU IRQ line (NBA hw/irq: IME && IE&IF, ~3 ticks after
+        // the request). Sampled by the CPU once per instruction.
+        self.irq_line
+    }
+
+    /// NBA-model delayed interrupt pipeline: apply due IE/IME/IF pendings
+    /// (1 tick after the write/raise), then propagate IE&IF availability
+    /// (+1) and the CPU IRQ line (+2). Transitions are queued in order (a
+    /// later recompute never cancels an earlier staged edge), so a
+    /// transiently true line is still observable by the CPU before it
+    /// falls again. A late IE/IME clear can therefore still cancel an IRQ
+    /// whose IF was already set (nba cancel-irq-ie/ime): the line only
+    /// stays true if no clear is in flight.
+    fn process_irq_pipeline(&mut self) {
+        let now = self.current_tcycle;
+        if self.pending_at.is_some_and(|at| at <= now) {
+            self.pending_at = None;
+            let ie = self.pending_ie;
+            let ime = self.pending_ime;
+            let sif = self.pending_if;
+            if ie != self.ie || ime != self.ime || sif != self.sif {
+                self.ie = ie;
+                self.ime = ime;
+                self.sif = sif;
+                // BIOS IRQ-flags mirror follows the effective IF.
+                self.iwram[0x7FF8..0x7FFA].copy_from_slice(&sif.to_le_bytes());
+                let avail = ie & sif != 0;
+                let avail_cur = self
+                    .avail_queue
+                    .last()
+                    .map(|(v, _)| *v)
+                    .unwrap_or(self.irq_available);
+                if avail != avail_cur {
+                    self.avail_queue.push((avail, now + 1));
+                }
+                let line = ime && avail;
+                let line_cur = self
+                    .line_queue
+                    .last()
+                    .map(|(v, _)| *v)
+                    .unwrap_or(self.irq_line);
+                if line != line_cur {
+                    self.line_queue.push((line, now + 2));
+                }
+            }
+        }
+        while self.avail_queue.first().is_some_and(|(_, at)| *at <= now) {
+            let (avail, _) = self.avail_queue.remove(0);
+            self.irq_available = avail;
+            if avail {
+                self.evaluate_halt_wake();
+            }
+        }
+        while self.line_queue.first().is_some_and(|(_, at)| *at <= now) {
+            let (line, _) = self.line_queue.remove(0);
+            self.irq_line = line;
+        }
     }
 
     pub fn frame_buffer(&self) -> &[u32] {
@@ -671,7 +756,14 @@ impl GbaMemoryBus {
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
-        self.halted = self.ie & self.sif & self.halt_irq_mask == 0;
+        // Halt entry combines delayed availability (an IRQ already
+        // propagated keeps the CPU running) with the newest IE/IF levels:
+        // a just-written ack (e.g. IntrWait discarding old flags) must be
+        // honored even though it applies next tick, while a just-raised IF
+        // (pending) correctly prevents halting. Pending levels persist, so
+        // they are always current-or-newer than the effective registers.
+        self.halted =
+            !(self.irq_available && self.pending_ie & self.pending_if & self.halt_irq_mask != 0);
     }
 
     /// SWI Stop / HALTCNT-stop: park the CPU with clocks down.
@@ -687,10 +779,16 @@ impl GbaMemoryBus {
     }
 
     pub fn request_interrupt(&mut self, mask: u16) {
+        // NBA hw/irq Raise: OR into the pending IF level; applied (with the
+        // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
+        // is evaluated when availability propagates, not here.
         let mask = mask & 0x3FFF;
-        self.sif |= mask;
-        let flags = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) | mask;
-        self.iwram[0x7FF8..0x7FFA].copy_from_slice(&flags.to_le_bytes());
+        self.pending_if |= mask;
+        self.pending_at = Some(self.current_tcycle + 1);
+    }
+
+    /// Wake a halted/stopped CPU once delayed availability arrives.
+    fn evaluate_halt_wake(&mut self) {
         if self.ie & self.sif & self.halt_irq_mask != 0 {
             if self.halted {
                 // IntrWait wake: reset the waited flags in the BIOS RAM
@@ -750,6 +848,15 @@ impl GbaMemoryBus {
             self.ie = 0;
             self.sif = 0;
             self.ime = false;
+            // Keep the delayed pipeline in sync with the direct clear.
+            self.pending_ie = 0;
+            self.pending_ime = false;
+            self.pending_if = 0;
+            self.pending_at = None;
+            self.irq_available = false;
+            self.avail_queue.clear();
+            self.irq_line = false;
+            self.line_queue.clear();
             self.wait_cnt = 0;
             self.keycnt = 0;
             self.postflg = 0;
@@ -1500,8 +1607,21 @@ impl GbaMemoryBus {
                 self.joy_trans = (self.joy_trans & 0x0000FFFF) | ((v16 as u32) << 16);
             }
             0x04000158 => self.joystat = v16,
-            0x04000200 => self.ie = v16 & 0x3FFF,
-            0x04000202 => self.sif &= !v16, // 書き込みでクリア（1のbitがクリア）
+            0x04000200 => {
+                // Delayed (NBA hw/irq): merges into the pending level,
+                // applied 1 tick later; reads still return the effective IE.
+                self.pending_ie = v16 & 0x3FFF;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
+            0x04000202 => {
+                // IF acknowledge: clears pending bits (NBA hw/irq).
+                self.pending_if &= !v16;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
             0x04000204 => {
                 // Bit 15 (GamePak type) and bit 13 are read-only/unused.
                 self.wait_cnt = v16 & !(0x8000 | 0x2000);
@@ -1510,7 +1630,13 @@ impl GbaMemoryBus {
                     self.prefetch_queue.clear();
                 }
             }
-            0x04000208 => self.ime = (v16 & 1) != 0,
+            0x04000208 => {
+                // Delayed like IE (NBA hw/irq).
+                self.pending_ime = (v16 & 1) != 0;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
                 self.open_bus_value = value;
@@ -1640,6 +1766,8 @@ mod tests {
     fn interrupt_enable_covers_gamepak_irq_bit() {
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000200, 0xFFFF);
+        // IE writes apply 1 tick later (delayed interrupt pipeline).
+        bus.tick();
         assert_eq!(bus.read16(0x04000200) & 0x3FFF, 0x3FFF);
     }
 
@@ -1877,10 +2005,14 @@ mod tests {
     #[test]
     fn write_if_clears() {
         let mut bus = GbaMemoryBus::new();
-        bus.sif = 0x0003;
+        bus.request_interrupt(0x0003);
+        bus.tick();
+        assert_eq!(bus.sif, 0x0003);
         bus.write16(0x04000202, 0x0001);
+        bus.tick();
         assert_eq!(bus.sif, 0x0002);
         bus.write16(0x04000202, 0x0002);
+        bus.tick();
         assert_eq!(bus.sif, 0x0000);
     }
 
@@ -1921,6 +2053,8 @@ mod tests {
         bus.set_keyinput(0x03FF); // nothing pressed
         assert_eq!(bus.sif & (1 << 12), 0);
         bus.set_keyinput(0x03FE); // A pressed (bit 0 = 0)
+        // Keypad raises apply 1 tick later (delayed interrupt pipeline).
+        bus.tick();
         assert_ne!(bus.sif & (1 << 12), 0);
     }
 
@@ -2148,6 +2282,10 @@ mod tests {
         bus.write16(0x04000200, 1);
         bus.enter_halt(1);
         bus.request_interrupt(1);
+        // Wake propagates through the delayed pipeline (apply +1,
+        // availability +1).
+        bus.tick();
+        bus.tick();
         assert!(!bus.is_halted());
         assert_eq!(bus.read16(0x03007FF8) & 1, 1);
     }
@@ -2178,12 +2316,16 @@ mod tests {
     }
 
     #[test]
-    fn halt_with_a_pending_enabled_irq_returns_immediately() {
+    fn halt_wakes_once_irq_availability_propagates() {
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000200, 1);
         bus.request_interrupt(1);
         bus.enter_halt(1);
-
+        // Halt parks first (availability propagates with delay)...
+        assert!(bus.is_halted());
+        // ...then the pending IRQ wakes it once availability arrives.
+        bus.tick();
+        bus.tick();
         assert!(!bus.is_halted());
     }
 
@@ -2225,6 +2367,8 @@ mod tests {
         for _ in 0..4 {
             bus.tick();
         }
+        // The overflow's IF propagates 1 tick after the request.
+        bus.tick();
         assert_ne!(bus.read16(0x04000202) & (1 << 3), 0);
         assert_eq!(bus.read16(0x04000104), 1);
     }
