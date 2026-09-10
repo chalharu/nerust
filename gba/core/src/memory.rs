@@ -5,7 +5,7 @@ use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
-use crate::ppu::{GbaPpu, HBLANK_FLAG_CYCLES, HDRAW_CYCLES};
+use crate::ppu::{GbaPpu, HDRAW_CYCLES};
 use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
 
@@ -44,7 +44,7 @@ pub struct GbaMemoryBus {
     ime: bool,
     postflg: u8,
     /// Write-only HALTCNT latch (GBATEK System Control). Reads return open
-    /// bus; bit 7 selects Stop mode (unmodeled, latched only).
+    /// bus; bit 7 selects Stop mode (wake mask IE&0x3080, SIO+Keypad+Pak).
     #[allow(dead_code)]
     haltcnt: u8,
     /// 4000800h Internal Memory Control (GBATEK System Control, R/W, init
@@ -126,8 +126,11 @@ impl DisplayStallSnapshot {
             return 0;
         }
         // BG/palette data is fetched during draw only. OAM stays busy
-        // through HBlank too, unless H-Blank Interval Free idles it.
-        let in_hblank = self.cycle >= HBLANK_FLAG_CYCLES;
+        // through HBlank too, unless H-Blank Interval Free idles it. The
+        // HBlank free window opens at HDraw end (cycle 960, GBATEK LCD
+        // Dimensions: 240 draw dots + 68 blank dots) — not at the HBlank
+        // flag (1006), which only marks the flag/IRQ edge.
+        let in_hblank = self.cycle >= HDRAW_CYCLES;
         // BG fetch clock (archive/ppu/mode3): contention only while the
         // fetcher runs and a BG is enabled (latched AND live).
         let in_fetch = (32..989).contains(&self.cycle) && self.bg_fetch_active;
@@ -353,8 +356,13 @@ impl GbaMemoryBus {
                 }
             }
             0x0E000000..=0x0FFFFFFF => {
+                // GBATEK WAITCNT: SRAM Wait Control selects 4/3/2/8
+                // waitstates, and like every access the total is 1 clock
+                // cycle PLUS waitstates. The SRAM bus is 8-bit and wide CPU
+                // accesses move a single byte (GBATEK SRAM data semantics),
+                // so there is no width multiplier.
                 const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
-                SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
+                SRAM_WAIT[(self.wait_cnt & 0b11) as usize] + 1
             }
             _ => 1,
         }
@@ -411,10 +419,10 @@ impl GbaMemoryBus {
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
         if event.hblank_started {
-            // Tonc/NBA: HBlank DMA fires on visible lines only (paused in VBlank).
-            if self.ppu.vcount() < 160 {
-                self.dma.trigger(DmaTrigger::HBlank);
-            }
+            // GBATEK DISPSTAT: H-Blank conditions are generated once per
+            // scanline, including the hidden scanlines during V-Blank — a
+            // repeat HBlank channel fires on lines 0..227, not just <160.
+            self.dma.trigger(DmaTrigger::HBlank);
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle + 1,
                 event_type: EventType::HBlank,
@@ -554,9 +562,8 @@ impl GbaMemoryBus {
             self.prev_addr = None;
             self.prev_width = 0;
             self.prefetch_queue.clear();
-            if transfer.interrupt {
-                interrupt_mask |= 1 << (8 + transfer.channel);
-            }
+            // Completion IRQs are raised via take_completion_interrupts
+            // below (one tick after the final write).
         }
         interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
@@ -2038,9 +2045,10 @@ mod tests {
     }
 
     #[test]
-    fn hblank_dma_skips_vblank_lines() {
-        // HBlank DMA with repeat fires on visible lines only (Tonc/NBA):
-        // one full frame must transfer exactly 160 units, not 228.
+    fn hblank_dma_fires_on_all_lines_including_vblank() {
+        // GBATEK DISPSTAT: H-Blank conditions are generated once per
+        // scanline, including hidden V-Blank scanlines — one full frame of
+        // a repeat HBlank channel transfers 228 units, not 160.
         let mut bus = GbaMemoryBus::new();
         for i in 0..256u16 {
             bus.write16(0x03000000 + u32::from(i) * 2, 0xABCD);
@@ -2061,7 +2069,7 @@ mod tests {
         let written = (0..256u16)
             .filter(|&i| bus.read16(0x03001000 + u32::from(i) * 2) != 0)
             .count();
-        assert_eq!(written, 160);
+        assert_eq!(written, 228);
     }
 
     #[test]
