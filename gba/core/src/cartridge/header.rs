@@ -64,8 +64,10 @@ impl GbaHeader {
     }
 
     fn complement_check(rom: &[u8]) -> bool {
+        // GBATEK: chk=0; for i=0A0h to 0BCh: chk=chk-[i]; chk=(chk-19h).
+        // The range is inclusive of 0BCh (software version).
         let mut chk: u8 = 0;
-        for &b in &rom[0xA0..0xBC] {
+        for &b in &rom[0xA0..=0xBC] {
             chk = chk.wrapping_sub(b);
         }
         chk = chk.wrapping_sub(0x19);
@@ -81,7 +83,7 @@ pub fn finalize_test_gba_rom(rom: &mut [u8]) {
     rom[LOGO_OFFSET..LOGO_OFFSET + LOGO_SIZE].copy_from_slice(&NINTENDO_LOGO_GBA);
     rom[0xB2] = 0x96;
     let mut chk: u8 = 0;
-    for &b in &rom[0xA0..0xBC] {
+    for &b in &rom[0xA0..=0xBC] {
         chk = chk.wrapping_sub(b);
     }
     chk = chk.wrapping_sub(0x19);
@@ -143,5 +145,19 @@ mod tests {
         finalize_test_gba_rom(&mut rom);
         assert!(GbaHeader::has_valid_logo(&rom));
         assert!(GbaHeader::parse(&rom).unwrap().complement_valid);
+    }
+
+    #[test]
+    fn complement_includes_software_version() {
+        // GBATEK sums 0A0h..0BCh inclusive: a nonzero version byte must
+        // validate, and corrupting it must fail.
+        let mut rom = vec![0u8; 0xC0];
+        rom[0xBC] = 0x01;
+        finalize_test_gba_rom(&mut rom);
+        let h = GbaHeader::parse(&rom).unwrap();
+        assert_eq!(h.software_version, 0x01);
+        assert!(h.complement_valid);
+        rom[0xBC] ^= 0xFF;
+        assert!(!GbaHeader::parse(&rom).unwrap().complement_valid);
     }
 }

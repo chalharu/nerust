@@ -29,6 +29,12 @@ pub trait SaveBackend: std::fmt::Debug + Send {
     fn eeprom_read_bit(&mut self) -> bool {
         true
     }
+    /// Peek the current response level WITHOUT consuming it (mGBA
+    /// GBASavedataReadEEPROM concordance for CPU loads): idle chip drives
+    /// 1 (pulled up = Ready for the GBATEK `LDRH [DFFFF00h]` poll).
+    fn eeprom_peek_bit(&self) -> bool {
+        true
+    }
     /// End of a DMA burst touching the backup chip.
     fn eeprom_end_burst(&mut self) {}
     fn has_battery(&self) -> bool {

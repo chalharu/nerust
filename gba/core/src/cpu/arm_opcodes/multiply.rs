@@ -27,7 +27,11 @@ fn handle_short(regs: &mut CpuRegisters, instr: u32) -> u32 {
     if a {
         result = result.wrapping_add(regs.r(rn));
     }
-    regs.set_r(rd, result);
+    // UNPREDICTABLE Rd=R15 (mGBA isa-arm.c skips the write): never let a
+    // multiply hijack the PC and trigger a spurious pipeline refill.
+    if rd != 15 {
+        regs.set_r(rd, result);
+    }
 
     if s {
         crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
