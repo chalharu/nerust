@@ -103,6 +103,12 @@ impl GbaCpu {
         bus.set_current_pc(target);
         bus.invalidate_prefetch_for_dma(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+        // Single-source IRQ entry accounting: the vector+refill bus waits
+        // above are intentionally discarded here (not leaked into the next
+        // step). The HLE entry cost IRQ_ENTRY_CYCLES + (N-1) in system.rs is
+        // the sole charge, so entry is location-independent by design;
+        // sub-tick entry overlap is future research (see rom_tests.yaml).
+        bus.take_access_wait_cycles();
         true
     }
 

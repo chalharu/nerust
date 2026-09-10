@@ -168,7 +168,12 @@ impl DisplayStallSnapshot {
             0x06000000..=0x06FFFFFF => {
                 let bitmap_mode = (self.dispcnt & 7) >= 3;
                 let bg_limit = if bitmap_mode { 0x14000 } else { 0x10000 };
-                if (addr & 0x1FFFF) < bg_limit {
+                // Classify by the same folded offset the data path uses:
+                // 0x18000-0x1FFFF mirrors 0x10000-0x17FFF (OBJ bank), so a
+                // raw-mask test would misfile mirror accesses as OBJ-busy.
+                let off = addr & 0x1FFFF;
+                let off = if off >= 0x18000 { off - 0x8000 } else { off };
+                if off < bg_limit {
                     u8::from(in_fetch)
                 } else {
                     u8::from(oam_busy)
@@ -366,6 +371,10 @@ impl GbaMemoryBus {
                 }
             }
             0x03000000..=0x03FFFFFF => 1,
+            // I/O stays width-insensitive at 1 cycle: twelve HW-pinned
+            // 128kb-boundary DMA fits measure three 32-bit setup stores
+            // (SAD/DAD/CNT) at 1 cycle each. The 16-bit-bus theory would
+            // charge 2 and overshoots every one of them by exactly +3.
             0x04000000..=0x040003FE => 1,
             0x05000000..=0x05FFFFFF => {
                 // GBATEK bus widths: Palette 16bit=1, 32bit=2 (+display stall).
@@ -375,6 +384,11 @@ impl GbaMemoryBus {
                 // GBATEK bus widths: VRAM 16bit=1, 32bit=2 (+display stall).
                 (if width == 4 { 2 } else { 1 }) + self.display_stall(addr)
             }
+            // OAM stays width-insensitive at 1 cycle: the HW-pinned
+            // 128kb-boundary LDM from 0x07FFFFF8 measures 28 with two
+            // 32-bit OAM loads at 1 cycle each (the sprite engine itself
+            // fetches A01 32-bit, i.e. a 32-bit bus). Palette/VRAM keep
+            // the 16-bit-bus 32bit=2 split.
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
                 // Prefetch ON: ROM opcode fetches ride the fetch stream
@@ -565,6 +579,18 @@ impl GbaMemoryBus {
             .dma
             .step(self.wait_cnt, &|addr| stall_snapshot.stall(addr))
         {
+            if std::env::var("GBA_DTRACE").is_ok() {
+                eprintln!(
+                    "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
+                    transfer.channel,
+                    self.current_tcycle,
+                    stall_snapshot.vcount,
+                    stall_snapshot.cycle,
+                    transfer.source,
+                    transfer.destination,
+                    transfer.width
+                );
+            }
             self.scheduler.schedule(ScheduledEvent {
                 target_tcycle: self.current_tcycle,
                 event_type: EventType::DmaTransfer(transfer.channel),
@@ -587,19 +613,26 @@ impl GbaMemoryBus {
                     bit
                 }
             } else if readable_source {
-                // nba burst-into-tears (HW-pinned): 16-bit DMA reads from
-                // GamePak ROM transfer mem[source+2] — the burst reads one
-                // unit ahead (unit N latches unit N+1's data; visible when
-                // the first read falls outside ROM). 32-bit ROM reads are
-                // unaffected (nba 128kb-boundary times would shift), as are
-                // I/O, WRAM and OAM sources (latch/start-delay/HBlank/video
-                // tests pin exact data) and the EEPROM serial path above.
+                // nba burst-into-tears (HW-pinned, source main.c): a 3-unit
+                // 16-bit DMA3 from 0x07FFFFFE (inc) to 0x08000000 (dec)
+                // delivers ROM[2] to OAM[0x3FE] and ROM[4] to OAM[0x3FC],
+                // i.e. dest[i] = mem16(src+2+2i): the 16-bit GamePak read
+                // path pre-increments, latching unit N+1's data into unit
+                // N (with a phantom read past the end). The shift fires
+                // when the read lands in ROM (source or source+2 is
+                // GamePak: unit 0 issues from the OAM mirror but lands at
+                // ROM[0]). 32-bit ROM reads are unaffected (nba
+                // 128kb-boundary times pin their addresses), and non-ROM
+                // 16-bit sources are unaffected (nba latch pins IWRAM
+                // 16-bit data exact: 0x12341234).
+                let src = transfer.source;
                 let read_addr = if transfer.width == 2
-                    && (0x08000000..=0x0DFFFFFF).contains(&transfer.source)
+                    && ((0x08000000..=0x0DFFFFFF).contains(&src)
+                        || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))
                 {
-                    transfer.source.wrapping_add(2)
+                    src.wrapping_add(2)
                 } else {
-                    transfer.source
+                    src
                 };
                 let value = self.read_dma_source(read_addr, transfer.width);
                 self.dma
@@ -708,11 +741,12 @@ impl GbaMemoryBus {
                     self.line_queue.push((line, now + 2));
                 }
                 // Halt wake on the effective IE/IF registers (GBATEK Halt:
-                // paused while (IE AND IF)=0): this restores the wake phase
-                // for halt-context measurements (nba haltcnt CPUSET-DMA is
-                // HW-exact this way), while CPU IRQ entry still uses the
-                // delayed line. Evaluated again on delayed availability
-                // below, so no wake is lost either way.
+                // paused while (IE AND IF)=0): evaluated here at apply time,
+                // which already sees the final levels (a later write cannot
+                // land between apply and the avail pop: writes run after
+                // the pipeline within each tick). CPU IRQ entry still uses
+                // the delayed line. (nba haltcnt CPUSET-DMA is HW-exact
+                // this way.)
                 if ie & sif & self.halt_irq_mask != 0 {
                     self.evaluate_halt_wake();
                 }
@@ -1043,8 +1077,9 @@ impl GbaMemoryBus {
     }
 
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
-        // GBATEK Backup Media / EEPROM: the chip is DMA-only bit-serial;
-        // CPU loads from 0D000000h see open bus, never EEPROM contents.
+        // GBATEK Backup Media / EEPROM: on EEPROM cartridges the 0D window
+        // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM: CPU
+        // loads see the chip state); plain ROMs mirror WS2 here.
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
             0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
@@ -1615,12 +1650,18 @@ impl GbaMemoryBus {
                     );
                 }
                 self.dma.write(aligned, v16);
-                // force next ROM fetch to NSEQ (GBATEK: STR to DMA CNT forces NSEQ)
-                self.prev_addr = None;
-                self.prev_width = 0;
-                self.fetch_addr = None;
-                self.fetch_width = 0;
-                self.prefetch_queue.clear();
+                // GBATEK "STR to DMA CNT forces NSEQ": only the CNT_H
+                // commit write breaks code sequentiality. SAD/DAD/CNT_L
+                // setup writes never touch the GamePak bus, so the
+                // prefetch buffer and the fetch stream stay valid across
+                // them (clearing there made ROM setup code spuriously N).
+                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
+                    self.prev_addr = None;
+                    self.prev_width = 0;
+                    self.fetch_addr = None;
+                    self.fetch_width = 0;
+                    self.prefetch_queue.clear();
+                }
             }
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
@@ -1692,6 +1733,8 @@ impl GbaMemoryBus {
             0x04000200 => {
                 // Delayed (NBA hw/irq): merges into the pending level,
                 // applied 1 tick later; reads still return the effective IE.
+                // (32-bit stores are split into halfword writes before this
+                // match, so IE+IF / IF+WAITCNT pairs land in order.)
                 self.pending_ie = v16 & 0x3FFF;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.open_bus_value = value;

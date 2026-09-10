@@ -2,8 +2,9 @@
 /// Handles GBA sound registers 0x04000060-0x0400009F and wave RAM.
 /// PSG/FIFO mixing is still stubbed, but registers are now owned here instead of GbaMemoryBus latch.
 /// FIFO_A/B (0x040000A0/A4) are 32-byte streaming buffers fed by DMA
-/// Special (DMA1/DMA2, 4x32-bit bursts); without a sound backend they are
-/// stored but never drained (no periodic drain is modeled).
+/// Special (DMA1/DMA2, 4x32-bit bursts); the overflowing sound timer
+/// clocks one sample byte out of each selected FIFO (drain_fifo), and
+/// a <=12-byte FIFO requests its refill DMA.
 #[derive(Debug)]
 pub struct GbaApu {
     pub sound1cnt_lo: u16,

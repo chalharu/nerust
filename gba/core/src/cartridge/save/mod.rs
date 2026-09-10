@@ -47,15 +47,16 @@ pub trait SaveBackend: std::fmt::Debug + Send {
 }
 
 pub fn detect_save_type(rom: &[u8]) -> SaveType {
-    // GBAヘッダにセーブ情報がないため SDK文字列を word-aligned step_by(4) でスキャン
+    // GBAヘッダにセーブ情報がないため SDK文字列をバイト単位でスキャン
+    // (SDK文字列のアライン保証はないため step_by(4) では見逃す)。
     // 優先順: FLASH1M > FLASH512/FLASH > SRAM > EEPROM > None
     let mut found_sram = false;
     let mut found_eeprom = false;
     let mut found_flash = false;
     let mut found_flash1m = false;
 
-    // Efficient scan: check every 4 bytes for known strings
-    for i in (0..rom.len()).step_by(4) {
+    // Byte-wise scan for known strings.
+    for i in 0..rom.len() {
         let slice = &rom[i..];
         if slice.starts_with(b"FLASH1M_V") {
             found_flash1m = true;
@@ -80,7 +81,8 @@ pub fn detect_save_type(rom: &[u8]) -> SaveType {
         return SaveType::Sram;
     }
     if found_eeprom {
-        // EEPROM_Vだけでは 512B/8KB 区別不可。常時8KBで確保するため Eeprom8k を返す。
+        // EEPROM_Vだけでは 512B/8KB 区別不可。EepromSave がバス上の
+        // フレーム長で動的に解決するため、ここでは Eeprom8k を返す。
         return SaveType::Eeprom8k;
     }
     SaveType::None
