@@ -20,8 +20,12 @@ pub fn window_mask(
     if enabled & 2 != 0 && in_window(registers.winh[1], registers.winv[1], x, y) {
         return (registers.winin >> 8) as u8 & 0x3F;
     }
-    if enabled & 4 != 0 && obj::pixel(registers, vram, palette, oam, (x, y), true, mosaic).is_some()
+    if enabled & 4 != 0
+        && registers.dispcnt & (1 << 12) != 0
+        && obj::pixel(registers, vram, palette, oam, (x, y), true, mosaic).is_some()
     {
+        // GBATEK Window Feature: both DISPCNT bits 12 (OBJ master) and 15
+        // (OBJ Window) must be set for OBJ Window region(s).
         return (registers.winout >> 8) as u8 & 0x3F;
     }
     registers.winout as u8 & 0x3F
