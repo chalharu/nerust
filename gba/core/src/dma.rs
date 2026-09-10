@@ -13,7 +13,6 @@ pub struct DmaTransfer {
     pub source: u32,
     pub destination: u32,
     pub width: u8,
-    pub interrupt: bool,
     pub latched_value: u32,
 }
 
@@ -233,7 +232,6 @@ impl GbaDma {
             source,
             destination,
             width,
-            interrupt: false,
             latched_value: dma.latch,
         })
     }
@@ -434,6 +432,9 @@ fn advance(address: u32, mode: u16, width: u8, destination: bool) -> u32 {
     match mode {
         1 => address.wrapping_sub(u32::from(width)),
         2 => address,
+        // GBATEK marks source mode 3 "Prohibited"; de-facto HW/mGBA behavior
+        // is increment, which is what the fallthrough implements.
+        // Destination mode 3 is Increment+Reload (reload handled at finish).
         3 if destination => address.wrapping_add(u32::from(width)),
         _ => address.wrapping_add(u32::from(width)),
     }
@@ -486,9 +487,10 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) 
             }
         }
         0x0E000000..=0x0FFFFFFF => {
+            // Same as the CPU path: waitstates + 1 base, no width
+            // multiplier (8-bit SRAM bus; wide accesses move one byte).
             const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
-            let base = SRAM_WAIT[(waitcnt & 0b11) as usize];
-            base.saturating_mul(width)
+            SRAM_WAIT[(waitcnt & 0b11) as usize] + 1
         }
         _ => 1,
     }
@@ -536,7 +538,8 @@ mod tests {
             }
         }
         let second = second.expect("second transfer should complete");
-        assert!(!second.interrupt);
+        // Completion IRQs arrive via take_completion_interrupts (one tick
+        // after the final write; GBATEK only says "upon end of Word Count").
         for _ in 0..30 {
             if !dma.is_active() {
                 break;
