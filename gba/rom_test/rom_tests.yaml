@@ -76,6 +76,14 @@ expected_failures:
 - nba_ppu_status_irq_dma
 - PeterLemon_FastLine
 - PeterLemon_FastLineClip
+# PeterLemon_Timers: REFERENCE-STATE, not emulation. The shipped .png is
+# mutually inconsistent with a single 3M-cycle snapshot of the shipped ROM
+# with reload 0: TM1=$CB64 needs 3.33M ticks, TM2=$F252 needs 15.9M,
+# TM3=$BCA5 needs 49.5M (verified by decoding the ref digits against the
+# ROM font). Our counters are internally exact (TM0/1/2/3 at 3M read
+# 0x6784/0xB19E/0x2C67/0x0B1A: one consistent S~=90K enable epoch, loss 2,
+# divider phases coherent). Regenerate the ref with an hw-validated build;
+# do not fit the timer model to impossible values.
 - PeterLemon_Timers
 - PeterLemon_GRB12LZDIFFRLEVideo
 - PeterLemon_Rickroll
@@ -289,18 +297,23 @@ suites:
       memory:
       # Counters (this .gba's layout; the stale .elf disagrees): test_count
       # @0x0300014C (=2, both subtests run), test_pass_count @0x03000150
-      # (=0; both read 86/86 instead of 88). The +16/+17 gap closed to +2/+2
-      # via GBATEK-correct costs: 16-bit ROM N/S +1 base (CPU and DMA paths),
-      # Thumb POP-PC refill, and per-tick timestamp decomposition (window =
-      # CPU-pre 48 + burst 12 + CPU-tail 28). The residual +2 is uniform and
-      # shared-knob-free: every shared burst knob (startup pending, first-
-      # unit xI, completion, per-unit N/S) is pinned exact by the 128kb-
-      # boundary DMA fits (12/12) and start-delay (16-bit read timing), and
-      # every shared CPU op by the 128kb LDM fits — so it lives in
-      # 16-bit x1-burst specifics or the ROM-measured tail, still open.
-      # A per-burst +2 (mGBA dma.c completion term) was tried and reverted:
-      # it fixes force-nseq but breaks all 12 exact 128kb fits (our front-
-      # loaded xI already carries those 2 cycles). Goal oracle for a fix.
+      # (=0; both read 87/87 instead of 88 after the single-unit tail;
+      # 86/86 before it). The +16/+17 gap closed via GBATEK-correct costs:
+      # 16-bit ROM N/S +1 base (CPU and DMA paths), Thumb POP-PC refill,
+      # per-tick timestamp decomposition (window = CPU-pre 48 + burst 13
+      # + CPU-tail 28), N/S fetch+data stream split, and the single-unit
+      # non-ROM completion tail (mGBA/NBA-conformant). The residual +1 is
+      # uniform and shared-knob-free: every shared burst knob (startup
+      # pending, first-unit xI, completion, per-unit N/S) is pinned exact
+      # by the 128kb-boundary DMA fits (12/12) and start-delay (16-bit
+      # read timing), timer loss (2) by start-stop/start-delay, and every
+      # shared CPU op by the 128kb LDM fits plus per-tick ROM tracing
+      # (post-start wall 88/88, every handler GBATEK-exact) — so it lives
+      # in a single ROM-wall rule (one fetch N/S or handler +/-1), still
+      # open. A per-burst +2 (mGBA dma.c completion term) was tried and
+      # reverted: it fixes force-nseq but breaks all 12 exact 128kb fits
+      # (our front-loaded xI already carries those 2 cycles). Goal oracle
+      # for a fix.
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
@@ -327,9 +340,15 @@ suites:
     cycles: 20000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 7/4): full pass when the
-      # video-DMA absolute phase model is fixed. Listed in expected_failures
-      # until then; a fix flips this to unexpected-pass.
+      # Upstream-known-correct goals (currently 4/7): full pass when the
+      # video-DMA absolute phase model is fixed. Replicated per-subtest:
+      # HBL-SET/UNSET + VCNT-FLAG (500/613/613) pass; DMA3-XFER reads
+      # 0x52D0 vs 0x52D3 (-3, first-burst 3 ticks early). A uniform
+      # countdown 2->5 fixes XFER but shifts the sweep pins to
+      # (498,611,611): no shared knob fits both, so the gap is a
+      # first-burst-only latency or a ROM-wall rule, not the per-line
+      # phase. Listed in expected_failures until then; a fix flips this
+      # to unexpected-pass.
       - {address: 0x0300062C, value: 7, width: 4}
       - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
