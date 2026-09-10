@@ -62,7 +62,7 @@ fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
         regs.set_cpsr_z(result == 0);
     }
     // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
-    multiplier_cycles(rs_value) + 2 + u32::from(accumulate)
+    multiplier_cycles_long(rs_value, signed) + 2 + u32::from(accumulate)
 }
 
 fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
@@ -78,11 +78,19 @@ fn register_pair(regs: &CpuRegisters, hi: usize, lo: usize) -> u64 {
 }
 
 pub(crate) fn multiplier_cycles(rs_val: u32) -> u32 {
-    if rs_val & 0xFFFFFF00 == 0 || rs_val & 0xFFFFFF00 == 0xFFFFFF00 {
+    // Short MUL/MLA: zero-or-one rule (32-bit truncated result).
+    multiplier_cycles_long(rs_val, true)
+}
+
+/// GBATEK ARM Multiply Long: m counts Rs top bits that are "all zero"
+/// (UMULL/UMLAL) or "all zero or all one" (SMULL/SMLAL).
+fn multiplier_cycles_long(rs_val: u32, signed: bool) -> u32 {
+    let top = |mask: u32, ones: u32| rs_val & mask == 0 || (signed && rs_val & mask == ones);
+    if top(0xFFFFFF00, 0xFFFFFF00) {
         1
-    } else if rs_val & 0xFFFF0000 == 0 || rs_val & 0xFFFF0000 == 0xFFFF0000 {
+    } else if top(0xFFFF0000, 0xFFFF0000) {
         2
-    } else if rs_val & 0xFF000000 == 0 || rs_val & 0xFF000000 == 0xFF000000 {
+    } else if top(0xFF000000, 0xFF000000) {
         3
     } else {
         4

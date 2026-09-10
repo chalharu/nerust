@@ -37,8 +37,9 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
     }
     if pc {
         let target = bus.read32(address);
-        // Thumb POP {PC} (LDM) interworks on ARMv4T: bit 0 selects the state.
-        regs.set_cpsr_t(target & 1 != 0);
+        // GBATEK THUMB.14: POP {PC} ignores the LSB — the processor remains
+        // in Thumb state even if bit0 was cleared (LSB-switch is ARM9-only;
+        // use POP/BX to switch). set_pc masks bit0 in Thumb state.
         regs.set_pc(target);
         address = address.wrapping_add(4);
     }

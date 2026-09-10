@@ -22,6 +22,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
                 up: u,
                 writeback: w,
                 load: l,
+                s_bit: s,
             },
         );
     }
@@ -32,8 +33,12 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     } else {
         base.wrapping_sub(reg_list.count_ones() * 4)
     };
-    let stored_base = (!l && reg_list & (1 << rn) != 0 && rn != reg_list.trailing_zeros() as usize)
-        .then_some((rn, writeback_value));
+    // Without writeback the base register is unchanged, so a stored base
+    // uses the OLD value; only W=1 stores the NEW (post-increment) value
+    // for non-first occurrences.
+    let stored_base =
+        (w && !l && reg_list & (1 << rn) != 0 && rn != reg_list.trailing_zeros() as usize)
+            .then_some((rn, writeback_value));
     let transfer_user_bank = s && !(l && reg_list & (1 << 15) != 0);
     let transferred = transfer_registers(
         regs,
@@ -80,6 +85,7 @@ struct EmptyTransferSpec {
     up: bool,
     writeback: bool,
     load: bool,
+    s_bit: bool,
 }
 
 fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
@@ -187,9 +193,16 @@ fn handle_empty_list(
             );
         }
         regs.set_pc(target);
+        // GBATEK: with the S bit set, an LDM^ loading PC also restores CPSR
+        // from SPSR (same as a non-empty LDM^ with PC in the list).
+        if spec.s_bit {
+            regs.set_cpsr(regs.spsr());
+        }
         // Empty list transfers 16 words including PC: 4+16.
         20
     } else {
+        // Empty STM stores the PC value only (R15 is not banked, so the S
+        // bit's user-bank selection has no visible effect here).
         bus.write32(address, regs.pc().wrapping_add(4));
         if spec.writeback {
             regs.set_r(
