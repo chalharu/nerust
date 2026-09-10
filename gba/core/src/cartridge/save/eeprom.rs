@@ -116,8 +116,12 @@ impl EepromSave {
                 }
                 Some((addr, width))
             } else {
+                // GBATEK EEPROM write frame: `10` + addr(6/14) + 64 data
+                // bits + `0` stop (73/81 bits exactly). Enforce the exact
+                // length: trailing garbage is rejected, and short frames
+                // return None instead of panicking on frame[stop] below.
                 let stop = 2 + addr_bits + 64;
-                if frame[stop] {
+                if frame.len() != stop + 1 || frame[stop] {
                     return None;
                 }
                 let mut addr = 0usize;

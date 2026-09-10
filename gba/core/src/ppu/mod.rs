@@ -595,7 +595,12 @@ impl GbaPpu {
     }
 
     fn apply_effect(&self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
-        if !enabled && !top.semi_transparent {
+        // Tonc gfx §13.2.2: with windows in use, blending needs the region's
+        // color-effect bit (WININ/WINOUT bit 5/13) — including for
+        // semi-transparent OBJs. GBATEK's semi-transparency paragraph only
+        // overrides BLDCNT bits 4/6-7, not the window gate, so a disabled
+        // region shows the top pixel opaque.
+        if !enabled {
             return top.color;
         }
         let first_mask = self.registers.bldcnt & 0x3F;

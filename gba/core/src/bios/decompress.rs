@@ -89,9 +89,10 @@ fn unpack_bits(bus: &mut GbaMemoryBus, spec: BitUnpackSpec) {
             }
         }
     }
-    if dst_bits > 0 {
-        bus.write32(destination, dst_word);
-    }
+    // HW drops a trailing partial word (clean-room bios-reference
+    // corroborating GBATEK's 32-bit-unit wording; same convention as the
+    // Huffman trailing-partial path below which only writes declared
+    // bytes). Do not flush dst_word here.
 }
 
 fn width_mask(width: u32) -> u32 {
@@ -100,6 +101,18 @@ fn width_mask(width: u32) -> u32 {
     } else {
         (1 << width) - 1
     }
+}
+
+/// SWI decompression headers are parsed byte-wise by the real BIOS: an
+/// aligned 32-bit fetch returns the wrong bytes for src%4==2,3, rejecting
+/// valid streams or decoding a wrong size. Assemble from bytes instead.
+fn read_header(bus: &mut GbaMemoryBus, src: u32) -> u32 {
+    u32::from_le_bytes([
+        bus.read8(src),
+        bus.read8(src.wrapping_add(1)),
+        bus.read8(src.wrapping_add(2)),
+        bus.read8(src.wrapping_add(3)),
+    ])
 }
 
 fn apply_offset(value: u32, offset: u32, include_zero: bool) -> u32 {
@@ -112,7 +125,7 @@ fn apply_offset(value: u32, offset: u32, include_zero: bool) -> u32 {
 
 pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let src = regs.r(0);
-    let header = bus.read32(src & !3);
+    let header = read_header(bus, src);
     let size = header >> 8;
     if header & 0xFF != 0x10 || size == 0 || !valid_source(src) {
         // 不正ヘッダは最小コストで早期リターン（固定20は根拠なし）
@@ -179,7 +192,7 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // HLE開始前の蓄積waitを控除し、HLE実行分だけを測定する。
     let entry_waits = bus.accumulated_wait_cycles();
     let src = regs.r(0);
-    let header = bus.read32(src & !3);
+    let header = read_header(bus, src);
     let data_bits = header & 0xF;
     let Some(size) = valid_huffman_size(src, header, data_bits) else {
         return 1 + (header >> 8) / 0x100;
@@ -287,7 +300,7 @@ fn decode_huffman(
 
 pub fn rl(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     let src = regs.r(0);
-    let header = bus.read32(src & !3);
+    let header = read_header(bus, src);
     let size = header >> 8;
     if header & 0xFF != 0x30 || size == 0 || !valid_source(src) {
         return 1 + size / 0x100;
@@ -335,7 +348,7 @@ fn decode_rl(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Vec<u8> {
 pub fn diff8_wram(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, dest_width: u8) {
     let src = regs.r(0);
     let dst = regs.r(1);
-    let header = bus.read32(src & !3);
+    let header = read_header(bus, src);
     let kind = header & 0xFF;
     // GBATEK Diff8bit filters take header 81h; 82h is the Diff16 header
     // and must be rejected, not decoded as bytes.
@@ -352,7 +365,7 @@ pub fn diff8_wram(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, dest_width: u
 pub fn diff16(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let src = regs.r(0);
     let dst = regs.r(1);
-    let header = bus.read32(src & !3);
+    let header = read_header(bus, src);
     if (header & 0xFF) != 0x82 {
         return;
     }

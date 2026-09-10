@@ -13,8 +13,14 @@ pub fn handle(regs: &mut CpuRegisters, instr: u32) -> u32 {
 }
 
 fn read_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
+    let rd = ((instr >> 12) & 0xF) as usize;
+    // MRS with Rd=R15 is UNPREDICTABLE and must not branch: ignore the
+    // write instead of latching PC to the PSR value via set_r(15).
+    if rd == 15 {
+        return;
+    }
     let value = if saved { regs.spsr() } else { regs.cpsr() };
-    regs.set_r(((instr >> 12) & 0xF) as usize, value);
+    regs.set_r(rd, value);
 }
 
 fn write_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
@@ -24,7 +30,13 @@ fn write_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
         field_mask &= 0x8;
     }
     let current = if saved { regs.spsr() } else { regs.cpsr() };
-    let value = apply_fields(current, operand, field_mask);
+    let mut value = apply_fields(current, operand, field_mask);
+    if !saved {
+        // GBATEK ARM PSR Transfer: "The T-bit may not be changed; for
+        // THUMB/ARM switching use BX". Keep the live T bit on MSR to CPSR
+        // (SPSR writes keep bit 5, which exception entry stores itself).
+        value = (value & !(1 << 5)) | (current & (1 << 5));
+    }
     if saved {
         regs.set_spsr(value);
     } else {

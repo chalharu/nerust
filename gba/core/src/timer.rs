@@ -33,6 +33,12 @@ impl GbaTimers {
         let new_control = (value >> 16) as u16 & 0x00C7;
         let was_enabled = self.channels[channel].control & 0x80 != 0;
         if was_enabled && new_control & 0x80 == 0 {
+            // 32-bit disable lands immediately, while a 16-bit CNT_H stop
+            // defers one tick via pending_control (write_control). The
+            // asymmetry is HW-pinned, not an oversight: nba start-stop
+            // (16-bit stop, 2ND=8) observes the counter ticking once more
+            // after the stop write, and nba reload (32-bit reset/start)
+            // pins the immediate path (7/7). Do not "unify" them.
             self.channels[channel].control = new_control;
             self.channels[channel].pending_control = None;
             self.channels[channel].start_delay = 0;

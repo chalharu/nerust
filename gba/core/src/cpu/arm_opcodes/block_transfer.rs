@@ -198,8 +198,10 @@ fn handle_empty_list(
         if spec.s_bit {
             regs.set_cpsr(regs.spsr());
         }
-        // Empty list transfers 16 words including PC: 4+16.
-        20
+        // GBATEK Block Transfer: an empty Rlist transfers R15 only
+        // (Rb+=0x40 is address arithmetic, not 16 words), so n=1:
+        // LDM+PC = nS+1N+1I +1S+1N refill = 5.
+        5
     } else {
         // Empty STM stores the PC value only (R15 is not banked, so the S
         // bit's user-bank selection has no visible effect here).
@@ -214,8 +216,8 @@ fn handle_empty_list(
                 },
             );
         }
-        // Empty list stores 16 words: 1+16.
-        17
+        // GBATEK: empty list stores R15 only, so n=1: STM = (n-1)S+2N = 2.
+        2
     }
 }
 
