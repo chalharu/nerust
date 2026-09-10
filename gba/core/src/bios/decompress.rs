@@ -42,8 +42,12 @@ struct BitUnpackSpec {
 impl BitUnpackSpec {
     fn read(regs: &CpuRegisters, bus: &mut GbaMemoryBus) -> Option<Self> {
         let source = regs.r(0);
+        let destination = regs.r(1);
         let info = regs.r(2);
-        if !valid_source(source) || info & 3 != 0 {
+        // GBATEK BitUnPack: r1 must be 32-bit-word aligned and data is
+        // written in 32-bit units; a misaligned destination garbles on HW.
+        // Reject it like the other malformed-spec cases (caller no-ops).
+        if !valid_source(source) || info & 3 != 0 || destination & 3 != 0 {
             return None;
         }
         let source_len = u32::from(bus.read16(info));
@@ -58,7 +62,7 @@ impl BitUnpackSpec {
         let offset = bus.read32(info + 4);
         Some(Self {
             source,
-            destination: regs.r(1),
+            destination,
             source_len,
             source_width,
             destination_width,
