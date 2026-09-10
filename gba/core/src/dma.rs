@@ -401,15 +401,12 @@ fn timing(control: u16) -> DmaTrigger {
     }
 }
 
-/// Per-channel start timing. GBATEK DMA: DMA0 has no Special source, so a
-/// Special setting on channel 0 behaves as Immediate.
-fn timing_for(channel: usize, control: u16) -> DmaTrigger {
-    let timing = timing(control);
-    if channel == 0 && timing == DmaTrigger::Special {
-        DmaTrigger::Immediate
-    } else {
-        timing
-    }
+/// Per-channel start timing. GBATEK DMA Start Timing: Special on DMA0 is
+/// Prohibited — it has no start source, so it never fires (mGBA never
+/// schedules CUSTOM on ch0). Return the raw timing so no enable, trigger,
+/// or repeat path can mistake it for Immediate.
+fn timing_for(_channel: usize, control: u16) -> DmaTrigger {
+    timing(control)
 }
 
 /// Sound-FIFO DMA (GBATEK "DMA-Sound Playback Procedure"): a Special-timed

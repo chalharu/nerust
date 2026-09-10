@@ -20,7 +20,9 @@ pub struct GbaApu {
     pub soundcnt_hi: u16,
     pub soundcnt_x: u16,
     pub soundbias: u16,
-    pub wave_ram: Box<[u8; 0x10]>,
+    /// Two 16-byte wave banks (GBATEK NR30): bit 6 selects the PLAYING
+    /// bank while CPU access addresses the other bank.
+    pub wave_ram: Box<[u8; 0x20]>,
     pub fifo_a: std::collections::VecDeque<u8>,
     pub fifo_b: std::collections::VecDeque<u8>,
     /// Minimal sound-driver HLE state (GBATEK BIOS Sound Functions).
@@ -46,7 +48,7 @@ impl Default for GbaApu {
             soundcnt_hi: 0,
             soundcnt_x: 0,
             soundbias: 0x200,
-            wave_ram: Box::new([0u8; 0x10]),
+            wave_ram: Box::new([0u8; 0x20]),
             fifo_a: std::collections::VecDeque::with_capacity(32),
             fifo_b: std::collections::VecDeque::with_capacity(32),
             sound_area: 0,
@@ -119,6 +121,53 @@ impl GbaApu {
         if value & (1 << 15) != 0 {
             self.fifo_b.clear();
         }
+    }
+
+    /// SOUNDCNT_X write (GBATEK NR52 + mGBA io.c `value & 0x0080`): only
+    /// bit 7 is R/W (bits 0-3 are read-only channel flags our PSG does not
+    /// track, so they read 0). Clearing a set master enable resets the PSG
+    /// range 4000060h..4000081h; 4000082h/4000088h are kept.
+    /// (SOUNDCNT_H bits 11/15 stay stored: GBATEK marks them "W?" and the
+    /// ROM-pinned 0xDA0C readback forbids masking.)
+    pub fn write_soundcnt_x(&mut self, value: u16) {
+        if value & 0x80 == 0 && self.soundcnt_x & 0x80 != 0 {
+            self.sound1cnt_lo = 0;
+            self.sound1cnt_hi = 0;
+            self.sound1cnt_x = 0;
+            self.sound2cnt_lo = 0;
+            self.sound2cnt_hi = 0;
+            self.sound3cnt_lo = 0;
+            self.sound3cnt_hi = 0;
+            self.sound3cnt_x = 0;
+            self.sound4cnt_lo = 0;
+            self.sound4cnt_hi = 0;
+            self.soundcnt_lo = 0;
+            self.soundcnt_hi = 0;
+            self.fifo_a.clear();
+            self.fifo_b.clear();
+        }
+        self.soundcnt_x = value & 0x80;
+    }
+
+    /// Wave RAM CPU access (GBATEK NR30): the CPU sees the bank NOT
+    /// selected for playback (bit 6). `aligned` is the 0x90-0x9E address.
+    fn wave_cpu_base(&self) -> usize {
+        if self.sound3cnt_lo & (1 << 6) != 0 {
+            0
+        } else {
+            16
+        }
+    }
+
+    pub fn wave_read(&self, aligned: u32) -> u16 {
+        let base = self.wave_cpu_base() + ((aligned & 0xF) as usize);
+        u16::from_le_bytes([self.wave_ram[base], self.wave_ram[base + 1]])
+    }
+
+    pub fn wave_write(&mut self, aligned: u32, value: u16) {
+        let base = self.wave_cpu_base() + ((aligned & 0xF) as usize);
+        self.wave_ram[base] = (value & 0xFF) as u8;
+        self.wave_ram[base + 1] = (value >> 8) as u8;
     }
 
     /// Push bytes into a DirectSound FIFO (max 32 bytes; overflow is dropped,

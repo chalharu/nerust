@@ -135,7 +135,7 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
         // 不正ヘッダは最小コストで早期リターン（固定20は根拠なし）
         return 1 + size / 0x100;
     }
-    let Some(output) = decode_lz77_vec(bus, src.wrapping_add(4), size) else {
+    let Some(output) = decode_lz77_vec(bus, src.wrapping_add(4), size, width) else {
         return 1 + size / 0x100;
     };
     write_output(bus, regs.r(1), &output, width);
@@ -153,7 +153,12 @@ pub fn lz77(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, width: u8) -> u32 {
     }
 }
 
-fn decode_lz77_vec(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option<Vec<u8>> {
+fn decode_lz77_vec(
+    bus: &mut GbaMemoryBus,
+    mut source: u32,
+    size: u32,
+    width: u8,
+) -> Option<Vec<u8>> {
     let mut output = Vec::with_capacity(size as usize);
     while output.len() < size as usize {
         let flag = bus.read8(source);
@@ -166,7 +171,7 @@ fn decode_lz77_vec(bus: &mut GbaMemoryBus, mut source: u32, size: u32) -> Option
                 output.push(bus.read8(source));
                 source += 1;
             } else {
-                source = append_lz_reference_vec(bus, source, size as usize, &mut output)?;
+                source = append_lz_reference_vec(bus, source, size as usize, &mut output, width)?;
             }
         }
     }
@@ -178,12 +183,20 @@ fn append_lz_reference_vec(
     source: u32,
     target_len: usize,
     output: &mut Vec<u8>,
+    width: u8,
 ) -> Option<u32> {
     let first = u32::from(bus.read8(source));
     let second = u32::from(bus.read8(source + 1));
     let length = ((first >> 4) + 3) as usize;
     let distance = ((((first & 0xF) << 8) | second) + 1) as usize;
     if distance > output.len() {
+        return None;
+    }
+    // GBATEK LZ77 CAUTION: the Vram function writes 16-bit units, so a
+    // disp=000h block reads the odd halfword at [dest-1] and fails on HW.
+    // HLE declines to fabricate that garbage: abort the decode instead.
+    // (Wram disp=000h, distance 1 here, is a valid previous-byte run.)
+    if width == 2 && distance == 1 {
         return None;
     }
     for _ in 0..length.min(target_len - output.len()) {
@@ -493,6 +506,28 @@ mod tests {
         lz77(&mut regs, &mut bus, 2);
         assert_eq!(bus.read16(0x06000000), u16::from_le_bytes(*b"AB"));
         assert_eq!(bus.read8(0x06000002), 0);
+    }
+
+    #[test]
+    fn lz77_vram_disp_zero_aborts() {
+        // GBATEK LZ77 CAUTION: Vram + disp=000h fails on HW. Stream: 'A'
+        // then a distance-1 run (disp field 000h, length field 0 => 3 bytes).
+        let mut bus = GbaMemoryBus::new();
+        let src = 0x02000000;
+        bus.write32(src, 0x00000410); // size 4, type LZ77
+        bus.write8(src + 4, 0x40); // flag: literal then reference
+        bus.write8(src + 5, b'A');
+        bus.write8(src + 6, 0x00); // length-3 = 0, disp MSB = 0
+        bus.write8(src + 7, 0x00); // disp LSB = 0 => distance 1
+        // Wram: valid previous-byte run -> "AAAA".
+        let mut regs = regs_for(src, 0x03000000);
+        lz77(&mut regs, &mut bus, 1);
+        assert_eq!(bus.read32(0x03000000), 0x41414141);
+        // Vram: HW fails -> HLE writes nothing.
+        bus.write32(0x06000000, 0xFFFFFFFF);
+        regs.set_r(1, 0x06000000);
+        lz77(&mut regs, &mut bus, 2);
+        assert_eq!(bus.read32(0x06000000), 0xFFFFFFFF);
     }
 
     #[test]
