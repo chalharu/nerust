@@ -54,9 +54,9 @@ fn shift(regs: &mut CpuRegisters, destination: usize, op: u8, value: u32, amount
     regs.set_r(destination, result);
     update_nz(regs, result);
     regs.set_cpsr_c(carry);
-    // ARM ARM: a register-specified shift with Rs[7:0]==0 performs no shift
-    // and costs 1S regardless of shift type (not just LSL).
-    if amount & 0xFF == 0 { 1 } else { 2 }
+    // GBATEK THUMB cycle table: LSL/LSR/ASR/ROR Rd,Rs costs 1S+1I
+    // unconditionally (no zero-amount exception, unlike the ARM-ARM note).
+    2
 }
 
 fn carry_arithmetic(

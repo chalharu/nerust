@@ -207,14 +207,16 @@ fn handle_empty_multiple(
     if load {
         let target = bus.read32(address);
         regs.set_r(base_register, address.wrapping_add(0x40));
-        regs.set_cpsr_t(target & 1 != 0);
+        // GBATEK THUMB.14: like POP {PC}, the LSB is ignored on ARMv4T.
         regs.set_pc(target);
         // Empty LDM = 16 words incl. PC: (16+1)S+2N+1I, same as ARM.
         20
     } else {
-        // Empty STM stores the R15 value observed at execute time
-        // (fetch address = instruction + 4 in Thumb state).
-        bus.write32(address, regs.pc());
+        // Empty STM stores R15+2 in Thumb state (mGBA GBAStoreMultiple:
+        // +WORD_SIZE_THUMB; ARM uses +WORD_SIZE_ARM) — pinned by jsmolka
+        // thumb t229, which compares the stored word against a
+        // `mov r1, pc` one instruction later.
+        bus.write32(address, regs.pc().wrapping_add(2));
         regs.set_r(base_register, address.wrapping_add(0x40));
         // Empty STM = 16 words: (16-1)S+2N, same as ARM.
         17
@@ -256,7 +258,7 @@ mod tests {
         regs.set_r(0, 0x03000000);
         handle_multiple(&mut regs, &mut bus, 0xC000);
         assert_eq!(regs.r(0), 0x03000040);
-        // ARM ARM: an empty STM stores R15 (instruction + 4 in Thumb).
-        assert_eq!(bus.read32(0x03000000), 0x08000304);
+        // Empty STM stores R15+2 in Thumb state (mGBA; jsmolka t229).
+        assert_eq!(bus.read32(0x03000000), 0x08000306);
     }
 }
