@@ -3,7 +3,6 @@ struct TimerChannel {
     reload: u16,
     counter: u16,
     control: u16,
-    divider: u16,
     start_delay: u8,
     pending_control: Option<u16>,
     /// CNT_L writes land with a one-tick delay (nba timer/reload 7/7: an
@@ -16,6 +15,11 @@ struct TimerChannel {
 #[derive(Debug, Default)]
 pub struct GbaTimers {
     channels: [TimerChannel; 4],
+    /// Free-running system prescaler (HW: the divider chain never resets,
+    /// enabling a timer does not touch its phase). Ticks once per T-cycle;
+    /// prescaled channels sample its taps. Wrapping at 65536 is
+    /// phase-transparent (65536 is a multiple of every period).
+    prescaler: u16,
     current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
 }
@@ -90,17 +94,24 @@ impl GbaTimers {
 
     /// Advance all four timers by one CPU T-cycle and return Timer IRQ bits 3..6.
     pub fn step(&mut self) -> u16 {
+        self.prescaler = self.prescaler.wrapping_add(1);
+        let prescaler = self.prescaler;
         let mut irq = 0;
         let mut cascade = false;
         for index in 0..4 {
-            let (next_cascade, channel_irq) = self.step_channel(index, cascade);
+            let (next_cascade, channel_irq) = self.step_channel(index, cascade, prescaler);
             cascade = next_cascade;
             irq |= channel_irq;
         }
         irq
     }
 
-    fn step_channel(&mut self, index: usize, incoming_cascade: bool) -> (bool, u16) {
+    fn step_channel(
+        &mut self,
+        index: usize,
+        incoming_cascade: bool,
+        prescaler: u16,
+    ) -> (bool, u16) {
         let timer = &mut self.channels[index];
         if timer.control & 0x80 == 0 {
             return (false, 0);
@@ -121,7 +132,7 @@ impl GbaTimers {
             }
             return (c, irq);
         }
-        let tick = Self::should_tick(timer, index, incoming_cascade);
+        let tick = Self::should_tick(timer, index, incoming_cascade, prescaler);
         let cascade = tick && increment(timer);
         let irq = if cascade && timer.control & (1 << 6) != 0 {
             1 << (3 + index)
@@ -181,18 +192,16 @@ impl GbaTimers {
         }
     }
 
-    fn should_tick(timer: &mut TimerChannel, index: usize, cascade: bool) -> bool {
+    fn should_tick(timer: &TimerChannel, index: usize, cascade: bool, prescaler: u16) -> bool {
         if index != 0 && timer.control & 4 != 0 {
             return cascade;
         }
-        timer.divider = timer.divider.wrapping_add(1);
+        // Sample the shared prescaler tap: the channel ticks when the tap
+        // carries out. Identical phase to seeding from the global cycle at
+        // enable (prescaler == bus tcycle, both 0-init and +1/tick), but
+        // the phase now survives disable/re-enable without a jump, as HW.
         let period = [1, 64, 256, 1024][usize::from(timer.control & 3)];
-        if timer.divider == period {
-            timer.divider = 0;
-            true
-        } else {
-            false
-        }
+        prescaler & (period - 1) == period - 1
     }
 
     pub fn reset(&mut self) {
@@ -242,7 +251,7 @@ impl GbaTimers {
 fn write_control(
     timer: &mut TimerChannel,
     new_control: u16,
-    current_cycle: u64,
+    _current_cycle: u64,
     _last_reload_cycle: Option<u64>,
     _index: usize,
 ) {
@@ -262,15 +271,9 @@ fn write_control(
         // Fixed 2-cycle start latency (was a reload/elapsed fit that only
         // ever triggered for 0xFFFC and broke the cancel-irq race).
         timer.start_delay = 2;
-        // The prescaler is free-running system-wide (mGBA lastEvent =
-        // now & ~tickMask; NBA prescaler_offset = now & mask): enabling
-        // does NOT reset its phase, so seed the divider from the global
-        // cycle instead of zero. /1 (mask 0) and cascade timers are
-        // unaffected. (Variant (a): raw global phase; the +3 latency
-        // skew variant broke the unpinned /64 unit fit, so the ROM
-        // decides between them.)
-        let period = [1u64, 64, 256, 1024][usize::from(new_control & 3)];
-        timer.divider = (current_cycle & (period - 1)) as u16;
+        // No phase seeding: the shared prescaler is free-running and never
+        // reset by enables (mGBA lastEvent = now & ~tickMask;
+        // NBA prescaler_offset = now & mask).
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
@@ -326,9 +329,15 @@ mod tests {
         timers.step();
         timers.write(0x04000100, 0);
         timers.write(0x04000102, 0x0081);
+        // /64 samples the free-running prescaler tap: reset the phase so
+        // the first tick lands deterministically. Enable at prescaler 0,
+        // 2 start-delay ticks (prescaler 1, 2), then the tap carries at
+        // prescaler 63: 60 more steps keep the counter at 0, the 61st
+        // ticks it to 1.
+        timers.prescaler = 0;
         timers.step();
         timers.step();
-        for _ in 0..63 {
+        for _ in 0..60 {
             timers.step();
         }
         assert_eq!(timers.read(0x04000100), Some(0));

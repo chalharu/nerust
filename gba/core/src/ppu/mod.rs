@@ -432,10 +432,12 @@ impl GbaPpu {
                 // GBATEK: outside VBlank the write is copied to internal immediately.
                 // For per-scanline affine (BGMode7) the HBlank write must not be
                 // incremented again at line end, so mark dirty to skip advance.
+                // "During H-Blank" is the blanking period starting at HDraw
+                // end (cycle 960), not the DISPSTAT flag edge (1006).
                 if self.vcount < 160 && self.registers.dispcnt & (1 << (10 + affine)) != 0 {
                     self.internal_x[affine] = self.registers.ref_x[affine];
                     self.internal_y[affine] = self.registers.ref_y[affine];
-                    if self.cycle >= HBLANK_FLAG_CYCLES {
+                    if self.cycle >= HDRAW_CYCLES {
                         self.ref_written[affine] = true;
                     }
                 }
