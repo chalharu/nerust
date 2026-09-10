@@ -242,7 +242,7 @@ impl GbaTimers {
 fn write_control(
     timer: &mut TimerChannel,
     new_control: u16,
-    _current_cycle: u64,
+    current_cycle: u64,
     _last_reload_cycle: Option<u64>,
     _index: usize,
 ) {
@@ -262,7 +262,15 @@ fn write_control(
         // Fixed 2-cycle start latency (was a reload/elapsed fit that only
         // ever triggered for 0xFFFC and broke the cancel-irq race).
         timer.start_delay = 2;
-        timer.divider = 0;
+        // The prescaler is free-running system-wide (mGBA lastEvent =
+        // now & ~tickMask; NBA prescaler_offset = now & mask): enabling
+        // does NOT reset its phase, so seed the divider from the global
+        // cycle instead of zero. /1 (mask 0) and cascade timers are
+        // unaffected. (Variant (a): raw global phase; the +3 latency
+        // skew variant broke the unpinned /64 unit fit, so the ROM
+        // decides between them.)
+        let period = [1u64, 64, 256, 1024][usize::from(new_control & 3)];
+        timer.divider = (current_cycle & (period - 1)) as u16;
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {
