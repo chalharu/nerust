@@ -99,6 +99,15 @@ pub struct GbaMemoryBus {
     current_pc: u32,
     prev_addr: Option<u32>,
     prev_width: u8,
+    /// Opcode-fetch N/S stream, independent from the data stream above.
+    /// GBATEK "GamePak Prefetch": prefetch feeds on during load/store data
+    /// accesses, so a data access never breaks code sequentiality (mGBA
+    /// likewise fetches unconditionally sequential and charges data only
+    /// the N-S delta). Conversely an opcode fetch never makes the next
+    /// data access sequential (a literal load is a 1N data access even
+    /// when its address happens to follow the fetch).
+    fetch_addr: Option<u32>,
+    fetch_width: u8,
     access_wait_cycles: u32,
     halted: bool,
     halt_irq_mask: u16,
@@ -224,6 +233,8 @@ impl GbaMemoryBus {
             current_pc: 0x08000000,
             prev_addr: None,
             prev_width: 0,
+            fetch_addr: None,
+            fetch_width: 0,
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
@@ -366,7 +377,17 @@ impl GbaMemoryBus {
             }
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
-                let sequential = self.is_sequential(addr, width);
+                // Prefetch ON: ROM opcode fetches ride the fetch stream
+                // (buffer/prefetch fills during data accesses, so data never
+                // breaks code sequentiality). Otherwise N/S is pure bus
+                // order: contiguity with the last bus access of any kind
+                // (data reads/writes included), plus the Disable-Bug
+                // penalty for opcode fetches.
+                let sequential = if is_opcode && self.prefetch_enabled {
+                    self.is_fetch_sequential(addr)
+                } else {
+                    self.is_sequential(addr, width)
+                };
                 if is_opcode {
                     // Opcode fetches ride the prefetch buffer when enabled.
                     if self.prefetch_enabled && sequential && !self.prefetch_queue.is_empty() {
@@ -603,6 +624,8 @@ impl GbaMemoryBus {
             // N/S chain and any queued opcodes).
             self.prev_addr = None;
             self.prev_width = 0;
+            self.fetch_addr = None;
+            self.fetch_width = 0;
             self.prefetch_queue.clear();
             // Completion IRQs are raised via take_completion_interrupts
             // below (one tick after the final write).
@@ -954,11 +977,19 @@ impl GbaMemoryBus {
     // -----------------------------------------------------------------------
 
     fn is_sequential(&self, addr: u32, _width: u8) -> bool {
-        if let Some(prev) = self.prev_addr {
+        Self::seq_in_rom(self.prev_addr, self.prev_width, addr)
+    }
+
+    fn is_fetch_sequential(&self, addr: u32) -> bool {
+        Self::seq_in_rom(self.fetch_addr, self.fetch_width, addr)
+    }
+
+    fn seq_in_rom(prev: Option<u32>, prev_w: u8, addr: u32) -> bool {
+        if let Some(prev) = prev {
             // 32bit ROM領域で連続アドレスか、かつ128KB境界を跨がない
             (0x08000000..=0x0DFFFFFF).contains(&addr)
                 && (0x08000000..=0x0DFFFFFF).contains(&prev)
-                && addr == prev.wrapping_add(u32::from(self.prev_width))
+                && addr == prev.wrapping_add(u32::from(prev_w))
                 && (addr & !0x1FFFF) == (prev & !0x1FFFF)
         } else {
             false
@@ -1097,6 +1128,8 @@ impl GbaMemoryBus {
         }
         self.prev_addr = None;
         self.prev_width = 0;
+        self.fetch_addr = None;
+        self.fetch_width = 0;
         self.icycle_fetch_penalty = false;
     }
 
@@ -1140,11 +1173,22 @@ impl GbaMemoryBus {
             }
         }
         self.access_wait_cycles += u32::from(wait.saturating_sub(1));
-        let sequential = self.is_sequential(addr, width) && self.prefetch_enabled;
+        let sequential = if is_opcode {
+            self.is_fetch_sequential(addr) && self.prefetch_enabled
+        } else {
+            self.is_sequential(addr, width) && self.prefetch_enabled
+        };
         let raw = self.read_mapped(addr, width);
         self.update_prefetch_queue(addr, width, sequential, is_opcode);
+        // prev_* tracks the last bus access of ANY kind (GBATEK N/S bus
+        // order); fetch_* tracks the opcode stream for the prefetch-ON
+        // fetch path above.
         self.prev_addr = Some(addr);
         self.prev_width = width;
+        if is_opcode {
+            self.fetch_addr = Some(addr);
+            self.fetch_width = width;
+        }
         self.last_prefetch = raw;
         self.open_bus_value = raw;
         (raw, wait)
@@ -1571,6 +1615,8 @@ impl GbaMemoryBus {
                 // force next ROM fetch to NSEQ (GBATEK: STR to DMA CNT forces NSEQ)
                 self.prev_addr = None;
                 self.prev_width = 0;
+                self.fetch_addr = None;
+                self.fetch_width = 0;
                 self.prefetch_queue.clear();
             }
             0x04000100..=0x0400010E => {
@@ -1968,6 +2014,34 @@ mod tests {
         // Penalty is consumed exactly once: following fetch is S again.
         let _ = bus.fetch16(0x08000006);
         assert_eq!(bus.opcode_cycles_for(0x08000008, 2), 3);
+    }
+
+    #[test]
+    fn prefetch_on_data_access_keeps_fetch_stream() {
+        // GBATEK "GamePak Prefetch": prefetch fills during load/store data
+        // accesses, so a data access to another area never breaks code
+        // sequentiality (mGBA fetches unconditionally sequential). With
+        // prefetch OFF the same sequence is bus-order N (pinned below).
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14); // prefetch enable
+        let _ = bus.fetch16(0x08000000);
+        let _ = bus.fetch16(0x08000002);
+        // Data access to I/O: must not poison the ROM fetch stream.
+        let _ = bus.read16(0x04000000);
+        // Next ROM fetch still sequential: buffer hit, not 1N.
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 1);
+    }
+
+    #[test]
+    fn prefetch_off_data_access_breaks_bus_sequence() {
+        // Prefetch OFF: N/S is pure bus order, so the same I/O access
+        // makes the next ROM fetch non-sequential (1N = 5 total at WS0).
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.prefetch_enabled);
+        let _ = bus.fetch16(0x08000000);
+        let _ = bus.fetch16(0x08000002);
+        let _ = bus.read16(0x04000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 5);
     }
 
     #[test]

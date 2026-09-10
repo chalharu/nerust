@@ -35,6 +35,14 @@ struct DmaChannel {
     stalled: bool,
     completing: bool,
     completion_interrupt: bool,
+    /// Extra completion tail tick for a finished single-unit burst with a
+    /// non-ROM end. mGBA GBADMAService adds +2 at burst end when either end
+    /// is below ROM0 (and only the front xI otherwise); NBA Run() brackets
+    /// every burst with Step(1)+Step(1). Our unconditional completing tick
+    /// covers one of those; this carries the second for single-unit bursts
+    /// (multi-unit bursts keep the pinned 128kb-boundary totals, which the
+    /// front-loaded xI already satisfies).
+    completion_extra: bool,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +146,11 @@ impl GbaDma {
             }
         }
         if dma.completing {
+            if dma.completion_extra {
+                // Extra tail tick before the finish event lands.
+                dma.completion_extra = false;
+                return None;
+            }
             let interrupt = dma.completion_interrupt;
             finish(dma, channel);
             if interrupt {
@@ -220,12 +233,21 @@ impl GbaDma {
         }
         dma.prev_src = source;
         dma.prev_dst = destination;
+        let was_first = dma.is_first;
         dma.is_first = false;
         dma.remaining -= 1;
         let finished = dma.remaining == 0;
         if finished {
             dma.completing = true;
             dma.completion_interrupt = dma.control & (1 << 14) != 0;
+            // Single-unit burst with a non-ROM end: the second completion
+            // tail tick (see field docs). Pinned by nba force-nseq (86->87;
+            // residual +1 is a ROM-code wall gap, not DMA overhead: startup,
+            // front xI and tail totals now match mGBA/NBA exactly).
+            let src_page = source >> 24;
+            let dst_page = destination >> 24;
+            let non_rom = !(0x08..=0x0D).contains(&src_page) || !(0x08..=0x0D).contains(&dst_page);
+            dma.completion_extra = was_first && non_rom;
         }
         Some(DmaTransfer {
             channel,
@@ -350,6 +372,7 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.delay = 0;
     dma.stalled = false;
     dma.completing = false;
+    dma.completion_extra = false;
     dma.completion_interrupt = false;
     if repeat {
         dma.remaining = if sound_dma(channel, dma.control, dma.destination) {
