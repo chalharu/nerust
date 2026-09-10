@@ -20,6 +20,19 @@ pub struct VerifySpec {
     pub registers: RegisterVerify,
     #[serde(default)]
     pub frame_pixels: Vec<FramePixelEntry>,
+    /// Log-driven multi-test verification (mgba-emu/suite): branch one
+    /// ROM's `PASS:`/`FAIL:` debug-log lines into per-subtest checks.
+    #[serde(default)]
+    pub suite_log: Option<SuiteLogVerify>,
+}
+
+/// Scope for [`verify_suite_log`]: the `BEGIN:`/`END:` markers the suite
+/// core (`runSuite` in suite `main.c`) emits around each suite run.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SuiteLogVerify {
+    pub begin: String,
+    pub end: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -63,7 +76,10 @@ pub struct RegisterVerify {
 
 impl VerifySpec {
     pub fn is_empty(&self) -> bool {
-        self.memory.is_empty() && self.registers.is_empty() && self.frame_pixels.is_empty()
+        self.memory.is_empty()
+            && self.registers.is_empty()
+            && self.frame_pixels.is_empty()
+            && self.suite_log.is_none()
     }
 
     pub fn validate(&self) -> Result<(), RomTestError> {
@@ -218,10 +234,148 @@ impl RegisterVerify {
     }
 }
 
+/// Attach `savprintf` failure details (`Got X vs Y`) from the suite's
+/// SRAM log to failing suite-log checks.
+///
+/// The SRAM log (mgba-emu/suite `savprintf` to `0x0E000000`) holds one
+/// detail line per failure, in the same emission order as the `FAIL:`
+/// debug-log lines, scoped by per-test headers (`Memory test: <name>`,
+/// ...). Details are zipped positionally within each scope; a detail
+/// carrying an explicit preface key (`<preface>: Got ...`) is only
+/// attached when the check name ends with that preface, otherwise the
+/// check keeps its plain `FAIL` actual.
+pub fn enrich_suite_log_checks(checks: &mut [CheckResult], sram_text: &str) {
+    // scope -> details in emission order. `String::new()` is the global
+    // scope for suites without headers.
+    let mut scopes: std::collections::BTreeMap<String, Vec<(Option<String>, String)>> =
+        std::collections::BTreeMap::new();
+    let mut current = String::new();
+    for line in sram_text.split('\n') {
+        let line = line.trim_end_matches('\0').trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(body) = line.strip_suffix(": FAIL") {
+            let key = body
+                .split_once(": Got")
+                .map(|(key, _)| key.trim().to_string());
+            let key = key.filter(|key| !key.is_empty());
+            scopes
+                .entry(current.clone())
+                .or_default()
+                .push((key, line.to_string()));
+        } else if let Some((_, name)) = line.split_once(" test: ") {
+            current = name.trim().to_string();
+        }
+    }
+    if scopes.is_empty() {
+        return;
+    }
+    let mut consumed: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for check in checks.iter_mut().filter(|check| !check.passed) {
+        // Longest header scope that prefixes the check name ("ROM load"
+        // for "ROM load U16 (unaligned)"); fall back to global scope.
+        let mut scope = String::new();
+        for name in scopes.keys() {
+            if !name.is_empty()
+                && (check.name == *name || check.name.starts_with(&format!("{name} ")))
+                && name.len() > scope.len()
+            {
+                scope = name.clone();
+            }
+        }
+        let Some(details) = scopes.get(&scope) else {
+            continue;
+        };
+        let used = consumed.entry(scope.clone()).or_insert(0);
+        // Prefer the next detail whose preface key matches; otherwise take
+        // the next detail positionally (emission order is guaranteed).
+        let mut pick = None;
+        for (index, (key, _)) in details.iter().enumerate().skip(*used) {
+            if key.as_ref().is_some_and(|key| check.name.ends_with(key)) {
+                pick = Some(index);
+                break;
+            }
+        }
+        let pick = pick.unwrap_or(*used);
+        if let Some((_, full)) = details.get(pick) {
+            check.actual = full.clone();
+        }
+        *used = (*used).max(pick + 1);
+    }
+}
+
 pub struct FramePixels<'a> {
     pub rgba: &'a [u8],
     pub width: u32,
     pub height: u32,
+}
+
+/// Branch one ROM's mGBA debug-log lines into per-subtest [`CheckResult`]s.
+///
+/// Only lines between the first line containing `spec.begin` and the first
+/// later line containing `spec.end` are scored; `PASS: <rest>` passes a
+/// check named `<rest>`, `FAIL: <rest>` fails it. Missing markers produce
+/// failing scope checks (a ROM that never reaches `END:` timed out or
+/// crashed) while still reporting whatever subtests were observed.
+pub fn verify_suite_log(
+    logs: &[nerust_gba_core::memory::MgbaDebugLog],
+    spec: &SuiteLogVerify,
+) -> Vec<CheckResult> {
+    let mut checks = Vec::new();
+    let begin = logs.iter().position(|log| log.text.contains(&spec.begin));
+    let Some(begin) = begin else {
+        return vec![CheckResult {
+            name: "suite log begin".into(),
+            expected: spec.begin.clone(),
+            actual: "marker never logged".into(),
+            passed: false,
+        }];
+    };
+    let mut window = Vec::new();
+    for log in &logs[begin..] {
+        let done = log.text.contains(&spec.end);
+        window.push(log.text.as_str());
+        if done {
+            break;
+        }
+    }
+    let finished = window.iter().any(|line| line.contains(&spec.end));
+    for line in window {
+        if let Some(rest) = line.strip_prefix("PASS: ") {
+            checks.push(CheckResult {
+                name: rest.to_string(),
+                expected: "pass".into(),
+                actual: "PASS".into(),
+                passed: true,
+            });
+        } else if let Some(rest) = line.strip_prefix("FAIL: ") {
+            checks.push(CheckResult {
+                name: rest.to_string(),
+                expected: "pass".into(),
+                actual: "FAIL".into(),
+                passed: false,
+            });
+        }
+    }
+    if finished {
+        if checks.is_empty() {
+            checks.push(CheckResult {
+                name: "suite log results".into(),
+                expected: "at least one PASS/FAIL line".into(),
+                actual: "none in scope".into(),
+                passed: false,
+            });
+        }
+    } else {
+        checks.push(CheckResult {
+            name: "suite log end".into(),
+            expected: spec.end.clone(),
+            actual: "marker never logged".into(),
+            passed: false,
+        });
+    }
+    checks
 }
 
 pub fn verify_reference(
@@ -386,6 +540,56 @@ mod tests {
                 .iter()
                 .all(|check| check.passed)
         );
+    }
+
+    #[test]
+    fn suite_log_branches_and_scopes() {
+        use nerust_gba_core::memory::MgbaDebugLog;
+        let logs = [
+            "Game Boy Advance Test Suite",
+            "BEGIN: Memory tests",
+            "PASS: ROM load U8",
+            "FAIL: ROM load U16 (unaligned)",
+            "END: 1/2",
+        ]
+        .map(|text| MgbaDebugLog {
+            level: 4,
+            text: text.into(),
+        });
+        let spec = SuiteLogVerify {
+            begin: "BEGIN: Memory tests".into(),
+            end: "END:".into(),
+        };
+        let mut checks = verify_suite_log(&logs, &spec);
+        assert_eq!(checks.len(), 2);
+        enrich_suite_log_checks(
+            &mut checks,
+            "Memory test: ROM load\nU16 (unaligned): Got 0x00000004 vs 0x00000008: FAIL\n",
+        );
+        let fail = checks
+            .iter()
+            .find(|c| c.name == "ROM load U16 (unaligned)")
+            .unwrap();
+        assert!(!fail.passed);
+        assert!(fail.actual.contains("Got 0x00000004 vs 0x00000008"));
+        let pass = checks.iter().find(|c| c.name == "ROM load U8").unwrap();
+        assert!(pass.passed);
+    }
+
+    #[test]
+    fn suite_log_reports_missing_markers() {
+        use nerust_gba_core::memory::MgbaDebugLog;
+        let logs = [MgbaDebugLog {
+            level: 4,
+            text: "nothing".into(),
+        }];
+        let spec = SuiteLogVerify {
+            begin: "BEGIN: X".into(),
+            end: "END:".into(),
+        };
+        let checks = verify_suite_log(&logs, &spec);
+        assert_eq!(checks.len(), 1);
+        assert!(!checks[0].passed);
     }
 
     #[test]

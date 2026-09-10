@@ -14,6 +14,12 @@ pub struct DmaTransfer {
     pub destination: u32,
     pub width: u8,
     pub latched_value: u32,
+    /// True when this unit is the only unit of its burst. The 16-bit
+    /// GamePak pre-increment read (dest[i] = mem16(src+2+2i)) is a
+    /// multi-unit pipeline effect (HW-pinned by nba burst-into-tears,
+    /// count 3): single-unit 16-bit reads land on the aligned source
+    /// (mgba-suite "ROM load DMA1 16" pins 0xBEEF, not 0xDEAD).
+    pub single_unit: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -308,6 +314,12 @@ impl GbaDma {
             destination,
             width,
             latched_value: dma.latch,
+            // `remaining` already counts down past this unit, and
+            // `was_first` marks the burst head: only a lone unit
+            // (remaining == 0 after decrement with was_first) skips the
+            // pre-increment; every unit of a multi-unit burst shifts,
+            // including the last (burst-into-tears TIME pin).
+            single_unit: dma.remaining == 0 && was_first,
         })
     }
 
