@@ -2,9 +2,10 @@
 ///
 /// GBATEK `#gbacartioportgpio`: 4-bit bidirectional port used by RTC
 /// (S3511), solar sensor (Boktai), tilt/gyro/rumble carts. Data at C4h,
-/// direction at C6h, control at C8h (bit 0 = port enable). Data and
-/// direction are only accessible while control bit 0 is set; otherwise
-/// reads return 00h and writes are ignored.
+/// direction at C6h, control at C8h (bit 0 = port enable). Control bit 0
+/// selects Write-Only vs Read/Write: in write-only mode READS return 00h,
+/// but WRITES still latch (only reads are gated). Pre-enable setup bytes
+/// therefore survive until the port is enabled.
 ///
 /// Attachment is lazy: the overlay stays dormant (reads return ROM data,
 /// writes latch open bus as before) until the first control write with
@@ -73,7 +74,8 @@ impl Gpio {
     }
 
     /// CPU write to the GPIO window. Returns true when consumed (control
-    /// writes always attach on bit 0; data/direction writes need enable).
+    /// writes always; data/direction writes latch always but only consume
+    /// once enabled, keeping non-GPIO carts on the ROM path).
     pub fn write(&mut self, addr: u32, width: u8, value: u32) -> bool {
         match width {
             2 => self.write_half(addr, (value & 0xFFFF) as u16),
@@ -112,16 +114,20 @@ impl Gpio {
             }
             return true;
         }
-        if self.control & 1 == 0 {
-            return false;
-        }
-        self.attached = true;
+        // GBATEK: control bit 0 gates READS (00h in write-only mode), not
+        // writes — latch data/direction unconditionally so pre-enable
+        // setup survives. Attachment still waits for the enable write so
+        // non-GPIO carts never misfire (their reads keep hitting ROM).
         if addr & 0xFF == 0xC4 {
             self.data = v & 0xF;
         } else {
             self.direction = v & 0xF;
         }
-        true
+        if self.control & 1 != 0 {
+            self.attached = true;
+            return true;
+        }
+        false
     }
 
     /// Whether any GPIO register has been enabled (for tests).
@@ -139,13 +145,17 @@ mod tests {
         let mut gpio = Gpio::new();
         // Reads fall through to ROM while dormant.
         assert_eq!(gpio.read(0x080000C4, 2), None);
-        // Data writes without enable are ignored (open bus path).
+        // Pre-enable data writes latch (GBATEK: write-only gates reads,
+        // not writes) but do not attach yet.
         assert!(!gpio.write(0x080000C4, 2, 0xF));
         assert!(!gpio.is_attached());
-        // Enabling attaches.
+        // Enabling attaches, and the pre-enable byte survived (made
+        // visible by opening the direction pins).
         assert!(gpio.write(0x080000C8, 2, 1));
         assert!(gpio.is_attached());
         assert_eq!(gpio.read(0x080000C8, 2), Some(1));
+        assert!(gpio.write(0x080000C6, 2, 0xF));
+        assert_eq!(gpio.read(0x080000C4, 2), Some(0xF));
     }
 
     #[test]

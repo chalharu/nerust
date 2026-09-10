@@ -297,6 +297,10 @@ impl GbaMemoryBus {
         self.write_internal(addr, 2, value as u32, true);
     }
 
+    pub fn write_hle_bios8(&mut self, addr: u32, value: u8) {
+        self.write_internal(addr, 1, value as u32, true);
+    }
+
     pub fn write_hle_bios32(&mut self, addr: u32, value: u32) {
         self.write_internal(addr, 4, value, true);
     }
@@ -826,8 +830,11 @@ impl GbaMemoryBus {
     }
 
     /// Raw pending interrupt flags (IE-independent), for IntrWait's r0=0 check.
+    /// GBATEK: return immediately when an OLD flag is already set — that is
+    /// the raw IF level, not the +1-tick-delayed effective `sif`. A flag
+    /// raised just before the SWI (still in `pending_if`) must count.
     pub fn irq_flags(&self) -> u16 {
-        self.sif
+        self.pending_if
     }
 
     /// Arm the IntrWait wake-clear mask (cleared on next halt wake).
@@ -916,6 +923,10 @@ impl GbaMemoryBus {
 
     pub(crate) fn apu_mut(&mut self) -> &mut GbaApu {
         &mut self.apu
+    }
+
+    pub(crate) fn apu(&self) -> &GbaApu {
+        &self.apu
     }
 
     pub fn take_cartridge(&mut self) -> Option<Cartridge> {
@@ -1009,10 +1020,14 @@ impl GbaMemoryBus {
             0x08000000..=0x0CFFFFFF => self.read_rom(addr, width),
             0x0D000000..=0x0DFFFFFF => {
                 // GBATEK Backup Media: on EEPROM cartridges the 0D window
-                // is the serial chip, not ROM; CPU loads see open bus
-                // (only DMA3 bit-serial works). Plain ROMs mirror WS2 here.
+                // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM:
+                // CPU loads see the chip state). The peek does not consume
+                // stream bits, so DMA bursts stay in sync; idle drives 1
+                // (Ready for the GBATEK `LDRH [DFFFF00h]` poll). Plain ROMs
+                // mirror WS2 here.
                 if self.is_eeprom() {
-                    self.open_bus_value
+                    let bit = self.cartridge.as_ref().is_none_or(|c| c.eeprom_peek_bit());
+                    u32::from(bit)
                 } else {
                     self.read_rom(addr, width)
                 }
@@ -1307,7 +1322,19 @@ impl GbaMemoryBus {
                     }
                 }
             }
-            0x040000B0..=0x040000DE => self.dma.read(aligned).unwrap_or(0),
+            0x040000B0..=0x040000DE => {
+                // GBATEK I/O Map: SAD/DAD/CNT_L are write-only (CPU reads
+                // see open bus, like other write-only ports); CNT_H is
+                // R/W so it reads back the latched control (enable bit
+                // included). (The channel latch itself is untouched;
+                // byte-store merging in write_io reads it back via
+                // dma.read directly.)
+                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
+                    self.dma.read(aligned).unwrap_or(0)
+                } else {
+                    (self.open_bus_value & 0xFFFF) as u16
+                }
+            }
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
                     eprintln!("T tmread @{}", self.current_tcycle);
@@ -1508,7 +1535,24 @@ impl GbaMemoryBus {
             }
         }
         let aligned = addr & !1;
-        let v16 = value as u16;
+        // GBATEK Address Bus Width: the I/O bus is 16-bit with byte-lane
+        // selectivity (mGBA GBAIOWrite8 merges then dispatches 16-bit).
+        // A sub-word store must preserve the untouched lane instead of
+        // zeroing it (e.g. STRB to a CNT_H low byte must not clear the
+        // start/IRQ bits in the high lane). DMA registers merge against
+        // the latched channel state (CPU reads see open bus, #13).
+        let v16 = if width == 1 {
+            let shift = (addr & 1) * 8;
+            let lane = (value & 0xFF) << shift;
+            let cur = if (0x040000B0..=0x040000DE).contains(&aligned) {
+                u32::from(self.dma.read(aligned).unwrap_or(0))
+            } else {
+                self.read_io(aligned, 2)
+            };
+            ((cur & !(0xFF << shift)) | lane) as u16
+        } else {
+            value as u16
+        };
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000006 => {
                 let irq = self.ppu.write_register(aligned, v16);
@@ -1640,8 +1684,14 @@ impl GbaMemoryBus {
                 return;
             }
             0x04000202 => {
-                // IF acknowledge: clears pending bits (NBA hw/irq).
-                self.pending_if &= !v16;
+                // IF acknowledge: only written 1-bits clear (NBA hw/irq).
+                // A byte store acks its lane only, not the merged halfword.
+                let bits = if width == 1 {
+                    ((value & 0xFF) << ((addr & 1) * 8)) as u16
+                } else {
+                    (value & 0xFFFF) as u16
+                };
+                self.pending_if &= !bits;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.open_bus_value = value;
                 return;
@@ -2086,17 +2136,18 @@ mod tests {
     fn eeprom_dma_bitstream_roundtrip() {
         use crate::cartridge::Cartridge;
         use crate::cartridge::header::finalize_test_gba_rom;
-        // EEPROM-detected cart: CPU access must not touch EEPROM contents.
+        // EEPROM-detected cart: CPU access must not consume stream bits.
         let mut rom = vec![0u8; 0x1000];
         finalize_test_gba_rom(&mut rom);
         rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
         let mut bus = GbaMemoryBus::new();
         bus.set_cartridge(Cartridge::new(rom).unwrap());
-        // CPU access to the EEPROM window is open bus, never chip contents.
+        // CPU loads from the EEPROM window see the chip state (mGBA
+        // GBASavedataReadEEPROM): idle drives 1 (Ready), never open bus.
         bus.write32(0x02000000, 0x12345678);
         let _ = bus.read32(0x02000000);
         bus.write8(0x0D000000, 0x42);
-        assert_eq!(bus.read8(0x0D000000), 0x42); // open_bus = last value
+        assert_eq!(bus.read8(0x0D000000), 1);
         // DMA write burst: 8K frame (start, write-op, 14-bit addr 0, data, stop).
         let data = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04];
         let mut bits = vec![true, false];

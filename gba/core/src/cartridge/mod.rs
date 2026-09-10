@@ -76,6 +76,11 @@ impl Cartridge {
         self.save.eeprom_read_bit()
     }
 
+    /// Peek the EEPROM response level without consuming (CPU load).
+    pub fn eeprom_peek_bit(&self) -> bool {
+        self.save.eeprom_peek_bit()
+    }
+
     /// End of a DMA burst touching the backup chip.
     pub fn eeprom_end_burst(&mut self) {
         self.save.eeprom_end_burst();

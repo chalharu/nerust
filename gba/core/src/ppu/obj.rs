@@ -235,10 +235,13 @@ fn signed_origin(value: u16, threshold: i32, modulus: i32) -> i32 {
 
 /// GBATEK OBJ Overview: per-line OBJ rendering cycle budget.
 /// 1210 cycles if H-Blank Interval Free (DISPCNT bit5) is 0, else 954.
-/// Normal OBJ costs `width` cycles, affine costs `10 + field_width*2`.
-/// OBJs that are disabled, prohibited, or vertically off the line cost 2.
-/// Higher-priority (lower-index) offscreen OBJs also consume cycles, so once
-/// the budget is exceeded this line drops the OBJ and all lower-priority ones.
+/// Normal OBJ costs `width` cycles, affine costs `10 + field_width*2`
+/// (GBATEK; mGBA uses 8 as its affine base). OBJs that are disabled,
+/// prohibited, or fully off the line (vertically OR horizontally) cost the
+/// 2-cycle gap. Higher-priority (lower-index) offscreen OBJs also consume
+/// cycles, so once the budget is exceeded this line drops the OBJ and all
+/// lower-priority ones. Partially left-clipped OBJs pay less (mGBA
+/// `common.c`: affine `+= x`, normal `+= x>>1` for negative x).
 fn cycle_drop_mask(registers: &PpuRegisters, oam: &[u8], y: usize) -> [bool; 128] {
     let mut dropped = [false; 128];
     let budget: u32 = if registers.dispcnt & (1 << 5) != 0 {
@@ -290,10 +293,24 @@ fn line_cost(oam: &[u8], index: usize, y: usize) -> u32 {
     if (y as i32) < origin_y || (y as i32) >= origin_y + field_height as i32 {
         return 2;
     }
-    if affine {
-        10 + field_width as u32 * 2
+    // Horizontal participation (mGBA CleanOAM): 9-bit X wraps (256..511 =
+    // -256..-1); fully offscreen left or right costs the 2-cycle gap
+    // instead of the full width (parked OBJs must not burn 64 cycles).
+    let x_raw = attr1 & 0x1FF;
+    let origin_x = if x_raw >= 256 {
+        x_raw as i32 - 512
     } else {
-        width as u32
+        x_raw as i32
+    };
+    if origin_x + field_width as i32 <= 0 || origin_x >= 240 {
+        return 2;
+    }
+    // Left-clipped remainder (mGBA clip adjustments on our GBATEK bases).
+    let clip = origin_x.min(0);
+    if affine {
+        (10 + field_width as i32 * 2 + clip).max(2) as u32
+    } else {
+        (width as i32 + (clip >> 1)).max(2) as u32
     }
 }
 
