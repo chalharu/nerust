@@ -129,17 +129,25 @@ pub struct GbaMemoryBus {
     /// A DMA burst is currently feeding the EEPROM serial chip; closed when
     /// no DMA channel is active or pending (frame decoded at burst end).
     eeprom_burst_open: bool,
-    /// mGBA debug-log MMIO (mgba-emu/suite harness, src/mgba.c):
+    /// Test-ROM log sink behind the `mgba-debug-log` cargo feature
+    /// (mGBA debug-log protocol, mgba-emu/suite `src/mgba.c`):
     /// 0x04FFF600-0x04FFF6FF string buffer, 0x04FFF700 flags (bit 8 =
     /// send, low 3 bits = level), 0x04FFF780 enable (0xC0DE -> on, reads
     /// back 0x1DEA). No hardware counterpart exists, so accesses cost
     /// zero waits and never touch prefetch / N-S / Disable-Bug state.
+    /// Production frontends build without the feature; the addresses
+    /// then behave as plain open bus, exactly as before.
+    #[cfg(feature = "mgba-debug-log")]
     mgba_debug_enable: bool,
+    #[cfg(feature = "mgba-debug-log")]
     mgba_debug_buf: [u8; 256],
+    #[cfg(feature = "mgba-debug-log")]
     mgba_debug_logs: Vec<MgbaDebugLog>,
 }
 
 /// One committed mGBA debug-log line (`mgba_printf` in suite sources).
+/// Only exists with the `mgba-debug-log` cargo feature (test harness).
+#[cfg(feature = "mgba-debug-log")]
 #[derive(Debug, Clone)]
 pub struct MgbaDebugLog {
     /// `MGBA_LOG_*` level from the flags write (`INFO = 3`, `DEBUG = 4`).
@@ -277,8 +285,11 @@ impl GbaMemoryBus {
             video_armed: false,
             video_countdown: 0,
             eeprom_burst_open: false,
+            #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
+            #[cfg(feature = "mgba-debug-log")]
             mgba_debug_buf: [0; 256],
+            #[cfg(feature = "mgba-debug-log")]
             mgba_debug_logs: Vec::new(),
         }
     }
@@ -1213,8 +1224,10 @@ impl GbaMemoryBus {
     }
 
     fn read_internal(&mut self, addr: u32, width: u8, is_opcode: bool) -> (u32, u8) {
-        // mGBA debug MMIO has no hardware counterpart: zero waits, no
-        // prefetch / N-S / Disable-Bug side effects (see field docs).
+        // Test-ROM log sink (only with the `mgba-debug-log` feature; see
+        // field docs). Without the feature these addresses fall through
+        // to plain open bus below.
+        #[cfg(feature = "mgba-debug-log")]
         if !is_opcode && (0x04FFF600..=0x04FFF7FF).contains(&addr) {
             let raw = self.read_mgba_debug(addr, width);
             self.last_prefetch = raw;
@@ -1278,8 +1291,10 @@ impl GbaMemoryBus {
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
-        // mGBA debug MMIO (see field docs): zero waits, no bus-state
-        // side effects beyond the debug buffer itself.
+        // Test-ROM log sink (only with the `mgba-debug-log` feature; see
+        // field docs). Without the feature these addresses fall through
+        // to the open-bus default below.
+        #[cfg(feature = "mgba-debug-log")]
         if (0x04FFF600..=0x04FFF7FF).contains(&addr) {
             self.write_mgba_debug(addr, width, value);
             self.prev_addr = Some(addr);
@@ -1318,20 +1333,26 @@ impl GbaMemoryBus {
 
     // -- Region readers --
 
-    /// Drain committed mGBA debug-log lines (oldest first).
+    /// Drain committed test-ROM debug-log lines (oldest first). Only
+    /// exists with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
     pub fn drain_mgba_debug_logs(&mut self) -> Vec<MgbaDebugLog> {
         std::mem::take(&mut self.mgba_debug_logs)
     }
 
-    /// Whether the guest enabled the mGBA debug interface (`mgba_open`).
+    /// Whether the guest enabled the test-ROM log sink. Only exists
+    /// with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
     pub fn mgba_debug_enabled(&self) -> bool {
         self.mgba_debug_enable
     }
 
-    /// mGBA debug-log MMIO write (mgba-emu/suite `src/mgba.c`):
-    /// `strncpy` into `REG_DEBUG_STRING`, commit on a `REG_DEBUG_FLAGS`
-    /// write with bit 8 set, enable on `REG_DEBUG_ENABLE = 0xC0DE`
-    /// (`mgba_close` writes 0). Byte-granular so any store width works.
+    /// Test-ROM log-sink write (mGBA debug-log protocol, mgba-emu/suite
+    /// `src/mgba.c`): `strncpy` into the string buffer, commit on a
+    /// flags write with bit 8 set, enable on `0xC0DE` (`mgba_close`
+    /// writes 0). Byte-granular so any store width works. Only compiled
+    /// with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
     fn write_mgba_debug(&mut self, addr: u32, width: u8, value: u32) {
         match addr {
             0x04FFF600..=0x04FFF6FF => {
@@ -1370,9 +1391,11 @@ impl GbaMemoryBus {
         self.open_bus_value = value;
     }
 
-    /// mGBA debug-log MMIO read: buffer bytes, or `0x1DEA` from
-    /// `REG_DEBUG_ENABLE` while enabled (`mgba_open` handshake);
-    /// disabled reads fall through to open bus (prior behavior).
+    /// Test-ROM log-sink read: buffer bytes, or `0x1DEA` from the
+    /// enable register while enabled (handshake); disabled reads fall
+    /// through to open bus (prior behavior). Only compiled with the
+    /// `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
     fn read_mgba_debug(&mut self, addr: u32, width: u8) -> u32 {
         match addr {
             0x04FFF600..=0x04FFF6FF => {
@@ -1987,6 +2010,7 @@ fn is_unreadable_io(address: u32) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "mgba-debug-log")]
     #[test]
     fn mgba_debug_handshake_and_log_commit() {
         // mgba-emu/suite `mgba_open` handshake + `mgba_printf` commit.

@@ -137,7 +137,12 @@ fn run_script(
     executed_tcycles: &mut usize,
     logs: &mut Vec<nerust_gba_core::memory::MgbaDebugLog>,
 ) -> Result<(), RomTestError> {
-    let mut cursor = 0usize;
+    // Lines already checked for any marker. Only fresh lines are scanned
+    // each cycle (rescanning the whole window is O(n^2) over a suite
+    // run). Steps only match lines that arrive while the step runs: the
+    // settle phase resyncs `scanned` to the log end, so a marker from an
+    // earlier step can never match a later step.
+    let mut scanned = 0usize;
     for (index, step) in selected.case.script.iter().enumerate() {
         let keyinput = step
             .press
@@ -156,7 +161,9 @@ fn run_script(
                 system.step_tcycle();
                 *executed_tcycles += 1;
                 logs.extend(system.bus.drain_mgba_debug_logs());
-                if logs[cursor..].iter().any(|log| log.text.contains(marker)) {
+                let fresh = logs[scanned..].iter().any(|log| log.text.contains(marker));
+                scanned = logs.len();
+                if fresh {
                     break;
                 }
             }
@@ -182,7 +189,7 @@ fn run_script(
             *executed_tcycles += 1;
             logs.extend(system.bus.drain_mgba_debug_logs());
         }
-        cursor = logs.len();
+        scanned = logs.len();
     }
     Ok(())
 }
@@ -241,17 +248,21 @@ fn run_case_inner(
         .verify(&mut system.bus, system.cpu.registers())?;
     // Also verify frame_pixels already includes frame_buffer check, but we also want to verify full frame if needed
     acc.checks.append(&mut checks);
-    // Branch one ROM's debug log into per-subtest checks (mgba-emu/suite).
+    // Branch one ROM's guest log into per-subtest checks.
     if let Some(suite_log) = &selected.case.verify.suite_log {
         acc.checks
             .extend(crate::verify::verify_suite_log(&acc.logs, suite_log));
-        // Enrich failures with `Got X vs Y` details from the SRAM log.
-        let mut sram = Vec::with_capacity(0x8000);
-        for addr in 0x0E00_0000..0x0E00_8000 {
-            sram.push(system.bus.read8(addr));
+        // Enrich failures with guest-provided details from the SRAM log
+        // (the GBA backup-media window; suites with an `savprintf`-style
+        // channel report values there).
+        if let Some(markers) = &suite_log.sram {
+            let mut sram = Vec::with_capacity(0x8000);
+            for addr in 0x0E00_0000..0x0E00_8000 {
+                sram.push(system.bus.read8(addr));
+            }
+            let text = String::from_utf8_lossy(&sram).into_owned();
+            crate::verify::enrich_suite_log_checks(&mut acc.checks, &text, markers);
         }
-        let text = String::from_utf8_lossy(&sram).into_owned();
-        crate::verify::enrich_suite_log_checks(&mut acc.checks, &text);
     }
     if acc.checks.is_empty() {
         acc.checks.push(crate::verify::CheckResult {
@@ -430,6 +441,352 @@ mod tests {
     };
     use nerust_gba_core::cartridge::header::finalize_test_gba_rom;
 
+    /// Minimal ARM assembler for synthetic test ROMs: literal-pool LDR
+    /// plus a few single-transfer/branch/SWI forms. All encodings are
+    /// computed (no hand hex), pools laid out after the code.
+    struct MiniAsm {
+        code: Vec<u32>,
+        pool: Vec<u32>,
+        fixups: Vec<(usize, usize)>,
+    }
+
+    impl MiniAsm {
+        fn new() -> Self {
+            Self {
+                code: Vec::new(),
+                pool: Vec::new(),
+                fixups: Vec::new(),
+            }
+        }
+
+        fn ldr_lit(&mut self, rd: usize, val: u32) {
+            self.pool.push(val);
+            self.fixups.push((self.code.len(), self.pool.len() - 1));
+            self.code.push(0xE59F_0000 | ((rd as u32) << 12));
+        }
+
+        fn emit(&mut self, word: u32) {
+            self.code.push(word);
+        }
+
+        fn mov_imm(&mut self, rd: usize, imm: u32) {
+            assert!(imm < 256);
+            self.emit(0xE3A0_0000 | ((rd as u32) << 12) | imm);
+        }
+
+        fn str_imm(&mut self, rd: usize, rn: usize, off: u32) {
+            assert!(off < 4096);
+            self.emit(0xE580_0000 | ((rn as u32) << 16) | ((rd as u32) << 12) | off);
+        }
+
+        fn strh(&mut self, rd: usize, rn: usize) {
+            self.emit(0xE1C0_00B0 | ((rn as u32) << 16) | ((rd as u32) << 12));
+        }
+
+        fn strb(&mut self, rd: usize, rn: usize, off: u32) {
+            assert!(off < 4096);
+            self.emit(0xE5C0_0000 | ((rn as u32) << 16) | ((rd as u32) << 12) | off);
+        }
+
+        fn ldrh(&mut self, rd: usize, rn: usize, off: u32) {
+            assert!(off < 256);
+            self.emit(
+                0xE1D0_00B0
+                    | ((rn as u32) << 16)
+                    | ((rd as u32) << 12)
+                    | ((off & 0xF0) << 4)
+                    | (off & 0xF),
+            );
+        }
+
+        fn ldrsh(&mut self, rd: usize, rn: usize, off: u32) {
+            assert!(off < 256);
+            self.emit(
+                0xE1D0_00F0
+                    | ((rn as u32) << 16)
+                    | ((rd as u32) << 12)
+                    | ((off & 0xF0) << 4)
+                    | (off & 0xF),
+            );
+        }
+
+        fn swi(&mut self, num: u32) {
+            // devkitARM ABI (which the core decodes): the SWI number
+            // lives in bits 16-23, so `swi 0x0B` assembles to EF0B0000.
+            assert!(num < 256);
+            self.emit(0xEF00_0000 | (num << 16));
+        }
+
+        fn spin(&mut self) {
+            self.emit(0xEAFF_FFFE);
+        }
+
+        /// Lay out code at 0x080000C0 with pools after, splice `data`
+        /// blobs (offset, bytes), and finalize a bootable test ROM.
+        fn build(mut self, rom_size: usize, data: &[(usize, &[u8])]) -> Vec<u8> {
+            let base = 0x080000C0u32;
+            let pool_base = base + self.code.len() as u32 * 4;
+            for (code_idx, pool_idx) in &self.fixups {
+                let instr = base + (*code_idx as u32) * 4;
+                let target = pool_base + (*pool_idx as u32) * 4;
+                let off = target.wrapping_sub(instr + 8);
+                assert!(off < 0x1000, "literal pool out of range");
+                self.code[*code_idx] |= off;
+            }
+            let mut rom = vec![0u8; rom_size];
+            rom[0..4].copy_from_slice(&0xEA00_002Eu32.to_le_bytes());
+            for (i, word) in self.code.iter().enumerate() {
+                rom[0xC0 + i * 4..0xC0 + (i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+            }
+            let pool_off = 0xC0 + self.code.len() * 4;
+            for (i, word) in self.pool.iter().enumerate() {
+                rom[pool_off + i * 4..pool_off + (i + 1) * 4].copy_from_slice(&word.to_le_bytes());
+            }
+            for (off, bytes) in data {
+                rom[*off..*off + bytes.len()].copy_from_slice(bytes);
+            }
+            finalize_test_gba_rom(&mut rom);
+            rom
+        }
+    }
+
+    fn mem_check(address: &str, value: &str, width: u8) -> VerifySpec {
+        VerifySpec {
+            memory: vec![MemoryEntry {
+                address: address.into(),
+                value: value.into(),
+                width,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn mem_checks(entries: &[(&str, &str, u8)]) -> VerifySpec {
+        VerifySpec {
+            memory: entries
+                .iter()
+                .map(|(address, value, width)| MemoryEntry {
+                    address: (*address).into(),
+                    value: (*value).into(),
+                    width: *width,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Write an assembled ROM to a scratch suite dir and run it as a
+    /// case with memory verification. Returns the full result.
+    fn run_assembled_rom(id: &str, rom: Vec<u8>, verify: VerifySpec) -> CaseResult {
+        // Unique scratch dir per call: lib tests run in parallel threads
+        // of one process (same pid), so the id alone is not enough.
+        static NEXT_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let uniq = NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let root =
+            std::env::temp_dir().join(format!("nerust-gba-asm-{}-{uniq}", std::process::id()));
+        let suite_dir = root.join("synthetic");
+        std::fs::create_dir_all(&suite_dir).unwrap();
+        std::fs::write(suite_dir.join("case.gba"), rom).unwrap();
+        let suite = crate::manifest::RomSuite {
+            name: "synthetic".into(),
+            cases: Vec::new(),
+            case_patterns: Vec::new(),
+        };
+        let case = RomCase {
+            id: id.into(),
+            rom: "case.gba".into(),
+            cycles: 20_000,
+            completion: None,
+            description: "assembled pin test".into(),
+            verify,
+            inputs: Vec::new(),
+            reference: None,
+            skip_screenshot: true,
+            script: Vec::new(),
+            expected_checks: Vec::new(),
+        };
+        let selected = SelectedCase {
+            suite: &suite,
+            case: &case,
+            completion: None,
+        };
+        let result = run_case(&selected, &root, None, false);
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// Odd LDRH sees the aligned halfword rotated (spread), odd LDRSH
+    /// sign-extends the odd byte. Pins the ROM align-down read path.
+    #[test]
+    fn synthetic_rom_odd_halfword_spread() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(1, 0x0800_0200);
+        asm.ldr_lit(2, 0x0200_0000);
+        asm.ldrh(0, 1, 1);
+        asm.str_imm(0, 2, 0);
+        asm.ldrsh(0, 1, 1);
+        asm.str_imm(0, 2, 4);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x200, &[0xEF, 0xBE, 0xAD, 0xDE])]);
+        let result = run_assembled_rom(
+            "odd_halfword",
+            rom,
+            mem_checks(&[
+                ("0x02000000", "0xEF0000BE", 4),
+                ("0x02000004", "0xFFFFFFBE", 4),
+            ]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// Single-unit 16-bit DMA from ROM lands on the aligned source
+    /// (no pre-increment); only multi-unit bursts shift.
+    #[test]
+    fn synthetic_dma16_single_no_shift() {
+        let mut asm = MiniAsm::new();
+        // DMA1, even source.
+        asm.ldr_lit(0, 0x0800_0200);
+        asm.ldr_lit(1, 0x0400_00BC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0000);
+        asm.ldr_lit(1, 0x0400_00C0);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 1);
+        asm.ldr_lit(1, 0x0400_00C4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x8000);
+        asm.ldr_lit(1, 0x0400_00C6);
+        asm.strh(0, 1);
+        // DMA1 again, odd source (aligns down, same content).
+        asm.ldr_lit(0, 0x0800_0201);
+        asm.ldr_lit(1, 0x0400_00BC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0002);
+        asm.ldr_lit(1, 0x0400_00C0);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 1);
+        asm.ldr_lit(1, 0x0400_00C4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x8000);
+        asm.ldr_lit(1, 0x0400_00C6);
+        asm.strh(0, 1);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x200, &[0xEF, 0xBE, 0xAD, 0xDE])]);
+        let result = run_assembled_rom(
+            "dma16_single",
+            rom,
+            mem_checks(&[("0x02000000", "0xBEEF", 2), ("0x02000002", "0xBEEF", 2)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// 16-bit CpuSet from an odd source copies zero-extended bytes.
+    #[test]
+    fn synthetic_cpuset16_odd_bytes() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0xDEAD_BEEF);
+        asm.ldr_lit(1, 0x0200_0100);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0101);
+        asm.ldr_lit(1, 0x0200_0200);
+        asm.mov_imm(2, 4);
+        asm.swi(0x0B);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "cpuset16_odd",
+            rom,
+            mem_check("0x02000200", "0x00DE00BE", 4),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// DMA3 stores to SRAM stick (bytewise backend + replicate read).
+    #[test]
+    fn synthetic_dma3_sram_sticks() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0xC7D8);
+        asm.ldr_lit(1, 0x0200_0100);
+        asm.strh(0, 1);
+        asm.ldr_lit(0, 0x0200_0100);
+        asm.ldr_lit(1, 0x0400_00D4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0E00_0000);
+        asm.ldr_lit(1, 0x0400_00D8);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 1);
+        asm.ldr_lit(1, 0x0400_00DC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x8000);
+        asm.ldr_lit(1, 0x0400_00DE);
+        asm.strh(0, 1);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x300, b"SRAM_V100")]);
+        let result = run_assembled_rom("dma3_sram", rom, mem_check("0x0E000000", "0xD8", 1));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// CpuSet from unmapped non-BIOS memory performs no copy (unlike
+    /// DMA, which exposes the last bus value).
+    #[test]
+    fn synthetic_cpuset_unmapped_reject() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0x0100_0000);
+        asm.ldr_lit(1, 0x0200_0200);
+        asm.mov_imm(2, 4);
+        asm.swi(0x0B);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom("cpuset_bad", rom, mem_check("0x02000200", "0x0", 4));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// 32-bit CpuSet from an odd SRAM source replicates the odd byte.
+    #[test]
+    fn synthetic_cpuset32_sram_odd_src() {
+        let mut asm = MiniAsm::new();
+        for (i, ch) in [0x47u32, 0x61, 0x6D, 0x65].iter().enumerate() {
+            asm.mov_imm(0, *ch);
+            asm.ldr_lit(1, 0x0E00_0000);
+            asm.strb(0, 1, i as u32);
+        }
+        asm.ldr_lit(0, 0x0E00_0001);
+        asm.ldr_lit(1, 0x0200_0200);
+        asm.ldr_lit(2, 0x0400_0002);
+        asm.swi(0x0B);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x300, b"SRAM_V100")]);
+        let result = run_assembled_rom(
+            "cpuset32_sram_odd",
+            rom,
+            mem_check("0x02000200", "0x61616161", 4),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// 32-bit CpuSet to an odd SRAM address stores nothing.
+    #[test]
+    fn synthetic_cpuset32_sram_odd_dst_drop() {
+        let mut asm = MiniAsm::new();
+        for i in 0..4u32 {
+            asm.mov_imm(0, 0x66);
+            asm.ldr_lit(1, 0x0E00_0000);
+            asm.strb(0, 1, i);
+        }
+        asm.ldr_lit(0, 0x0200_0100);
+        asm.ldr_lit(1, 0x0E00_0001);
+        asm.ldr_lit(2, 0x0400_0002);
+        asm.swi(0x0B);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x300, b"SRAM_V100")]);
+        let result = run_assembled_rom(
+            "cpuset32_sram_drop",
+            rom,
+            mem_check("0x0E000000", "0x66666666", 4),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     #[test]
     fn completion_tracker_requires_ordered_matches() {
         let mut tracker = CompletionTracker::default();
@@ -582,6 +939,9 @@ mod tests {
                 suite_log: Some(SuiteLogVerify {
                     begin: "BEGIN: syn".into(),
                     end: "END:".into(),
+                    pass_prefix: "PASS: ".into(),
+                    fail_prefix: "FAIL: ".into(),
+                    sram: None,
                 }),
                 ..Default::default()
             },
