@@ -111,6 +111,29 @@ expected_failures:
 # Velocity/Acceleration: see the affine note above (interacted refs).
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
+# mgba_suite_timing: whole-case research-grade (1030/1244 subtests fail).
+# The suite measures instruction/bus cycle counts over prefetch (P),
+# N/S-wait (N/S) and region combinations against HW captures; our bus
+# timing model differs systematically (calibration itself already
+# mismatches, shifting every downstream measurement). Enumerating 1030
+# check names would bury the signal; the checks still run and report,
+# and the case flips to unexpected-pass when a timing overhaul lands.
+# See the suite's timing.c calibration + P/N/S matrix.
+- mgba_suite_timing
+# mgba_suite_timers: QUARANTINED HANG (never reaches END). The first
+# count-up cell spins on TM0CNT enable-clear forever: the overflow IRQ
+# storm (FFFF/reload-0-ish + IRQ + start overflows every tick) nests
+# through the devkit master (which clears CPSR-I and switches to SYS
+# via MSR) while the line stays asserted, and our single-shot HLE
+# return path (now a stack, still under diagnosis) strands the outer
+# return; meanwhile testIrq's stop-write applies once but the spin
+# never observes it. Per-instruction evidence: exactly one CNT_H stop
+# ever, one C3 restart, one C0 start, vector/table/stack intact, timer
+# ticking. The small budget keeps the Timeout fast; the case still
+# boots the suite (BEGIN logged), proving the hang rather than a
+# navigation failure. True fix needs the nested-dispatch unwind
+# audited against the real BIOS prologue pacing.
+- mgba_suite_timers
 
 suites:
 - name: jsmolka_gba-tests
@@ -884,3 +907,521 @@ suites:
     - 'BIOS load 32 (unaligned 3)'
     - 'BIOS out-of-bounds load S16 (unaligned)'
     - 'Out-of-bounds load S16 (unaligned)'
+  # The remaining mgba-suite groups are menu-driven (DOWN x N, A to run,
+  # END logged, results viewer dismissed). Each case boots fresh, so the
+  # menu always starts at index 0 (0 Memory, 1 I/O read, 2 Timing,
+  # 3 Timer count-up, 4 Timer IRQ, 5 Shifter, 6 Carry, 7 Multiply long,
+  # 8 BIOS math, 9 DMA, 10 SIO R/W, 11 SIO timing, 12 Misc edge,
+  # 13 Video (interactive/visual: out of scope for log verify)).
+  - id: mgba_suite_io_read
+    rom: suite.gba
+    description: mgba suite - I/O read tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: I/O read tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: I/O read tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 12 subtests fail on APU readable-bit masks (e.g. SOUND1CNT_LO is
+    # 0x007F on HW): the APU is unimplemented (Phase 9), so the bus
+    # returns the write latch. SOUNDCNT_X passes (0x0080 enable bit
+    # latches). DMA CNT_LO/CNT_HI and unused-I/O reads were fixed
+    # alongside (silent-0 per mGBA GBAIORead; DRQ latch kept verbatim).
+    expected_checks:
+    - 'SOUND1CNT_LO'
+    - 'SOUND1CNT_HI'
+    - 'SOUND1CNT_X'
+    - 'SOUND2CNT_LO'
+    - 'SOUND2CNT_HI'
+    - 'SOUND3CNT_LO'
+    - 'SOUND3CNT_HI'
+    - 'SOUND3CNT_X'
+    - 'SOUND4CNT_LO'
+    - 'SOUND4CNT_HI'
+    - 'SOUNDCNT_LO'
+    - 'SOUNDCNT_HI'
+  - id: mgba_suite_shifter
+    rom: suite.gba
+    description: mgba suite - Shifter tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Shifter tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Shifter tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+  - id: mgba_suite_carry
+    rom: suite.gba
+    description: mgba suite - Carry tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Carry tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Carry tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+  - id: mgba_suite_multiply_long
+    rom: suite.gba
+    description: mgba suite - Multiply long tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Multiply long tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Multiply long tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 20 subtests fail on the MULLS C flag: N (from RdHi) and Z (full
+    # 64-bit zero) match, but HW sets C=1 for an operand-dependent
+    # subset (e.g. SMULL(0, 0x80000000) -> C=1, SMULL(-1, -1) -> C=0;
+    # UMULL hi!=0 is not sufficient either: $7F*$7F -> C=0). The rule
+    # is not a pure function of the product (same-product pairs like
+    # -1*$7F vs 1*$81 agree) but needs the Booth-multiplier carry
+    # behavior; mGBA leaves C untouched too (ARM_NEUTRAL_HI_S sets
+    # only N/Z). Research-grade: values+N/Z are pinned, C stays 0.
+    expected_checks:
+    - ' -1 *  -1 umulls'
+    - '$7F *  -1 umulls'
+    - ' -1 * $7F smulls'
+    - ' -1 * $7F umulls'
+    - '$80 * $7F smulls'
+    - '$80 * $7F umulls'
+    - '$81 * $7F smulls'
+    - '$81 * $7F umulls'
+    - '  0 * $80 smulls'
+    - '  1 * $80 smulls'
+    - ' -1 * $80 umulls'
+    - '$7F * $80 smulls'
+    - '$80 * $80 umulls'
+    - '$81 * $80 umulls'
+    - '  0 * $81 smulls'
+    - '  1 * $81 smulls'
+    - ' -1 * $81 umulls'
+    - '$7F * $81 smulls'
+    - '$80 * $81 umulls'
+    - '$81 * $81 umulls'
+  - id: mgba_suite_bios_math
+    rom: suite.gba
+    description: mgba suite - BIOS math tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: BIOS math tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: BIOS math tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+  - id: mgba_suite_sio_read
+    rom: suite.gba
+    description: mgba suite - SIO register R/W tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: SIO register R/W tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: SIO register R/W tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 25/90 pass. The 65 below need SIO/JOY transfer + mode-state
+    # emulation (no link layer exists yet): multi/normal/uart/gpio/
+    # joybus data regs read 0 on HW once addressed (we return the
+    # write latch or open bus: SIODATA32 got 0xFFFF, SIOMULTI2/3 got
+    # 0xDEAD), SIOCNT/RCNT read back per-mode masks (e.g. M: SIOCNT
+    # 0xEFFF->0x6F8F, G: RCNT 0xBFFF->0x81FF, J: RCNT 0xFFFF->0xC1FC),
+    # JOYCNT reads 0x0040 and JOY_RECV/TRANS read 0. SIOMLT_SEND and
+    # normal-mode SIODATA8 were fixed alongside (full-halfword latch).
+    # NOTE: the shipped ROM is newer than the last suite snapshot:
+    # it runs 6 mode groups (M/N8/N32/U/G/J, 90 subtests), not 4.
+    expected_checks:
+    - 'M: SIOMULTI0'
+    - 'M: SIOMULTI1'
+    - 'M: SIOMULTI2'
+    - 'M: SIOMULTI3'
+    - 'M: SIOCNT'
+    - 'M: RCNT'
+    - 'M: JOYCNT'
+    - 'M: JOY_RECV_L'
+    - 'M: JOY_RECV_H'
+    - 'M: JOY_TRANS_L'
+    - 'M: JOY_TRANS_H'
+    - 'N8: SIODATA32_L'
+    - 'N8: SIODATA32_H'
+    - 'N8: SIOMULTI2'
+    - 'N8: SIOMULTI3'
+    - 'N8: SIOCNT'
+    - 'N8: RCNT'
+    - 'N8: JOYCNT'
+    - 'N8: JOY_RECV_L'
+    - 'N8: JOY_RECV_H'
+    - 'N8: JOY_TRANS_L'
+    - 'N8: JOY_TRANS_H'
+    - 'N32: SIOMULTI2'
+    - 'N32: SIOMULTI3'
+    - 'N32: SIOCNT'
+    - 'N32: RCNT'
+    - 'N32: JOYCNT'
+    - 'N32: JOY_RECV_L'
+    - 'N32: JOY_RECV_H'
+    - 'N32: JOY_TRANS_L'
+    - 'N32: JOY_TRANS_H'
+    - 'U: SIODATA32_L'
+    - 'U: SIODATA32_H'
+    - 'U: SIOMULTI2'
+    - 'U: SIOMULTI3'
+    - 'U: SIOCNT'
+    - 'U: SIODATA8'
+    - 'U: RCNT'
+    - 'U: JOYCNT'
+    - 'U: JOY_RECV_L'
+    - 'U: JOY_RECV_H'
+    - 'U: JOY_TRANS_L'
+    - 'U: JOY_TRANS_H'
+    - 'G: SIODATA32_L'
+    - 'G: SIODATA32_H'
+    - 'G: SIOMULTI2'
+    - 'G: SIOMULTI3'
+    - 'G: SIOCNT'
+    - 'G: RCNT'
+    - 'G: JOYCNT'
+    - 'G: JOY_RECV_L'
+    - 'G: JOY_RECV_H'
+    - 'G: JOY_TRANS_L'
+    - 'G: JOY_TRANS_H'
+    - 'J: SIODATA32_L'
+    - 'J: SIODATA32_H'
+    - 'J: SIOMULTI2'
+    - 'J: SIOMULTI3'
+    - 'J: SIOCNT'
+    - 'J: RCNT'
+    - 'J: JOYCNT'
+    - 'J: JOY_RECV_L'
+    - 'J: JOY_RECV_H'
+    - 'J: JOY_TRANS_L'
+    - 'J: JOY_TRANS_H'
+  - id: mgba_suite_misc_edge
+    rom: suite.gba
+    description: mgba suite - Misc. edge case tests
+    cycles: 1000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Misc. edge case tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Misc. edge case tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 6 subtests fail on research-grade micro-behavior:
+    # - "DMA Prefetch Break/Read": while an HBlank DMA3 runs, CPU
+    #   reads from unmapped (0x10000000+) see DMA-bus bleed matching
+    #   (value & 0xFFC0FFC0) == 0x40004000 until 0x10002A94, ending
+    #   0xDEAD0000. Unmodeled bus-contention behavior (we return plain
+    #   open bus, breaking at 0x10000004).
+    # - "H-blank bit start Hblank/Flip 1-3": timer-measured HBlank
+    #   flag edges (halt 0x4D0, rise 0x87, fall 0x3EC, rise 0xE5).
+    #   Later flips (0x3EB/0xE3/0x3F3) pass; the first edges need
+    #   exact flag/halt micro-timing (PPU Phase 8 follow-up).
+    expected_checks:
+    - 'DMA Prefetch Break'
+    - 'DMA Prefetch Read'
+    - 'H-blank bit start Hblank'
+    - 'H-blank bit start Flip 1'
+    - 'H-blank bit start Flip 2'
+    - 'H-blank bit start Flip 3'
+  # Batch 2: timing-sensitive suites (slower guests; larger budgets).
+  - id: mgba_suite_timing
+    rom: suite.gba
+    description: mgba suite - Timing tests
+    cycles: 8000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Timing tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Timing tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+  - id: mgba_suite_timers
+    rom: suite.gba
+    description: mgba suite - Timer count-up tests
+    # Quarantined hang (see expected_failures note): keep the budget
+    # just past suite start so the Timeout stays fast.
+    cycles: 100000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Timer count-up tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Timer count-up tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+  - id: mgba_suite_timer_irq
+    rom: suite.gba
+    description: mgba suite - Timer IRQ tests
+    cycles: 8000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: Timer IRQ tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: Timer IRQ tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 36 subtests fail on timer start-latency phase: early samples
+    # match ("FFFF 0/1 nops" pass) then drift, with the frontier
+    # moving diagonally (FFFF fails from nop 2, FFFE from 3, ...
+    # FFF8 only at 9). The counter runs a systematic 1-2 ticks off
+    # HW phase after (re)start (prescaler tap / start-delay shape);
+    # retuning it would perturb the nba start-delay/tick-before-
+    # reload pins, so this stays research-grade timing.
+    expected_checks:
+    - 'FFFF 2 nops'
+    - 'FFFF 3 nops'
+    - 'FFFF 4 nops'
+    - 'FFFF 5 nops'
+    - 'FFFF 6 nops'
+    - 'FFFF 7 nops'
+    - 'FFFF 8 nops'
+    - 'FFFF 9 nops'
+    - 'FFFE 3 nops'
+    - 'FFFE 4 nops'
+    - 'FFFE 5 nops'
+    - 'FFFE 6 nops'
+    - 'FFFE 7 nops'
+    - 'FFFE 8 nops'
+    - 'FFFE 9 nops'
+    - 'FFFD 4 nops'
+    - 'FFFD 5 nops'
+    - 'FFFD 6 nops'
+    - 'FFFD 7 nops'
+    - 'FFFD 8 nops'
+    - 'FFFD 9 nops'
+    - 'FFFC 5 nops'
+    - 'FFFC 6 nops'
+    - 'FFFC 7 nops'
+    - 'FFFC 8 nops'
+    - 'FFFC 9 nops'
+    - 'FFFB 6 nops'
+    - 'FFFB 7 nops'
+    - 'FFFB 8 nops'
+    - 'FFFB 9 nops'
+    - 'FFFA 7 nops'
+    - 'FFFA 8 nops'
+    - 'FFFA 9 nops'
+    - 'FFF9 8 nops'
+    - 'FFF9 9 nops'
+    - 'FFF8 9 nops'
+  - id: mgba_suite_dma
+    rom: suite.gba
+    description: mgba suite - DMA tests
+    cycles: 8000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: DMA tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: DMA tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 48 subtests fail on the GamePak-DMA first-word quirk (all are the
+    # "3" check = first destination word of a 4-word ROM-source burst
+    # on channels 1-3; channel 0 passes). Observed HW rule: with a
+    # fixed or decrement ROM source the first word comes from sad+12
+    # (W: DEADBEF2 = srcR[6]; H: byte-merged ...DEAD), while an
+    # increment source delivers the programmed word (+ROM passes).
+    # We return the programmed word for =ROM/+ROM and sad-12 for -ROM
+    # (last-unit-wins under the fixed dest). mGBA models none of this
+    # (plain load32 + bus=latch). Research-grade prefetch/bus
+    # interaction; END is 1196/1244.
+    expected_checks:
+    - '1 Imm W =ROM/=IWRAM 3'
+    - '2 Imm W =ROM/=IWRAM 3'
+    - '3 Imm W =ROM/=IWRAM 3'
+    - '1 Imm W =ROM/=EWRAM 3'
+    - '2 Imm W =ROM/=EWRAM 3'
+    - '3 Imm W =ROM/=EWRAM 3'
+    - '1 Imm H +ROM/=IWRAM 3'
+    - '2 Imm H +ROM/=IWRAM 3'
+    - '3 Imm H +ROM/=IWRAM 3'
+    - '1 Imm H +ROM/=EWRAM 3'
+    - '2 Imm H +ROM/=EWRAM 3'
+    - '3 Imm H +ROM/=EWRAM 3'
+    - '1 Imm H -ROM/=IWRAM 3'
+    - '2 Imm H -ROM/=IWRAM 3'
+    - '3 Imm H -ROM/=IWRAM 3'
+    - '1 Imm H -ROM/=EWRAM 3'
+    - '2 Imm H -ROM/=EWRAM 3'
+    - '3 Imm H -ROM/=EWRAM 3'
+    - '1 Imm W -ROM/=IWRAM 3'
+    - '2 Imm W -ROM/=IWRAM 3'
+    - '3 Imm W -ROM/=IWRAM 3'
+    - '1 Imm W -ROM/=EWRAM 3'
+    - '2 Imm W -ROM/=EWRAM 3'
+    - '3 Imm W -ROM/=EWRAM 3'
+    - '1 HBl W =ROM/=IWRAM 3'
+    - '2 HBl W =ROM/=IWRAM 3'
+    - '3 HBl W =ROM/=IWRAM 3'
+    - '1 HBl W =ROM/=EWRAM 3'
+    - '2 HBl W =ROM/=EWRAM 3'
+    - '3 HBl W =ROM/=EWRAM 3'
+    - '1 HBl H +ROM/=IWRAM 3'
+    - '2 HBl H +ROM/=IWRAM 3'
+    - '3 HBl H +ROM/=IWRAM 3'
+    - '1 HBl H +ROM/=EWRAM 3'
+    - '2 HBl H +ROM/=EWRAM 3'
+    - '3 HBl H +ROM/=EWRAM 3'
+    - '1 HBl H -ROM/=IWRAM 3'
+    - '2 HBl H -ROM/=IWRAM 3'
+    - '3 HBl H -ROM/=IWRAM 3'
+    - '1 HBl H -ROM/=EWRAM 3'
+    - '2 HBl H -ROM/=EWRAM 3'
+    - '3 HBl H -ROM/=EWRAM 3'
+    - '1 HBl W -ROM/=IWRAM 3'
+    - '2 HBl W -ROM/=IWRAM 3'
+    - '3 HBl W -ROM/=IWRAM 3'
+    - '1 HBl W -ROM/=EWRAM 3'
+    - '2 HBl W -ROM/=EWRAM 3'
+    - '3 HBl W -ROM/=EWRAM 3'
+  - id: mgba_suite_sio_timing
+    rom: suite.gba
+    description: mgba suite - SIO timing tests
+    cycles: 8000000000
+    skip_screenshot: true
+    script:
+    - {press: [], wait_frames: 30}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [down], wait_frames: 3}
+    - {press: [a], until_log: 'BEGIN: SIO timing tests'}
+    - {press: [], until_log: 'END:'}
+    verify:
+      suite_log:
+        begin: 'BEGIN: SIO timing tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+    # 4 subtests fail: Normal-mode transfer durations with no link
+    # partner (no SIO emulation exists yet; the SWI-timeout path
+    # times differently). Multi/* self-SKIPs (ignored by verify).
+    expected_checks:
+    - 'Normal8/256k'
+    - 'Normal8/2M'
+    - 'Normal32/256k'
+    - 'Normal32/2M'

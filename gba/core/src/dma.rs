@@ -378,13 +378,12 @@ impl GbaDma {
 fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
     let was_enabled = dma.control & 0x8000 != 0;
     // GBATEK DMA: DRQ (bit 11) exists on DMA3 only (mGBA masks 0xF7E0 below).
+    // NOTE: GBATEK's "Repeat must be zero if DRQ is set" is a programming
+    // constraint, not latch behavior: the mgba-suite io-read HW capture
+    // reads back both bits (DMA3CNT_HI == 0xFFE0), so the latch is kept
+    // verbatim here. The guard lives in finish(): a DRQ channel never
+    // re-arms.
     dma.control = value & if channel == 3 { 0xFFE0 } else { 0xF7E0 };
-    // GBATEK DMA3: "Repeat must be zero if Bit11 (DRQ) is set". Enforce by
-    // clearing Repeat when DRQ is written, so a DRQ+Repeat combo cannot arm
-    // a repeat channel the hardware would refuse.
-    if channel == 3 && dma.control & 0x0800 != 0 {
-        dma.control &= !0x0200;
-    }
     if dma.control & 0x8000 != 0 && !was_enabled {
         dma.current_source = dma.source
             & if channel == 0 {
@@ -432,6 +431,10 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
 
 fn finish(dma: &mut DmaChannel, channel: usize) {
     let repeat = dma.control & (1 << 9) != 0;
+    // GBATEK DMA3: Repeat must be zero when DRQ is set; such a combo is a
+    // programming error, so it never re-arms (the latch itself is kept
+    // verbatim for HW readback; see write_control).
+    let repeat = repeat && !(channel == 3 && dma.control & 0x0800 != 0);
     dma.active = false;
     dma.pending = 0;
     dma.delay = 0;

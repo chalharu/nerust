@@ -16,8 +16,12 @@ const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 pub struct GbaCpu {
     regs: CpuRegisters,
     pipeline: [u32; 2],
-    irq_return_address: Option<u32>,
-    irq_saved_registers: Option<[u32; 5]>,
+    /// HLE IRQ return slots, innermost last. The real BIOS prologue nests
+    /// through the IRQ stack, so a second dispatch inside a handler must
+    /// not clobber the outer return (mgba-suite timers: the master
+    /// re-enables IRQ (MSR SYS+clear-I) while an every-tick timer keeps
+    /// the line asserted, nesting deeply until testIrq stops it).
+    irq_return_stack: Vec<(u32, [u32; 5])>,
 }
 
 impl GbaCpu {
@@ -25,8 +29,7 @@ impl GbaCpu {
         Self {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
-            irq_return_address: None,
-            irq_saved_registers: None,
+            irq_return_stack: Vec::new(),
         }
     }
 
@@ -36,8 +39,7 @@ impl GbaCpu {
 
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
-        self.irq_return_address = None;
-        self.irq_saved_registers = None;
+        self.irq_return_stack.clear();
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
@@ -89,14 +91,16 @@ impl GbaCpu {
         // protected BIOS read observes during the ISR (jsmolka t003).
         bus.set_bios_prefetch(0xE25EF004);
         if target != 0x00000018 {
-            self.irq_return_address = Some(resume_address);
-            self.irq_saved_registers = Some([
-                self.regs.r(0),
-                self.regs.r(1),
-                self.regs.r(2),
-                self.regs.r(3),
-                self.regs.r(12),
-            ]);
+            self.irq_return_stack.push((
+                resume_address,
+                [
+                    self.regs.r(0),
+                    self.regs.r(1),
+                    self.regs.r(2),
+                    self.regs.r(3),
+                    self.regs.r(12),
+                ],
+            ));
             self.regs.set_lr(HLE_IRQ_RETURN_TRAMPOLINE);
         }
         self.pipeline = [0; 2];
@@ -137,13 +141,11 @@ impl GbaCpu {
         let pc_written = self.regs.take_pc_written();
         if pc_written {
             if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
-                && let Some(return_address) = self.irq_return_address.take()
+                && let Some((return_address, saved)) = self.irq_return_stack.pop()
             {
                 self.regs.set_cpsr(self.regs.spsr());
-                if let Some(saved) = self.irq_saved_registers.take() {
-                    for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
-                        self.regs.set_r(register, value);
-                    }
+                for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
+                    self.regs.set_r(register, value);
                 }
                 // IRQ round-trip complete: the BIOS epilogue's last opcode
                 // (0xE55EC002) is latched for protected reads (jsmolka t004).
