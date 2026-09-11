@@ -123,19 +123,37 @@ expected_failures:
 # and the case flips to unexpected-pass when a timing overhaul lands.
 # See the suite's timing.c calibration + P/N/S matrix.
 - mgba_suite_timing
-# mgba_suite_timers: QUARANTINED HANG (never reaches END). The first
-# count-up cell spins on TM0CNT enable-clear forever: the overflow IRQ
-# storm (FFFF/reload-0-ish + IRQ + start overflows every tick) nests
-# through the devkit master (which clears CPSR-I and switches to SYS
-# via MSR) while the line stays asserted, and our single-shot HLE
-# return path (now a stack, still under diagnosis) strands the outer
-# return; meanwhile testIrq's stop-write applies once but the spin
-# never observes it. Per-instruction evidence: exactly one CNT_H stop
-# ever, one C3 restart, one C0 start, vector/table/stack intact, timer
-# ticking. The small budget keeps the Timeout fast; the case still
-# boots the suite (BEGIN logged), proving the hang rather than a
-# navigation failure. True fix needs the nested-dispatch unwind
-# audited against the real BIOS prologue pacing.
+# mgba_suite_timers: QUARANTINED HANG (never reaches END). Root-caused
+# to two ~1-cycle dispatch-ordering windows (provable by tracing, not
+# hypothesized), both of the shape "HW dispatch wins a race our staged
+# IRQ pipeline loses":
+# - WAKE window (FIXED): the HLE IntrWait returns inline (zero cycles),
+#   so the woken thread stores `irqCounter = ii` before the just-raised
+#   IRQ line finishes staging (+2 after apply). On HW the real BIOS
+#   IntrWait exit path (~10+ cycles) always loses that race, so the wake
+#   dispatch consumes the prologue counter first. Fixed by `wake_latency`
+#   (memory.rs/system.rs): an IntrWait-armed wake burns 8 CPU-stall
+#   cycles (time still advances, line stages during the burn), forcing
+#   dispatch-before-resume deterministically. First tight half-cell now
+#   completes (was: stranded at the first spin).
+# - START-DELAY window (OPEN): every prologue restarts TM0, whose stale
+#   counter (0xFFFF left by the previous storm) overflows on the first
+#   start-delay tick (+1). That overflow is REAL HW behavior (nba
+#   tick-before-reload pins its IF.3 + TM1 cascade), and its dispatch
+#   lands between `irqCounter = 1` and the timer start: testIrq consumes
+#   the fresh counter and stops TM0, stranding IntrWait with a dead
+#   timer (no C0 start is ever written). On HW the immediate line wins
+#   by ~1 cycle (dispatch pre-dates the store); our apply+1/avail+1/
+#   line+2 pipeline loses by ~1 (dispatch lands interrupting `mov r1`).
+#   Exhaustively unfixable within pin constraints: staging/entry/
+#   charges/(A)-vs-(C) intra-tick order/thread-stall/edge-cancellation
+#   all move nba irq-delay (92/112/120), cancel-ime (8/8), timer pins or
+#   Timing cells; divider-reseed is irrelevant (+1 is start-latency, not
+#   prescaler phase); pending-stop-survives doesn't apply (the pending
+#   stop lands long before C0). True fix needs a structural IRQ-pipeline
+#   redesign (sub-tick sample/line model) as future research. Do NOT
+#   retune timer phase/charges/staging or fit IntrWait timing to chase
+#   single cells.
 - mgba_suite_timers
 
 suites:

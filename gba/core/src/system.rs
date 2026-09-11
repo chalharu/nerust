@@ -117,7 +117,15 @@ impl GbaSystem {
             self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         }
         self.tick = self.tick.wrapping_add(1);
-        self.bus.tick()
+        let frame_end = self.bus.tick();
+        // IntrWait wake-exit latency (see `wake_latency`): burn as
+        // CPU-stall cycles so the staging IRQ line wins the race against
+        // the woken thread. Subsumed by any longer in-flight charge.
+        let wake_latency = self.bus.take_wake_latency();
+        if wake_latency > 0 {
+            self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
+        }
+        frame_end
     }
 }
 

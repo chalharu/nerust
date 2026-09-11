@@ -162,6 +162,19 @@ pub struct GbaMemoryBus {
     /// IntrWait/VBlankIntrWait wake-clear mask (GBATEK: waited flags are
     /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
     wake_clear_mask: u16,
+    /// IntrWait/VBlankIntrWait wake-exit latency (real-BIOS exit-path cost,
+    /// in T-cycles). The HLE returns from the SWI inline, so without this
+    /// the woken thread runs 1-2 instructions before the just-raised IRQ
+    /// line finishes staging (+2 after apply); on HW the BIOS exit path
+    /// (~10+ cycles: flag check, mirror reset, restore, return) always
+    /// loses that race, so the pending IRQ dispatches BEFORE the thread
+    /// resumes. Missing it strands mgba-suite Timer count-up: the wake
+    /// dispatch lands between `irqCounter = ii` and the timer start, eats
+    /// ii, and the storm then wraps the counter forever. Armed by
+    /// `evaluate_halt_wake` on an IntrWait-armed wake; consumed by the
+    /// system step loop as CPU-stall cycles (time still advances, so the
+    /// line stages during the burn). Plain HALTCNT halts never arm it.
+    wake_latency: u32,
     bios_prefetch: u32,
     scheduler: EventScheduler,
     current_tcycle: u64,
@@ -320,6 +333,7 @@ impl GbaMemoryBus {
             halt_irq_mask: 0,
             stopped: false,
             wake_clear_mask: 0,
+            wake_latency: 0,
             pending_ie: 0,
             pending_ime: false,
             pending_if: 0,
@@ -950,6 +964,11 @@ impl GbaMemoryBus {
         self.halted
     }
 
+    /// Take a pending IntrWait wake-exit latency (see `wake_latency`).
+    pub fn take_wake_latency(&mut self) -> u32 {
+        std::mem::take(&mut self.wake_latency)
+    }
+
     pub fn request_interrupt(&mut self, mask: u16) {
         // NBA hw/irq Raise: OR into the pending IF level; applied (with the
         // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
@@ -970,6 +989,14 @@ impl GbaMemoryBus {
                     let kept =
                         u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
                     self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
+                    // Pay the real-BIOS IntrWait exit-path cost (see
+                    // `wake_latency`): without it the thread outruns the
+                    // staging IRQ line and the wake dispatch lands inside
+                    // the caller's post-wait setup (mgba-suite timers).
+                    // Fitted: must cover the apply-to-line remainder (~3);
+                    // recalibrate against nba irq-delay/cancel-ime and the
+                    // suite timers/timer-irq totals if this changes.
+                    self.wake_latency = 8;
                 }
             }
             self.halted = false;
