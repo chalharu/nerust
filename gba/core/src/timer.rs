@@ -116,7 +116,7 @@ impl GbaTimers {
         if timer.control & 0x80 == 0 {
             return (false, 0);
         }
-        if let Some((c, irq)) = Self::handle_start_delay(timer, index) {
+        if let Some((c, irq)) = Self::handle_start_delay(timer, index, prescaler) {
             // mGBA GBATimerUpdate cascades synchronously: a lower timer's
             // overflow still clocks this counter during enable latency
             // (applied after the state's own action, so the state-2 reload
@@ -151,7 +151,11 @@ impl GbaTimers {
         (cascade, irq)
     }
 
-    fn handle_start_delay(timer: &mut TimerChannel, index: usize) -> Option<(bool, u16)> {
+    fn handle_start_delay(
+        timer: &mut TimerChannel,
+        index: usize,
+        prescaler: u16,
+    ) -> Option<(bool, u16)> {
         match timer.start_delay {
             1 => {
                 // Counter was loaded during the first latency tick (below);
@@ -160,13 +164,27 @@ impl GbaTimers {
                 Some((false, 0))
             }
             2 => {
-                // Enabling takes one cycle to load the reload value, and
-                // the stale counter ticks (even overflows) in that cycle
-                // before the load — for 16- AND 32-bit enables alike (nba
-                // tick-before-reload uses 32-bit REG_TM0CNT writes; GBATEK's
-                // "new reload recognized" note only pins the post-load
-                // value, which the load below provides).
+                // Enabling takes one cycle to load the reload value. The
+                // stale counter only ticks (and can overflow, even
+                // cascading) when the prescaler tap fires this tick, and
+                // never for count-up enables (which load the reload
+                // outright) -- nba OnControlWritten / issue #331. An
+                // unconditional stale tick fabricates a +1 overflow IRQ on
+                // prescaled re-enables (mgba-suite timers prologues reuse
+                // TM0 across prescalers with a 0xFFFF stale), spawning a
+                // dispatch race HW never runs. (/1 taps fire every tick,
+                // so tick-before-reload and all 0b behavior is unchanged.)
                 timer.start_delay = 1;
+                let count_up = index != 0 && timer.control & 4 != 0;
+                if count_up {
+                    timer.counter = timer.reload;
+                    return Some((false, 0));
+                }
+                let period = [1, 64, 256, 1024][usize::from(timer.control & 3)];
+                if prescaler & (period - 1) != period - 1 {
+                    timer.counter = timer.reload;
+                    return Some((false, 0));
+                }
                 let cascade = increment(timer);
                 let irq = if cascade && timer.control & (1 << 6) != 0 {
                     1 << (3 + index)
