@@ -26,13 +26,37 @@ pub struct VerifySpec {
     pub suite_log: Option<SuiteLogVerify>,
 }
 
-/// Scope for [`verify_suite_log`]: the `BEGIN:`/`END:` markers the suite
-/// core (`runSuite` in suite `main.c`) emits around each suite run.
+/// Scope for [`verify_suite_log`]: the marker lines a guest log emits
+/// around each test group, plus the per-result line prefixes. All
+/// strings are manifest configuration (no ROM-specific knowledge in
+/// the engine); e.g. mgba-emu/suite uses `BEGIN:`/`END:` with
+/// `PASS: `/`FAIL: ` lines from its `runSuite`/`doResult` helpers.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SuiteLogVerify {
     pub begin: String,
     pub end: String,
+    pub pass_prefix: String,
+    pub fail_prefix: String,
+    /// Optional SRAM failure-detail enrichment (see
+    /// [`enrich_suite_log_checks`]). Absent = checks carry plain
+    /// pass/fail without guest-provided values.
+    #[serde(default)]
+    pub sram: Option<SramEnrichment>,
+}
+
+/// Marker shapes for [`enrich_suite_log_checks`]: which SRAM lines are
+/// failure details, which open a new test scope, and how a detail's
+/// preface key is separated from its values. All manifest
+/// configuration; e.g. mgba-emu/suite details look like
+/// `<preface>: Got 0x... vs 0x...: FAIL` under `<Suite> test: <name>`
+/// headers.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SramEnrichment {
+    pub fail_suffix: String,
+    pub header_infix: String,
+    pub detail_infix: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -113,6 +137,28 @@ impl VerifySpec {
                     "invalid frame pixel at {},{}",
                     entry.x, entry.y
                 )));
+            }
+        }
+        if let Some(suite_log) = &self.suite_log {
+            // Empty markers would match every line (or nothing); require
+            // explicit non-empty configuration.
+            if suite_log.begin.is_empty()
+                || suite_log.end.is_empty()
+                || suite_log.pass_prefix.is_empty()
+                || suite_log.fail_prefix.is_empty()
+            {
+                return Err(RomTestError::InvalidManifest(
+                    "suite_log markers must all be non-empty".to_string(),
+                ));
+            }
+            if let Some(markers) = &suite_log.sram
+                && (markers.fail_suffix.is_empty()
+                    || markers.header_infix.is_empty()
+                    || markers.detail_infix.is_empty())
+            {
+                return Err(RomTestError::InvalidManifest(
+                    "suite_log sram markers must all be non-empty".to_string(),
+                ));
             }
         }
         self.registers.validate()
@@ -234,17 +280,22 @@ impl RegisterVerify {
     }
 }
 
-/// Attach `savprintf` failure details (`Got X vs Y`) from the suite's
-/// SRAM log to failing suite-log checks.
+/// Attach guest-provided failure details from a memory log (e.g. a
+/// suite's SRAM `savprintf` area) to failing log checks.
 ///
-/// The SRAM log (mgba-emu/suite `savprintf` to `0x0E000000`) holds one
-/// detail line per failure, in the same emission order as the `FAIL:`
-/// debug-log lines, scoped by per-test headers (`Memory test: <name>`,
-/// ...). Details are zipped positionally within each scope; a detail
-/// carrying an explicit preface key (`<preface>: Got ...`) is only
+/// The memory text holds one detail line per failure, in the same
+/// emission order as the log's fail lines, scoped by per-test headers.
+/// Details are zipped positionally within each scope; a detail carrying
+/// an explicit preface key (text before `markers.detail_infix`) is only
 /// attached when the check name ends with that preface, otherwise the
-/// check keeps its plain `FAIL` actual.
-pub fn enrich_suite_log_checks(checks: &mut [CheckResult], sram_text: &str) {
+/// check keeps its plain actual. Headers are lines containing
+/// `markers.header_infix`, with the scope name after the infix; suites
+/// without headers share one global scope.
+pub fn enrich_suite_log_checks(
+    checks: &mut [CheckResult],
+    sram_text: &str,
+    markers: &SramEnrichment,
+) {
     // scope -> details in emission order. `String::new()` is the global
     // scope for suites without headers.
     let mut scopes: std::collections::BTreeMap<String, Vec<(Option<String>, String)>> =
@@ -255,16 +306,16 @@ pub fn enrich_suite_log_checks(checks: &mut [CheckResult], sram_text: &str) {
         if line.is_empty() {
             continue;
         }
-        if let Some(body) = line.strip_suffix(": FAIL") {
+        if let Some(body) = line.strip_suffix(markers.fail_suffix.as_str()) {
             let key = body
-                .split_once(": Got")
+                .split_once(markers.detail_infix.as_str())
                 .map(|(key, _)| key.trim().to_string());
             let key = key.filter(|key| !key.is_empty());
             scopes
                 .entry(current.clone())
                 .or_default()
                 .push((key, line.to_string()));
-        } else if let Some((_, name)) = line.split_once(" test: ") {
+        } else if let Some((_, name)) = line.split_once(markers.header_infix.as_str()) {
             current = name.trim().to_string();
         }
     }
@@ -311,13 +362,14 @@ pub struct FramePixels<'a> {
     pub height: u32,
 }
 
-/// Branch one ROM's mGBA debug-log lines into per-subtest [`CheckResult`]s.
+/// Branch one ROM's guest-log lines into per-subtest [`CheckResult`]s.
 ///
 /// Only lines between the first line containing `spec.begin` and the first
-/// later line containing `spec.end` are scored; `PASS: <rest>` passes a
-/// check named `<rest>`, `FAIL: <rest>` fails it. Missing markers produce
-/// failing scope checks (a ROM that never reaches `END:` timed out or
-/// crashed) while still reporting whatever subtests were observed.
+/// later line containing `spec.end` are scored; lines starting with
+/// `spec.pass_prefix` pass a check named after the prefix, lines starting
+/// with `spec.fail_prefix` fail it. Missing markers produce failing scope
+/// checks (a ROM that never reaches `end` timed out or crashed) while
+/// still reporting whatever subtests were observed.
 pub fn verify_suite_log(
     logs: &[nerust_gba_core::memory::MgbaDebugLog],
     spec: &SuiteLogVerify,
@@ -342,14 +394,14 @@ pub fn verify_suite_log(
     }
     let finished = window.iter().any(|line| line.contains(&spec.end));
     for line in window {
-        if let Some(rest) = line.strip_prefix("PASS: ") {
+        if let Some(rest) = line.strip_prefix(spec.pass_prefix.as_str()) {
             checks.push(CheckResult {
                 name: rest.to_string(),
                 expected: "pass".into(),
                 actual: "PASS".into(),
                 passed: true,
             });
-        } else if let Some(rest) = line.strip_prefix("FAIL: ") {
+        } else if let Some(rest) = line.strip_prefix(spec.fail_prefix.as_str()) {
             checks.push(CheckResult {
                 name: rest.to_string(),
                 expected: "pass".into(),
@@ -559,12 +611,20 @@ mod tests {
         let spec = SuiteLogVerify {
             begin: "BEGIN: Memory tests".into(),
             end: "END:".into(),
+            pass_prefix: "PASS: ".into(),
+            fail_prefix: "FAIL: ".into(),
+            sram: Some(SramEnrichment {
+                fail_suffix: ": FAIL".into(),
+                header_infix: " test: ".into(),
+                detail_infix: ": Got".into(),
+            }),
         };
         let mut checks = verify_suite_log(&logs, &spec);
         assert_eq!(checks.len(), 2);
         enrich_suite_log_checks(
             &mut checks,
             "Memory test: ROM load\nU16 (unaligned): Got 0x00000004 vs 0x00000008: FAIL\n",
+            spec.sram.as_ref().unwrap(),
         );
         let fail = checks
             .iter()
@@ -586,6 +646,9 @@ mod tests {
         let spec = SuiteLogVerify {
             begin: "BEGIN: X".into(),
             end: "END:".into(),
+            pass_prefix: "PASS: ".into(),
+            fail_prefix: "FAIL: ".into(),
+            sram: None,
         };
         let checks = verify_suite_log(&logs, &spec);
         assert_eq!(checks.len(), 1);

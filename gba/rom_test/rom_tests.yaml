@@ -813,7 +813,12 @@ suites:
     - {press: [a], until_log: 'BEGIN: Memory tests'}
     - {press: [], until_log: 'END:'}
     verify:
-      suite_log: {begin: 'BEGIN: Memory tests', end: 'END:'}
+      suite_log:
+        begin: 'BEGIN: Memory tests'
+        end: 'END:'
+        pass_prefix: 'PASS: '
+        fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
     # 1502/1552 subtests pass. The 50 below are reference-side or
     # research-grade (mechanism-verified, see notes):
     # - "ROM out-of-bounds load *" (38): STALE REFERENCE. The baked table
