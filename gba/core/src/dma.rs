@@ -169,6 +169,17 @@ impl GbaDma {
         self.channels.iter().any(|dma| dma.pending > 0)
     }
 
+    /// Shorten a pending Immediate startup to 3 (prefetch overlaps one
+    /// tick; see the CNT_H arming site). Never lengthens.
+    pub fn retime_pending(&mut self, channel: usize, pending: u8) {
+        if channel < 4 {
+            let dma = &mut self.channels[channel];
+            if dma.pending > 0 && pending < dma.pending {
+                dma.pending = pending;
+            }
+        }
+    }
+
     /// Produce at most one bus transfer. Lower-numbered active channels have priority.
     /// `stall` maps an address to the display-controller contention wait
     /// (0 outside video RAM / VBlank); the bus owner pays it like the CPU.
@@ -248,27 +259,32 @@ impl GbaDma {
         // units are transferred by sequential reads and writes", mGBA
         // dma.c caches Seq for every later unit): every destination mode,
         // including fixed, is sequential after the first unit.
-        let is_seq_dst = !dma.is_first;
+        let is_seq_dst = if dma.is_first {
+            // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
+            // burst streams the destination from the first unit (S); all
+            // other first units are N (GBATEK 2N). Single-ROM and non-ROM
+            // first-destinations stay N (their cells pin it).
+            is_rom(source) && is_rom(destination)
+        } else {
+            true
+        };
         let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
         // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
         // cost is N/S waits only. The xI internal overhead is a SINGLE
-        // per-burst term (2I, 4I when both ends are GamePak), charged with
-        // the first unit. (Per-unit internal overcharges by 2/unit; the old
-        // code hid that with a -1 hack on the first two units plus a zeroed
-        // I/O wait. With burst-start xI the HBlank sampling rate is exactly
-        // 2.0 cycles/unit with the documented I/O wait restored, and both
+        // per-burst term (2I), charged with the first unit. (Per-unit
+        // internal overcharges by 2/unit; the old code hid that with a -1
+        // hack on the first two units plus a zeroed I/O wait. With
+        // burst-start xI the HBlank sampling rate is exactly 2.0
+        // cycles/unit with the documented I/O wait restored, and both
         // the HBlank and video sweep phases match their HW-pinned edges.)
         // 128K blocks force N (GBATEK GamePak Prefetch), except the final
         // unit: N/S describes the gap to a successor, and the last unit
         // has none (nba 128kb-boundary late-cross measures S-cost).
         let total_wait = u32::from(src_wait) + u32::from(dst_wait);
-        let both_gamepak = is_rom(source) && is_rom(destination);
-        let internal: u32 = if dma.is_first {
-            if both_gamepak { 4 } else { 2 }
-        } else {
-            0
-        };
+        // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
+        // burst pays 2I (GBATEK's 4I overshoots); single/non-ROM keep 2I.
+        let internal: u32 = if dma.is_first { 2 } else { 0 };
         dma.delay = (total_wait + internal) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         // Data stream: forced increment inside GamePak ROM (mGBA

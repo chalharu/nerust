@@ -111,12 +111,19 @@ pub struct GbaMemoryBus {
     block_batch_erase_sum: i32,
     block_batch_is_load: bool,
     block_batch_fetch_width: u8,
+    /// True when a ROM word appeared inside the batch (OAM-overflow LDM
+    /// into ROM): HW (mgba-suite Timing OAM cells) applies NO prefetch
+    /// erase at all then, so `end_block_batch` undoes the tracked erases.
+    /// Pure non-ROM bursts keep word1 + marginals + floor.
+    block_batch_has_rom: bool,
     /// Raw bulk mode (HLE CpuSet/CpuFastSet loops): HW BIOS runs from
     /// BIOS ROM (flat waits, no GamePak-prefetch erase dynamics), so bulk
     /// words accrue raw `(wait-1)` with no erase at all. Set with
     /// `begin_block_batch_raw`; bypasses even the ROM-code gate.
     block_batch_raw: bool,
     /// Address of the most recently fetched opcode. Scopes the
+    /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
+    /// owning code region, like mGBA's PC-tracked active region.
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
     /// owning code region, like mGBA's PC-tracked active region.
     last_opcode_addr: Option<u32>,
@@ -298,6 +305,7 @@ impl GbaMemoryBus {
             block_batch_erase_sum: 0,
             block_batch_is_load: true,
             block_batch_fetch_width: 4,
+            block_batch_has_rom: false,
             block_batch_raw: false,
             last_opcode_addr: None,
             last_prefetched_pc: 0,
@@ -1447,6 +1455,7 @@ impl GbaMemoryBus {
         self.block_batch_erase_sum = 0;
         self.block_batch_is_load = is_load;
         self.block_batch_fetch_width = fetch_width;
+        self.block_batch_has_rom = false;
         self.block_batch_raw = false;
     }
 
@@ -1457,14 +1466,21 @@ impl GbaMemoryBus {
         self.block_batch_any = false;
         self.block_batch_words = 0;
         self.block_batch_erase_sum = 0;
+        self.block_batch_has_rom = false;
         self.block_batch_raw = true;
     }
 
-    /// Close the batch: floor the instruction's total erase benefit at one
-    /// N-fetch worth (ROM code only). No-op when nothing batched.
+    /// Close the batch: undo all tracked erases when a ROM word appeared
+    /// (mixed ROM-overflow bursts apply no prefetch erase at all), else
+    /// floor the instruction's total erase benefit at one N-fetch worth
+    /// (ROM code only). No-op when nothing batched.
     pub(crate) fn end_block_batch(&mut self) {
         self.block_batching = false;
         if !self.block_batch_any {
+            return;
+        }
+        if self.block_batch_has_rom {
+            self.access_wait_cycles -= i64::from(self.block_batch_erase_sum);
             return;
         }
         if let Some(pc @ 0x08000000..=0x0DFFFFFF) = self.last_opcode_addr {
@@ -1484,7 +1500,14 @@ impl GbaMemoryBus {
     /// continuation words erase marginally. Only the returned delta lands
     /// on the accumulator; the caller still adds `(wait-1)` itself.
     fn batch_word_delta(&mut self, addr: u32, wait: u8) -> Option<i32> {
-        if !self.block_batching || !self.prefetch_enabled || addr >= 0x08000000 {
+        if !self.block_batching || !self.prefetch_enabled {
+            return None;
+        }
+        if addr >= 0x08000000 {
+            // ROM word inside the batch (OAM-overflow LDM): flag mixed
+            // burst (end undoes all erases); the word itself uses the
+            // normal N/S path with no erase.
+            self.block_batch_has_rom = true;
             return None;
         }
         // Raw bulk (HLE): no erase at all, any code region.
@@ -2020,6 +2043,19 @@ impl GbaMemoryBus {
                     );
                 }
                 self.dma.write(aligned, v16);
+                // Immediate CNT_H arming with prefetch on starts one tick
+                // sooner (pending 4->3): prefetch overlaps the enabling
+                // bus cycle, so short P-ON triggers still park before the
+                // next CPU step (mgba-suite Timing Thumb P../PN. race).
+                // P-OFF, event triggers, and nba pins keep pending=4.
+                if self.prefetch_enabled
+                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+                    && v16 & 0x8000 != 0
+                    && (v16 >> 12) & 3 == 0
+                {
+                    let channel = ((aligned - 0x040000B0) / 12) as usize;
+                    self.dma.retime_pending(channel, 3);
+                }
                 // GBATEK "STR to DMA CNT forces NSEQ": only the CNT_H
                 // commit write breaks code sequentiality. SAD/DAD/CNT_L
                 // setup writes never touch the GamePak bus, so the
