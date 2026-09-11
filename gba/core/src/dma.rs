@@ -65,27 +65,6 @@ struct DmaChannel {
     data_source: u32,
     completing: bool,
     completion_interrupt: bool,
-    /// Extra completion tail tick for a finished single-unit burst with a
-    /// non-ROM end. mGBA GBADMAService adds +2 at burst end when either end
-    /// is below ROM0 (and only the front xI otherwise); NBA Run() brackets
-    /// every burst with Step(1)+Step(1). Our unconditional completing tick
-    /// covers one of those; this carries the second for single-unit bursts
-    /// (multi-unit bursts keep the pinned 128kb-boundary totals, which the
-    /// front-loaded xI already satisfies).
-    completion_extra: bool,
-    /// Finalization tail tick for a finished single-unit burst with a
-    /// non-ROM end. HW-pinned by nba force-nseq (87->88): elimination
-    /// record — every CPU-side +1 candidate in the force window (STR32,
-    /// MOVs, BX, post-completion LDRH) also appears in the pinned
-    /// 128kb-boundary windows (x18, all exact), the DMA startup/xI totals
-    /// match mGBA/NBA, nba start-delay is immune by capture-at-transfer
-    /// (its value lands before completion), and multi-unit totals are
-    /// pinned by 128kb/burst/sweep fits. The single-unit completion is the
-    /// only force-unique window element, so the missing cycle lives here;
-    /// the precise micro-architectural source (enable self-clear
-    /// writeback vs. finalization) is open, but the tick is not a fit
-    /// constant: it fires for every single-unit non-ROM burst.
-    completion_tail_single: bool,
 }
 
 #[derive(Debug, Default)]
@@ -203,16 +182,6 @@ impl GbaDma {
             }
         }
         if dma.completing {
-            if dma.completion_extra {
-                // Extra tail tick before the finish event lands.
-                dma.completion_extra = false;
-                return None;
-            }
-            if dma.completion_tail_single {
-                // Single-unit finalization tail tick (see field docs).
-                dma.completion_tail_single = false;
-                return None;
-            }
             let interrupt = dma.completion_interrupt;
             finish(dma, channel);
             if interrupt {
@@ -333,15 +302,12 @@ impl GbaDma {
         if finished {
             dma.completing = true;
             dma.completion_interrupt = dma.control & (1 << 14) != 0;
-            // Single-unit burst with a non-ROM end: the second completion
-            // tail tick (see field docs). Pinned by nba force-nseq (86->87;
-            // residual +1 is a ROM-code wall gap, not DMA overhead: startup,
-            // front xI and tail totals now match mGBA/NBA exactly).
-            let src_page = source >> 24;
-            let dst_page = destination >> 24;
-            let non_rom = !(0x08..=0x0D).contains(&src_page) || !(0x08..=0x0D).contains(&dst_page);
-            dma.completion_extra = was_first && non_rom;
-            dma.completion_tail_single = was_first && non_rom;
+            // No single-unit completion tails (completion_extra /
+            // completion_tail_single removed): they compensated the
+            // pre-Phase-A CPU model, which lacked the load/store
+            // fetch-stream-break charge. Under the corrected model nba
+            // force-nseq (88/88) and suite Trivial DMA pass without them;
+            // multi-unit fits never saw them anyway.
         }
         Some(DmaTransfer {
             channel,
@@ -479,8 +445,6 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.delay = 0;
     dma.stalled = false;
     dma.completing = false;
-    dma.completion_extra = false;
-    dma.completion_tail_single = false;
     dma.completion_interrupt = false;
     if repeat {
         dma.remaining = if sound_dma(channel, dma.control, dma.destination) {

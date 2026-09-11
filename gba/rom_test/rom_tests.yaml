@@ -8,12 +8,15 @@ expected_failures:
 # TIME 43 -> 41). The shift fires only when the read lands in ROM
 # (source or source+2 is GamePak); IWRAM 16-bit data stays exact per the
 # nba latch test.
-# nba_dma_force_nseq GRADUATED 2/2 (87->88 both subtests): single-unit
-# non-ROM bursts carry a finalization tail tick beyond completing+extra.
-# Elimination record: every CPU-side candidate (STR32, MOVs, BX,
-# post-completion LDRH) also appears in the exact 128kb-boundary windows,
-# startup/xI match mGBA/NBA, start-delay is immune by capture-at-transfer,
-# multi-unit totals pinned. See DmaChannel::completion_tail_single.
+# nba_dma_force_nseq GRADUATED 2/2 (88/88 both subtests): single-unit
+# non-ROM bursts complete with the unconditional completing tick only
+# (no extra/tail ticks: those compensated the pre-Phase-A CPU model,
+# which lacked the load/store fetch-stream-break charge; the suite
+# Trivial DMA cells independently confirm +2 without them). The window
+# is trigger-store + 4 post-trigger nops + return + TM0 read: the first
+# nop costs 1N (DMA-pending bus arbitration N-ifies in-stream fetches),
+# the rest ride the re-established stream, and the TM0-read ldrh carries
+# the standard load post-body.
 # nba_archive_irq_cancel_ie: rows 0,1,3,5,6,7 pass; rows 2 and 4 fail on
 # 1-tick race boundaries that no uniform-latency model satisfies
 # simultaneously with the pinned timer tests (start-stop 2/2, reload 7/7,

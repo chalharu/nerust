@@ -66,6 +66,9 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         }
     }
 
+    // The block breaks the fetch stream (mGBA load/store post-body:
+    // once per instruction, not per word).
+    bus.charge_fetch_stream_break();
     transfer_cycles(l, reg_list, transferred)
 }
 
@@ -101,6 +104,10 @@ fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: Tra
     let mut address = spec.start;
     let mut transferred = 0;
     for register in (0..16).filter(|register| spec.list & (1 << register) != 0) {
+        // First word N; continuation words follow bus order (sequential
+        // unless crossing the 128KB line or regions).
+        let continuation = transferred > 0 && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
         if spec.load {
             load_register(
                 regs,
@@ -123,6 +130,7 @@ fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: Tra
         address = address.wrapping_add(4);
         transferred += 1;
     }
+    bus.set_data_sequential(false);
     transferred
 }
 
@@ -186,6 +194,7 @@ fn handle_empty_list(
     let address = start_address(spec.base, 16, spec.pre, spec.up);
     if spec.load {
         let target = bus.read_aligned32(address);
+        bus.charge_fetch_stream_break();
         if spec.writeback {
             regs.set_r(
                 spec.base_register,
@@ -210,6 +219,7 @@ fn handle_empty_list(
         // Empty STM stores the PC value only (R15 is not banked, so the S
         // bit's user-bank selection has no visible effect here).
         bus.write32(address, regs.pc().wrapping_add(4));
+        bus.charge_fetch_stream_break();
         if spec.writeback {
             regs.set_r(
                 spec.base_register,
