@@ -166,6 +166,18 @@ expected_failures:
 #   paths break beyond arithmetic. Uniform models cannot satisfy the
 #   timers windows and the cancel/irq-delay pins at once; the
 #   conflicting evidence needs a new model dimension, not a rebalance.
+#   POST-MORTEM 2 (sub-tick trial: combinatorial line + entry 25, also
+#   REVERTED): the suite DOES flow under it (END reached, 380/936 pass,
+#   540/540 C3->C0 halves complete deterministically, test 0b,0x0001
+#   36/36) -- proving the races are won -- but the residual 556 are
+#   unfittable uniformly: tight sums mix pass/-1 (sub-iter phase, not a
+#   constant), loose sums halve exactly for some reloads (0x10 vs 0x20,
+#   deterministic, d/i-independent, mechanism open), values encode
+#   roundtrip-mod-reload-period (one entry constant cannot align periods
+#   5/12/13/16/... short of matching HW's absolute roundtrip, which the
+#   shared entry cannot do per-suite without breaking irq-delay). And
+#   the pin cost stands (irq-delay EWRAM/ROM, cancel-ie rows). No
+#   uniform model graduates this suite; quarantine stands.
 - mgba_suite_timers
 
 suites:
