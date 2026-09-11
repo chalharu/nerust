@@ -123,10 +123,10 @@ expected_failures:
 # and the case flips to unexpected-pass when a timing overhaul lands.
 # See the suite's timing.c calibration + P/N/S matrix.
 - mgba_suite_timing
-# mgba_suite_timers: QUARANTINED HANG (never reaches END). Root-caused
-# to two ~1-cycle dispatch-ordering windows (provable by tracing, not
-# hypothesized), both of the shape "HW dispatch wins a race our staged
-# IRQ pipeline loses":
+# mgba_suite_timers: EXPECTED-FAIL (reaches END since the stale-tick
+# gate; 401/936). History: quarantined hang (never reached END),
+# root-caused to two ~1-cycle dispatch-ordering windows ("HW dispatch
+# wins a race our staged IRQ pipeline loses"):
 # - WAKE window (FIXED): the HLE IntrWait returns inline (zero cycles),
 #   so the woken thread stores `irqCounter = ii` before the just-raised
 #   IRQ line finishes staging (+2 after apply). On HW the real BIOS
@@ -134,26 +134,22 @@ expected_failures:
 #   dispatch consumes the prologue counter first. Fixed by `wake_latency`
 #   (memory.rs/system.rs): an IntrWait-armed wake burns 8 CPU-stall
 #   cycles (time still advances, line stages during the burn), forcing
-#   dispatch-before-resume deterministically. First tight half-cell now
-#   completes (was: stranded at the first spin).
-# - START-DELAY window (OPEN): every prologue restarts TM0, whose stale
-#   counter (0xFFFF left by the previous storm) overflows on the first
-#   start-delay tick (+1). That overflow is REAL HW behavior (nba
-#   tick-before-reload pins its IF.3 + TM1 cascade), and its dispatch
-#   lands between `irqCounter = 1` and the timer start: testIrq consumes
-#   the fresh counter and stops TM0, stranding IntrWait with a dead
-#   timer (no C0 start is ever written). On HW the immediate line wins
-#   by ~1 cycle (dispatch pre-dates the store); our apply+1/avail+1/
-#   line+2 pipeline loses by ~1 (dispatch lands interrupting `mov r1`).
-#   Exhaustively unfixable within pin constraints: staging/entry/
-#   charges/(A)-vs-(C) intra-tick order/thread-stall/edge-cancellation
-#   all move nba irq-delay (92/112/120), cancel-ime (8/8), timer pins or
-#   Timing cells; divider-reseed is irrelevant (+1 is start-latency, not
-#   prescaler phase); pending-stop-survives doesn't apply (the pending
-#   stop lands long before C0). True fix needs a structural IRQ-pipeline
-#   redesign (sub-tick sample/line model) as future research. Do NOT
-#   retune timer phase/charges/staging or fit IntrWait timing to chase
-#   single cells.
+#   dispatch-before-resume deterministically.
+# - START-DELAY window (FIXED differently than first theorized): the hang
+#   was NOT the HW-real stale overflow losing a dispatch race (that race
+#   is unfittable within pin constraints -- see post-mortems below), but
+#   a SPURIOUS stale overflow our model fabricated: the start-delay tick
+#   unconditionally incremented the stale counter, so every prescaled or
+#   count-up TM0 re-enable with a 0xFFFF stale raised a +1 overflow IRQ
+#   HW never produces. The suite reuses TM0 across prescalers (0b -> 6b
+#   -> 8b -> 10b), so these phantom dispatches killed staging timers and
+#   stranded IntrWait. Fixed by gating the stale tick on the prescaler
+#   tap (fires this tick only; count-up enables load outright), faithful
+#   to nba OnControlWritten / issue #331 (timer.rs handle_start_delay).
+#   /1 behavior is unchanged (tap fires every tick), so the nba
+#   tick-before-reload pin (IF.3 + TM1 cascade) still holds, as do
+#   start-stop, reload, irq-delay, cancel-ime/if and the Timing cells
+#   (full manifest 122/123 identical, PhaseF->PhaseH).
 #   POST-MORTEM (structural redesign attempted and REVERTED): separating
 #   register-settle (pending apply +1, kept) from line-sample
 #   (avail/line queues removed, combinatorial; IRQ_ENTRY 23->25 to hold
@@ -167,17 +163,20 @@ expected_failures:
 #   timers windows and the cancel/irq-delay pins at once; the
 #   conflicting evidence needs a new model dimension, not a rebalance.
 #   POST-MORTEM 2 (sub-tick trial: combinatorial line + entry 25, also
-#   REVERTED): the suite DOES flow under it (END reached, 380/936 pass,
-#   540/540 C3->C0 halves complete deterministically, test 0b,0x0001
-#   36/36) -- proving the races are won -- but the residual 556 are
-#   unfittable uniformly: tight sums mix pass/-1 (sub-iter phase, not a
-#   constant), loose sums halve exactly for some reloads (0x10 vs 0x20,
-#   deterministic, d/i-independent, mechanism open), values encode
-#   roundtrip-mod-reload-period (one entry constant cannot align periods
-#   5/12/13/16/... short of matching HW's absolute roundtrip, which the
-#   shared entry cannot do per-suite without breaking irq-delay). And
-#   the pin cost stands (irq-delay EWRAM/ROM, cancel-ie rows). No
-#   uniform model graduates this suite; quarantine stands.
+#   REVERTED): the suite DOES flow under it (END reached, 380/936 pass)
+#   -- proving the races are winnable -- but residuals are unfittable
+#   uniformly and the pin cost stands (irq-delay EWRAM/ROM, cancel-ie
+#   rows). Superseded by the stale-tick gate (401/936, zero pin cost).
+#   RESIDUALS (535, all d/i-independent and delay-row-independent for
+#   0b): tight sums run one poll short (0x0005 2v3, 0x000D 3v4; 0x0001
+#   passes at the floor), loose sums halve exactly when HW fits 2 polls
+#   (0x000C/0x000D 16xs 0x10v0x20), values drift +-1..6 with mixed signs
+#   (roundtrip-mod-reload-period aliasing). Same +-1-3 systematic class
+#   as the Timing 76; no uniform knob fits without breaking the
+#   irq-delay/cancel pins. Next step is a cycle trace of one cell (e.g.
+#   0b,0x0005 1d1i tight: enable/overflow/stop/dispatch stamps vs the
+#   poll-loop cost), not another global rebalance. Do NOT retune timer
+#   phase/charges/staging or fit IntrWait timing to chase single cells.
 - mgba_suite_timers
 
 suites:
@@ -1242,8 +1241,8 @@ suites:
   - id: mgba_suite_timers
     rom: suite.gba
     description: mgba suite - Timer count-up tests
-    # Quarantined hang (see expected_failures note): keep the budget
-    # just past suite start so the Timeout stays fast.
+    # Full suite needs ~61M tcycles to reach END (see expected_failures
+    # note); the 100M budget keeps headroom without slowing Timeout.
     cycles: 100000000
     skip_screenshot: true
     script:
