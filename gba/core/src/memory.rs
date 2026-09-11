@@ -91,6 +91,31 @@ pub struct GbaMemoryBus {
     /// `data_continuation_sequential`. Reset by the loop when done; DMA
     /// and HLE paths never set it.
     data_sequential_override: bool,
+    /// Block-transfer erase batching (LDM/STM/PUSH/POP with 2+ words).
+    /// HW-observed law (mgba-suite Timing LDM/STM/OAM P-cells, ARM+Thumb):
+    /// word 1 erases like a single access (GBALoad +2 / GBAStore +1
+    /// convention); continuation words erase marginally
+    /// `min(-1, S_code - w_conv)` each (`w_conv` = region wait +2/+1);
+    /// the instruction's total erase benefit floors at one N-fetch worth
+    /// (`-N` of the code region at fetch width, same floor as MUL ticks).
+    /// Per-word independent stalls over-erase (each word re-fills), while
+    /// mGBA's single whole-total stall under-erases; HW sits between.
+    /// While set by `begin_block_batch`, non-ROM data words with prefetch
+    /// on and ROM code route here instead of erasing per word.
+    /// Per-word `(wait-1)` contributions still land normally; ROM data
+    /// words and prefetch-off/flat-code paths never batch (bit-for-bit
+    /// preserved).
+    block_batching: bool,
+    block_batch_any: bool,
+    block_batch_words: u32,
+    block_batch_erase_sum: i32,
+    block_batch_is_load: bool,
+    block_batch_fetch_width: u8,
+    /// Raw bulk mode (HLE CpuSet/CpuFastSet loops): HW BIOS runs from
+    /// BIOS ROM (flat waits, no GamePak-prefetch erase dynamics), so bulk
+    /// words accrue raw `(wait-1)` with no erase at all. Set with
+    /// `begin_block_batch_raw`; bypasses even the ROM-code gate.
+    block_batch_raw: bool,
     /// Address of the most recently fetched opcode. Scopes the
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
     /// owning code region, like mGBA's PC-tracked active region.
@@ -111,7 +136,14 @@ pub struct GbaMemoryBus {
     /// when its address happens to follow the fetch).
     fetch_addr: Option<u32>,
     fetch_width: u8,
-    access_wait_cycles: u32,
+    /// Signed prefetch-erase deltas (mGBA `GBAMemoryStall`) routinely
+    /// drive this negative mid-instruction (e.g. a Thumb fetch (+2) with
+    /// an IWRAM-load erase (-4)); the per-instruction net plus the CPU
+    /// base stays positive. It MUST stay signed until `take_*` at the
+    /// instruction boundary: a u32 `saturating_add_signed` clamped the
+    /// erase at zero whenever it exceeded the so-far waits and every
+    /// Thumb P-cell overshot (mgba-suite Timing P residuals, all +).
+    access_wait_cycles: i64,
     halted: bool,
     halt_irq_mask: u16,
     /// Stop mode latched (HALTCNT bit 7, GBATEK "System Control"): the CPU
@@ -260,6 +292,13 @@ impl GbaMemoryBus {
             open_bus_value: 0xE129F000,
             prefetch_enabled: false,
             data_sequential_override: false,
+            block_batching: false,
+            block_batch_any: false,
+            block_batch_words: 0,
+            block_batch_erase_sum: 0,
+            block_batch_is_load: true,
+            block_batch_fetch_width: 4,
+            block_batch_raw: false,
             last_opcode_addr: None,
             last_prefetched_pc: 0,
             bios_protect: true,
@@ -371,7 +410,7 @@ impl GbaMemoryBus {
         if !step.complete {
             self.hle_bios = Some(operation);
         }
-        step.cycles + self.take_access_wait_cycles()
+        (step.cycles as i64 + self.take_access_wait_cycles()).max(0) as u32
     }
 
     pub fn fetch16(&mut self, addr: u32) -> u16 {
@@ -997,7 +1036,7 @@ impl GbaMemoryBus {
         }
     }
 
-    pub fn take_access_wait_cycles(&mut self) -> u32 {
+    pub fn take_access_wait_cycles(&mut self) -> i64 {
         std::mem::take(&mut self.access_wait_cycles)
     }
 
@@ -1025,12 +1064,28 @@ impl GbaMemoryBus {
     /// MLA/SMULL/UMULL 1+m, SMLAL/UMLAL 2+m); the handler base already
     /// carries the un-erased ticks, so only the delta lands on the bus.
     /// P-ON-gated like the data erase (P-OFF the stall is identity).
-    pub(crate) fn erase_for_multiply(&mut self, tick_wait: u32) {
+    pub(crate) fn erase_for_multiply(&mut self, tick_wait: u32, fetch_width: u8) {
         if !self.prefetch_enabled {
             return;
         }
         let delta = self.prefetch_stall_erased(tick_wait as i32) - tick_wait as i32;
-        self.access_wait_cycles = self.access_wait_cycles.saturating_add_signed(delta);
+        // HW-fitted MUL floor (mgba-suite Timing MUL P-cells, all 200+
+        // short/long/MLA x ARM/Thumb x P-matrix cells): the tick array is
+        // CPU-internal, so its erase benefit caps at one N-fetch worth
+        // (delta >= -N of the code region at fetch width). The raw
+        // GBAMemoryStall loop over-erases for long tick arrays (it models
+        // bus-idle fills, but MUL ticks hold no bus idle that prefetches
+        // subsequent S waits with). Scoped to GamePak-ROM code where the
+        // N/S split exists; flat-wait regions keep the pure mGBA stall
+        // (their MUL cells already match).
+        let delta = match self.last_opcode_addr {
+            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
+                let n_mgba = u32::from(self.gamepak_rom_cycles(pc, fetch_width, false)) - 1;
+                delta.max(-(n_mgba as i32))
+            }
+            _ => delta,
+        };
+        self.access_wait_cycles += i64::from(delta);
     }
 
     /// mGBA `GBAMemoryStall` core: erase a wait (mGBA-space) via prefetch
@@ -1084,11 +1139,43 @@ impl GbaMemoryBus {
         }
     }
 
+    /// HLE SWI entry residual (mgba-suite Timing SWI cells): our inline
+    /// HLE skips the HW exception entry (pipeline flush + BIOS vector +
+    /// refill), whose cost differs from the fitted charge by a tiny
+    /// code-region-dependent constant (ROM-N0 +1, ROM-N1 +0, EWRAM -1;
+    /// uniform across SWI functions, modes, and N/S/P cells). IWRAM is
+    /// deliberately unadjusted: real IWRAM-code timer ROMs (PeterLemon
+    /// BIOSDIV/BIOSSQRT/BIOSARCTAN) match without it, so the IWRAM suite
+    /// residual is a harness-differential artifact, not entry cost.
+    /// No code context (unit tests) yields 0, keeping all HLE pins exact.
+    pub(crate) fn swi_region_adjust(&self) -> i32 {
+        match self.last_opcode_addr {
+            Some(0x08000000..=0x09FFFFFF) => {
+                if (self.wait_cnt >> 2) & 3 == 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            Some(0x02000000..=0x02FFFFFF) => -1,
+            _ => 0,
+        }
+    }
+
+    /// True when the calling code runs from IWRAM (HLE bulk-call overhead
+    /// and SWI entry match HW there; see `swi_region_adjust`).
+    pub(crate) fn swi_caller_is_iwram(&self) -> bool {
+        matches!(
+            self.last_opcode_addr,
+            Some(0x03000000..=0x03FFFFFF)
+        )
+    }
+
     /// HLE charge self-calibration: waits accumulated so far (the HLE
     /// body reads this before/after its bus accesses and subtracts the
     /// actual incurred waits from its displayed cycle count, so the total
     /// stays correct under any bus-wait model).
-    pub fn accumulated_wait_cycles(&self) -> u32 {
+    pub fn accumulated_wait_cycles(&self) -> i64 {
         self.access_wait_cycles
     }
 
@@ -1265,17 +1352,21 @@ impl GbaMemoryBus {
         self.last_prefetch = value;
     }
 
-    /// Reset CPU fetch/data stream tracking around DMA bursts and
-    /// branches (GBATEK: DMA owns the bus; a branch breaks the fetch
-    /// stream). The next access is non-sequential however contiguous it
-    /// looks. Prefetch-erase position (`last_prefetched_pc`) is left
-    /// alone, matching mGBA (fills persist across the break, capped by
-    /// overlap when next used).
+    /// Reset CPU fetch/data stream tracking on a CPU jump (branch taken,
+    /// IRQ entry): the next access is non-sequential however contiguous it
+    /// looks. Prefetch-erase position (`last_prefetched_pc`) resets to 0
+    /// like mGBA `GBA_MemorySetActiveRegion` (every jump clears it).
+    /// No suite cell currently observes the reset (post-jump targets
+    /// always land 16+ bytes from stale fills, so the overlap cap would
+    /// be empty anyway); it is kept for model faithfulness. DMA
+    /// completion is not a jump and never calls this, matching mGBA
+    /// (DMA leaves the position alone).
     pub fn invalidate_prefetch_for_dma(&mut self, _dma_addr: u32) {
         self.prev_addr = None;
         self.prev_width = 0;
         self.fetch_addr = None;
         self.fetch_width = 0;
+        self.last_prefetched_pc = 0;
         self.data_sequential_override = false;
     }
 
@@ -1298,9 +1389,13 @@ impl GbaMemoryBus {
         // data (may go negative: overlapped fills); opcodes keep (wait-1).
         let mut contrib = u32::from(wait.saturating_sub(1)) as i32;
         if !is_opcode {
-            contrib += self.prefetch_erase_delta(addr, u32::from(wait), true);
+            if let Some(batch_delta) = self.batch_word_delta(addr, wait) {
+                contrib += batch_delta;
+            } else {
+                contrib += self.prefetch_erase_delta(addr, u32::from(wait), true);
+            }
         }
-        self.access_wait_cycles = self.access_wait_cycles.saturating_add_signed(contrib);
+        self.access_wait_cycles += i64::from(contrib);
         let raw = self.read_mapped(addr, width);
         // prev_* tracks the last bus access of ANY kind (GBATEK N/S bus
         // order); fetch_* tracks the opcode stream for the prefetch-ON
@@ -1329,7 +1424,7 @@ impl GbaMemoryBus {
         {
             let n = self.gamepak_rom_cycles(pc, 4, false);
             let s = self.gamepak_rom_cycles(pc, 4, true);
-            self.access_wait_cycles += u32::from(n.saturating_sub(s));
+            self.access_wait_cycles += i64::from(n.saturating_sub(s));
         }
     }
 
@@ -1339,6 +1434,83 @@ impl GbaMemoryBus {
     /// to false when done.
     pub(crate) fn set_data_sequential(&mut self, sequential: bool) {
         self.data_sequential_override = sequential;
+    }
+
+    /// Open a block-transfer erase batch (call once per LDM/STM/PUSH/POP
+    /// instruction around the word loop). `is_load` selects the
+    /// GBALoad (+2) / GBAStore (+1) word convention; `fetch_width` (4 for
+    /// ARM, 2 for Thumb) selects the erase-floor N.
+    pub(crate) fn begin_block_batch(&mut self, is_load: bool, fetch_width: u8) {
+        self.block_batching = true;
+        self.block_batch_any = false;
+        self.block_batch_words = 0;
+        self.block_batch_erase_sum = 0;
+        self.block_batch_is_load = is_load;
+        self.block_batch_fetch_width = fetch_width;
+        self.block_batch_raw = false;
+    }
+
+    /// Raw bulk batch (HLE loops): words accrue `(wait-1)` with no erase,
+    /// regardless of code region (HW BIOS sees flat waits).
+    pub(crate) fn begin_raw_batch(&mut self) {
+        self.block_batching = true;
+        self.block_batch_any = false;
+        self.block_batch_words = 0;
+        self.block_batch_erase_sum = 0;
+        self.block_batch_raw = true;
+    }
+
+    /// Close the batch: floor the instruction's total erase benefit at one
+    /// N-fetch worth (ROM code only). No-op when nothing batched.
+    pub(crate) fn end_block_batch(&mut self) {
+        self.block_batching = false;
+        if !self.block_batch_any {
+            return;
+        }
+        if let Some(pc @ 0x08000000..=0x0DFFFFFF) = self.last_opcode_addr {
+            let n_mgba =
+                u32::from(self.gamepak_rom_cycles(pc, self.block_batch_fetch_width, false)) - 1;
+            let floor = -(n_mgba as i32);
+            if self.block_batch_erase_sum < floor {
+                self.access_wait_cycles += i64::from(floor - self.block_batch_erase_sum);
+            }
+        }
+    }
+
+    /// Batched-word erase routing. Returns the erase-delta to add for this
+    /// word, or `None` when the word must use the normal per-word path
+    /// (ROM data, prefetch off, or non-ROM code, all bit-for-bit
+    /// preserved). Word 1 (first batched word) erases fully single-style;
+    /// continuation words erase marginally. Only the returned delta lands
+    /// on the accumulator; the caller still adds `(wait-1)` itself.
+    fn batch_word_delta(&mut self, addr: u32, wait: u8) -> Option<i32> {
+        if !self.block_batching || !self.prefetch_enabled || addr >= 0x08000000 {
+            return None;
+        }
+        // Raw bulk (HLE): no erase at all, any code region.
+        if self.block_batch_raw {
+            return Some(0);
+        }
+        if !matches!(self.last_opcode_addr, Some(0x08000000..=0x0DFFFFFF)) {
+            return None;
+        }
+        let region = u32::from(wait.saturating_sub(1)) as i32;
+        // Single-access conventions: GBALoad region+2, GBAStore region+1.
+        let single_input = region + if self.block_batch_is_load { 2 } else { 1 };
+        let delta = if self.block_batch_words == 0 {
+            // Word 1: full single-access stall (updates lastPrefetchedPc).
+            self.prefetch_stall_erased(single_input) - single_input
+        } else {
+            // Continuation words: marginal `min(-1, S - single_input)`;
+            // no lastPrefetchedPc update (word 1's fills persist).
+            let (_, s16_our) = self.code_wait16();
+            let s = s16_our as i32 - 1;
+            (s - single_input).min(-1)
+        };
+        self.block_batch_words += 1;
+        self.block_batch_any = true;
+        self.block_batch_erase_sum += delta;
+        Some(delta)
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
@@ -1356,9 +1528,13 @@ impl GbaMemoryBus {
         // only DMA bursts reach the serial chip (handled in the tick loop).
         let wait = self.cycles_for(addr, width);
         // Stores erase like loads (mGBA GBAStore stall, +1 base convention).
-        let contrib = u32::from(wait.saturating_sub(1)) as i32
-            + self.prefetch_erase_delta(addr, u32::from(wait), false);
-        self.access_wait_cycles = self.access_wait_cycles.saturating_add_signed(contrib);
+        let mut contrib = u32::from(wait.saturating_sub(1)) as i32;
+        if let Some(batch_delta) = self.batch_word_delta(addr, wait) {
+            contrib += batch_delta;
+        } else {
+            contrib += self.prefetch_erase_delta(addr, u32::from(wait), false);
+        }
+        self.access_wait_cycles += i64::from(contrib);
         match addr {
             0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
             0x03000000..=0x03FFFFFF => self.write_iwram(addr, width, value),
