@@ -794,6 +794,123 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
+    /// Differential TM0 cost block replicating one mgba-suite Timing cell
+    /// end-to-end: START (TM0 /1 on) + CODE + END (TM0 read/stop), result
+    /// stored to `flag`. The calibration block (empty CODE) must equal the
+    /// suite Calibration row; test minus calibration must equal the cell's
+    /// expected cost. Queue-exhaust pads before the first block mimic the
+    /// suite dispatch depth so the prefetch buffer is drained at START.
+    fn timer_block(asm: &mut MiniAsm, code: &[u32], flag: u32) {
+        asm.ldr_lit(0, 0x0400_0100);
+        asm.ldr_lit(1, 0x0080_0000);
+        asm.str_imm(1, 0, 0);
+        for word in code {
+            asm.emit(*word);
+        }
+        asm.emit(0xE1D0_20B0); // ldrh r2, [r0]
+        asm.emit(0xE1C0_10B2); // strh r1, [r0, #2]
+        asm.emit(0xE1A0_0002); // mov r0, r2
+        asm.ldr_lit(3, flag);
+        asm.str_imm(0, 3, 0);
+    }
+
+    /// Suite `nop` ARM/ROM ... cell (HW 6 = S+S fetch + 1 internal):
+    /// calibration overhead 7, test 13.
+    #[test]
+    fn synthetic_timing_nop_arm_rom() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(5, 0x0400_0204);
+        asm.ldr_lit(6, 0x0000);
+        asm.str_imm(6, 5, 0);
+        for _ in 0..8 {
+            asm.emit(0xE1A0_0000); // nop (queue-exhaust pads)
+        }
+        timer_block(&mut asm, &[], 0x0200_0000);
+        timer_block(&mut asm, &[0xE1A0_0000], 0x0200_0004);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "timing_nop",
+            rom,
+            mem_checks(&[("0x02000000", "0x7", 4), ("0x02000004", "0xD", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// Suite `ldr r2, [sp]` ARM/ROM ... cell (HW 10): calibration 7,
+    /// test 17.
+    #[test]
+    fn synthetic_timing_ldr_arm_rom() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(5, 0x0400_0204);
+        asm.ldr_lit(6, 0x0000);
+        asm.str_imm(6, 5, 0);
+        for _ in 0..8 {
+            asm.emit(0xE1A0_0000);
+        }
+        asm.ldr_lit(1, 0x0300_0000);
+        timer_block(&mut asm, &[], 0x0200_0000);
+        // Reload r1: the calibration block clobbers r0-r3.
+        asm.ldr_lit(1, 0x0300_0000);
+        timer_block(&mut asm, &[0xE591_2000], 0x0200_0004); // ldr r2, [r1]
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "timing_ldr",
+            rom,
+            mem_checks(&[("0x02000000", "0x7", 4), ("0x02000004", "0x11", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// Suite Calibration ARM/ROM P.. row (HW 4) plus `nop` P.. cell
+    /// (HW 6): prefetch-enabled overhead and CODE cost.
+    #[test]
+    fn synthetic_timing_nop_arm_rom_p() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(5, 0x0400_0204);
+        asm.ldr_lit(6, 0x4000);
+        asm.str_imm(6, 5, 0);
+        for _ in 0..8 {
+            asm.emit(0xE1A0_0000);
+        }
+        timer_block(&mut asm, &[], 0x0200_0000);
+        timer_block(&mut asm, &[0xE1A0_0000], 0x0200_0004);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "timing_nop_p",
+            rom,
+            mem_checks(&[("0x02000000", "0x4", 4), ("0x02000004", "0xA", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// Suite `ldr r2, [sp]` ARM/ROM P.. cell (HW 6): calibration 4,
+    /// test 10.
+    #[test]
+    fn synthetic_timing_ldr_arm_rom_p() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(5, 0x0400_0204);
+        asm.ldr_lit(6, 0x4000);
+        asm.str_imm(6, 5, 0);
+        for _ in 0..8 {
+            asm.emit(0xE1A0_0000);
+        }
+        asm.ldr_lit(1, 0x0300_0000);
+        timer_block(&mut asm, &[], 0x0200_0000);
+        asm.ldr_lit(1, 0x0300_0000);
+        timer_block(&mut asm, &[0xE591_2000], 0x0200_0004); // ldr r2, [r1]
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "timing_ldr_p",
+            rom,
+            mem_checks(&[("0x02000000", "0x4", 4), ("0x02000004", "0xA", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     /// DMA3 stores to SRAM stick (bytewise backend + replicate read).
     #[test]
     fn synthetic_dma3_sram_sticks() {

@@ -97,6 +97,8 @@ fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         bus.write32(addr, rm_val);
     }
     regs.set_r(rd, mem_val);
+    // Load+store breaks the fetch stream (mGBA post-body, once).
+    bus.charge_fetch_stream_break();
     4
 }
 fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
