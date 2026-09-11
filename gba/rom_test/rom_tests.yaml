@@ -600,8 +600,11 @@ suites:
       # PlaySoundA @48kHz setup: SoundA FIFO reset + L/R + 100%,
       # master enable, and the repeat/special DMA itself enabled.
       # (TM0CNT_L is a free-running counter, not a setup constant.)
+      # SOUNDCNT_H reads 0x0304: the ROM writes 0x0B04, but the FIFO
+      # reset bit 11 is an edge action that reads 0 on HW (GBATEK "W?";
+      # mGBA masks stores with 0x770F; suite io-read pins 0x770F).
       - {address: 0x040000C6, value: 0xB640, width: 2}
-      - {address: 0x04000082, value: 0x0B04, width: 2}
+      - {address: 0x04000082, value: 0x0304, width: 2}
       - {address: 0x04000084, value: 0x80, width: 1}
   - id: PeterLemon_SoundPCMStereo
     rom: Sound/PCM/Stereo/SoundPCMStereo.gba
@@ -610,10 +613,11 @@ suites:
     verify:
       memory:
       # PlaySoundAB @48kHz: both sound DMAs enabled, SoundA timer0 +
-      # SoundB timer1 enables in SOUNDCNT_H.
+      # SoundB timer1 enables in SOUNDCNT_H. The ROM writes 0xDA0C;
+      # the bus reads 0x520C (FIFO reset bits 11/15 read 0 on HW).
       - {address: 0x040000C6, value: 0xB640, width: 2}
       - {address: 0x040000D2, value: 0xB640, width: 2}
-      - {address: 0x04000082, value: 0xDA0C, width: 2}
+      - {address: 0x04000082, value: 0x520C, width: 2}
       - {address: 0x04000084, value: 0x80, width: 1}
   - id: PeterLemon_BIOSSoundBias
     rom: BIOS/Sound/Bias/BIOSSoundBias.gba
@@ -929,24 +933,12 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 12 subtests fail on APU readable-bit masks (e.g. SOUND1CNT_LO is
-    # 0x007F on HW): the APU is unimplemented (Phase 9), so the bus
-    # returns the write latch. SOUNDCNT_X passes (0x0080 enable bit
-    # latches). DMA CNT_LO/CNT_HI and unused-I/O reads were fixed
-    # alongside (silent-0 per mGBA GBAIORead; DRQ latch kept verbatim).
-    expected_checks:
-    - 'SOUND1CNT_LO'
-    - 'SOUND1CNT_HI'
-    - 'SOUND1CNT_X'
-    - 'SOUND2CNT_LO'
-    - 'SOUND2CNT_HI'
-    - 'SOUND3CNT_LO'
-    - 'SOUND3CNT_HI'
-    - 'SOUND3CNT_X'
-    - 'SOUND4CNT_LO'
-    - 'SOUND4CNT_HI'
-    - 'SOUNDCNT_LO'
-    - 'SOUNDCNT_HI'
+    # All subtests pass. The 12 APU readable-bit masks are applied at
+    # write time (mGBA GBAIOWrite `value &= mask`; GBATEK R/W maps), so
+    # unreadable bits never persist: e.g. SOUND1CNT_LO 0x007F,
+    # SOUND3CNT_LO 0x00E0, SOUNDCNT_HI 0x770F. SOUNDCNT_X reads 0x0080
+    # (master-enable latch; channel flags stay 0: the stub PSG never
+    # runs). Pinned end-to-end by synthetic_apu_read_masks.
   - id: mgba_suite_shifter
     rom: suite.gba
     description: mgba suite - Shifter tests
