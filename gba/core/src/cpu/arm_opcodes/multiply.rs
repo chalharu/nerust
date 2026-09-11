@@ -39,18 +39,19 @@ use crate::memory::GbaMemoryBus;
 // pins in nerust_gba_rom_test).
 
 pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
-    // Multiplies take internal cycles (GBATEK "Prefetch Disable Bug").
-    bus.note_internal_cycle();
+    // Multiplies take internal cycles (GBATEK 1S+mI); carried in the base
+    // below, plus the fetch-stream break (mGBA MUL post-body N32-S32) and
+    // the P-ON tick erase (mGBA ARM_WAIT_MUL stall).
     let is_long = (instr >> 23) & 1 != 0;
     if is_long {
         // UMULL/UMLAL/SMULL/SMLAL produce an RdHi:RdLo pair.
-        return handle_long(regs, instr);
+        return handle_long(regs, bus, instr);
     }
 
-    handle_short(regs, instr)
+    handle_short(regs, bus, instr)
 }
 
-fn handle_short(regs: &mut CpuRegisters, instr: u32) -> u32 {
+fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, instr: u32) -> u32 {
     let a = (instr >> 21) & 1 != 0; // MLA if 1
     let s = (instr >> 20) & 1 != 0;
     let rd = ((instr >> 16) & 0xF) as usize;
@@ -76,11 +77,15 @@ fn handle_short(regs: &mut CpuRegisters, instr: u32) -> u32 {
 
     let cycles = multiplier_cycles(rs_val);
     // GBATEK/ARM ARM: MUL=1S+mI, MLA=1S+mI+1I (the 1S is the execute cycle;
-    // the opcode fetch is charged separately by the bus).
+    // the opcode fetch is charged separately by the bus). The tick array
+    // also breaks the fetch stream (mGBA MUL post-body) and fills prefetch
+    // P-ON (mGBA ARM_WAIT_MUL stall on WAIT+m, WAIT=0/1).
+    bus.charge_fetch_stream_break();
+    bus.erase_for_multiply(cycles + u32::from(a));
     if a { cycles + 2 } else { cycles + 1 }
 }
 
-fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
+fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, instr: u32) -> u32 {
     let signed = (instr >> 22) & 1 != 0;
     let accumulate = (instr >> 21) & 1 != 0;
     let set_flags = (instr >> 20) & 1 != 0;
@@ -123,7 +128,11 @@ fn handle_long(regs: &mut CpuRegisters, instr: u32) -> u32 {
         regs.set_cpsr_c(carry);
     }
     // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
-    multiplier_cycles_long(rs_value, signed) + 2 + u32::from(accumulate)
+    let ticks = multiplier_cycles_long(rs_value, signed);
+    // mGBA long-MUL post-body + tick erase (WAIT: xMLAL 2+m, xMULL 1+m).
+    bus.charge_fetch_stream_break();
+    bus.erase_for_multiply(ticks + 1 + u32::from(accumulate));
+    ticks + 2 + u32::from(accumulate)
 }
 
 fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {

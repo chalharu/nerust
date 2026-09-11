@@ -2,7 +2,7 @@ use crate::cpu::arm_opcodes::helpers::{barrel_shift, barrel_shift_register};
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
-pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let i = (instr >> 25) & 1 != 0;
     let opcode = ((instr >> 21) & 0xF) as u8;
     let s = (instr >> 20) & 1 != 0;
@@ -10,9 +10,8 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     let rd = ((instr >> 12) & 0xF) as usize;
     let register_shift = !i && (instr >> 4) & 1 != 0;
     if register_shift {
-        // Register-specified shifts take an internal cycle (GBATEK
-        // "Prefetch Disable Bug").
-        bus.note_internal_cycle();
+        // Register-specified shifts take an internal cycle (GBATEK);
+        // carried in the base below, no fetch-stream break.
     }
     // Operand2 always passes through the barrel shifter, including immediates.
     let (op2, shifter_carry) = operand2(regs, instr, i);

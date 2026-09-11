@@ -38,6 +38,8 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if writeback && !(l && rd == rn) {
         regs.set_r(rn, wb_addr);
     }
+    // The data access breaks the fetch stream (mGBA load/store post-body).
+    bus.charge_fetch_stream_break();
     // GBATEK: LDRH/SH/SB = 1S+1N+1I (+1S+1N if R15 loaded).
     if l { if rd == 15 { 5 } else { 3 } } else { 2 }
 }

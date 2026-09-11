@@ -7,6 +7,7 @@ pub fn handle_pc_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let addr = (regs.pc() & !3).wrapping_add(imm);
     let val = bus.read32(addr);
     regs.set_r(rd, val);
+    bus.charge_fetch_stream_break();
     3
 }
 
@@ -25,6 +26,7 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         let val = regs.r(rd);
@@ -33,6 +35,7 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
         } else {
             bus.write32(addr, val);
         }
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -46,14 +49,17 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
     match op {
         0b00 => {
             bus.write16(addr, regs.r(rd) as u16); // STRH
+            bus.charge_fetch_stream_break();
             2
         }
         0b01 => {
             regs.set_r(rd, bus.read8(addr) as i8 as i32 as u32); // LDRSB
+            bus.charge_fetch_stream_break();
             3
         }
         0b10 => {
             regs.set_r(rd, bus.read_ldr_halfword(addr)); // LDRH
+            bus.charge_fetch_stream_break();
             3
         }
         _ => {
@@ -63,6 +69,7 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
                 bus.read16(addr) as i16 as i32 as u32
             };
             regs.set_r(rd, value); // LDRSH
+            bus.charge_fetch_stream_break();
             3
         }
     }
@@ -86,6 +93,7 @@ pub fn handle_imm_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         let val = regs.r(rd);
@@ -94,6 +102,7 @@ pub fn handle_imm_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
         } else {
             bus.write32(addr, val);
         }
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -107,9 +116,11 @@ pub fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
     if l {
         let val = bus.read_ldr_halfword(addr);
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         bus.write16(addr, regs.r(rd) as u16);
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -121,9 +132,11 @@ pub fn handle_sp_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let addr = regs.sp().wrapping_add(imm);
     if l {
         regs.set_r(rd, bus.read32(addr));
+        bus.charge_fetch_stream_break();
         3
     } else {
         bus.write32(addr, regs.r(rd));
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -149,10 +162,15 @@ fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
         if (rlist >> i) & 1 == 0 {
             continue;
         }
+        // First word N; continuation words follow bus order.
+        let continuation = count > 0 && bus.data_continuation_sequential(addr);
+        bus.set_data_sequential(continuation);
         regs.set_r(i, bus.read_aligned32(addr));
         addr = addr.wrapping_add(4);
         count += 1;
     }
+    bus.set_data_sequential(false);
+    bus.charge_fetch_stream_break();
     if (rlist >> rb) & 1 == 0 {
         regs.set_r(rb, addr);
     }
@@ -172,10 +190,15 @@ fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
             continue;
         }
         let value = stm_value(regs, rb, i, first_register, final_addr);
+        // First word N; continuation words follow bus order.
+        let continuation = count > 0 && bus.data_continuation_sequential(addr);
+        bus.set_data_sequential(continuation);
         bus.write32(addr, value);
         addr = addr.wrapping_add(4);
         count += 1;
     }
+    bus.set_data_sequential(false);
+    bus.charge_fetch_stream_break();
     regs.set_r(rb, addr);
     // Thumb STMIA: (n-1)S+2N (GBATEK), i.e. 1+count at 1-cycle memory.
     1 + count
@@ -208,6 +231,7 @@ fn handle_empty_multiple(
         // Empty LDM ignores addr[1:0] like every other LDM (forced align,
         // matching the ARM empty path and the non-empty path above).
         let target = bus.read_aligned32(address);
+        bus.charge_fetch_stream_break();
         regs.set_r(base_register, address.wrapping_add(0x40));
         // GBATEK THUMB.14: like POP {PC}, the LSB is ignored on ARMv4T.
         regs.set_pc(target);
@@ -219,6 +243,7 @@ fn handle_empty_multiple(
         // thumb t229, which compares the stored word against a
         // `mov r1, pc` one instruction later.
         bus.write32(address, regs.pc().wrapping_add(2));
+        bus.charge_fetch_stream_break();
         regs.set_r(base_register, address.wrapping_add(0x40));
         // GBATEK: empty list stores R15 only (n=1): (n-1)S+2N = 2.
         2
