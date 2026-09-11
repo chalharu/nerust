@@ -1010,35 +1010,12 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 20 subtests fail on the MULLS C flag: N (from RdHi) and Z (full
-    # 64-bit zero) match, but HW sets C=1 for an operand-dependent
-    # subset (e.g. SMULL(0, 0x80000000) -> C=1, SMULL(-1, -1) -> C=0;
-    # UMULL hi!=0 is not sufficient either: $7F*$7F -> C=0). The rule
-    # is not a pure function of the product (same-product pairs like
-    # -1*$7F vs 1*$81 agree) but needs the Booth-multiplier carry
-    # behavior; mGBA leaves C untouched too (ARM_NEUTRAL_HI_S sets
-    # only N/Z). Research-grade: values+N/Z are pinned, C stays 0.
-    expected_checks:
-    - ' -1 *  -1 umulls'
-    - '$7F *  -1 umulls'
-    - ' -1 * $7F smulls'
-    - ' -1 * $7F umulls'
-    - '$80 * $7F smulls'
-    - '$80 * $7F umulls'
-    - '$81 * $7F smulls'
-    - '$81 * $7F umulls'
-    - '  0 * $80 smulls'
-    - '  1 * $80 smulls'
-    - ' -1 * $80 umulls'
-    - '$7F * $80 smulls'
-    - '$80 * $80 umulls'
-    - '$81 * $80 umulls'
-    - '  0 * $81 smulls'
-    - '  1 * $81 smulls'
-    - ' -1 * $81 umulls'
-    - '$7F * $81 smulls'
-    - '$80 * $81 umulls'
-    - '$81 * $81 umulls'
+    # All 72 subtests pass. MULLS C comes from the Booth multiplier
+    # array's final carry, not the product (e.g. SMULL(0, $80) -> C=1 on
+    # a zero product); the core models it with the zaydlang/calc84maniac
+    # carry-save algorithm (full-tick Rs -> Hi model over RdHi, early-out
+    # Rs -> Lo model over RdLo), pinned by synthetic_mull_nzcv_writeback
+    # and the mull_carry_matches_suite_table unit test.
   - id: mgba_suite_bios_math
     rom: suite.gba
     description: mgba suite - BIOS math tests
