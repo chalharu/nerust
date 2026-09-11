@@ -154,6 +154,18 @@ expected_failures:
 #   redesign (sub-tick sample/line model) as future research. Do NOT
 #   retune timer phase/charges/staging or fit IntrWait timing to chase
 #   single cells.
+#   POST-MORTEM (structural redesign attempted and REVERTED): separating
+#   register-settle (pending apply +1, kept) from line-sample
+#   (avail/line queues removed, combinatorial; IRQ_ENTRY 23->25 to hold
+#   irq-delay totals) preserves cancel-ime 8/8 (row BOOLs come from
+#   same-tick coalescing in the single pending slot, not queue order)
+#   but structurally regresses irq-delay EWRAM/ROM (112/120 lost, no
+#   entry value 25-27 recovers them) and cancel-ie rows (246->369px,
+#   entry-invariant): with zero net wall-time shift, the earlier
+#   preemption point still flips +-1-margin rows, and some dispatch
+#   paths break beyond arithmetic. Uniform models cannot satisfy the
+#   timers windows and the cancel/irq-delay pins at once; the
+#   conflicting evidence needs a new model dimension, not a rebalance.
 - mgba_suite_timers
 
 suites:
