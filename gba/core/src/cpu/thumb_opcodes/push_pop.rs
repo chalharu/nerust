@@ -19,6 +19,7 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
     let mut address = regs.sp().wrapping_sub(count * 4);
     regs.set_sp(address);
     let mut first = true;
+    bus.begin_block_batch(false, 2);
     for register in selected_registers(list) {
         // First word N; continuation words follow bus order.
         let continuation = !first && bus.data_continuation_sequential(address);
@@ -33,6 +34,7 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
         bus.write32(address, regs.lr());
     }
     bus.set_data_sequential(false);
+    bus.end_block_batch();
     bus.charge_fetch_stream_break();
     // Thumb PUSH: (n-1)S+2N (GBATEK STM formula), i.e. 1+count.
     1 + count
@@ -41,6 +43,7 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
 fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
     let mut address = regs.sp();
     let mut first = true;
+    bus.begin_block_batch(true, 2);
     for register in selected_registers(list) {
         // GBATEK forces align for PUSH/POP (mGBA LoadMultiple aligns).
         // First word N; continuation words follow bus order.
@@ -62,6 +65,7 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
     }
     regs.set_sp(address);
     bus.set_data_sequential(false);
+    bus.end_block_batch();
     bus.charge_fetch_stream_break();
     // Thumb POP: nS+1N+1I (2+count); with PC: (n+1)S+2N+1I (4+count),
     // n including PC (GBATEK THUMB cycle times).

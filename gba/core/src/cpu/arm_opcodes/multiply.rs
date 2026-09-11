@@ -81,7 +81,7 @@ fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, 
     // also breaks the fetch stream (mGBA MUL post-body) and fills prefetch
     // P-ON (mGBA ARM_WAIT_MUL stall on WAIT+m, WAIT=0/1).
     bus.charge_fetch_stream_break();
-    bus.erase_for_multiply(cycles + u32::from(a));
+    bus.erase_for_multiply(cycles + u32::from(a), 4);
     if a { cycles + 2 } else { cycles + 1 }
 }
 
@@ -131,7 +131,7 @@ fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, i
     let ticks = multiplier_cycles_long(rs_value, signed);
     // mGBA long-MUL post-body + tick erase (WAIT: xMLAL 2+m, xMULL 1+m).
     bus.charge_fetch_stream_break();
-    bus.erase_for_multiply(ticks + 1 + u32::from(accumulate));
+    bus.erase_for_multiply(ticks + 1 + u32::from(accumulate), 4);
     ticks + 2 + u32::from(accumulate)
 }
 

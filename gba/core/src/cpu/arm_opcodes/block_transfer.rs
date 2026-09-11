@@ -103,6 +103,9 @@ fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
 fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: TransferSpec) -> u32 {
     let mut address = spec.start;
     let mut transferred = 0;
+    // mGBA LoadMultiple/StoreMultiple: ONE prefetch stall on the
+    // whole-word total (see begin/end_block_batch).
+    bus.begin_block_batch(spec.load, 4);
     for register in (0..16).filter(|register| spec.list & (1 << register) != 0) {
         // First word N; continuation words follow bus order (sequential
         // unless crossing the 128KB line or regions).
@@ -131,6 +134,7 @@ fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: Tra
         transferred += 1;
     }
     bus.set_data_sequential(false);
+    bus.end_block_batch();
     transferred
 }
 

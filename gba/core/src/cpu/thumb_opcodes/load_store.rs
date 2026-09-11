@@ -158,6 +158,7 @@ pub fn handle_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
 fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
     let mut count = 0;
+    bus.begin_block_batch(true, 2);
     for i in 0..8 {
         if (rlist >> i) & 1 == 0 {
             continue;
@@ -170,6 +171,7 @@ fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
         count += 1;
     }
     bus.set_data_sequential(false);
+    bus.end_block_batch();
     bus.charge_fetch_stream_break();
     if (rlist >> rb) & 1 == 0 {
         regs.set_r(rb, addr);
@@ -185,6 +187,7 @@ fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
     let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
     let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
+    bus.begin_block_batch(false, 2);
     for i in 0..8 {
         if (rlist >> i) & 1 == 0 {
             continue;
@@ -198,6 +201,7 @@ fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlis
         count += 1;
     }
     bus.set_data_sequential(false);
+    bus.end_block_batch();
     bus.charge_fetch_stream_break();
     regs.set_r(rb, addr);
     // Thumb STMIA: (n-1)S+2N (GBATEK), i.e. 1+count at 1-cycle memory.

@@ -224,7 +224,10 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // 呼び出し側のwait再加算と合わせて表示値に一致させる。固定の
     // 引き算（旧 4BIT 0x1400、8BIT 0）はバスモデル依存で脆く、
     // VRAM 32bit=2cyc化のような正当な修正で崩れるため、実測引きを採用。
-    let incurred = bus.accumulated_wait_cycles().saturating_sub(entry_waits);
+    let incurred = bus
+        .accumulated_wait_cycles()
+        .saturating_sub(entry_waits)
+        .max(0) as u32;
     let displayed = match data_bits {
         4 => 0x626Fu32 * size / 0x1000,
         8 => 0x8D49u32 * size / 0x1000,
