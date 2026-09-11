@@ -617,7 +617,7 @@ impl GbaMemoryBus {
                     self.current_tcycle,
                     stall_snapshot.vcount,
                     stall_snapshot.cycle,
-                    transfer.source,
+                    transfer.data_source,
                     transfer.destination,
                     transfer.width
                 );
@@ -633,9 +633,9 @@ impl GbaMemoryBus {
             let use_eeprom = transfer.channel == 3
                 && transfer.width == 2
                 && self.is_eeprom()
-                && (in_eeprom_range(transfer.source) || in_eeprom_range(transfer.destination));
-            let readable_source = transfer.source >= 0x02000000;
-            let value = if use_eeprom && in_eeprom_range(transfer.source) {
+                && (in_eeprom_range(transfer.data_source) || in_eeprom_range(transfer.destination));
+            let readable_source = transfer.data_source >= 0x02000000;
+            let value = if use_eeprom && in_eeprom_range(transfer.data_source) {
                 // EEPROM DMA read: one response bit per 16-bit unit.
                 let bit = self.next_eeprom_read_bit();
                 if transfer.width == 4 {
@@ -649,7 +649,11 @@ impl GbaMemoryBus {
                 // delivers ROM[2] to OAM[0x3FE] and ROM[4] to OAM[0x3FC],
                 // i.e. dest[i] = mem16(src+2+2i): the 16-bit GamePak read
                 // path pre-increments, latching unit N+1's data into unit
-                // N (with a phantom read past the end). The shift is a
+                // N (with a phantom read past the end). The shift fires
+                // only for primed bursts (head issued outside GamePak ROM;
+                // `DmaTransfer::shift_primed`): bursts sourced entirely
+                // within ROM stream aligned (mgba-suite DMA H rows pin the
+                // plain forced-increment last word 0xDEAD). The shift is a
                 // multi-unit pipeline effect: single-unit 16-bit reads
                 // land on the aligned source (mgba-suite "ROM load DMA1
                 // 16" pins 0xBEEF). It fires when the read lands in ROM
@@ -658,8 +662,12 @@ impl GbaMemoryBus {
                 // unaffected (nba 128kb-boundary times pin their
                 // addresses), and non-ROM 16-bit sources are unaffected
                 // (nba latch pins IWRAM 16-bit data exact: 0x12341234).
-                let src = transfer.source;
+                // The read issues on the data stream (forced increment
+                // inside GamePak ROM; see `DmaChannel::data_source`),
+                // while N/S timing follows the programmed counter.
+                let src = transfer.data_source;
                 let read_addr = if transfer.width == 2
+                    && transfer.shift_primed
                     && !transfer.single_unit
                     && ((0x08000000..=0x0DFFFFFF).contains(&src)
                         || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))

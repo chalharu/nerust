@@ -10,10 +10,21 @@ pub enum DmaTrigger {
 #[derive(Clone, Copy, Debug)]
 pub struct DmaTransfer {
     pub channel: usize,
+    /// Programmed-counter source (drives N/S timing; may descend).
     pub source: u32,
+    /// Actual data-read source (forced increment inside GamePak ROM).
+    pub data_source: u32,
     pub destination: u32,
     pub width: u8,
     pub latched_value: u32,
+    /// True when the burst head issued outside GamePak ROM. The 16-bit
+    /// GamePak read-path shift (unit N latches unit N+1's halfword) only
+    /// fires for such primed bursts (HW-pinned by nba burst-into-tears,
+    /// whose head issues from the OAM mirror): bursts sourced entirely
+    /// within ROM stream aligned (HW-pinned by mgba-suite DMA H rows,
+    /// which expect the plain forced-increment last word 0xDEAD, not the
+    /// shifted 0xBEF1/0xBEEE).
+    pub shift_primed: bool,
     /// True when this unit is the only unit of its burst. The 16-bit
     /// GamePak pre-increment read (dest[i] = mem16(src+2+2i)) is a
     /// multi-unit pipeline effect (HW-pinned by nba burst-into-tears,
@@ -39,6 +50,19 @@ struct DmaChannel {
     is_first: bool,
     pending: u8,
     stalled: bool,
+    /// Latched at enable: whether the burst head issued outside GamePak
+    /// ROM (see `DmaTransfer::shift_primed`). The latched source is fixed
+    /// for the burst (re-arms keep it), so the flag needs no per-unit
+    /// update.
+    shift_primed: bool,
+    /// Data-stream source, latched at enable alongside `current_source`
+    /// and advanced per unit. GamePak-ROM sources always increment (mGBA
+    /// dma.c `sourceOffset = width`) while the N/S timing follows the
+    /// programmed counter: HW-pinned both ways (mgba-suite DMA data rows
+    /// deliver the 4th word up for fixed/inc/dec ROM sources; nba
+    /// 128kb-boundary dec rows time the descending counter, e.g. 70 vs
+    /// 68 across the 128K line). Outside ROM both streams coincide.
+    data_source: u32,
     completing: bool,
     completion_interrupt: bool,
     /// Extra completion tail tick for a finished single-unit burst with a
@@ -278,6 +302,17 @@ impl GbaDma {
         };
         dma.delay = (total_wait + internal) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
+        // Data stream: forced increment inside GamePak ROM (mGBA
+        // `sourceOffset = width`, re-evaluated per unit like mGBA's
+        // region-crossing refresh); programmed mode elsewhere, where it
+        // coincides with the counter above.
+        let data_source = dma.data_source & !(u32::from(width) - 1);
+        let data_mode = if is_rom(data_source) {
+            0
+        } else {
+            source_mode(dma.control)
+        };
+        dma.data_source = advance(dma.data_source, data_mode, width, false);
         if sound_dma(channel, dma.control, destination) {
             // GBATEK DMA: sound FIFO transfers never increment the
             // destination; the 4x32-bit burst always lands in the FIFO.
@@ -311,8 +346,10 @@ impl GbaDma {
         Some(DmaTransfer {
             channel,
             source,
+            data_source,
             destination,
             width,
+            shift_primed: dma.shift_primed,
             latched_value: dma.latch,
             // `remaining` already counts down past this unit, and
             // `was_first` marks the burst head: only a lone unit
@@ -407,6 +444,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.is_first = true;
         dma.prev_src = 0;
         dma.prev_dst = 0;
+        dma.shift_primed = !is_rom(dma.current_source);
+        dma.data_source = dma.current_source;
         dma.delay = 0;
         dma.stalled = false;
         dma.completing = false;
