@@ -1810,17 +1810,21 @@ impl GbaMemoryBus {
                 self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
-            0x04000060 => self.apu.sound1cnt_lo = v16,
-            0x04000062 => self.apu.sound1cnt_hi = v16,
-            0x04000064 => self.apu.sound1cnt_x = v16,
-            0x04000068 => self.apu.sound2cnt_lo = v16,
-            0x0400006C => self.apu.sound2cnt_hi = v16,
-            0x04000070 => self.apu.sound3cnt_lo = v16,
-            0x04000072 => self.apu.sound3cnt_hi = v16,
-            0x04000074 => self.apu.sound3cnt_x = v16,
-            0x04000078 => self.apu.sound4cnt_lo = v16,
-            0x0400007C => self.apu.sound4cnt_hi = v16,
-            0x04000080 => self.apu.soundcnt_lo = v16,
+            // APU readable-bit masks are applied at write time (mGBA
+            // GBAIOWrite `value &= mask`; GBATEK R/W maps): unreadable
+            // bits never persist, so reads return the stored value.
+            // mgba-suite io-read pins write-0xFFFF -> each mask.
+            0x04000060 => self.apu.sound1cnt_lo = v16 & 0x007F,
+            0x04000062 => self.apu.sound1cnt_hi = v16 & 0xFFC0,
+            0x04000064 => self.apu.sound1cnt_x = v16 & 0x4000,
+            0x04000068 => self.apu.sound2cnt_lo = v16 & 0xFFC0,
+            0x0400006C => self.apu.sound2cnt_hi = v16 & 0x4000,
+            0x04000070 => self.apu.sound3cnt_lo = v16 & 0x00E0,
+            0x04000072 => self.apu.sound3cnt_hi = v16 & 0xE000,
+            0x04000074 => self.apu.sound3cnt_x = v16 & 0x4000,
+            0x04000078 => self.apu.sound4cnt_lo = v16 & 0xFF00,
+            0x0400007C => self.apu.sound4cnt_hi = v16 & 0x40FF,
+            0x04000080 => self.apu.soundcnt_lo = v16 & 0xFF77,
             0x04000082 => self.apu.write_soundcnt_hi(v16),
             0x04000084 => self.apu.write_soundcnt_x(v16),
             0x04000088 => self.apu.soundbias = v16,

@@ -914,6 +914,57 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
+    /// APU readable-bit masks (mgba-suite io-read): write 0xFFFF to each
+    /// PSG/SOUNDCNT register and read back the R/W mask (mGBA GBAIOWrite
+    /// write-time masking; GBATEK R/W maps). SOUNDCNT_X is covered by the
+    /// suite itself (0x0080); SOUNDBIAS is out of scope here.
+    #[test]
+    fn synthetic_apu_read_masks() {
+        // (address, expected readback of 0xFFFF)
+        const VECTORS: [(u32, u32); 12] = [
+            (0x0400_0060, 0x007F),
+            (0x0400_0062, 0xFFC0),
+            (0x0400_0064, 0x4000),
+            (0x0400_0068, 0xFFC0),
+            (0x0400_006C, 0x4000),
+            (0x0400_0070, 0x00E0),
+            (0x0400_0072, 0xE000),
+            (0x0400_0074, 0x4000),
+            (0x0400_0078, 0xFF00),
+            (0x0400_007C, 0x40FF),
+            (0x0400_0080, 0xFF77),
+            (0x0400_0082, 0x770F),
+        ];
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(2, 0x0200_0000);
+        for (i, (addr, _)) in VECTORS.iter().enumerate() {
+            asm.ldr_lit(0, 0xFFFF);
+            asm.ldr_lit(1, *addr);
+            asm.strh(0, 1);
+            asm.ldrh(0, 1, 0);
+            asm.str_imm(0, 2, (i as u32) * 4);
+        }
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let entries: Vec<(String, String, u8)> = VECTORS
+            .iter()
+            .enumerate()
+            .map(|(i, (_, expected))| {
+                (
+                    format!("0x{:08X}", 0x0200_0000u32 + (i as u32) * 4),
+                    format!("0x{expected:X}"),
+                    4,
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str, u8)> = entries
+            .iter()
+            .map(|(a, v, w)| (a.as_str(), v.as_str(), *w))
+            .collect();
+        let result = run_assembled_rom("apu_masks", rom, mem_checks(&refs));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     #[test]
     fn completion_tracker_requires_ordered_matches() {
         let mut tracker = CompletionTracker::default();
