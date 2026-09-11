@@ -375,7 +375,13 @@ pub fn verify_suite_log(
     spec: &SuiteLogVerify,
 ) -> Vec<CheckResult> {
     let mut checks = Vec::new();
-    let begin = logs.iter().position(|log| log.text.contains(&spec.begin));
+    // Suite markers always start the line ("BEGIN: <name>", "END: p/t").
+    // Substring matching is wrong here: a test name can contain the
+    // marker text (e.g. sio SIOMLT_SEND detail lines contain "END:"),
+    // which would truncate the scope window early.
+    let begin = logs
+        .iter()
+        .position(|log| log.text.starts_with(&spec.begin));
     let Some(begin) = begin else {
         return vec![CheckResult {
             name: "suite log begin".into(),
@@ -386,7 +392,7 @@ pub fn verify_suite_log(
     };
     let mut window = Vec::new();
     for log in &logs[begin..] {
-        let done = log.text.contains(&spec.end);
+        let done = log.text.starts_with(&spec.end);
         window.push(log.text.as_str());
         if done {
             break;

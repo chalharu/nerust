@@ -742,6 +742,9 @@ fn arc_tan2(regs: &mut CpuRegisters) {
     let y = regs.r(1) as i32;
     if x == 0 && y == 0 {
         regs.set_r(0, 0);
+        // The HW (0,0) path still costs the full 0x170 cycles
+        // (mgba-suite bios-math HW capture); r1 is already 0.
+        regs.set_r(3, 0x170);
         return;
     }
     let (v, a) = bios_arctan2_full(x, y);
