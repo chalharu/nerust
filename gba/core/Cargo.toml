@@ -19,3 +19,12 @@ nerust_sound_filter.workspace = true
 thiserror.workspace = true
 typetag.workspace = true
 serde.workspace = true
+
+[features]
+# Test-ROM log sink speaking the mGBA debug-log protocol (0x4FFF600
+# string buffer, 0x4FFF700 flags, 0x4FFF780 enable handshake). This is
+# NOT hardware: production frontends must not enable it. It exists so
+# headless test harnesses (nerust_gba_rom_test) can capture per-subtest
+# PASS/FAIL lines from test ROMs built against the mGBA suite SDK.
+# Zero wait cycles, no bus-state side effects.
+mgba-debug-log = []

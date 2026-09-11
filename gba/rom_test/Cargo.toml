@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nerust_gba_core.workspace = true
+nerust_gba_core = { workspace = true, features = ["mgba-debug-log"] }
 nerust_render_traits.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde-saphyr.workspace = true
