@@ -189,26 +189,43 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(1)
         }
         0x06 => {
-            // Fixed charge: the ROM itself pins TIMER0=0xE2 for
-            // ($FEDCBA98, $1234), identical to our ($12345678, $1000) pin
-            // despite wildly different magnitudes — the loop is effectively
-            // constant-length, so no operand-dependent model (a variable
-            // slope demonstrably breaks the BIOSDIV screenshot).
+            // Operand-dependent Div latency (mgba-suite Timing SWI cells
+            // + BIOSDIV TIMER0 screenshot + div_e2 unit pin):
+            // fast path (73) when |num| < |den| (trivial quotient 0);
+            // slow path 226 for 13+-bit divisors, +107 below (extra
+            // normalization for small divisors; HW-measured at 8 bits).
+            let num = regs.r(0) as i32;
+            let den = regs.r(1) as i32;
+            let charge = div_charge(num, den);
             div(regs);
-            SwiResult::Return(0xE2)
+            SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x07 => {
-            // Same: ROM pins TIMER0=0xE5 for DivArm($1234, $FEDCBA98).
+            // DivArm swaps r0/r1 and costs 3 over Div (div_arm_e5 pin).
+            let den = regs.r(0) as i32;
+            let num = regs.r(1) as i32;
+            let charge = div_charge(num, den).wrapping_add(3);
             div_arm(regs);
-            SwiResult::Return(0xE5)
+            SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x08 => {
+            // Operand-dependent Sqrt latency (mgba-suite Timing Sqrt
+            // cells + BIOSSQRT TIMER0 screenshot + sqrt_fedcba98 pin):
+            // HW-anchored piecewise-linear in the input bit length
+            // (0->102, 8->217, 29->1133, 32->585; interior rounds down,
+            // games never assert exact Sqrt timing).
+            let n = regs.r(0);
+            let charge = sqrt_charge(n);
             sqrt(regs);
-            SwiResult::Return(0x249)
+            SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x09 => {
+            // ArcTan sign path (suite 0xFF vs fedcba98 pin): negative
+            // inputs cost one extra branch refill (+4).
+            let i = regs.r(0) as i32;
+            let charge = 0x66u32 + if i < 0 { 4 } else { 0 };
             arc_tan(regs);
-            SwiResult::Return(0x6A)
+            SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x0A => {
             arc_tan2(regs);
@@ -435,7 +452,10 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             bus.write32(addr, 0);
         }
         // VPAL 0x400 bytes, HW display total 0x039A (size比例)
-        let incurred = bus.accumulated_wait_cycles().saturating_sub(w_before);
+        let incurred = bus
+            .accumulated_wait_cycles()
+            .saturating_sub(w_before)
+            .max(0) as u32;
         cycles = cycles.wrapping_add(0x039Au32.saturating_sub(incurred));
     }
     if flags & 8 != 0 {
@@ -444,7 +464,10 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             bus.write32(addr, 0);
         }
         // VRAM 0x18000 bytes, HW display total 0xFCFA (size比例, 30ステップで終わらない)
-        let incurred = bus.accumulated_wait_cycles().saturating_sub(w_before);
+        let incurred = bus
+            .accumulated_wait_cycles()
+            .saturating_sub(w_before)
+            .max(0) as u32;
         cycles = cycles.wrapping_add(0xFCFAu32.saturating_sub(incurred));
     }
     if flags & 16 != 0 {
@@ -636,6 +659,21 @@ fn sound_get_jump_list(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
         bus.write_hle_bios32(dest.wrapping_add((i as u32) * 4), *entry);
     }
 }
+/// Operand-dependent Div latency (see SWI 0x06 call site for the HW
+/// evidence). Magnitudes drive the normalizing shift loop; the quotient-0
+/// fast path skips it.
+fn div_charge(num: i32, den: i32) -> u32 {
+    if den == 0 {
+        return 0xE2;
+    }
+    let (num_m, den_m) = (num.unsigned_abs(), den.unsigned_abs());
+    if num_m < den_m {
+        return 73;
+    }
+    let den_bits = 32 - den_m.leading_zeros();
+    0xE2 + if den_bits < 13 { 107 } else { 0 }
+}
+
 fn div(regs: &mut CpuRegisters) {
     let num = regs.r(0) as i32;
     let den = regs.r(1) as i32;
@@ -676,6 +714,19 @@ fn div_arm(regs: &mut CpuRegisters) {
 fn sqrt(regs: &mut CpuRegisters) {
     let n = regs.r(0);
     regs.set_r(0, n.isqrt());
+}
+
+/// Operand-dependent Sqrt latency: HW-measured anchor points in the
+/// unsigned input bit length ((0,102), (8,217), (29,1133), (32,585)),
+/// linear between anchors (integer division rounds down; anchors exact).
+fn sqrt_charge(n: u32) -> u32 {
+    let bits = 32 - n.leading_zeros();
+    match bits {
+        0 => 102,
+        1..=8 => 102 + 115 * bits / 8,
+        9..=29 => 217 + 916 * (bits - 8) / 21,
+        _ => 1133 - 548 * (bits - 29) / 3,
+    }
 }
 
 /// Real BIOS ArcTan core (mGBA `_ArcTan` concordance): a fixed-point
@@ -869,6 +920,10 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let fill = bus.read32(s0);
         let mut s = s0;
         let mut d = d0;
+        // HW BIOS bulk loop sees flat waits (no GamePak-prefetch erase):
+        // accrue raw bus waits; the display formula below carries the
+        // fixed overhead.
+        bus.begin_raw_batch();
         for _ in 0..len {
             let v = if fixed { fill } else { bus.read32(s) };
             bus.write32(d, v);
@@ -877,6 +932,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             }
             d = d.wrapping_add(4);
         }
+        bus.end_block_batch();
         // 32BIT: base 0x400 words, waitはWRAMで size*0x1400/0x400 に比例
         // 30ステップで4096byteが終わることはなく、size比例で数千cycleかかる
         let base_disp = if fixed { 0x3060u32 } else { 0x3C5Fu32 };
@@ -892,6 +948,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let fill = bus.read16(s0);
         let mut s = s0;
         let mut d = d0;
+        bus.begin_raw_batch();
         for _ in 0..len {
             let v = if fixed { fill } else { bus.read16(s) };
             bus.write16(d, v);
@@ -900,6 +957,7 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             }
             d = d.wrapping_add(2);
         }
+        bus.end_block_batch();
         // 16BIT: base 0x800 halfwords, waitはWRAMで size*0x1000/0x800 に比例
         // 30ステップで4096byteが終わることはなく、size比例で1万cycle以上かかる
         let base_disp = if fixed { 0x5062u32 } else { 0x6861u32 };
@@ -937,6 +995,9 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     }
     let fixed = len_mode & (1 << 24) != 0;
     // mGBA準拠の高速コピー（HLEで即時完了）。固定fillは単発サンプル。
+    // Bulk words (including the fill sample) accrue raw: same raw-bulk
+    // treatment as CpuSet (see above).
+    bus.begin_raw_batch();
     let fill = bus.read32(src);
     let mut s = src;
     let mut d = dst;
@@ -953,6 +1014,7 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         }
         d = d.wrapping_add(4);
     }
+    bus.end_block_batch();
     // 実測表示 TIMER0: COPY 0x1FDE / FIXED 0x1AE8 (len=0x400, 4096byte)
     // WRAM waitは size*0x1400/0x400 に比例。30ステップで4096byteが
     // 終了することはなく、HLE stallもsize比例で数千cycleかかる。
@@ -961,7 +1023,18 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let base_len = 0x400u32;
     let disp = base_disp * len / base_len;
     let wait = base_wait * len / base_len;
+    // BIOS call fixed overhead (exception entry + prologue/epilogue,
+    // mgba-suite Timing CpuSet cells: flat +69 after raw-bulk) plus the
+    // SWI region entry residual (shared with Div/Sqrt/ArcTan). Both skip
+    // IWRAM callers (real IWRAM timer ROMs match without them).
+    let overhead = if bus.swi_caller_is_iwram() {
+        0
+    } else {
+        69
+    };
     disp.saturating_sub(wait)
+        .wrapping_add(overhead)
+        .saturating_add_signed(bus.swi_region_adjust())
 }
 
 fn bios_checksum(regs: &mut CpuRegisters, bus: &GbaMemoryBus) {

@@ -21,7 +21,7 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
                     regs.r((instr & 0x7) as usize),
                 );
                 bus.charge_fetch_stream_break();
-                bus.erase_for_multiply(ticks);
+                bus.erase_for_multiply(ticks, 2);
             }
             thumb_opcodes::alu::handle(regs, instr)
         }
