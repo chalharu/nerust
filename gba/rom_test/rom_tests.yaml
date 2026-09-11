@@ -1301,65 +1301,19 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 48 subtests fail on the GamePak-DMA first-word quirk (all are the
-    # "3" check = first destination word of a 4-word ROM-source burst
-    # on channels 1-3; channel 0 passes). Observed HW rule: with a
-    # fixed or decrement ROM source the first word comes from sad+12
-    # (W: DEADBEF2 = srcR[6]; H: byte-merged ...DEAD), while an
-    # increment source delivers the programmed word (+ROM passes).
-    # We return the programmed word for =ROM/+ROM and sad-12 for -ROM
-    # (last-unit-wins under the fixed dest). mGBA models none of this
-    # (plain load32 + bus=latch). Research-grade prefetch/bus
-    # interaction; END is 1196/1244.
-    expected_checks:
-    - '1 Imm W =ROM/=IWRAM 3'
-    - '2 Imm W =ROM/=IWRAM 3'
-    - '3 Imm W =ROM/=IWRAM 3'
-    - '1 Imm W =ROM/=EWRAM 3'
-    - '2 Imm W =ROM/=EWRAM 3'
-    - '3 Imm W =ROM/=EWRAM 3'
-    - '1 Imm H +ROM/=IWRAM 3'
-    - '2 Imm H +ROM/=IWRAM 3'
-    - '3 Imm H +ROM/=IWRAM 3'
-    - '1 Imm H +ROM/=EWRAM 3'
-    - '2 Imm H +ROM/=EWRAM 3'
-    - '3 Imm H +ROM/=EWRAM 3'
-    - '1 Imm H -ROM/=IWRAM 3'
-    - '2 Imm H -ROM/=IWRAM 3'
-    - '3 Imm H -ROM/=IWRAM 3'
-    - '1 Imm H -ROM/=EWRAM 3'
-    - '2 Imm H -ROM/=EWRAM 3'
-    - '3 Imm H -ROM/=EWRAM 3'
-    - '1 Imm W -ROM/=IWRAM 3'
-    - '2 Imm W -ROM/=IWRAM 3'
-    - '3 Imm W -ROM/=IWRAM 3'
-    - '1 Imm W -ROM/=EWRAM 3'
-    - '2 Imm W -ROM/=EWRAM 3'
-    - '3 Imm W -ROM/=EWRAM 3'
-    - '1 HBl W =ROM/=IWRAM 3'
-    - '2 HBl W =ROM/=IWRAM 3'
-    - '3 HBl W =ROM/=IWRAM 3'
-    - '1 HBl W =ROM/=EWRAM 3'
-    - '2 HBl W =ROM/=EWRAM 3'
-    - '3 HBl W =ROM/=EWRAM 3'
-    - '1 HBl H +ROM/=IWRAM 3'
-    - '2 HBl H +ROM/=IWRAM 3'
-    - '3 HBl H +ROM/=IWRAM 3'
-    - '1 HBl H +ROM/=EWRAM 3'
-    - '2 HBl H +ROM/=EWRAM 3'
-    - '3 HBl H +ROM/=EWRAM 3'
-    - '1 HBl H -ROM/=IWRAM 3'
-    - '2 HBl H -ROM/=IWRAM 3'
-    - '3 HBl H -ROM/=IWRAM 3'
-    - '1 HBl H -ROM/=EWRAM 3'
-    - '2 HBl H -ROM/=EWRAM 3'
-    - '3 HBl H -ROM/=EWRAM 3'
-    - '1 HBl W -ROM/=IWRAM 3'
-    - '2 HBl W -ROM/=IWRAM 3'
-    - '3 HBl W -ROM/=IWRAM 3'
-    - '1 HBl W -ROM/=EWRAM 3'
-    - '2 HBl W -ROM/=EWRAM 3'
-    - '3 HBl W -ROM/=EWRAM 3'
+    # All subtests pass (END: 1244/1244). Two de-facto HW rules, both
+    # matching mGBA dma.c:
+    # - GamePak-ROM sources always increment (`sourceOffset = width`),
+    #   ignoring the programmed source mode: fixed/inc/dec ROM sources
+    #   all deliver the 4th word to a fixed destination (W srcR[6],
+    #   H 0xDEAD). Channel 0 needs no extra work: its SAD is already
+    #   masked to 27 bits, so a ROM source becomes a BIOS-mirror
+    #   address and the stale per-channel latch is stored (0xBABEBABE).
+    # - The 16-bit GamePak +2 read shift fires only for primed bursts
+    #   (head issued outside ROM: nba burst-into-tears still delivers
+    #   ROM[2]/ROM[4] to OAM); bursts sourced entirely within ROM
+    #   stream aligned. Pinned end-to-end by synthetic_dma_rom_*
+    #   (W fixed, H fixed, W decrement: all deliver the 4th unit).
   - id: mgba_suite_sio_timing
     rom: suite.gba
     description: mgba suite - SIO timing tests

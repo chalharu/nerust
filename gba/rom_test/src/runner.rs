@@ -639,6 +639,99 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
+    /// GamePak-ROM DMA sources always increment (mGBA dma.c
+    /// `sourceOffset = width`), ignoring the programmed source mode:
+    /// fixed/inc/dec ROM sources all deliver the 4th word to a fixed
+    /// destination (HW-pinned by the mgba-suite DMA table: W srcR[6],
+    /// H 0xDEAD). 32-bit fixed-source pin.
+    #[test]
+    fn synthetic_dma_rom_forced_increment_w() {
+        let mut asm = MiniAsm::new();
+        // DMA1, 32-bit, fixed src 0x08000200 -> fixed dst EWRAM, count 4.
+        asm.ldr_lit(0, 0x0800_0200);
+        asm.ldr_lit(1, 0x0400_00BC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0000);
+        asm.ldr_lit(1, 0x0400_00C0);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 4);
+        asm.ldr_lit(1, 0x0400_00C4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x8540);
+        asm.ldr_lit(1, 0x0400_00C6);
+        asm.strh(0, 1);
+        asm.spin();
+        let data = [
+            0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22, 0x33, 0x33, 0x33, 0x33, 0x44, 0x44,
+            0x44, 0x44,
+        ];
+        let rom = asm.build(0x400, &[(0x200, &data)]);
+        let result = run_assembled_rom(
+            "dma_rom_inc_w",
+            rom,
+            mem_check("0x02000000", "0x44444444", 4),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// 16-bit GamePak-ROM DMA with a fixed source delivers the 4th
+    /// halfword (unshifted: bursts sourced entirely within ROM stream
+    /// aligned; only primed bursts shift).
+    #[test]
+    fn synthetic_dma_rom_forced_increment_h() {
+        let mut asm = MiniAsm::new();
+        // DMA1, 16-bit, fixed src 0x08000200 -> fixed dst EWRAM, count 4.
+        asm.ldr_lit(0, 0x0800_0200);
+        asm.ldr_lit(1, 0x0400_00BC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0000);
+        asm.ldr_lit(1, 0x0400_00C0);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 4);
+        asm.ldr_lit(1, 0x0400_00C4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x8140);
+        asm.ldr_lit(1, 0x0400_00C6);
+        asm.strh(0, 1);
+        asm.spin();
+        let data = [0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0x44, 0x44];
+        let rom = asm.build(0x400, &[(0x200, &data)]);
+        let result = run_assembled_rom("dma_rom_inc_h", rom, mem_check("0x02000000", "0x4444", 2));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// A decrement source mode is ignored for GamePak-ROM sources too:
+    /// the run still delivers the 4th word above the start address.
+    #[test]
+    fn synthetic_dma_rom_forced_increment_dec() {
+        let mut asm = MiniAsm::new();
+        // DMA1, 32-bit, decrement src 0x08000200 -> fixed dst, count 4.
+        asm.ldr_lit(0, 0x0800_0200);
+        asm.ldr_lit(1, 0x0400_00BC);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x0200_0000);
+        asm.ldr_lit(1, 0x0400_00C0);
+        asm.str_imm(0, 1, 0);
+        asm.mov_imm(0, 4);
+        asm.ldr_lit(1, 0x0400_00C4);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(0, 0x84C0);
+        asm.ldr_lit(1, 0x0400_00C6);
+        asm.strh(0, 1);
+        asm.spin();
+        let data = [
+            0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x22, 0x22, 0x33, 0x33, 0x33, 0x33, 0x44, 0x44,
+            0x44, 0x44,
+        ];
+        let rom = asm.build(0x400, &[(0x200, &data)]);
+        let result = run_assembled_rom(
+            "dma_rom_inc_dec",
+            rom,
+            mem_check("0x02000000", "0x44444444", 4),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     /// Single-unit 16-bit DMA from ROM lands on the aligned source
     /// (no pre-increment); only multi-unit bursts shift.
     #[test]
