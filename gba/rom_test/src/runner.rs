@@ -866,6 +866,54 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
+    /// Long-multiply NZCV writeback incl. the Booth-array C (mgba-suite
+    /// multiply-long): MSR-clear, MULLS, MRS, nibble-store per vector.
+    /// Covers both carry paths (Hi = full-tick Rs, Lo = early-out Rs).
+    #[test]
+    fn synthetic_mull_nzcv_writeback() {
+        // (rm, rs, smulls?, expected_nzcv_nibble)
+        let vectors: [(u32, u32, bool, u32); 7] = [
+            (0x00000000, 0x80000000, true, 0x6), // SMULL(0,$80): Z=1,C=1 (Hi)
+            (0xFFFFFFFF, 0xFFFFFFFF, false, 0xA), // UMULL(-1,-1): N=1,C=1 (Hi)
+            (0x7FFFFFFF, 0xFFFFFFFF, false, 0x2), // UMULL($7F,-1): C=1 (Hi)
+            (0x00000001, 0x00000001, true, 0x0), // SMULL(1,1) (Lo)
+            (0x00000000, 0x00000000, false, 0x4), // UMULL(0,0): Z=1 (Lo)
+            (0xFFFFFFFF, 0xFFFFFFFF, true, 0x0), // SMULL(-1,-1) (Lo)
+            (0x80000000, 0x80000000, false, 0x2), // UMULL($80,$80): C=1 (Hi)
+        ];
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(6, 0x0200_0000);
+        for (i, (rm, rs, signed, _)) in vectors.iter().enumerate() {
+            asm.ldr_lit(0, *rm);
+            asm.ldr_lit(1, *rs);
+            asm.emit(0xE328_F000); // MSR CPSR_f, #0 (clear NZCV)
+            let base = if *signed { 0xE0D0_0090 } else { 0xE090_0090 };
+            asm.emit(base | (3 << 16) | (2 << 12) | (1 << 8)); // xMULLS R2,R3,R0,R1
+            asm.emit(0xE10F_4000); // MRS R4, CPSR
+            asm.emit(0xE1A0_5E24); // MOV R5, R4, LSR #28
+            asm.str_imm(5, 6, (i as u32) * 4);
+        }
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let entries: Vec<(String, String, u8)> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, (_, _, _, nzcv))| {
+                (
+                    format!("0x{:08X}", 0x0200_0000u32 + (i as u32) * 4),
+                    format!("0x{nzcv:X}"),
+                    4,
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str, u8)> = entries
+            .iter()
+            .map(|(a, v, w)| (a.as_str(), v.as_str(), *w))
+            .collect();
+        let result = run_assembled_rom("mull_nzcv", rom, mem_checks(&refs));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     #[test]
     fn completion_tracker_requires_ordered_matches() {
         let mut tracker = CompletionTracker::default();
