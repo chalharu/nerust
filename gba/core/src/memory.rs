@@ -69,7 +69,7 @@ pub struct GbaMemoryBus {
     keyinput: u16,
     keycnt: u16,
     siocnt: u16,
-    siodata8: u8,
+    siodata8: u16,
     siodata32: u32,
     rcnt: u16,
     joycnt: u16,
@@ -1538,14 +1538,17 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => {
-                // GBATEK I/O Map: SAD/DAD/CNT_L are write-only (CPU reads
-                // see open bus, like other write-only ports); CNT_H is
-                // R/W so it reads back the latched control (enable bit
-                // included). (The channel latch itself is untouched;
-                // byte-store merging in write_io reads it back via
-                // dma.read directly.)
+                // GBATEK I/O Map: SAD/DAD are write-only (CPU reads see
+                // open bus); CNT_L instead reads back as 0 ("silent
+                // write-only", mGBA GBAIORead), and CNT_H is R/W so it
+                // reads back the latched control (enable bit included).
+                // (The channel latch itself is untouched; byte-store
+                // merging in write_io reads it back via dma.read
+                // directly.)
                 if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
                     self.dma.read(aligned).unwrap_or(0)
+                } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
+                    0
                 } else {
                     (self.open_bus_value & 0xFFFF) as u16
                 }
@@ -1573,7 +1576,7 @@ impl GbaMemoryBus {
             0x04000090..=0x0400009E => self.apu.wave_read(aligned),
             // FIFO_A/B (A0/A4) are write-only; reads return open bus.
             0x04000128 => self.siocnt,
-            0x0400012A => self.siodata8 as u16,
+            0x0400012A => self.siodata8,
             0x04000120 => (self.siodata32 & 0xFFFF) as u16,
             0x04000122 => ((self.siodata32 >> 16) & 0xFFFF) as u16,
             0x04000130 => self.keyinput,
@@ -1590,6 +1593,13 @@ impl GbaMemoryBus {
             0x04000204 => self.wait_cnt,
             0x04000208 => self.ime as u16,
             0x04000300 => (self.postflg as u16) | (self.open_bus_value & 0xFF00) as u16,
+            // Unused I/O reads return 0, NOT open bus (mGBA GBAIORead
+            // "Read from unused I/O register" list; the mgba-suite
+            // io-read table is the HW capture: 0x20A reads 0 too, as
+            // the empty high half of the 1-bit IME register).
+            0x04000066 | 0x0400006A | 0x0400006E | 0x04000076 | 0x0400007A | 0x0400007E
+            | 0x04000086 | 0x0400008A | 0x04000136 | 0x04000142 | 0x0400015A | 0x04000206
+            | 0x0400020A | 0x04000302 => 0,
             _ => {
                 // Unimplemented/write-only registers return the recently
                 // prefetched opcode, not the last written value (GBATEK
@@ -1821,7 +1831,10 @@ impl GbaMemoryBus {
             0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
             0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
             0x04000128 => self.siocnt = v16,
-            0x0400012A => self.siodata8 = (value & 0xFF) as u8,
+            // SIODATA8/SIOMLT_SEND latch the full halfword (mGBA
+            // GBASIOWriteRegister stores the whole value absent a
+            // transfer); byte reads split lanes below.
+            0x0400012A => self.siodata8 = (value & 0xFFFF) as u16,
             0x04000120 => {
                 if width == 4 {
                     self.siodata32 = value;

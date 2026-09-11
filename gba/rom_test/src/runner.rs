@@ -787,6 +787,85 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
+    /// Unused I/O reads return 0, not open bus (mGBA GBAIORead list):
+    /// a sound-block gap and the empty high half of IME.
+    #[test]
+    fn synthetic_unused_io_reads_zero() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(1, 0x0400_0066);
+        asm.ldrh(0, 1, 0);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(1, 0x0400_020A);
+        asm.ldrh(0, 1, 0);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.str_imm(0, 1, 4);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "unused_io_zero",
+            rom,
+            mem_checks(&[("0x02000000", "0x0", 4), ("0x02000004", "0x0", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// DMA count registers are silent write-only: storing 0xFFFF then
+    /// reading back yields 0 (mGBA GBAIORead; suite HW capture).
+    #[test]
+    fn synthetic_dma_cnt_lo_reads_zero() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0xFFFF);
+        asm.ldr_lit(1, 0x0400_00DC);
+        asm.strh(0, 1);
+        asm.ldrh(0, 1, 0);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.str_imm(0, 1, 0);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom("dma_cnt_lo_zero", rom, mem_check("0x02000000", "0x0", 4));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// ArcTan2(0,0) returns r0=0 with the full 0x170-cycle cost in r3
+    /// (mgba-suite bios-math HW capture pins the degenerate path too).
+    #[test]
+    fn synthetic_arctan2_zero_zero_cycles() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0x0000);
+        asm.ldr_lit(1, 0x0000);
+        asm.swi(0x0A);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.str_imm(0, 1, 0);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.emit(0xE581_3004); // STR r3, [r1, #4] (no mov-reg in MiniAsm)
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom(
+            "arctan2_00",
+            rom,
+            mem_checks(&[("0x02000000", "0x0", 4), ("0x02000004", "0x170", 4)]),
+        );
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// SIODATA8/SIOMLT_SEND latch the full halfword (mGBA stores the
+    /// whole value absent a transfer); halfword reads echo it back.
+    #[test]
+    fn synthetic_siodata8_halfword_latch() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(0, 0xCFFF);
+        asm.ldr_lit(1, 0x0400_012A);
+        asm.strh(0, 1);
+        asm.ldrh(0, 1, 0);
+        asm.ldr_lit(1, 0x0200_0000);
+        asm.str_imm(0, 1, 0);
+        asm.spin();
+        let rom = asm.build(0x400, &[]);
+        let result = run_assembled_rom("siodata8_latch", rom, mem_check("0x02000000", "0xCFFF", 4));
+        assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
     #[test]
     fn completion_tracker_requires_ordered_matches() {
         let mut tracker = CompletionTracker::default();
