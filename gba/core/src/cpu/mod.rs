@@ -130,6 +130,28 @@ impl GbaCpu {
 
     /// 1命令実行し、消費T-cycleを返す。
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> u32 {
+        // Micro-op engine (per-cycle remodel slice 1-2): covered classes
+        // execute through expansion with legacy-identical totals (proven
+        // by the micro_op differential tests); everything else, plus any
+        // step inside a user IRQ handler (trampoline return path), stays
+        // on the legacy path.
+        if self.irq_return_stack.is_empty() {
+            let is_thumb = self.regs.cpsr_t();
+            if let Some(c) = crate::cpu::micro_op::interpret_step(
+                &mut self.regs,
+                bus,
+                &mut self.pipeline,
+                is_thumb,
+            ) {
+                return c;
+            }
+        }
+        self.step_legacy(bus)
+    }
+
+    /// Legacy instruction-atomic step (kept as the fallback for uncovered
+    /// classes and as the differential oracle in `micro_op` tests).
+    pub(crate) fn step_legacy(&mut self, bus: &mut GbaMemoryBus) -> u32 {
         bus.take_access_wait_cycles();
         bus.set_current_pc(self.regs.pc());
         let is_thumb = self.regs.cpsr_t();
