@@ -307,6 +307,20 @@ expected_failures:
   #   frozen-immune (all timers exits read stopped counters) and only
   #   valid paired with its immediate-start; piecemeal transfer would
   #   break the exact reload pins. Nothing transfers; box stands.
+  #   HLE STRUCTURAL VALIDATION (mGBA hle-bios.s read; no code change):
+  #   real-BIOS-equivalent sequences costed by GBATEK tables line up
+  #   with the fits, upgrading them from fits to structured values:
+  #   IRQ prologue (STMFD6+M0V+ADD+LDR-pc ~= 7+1+1+5=14) + ARM core
+  #   entry (~4-9) ~= entry 23; IntrWait all-in (save+setup+discard+
+  #   halt-loop+check+restore+return ~= 40-50) ~= wake 48. The epilogue
+  #   (LDMFD6+SUBS ~= 8+5=13) does NOT line up with epi 7 -- epi stays
+  #   an explicit pause compromise (cascade wants 7, frozen wants ~5),
+  #   documented above. mGBA-shape start (immediate load, no idle)
+  #   goes the wrong direction for frozen (-2 ovf shift) and breaks
+  #   exact nba pins; not attempted. Entry N-term compensation hunt
+  #   is dead: timers paths are IWRAM-only, EWRAM/ROM adjustments
+  #   cannot reach them. The IWRAM-path +2 has no unblocked source;
+  #   box stands triple-confirmed (pins, audit, cross-emu, HLE).
 - mgba_suite_timers
 
 suites:
