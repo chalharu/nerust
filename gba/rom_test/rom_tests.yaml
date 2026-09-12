@@ -234,6 +234,32 @@ expected_failures:
   #   ~5 (epi=5 fixes values but loses ~85 sums to quantization); a
   #   single wall constant cannot satisfy both. Further progress needs
   #   sub-tick read/dispatch ordering or IWRAM micro-costs -- research.
+  #   FOLLOW-UP (all probes removed, reverted to 653): 0b tests are ALL
+  #   /1 (control 0xC0), so phaseless; their timelines are rigid under
+  #   this model class -- proven, not just grid-fitted: (a) a per-
+  #   instruction charge audit of dispatch->disable (89 wall: entry 23
+  #   + IntrMain/findIRQ/got_handler/testIrq) matches GBATEK exactly,
+  #   ruling out handler micro-costs; (b) pre-enable shifts transmit
+  #   1:1 through the IntrWait+sync anchor with zero effect on /1
+  #   frozen values (measured); (c) dispatch shifts < 8 are eaten by
+  #   poll-loop boundaries (tight P=8). A raise-vs-write staging split
+  #   (timer raises avail+0/line+1, writes unchanged) was implemented
+  #   and FALSIFIED: frozen values invariant (anchor compensation),
+  #   only race churn (+7 net: loose-1i flips vs 2i, a see-saw with no
+  #   uniform point). Storm structure (0x000C loose: initial + cleanup
+  #   dispatches, exit at first post-return ldr, r0 counts adds) shows
+  #   HW's tail fits one more loose iteration (+23 wall) with no
+  #   structural story that keeps tight frozen (-2) and EWRAM/ROM
+  #   irq-delay exact at once. One internal suspect stands out with no
+  #   HW evidence either way: `mov pc,lr` retires at 10 vs bx/bne at 3
+  #   (refill dynamics concentrate at full-pc writes), same dimension
+  #   as the epilogue charge, so no new info. The three pin families
+  #   overconstrain D+E (timers wants 25, irq-delay EWRAM/ROM wants 27)
+  #   with audited instructions between them: the uniform pipeline/
+  #   entry model is exhausted mechanistically. Next needs either
+  #   sub-tick same-boundary ordering or a fetch-overlap remodel, both
+  #   requiring HW evidence. Do NOT refit epi/wake or add staging
+  #   variants without it.
 - mgba_suite_timers
 
 suites:
