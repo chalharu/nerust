@@ -1,5 +1,6 @@
 pub mod arm;
 pub mod arm_opcodes;
+pub mod micro_op;
 pub mod thumb;
 pub mod thumb_opcodes;
 
