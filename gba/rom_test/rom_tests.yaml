@@ -194,9 +194,46 @@ expected_failures:
 #   lottery (decision slips a full 5-cycle LDR past the tie, walking
 #   residues mod p), the irq-delay check value moved, and cancel-ie
 #   first-diff-pixel moved (count still 246). Uniform knobs are now
-#   exhaustively closed (entry, line, staging, start-delay,
-#   stop-deferral, P-floor): what remains is phase-dependent decision
-#   quantization or a cycle-exact CPU, both research-grade.
+  #   exhaustively closed (entry, line, staging, start-delay,
+  #   stop-deferral, P-floor): what remains is phase-dependent decision
+  #   quantization or a cycle-exact CPU, both research-grade.
+  #   ROUND-PAUSE + ENABLE-PHASE (traced, probes removed; 401 -> 653/936):
+  #   per-cell cycle traces (testId 13/14, tight 1d1i) decompose the
+  #   cascade-test (6b/8b/10b) error into two wall-clock terms: (a) every
+  #   dispatch round pauses polling ~8 cycles short of HW (+1 poll per
+  #   extra IRQ, tight and loose agree), and (b) the measured-enable
+  #   lands ~40 wall cycles off HW's first-tick phase, uniform across
+  #   /64, /256 and /1024 (1d1i all +6 polls = +48 with the round term;
+  #   the 4d-row sign flip is a tap-boundary crossing HW makes and we
+  #   don't). A boot-phase seed does nothing (each phase re-anchors to
+  #   the /1024 sync-timer tap grid via IntrWait, killing history), so
+  #   both terms are local to the wake/handler path. Two HLE-omission
+  #   charges fix them -- a NEW model dimension (skipped real-BIOS code),
+  #   not a rebalance of existing knobs:
+  #   - HLE_IRQ_EPILOGUE_CYCLES = 7 (cpu/mod.rs trampoline): the HLE IRQ
+  #     return skips the real-BIOS register-restore + exception-return
+  #     sequence; charged where the user handler returns (both ARM and
+  #     Thumb trampolines; the Thumb side previously lacked the return
+  #     check entirely). Grid-fitted (5/7/9/11 x wake tried; 7 peaks).
+  #   - wake_latency 8 -> 48 (memory.rs): recalibration of the fitted
+  #     IntrWait exit-path cost; it sets each cell's enable phase against
+  #     the tap grid. Grid optimum with the epilogue (ridge epi+wake ~= 55).
+  #   Result 653/936 (+252) with ZERO pin cost: nba timer
+  #   reload/start-stop/tick-before-reload pass, cancel-ime/if pass,
+  #   cancel-ie and irq-delay bit-identical to baseline, timer-irq fail
+  #   sets identical (54/90), Timing 1944/2020 and misc_edge 6/12
+  #   unchanged (full manifest re-verified).
+  #   REMAINING 283: (i) 0b small-period sums (0x0005 2v3 et al -- the
+  #   dispatch-vs-read same-tick tie; flipping intra-tick order is
+  #   global, affects PPU/DMA, not attempted); (ii) 0b values: large-
+  #   period tight values sit uniformly +2 (frozen-at-disable measures
+  #   dispatch->disable directly; ours runs 2 long in IWRAM -- same
+  #   family as the irq-delay IWRAM +3), small periods scatter mod-p
+  #   (true tie-race); (iii) ~20 scattered cascade sums. Note epi=7 is a
+  #   compromise: cascade sums want the longer pause, frozen values want
+  #   ~5 (epi=5 fixes values but loses ~85 sums to quantization); a
+  #   single wall constant cannot satisfy both. Further progress needs
+  #   sub-tick read/dispatch ordering or IWRAM micro-costs -- research.
 - mgba_suite_timers
 
 suites:
