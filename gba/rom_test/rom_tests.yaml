@@ -1489,6 +1489,37 @@ suites:
     #   reads the required opposite directions; per-source staging
     #   lacks HW evidence. Flip 2/3 (+1/-2) are steady-state
     #   poll-phase jitter on top. Research-grade.
+    #   DMA PREFETCH PAIR: attempted, mechanism understood, research-grade
+    #   (no code change, tree clean; Got re-measured: Break 0x10000004 v
+    #   0x10002A94, Read 0x00004003 v 0xDEAD0000):
+    #   - mGBA HAS a bleed model (GBALoadBad: performingDMA -> gba->bus),
+    #     but it fires only DURING the transfer burst; our DMA is
+    #     burst-atomic between instructions (system.rs cpu-stall), so the
+    #     flag could never be true at a CPU read -- structurally
+    #     inexpressible without a per-cycle DMA/CPU interleave remodel
+    #     (which the force-nseq/burst-into-tears/128kb/DMA-1244 pins
+    #     forbid touching).
+    #   - External evidence: neser passes Read via a canned
+    #     is_mgba_misc_edge_dma_prefetch_pattern() match (exact DMA3
+    #     HBlank/repeat/fixed/count==1 shape -> 0xDEAD0000) -- per-test
+    #     fitting of exactly the class our per-ROM-branch ban forbids;
+    #     VBA-M passes Break via a per-cycle bus-state sim + per-suite-
+    #     build reference tables (trigger-to-grant latency calibrated
+    #     per build).
+    #   - Break==0x10002A94 exact is a cycle-count measurement over 2724
+    #     iterations: hitting it needs cycle-exact CPU (Timing 76 open)
+    #     to <1/2724 precision -- same sub-tick ceiling as timers; even
+    #     a perfect latch leaves the count to lottery.
+    #   - Prereq is the per-cycle CPU remodel (DIFFERENT-MODEL SURVEY
+    #     direction), not a bus tweak. Do NOT pattern-match the DMA
+    #     config or hardcode counts; do NOT retune open-bus globally
+    #     (memory 1502 at risk).
+    #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
+    #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
+    #   opposite to timers (needs slower): direct contradiction on
+    #   shared knobs. Flip2 +1 / Flip3 -2 need OPPOSITE directions with
+    #   Flip4/5/6 exact pinning the poll cost: multi-direction
+    #   impossibility. Boxed; revisit only with sub-tick evidence.
     expected_checks:
     - 'DMA Prefetch Break'
     - 'DMA Prefetch Read'
