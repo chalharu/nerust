@@ -276,6 +276,15 @@ expected_failures:
   #   {P=8, E=23, D=4, GBATEK-handler}: timers wants D+E=25 but
   #   irq-delay EWRAM/ROM wants 27. No wall, phase, or staging knob
   #   can move them; do not retry without new HW facts.
+  #   MULTI-DIRECTION IMPOSSIBILITY (empirical, probes removed):
+  #   wake 32/40/48/56/64 moves sums (peak 48) but tight1v (129) and
+  #   loose16 fails (90, identical sets, zero churn) are perfectly
+  #   rigid -- values are walls, sums are phase/pause/ties. Values
+  #   want incompatible directions per (loop x rounds): tight 1i/2i
+  #   -2, tight 4i 0, loose 1i +1, loose 2i/4i -1 (0x8000: tight
+  #   805E->805C, loose 805D->805E/805C). No uniform constant can go
+  #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
+  #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
   #   CROSS-EMULATOR TRIANGULATION (GBAHawk, mGBA, GBATEK原文; no code
   #   change, tree clean): GBAHawk timer (tim_upd) uses ST_Time=3 with
   #   Go-immediate-tick, net-identical to ours for /1 (load W+2 vs W+1
@@ -1461,6 +1470,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
   - id: mgba_suite_timer_irq
     rom: suite.gba
     description: mgba suite - Timer IRQ tests
