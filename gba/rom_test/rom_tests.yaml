@@ -333,6 +333,20 @@ expected_failures:
   #   preemption phase (timers would move too). EWRAM-IWRAM deltas
   #   (HW 20 vs ours 17) isolate a 3 in region waits or refill N-term
   #   that no exact pin can absorb. Same impossibility shape as +2.
+  #   NON-HLE EXHAUSTION (no code change): per redirect, every non-HLE
+  #   component re-audited. Fetch/wait dynamics are inert for IWRAM/IO
+  #   (no N/S splits; prefetch off; ROM-gated breaks), so the IWRAM
+  #   path is flat bases (GBATEK-exact) + entry + pipeline only. Write
+  #   landing (model-start vs HW data-phase) cancels for frozen and
+  #   transmits 1:1 for sums; fixing it would ADD ticks (wrong way).
+  #   Deferred stop is load-bearing exact (start-stop 2ND). Raise-path
+  #   D is unpinned but any <8 shift is eaten by poll boundaries
+  #   (proven twice) and >=8 is absurd. Composition bugs ruled out
+  #   (take() clears, max(1) inert with prefetch off, bulk inactive,
+  #   APU/DMA/PPU inert, mirrors uninvolved, HLE loop unimplementable
+  #   without the binary so burn stands). suite.gba timers table
+  #   verified byte-identical to repo src (no version skew). Left:
+  #   D+E split (25 vs 27) with every sub-part pinned or audited.
 - mgba_suite_timers
 
 suites:
