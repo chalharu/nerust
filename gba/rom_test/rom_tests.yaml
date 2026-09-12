@@ -267,6 +267,15 @@ expected_failures:
   #   unconditional +1); normal path untouched so overflow-vs-landing
   #   races keep their order. The code comment already claimed uniform
   #   one-tick landing -- the code now matches it.
+  #   RIGIDITY PROOF (empirical, probes removed): wake 48->56 (+8
+  #   pre-enable shift) flips 141 cascade cells (phase response, as
+  #   expected) but ZERO 0b cells -- every /1 sum and value bit-
+  #   identical. Pre-enable shifts transmit 1:1 through the anchor for
+  #   /1 (no phase), poll boundaries eat sub-8 dispatch shifts, and
+  #   D/E/H are pinned/audited. /1-tight residuals are unfixable in
+  #   {P=8, E=23, D=4, GBATEK-handler}: timers wants D+E=25 but
+  #   irq-delay EWRAM/ROM wants 27. No wall, phase, or staging knob
+  #   can move them; do not retry without new HW facts.
 - mgba_suite_timers
 
 suites:
