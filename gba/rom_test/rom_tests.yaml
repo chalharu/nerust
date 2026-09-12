@@ -333,6 +333,15 @@ expected_failures:
   #   preemption phase (timers would move too). EWRAM-IWRAM deltas
   #   (HW 20 vs ours 17) isolate a 3 in region waits or refill N-term
   #   that no exact pin can absorb. Same impossibility shape as +2.
+  #   GBATEK-原文説の反証 (THUMB含む全命令; no code change):
+  #   THUMB LDR 1S+1N+1I / STR 2N / PUSH (n-1)S+2N / POP nS+1N+1I /
+  #   B-taken 2S+1N / B-nt 1S / BX 2S+1N / BL 3S+1N -- ARM表と同一で
+  #   全chargeと一致。testIrq(Thumb)とirq_handler(ARM)の差は純粋な
+  #   仕事量差 (19 vs 25) で単価差なし。IntrMain-onlyな特殊opなし。
+  #   P=8がIO32-LDR=3をlocking (+12%ずれ prohibitive)。delay loop
+  #   はlever不足 (tap-crossingに要する~50に届かない)。GBATEK誤記で
+  #   +2を出すには汎用op誤記が必要だがpass中の他全てを壊す。
+  #   選択肢1は反証済み.
   #   NON-HLE EXHAUSTION (no code change): per redirect, every non-HLE
   #   component re-audited. Fetch/wait dynamics are inert for IWRAM/IO
   #   (no N/S splits; prefetch off; ROM-gated breaks), so the IWRAM
