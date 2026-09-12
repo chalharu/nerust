@@ -993,10 +993,14 @@ impl GbaMemoryBus {
                     // `wake_latency`): without it the thread outruns the
                     // staging IRQ line and the wake dispatch lands inside
                     // the caller's post-wait setup (mgba-suite timers).
-                    // Fitted: must cover the apply-to-line remainder (~3);
+                    // Recalibrated 8 -> 48 against the timers prescaled
+                    // sums: the per-phase sync anchor re-snaps the timeline
+                    // to the /1024 tap grid, so this latency sets each
+                    // cell's enable phase; 48 centers the first-tick delay
+                    // against HW (with the IRQ-epilogue charge). Fitted:
                     // recalibrate against nba irq-delay/cancel-ime and the
                     // suite timers/timer-irq totals if this changes.
-                    self.wake_latency = 8;
+                    self.wake_latency = 48;
                 }
             }
             self.halted = false;
