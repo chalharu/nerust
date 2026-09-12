@@ -1233,6 +1233,19 @@ suites:
     #   flag edges (halt 0x4D0, rise 0x87, fall 0x3EC, rise 0xE5).
     #   Later flips (0x3EB/0xE3/0x3F3) pass; the first edges need
     #   exact flag/halt micro-timing (PPU Phase 8 follow-up).
+    #   Traced (probes removed): both Halt wakes land exactly one line
+    #   apart (1232), but the calibration read runs BEFORE its no-op
+    #   master dispatch (+1) while the value read runs AFTER (+73),
+    #   so Hblank measures 1232+72=1304 and Flip 1 runs +33. HW reads
+    #   are symmetric (both post-dispatch, ~+105), forcing the first
+    #   decision ahead of the calibration ldrh -- i.e. a ~2-tick faster
+    #   PPU line -- while the shared line is pinned the opposite way
+    #   by the timers ties (they need it slower) and irq-delay totals.
+    #   Same sub-tick ceiling as the timers residuals: no uniform knob
+    #   (line, entry, flag dots 1006/1232, halt charge) moves the two
+    #   reads the required opposite directions; per-source staging
+    #   lacks HW evidence. Flip 2/3 (+1/-2) are steady-state
+    #   poll-phase jitter on top. Research-grade.
     expected_checks:
     - 'DMA Prefetch Break'
     - 'DMA Prefetch Read'
