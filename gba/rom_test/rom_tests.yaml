@@ -321,6 +321,18 @@ expected_failures:
   #   is dead: timers paths are IWRAM-only, EWRAM/ROM adjustments
   #   cannot reach them. The IWRAM-path +2 has no unblocked source;
   #   box stands triple-confirmed (pins, audit, cross-emu, HLE).
+  #   TRI-REGION DISASSEMBLY (irq-delay.gba + live IWRAM/EWRAM dump;
+  #   no code change): IWRAM/EWRAM/ROM test fns structurally identical
+  #   (nop sled + mov/mov/str/ldr/strh/strb/strh(IME)/ldrb/cmp/beq/
+  #   mov(exp)/ldrh/ldr/bl/pop/bx; flag always IWRAM), libgba master+
+  #   handler identical across regions with identical charges. The
+  #   IWRAM-only +3 lives in none of: test-fn code, master/handler
+  #   instructions (GBATEK-exact), IME/IF/timer writes (shared),
+  #   fetches (IWRAM N=S=1, no cold effects), entry N-term (EWRAM/ROM
+  #   exactness forbids moves), IME landing (cancels vs the restart),
+  #   preemption phase (timers would move too). EWRAM-IWRAM deltas
+  #   (HW 20 vs ours 17) isolate a 3 in region waits or refill N-term
+  #   that no exact pin can absorb. Same impossibility shape as +2.
 - mgba_suite_timers
 
 suites:
