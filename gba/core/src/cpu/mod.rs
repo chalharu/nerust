@@ -12,6 +12,17 @@ use crate::memory::GbaMemoryBus;
 
 const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
+/// Real-BIOS IRQ epilogue cost (fitted): the HLE return trampoline skips
+/// the register-restore + exception-return sequence the real BIOS runs
+/// after the user handler on HW. Fitted at 7 against the mgba-suite
+/// timers dispatch rounds (cascade sums need the longer pause while the
+/// frozen 1d1i exit values prefer ~5; 7 is the least-bad compromise --
+/// see the timers note in rom_tests.yaml). Pin-verified: timer-irq fail
+/// sets identical, cancel-ime/if + timer reload/start-stop/tick-before-
+/// reload pass, Timing and misc_edge unchanged. Recalibrate against
+/// those if this changes.
+const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
+
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
     regs: CpuRegisters,
@@ -144,6 +155,9 @@ impl GbaCpu {
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
         let pc_written = self.regs.take_pc_written();
         if pc_written {
+            // True when this pc-write returns from a user IRQ handler
+            // through the HLE trampoline (see HLE_IRQ_EPILOGUE_CYCLES).
+            let mut irq_epilogue = 0;
             if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
                 && let Some((return_address, saved)) = self.irq_return_stack.pop()
             {
@@ -155,11 +169,13 @@ impl GbaCpu {
                 // (0xE55EC002) is latched for protected reads (jsmolka t004).
                 bus.set_bios_prefetch(0xE55EC002);
                 self.regs.set_pc(return_address);
+                irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
             }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             bus.invalidate_prefetch_for_dma(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+            return cycles + irq_epilogue;
         } else {
             self.regs.set_pc(pc.wrapping_add(4));
         }
@@ -175,10 +191,26 @@ impl GbaCpu {
         self.regs.clear_pc_written();
         let cycles = thumb::decode_thumb(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
+            // Thumb user handlers return through the same trampoline (the
+            // ARM side has handled it all along; the Thumb side previously
+            // lacked the check). Same epilogue charge as ARM.
+            let mut irq_epilogue = 0;
+            if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
+                && let Some((return_address, saved)) = self.irq_return_stack.pop()
+            {
+                self.regs.set_cpsr(self.regs.spsr());
+                for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
+                    self.regs.set_r(register, value);
+                }
+                bus.set_bios_prefetch(0xE55EC002);
+                self.regs.set_pc(return_address);
+                irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
+            }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             bus.invalidate_prefetch_for_dma(self.regs.pc());
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
+            return cycles + irq_epilogue;
         } else {
             self.regs.set_pc(pc.wrapping_add(2));
         }
