@@ -276,6 +276,25 @@ expected_failures:
   #   {P=8, E=23, D=4, GBATEK-handler}: timers wants D+E=25 but
   #   irq-delay EWRAM/ROM wants 27. No wall, phase, or staging knob
   #   can move them; do not retry without new HW facts.
+  #   CROSS-EMULATOR TRIANGULATION (GBAHawk, mGBA, GBATEK原文; no code
+  #   change, tree clean): GBAHawk timer (tim_upd) uses ST_Time=3 with
+  #   Go-immediate-tick, net-identical to ours for /1 (load W+2 vs W+1
+  #   but first tick W+3 both); its tap==(SubCnt&mask)==0 is a 1-phase
+  #   convention variant absorbed by the wake fit; deferred disable +
+  #   old-reload + count-up cascade all agree. mGBA uses immediate
+  #   load + tap-align (no idle: ovf 2 EARLIER, wrong direction for
+  #   frozen) and lazy CNT reads sampled at now-2 ("1N+1I preemptive"):
+  #   now-2 is frozen-immune (every timers exit reads a stopped
+  #   counter), running-reads only -- piecemeal transfer would break
+  #   the exact reload pins, since (start, sampling) only work as a
+  #   pair and HW has exactly one. GBATEK原文 externally validates
+  #   every audited charge (MRS/MSR 1S, LDR 1S+1N+1I, STR 2N, LDM
+  #   nS+1N+1I, STM (n-1)S+2N, B/BX 2S+1N), breaking the audit's
+  #   circularity in our favor. Three implementations triangulate the
+  #   same box from different sides; none offers a transferable timers
+  #   fix. The only structurally live suspect remains fetch-refill
+  #   dynamics (mov pc,lr retires at 10 vs bx/bne at 3), same dimension
+  #   as the epilogue -- no new info without HW fetch-timing evidence.
 - mgba_suite_timers
 
 suites:
