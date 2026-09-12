@@ -285,6 +285,20 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   DIFFERENT-MODEL SURVEY (no code change -- all dead except one
+  #   direction): event-driven timer core (same spec, no observable
+  #   change); context latencies (nested==outer same code; halted
+  #   proven identical sets); sub-instruction phases (reads break
+  #   sampling pins, writes cancel, decoupled lag is lottery); IO32
+  #   half-split latch (counter-newer goes wrong way for frozen,
+  #   direction-certain, not attempted). Sole viable different model
+  #   is a PER-CYCLE ARM PIPELINE CPU (ARM ARM-faithful overlap):
+  #   same GBATEK totals (P/E/H locked) but different sub-instruction
+  #   distribution, moving only races/ties (frozen untouched -- walls
+  #   same). Payoff partial by construction (~100 tie cells; frozen
+  #   needs walls). Cost: core rewrite + full revalidation
+  #   (multi-turn). Prereq: ARM7TDMI TRM facts (public). Direction
+  #   recorded, not attempted this turn.
   #   SINGLE-CELL IMPOSSIBILITY (0x8000 1d1i: sums EXACT 4098 yet
   #   values +2; no code change): total wall exact forces (middle
   #   +2) + (ends -2) with start pinned exact by reload, hence tail
