@@ -285,6 +285,20 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   TWO-CAUSE DECOMPOSITION (additive fit + order analysis + bug
+  #   hunt a-h over ovf-IF/cascade/sampling/deferral/load/stale/split/
+  #   phase; no code change): failing sums are uniform -1 poll (-16
+  #   loose: single systematic shortfall + quantization), large tight
+  #   values uniform +2 -- clean single-cause signatures in opposite
+  #   directions (longer vs shorter). Same-tick order split (dispatch
+  #   post-step, reads pre-step) is HW-plausible yet dead: reads are
+  #   sampling-pinned, dispatch is quantization-eaten for tight,
+  #   writes cancel (enable+disable shift together). Bug hunt: all
+  #   consensus with NBA/mGBA/GBAHawk or pin-validated. So "two
+  #   causes" resolves to (phase-cause FIXED at 653) + (wall-cause
+  #   BLOCKED) + (order-cause DEAD) -- not two fixables. The wall
+  #   cause is single (disable +2); race redistribution is its
+  #   nonlinear shadow, not an independent lever.
   #   CROSS-EMULATOR TRIANGULATION (GBAHawk, mGBA, GBATEK原文; no code
   #   change, tree clean): GBAHawk timer (tim_upd) uses ST_Time=3 with
   #   Go-immediate-tick, net-identical to ours for /1 (load W+2 vs W+1
@@ -1470,7 +1484,6 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
   - id: mgba_suite_timer_irq
     rom: suite.gba
     description: mgba suite - Timer IRQ tests
