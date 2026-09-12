@@ -285,6 +285,18 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   THREE-WAY D DISAGREEMENT (timer-irq traced, TEMP reverted):
+  #   FFFF v0 shows enable->overwrite->DOUBLE-ovf (normal-path race,
+  #   OLD reload twice -- the nba 32_7 pin race) then testIrq stop;
+  #   v0-v3 read live (0,1,2,3), v4+ frozen 0x51. For v2 to read live,
+  #   HW dispatch must come AFTER the sample (D >= +15), but
+  #   irq-delay E/R exactness needs D=+0 and timers frozen needs
+  #   D=-2. No uniform D satisfies (+15, 0, -2). Since E/R exactness
+  #   is the simplest clean test and timers frozen is single-ovf
+  #   clean, timer-irq v2+ expectations (intricate storm-adjacent
+  #   live-samples) are least trustworthy -- likely stale or
+  #   mGBA-generated (slow-D passes there by construction).
+  #   DEPRIORITIZE timer-irq; do not chase v2+.
   #   DIFFERENT-MODEL SURVEY (no code change -- all dead except one
   #   direction): event-driven timer core (same spec, no observable
   #   change); context latencies (nested==outer same code; halted
