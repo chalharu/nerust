@@ -356,6 +356,17 @@ expected_failures:
   #   without the binary so burn stands). suite.gba timers table
   #   verified byte-identical to repo src (no version skew). Left:
   #   D+E split (25 vs 27) with every sub-part pinned or audited.
+  #   HIGH-GRID NEGATIVE (epi 11-19 x wake 48-96, all 400-510, TEMP
+  #   reverted): the per-round +1 growth (uniform across /1//64//256/
+  #   /1024, so pause not period) is NOT fixable by longer pause --
+  #   epi+8 breaks base cells by lottery faster than it fixes growth.
+  #   Decomposition shows why: pause/8 boundary quantization means a
+  #   +/-4 wall (not +8) is needed, but every +/-4 source is global
+  #   (entry/master/testIrq/IntrRet/epi/return all shared or audited).
+  #   Compensation theories dead too (DMA direction EWARM-fast vs
+  #   needed-slow; P locked; N-terms jointly pinned). The +1/round is
+  #   quantization-locked: structurally identical pauses differing by
+  #   boundary luck. No global direction left; box stands.
 - mgba_suite_timers
 
 suites:
