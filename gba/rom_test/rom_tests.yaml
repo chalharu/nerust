@@ -285,6 +285,14 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   FASTRAISE REFUTATION (raise avail+0/line+1 for timer raises;
+  #   TEMP reverted): +7 net is loose-only boundary lottery (tight
+  #   sums/values, frozen, and cancel-ie rows 2/4 with identical
+  #   246px all immune). Raise-path changes cannot move tight
+  #   dispatch (8-cycle boundaries eat <8); halted-gate variant is
+  #   behaviorally identical (wake burn swallows sync). Loose tails
+  #   (G1/G2 preemption points) are anchor-locked rigid. Raise/write
+  #   split dead for the third time; do not retry.
   #   TWO-CAUSE REFUTATION (entry-core + EWRAM-fetch compensation;
   #   no code change): GBATEK原文 memory table gives EWRAM 3/3/6 FLAT
   #   (no S discount) and IWRAM 1/1/1 -- our waits match exactly, so
