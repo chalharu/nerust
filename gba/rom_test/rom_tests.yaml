@@ -586,6 +586,11 @@ suites:
       # TIME-ROM 245 (HW 249: -4, narrowed from -10 by GBATEK-correct ROM
       # fetch costs). Listed in expected_failures until the HLE phases are
       # HW-anchored.
+      # ADDENDUM (Halt-wake burn, from the SIO work): plain-Halt wakes
+      # burn only with IME=1 (dispatch may follow); with IME=0 (as here:
+      # cpu_irq_disable + REG_IME=0, so no dispatch is possible) the wake
+      # stays free, preserving CPUSET-DMA 4154 exact. Verified 5/6 both
+      # before and after.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -1363,82 +1368,31 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 25/90 pass. The 65 below need SIO/JOY transfer + mode-state
-    # emulation (no link layer exists yet): multi/normal/uart/gpio/
-    # joybus data regs read 0 on HW once addressed (we return the
-    # write latch or open bus: SIODATA32 got 0xFFFF, SIOMULTI2/3 got
-    # 0xDEAD), SIOCNT/RCNT read back per-mode masks (e.g. M: SIOCNT
-    # 0xEFFF->0x6F8F, G: RCNT 0xBFFF->0x81FF, J: RCNT 0xFFFF->0xC1FC),
-    # JOYCNT reads 0x0040 and JOY_RECV/TRANS read 0. SIOMLT_SEND and
-    # normal-mode SIODATA8 were fixed alongside (full-halfword latch).
-    # NOTE: the shipped ROM is newer than the last suite snapshot:
-    # it runs 6 mode groups (M/N8/N32/U/G/J, 90 subtests), not 4.
-    expected_checks:
-    - 'M: SIOMULTI0'
-    - 'M: SIOMULTI1'
-    - 'M: SIOMULTI2'
-    - 'M: SIOMULTI3'
-    - 'M: SIOCNT'
-    - 'M: RCNT'
-    - 'M: JOYCNT'
-    - 'M: JOY_RECV_L'
-    - 'M: JOY_RECV_H'
-    - 'M: JOY_TRANS_L'
-    - 'M: JOY_TRANS_H'
-    - 'N8: SIODATA32_L'
-    - 'N8: SIODATA32_H'
-    - 'N8: SIOMULTI2'
-    - 'N8: SIOMULTI3'
-    - 'N8: SIOCNT'
-    - 'N8: RCNT'
-    - 'N8: JOYCNT'
-    - 'N8: JOY_RECV_L'
-    - 'N8: JOY_RECV_H'
-    - 'N8: JOY_TRANS_L'
-    - 'N8: JOY_TRANS_H'
-    - 'N32: SIOMULTI2'
-    - 'N32: SIOMULTI3'
-    - 'N32: SIOCNT'
-    - 'N32: RCNT'
-    - 'N32: JOYCNT'
-    - 'N32: JOY_RECV_L'
-    - 'N32: JOY_RECV_H'
-    - 'N32: JOY_TRANS_L'
-    - 'N32: JOY_TRANS_H'
-    - 'U: SIODATA32_L'
-    - 'U: SIODATA32_H'
-    - 'U: SIOMULTI2'
-    - 'U: SIOMULTI3'
-    - 'U: SIOCNT'
-    - 'U: SIODATA8'
-    - 'U: RCNT'
-    - 'U: JOYCNT'
-    - 'U: JOY_RECV_L'
-    - 'U: JOY_RECV_H'
-    - 'U: JOY_TRANS_L'
-    - 'U: JOY_TRANS_H'
-    - 'G: SIODATA32_L'
-    - 'G: SIODATA32_H'
-    - 'G: SIOMULTI2'
-    - 'G: SIOMULTI3'
-    - 'G: SIOCNT'
-    - 'G: RCNT'
-    - 'G: JOYCNT'
-    - 'G: JOY_RECV_L'
-    - 'G: JOY_RECV_H'
-    - 'G: JOY_TRANS_L'
-    - 'G: JOY_TRANS_H'
-    - 'J: SIODATA32_L'
-    - 'J: SIODATA32_H'
-    - 'J: SIOMULTI2'
-    - 'J: SIOMULTI3'
-    - 'J: SIOCNT'
-    - 'J: RCNT'
-    - 'J: JOYCNT'
-    - 'J: JOY_RECV_L'
-    - 'J: JOY_RECV_H'
-    - 'J: JOY_TRANS_L'
-    - 'J: JOY_TRANS_H'
+    # 90/90 subtests pass (GRADUATED). SIO register file, all derived
+    # from the suite HW table (sio-read.c) + GBATEK R/W maps, with mGBA
+    # (sio.c/io.c) as mechanism reference where it matches HW:
+    # - SIOCNT write masks per sub-mode (mGBA `& 0x7FFF` for bit 15):
+    #   multi `& 0xFF83` + slave (unconnected unit is a Child) + ID 0 +
+    #   Ready + old RO-bit retain; normal `& ~0x8070` + SI forced high
+    #   (no partner); UART `& ~0x8050` (Send-Full/Error read 0 idle,
+    #   Receive-Empty reads 1); GPIO/Joybus keep the SIOCNT sub-format.
+    # - RCNT: mode bits + {4-8} latch at write; data pins {0-3} are live
+    #   at read (multi/UART float high 0xF, normal SC+SI high 0x5);
+    #   GPIO latches {0-8}, Joybus latches {2-8} (SC/SD read 0).
+    # - JOYCNT uses the mGBA formula (0xFFFF -> 0x0040 from reset).
+    # - Data regs: 0x120/0x122 latch only in Normal-32 SIO mode (send);
+    #   0x12A latches except in UART (empty receive FIFO reads 0);
+    #   SIOMULTI2/3, JOY_RECV/TRANS and JOYSTAT read 0 with no transfer.
+    # - Unconnected multi is a SLAVE: START never schedules (the suite's
+    #   Multi timing tests rely on this to time out into self-SKIP), so
+    #   no transfer completion can clobber later subtests.
+    # - Where mGBA diverges from the HW table, the table rules (UART
+    #   SIODATA8, JOY TRANS/STAT, G/J SIOCNT, RCNT data bits): mGBA does
+    #   not fully pass its own newer suite ROM.
+    # - Normal START edge schedules the transfer engine (see sio-timing):
+    #   8/32 bits at 256KHz (64c/bit) or 2MHz (8c/bit), completion
+    #   clears START, delivers pulled-high receive data and raises the
+    #   serial IRQ when enabled. Immediate re-reads still see busy.
   - id: mgba_suite_misc_edge
     rom: suite.gba
     description: mgba suite - Misc. edge case tests
@@ -1489,6 +1443,15 @@ suites:
     #   reads the required opposite directions; per-source staging
     #   lacks HW evidence. Flip 2/3 (+1/-2) are steady-state
     #   poll-phase jitter on top. Research-grade.
+    #   H-BLANK UPDATE (Halt dispatch-before-resume, from the SIO work;
+    #   Got re-measured, no code change here): Hblank +79 -> +3 (0x4D3 v
+    #   0x4D0), Flip 1 +25 -> -7 (0x80 v 0x87); Flip 2/3 unchanged
+    #   (+1/-2). With the wake dispatch running, both Halt wakes cost
+    #   the same, so the old calibration/value asymmetry is gone and the
+    #   measures are near-symmetric. Residuals are still opposite-
+    #   direction pairs (+3/-7/+1/-2) with no uniform knob (the line is
+    #   pinned the other way by the timers ties): still research-grade,
+    #   revisit only with sub-tick evidence.
     #   DMA PREFETCH PAIR: attempted, mechanism understood, research-grade
     #   (no code change, tree clean; Got re-measured: Break 0x10000004 v
     #   0x10002A94, Read 0x00004003 v 0xDEAD0000):
@@ -1691,11 +1654,19 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 4 subtests fail: Normal-mode transfer durations with no link
-    # partner (no SIO emulation exists yet; the SWI-timeout path
-    # times differently). Multi/* self-SKIPs (ignored by verify).
-    expected_checks:
-    - 'Normal8/256k'
-    - 'Normal8/2M'
-    - 'Normal32/256k'
-    - 'Normal32/2M'
+    # All 8 subtests pass (GRADUATED): the 4 Normal transfers measure
+    # exactly transfer-cycles + 121 (mGBA `GBASIOTransferCycles`: 512 /
+    # 64 / 2048 / 256; the +121 is the fixed setup + Halt-wake exit +
+    # entry + guest IntrMain path), and the 4 Multi tests time out into
+    # self-SKIP (unconnected multi is a slave and never starts, so no
+    # SIO IRQ ever arrives; the TM1-count-up timeout fires instead).
+    # Enabling work, all in the SIO register-file change:
+    # - Normal START edge schedules the transfer engine; completion
+    #   clears START, delivers 0xFF/0xFFFFFFFF receive data and raises
+    #   the serial IRQ when enabled (the waiter uses plain Halt).
+    # - Plain-Halt wakes now stall past line-rise so the wake dispatch
+    #   (entry + guest IntrMain) runs before the woken thread resumes
+    #   (previously the resume won the race and only transfer + 2 was
+    #   measured). IntrWait keeps its 48 burn; plain Halt burns 32
+    #   (no BIOS wait-loop), gated on IME=1 (with IME=0 no dispatch can
+    #   follow, so nba haltcnt CPUSET-DMA stays exact at +0).

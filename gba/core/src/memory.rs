@@ -71,9 +71,12 @@ pub struct GbaMemoryBus {
     siodata32: u32,
     rcnt: u16,
     joycnt: u16,
-    joy_recv: u32,
-    joy_trans: u32,
-    joystat: u16,
+    /// Pending SIO Normal-mode transfer: T-cycles until completion (0 =
+    /// idle) and whether it is 32-bit. Scheduled on the START edge;
+    /// completion clears START, delivers pulled-high receive data and
+    /// raises the serial IRQ when enabled.
+    sio_xfer_cycles: u32,
+    sio_xfer_32: bool,
 
     // Bus制御
     last_prefetch: u32,
@@ -171,9 +174,10 @@ pub struct GbaMemoryBus {
     /// resumes. Missing it strands mgba-suite Timer count-up: the wake
     /// dispatch lands between `irqCounter = ii` and the timer start, eats
     /// ii, and the storm then wraps the counter forever. Armed by
-    /// `evaluate_halt_wake` on an IntrWait-armed wake; consumed by the
-    /// system step loop as CPU-stall cycles (time still advances, so the
-    /// line stages during the burn). Plain HALTCNT halts never arm it.
+    /// `evaluate_halt_wake` on every halt wake (IntrWait and plain Halt
+    /// alike: HW always vectors through IntrMain before resuming past the
+    /// halt); consumed by the system step loop as CPU-stall cycles (time
+    /// still advances, so the line stages during the burn).
     wake_latency: u32,
     bios_prefetch: u32,
     scheduler: EventScheduler,
@@ -304,9 +308,8 @@ impl GbaMemoryBus {
             siodata32: 0,
             rcnt: 0x8000,
             joycnt: 0,
-            joy_recv: 0,
-            joy_trans: 0,
-            joystat: 0,
+            sio_xfer_cycles: 0,
+            sio_xfer_32: false,
 
             last_prefetch: 0xE129F000,
             open_bus_value: 0xE129F000,
@@ -365,6 +368,19 @@ impl GbaMemoryBus {
     pub fn read8(&mut self, addr: u32) -> u8 {
         let (data, _wait) = self.read_internal(addr, 1, false);
         (data & 0xFF) as u8
+    }
+
+    /// RCNT top-mode bit selects the SIO block (00) over GPIO (10) and
+    /// Joybus (11): only in SIO mode do the SIOCNT sub-mode and transfer
+    /// engine apply (mGBA `_switchMode`).
+    fn sio_block_selected(&self) -> bool {
+        self.rcnt & 0xC000 == 0
+    }
+
+    /// SIO sub-mode from SIOCNT bits 12-13: 0 = Normal-8, 1 = Normal-32,
+    /// 2 = Multiplayer, 3 = UART.
+    fn sio_submode(siocnt: u16) -> u8 {
+        ((siocnt >> 12) & 3) as u8
     }
 
     pub fn read16(&mut self, addr: u32) -> u16 {
@@ -659,6 +675,25 @@ impl GbaMemoryBus {
             }
         }
         let mut interrupt_mask = event.interrupt_mask | timer_irq;
+        // SIO Normal-mode transfer completion (scheduled on the START
+        // edge): clears START, delivers pulled-high receive data (no link
+        // partner drives the lines low) and raises the serial IRQ when
+        // enabled. Pinned by mgba-suite sio-timing (measured = transfer
+        // cycles + a constant 121-cycle setup/exit path).
+        if self.sio_xfer_cycles > 0 {
+            self.sio_xfer_cycles -= 1;
+            if self.sio_xfer_cycles == 0 {
+                self.siocnt &= !0x0080;
+                if self.sio_xfer_32 {
+                    self.siodata32 = 0xFFFF_FFFF;
+                } else {
+                    self.siodata8 = 0x00FF;
+                }
+                if self.siocnt & 0x4000 != 0 {
+                    self.request_interrupt(1 << 7);
+                }
+            }
+        }
         let stall_snapshot = DisplayStallSnapshot {
             forced_blank: self.ppu.forced_blank(),
             vcount: self.ppu.vcount(),
@@ -989,19 +1024,36 @@ impl GbaMemoryBus {
                     let kept =
                         u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
                     self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
-                    // Pay the real-BIOS IntrWait exit-path cost (see
-                    // `wake_latency`): without it the thread outruns the
-                    // staging IRQ line and the wake dispatch lands inside
-                    // the caller's post-wait setup (mgba-suite timers).
-                    // Recalibrated 8 -> 48 against the timers prescaled
-                    // sums: the per-phase sync anchor re-snaps the timeline
-                    // to the /1024 tap grid, so this latency sets each
-                    // cell's enable phase; 48 centers the first-tick delay
-                    // against HW (with the IRQ-epilogue charge). Fitted:
-                    // recalibrate against nba irq-delay/cancel-ime and the
-                    // suite timers/timer-irq totals if this changes.
-                    self.wake_latency = 48;
                 }
+                // Every halt wake with the IRQ line live pays the wake-exit
+                // latency and, by stalling past line-rise, lets the wake
+                // dispatch run before the woken thread resumes: on HW the
+                // halted CPU always vectors through IntrMain before
+                // executing past the halt, so e.g. an SIO waiter's timer
+                // stop observes entry+handler+return (mgba-suite
+                // sio-timing measures transfer + 121; without this the
+                // resume wins the race and only transfer + 2 is seen).
+                // With IME=0 no dispatch can follow (the CPU line never
+                // rises), so there is no race to order and the wake stays
+                // free -- nba haltcnt CPUSET-DMA is exact at +0 with
+                // IRQs disabled. IntrWait's 48 covers the real-BIOS
+                // wait-loop/mirror/return (recalibrated 8 -> 48 against
+                // the timers prescaled sums: the per-phase sync anchor
+                // re-snaps the timeline to the /1024 tap grid, so this
+                // latency sets each cell's enable phase); plain Halt
+                // resumes directly, so 32 (sio-timing pins transfer +
+                // 121 exactly with entry + the guest IntrMain). Corner:
+                // IME=1 with CPSR I-set still burns 32 without a dispatch
+                // (accepted). Recalibrate together if either changes. Fitted:
+                // recalibrate against nba irq-delay/cancel-ime and the
+                // suite timers/timer-irq totals if this changes.
+                self.wake_latency = if clear != 0 {
+                    48
+                } else if self.ime {
+                    32
+                } else {
+                    0
+                };
             }
             self.halted = false;
             self.stopped = false;
@@ -1027,15 +1079,16 @@ impl GbaMemoryBus {
         self.siodata32 &= 0xFFFF0000;
         if flags & 0x20 != 0 {
             // mGBA _RegisterRamReset SIO: SIOCNT=0, RCNT=RCNT_INITIAL(0x8000),
-            // SIOMLT_SEND=0, JOYCNT=0, JOY_RECV=0, JOY_TRANS=0
+            // SIOMLT_SEND=0, JOYCNT=0, JOY_RECV=0, JOY_TRANS=0 (the JOY
+            // data regs read 0 here regardless, so only the latch and
+            // transfer state need clearing).
             self.siocnt = 0;
             self.rcnt = 0x8000;
             self.siodata32 = 0;
             self.siodata8 = 0;
             self.joycnt = 0;
-            self.joy_recv = 0;
-            self.joy_trans = 0;
-            self.joystat = 0;
+            self.sio_xfer_cycles = 0;
+            self.sio_xfer_32 = false;
         }
         if flags & 0x40 != 0 {
             self.apu.reset_sound();
@@ -1860,18 +1913,44 @@ impl GbaMemoryBus {
             0x04000090..=0x0400009E => self.apu.wave_read(aligned),
             // FIFO_A/B (A0/A4) are write-only; reads return open bus.
             0x04000128 => self.siocnt,
-            0x0400012A => self.siodata8,
-            0x04000120 => (self.siodata32 & 0xFFFF) as u16,
-            0x04000122 => ((self.siodata32 >> 16) & 0xFFFF) as u16,
+            // 0x12A is SIOMLT_SEND (multi), SIODATA8 (normal-8/32) or a
+            // plain latch (GPIO/Joybus); in UART mode reads come from the
+            // empty receive FIFO, i.e. 0 (suite table).
+            0x0400012A => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
+                    0
+                } else {
+                    self.siodata8
+                }
+            }
+            // 0x120/0x122 latch only in Normal-32 SIO mode (send data);
+            // every other mode reads the idle receive path as 0.
+            0x04000120 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    (self.siodata32 & 0xFFFF) as u16
+                } else {
+                    0
+                }
+            }
+            0x04000122 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    ((self.siodata32 >> 16) & 0xFFFF) as u16
+                } else {
+                    0
+                }
+            }
+            // SIOMULTI2/3 (and SIOMULTI0/1 outside Normal-32) are receive
+            // registers: 0 with no transfer (suite table; writes ignored).
+            0x04000124 | 0x04000126 => 0,
             0x04000130 => self.keyinput,
             0x04000132 => self.keycnt,
-            0x04000134 => self.rcnt,
+            0x04000134 => self.read_rcnt(),
             0x04000140 => self.joycnt,
-            0x04000150 => (self.joy_recv & 0xFFFF) as u16,
-            0x04000152 => ((self.joy_recv >> 16) & 0xFFFF) as u16,
-            0x04000154 => (self.joy_trans & 0xFFFF) as u16,
-            0x04000156 => ((self.joy_trans >> 16) & 0xFFFF) as u16,
-            0x04000158 => self.joystat,
+            // JOY_RECV/TRANS read 0 with no link transfer (suite table);
+            // JOYSTAT has no status source yet either (0x15A reads 0).
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 => 0,
+            // JOYSTAT (0x158) has no status source with no link transfer.
+            0x04000158 => 0,
             0x04000200 => self.ie,
             0x04000202 => self.sif,
             0x04000204 => self.wait_cnt,
@@ -1963,6 +2042,87 @@ impl GbaMemoryBus {
             write_slice(&mut *self.fallback_sram, off, width, value);
         }
         self.open_bus_value = value;
+    }
+
+    /// SIOCNT write with per-sub-mode R/W maps (GBATEK SIO chapters;
+    /// mGBA `GBASIOWriteSIOCNT` + `GBAIOWrite` masks). Unreadable bits
+    /// never persist (same convention as the APU masks above), so reads
+    /// return the stored value. Pinned by mgba-suite sio-read (6 mode
+    /// groups); mGBA itself diverges on several (UART SIODATA8, JOY
+    /// TRANS/STAT, G/J SIOCNT, RCNT data bits), so the HW table rules.
+    fn write_siocnt(&mut self, v: u16) {
+        // Bit 15 is always 0 (mGBA GBAIOWrite `value &= 0x7FFF`).
+        let mut value = v & 0x7FFF;
+        let sub = Self::sio_submode(value);
+        let sio_block = self.sio_block_selected();
+        match sub {
+            2 if sio_block => {
+                // Multiplayer (GBATEK R/W map): Slave/Ready/ID/Error are
+                // read-only. Unconnected the unit is a Child (SI-terminal
+                // reads 1, as the suite table shows), ID is 0 (undefined
+                // until the first transfer), Ready reads 1; old RO bits
+                // {2-6} are retained (mGBA no-driver rules). A slave can
+                // never start (it waits for the parent clock), so START
+                // never schedules -- the suite's Multi timing tests rely
+                // on this to time out into self-SKIP.
+                value &= 0xFF83;
+                value |= 0x0004;
+                value &= !0x0030;
+                value |= self.siocnt & 0x00FC;
+                value |= 0x0008;
+            }
+            3 if sio_block => {
+                // UART SCCNT_L (GBATEK): Send-Full (4) reads 0 and Error
+                // (6) reads 0 while idle; Receive-Empty (5) reads 1; the
+                // baud/parity/enable bits are R/W.
+                value &= !0x8050;
+            }
+            _ => {
+                // Normal-8/32, and GPIO/Joybus (SIOCNT keeps its
+                // sub-format there): bits 4-6 always read 0 (GBATEK
+                // "Not used"), bits 8-11 are R/W latches, and SI floats
+                // high with no link partner (mGBA `FillSi`).
+                value &= !0x8070;
+                value |= 0x0004;
+            }
+        }
+        let started = value & 0x0080 != 0 && self.siocnt & 0x0080 == 0;
+        self.siocnt = value;
+        // Normal-mode transfer (mGBA `GBASIOTransferCycles`, no partner):
+        // 8/32 bits at 256KHz (64 T-cycles/bit) or 2MHz (8 T-cycles/bit).
+        if started && sio_block && (sub == 0 || sub == 1) {
+            let bit: u32 = if value & 0x0002 != 0 { 8 } else { 64 };
+            self.sio_xfer_32 = sub == 1;
+            self.sio_xfer_cycles = (if sub == 1 { 32 } else { 8 }) * bit;
+        }
+    }
+
+    /// RCNT write latch (mGBA `GBAIOWrite` mask `0xC1FF` + per-mode maps).
+    /// Data pins {0-3} are live state composed at read time; only the
+    /// direction/control bits {4-8} latch here.
+    fn write_rcnt(&mut self, v: u16) {
+        let value = v & 0xC1FF;
+        self.rcnt = match value & 0xC000 {
+            // GPIO: full {0-8} latch.
+            0x8000 => value,
+            // Joybus: {2-8} latch; SC/SD read 0.
+            0xC000 => (value & 0xC1FC) | 0xC000,
+            // SIO: {4-8} latch; data pins are forced at read.
+            _ => value & 0xC1F0,
+        };
+    }
+
+    /// RCNT read: latched {4-8,14-15} plus live data pins. With no link
+    /// partner the pins float high in Multi/UART mode, while Normal mode
+    /// shows SC+SI high (suite HW table: M/U 0xF, N8/N32 0x5).
+    fn read_rcnt(&self) -> u16 {
+        let mut value = self.rcnt;
+        if self.sio_block_selected() {
+            let sub = Self::sio_submode(self.siocnt);
+            let data = if sub == 0 || sub == 1 { 0x0005 } else { 0x000F };
+            value = (value & !0x000F) | data;
+        }
+        value
     }
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
@@ -2130,49 +2290,46 @@ impl GbaMemoryBus {
             // two halfword pushes in LSB-first order, matching DMA bursts.
             0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
             0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
-            0x04000128 => self.siocnt = v16,
-            // SIODATA8/SIOMLT_SEND latch the full halfword (mGBA
-            // GBASIOWriteRegister stores the whole value absent a
-            // transfer); byte reads split lanes below.
-            0x0400012A => self.siodata8 = (value & 0xFFFF) as u16,
+            0x04000128 => self.write_siocnt(v16),
+            // 0x12A latches except in UART mode (send FIFO is not
+            // readable back; receive side is empty).
+            0x0400012A => {
+                if !(self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3) {
+                    self.siodata8 = v16;
+                }
+            }
             0x04000120 => {
-                if width == 4 {
-                    self.siodata32 = value;
-                } else {
-                    self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    if width == 4 {
+                        self.siodata32 = value;
+                    } else {
+                        self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
+                    }
                 }
             }
             0x04000122 => {
-                self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
+                }
             }
+            // Receive-register writes land nowhere readable.
+            0x04000124 | 0x04000126 => {}
             // 0x04000130 KEYINPUT は RO
             0x04000132 => {
                 self.keycnt = v16 & 0xC3FF;
                 self.check_keycnt();
             }
-            0x04000134 => self.rcnt = v16,
-            0x04000140 => self.joycnt = v16,
-            0x04000150 => {
-                if width == 4 {
-                    self.joy_recv = value;
-                } else {
-                    self.joy_recv = (self.joy_recv & 0xFFFF0000) | (v16 as u32);
-                }
+            0x04000134 => self.write_rcnt(v16),
+            // JOYCNT (mGBA `GBASIOWriteRegister`, all modes): only the
+            // reset bit persists from the new value; old flag bits clear
+            // where the new value selects them. From reset this turns a
+            // 0xFFFF write into 0x0040 (suite table).
+            0x04000140 => {
+                self.joycnt = (v16 & 0x0040) | (self.joycnt & !(v16 & 7) & !0x0040);
             }
-            0x04000152 => {
-                self.joy_recv = (self.joy_recv & 0x0000FFFF) | ((v16 as u32) << 16);
-            }
-            0x04000154 => {
-                if width == 4 {
-                    self.joy_trans = value;
-                } else {
-                    self.joy_trans = (self.joy_trans & 0xFFFF0000) | (v16 as u32);
-                }
-            }
-            0x04000156 => {
-                self.joy_trans = (self.joy_trans & 0x0000FFFF) | ((v16 as u32) << 16);
-            }
-            0x04000158 => self.joystat = v16,
+            // JOY_RECV/TRANS/JOYSTAT writes have no observable effect
+            // with no link transfer (suite table reads all zero).
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 | 0x04000158 => {}
             0x04000200 => {
                 // Delayed (NBA hw/irq): merges into the pending level,
                 // applied 1 tick later; reads still return the effective IE.
