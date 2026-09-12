@@ -116,6 +116,19 @@ impl GbaTimers {
         if timer.control & 0x80 == 0 {
             return (false, 0);
         }
+        // CNT_L landing is uniform one tick: consume a pending reload
+        // even inside start-delay ticks. (Previously the early return
+        // below skipped the take, delaying delay-window overwrites by
+        // up to 2 extra ticks. The skip was an implementation artifact
+        // of the early return, not modeled HW behavior: nba schedules
+        // OnReloadWritten unconditionally +1. The normal path below is
+        // untouched, so overflow-vs-landing races keep their order.
+        // Verified zero-effect across the full 123-case manifest.)
+        if timer.start_delay != 0 {
+            if let Some(reload) = timer.reload_pending.take() {
+                timer.reload = reload;
+            }
+        }
         if let Some((c, irq)) = Self::handle_start_delay(timer, index, prescaler) {
             // mGBA GBATimerUpdate cascades synchronously: a lower timer's
             // overflow still clocks this counter during enable latency

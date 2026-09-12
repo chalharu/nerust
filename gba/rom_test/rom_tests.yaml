@@ -260,6 +260,13 @@ expected_failures:
   #   sub-tick same-boundary ordering or a fetch-overlap remodel, both
   #   requiring HW evidence. Do NOT refit epi/wake or add staging
   #   variants without it.
+  #   TAKE-SKIP CLEANUP (zero-effect, full manifest bit-identical):
+  #   step_channel skipped reload_pending.take() inside start-delay
+  #   ticks (early return), delaying delay-window overwrites by up to 2
+  #   extra ticks. Now consumed uniformly (nba OnReloadWritten is
+  #   unconditional +1); normal path untouched so overflow-vs-landing
+  #   races keep their order. The code comment already claimed uniform
+  #   one-tick landing -- the code now matches it.
 - mgba_suite_timers
 
 suites:
