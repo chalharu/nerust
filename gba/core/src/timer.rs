@@ -124,10 +124,10 @@ impl GbaTimers {
         // OnReloadWritten unconditionally +1. The normal path below is
         // untouched, so overflow-vs-landing races keep their order.
         // Verified zero-effect across the full 123-case manifest.)
-        if timer.start_delay != 0 {
-            if let Some(reload) = timer.reload_pending.take() {
-                timer.reload = reload;
-            }
+        if timer.start_delay != 0
+            && let Some(reload) = timer.reload_pending.take()
+        {
+            timer.reload = reload;
         }
         if let Some((c, irq)) = Self::handle_start_delay(timer, index, prescaler) {
             // mGBA GBATimerUpdate cascades synchronously: a lower timer's

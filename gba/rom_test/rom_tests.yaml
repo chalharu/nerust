@@ -267,6 +267,179 @@ expected_failures:
   #   unconditional +1); normal path untouched so overflow-vs-landing
   #   races keep their order. The code comment already claimed uniform
   #   one-tick landing -- the code now matches it.
+  #   RIGIDITY PROOF (empirical, probes removed): wake 48->56 (+8
+  #   pre-enable shift) flips 141 cascade cells (phase response, as
+  #   expected) but ZERO 0b cells -- every /1 sum and value bit-
+  #   identical. Pre-enable shifts transmit 1:1 through the anchor for
+  #   /1 (no phase), poll boundaries eat sub-8 dispatch shifts, and
+  #   D/E/H are pinned/audited. /1-tight residuals are unfixable in
+  #   {P=8, E=23, D=4, GBATEK-handler}: timers wants D+E=25 but
+  #   irq-delay EWRAM/ROM wants 27. No wall, phase, or staging knob
+  #   can move them; do not retry without new HW facts.
+  #   MULTI-DIRECTION IMPOSSIBILITY (empirical, probes removed):
+  #   wake 32/40/48/56/64 moves sums (peak 48) but tight1v (129) and
+  #   loose16 fails (90, identical sets, zero churn) are perfectly
+  #   rigid -- values are walls, sums are phase/pause/ties. Values
+  #   want incompatible directions per (loop x rounds): tight 1i/2i
+  #   -2, tight 4i 0, loose 1i +1, loose 2i/4i -1 (0x8000: tight
+  #   805E->805C, loose 805D->805E/805C). No uniform constant can go
+  #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
+  #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   THREE-WAY D DISAGREEMENT (timer-irq traced, TEMP reverted):
+  #   FFFF v0 shows enable->overwrite->DOUBLE-ovf (normal-path race,
+  #   OLD reload twice -- the nba 32_7 pin race) then testIrq stop;
+  #   v0-v3 read live (0,1,2,3), v4+ frozen 0x51. For v2 to read live,
+  #   HW dispatch must come AFTER the sample (D >= +15), but
+  #   irq-delay E/R exactness needs D=+0 and timers frozen needs
+  #   D=-2. No uniform D satisfies (+15, 0, -2). Since E/R exactness
+  #   is the simplest clean test and timers frozen is single-ovf
+  #   clean, timer-irq v2+ expectations (intricate storm-adjacent
+  #   live-samples) are least trustworthy -- likely stale or
+  #   mGBA-generated (slow-D passes there by construction).
+  #   DEPRIORITIZE timer-irq; do not chase v2+.
+  #   DIFFERENT-MODEL SURVEY (no code change -- all dead except one
+  #   direction): event-driven timer core (same spec, no observable
+  #   change); context latencies (nested==outer same code; halted
+  #   proven identical sets); sub-instruction phases (reads break
+  #   sampling pins, writes cancel, decoupled lag is lottery); IO32
+  #   half-split latch (counter-newer goes wrong way for frozen,
+  #   direction-certain, not attempted). Sole viable different model
+  #   is a PER-CYCLE ARM PIPELINE CPU (ARM ARM-faithful overlap):
+  #   same GBATEK totals (P/E/H locked) but different sub-instruction
+  #   distribution, moving only races/ties (frozen untouched -- walls
+  #   same). Payoff partial by construction (~100 tie cells; frozen
+  #   needs walls). Cost: core rewrite + full revalidation
+  #   (multi-turn). Prereq: ARM7TDMI TRM facts (public). Direction
+  #   recorded, not attempted this turn.
+  #   SINGLE-CELL IMPOSSIBILITY (0x8000 1d1i: sums EXACT 4098 yet
+  #   values +2; no code change): total wall exact forces (middle
+  #   +2) + (ends -2) with start pinned exact by reload, hence tail
+  #   -2 (ours short; HW tail longer via real-epi ~= 9). But tail
+  #   lengthening (epi 7->9) is absorbed (frozen is pre-return!) and
+  #   grid-worse-or-equal, while middle -2 is E/H-forbidden. One cell
+  #   needs opposite wall moves in adjacent sub-walls -- no model in
+  #   this class can do that. Strongest form of the box.
+  #   FASTRAISE REFUTATION (raise avail+0/line+1 for timer raises;
+  #   TEMP reverted): +7 net is loose-only boundary lottery (tight
+  #   sums/values, frozen, and cancel-ie rows 2/4 with identical
+  #   246px all immune). Raise-path changes cannot move tight
+  #   dispatch (8-cycle boundaries eat <8); halted-gate variant is
+  #   behaviorally identical (wake burn swallows sync). Loose tails
+  #   (G1/G2 preemption points) are anchor-locked rigid. Raise/write
+  #   split dead for the third time; do not retry.
+  #   TWO-CAUSE REFUTATION (entry-core + EWRAM-fetch compensation;
+  #   no code change): GBATEK原文 memory table gives EWRAM 3/3/6 FLAT
+  #   (no S discount) and IWRAM 1/1/1 -- our waits match exactly, so
+  #   EWRAM-fetch slowness cannot compensate an entry-core cut.
+  #   N-terms jointly pinned with EWRAM/ROM exactness; IWRAM N-term
+  #   already minimal (+0). Compensation dead on arrival. The wall is
+  #   single (disable +2) with every sub-part pinned, audited, or
+  #   GBATEK-exact -- not two compensating causes.
+  #   TWO-CAUSE DECOMPOSITION (additive fit + order analysis + bug
+  #   hunt a-h over ovf-IF/cascade/sampling/deferral/load/stale/split/
+  #   phase; no code change): failing sums are uniform -1 poll (-16
+  #   loose: single systematic shortfall + quantization), large tight
+  #   values uniform +2 -- clean single-cause signatures in opposite
+  #   directions (longer vs shorter). Same-tick order split (dispatch
+  #   post-step, reads pre-step) is HW-plausible yet dead: reads are
+  #   sampling-pinned, dispatch is quantization-eaten for tight,
+  #   writes cancel (enable+disable shift together). Bug hunt: all
+  #   consensus with NBA/mGBA/GBAHawk or pin-validated. So "two
+  #   causes" resolves to (phase-cause FIXED at 653) + (wall-cause
+  #   BLOCKED) + (order-cause DEAD) -- not two fixables. The wall
+  #   cause is single (disable +2); race redistribution is its
+  #   nonlinear shadow, not an independent lever.
+  #   CROSS-EMULATOR TRIANGULATION (GBAHawk, mGBA, GBATEK原文; no code
+  #   change, tree clean): GBAHawk timer (tim_upd) uses ST_Time=3 with
+  #   Go-immediate-tick, net-identical to ours for /1 (load W+2 vs W+1
+  #   but first tick W+3 both); its tap==(SubCnt&mask)==0 is a 1-phase
+  #   convention variant absorbed by the wake fit; deferred disable +
+  #   old-reload + count-up cascade all agree. mGBA uses immediate
+  #   load + tap-align (no idle: ovf 2 EARLIER, wrong direction for
+  #   frozen) and lazy CNT reads sampled at now-2 ("1N+1I preemptive"):
+  #   now-2 is frozen-immune (every timers exit reads a stopped
+  #   counter), running-reads only -- piecemeal transfer would break
+  #   the exact reload pins, since (start, sampling) only work as a
+  #   pair and HW has exactly one. GBATEK原文 externally validates
+  #   every audited charge (MRS/MSR 1S, LDR 1S+1N+1I, STR 2N, LDM
+  #   nS+1N+1I, STM (n-1)S+2N, B/BX 2S+1N), breaking the audit's
+  #   circularity in our favor. Three implementations triangulate the
+  #   same box from different sides; none offers a transferable timers
+  #   fix. The only structurally live suspect remains fetch-refill
+  #   dynamics (mov pc,lr retires at 10 vs bx/bne at 3), same dimension
+  #   as the epilogue -- no new info without HW fetch-timing evidence.
+  #   ADDENDUM (GBAHawk BIOS + mov-pc + now-2 resolutions, no code
+  #   change): GBAHawk loads a REAL BIOS (GBA_load_bios, no HLE) -- it
+  #   passes by emulating the real IntrWait/prologue/epilogue, while
+  #   ours are fitted constants (wake/epi/entry); the fits ARE the HW
+  #   values as best as uniform constants express (ridge/grid solved),
+  #   and deriving them from BIOS structure would land on the same
+  #   point -- no new info. mov-pc#10 is flat 3 + epi 7 + fill 0, not
+  #   a refill bug (trace was taken with epi active); the audit
+  #   stands as GBATEK-exact + fitted epi. mGBA now-2 reads are
+  #   frozen-immune (all timers exits read stopped counters) and only
+  #   valid paired with its immediate-start; piecemeal transfer would
+  #   break the exact reload pins. Nothing transfers; box stands.
+  #   HLE STRUCTURAL VALIDATION (mGBA hle-bios.s read; no code change):
+  #   real-BIOS-equivalent sequences costed by GBATEK tables line up
+  #   with the fits, upgrading them from fits to structured values:
+  #   IRQ prologue (STMFD6+M0V+ADD+LDR-pc ~= 7+1+1+5=14) + ARM core
+  #   entry (~4-9) ~= entry 23; IntrWait all-in (save+setup+discard+
+  #   halt-loop+check+restore+return ~= 40-50) ~= wake 48. The epilogue
+  #   (LDMFD6+SUBS ~= 8+5=13) does NOT line up with epi 7 -- epi stays
+  #   an explicit pause compromise (cascade wants 7, frozen wants ~5),
+  #   documented above. mGBA-shape start (immediate load, no idle)
+  #   goes the wrong direction for frozen (-2 ovf shift) and breaks
+  #   exact nba pins; not attempted. Entry N-term compensation hunt
+  #   is dead: timers paths are IWRAM-only, EWRAM/ROM adjustments
+  #   cannot reach them. The IWRAM-path +2 has no unblocked source;
+  #   box stands triple-confirmed (pins, audit, cross-emu, HLE).
+  #   TRI-REGION DISASSEMBLY (irq-delay.gba + live IWRAM/EWRAM dump;
+  #   no code change): IWRAM/EWRAM/ROM test fns structurally identical
+  #   (nop sled + mov/mov/str/ldr/strh/strb/strh(IME)/ldrb/cmp/beq/
+  #   mov(exp)/ldrh/ldr/bl/pop/bx; flag always IWRAM), libgba master+
+  #   handler identical across regions with identical charges. The
+  #   IWRAM-only +3 lives in none of: test-fn code, master/handler
+  #   instructions (GBATEK-exact), IME/IF/timer writes (shared),
+  #   fetches (IWRAM N=S=1, no cold effects), entry N-term (EWRAM/ROM
+  #   exactness forbids moves), IME landing (cancels vs the restart),
+  #   preemption phase (timers would move too). EWRAM-IWRAM deltas
+  #   (HW 20 vs ours 17) isolate a 3 in region waits or refill N-term
+  #   that no exact pin can absorb. Same impossibility shape as +2.
+  #   GBATEK-原文説の反証 (THUMB含む全命令; no code change):
+  #   THUMB LDR 1S+1N+1I / STR 2N / PUSH (n-1)S+2N / POP nS+1N+1I /
+  #   B-taken 2S+1N / B-nt 1S / BX 2S+1N / BL 3S+1N -- ARM表と同一で
+  #   全chargeと一致。testIrq(Thumb)とirq_handler(ARM)の差は純粋な
+  #   仕事量差 (19 vs 25) で単価差なし。IntrMain-onlyな特殊opなし。
+  #   P=8がIO32-LDR=3をlocking (+12%ずれ prohibitive)。delay loop
+  #   はlever不足 (tap-crossingに要する~50に届かない)。GBATEK誤記で
+  #   +2を出すには汎用op誤記が必要だがpass中の他全てを壊す。
+  #   選択肢1は反証済み.
+  #   NON-HLE EXHAUSTION (no code change): per redirect, every non-HLE
+  #   component re-audited. Fetch/wait dynamics are inert for IWRAM/IO
+  #   (no N/S splits; prefetch off; ROM-gated breaks), so the IWRAM
+  #   path is flat bases (GBATEK-exact) + entry + pipeline only. Write
+  #   landing (model-start vs HW data-phase) cancels for frozen and
+  #   transmits 1:1 for sums; fixing it would ADD ticks (wrong way).
+  #   Deferred stop is load-bearing exact (start-stop 2ND). Raise-path
+  #   D is unpinned but any <8 shift is eaten by poll boundaries
+  #   (proven twice) and >=8 is absurd. Composition bugs ruled out
+  #   (take() clears, max(1) inert with prefetch off, bulk inactive,
+  #   APU/DMA/PPU inert, mirrors uninvolved, HLE loop unimplementable
+  #   without the binary so burn stands). suite.gba timers table
+  #   verified byte-identical to repo src (no version skew). Left:
+  #   D+E split (25 vs 27) with every sub-part pinned or audited.
+  #   HIGH-GRID NEGATIVE (epi 11-19 x wake 48-96, all 400-510, TEMP
+  #   reverted): the per-round +1 growth (uniform across /1//64//256/
+  #   /1024, so pause not period) is NOT fixable by longer pause --
+  #   epi+8 breaks base cells by lottery faster than it fixes growth.
+  #   Decomposition shows why: pause/8 boundary quantization means a
+  #   +/-4 wall (not +8) is needed, but every +/-4 source is global
+  #   (entry/master/testIrq/IntrRet/epi/return all shared or audited).
+  #   Compensation theories dead too (DMA direction EWARM-fast vs
+  #   needed-slow; P locked; N-terms jointly pinned). The +1/round is
+  #   quantization-locked: structurally identical pauses differing by
+  #   boundary luck. No global direction left; box stands.
 - mgba_suite_timers
 
 suites:
@@ -1316,6 +1489,37 @@ suites:
     #   reads the required opposite directions; per-source staging
     #   lacks HW evidence. Flip 2/3 (+1/-2) are steady-state
     #   poll-phase jitter on top. Research-grade.
+    #   DMA PREFETCH PAIR: attempted, mechanism understood, research-grade
+    #   (no code change, tree clean; Got re-measured: Break 0x10000004 v
+    #   0x10002A94, Read 0x00004003 v 0xDEAD0000):
+    #   - mGBA HAS a bleed model (GBALoadBad: performingDMA -> gba->bus),
+    #     but it fires only DURING the transfer burst; our DMA is
+    #     burst-atomic between instructions (system.rs cpu-stall), so the
+    #     flag could never be true at a CPU read -- structurally
+    #     inexpressible without a per-cycle DMA/CPU interleave remodel
+    #     (which the force-nseq/burst-into-tears/128kb/DMA-1244 pins
+    #     forbid touching).
+    #   - External evidence: neser passes Read via a canned
+    #     is_mgba_misc_edge_dma_prefetch_pattern() match (exact DMA3
+    #     HBlank/repeat/fixed/count==1 shape -> 0xDEAD0000) -- per-test
+    #     fitting of exactly the class our per-ROM-branch ban forbids;
+    #     VBA-M passes Break via a per-cycle bus-state sim + per-suite-
+    #     build reference tables (trigger-to-grant latency calibrated
+    #     per build).
+    #   - Break==0x10002A94 exact is a cycle-count measurement over 2724
+    #     iterations: hitting it needs cycle-exact CPU (Timing 76 open)
+    #     to <1/2724 precision -- same sub-tick ceiling as timers; even
+    #     a perfect latch leaves the count to lottery.
+    #   - Prereq is the per-cycle CPU remodel (DIFFERENT-MODEL SURVEY
+    #     direction), not a bus tweak. Do NOT pattern-match the DMA
+    #     config or hardcode counts; do NOT retune open-bus globally
+    #     (memory 1502 at risk).
+    #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
+    #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
+    #   opposite to timers (needs slower): direct contradiction on
+    #   shared knobs. Flip2 +1 / Flip3 -2 need OPPOSITE directions with
+    #   Flip4/5/6 exact pinning the poll cost: multi-direction
+    #   impossibility. Boxed; revisit only with sub-tick evidence.
     expected_checks:
     - 'DMA Prefetch Break'
     - 'DMA Prefetch Read'
