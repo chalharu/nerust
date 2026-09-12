@@ -295,6 +295,18 @@ expected_failures:
   #   fix. The only structurally live suspect remains fetch-refill
   #   dynamics (mov pc,lr retires at 10 vs bx/bne at 3), same dimension
   #   as the epilogue -- no new info without HW fetch-timing evidence.
+  #   ADDENDUM (GBAHawk BIOS + mov-pc + now-2 resolutions, no code
+  #   change): GBAHawk loads a REAL BIOS (GBA_load_bios, no HLE) -- it
+  #   passes by emulating the real IntrWait/prologue/epilogue, while
+  #   ours are fitted constants (wake/epi/entry); the fits ARE the HW
+  #   values as best as uniform constants express (ridge/grid solved),
+  #   and deriving them from BIOS structure would land on the same
+  #   point -- no new info. mov-pc#10 is flat 3 + epi 7 + fill 0, not
+  #   a refill bug (trace was taken with epi active); the audit
+  #   stands as GBATEK-exact + fitted epi. mGBA now-2 reads are
+  #   frozen-immune (all timers exits read stopped counters) and only
+  #   valid paired with its immediate-start; piecemeal transfer would
+  #   break the exact reload pins. Nothing transfers; box stands.
 - mgba_suite_timers
 
 suites:
