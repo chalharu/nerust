@@ -114,14 +114,57 @@ expected_failures:
 # Velocity/Acceleration: see the affine note above (interacted refs).
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
-# mgba_suite_timing: whole-case research-grade (1030/1244 subtests fail).
-# The suite measures instruction/bus cycle counts over prefetch (P),
-# N/S-wait (N/S) and region combinations against HW captures; our bus
-# timing model differs systematically (calibration itself already
-# mismatches, shifting every downstream measurement). Enumerating 1030
-# check names would bury the signal; the checks still run and report,
-# and the case flips to unexpected-pass when a timing overhaul lands.
-# See the suite's timing.c calibration + P/N/S matrix.
+# mgba_suite_timing: whole-case research-grade (76/2020 subtests fail
+# with the shipped ROM; the old 1030/1244 count is from a previous suite
+# build). Non-prefetch timing is PERFECT (every non-P cell passes): all 76
+# residuals sit in prefetch (P) columns or IWRAM-SWI cells, in crisp
+# groups (Got values via the case's sram enrichment):
+# - A (18, BOXED): Thumb LDR/LDRH + prefetch + S-fast is -1 per stack load
+#   (-2 for two-load snippets); ARM identicals pass, Thumb ROM-loads
+#   pass, non-prefetch passes. Traced (activeTestInfo-gated erase probe,
+#   since removed): erase inputs are IDENTICAL ARM/Thumb (prev=0 always —
+#   bx resets lp, small waits never run the fill loop), so our model
+#   erases the same for both and steps ARM 4 / Thumb 2 vs HW 4 / 3.
+#   mGBA computes the same 4/2 by construction (mode-blind stall +
+#   N32-S32 == N16-S16 post-body), so the HW +1/Thumb-load lives outside
+#   the mGBA model class; a mode-dependent erase has no HW story (same
+#   address/width access both modes). Per-cycle pipeline territory.
+# - B (12, BOXED): LDMIA OAM->ROM overflow + prefetch is -1 in some P
+#   columns (ov1: P.S/PNS, ov2: P../PN., ov3: P.S/PNS; ov4/ov5 pass all).
+#   Non-monotonic in overflow depth (phase lottery on burst N/S
+#   assignment); ov4/ov5 pin the current mixed-burst undo-all rule, and
+#   any partial-erase refinement risks the 128kb/DMA-1244 pins. No
+#   uniform rule fits the alternating columns. Revisit with per-cycle
+#   CPU (burst phasing), not bus tweaks.
+# - E (32, BOXED): DMA touching ROM + prefetch is -1 per transfer
+#   (length-independent: trivial and short-16 agree). Linear
+#   decomposition over the S-columns proves the split is transfer-side
+#   (test code is identical across DMA types): (X) src-ROM fails fast-S
+#   only, ARM-ONLY (16 cells); (Y) dst-ROM-only fails slow-S, both modes
+#   (16 cells); both-ROM follows (X). No coherent single mechanism
+#   (startup-arbitration, in-flight-fill, completion-handover and
+#   S-word theories each fit one side and invert on the other); two
+#   hyper-specific 3-way-gated terms would be fitting, not modeling.
+# - C+D (14, BOXED — see below): SWI Div/Div2/Sqrt/Sqrt2/Sqrt3/ArcTan
+#   from IWRAM are uniformly +3 (ARM+Thumb), CpuSet-from-IWRAM is -66.
+#   C+D BOX (contradictory HW truths, do not touch): IWRAM entry -3 +
+#   CpuSet overhead 69-for-IWRAM fixes all 14 exactly with zero churn
+#   (verified: 76 -> 62, other cells bit-identical; -66 = -(69-3) locks
+#   it structurally), but breaks 4 pixel-exact PeterLemon screenshots
+#   (BIOSDIV/BIOSSQRT/BIOSARCTAN, all call SWI from IWRAM, TIMER0 digits
+#   resolve +-3). Entry cost is path-independent on HW (real BIOS runs
+#   from BIOS ROM; mGBA HLE entry confirms: stmfd + ldrb [lr,#-2] from
+#   caller), yet all 7 suite paths demand -3 while all 4 PeterLemon
+#   paths (Div-226/DivArm-229/Sqrt-585/ArcTan-neg) demand +0 with
+#   disjoint path sets — so one side's HW truth is stale and no uniform
+#   model can satisfy both (per-(path x region) fitting is banned, same
+#   class as per-ROM branches; refills are HW-exact per the passing B/BX
+#   cells, charges are pinned by ROM+EWRAM cells). Open: PeterLemon PNG
+#   provenance (author HW photos vendored upstream) vs suite captures;
+#   possible BIOS-revision divergence. Revisit only with new HW facts.
+# The checks still run and report, and the case flips to
+# unexpected-pass when the prefetch interactions land. See the suite's
+# timing.c calibration + P/N/S matrix.
 - mgba_suite_timing
 # mgba_suite_timers: EXPECTED-FAIL (reaches END since the stale-tick
 # gate; 401/936). History: quarantined hang (never reached END),
@@ -1508,6 +1551,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
   - id: mgba_suite_timers
     rom: suite.gba
     description: mgba suite - Timer count-up tests
