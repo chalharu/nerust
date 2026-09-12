@@ -285,6 +285,14 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   TWO-CAUSE REFUTATION (entry-core + EWRAM-fetch compensation;
+  #   no code change): GBATEK原文 memory table gives EWRAM 3/3/6 FLAT
+  #   (no S discount) and IWRAM 1/1/1 -- our waits match exactly, so
+  #   EWRAM-fetch slowness cannot compensate an entry-core cut.
+  #   N-terms jointly pinned with EWRAM/ROM exactness; IWRAM N-term
+  #   already minimal (+0). Compensation dead on arrival. The wall is
+  #   single (disable +2) with every sub-part pinned, audited, or
+  #   GBATEK-exact -- not two compensating causes.
   #   TWO-CAUSE DECOMPOSITION (additive fit + order analysis + bug
   #   hunt a-h over ovf-IF/cascade/sampling/deferral/load/stale/split/
   #   phase; no code change): failing sums are uniform -1 poll (-16
