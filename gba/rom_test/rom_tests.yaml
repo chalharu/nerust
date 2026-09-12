@@ -177,6 +177,26 @@ expected_failures:
 #   0b,0x0005 1d1i tight: enable/overflow/stop/dispatch stamps vs the
 #   poll-loop cost), not another global rebalance. Do NOT retune timer
 #   phase/charges/staging or fit IntrWait timing to chase single cells.
+#   TRACE FINDINGS (cycle-attributed via activeTestInfo testId/phase,
+#   probes since removed): the tight loop costs P=8 (GBATEK-exact
+#   1+3+1+3, so loop cost is NOT the error). For 0b,0x0005 (period 5)
+#   the 2nd poll read and the first storm dispatch tie at the same
+#   instruction-boundary tick and dispatch structurally wins the tie
+#   (service_irq runs before cpu.step), giving 2v3; for 0b,0x000C
+#   (period 12) the 2nd read beats the dispatch, giving 3v3. Values pin
+#   X=(stopApply-firstOvf) to X=4 mod 5 (0x0005) and X=10 mod 12
+#   (0x000C) on the IDENTICAL path, while the model yields 93 and 94:
+#   0x000C already satisfies X=34 mod 60 and any uniform shift breaks
+#   it, and the loop is already at ~1 cycle/insn (no shaveable floor).
+#   EXPERIMENT (line+1/entry-1, total-preserving, REVERTED): sums +24
+#   (all 0x000D/0x0024/0x0080 loose-halves complete -- unifying tight-1
+#   and loose-half as preemption ties) but values -14 by boundary-slip
+#   lottery (decision slips a full 5-cycle LDR past the tie, walking
+#   residues mod p), the irq-delay check value moved, and cancel-ie
+#   first-diff-pixel moved (count still 246). Uniform knobs are now
+#   exhaustively closed (entry, line, staging, start-delay,
+#   stop-deferral, P-floor): what remains is phase-dependent decision
+#   quantization or a cycle-exact CPU, both research-grade.
 - mgba_suite_timers
 
 suites:
