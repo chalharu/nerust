@@ -285,6 +285,14 @@ expected_failures:
   #   805E->805C, loose 805D->805E/805C). No uniform constant can go
   #   (-2,0,+1,-1) at once; the only varying structure (rounds x loop
   #   code) is anchor-locked rigid. Per-cell fitting is forbidden.
+  #   SINGLE-CELL IMPOSSIBILITY (0x8000 1d1i: sums EXACT 4098 yet
+  #   values +2; no code change): total wall exact forces (middle
+  #   +2) + (ends -2) with start pinned exact by reload, hence tail
+  #   -2 (ours short; HW tail longer via real-epi ~= 9). But tail
+  #   lengthening (epi 7->9) is absorbed (frozen is pre-return!) and
+  #   grid-worse-or-equal, while middle -2 is E/H-forbidden. One cell
+  #   needs opposite wall moves in adjacent sub-walls -- no model in
+  #   this class can do that. Strongest form of the box.
   #   FASTRAISE REFUTATION (raise avail+0/line+1 for timer raises;
   #   TEMP reverted): +7 net is loose-only boundary lottery (tight
   #   sums/values, frozen, and cancel-ie rows 2/4 with identical
