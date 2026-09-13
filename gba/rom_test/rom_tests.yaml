@@ -214,6 +214,40 @@ expected_failures:
 #   cells, charges are pinned by ROM+EWRAM cells). Open: PeterLemon PNG
 #   provenance (author HW photos vendored upstream) vs suite captures;
 #   possible BIOS-revision divergence. Revisit only with new HW facts.
+# - GBAHAWK-PORT EXPERIMENT (exp/gba-prefetch-buffer, reverted — box
+#   stands, mGBA-erase model retained): GBAHawk libHawk/GBAHawk was mined
+#   as a mechanistic reference (it emulates a REAL 8x16-bit prefetch
+#   buffer: idle-cycle S-rate fills, 128KB-boundary fail-through,
+#   mid-fetch takeover with remainder, bus-holding glitch +1, data abort,
+#   enable/disable edges) and ported faithfully to instruction
+#   granularity (pre-tick+skip cycle accounting, stream-break latch,
+#   HLE-entry abort, DMA per-unit abort; mGBA-erase apparatus removed as
+#   superseded). Two port-only bugs were found and fixed en route, both
+#   real GBAHawk behaviors: (1) every ROM/SRAM consume must pre-tick
+#   before reading state (Single_Step order) with a step-loop skip, else
+#   every stepped cycle double-ticks; (2) a miss/takeover/boundary
+#   consume parks the filler inactive for exactly its own waits (the CPU
+#   owns the bus — fills during own waits are phantom), re-armed by the
+#   ensuing read (deferred pb_clear_at, fired by step loop and at consume
+#   time for back-to-back accesses). Also fixed: service_irq's vector
+#   poll must not accrue skip positioning (a +1/tick drift over-fills).
+#   MEASUREMENT: 76 -> 606 fails. The port fixes 11 group-A cells
+#   structurally (Thumb stack loads, S-fast P columns — the 16-bit
+#   granule consumption story the offline sim lacked) and collapses
+#   residuals from +-5 to +-1..4 (nop -1, ldrh +1, ROM-data loads
+#   -(charge+1), BIOS-math ROM ARM -11/-7 / Thumb -5/-3 uniform), but
+#   regresses ~540 P cells: faithful GBAHawk rules produce buffer
+#   hits/takeovers where HW pays steady S/N (verified by construction —
+#   identical rules give identical numbers, so GBAHawk itself cannot pass
+#   these cells either; its strength is DMA/IRQ/PPU research, not suite
+#   P-timing). Non-P/IWRAM/EWRAM/DMA/timer behavior bit-identical
+#   throughout (lib 261 green, dma 1244 + timer_irq 36-expected green).
+#   Reverted to keep counts green; port preserved on
+#   exp/gba-prefetch-buffer (with TEMP-PTRACE diagnostics) for future
+#   per-cycle CPU work. Roadmap if revived: skip/base alignment (pb_acc
+#   misses interleave base cycles — shape-dependent +-1 phase noise),
+#   ROM-scoped mode-dependent SWI-entry term (IWRAM +3 pins entry; ROM
+#   ARM/Thumb residuals differ), post-data-N flows. No per-cell fitting.
 # The checks still run and report, and the case flips to
 # unexpected-pass when the prefetch interactions land. See the suite's
 # timing.c calibration + P/N/S matrix.
