@@ -1520,6 +1520,25 @@ suites:
     #     direction), not a bus tweak. Do NOT pattern-match the DMA
     #     config or hardcode counts; do NOT retune open-bus globally
     #     (memory 1502 at risk).
+    #   LATCH HYPOTHESIS FALSIFIED (analysis only, no code change):
+    #   a DMA bus latch (mGBA-shaped `gba->bus` = last source data,
+    #   served on post-unit unmapped reads) cannot fix either cell:
+    #   - The loop starts post-VBlankIntrWait; the first HBlank unit
+    #     lands ~900 ticks later while loop iterations cost ~15-30 ticks,
+    #     so iterations 0-40 run PRE-first-unit — yet HW bleeds through
+    #     them (breaks at 2724, not 0). Bleed therefore does NOT require
+    #     a prior unit; a post-unit latch breaks at iter 0 either way
+    #     (latch 0xDEAD or open bus, both != pattern) and can never reach
+    #     the Read fix either (Read's Got comes from the iter-0 break,
+    #     pre-unit, open bus — identical with or without latch).
+    #   - The bleed VALUE is underivable: no DMA state (SAD/DAD/CNT are
+    #     EWRAM/0x8401-ish) masks to (v&0xFFC0FFC0)==0x40004000, and
+    #     mGBA's own bus=latch (source data) doesn't match the pattern
+    #     either — sustained armed-bleed needs bus-electrical facts no
+    #     emulator source records. Interleave is equally dead for the
+    #     count (1 unit/line has no between-units gap for the CPU).
+    #   Both sub-hypotheses dead; the pair stays boxed as phase-lottery
+    #   (Break) + unknowable-value (Read/bleed).
     #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
     #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
     #   opposite to timers (needs slower): direct contradiction on
