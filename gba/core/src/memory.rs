@@ -87,6 +87,48 @@ pub struct GbaMemoryBus {
     /// suite proves pure-fetch streams get no ride discount: nop P.. = 6
     /// = S+S), and prefetch hides data/internal stalls via erases.
     prefetch_enabled: bool,
+    /// GBAHawk-faithful GamePak prefetch buffer state (8x16-bit slots;
+    /// see constructor comment). All fields are inert unless
+    /// `prefetch_enabled` routes a ROM/SRAM access through the consume
+    /// path (`pb_run` stays false otherwise, so `pb_tick` is a no-op).
+    pb_run: bool,
+    pb_force_nonseq: bool,
+    pb_was_full: bool,
+    pb_boundary: bool,
+    pb_following: bool,
+    pb_inactive: bool,
+    pb_read_addr: u32,
+    pb_check_addr: u32,
+    pb_buf_cnt: u32,
+    pb_fetch_cnt: u32,
+    pb_fetch_wait: u32,
+    pb_glitch: bool,
+    /// Step-loop cycles whose `pb_tick` was already applied as a
+    /// consume-time pre-tick (Single_Step order). `tick` skips the
+    /// buffer tick for these, so every stepped cycle ticks exactly once.
+    pb_skips: Vec<u64>,
+    /// Unstepped CPU cycles accrued since execution start (sum of full
+    /// access `wait`s, all regions): positions later consumes'
+    /// skip cycles. Reset at each CPU/HLE execution start.
+    /// NOTE: the IRQ vector poll (service_irq, every tick) must not
+    /// accrue here (it samples no bus cycle in HW terms); it saves and
+    /// restores around its read.
+    pub(crate) pb_acc: u64,
+    /// Fetch-stream break latch (GBAHawk `cpu_Seq_Access` equivalent for
+    /// the P-on consume path): set by any CPU data access / DMA / the
+    /// per-instruction break charge (covers MUL's internal stream
+    /// break), cleared by any opcode fetch. While set, a buffer miss
+    /// costs N (refill) instead of S. Consumed ONLY by the P-on path;
+    /// the P-off N/S stream is untouched.
+    pb_seq_break: bool,
+    /// Deferred filler re-arm (GBAHawk Read-at-fetch-end): a
+    /// miss/takeover/boundary consume parks the filler inactive for
+    /// exactly its own wait cycles (dead ticks, no fills — the CPU owns
+    /// the bus); the ensuing bus read re-arms it. Absolute T-cycle at
+    /// which `pb_inactive` clears. Fired both by the step loop (stepped
+    /// time) and at consume time (back-to-back accesses within one
+    /// execution, e.g. fill_pipeline pairs or fetch+data).
+    pb_clear_at: Option<u64>,
     /// Block-transfer continuation flag (mGBA-shaped N/S): CPU data
     /// accesses are always nonsequential EXCEPT LDM/STM/PUSH/POP words
     /// after the first, which follow bus order (sequential unless
@@ -328,6 +370,30 @@ impl GbaMemoryBus {
             last_prefetch: 0xE129F000,
             open_bus_value: 0xE129F000,
             prefetch_enabled: false,
+            // GBAHawk-faithful GamePak prefetch buffer (8x16-bit). Ports
+            // GBA_System.h Wait_State_Access_{16,32}_Instr ROM/SRAM paths
+            // plus the GBA_System.cpp per-cycle fill, driven at
+            // instruction granularity: each ROM/SRAM consume applies the
+            // current cycle's pre-tick first (Single_Step order) and
+            // records a skip so the step loop does not tick it again.
+            // Active only when prefetch_enabled; prefetch-off behavior is
+            // bit-identical (old N/S path, no skips, pb_run false).
+            pb_run: false,
+            pb_force_nonseq: false,
+            pb_was_full: false,
+            pb_boundary: false,
+            pb_following: false,
+            pb_inactive: true,
+            pb_read_addr: 0,
+            pb_check_addr: 0,
+            pb_buf_cnt: 0,
+            pb_fetch_cnt: 0,
+            pb_fetch_wait: 0,
+            pb_glitch: false,
+            pb_skips: Vec::new(),
+            pb_acc: 0,
+            pb_seq_break: false,
+            pb_clear_at: None,
             data_sequential_override: false,
             block_batching: false,
             block_batch_any: false,
@@ -450,6 +516,14 @@ impl GbaMemoryBus {
     pub(crate) fn start_hle_bios(&mut self, operation: HleBiosOperation) {
         debug_assert!(self.hle_bios.is_none());
         self.hle_bios = Some(operation);
+        // Exception entry leaves the game code stream: real BIOS
+        // execution re-aims the prefetch unit at BIOS ROM, so the
+        // game-armed run must not fill through the HLE body (its ticks
+        // would falsely saturate the buffer and make post-SWI fetches
+        // hit). Abort like a data access; the return refills by miss.
+        // No cycle effect (state only); P-off inert (run false).
+        self.pb_fetch_cnt = 0;
+        self.pb_check_addr = 0;
     }
 
     pub(crate) fn hle_bios_active(&self) -> bool {
@@ -583,6 +657,7 @@ impl GbaMemoryBus {
 
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
+        let tc = self.current_tcycle;
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
         // Deferred HBlank IRQ first (NBA +1): same pipeline visibility as
         // a same-tick raise (processed below), so CPU entry is unchanged.
@@ -821,6 +896,29 @@ impl GbaMemoryBus {
                     value,
                 );
             }
+            if self.prefetch_enabled
+                && ((0x08000000..=0x0FFFFFFF).contains(&transfer.data_source)
+                    || (transfer.width == 2
+                        && (0x08000000..=0x0FFFFFFF)
+                            .contains(&transfer.data_source.wrapping_add(2)))
+                    || (0x08000000..=0x0FFFFFFF).contains(&transfer.destination))
+            {
+                // GBAHawk DMA data abort: a GamePak/SRAM unit abandons
+                // the in-flight fetch (later units find check-zero, so
+                // only the burst head structurally matters: post-DMA
+                // code refills from scratch). No wait adjustment: the
+                // unit delay was already paced; the +/-1 bus-holding
+                // glitch lottery is not modeled (group-E residuals are
+                // uniform per transfer, not phase lottery).
+                self.pb_fire_clears(tc);
+                self.pb_tick();
+                self.pb_data_abort();
+                self.pb_skips.push(tc);
+                // A DMA burst breaks the fetch stream (GBAHawk Seq=false
+                // at takeover; the existing fetch_addr=None clear covers
+                // the P-off stream).
+                self.pb_seq_break = true;
+            }
             // DMA owns the bus between CPU accesses: the CPU's next access
             // is non-sequential (GBATEK DMA owns the bus).
             self.prev_addr = None;
@@ -829,6 +927,22 @@ impl GbaMemoryBus {
             self.fetch_width = 0;
             // Completion IRQs are raised via take_completion_interrupts
             // below (one tick after the final write).
+        }
+        // GamePak prefetch buffer tick (GBAHawk Single_Step order:
+        // prefetch before the bus action; the buffer is device-
+        // independent so the in-tick position is free, but it must run
+        // after the DMA transfer above: a transfer applies its own
+        // pre-tick at execution time and records this cycle (`tc`) as
+        // skipped). Deferred re-arms fire first (a read whose waits just
+        // elapsed releases the filler for this cycle's pre-tick).
+        // Cycles whose pre-tick already ran at consume time are skipped,
+        // so every stepped cycle ticks exactly once. Frozen with the
+        // system clock under Stop (early return above).
+        self.pb_fire_clears(tc);
+        if let Some(pos) = self.pb_skips.iter().position(|&s| s == tc) {
+            self.pb_skips.swap_remove(pos);
+        } else {
+            self.pb_tick();
         }
         interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
@@ -1151,6 +1265,7 @@ impl GbaMemoryBus {
             self.postflg = 0;
             self.haltcnt = 0;
             self.prefetch_enabled = false;
+            self.pb_reset();
             self.last_prefetched_pc = 0;
             self.halted = false;
             self.halt_irq_mask = 0;
@@ -1162,104 +1277,394 @@ impl GbaMemoryBus {
         std::mem::take(&mut self.access_wait_cycles)
     }
 
-    /// Prefetch erase (mGBA `GBAMemoryStall` port): with prefetch enabled,
-    /// a non-ROM data/internal stall fills the prefetch unit, converting
-    /// this access's N into S and erasing subsequent S waits. Returns the
-    /// delta to add to `access_wait_cycles` INSTEAD of the normal
-    /// `(wait - 1)` contribution (may be negative: the fill overlaps the
-    /// stall). ROM data never stalls (cart bus); prefetch off returns the
-    /// normal contribution delta (0). Computed in mGBA wait-space then
-    /// converted back, so tune against mGBA, not against our +1 totals.
-    pub(crate) fn prefetch_erase_delta(&mut self, addr: u32, wait_our: u32, is_load: bool) -> i32 {
-        if !self.prefetch_enabled || addr >= 0x08000000 {
-            return 0;
-        }
-        // mGBA-space wait: GBALoad adds +2, GBAStore +1 over the raw table.
-        // Our raw already carries +1 base, so loads add one more.
-        let base_adj = if is_load { 1 } else { 0 };
-        let wait_mgba = wait_our as i32 + base_adj;
-        self.prefetch_stall_erased(wait_mgba) - wait_mgba
+    /// Reset the GBAHawk-faithful prefetch buffer (GBAHawk `pre_Reset`).
+    fn pb_reset(&mut self) {
+        self.pb_run = false;
+        self.pb_force_nonseq = false;
+        self.pb_was_full = false;
+        self.pb_boundary = false;
+        self.pb_following = false;
+        self.pb_inactive = true;
+        self.pb_read_addr = 0;
+        self.pb_check_addr = 0;
+        self.pb_buf_cnt = 0;
+        self.pb_fetch_cnt = 0;
+        self.pb_fetch_wait = 0;
+        self.pb_glitch = false;
+        self.pb_skips.clear();
+        self.pb_acc = 0;
+        self.pb_seq_break = false;
+        self.pb_clear_at = None;
     }
 
-    /// Multiply-tick erase (mGBA `ARM_WAIT_MUL` stall): the m-tick array
-    /// fills prefetch P-ON. `tick_wait` is WAIT+m in mGBA-space (MUL 0+m,
-    /// MLA/SMULL/UMULL 1+m, SMLAL/UMLAL 2+m); the handler base already
-    /// carries the un-erased ticks, so only the delta lands on the bus.
-    /// P-ON-gated like the data erase (P-OFF the stall is identity).
-    pub(crate) fn erase_for_multiply(&mut self, tick_wait: u32, fetch_width: u8) {
-        if !self.prefetch_enabled {
+    /// Mark the start of one CPU/HLE execution: later consumes position
+    /// their skip cycles relative to this (sum of full access waits).
+    pub(crate) fn begin_cpu_instruction(&mut self) {
+        self.pb_acc = 0;
+    }
+
+    /// WAITCNT S-waitstates for the prefetch fill rate (GBAHawk
+    /// `pre_Fetch_Wait = ROM_Waits_{0,1,2}_S + 1` selection).
+    fn pb_s_wait(&self, addr: u32) -> u32 {
+        let (shift, slow): (u32, u32) = match addr {
+            0x08000000..=0x09FFFFFF => (4, 2),
+            0x0A000000..=0x0BFFFFFF => (7, 4),
+            _ => (10, 8),
+        };
+        u32::from(if (self.wait_cnt >> shift) & 1 == 0 {
+            slow
+        } else {
+            1
+        })
+    }
+
+    fn pb_n16(&self, addr: u32) -> u32 {
+        u32::from(self.gamepak_rom_cycles(addr, 2, false)) - 1
+    }
+
+    fn pb_s16(&self, addr: u32) -> u32 {
+        u32::from(self.gamepak_rom_cycles(addr, 2, true)) - 1
+    }
+
+    fn pb_n32(&self, addr: u32) -> u32 {
+        u32::from(self.gamepak_rom_cycles(addr, 4, false)) - 1
+    }
+
+    fn pb_s32(&self, addr: u32) -> u32 {
+        u32::from(self.gamepak_rom_cycles(addr, 4, true)) - 1
+    }
+
+    fn pb_sram_wait(&self) -> u32 {
+        const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
+        u32::from(SRAM_WAIT[(self.wait_cnt & 0b11) as usize])
+    }
+
+    /// One prefetch-buffer cycle (GBAHawk `GBA_System.cpp` Prefetch
+    /// region, verbatim order: clear glitch, fill unless inactive /
+    /// check-zero / was-full, start or continue the S-rate fetch,
+    /// complete with the boundary rule and the bus-holding glitch).
+    fn pb_tick(&mut self) {
+        self.pb_glitch = false;
+        if !self.pb_run {
             return;
         }
-        let delta = self.prefetch_stall_erased(tick_wait as i32) - tick_wait as i32;
-        // HW-fitted MUL floor (mgba-suite Timing MUL P-cells, all 200+
-        // short/long/MLA x ARM/Thumb x P-matrix cells): the tick array is
-        // CPU-internal, so its erase benefit caps at one N-fetch worth
-        // (delta >= -N of the code region at fetch width). The raw
-        // GBAMemoryStall loop over-erases for long tick arrays (it models
-        // bus-idle fills, but MUL ticks hold no bus idle that prefetches
-        // subsequent S waits with). Scoped to GamePak-ROM code where the
-        // N/S split exists; flat-wait regions keep the pure mGBA stall
-        // (their MUL cells already match).
-        let delta = match self.last_opcode_addr {
-            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
-                let n_mgba = u32::from(self.gamepak_rom_cycles(pc, fetch_width, false)) - 1;
-                delta.max(-(n_mgba as i32))
+        if self.pb_inactive || self.pb_check_addr == 0 || self.pb_was_full {
+            return;
+        }
+        if self.pb_fetch_cnt == 0 {
+            if self.pb_buf_cnt == 8 {
+                self.pb_was_full = true;
+            } else {
+                self.pb_fetch_wait = self.pb_s_wait(self.pb_read_addr) + 1;
+                self.pb_boundary = (self.pb_read_addr & 0x1FFFE) == 0;
+                // Minimum cart fetch is 2 cycles (fetch counter starts at
+                // 1, so a wait-1 region still costs one more tick).
+                self.pb_fetch_cnt = 1;
             }
-            _ => delta,
-        };
-        self.access_wait_cycles += i64::from(delta);
+        } else {
+            self.pb_following = true;
+            self.pb_fetch_cnt += 1;
+            if self.pb_fetch_cnt == self.pb_fetch_wait {
+                self.pb_fetch_cnt = 0;
+                // At the 128KB boundary the read fails (no slot fills)
+                // but the fetch continues at sequential timing.
+                if !self.pb_boundary {
+                    self.pb_buf_cnt += 1;
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(2);
+                }
+                self.pb_glitch = true;
+                if !self.prefetch_enabled {
+                    self.pb_run = false;
+                }
+            }
+        }
     }
 
-    /// mGBA `GBAMemoryStall` core: erase a wait (mGBA-space) via prefetch
-    /// fills, returning the erased wait (possibly larger when the fill
-    /// itself costs, possibly negative when it overlaps).
-    fn prefetch_stall_erased(&mut self, wait_mgba: i32) -> i32 {
-        let mut wait = wait_mgba;
-        // Code-region S16/N16 in mGBA-space (our totals minus base 1).
-        let (n16_our, s16_our) = self.code_wait16();
-        let s = s16_our as i32 - 1;
-        let n = n16_our as i32 - 1;
-        // Overlap cap with the previous prefetch (mGBA lastPrefetchedPc).
-        let dist = self.last_prefetched_pc.wrapping_sub(self.current_pc);
-        let prev = if dist < 16 { (dist >> 1) as i32 } else { 0 };
-        let max_loads = 8 - prev;
-        // Halfword slots the stall can fill.
-        let mut stall = s + 1;
-        let mut loads = 1;
-        while stall < wait && loads < max_loads {
-            stall += s;
-            loads += 1;
+    /// Begin one GamePak-ROM/SRAM CPU access with prefetch on: fire any
+    /// due deferred re-arm, then apply the current cycle's pre-tick
+    /// (Single_Step order: prefetch before the bus action) and record
+    /// its skip so the step loop does not tick it again. The caller
+    /// computes `wait`, then calls `pb_accrue(wait)`.
+    fn pb_begin_access(&mut self) {
+        self.pb_fire_clears(self.current_tcycle + self.pb_acc);
+        self.pb_tick();
+        self.pb_skips.push(self.current_tcycle + self.pb_acc);
+        // TEMP-PTRACE (remove before commit): suite timing diagnosis.
+        if std::env::var("GBA_PTRACE").is_ok() && self.iwram[0xB2] == 1 {
+            let sub = u16::from_le_bytes([self.iwram[0xB0], self.iwram[0xB1]]);
+            eprintln!(
+                "PT pre sub={} tc={} pc={:#x} acc={} run={} ina={} chk={:#x} rd={:#x} cnt={} fc={}/{} gl={}",
+                sub,
+                self.current_tcycle,
+                self.current_pc,
+                self.pb_acc,
+                self.pb_run as u8,
+                self.pb_inactive as u8,
+                self.pb_check_addr,
+                self.pb_read_addr,
+                self.pb_buf_cnt,
+                self.pb_fetch_cnt,
+                self.pb_fetch_wait,
+                self.pb_glitch as u8,
+            );
         }
-        self.last_prefetched_pc = self
-            .current_pc
-            .wrapping_add(2 * (loads + prev - 1).max(0) as u32);
-        if stall > wait {
-            wait = stall;
-        }
-        // This access used to have an N: convert to S; the filled slots
-        // erase subsequent S waits (possibly driving this term negative).
-        wait -= n - s;
-        wait -= stall;
-        wait
     }
 
-    /// S16/N16 wait totals (our +1 convention) of the owning code region,
-    /// for the prefetch erase. ROM uses the WAITCNT shifts; other regions
-    /// carry no N/S split (N == S == the flat access cost).
-    fn code_wait16(&self) -> (u32, u32) {
-        match self.last_opcode_addr {
-            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
-                let n = self.gamepak_rom_cycles(pc, 2, false);
-                let s = self.gamepak_rom_cycles(pc, 2, true);
-                (u32::from(n), u32::from(s))
-            }
-            Some(pc) => {
-                let c = u32::from(self.cycles_for(pc, 2));
-                (c, c)
-            }
-            None => (1, 1),
+    fn pb_accrue(&mut self, wait: u8) {
+        self.pb_acc += u64::from(wait);
+    }
+
+    /// Fire a due deferred filler re-arm (the bus read at the end of a
+    /// miss/takeover/boundary fetch's waits). Idempotent.
+    fn pb_fire_clears(&mut self, now: u64) {
+        if self.pb_clear_at.is_some_and(|at| at <= now) {
+            self.pb_inactive = false;
+            self.pb_clear_at = None;
         }
     }
+
+    /// Park the filler inactive for this access's own `wait` cycles (the
+    /// CPU owns the bus); the ensuing read re-arms it (see
+    /// `pb_fire_clears`). Overwrites any pending re-arm (each consume's
+    /// read supersedes).
+    fn pb_park_for(&mut self, wait: u32) {
+        self.pb_clear_at = Some(self.current_tcycle + self.pb_acc + u64::from(wait.min(255)));
+    }
+
+    /// SRAM opcode fetch (both widths: flat waits + bus-holding glitch,
+    /// abandon the run). Shared by the 16/32-bit consume tails.
+    fn pb_consume_sram(&mut self) -> u8 {
+        let mut wait = 1 + self.pb_sram_wait();
+        if self.pb_glitch {
+            wait += 1;
+        }
+        self.pb_fetch_cnt = 0;
+        self.pb_check_addr = 0;
+        wait.min(u8::MAX as u32) as u8
+    }
+
+    /// 16-bit opcode-fetch consume (GBAHawk `Wait_State_Access_16_Instr`
+    /// ROM/SRAM paths; callers guarantee prefetch on and ROM/SRAM).
+    /// Returns total cycles (1 base + waits).
+    fn pb_consume_16(&mut self, addr: u32, sequential: bool) -> u8 {
+        let mut wait: u32 = 1;
+        if addr < 0x0E000000 {
+            if addr == self.pb_check_addr {
+                if self.pb_check_addr != self.pb_read_addr && self.pb_buf_cnt > 0 {
+                    // Buffered: immediate read.
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                    self.pb_buf_cnt -= 1;
+                    if self.pb_buf_cnt == 0 && self.pb_was_full {
+                        self.pb_check_addr = 0;
+                        self.pb_force_nonseq = true;
+                    }
+                } else if (addr & 0x1FFFE) == 0 {
+                    // 128KB boundary: always non-sequential.
+                    wait += self.pb_n16(addr);
+                    if self.pb_glitch {
+                        wait += 1;
+                    }
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(2);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_inactive = true;
+                    self.pb_park_for(wait);
+                } else if !sequential && self.pb_fetch_cnt == 1 && !self.pb_following {
+                    // Branch onto the in-flight fetch address: full N.
+                    wait += self.pb_n16(addr);
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(2);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_inactive = true;
+                    self.pb_park_for(wait);
+                } else {
+                    // Take over the in-flight fetch: remaining cycles
+                    // (+1: the prefetcher already spent this cycle).
+                    wait = self.pb_fetch_wait - self.pb_fetch_cnt + 1;
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(2);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_inactive = true;
+                    self.pb_park_for(wait);
+                }
+            } else {
+                // Unrelated address: N/S fetch, abandon the buffer run.
+                let seq = sequential && !self.pb_force_nonseq;
+                wait += if (addr & 0x1FFFE) == 0 || !seq {
+                    self.pb_n16(addr)
+                } else {
+                    self.pb_s16(addr)
+                };
+                self.pb_force_nonseq = false;
+                if self.pb_glitch {
+                    wait += 1;
+                }
+                self.pb_buf_cnt = 0;
+                self.pb_fetch_cnt = 0;
+                self.pb_run = true;
+                self.pb_was_full = false;
+                self.pb_following = false;
+                self.pb_inactive = true;
+                self.pb_check_addr = addr.wrapping_add(2);
+                self.pb_read_addr = self.pb_check_addr;
+                self.pb_park_for(wait);
+            }
+        } else {
+            return self.pb_consume_sram();
+        }
+        wait.min(u8::MAX as u32) as u8
+    }
+
+    /// 32-bit opcode-fetch consume (GBAHawk `Wait_State_Access_32_Instr`
+    /// ROM/SRAM paths). A 32-bit hit drains two 16-bit slots in one
+    /// cycle when buffered; a half-miss takes over the remainder plus
+    /// one sequential second half.
+    fn pb_consume_32(&mut self, addr: u32, sequential: bool) -> u8 {
+        let mut wait: u32 = 1;
+        let addr_check = addr & 0xFFFF_FFFC;
+        if addr < 0x0E000000 {
+            if addr_check == self.pb_check_addr {
+                if self.pb_check_addr != self.pb_read_addr && self.pb_buf_cnt > 0 {
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                    self.pb_buf_cnt -= 1;
+                    if self.pb_check_addr != self.pb_read_addr && self.pb_buf_cnt > 0 {
+                        // Both halves buffered: 32 bits in 1 cycle.
+                        self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                        self.pb_buf_cnt -= 1;
+                        if self.pb_buf_cnt == 0 && self.pb_was_full {
+                            self.pb_check_addr = 0;
+                            self.pb_force_nonseq = true;
+                        }
+                    } else if self.pb_was_full && self.pb_buf_cnt == 0 {
+                        // Prefetcher stopped mid-fetch (unreachable in
+                        // practice: a drained full buffer zeroes check).
+                        // Saturate instead of hanging the emulator.
+                        return u8::MAX;
+                    } else {
+                        // Second half in flight: take over the remainder.
+                        wait = self.pb_fetch_wait - self.pb_fetch_cnt + 1;
+                        self.pb_inactive = true;
+                        self.pb_read_addr = self.pb_read_addr.wrapping_add(2);
+                        self.pb_check_addr = self.pb_check_addr.wrapping_add(2);
+                        self.pb_fetch_cnt = 0;
+                        self.pb_buf_cnt = 0;
+                        self.pb_run = true;
+                        self.pb_park_for(wait);
+                    }
+                } else if (addr & 0x1FFFC) == 0 {
+                    wait += self.pb_n32(addr);
+                    if self.pb_glitch {
+                        wait += 1;
+                    }
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(4);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(4);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_inactive = true;
+                    self.pb_park_for(wait);
+                } else if !sequential && self.pb_fetch_cnt == 1 && !self.pb_following {
+                    wait += self.pb_n32(addr);
+                    self.pb_inactive = true;
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(4);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(4);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_run = true;
+                    self.pb_park_for(wait);
+                } else {
+                    // Take over the remainder, plus one sequential half.
+                    wait = self.pb_fetch_wait - self.pb_fetch_cnt + 1;
+                    wait += self.pb_s16(addr) + 1;
+                    self.pb_inactive = true;
+                    self.pb_read_addr = self.pb_read_addr.wrapping_add(4);
+                    self.pb_check_addr = self.pb_check_addr.wrapping_add(4);
+                    self.pb_fetch_cnt = 0;
+                    self.pb_run = true;
+                    self.pb_park_for(wait);
+                }
+            } else {
+                let seq = sequential && !self.pb_force_nonseq;
+                wait += if (addr & 0x1FFFC) == 0 || !seq {
+                    self.pb_n32(addr)
+                } else {
+                    // Sequential 32-bit pair (2 accesses).
+                    self.pb_s32(addr)
+                };
+                self.pb_force_nonseq = false;
+                if self.pb_glitch {
+                    wait += 1;
+                }
+                self.pb_buf_cnt = 0;
+                self.pb_fetch_cnt = 0;
+                self.pb_run = true;
+                self.pb_was_full = false;
+                self.pb_following = false;
+                self.pb_inactive = true;
+                self.pb_check_addr = addr.wrapping_add(4);
+                self.pb_read_addr = self.pb_check_addr;
+                self.pb_park_for(wait);
+            }
+        } else {
+            return self.pb_consume_sram();
+        }
+        wait.min(u8::MAX as u32) as u8
+    }
+
+    /// GamePak-ROM/SRAM data-access abort (GBAHawk `Wait_State_Access_*`
+    /// tail): a data access abandons the in-flight fetch and (via
+    /// check-zero) pauses filling; a just-completed fill holding the
+    /// bus costs one extra cycle. Returns the glitch extra; the N/S
+    /// waits themselves are computed by the existing path.
+    fn pb_data_abort(&mut self) -> u8 {
+        let extra = u8::from(self.pb_glitch);
+        self.pb_fetch_cnt = 0;
+        self.pb_check_addr = 0;
+        extra
+    }
+
+    /// WAITCNT write edges (GBAHawk `pre_Reg_Write`): enabling resets
+    /// the run; disabling forces the next fetch non-sequential and
+    /// stops the run unless a half-finished 32-bit fetch must complete
+    /// (odd slot count in ARM mode; `fetch_width == 2` proxies Thumb).
+    /// Call BEFORE updating `prefetch_enabled`.
+    fn pb_waitcnt_write(&mut self, value: u16) {
+        let enable = (value & (1 << 14)) != 0;
+        if !self.prefetch_enabled && enable {
+            self.pb_check_addr = 0;
+            self.pb_buf_cnt = 0;
+            self.pb_fetch_cnt = 0;
+            self.pb_inactive = true;
+            self.pb_run = true;
+            self.pb_clear_at = None;
+        }
+        if self.prefetch_enabled && !enable {
+            self.pb_force_nonseq = true;
+            if self.pb_fetch_cnt == 0 {
+                if (self.pb_buf_cnt & 1) == 0 {
+                    self.pb_run = false;
+                } else if self.fetch_width == 2 {
+                    self.pb_run = false;
+                }
+                if self.pb_buf_cnt == 0 {
+                    self.pb_check_addr = 0;
+                }
+            }
+        }
+    }
+
+    /// Prefetch erase (mGBA `GBAMemoryStall` port): SUPERSEDED by the
+    /// GBAHawk-faithful buffer above (fetches consume slots, fills run
+    /// per-cycle). Kept as a no-op for the prefetch-off path (which
+    /// already returned 0) and call-site stability; the buffer carries
+    /// all P-on dynamics now.
+    pub(crate) fn prefetch_erase_delta(&mut self, _addr: u32, _wait_our: u32, _is_load: bool) -> i32 {
+        0
+    }
+
+    /// Multiply-tick erase: SUPERSEDED by the GBAHawk buffer (MUL
+    /// internal ticks fill the buffer via the step loop; the stream
+    /// break itself rides `pb_seq_break` through the unchanged
+    /// `charge_fetch_stream_break` call sites). No-op.
+    pub(crate) fn erase_for_multiply(&mut self, _tick_wait: u32, _fetch_width: u8) {}
+
 
     /// HLE SWI entry residual (mgba-suite Timing SWI cells): our inline
     /// HLE skips the HW exception entry (pipeline flush + BIOS vector +
@@ -1503,9 +1908,80 @@ impl GbaMemoryBus {
             self.open_bus_value = raw;
             return (raw, 0);
         }
-        let wait = self.cycles_for_access(addr, width, is_opcode);
+        let wait = if self.prefetch_enabled && matches!(addr, 0x08000000..=0x0FFFFFFF) {
+            // GBAHawk buffer path (ROM/SRAM with prefetch on): the
+            // consume replaces the N/S fetch cost; data keeps its N/S
+            // waits with the abort tail. Erase fits below stay active
+            // during the transition (measured out stepwise).
+            self.pb_begin_access();
+            let w = if is_opcode {
+                // A fetch re-establishes the stream (GBAHawk Seq=true on
+                // fetch completion); a data access breaks it. The latch
+                // feeds only the P-on consume below (P-off N/S untouched).
+                let seq = !self.dma.has_pending()
+                    && self.is_fetch_sequential(addr)
+                    && !self.pb_seq_break;
+                self.pb_seq_break = false;
+                if addr < 0x0E000000 {
+                    if width == 4 {
+                        self.pb_consume_32(addr, seq)
+                    } else {
+                        self.pb_consume_16(addr, seq)
+                    }
+                } else {
+                    self.pb_consume_sram()
+                }
+            } else {
+                // A CPU data access breaks the fetch stream (GBAHawk
+                // Seq=false); the latch feeds only the P-on consume.
+                self.pb_seq_break = true;
+                self.cycles_for_access(addr, width, false)
+                    .saturating_add(self.pb_data_abort())
+            };
+            self.pb_accrue(w);
+            // TEMP-PTRACE (remove before commit).
+            if std::env::var("GBA_PTRACE").is_ok() && self.iwram[0xB2] == 1 {
+                let sub = u16::from_le_bytes([self.iwram[0xB0], self.iwram[0xB1]]);
+                eprintln!(
+                    "PT acc sub={} addr={:#x} w={} op={} wait={} ina={} chk={:#x} cnt={}",
+                    sub,
+                    addr,
+                    width,
+                    is_opcode as u8,
+                    w,
+                    self.pb_inactive as u8,
+                    self.pb_check_addr,
+                    self.pb_buf_cnt,
+                );
+            }
+            w
+        } else {
+            let w = self.cycles_for_access(addr, width, is_opcode);
+            self.pb_accrue(w);
+            // Keep the stream latch coherent across regions (no cycle
+            // effect outside the P-on consume): any fetch completes it,
+            // any data access breaks it.
+            self.pb_seq_break = !is_opcode;
+            w
+        };
         if is_opcode {
             self.last_opcode_addr = Some(addr);
+        }
+        // TEMP-PTRACE2 (remove before commit): all bus reads.
+        if std::env::var("GBA_PTRACE2").is_ok()
+            && self.iwram[0xB2] == 1
+            && self.current_tcycle >= 13122180
+            && self.current_tcycle <= 13122240
+        {
+            eprintln!(
+                "PT2 rd tc={} pc={:#x} addr={:#x} w={} op={} wait={}",
+                self.current_tcycle,
+                self.current_pc,
+                addr,
+                width,
+                is_opcode as u8,
+                wait,
+            );
         }
         // Prefetch erase replaces the normal contribution for non-ROM
         // data (may go negative: overlapped fills); opcodes keep (wait-1).
@@ -1536,11 +2012,19 @@ impl GbaMemoryBus {
     /// Fetch-stream-break charge (mGBA load/store post-body
     /// `activeNonseqCycles32 - activeSeqCycles32`): a CPU data access
     /// breaks the fetch stream, so the next fetch costs N instead of S.
-    /// Pre-paid here per load/store instruction as N32-S32 of the owning
-    /// code region (0 outside GamePak ROM, which carries no N/S split).
+    /// With the GBAHawk buffer (prefetch on) the break emerges from the
+    /// consume itself (data abort zeroes check; `pb_seq_break` forces N
+    /// on the refill), so no cycle charge lands there — it would
+    /// double-count the miss. Prefetch off keeps the mGBA post-body
+    /// charge bit-identical. The latch is set in both cases (covers
+    /// MUL's internal stream break, which has no data access).
     /// Call once per CPU load/store instruction (LDM/STM/PUSH/POP: once
     /// per instruction, not per word).
     pub(crate) fn charge_fetch_stream_break(&mut self) {
+        self.pb_seq_break = true;
+        if self.prefetch_enabled {
+            return;
+        }
         if let Some(pc) = self.last_opcode_addr
             && (0x08000000..=0x0DFFFFFF).contains(&pc)
         {
@@ -1584,70 +2068,18 @@ impl GbaMemoryBus {
         self.block_batch_raw = true;
     }
 
-    /// Close the batch: undo all tracked erases when a ROM word appeared
-    /// (mixed ROM-overflow bursts apply no prefetch erase at all), else
-    /// floor the instruction's total erase benefit at one N-fetch worth
-    /// (ROM code only). No-op when nothing batched.
+    /// Close the batch: SUPERSEDED by the GBAHawk buffer (continuation
+    /// words ride the bus-order S path; fills run per-cycle). Resets the
+    /// flag only; call sites unchanged.
     pub(crate) fn end_block_batch(&mut self) {
         self.block_batching = false;
-        if !self.block_batch_any {
-            return;
-        }
-        if self.block_batch_has_rom {
-            self.access_wait_cycles -= i64::from(self.block_batch_erase_sum);
-            return;
-        }
-        if let Some(pc @ 0x08000000..=0x0DFFFFFF) = self.last_opcode_addr {
-            let n_mgba =
-                u32::from(self.gamepak_rom_cycles(pc, self.block_batch_fetch_width, false)) - 1;
-            let floor = -(n_mgba as i32);
-            if self.block_batch_erase_sum < floor {
-                self.access_wait_cycles += i64::from(floor - self.block_batch_erase_sum);
-            }
-        }
     }
 
-    /// Batched-word erase routing. Returns the erase-delta to add for this
-    /// word, or `None` when the word must use the normal per-word path
-    /// (ROM data, prefetch off, or non-ROM code, all bit-for-bit
-    /// preserved). Word 1 (first batched word) erases fully single-style;
-    /// continuation words erase marginally. Only the returned delta lands
-    /// on the accumulator; the caller still adds `(wait-1)` itself.
-    fn batch_word_delta(&mut self, addr: u32, wait: u8) -> Option<i32> {
-        if !self.block_batching || !self.prefetch_enabled {
-            return None;
-        }
-        if addr >= 0x08000000 {
-            // ROM word inside the batch (OAM-overflow LDM): flag mixed
-            // burst (end undoes all erases); the word itself uses the
-            // normal N/S path with no erase.
-            self.block_batch_has_rom = true;
-            return None;
-        }
-        // Raw bulk (HLE): no erase at all, any code region.
-        if self.block_batch_raw {
-            return Some(0);
-        }
-        if !matches!(self.last_opcode_addr, Some(0x08000000..=0x0DFFFFFF)) {
-            return None;
-        }
-        let region = u32::from(wait.saturating_sub(1)) as i32;
-        // Single-access conventions: GBALoad region+2, GBAStore region+1.
-        let single_input = region + if self.block_batch_is_load { 2 } else { 1 };
-        let delta = if self.block_batch_words == 0 {
-            // Word 1: full single-access stall (updates lastPrefetchedPc).
-            self.prefetch_stall_erased(single_input) - single_input
-        } else {
-            // Continuation words: marginal `min(-1, S - single_input)`;
-            // no lastPrefetchedPc update (word 1's fills persist).
-            let (_, s16_our) = self.code_wait16();
-            let s = s16_our as i32 - 1;
-            (s - single_input).min(-1)
-        };
-        self.block_batch_words += 1;
-        self.block_batch_any = true;
-        self.block_batch_erase_sum += delta;
-        Some(delta)
+    /// Batched-word erase routing: SUPERSEDED (always `None`: every word
+    /// uses the normal N/S path with no erase; the buffer carries P-on
+    /// dynamics). Call sites unchanged.
+    fn batch_word_delta(&mut self, _addr: u32, _wait: u8) -> Option<i32> {
+        None
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
@@ -1663,7 +2095,18 @@ impl GbaMemoryBus {
         }
         // GBATEK Backup Media / EEPROM: CPU stores to 0D000000h are open bus;
         // only DMA bursts reach the serial chip (handled in the tick loop).
-        let wait = self.cycles_for(addr, width);
+        let mut wait = self.cycles_for(addr, width);
+        if self.prefetch_enabled && matches!(addr, 0x08000000..=0x0FFFFFFF) {
+            // GBAHawk buffer path for ROM/SRAM stores: pre-tick + skip
+            // with the abort tail (N/S waits themselves unchanged).
+            self.pb_begin_access();
+            wait = wait.saturating_add(self.pb_data_abort());
+        }
+        self.pb_accrue(wait);
+        // A CPU store breaks the fetch stream like any data access
+        // (feeds only the P-on consume; GPIO-overlay exits below are
+        // not bus accesses but share the latch — negligible).
+        self.pb_seq_break = true;
         // Stores erase like loads (mGBA GBAStore stall, +1 base convention).
         let mut contrib = u32::from(wait.saturating_sub(1)) as i32;
         if let Some(batch_delta) = self.batch_word_delta(addr, wait) {
@@ -1689,6 +2132,9 @@ impl GbaMemoryBus {
                     self.open_bus_value = value;
                     self.prev_addr = Some(addr);
                     self.prev_width = width;
+                    // No bus wait accrued above: back the positioning
+                    // accrual out with it.
+                    self.pb_acc = self.pb_acc.saturating_sub(u64::from(wait));
                     return;
                 }
                 self.open_bus_value = value;
@@ -1923,6 +2369,21 @@ impl GbaMemoryBus {
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
                     eprintln!("T tmread @{}", self.current_tcycle);
+                }
+                // TEMP-PTRACE2 (remove before commit).
+                if std::env::var("GBA_PTRACE2").is_ok()
+                    && aligned == 0x04000100
+                    && self.iwram[0xB2] <= 4
+                {
+                    let sub = u16::from_le_bytes([self.iwram[0xB0], self.iwram[0xB1]]);
+                    eprintln!(
+                        "PT2 tmrd test={} sub={} tc={} pc={:#x} val={}",
+                        self.iwram[0xB2],
+                        sub,
+                        self.current_tcycle,
+                        self.current_pc,
+                        self.timers.read(aligned).unwrap_or(0),
+                    );
                 }
                 self.timers.read(aligned).unwrap_or(0)
             }
@@ -2168,6 +2629,19 @@ impl GbaMemoryBus {
             return;
         }
         if width == 4 && self.timers.write32(addr, value) {
+            // TEMP-PTRACE2 (remove before commit).
+            if std::env::var("GBA_PTRACE2").is_ok() && self.iwram[0xB2] <= 4 {
+                let sub = u16::from_le_bytes([self.iwram[0xB0], self.iwram[0xB1]]);
+                eprintln!(
+                    "PT2 tmwr test={} sub={} tc={} pc={:#x} addr={:#x} val={:#x}",
+                    self.iwram[0xB2],
+                    sub,
+                    self.current_tcycle,
+                    self.current_pc,
+                    addr,
+                    value,
+                );
+            }
             self.open_bus_value = value;
             return;
         }
@@ -2386,6 +2860,9 @@ impl GbaMemoryBus {
             0x04000204 => {
                 // Bit 15 (GamePak type) and bit 13 are read-only/unused.
                 self.wait_cnt = v16 & !(0x8000 | 0x2000);
+                // Prefetch enable edges drive the buffer run first
+                // (GBAHawk pre_Reg_Write; needs the OLD enable state).
+                self.pb_waitcnt_write(v16);
                 self.prefetch_enabled = (v16 & (1 << 14)) != 0;
             }
             0x04000208 => {

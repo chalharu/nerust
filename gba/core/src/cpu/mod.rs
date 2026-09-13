@@ -98,7 +98,13 @@ impl GbaCpu {
         if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
             return false;
         }
+        // The vector poll is line sampling, not a bus access (GBAHawk
+        // samples the IRQ state without bus traffic): keep it out of the
+        // prefetch skip positioning, otherwise every tick drifts later
+        // consumes by +1 and systematically over-fills the buffer.
+        let acc = bus.pb_acc;
         let vector = bus.read32(0x03007FFC);
+        bus.pb_acc = acc;
         // The real BIOS jumps to [03007FFCh] blindly; a handler can live in
         // any executable memory (IWRAM/EWRAM, any ROM mirror 08-0D, SRAM).
         // Only a null vector (nothing installed yet) falls back to the

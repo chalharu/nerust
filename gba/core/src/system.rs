@@ -115,6 +115,9 @@ impl GbaSystem {
             // only the bus advances, the in-flight op resumes afterwards.
         } else {
             if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+                // Position later ROM/SRAM consumes' prefetch skip
+                // cycles: unstepped waits accrue from execution start.
+                self.bus.begin_cpu_instruction();
                 if self.bus.hle_bios_active() {
                     self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
                 } else {
