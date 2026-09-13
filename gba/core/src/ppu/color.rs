@@ -3,16 +3,7 @@ pub(crate) fn read_color(palette: &[u8], index: usize) -> u16 {
     u16::from_le_bytes([palette[offset], palette[offset + 1]]) & 0x7FFF
 }
 
-/// BGR555(5bit/channel) -> RGBA8888 展開
-/// GBAは15bitカラーだが、現代の8bit/channelへ展開する際は
-/// 単純な `v<<3` (0-248) ではなく、ハードウェアのDAC特性に近い
-/// `v*255/31` の近似である `(v<<3)|(v>>2)` (0-255) を用いる。
-/// これは `v*255/31` と最大1の差で、mGBA等でも採用される。
-/// Near "Color Emulation" の Color precision 章が求める bit-repeat 展開
-/// (`rrr -> rrrrrrrr` 系)そのものでもあり、記事適合である。
-/// 例: 31->255, 0->0, 4->33, 9->74, 6->49
-/// 参照PNGが `v<<3` (例: 4->32)で生成されていても、15bitレベルでは同一なため
-/// 検証側でBGR555に丸めて比較する (verify.rsのBGR555 tolerant)。
+/// Expand BGR555 to RGBA8888 with bit-repeat (`v<<3|v>>2`), close to `v*255/31`.
 pub(crate) fn rgba8888(color: u16) -> u32 {
     let r = ((((color) & 0x1F) << 3) | (((color) & 0x1F) >> 2)) as u8;
     let g = ((((color >> 5) & 0x1F) << 3) | (((color >> 5) & 0x1F) >> 2)) as u8;
@@ -54,29 +45,9 @@ fn change_brightness(color: u16, amount: u8, brighter: bool) -> u16 {
     adjust(0) | adjust(5) | adjust(10)
 }
 
-/// GBA LCD color emulation (presentation stage only).
-///
-/// Reference: Near "Color Emulation", LCD emulation: Game Boy Advance
-/// (Talarubi's formula). The original AGB-001 LCD washes colors out, so
-/// developers exaggerated palettes; shown raw on an sRGB monitor they look
-/// oversaturated ("technicolor nightmare"). This filter reproduces the LCD
-/// response: per-channel `pow(v/31, lcdGamma=4.0)`, a primaries cross-talk
-/// matrix, then `pow(., 1/outGamma=2.2)`:
-///
-/// ```text
-/// r = ((  0*lb +  50*lg + 255*lr) / 255) ^ (1/2.2)
-/// g = (( 30*lb + 230*lg +  10*lr) / 255) ^ (1/2.2)
-/// b = ((220*lb +  10*lg +  50*lr) / 255) ^ (1/2.2)
-/// ```
-///
-/// The article scales by `(0xffff * 255 / 280)` for its 16-bit pipeline;
-/// here the full-scale `0xffff` is replaced by `0xff` for 8-bit output,
-/// keeping the article's `255/280` dimming headroom, then rounded+clamped.
-///
-/// This is intentionally *not* applied to the core framebuffer: the PPU
-/// framebuffer stays a bit-exact BGR555 expansion (ROM tests verify
-/// BGR555-exact pixels). Frontends apply this at presentation time, the
-/// same layering as ares/mGBA color-correction shaders.
+/// GBA LCD color emulation for presentation only (not the core framebuffer).
+/// Reproduces AGB-001 washout via gamma plus primaries matrix; frontends opt in.
+/// Framebuffer stays bit-exact BGR555 expansion.
 pub fn gba_lcd_rgba8888(color: u16) -> u32 {
     lcd_lut()[usize::from(color & 0x7FFF)]
 }

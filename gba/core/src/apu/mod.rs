@@ -1,10 +1,5 @@
-/// GBA APU - Phase 9
-/// Handles GBA sound registers 0x04000060-0x0400009F and wave RAM.
-/// PSG/FIFO mixing is still stubbed, but registers are now owned here instead of GbaMemoryBus latch.
-/// FIFO_A/B (0x040000A0/A4) are 32-byte streaming buffers fed by DMA
-/// Special (DMA1/DMA2, 4x32-bit bursts); the overflowing sound timer
-/// clocks one sample byte out of each selected FIFO (drain_fifo), and
-/// a <=12-byte FIFO requests its refill DMA.
+/// GBA APU owning sound registers, wave RAM and DirectSound FIFOs.
+/// PSG/FIFO mixing is stubbed; FIFOs stream via timer-driven DMA refill.
 #[derive(Debug)]
 pub struct GbaApu {
     pub sound1cnt_lo: u16,
@@ -127,12 +122,7 @@ impl GbaApu {
         self.soundcnt_hi = value & 0x770F;
     }
 
-    /// SOUNDCNT_X write (GBATEK NR52 + mGBA io.c `value & 0x0080`): only
-    /// bit 7 is R/W (bits 0-3 are read-only channel flags our PSG does not
-    /// track, so they read 0). Clearing a set master enable resets the PSG
-    /// range 4000060h..4000081h; 4000088h is kept (SOUNDCNT_H keeps its
-    /// masked value: the reset/FIFO bits 11/15 are edge actions, so they
-    /// must not persist as state).
+    /// SOUNDCNT_X write: only bit 7 is R/W; clearing master enable resets PSG state.
     pub fn write_soundcnt_x(&mut self, value: u16) {
         if value & 0x80 == 0 && self.soundcnt_x & 0x80 != 0 {
             self.sound1cnt_lo = 0;

@@ -1,9 +1,5 @@
-//! PPU affine helpers — thin wrapper over `crate::math::affine` shared with BIOS HLE.
-//!
-//! `architecture-v1.md` expects `ppu/affine.rs` as part of the PPU crate budget.
-//! The actual matrix math lives in `crate::math::affine` (Phase 6/8 shared) to avoid
-//! duplication with `bios::handle_swi` `BgAffineSet`/`ObjAffineSet`. This module
-//! re-exports the shared types and provides PPU-specific accumulator helpers.
+//! PPU affine helpers over the shared affine math (also used by BIOS HLE).
+//! Provides PPU-specific internal-reference accumulator stepping.
 
 /// Advance the internal affine accumulators by one scanline (PB/PD),
 /// skipping the increment when a HBlank BGX/Y write has already updated

@@ -40,13 +40,8 @@ pub struct GbaMemoryBus {
     ie: u16,
     sif: u16,
     ime: bool,
-    /// NBA-model delayed interrupt state (nba-emu/NanoBoyAdvance hw/irq):
-    /// IE/IME/IF writes and IRQ raises land in pending levels, applied to
-    /// the effective registers 1 tick later; irq_available (IE&IF) follows
-    /// 1 tick after that; the CPU irq_line (IME && available) 2 ticks after
-    /// that. A late IE/IME clear can therefore still cancel an IRQ whose IF
-    /// was already set (nba cancel-irq-ie/ime), and the CPU observes the
-    /// line ~3 ticks after the request. Reads return effective values.
+    /// Delayed interrupt pipeline: IE/IME/IF writes and IRQ raises apply
+    /// to effective registers with staged latency; reads return effective values.
     pending_ie: u16,
     pending_ime: bool,
     pending_if: u16,
@@ -87,27 +82,12 @@ pub struct GbaMemoryBus {
     /// suite proves pure-fetch streams get no ride discount: nop P.. = 6
     /// = S+S), and prefetch hides data/internal stalls via erases.
     prefetch_enabled: bool,
-    /// Block-transfer continuation flag (mGBA-shaped N/S): CPU data
-    /// accesses are always nonsequential EXCEPT LDM/STM/PUSH/POP words
-    /// after the first, which follow bus order (sequential unless
-    /// crossing the 128KB line or regions) via
-    /// `data_continuation_sequential`. Reset by the loop when done; DMA
-    /// and HLE paths never set it.
+    /// Block-transfer continuation: LDM/STM/PUSH/POP words after the first
+    /// follow bus order via `data_continuation_sequential`.
     data_sequential_override: bool,
-    /// Block-transfer erase batching (LDM/STM/PUSH/POP with 2+ words).
-    /// HW-observed law (mgba-suite Timing LDM/STM/OAM P-cells, ARM+Thumb):
-    /// word 1 erases like a single access (GBALoad +2 / GBAStore +1
-    /// convention); continuation words erase marginally
-    /// `min(-1, S_code - w_conv)` each (`w_conv` = region wait +2/+1);
-    /// the instruction's total erase benefit floors at one N-fetch worth
-    /// (`-N` of the code region at fetch width, same floor as MUL ticks).
-    /// Per-word independent stalls over-erase (each word re-fills), while
-    /// mGBA's single whole-total stall under-erases; HW sits between.
-    /// While set by `begin_block_batch`, non-ROM data words with prefetch
-    /// on and ROM code route here instead of erasing per word.
-    /// Per-word `(wait-1)` contributions still land normally; ROM data
-    /// words and prefetch-off/flat-code paths never batch (bit-for-bit
-    /// preserved).
+    /// Block-transfer erase batching (2+ word LDM/STM/PUSH/POP): word 1
+    /// erases like a single access, continuation words erase marginally,
+    /// total floored at one N-fetch worth. Set by `begin_block_batch`.
     block_batching: bool,
     block_batch_any: bool,
     block_batch_words: u32,
@@ -137,22 +117,12 @@ pub struct GbaMemoryBus {
     current_pc: u32,
     prev_addr: Option<u32>,
     prev_width: u8,
-    /// Opcode-fetch N/S stream, independent from the data stream above.
-    /// GBATEK "GamePak Prefetch": prefetch feeds on during load/store data
-    /// accesses, so a data access never breaks code sequentiality (mGBA
-    /// likewise fetches unconditionally sequential and charges data only
-    /// the N-S delta). Conversely an opcode fetch never makes the next
-    /// data access sequential (a literal load is a 1N data access even
-    /// when its address happens to follow the fetch).
+    /// Opcode-fetch N/S stream, independent of the data stream: data
+    /// accesses never break code sequentiality and vice versa.
     fetch_addr: Option<u32>,
     fetch_width: u8,
-    /// Signed prefetch-erase deltas (mGBA `GBAMemoryStall`) routinely
-    /// drive this negative mid-instruction (e.g. a Thumb fetch (+2) with
-    /// an IWRAM-load erase (-4)); the per-instruction net plus the CPU
-    /// base stays positive. It MUST stay signed until `take_*` at the
-    /// instruction boundary: a u32 `saturating_add_signed` clamped the
-    /// erase at zero whenever it exceeded the so-far waits and every
-    /// Thumb P-cell overshot (mgba-suite Timing P residuals, all +).
+    /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
+    /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
     access_wait_cycles: i64,
     halted: bool,
     halt_irq_mask: u16,
@@ -165,19 +135,9 @@ pub struct GbaMemoryBus {
     /// IntrWait/VBlankIntrWait wake-clear mask (GBATEK: waited flags are
     /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
     wake_clear_mask: u16,
-    /// IntrWait/VBlankIntrWait wake-exit latency (real-BIOS exit-path cost,
-    /// in T-cycles). The HLE returns from the SWI inline, so without this
-    /// the woken thread runs 1-2 instructions before the just-raised IRQ
-    /// line finishes staging (+2 after apply); on HW the BIOS exit path
-    /// (~10+ cycles: flag check, mirror reset, restore, return) always
-    /// loses that race, so the pending IRQ dispatches BEFORE the thread
-    /// resumes. Missing it strands mgba-suite Timer count-up: the wake
-    /// dispatch lands between `irqCounter = ii` and the timer start, eats
-    /// ii, and the storm then wraps the counter forever. Armed by
-    /// `evaluate_halt_wake` on every halt wake (IntrWait and plain Halt
-    /// alike: HW always vectors through IntrMain before resuming past the
-    /// halt); consumed by the system step loop as CPU-stall cycles (time
-    /// still advances, so the line stages during the burn).
+    /// IntrWait/VBlankIntrWait wake-exit latency (real-BIOS exit-path cost).
+    /// The HLE returns inline, so without this the woken thread outruns the
+    /// staging IRQ line; consumed as CPU-stall cycles by the step loop.
     wake_latency: u32,
     bios_prefetch: u32,
     scheduler: EventScheduler,
@@ -185,25 +145,14 @@ pub struct GbaMemoryBus {
     hle_bios: Option<HleBiosOperation>,
     video_armed: bool,
     video_countdown: u8,
-    /// HBlank IRQ deferred one tick (NBA PPU.cc `BeginHBlankVDraw`
-    /// schedules `PPU_HBlankIRQ` +1 after the flag edge; VBlank/VCount
-    /// IRQs are likewise +1 in NBA but no pin demands them here).
-    /// Raised at the next tick start, ahead of the delayed pipeline, so
-    /// CPU entry timing is unchanged and only same-tick DMA/CPU reads of
-    /// IF observe the lag (exact-timing HBL IRQ 501: the flag-edge
-    /// sample stays clear, the next one sees IF).
+    /// HBlank IRQ deferred one tick: raised at the next tick start, so only
+    /// same-tick IF reads observe the lag; CPU entry timing is unchanged.
     pending_hblank_irq: bool,
     /// A DMA burst is currently feeding the EEPROM serial chip; closed when
     /// no DMA channel is active or pending (frame decoded at burst end).
     eeprom_burst_open: bool,
-    /// Test-ROM log sink behind the `mgba-debug-log` cargo feature
-    /// (mGBA debug-log protocol, mgba-emu/suite `src/mgba.c`):
-    /// 0x04FFF600-0x04FFF6FF string buffer, 0x04FFF700 flags (bit 8 =
-    /// send, low 3 bits = level), 0x04FFF780 enable (0xC0DE -> on, reads
-    /// back 0x1DEA). No hardware counterpart exists, so accesses cost
-    /// zero waits and never touch prefetch / N-S / Disable-Bug state.
-    /// Production frontends build without the feature; the addresses
-    /// then behave as plain open bus, exactly as before.
+    /// Test-ROM log sink behind the `mgba-debug-log` cargo feature. No
+    /// hardware counterpart exists: zero waits, no prefetch/N-S side effects.
     #[cfg(feature = "mgba-debug-log")]
     mgba_debug_enable: bool,
     #[cfg(feature = "mgba-debug-log")]
@@ -517,14 +466,9 @@ impl GbaMemoryBus {
             // the 16-bit-bus 32bit=2 split.
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
-                // mGBA-shaped N/S (mgba-emu/suite Timing truth): opcode
-                // fetches always follow the fetch stream (linear code is
-                // sequential even with prefetch off or across data
-                // accesses); data accesses are always nonsequential
-                // (block-transfer continuation words use the explicit
-                // sequential data path). The fetch-stream break a data
-                // access causes is pre-paid per instruction by
-                // `charge_fetch_stream_break` (mGBA load/store post-body).
+                // Opcode fetches follow the fetch stream; data accesses are
+                // nonsequential (continuation words use the sequential data
+                // path); the fetch-stream break is pre-paid per instruction.
                 let sequential = if is_opcode {
                     // Fetches issued while a DMA burst is pending (trigger
                     // stored, bus handover imminent) cost N: the arbitrated
@@ -561,15 +505,8 @@ impl GbaMemoryBus {
         }
     }
 
-    /// Extra wait cycle when the CPU touches video memory while the LCD
-    /// controller is fetching it. GBATEK ("VRAM, OAM, and Palette RAM Access")
-    /// and Tonc agree: the CPU may access at any time and data is never
-    /// corrupted (unlike the GBC); a waitstate is inserted automatically on
-    /// contention. This mirrors mGBA's `GBAMemoryStallVRAM`/`stallMask` in
-    /// simplified form: +1 cycle while the controller is actively drawing,
-    /// 0 during blanks or forced blank (controller idle, fast access).
-    /// Display-controller contention snapshot (usable without borrowing
-    /// the bus, e.g. for DMA costs while a channel is mutably borrowed).
+    /// Extra wait while the LCD controller fetches the same video memory.
+    /// +1 while actively drawing, 0 during blanks/forced blank.
     fn display_stall(&self, addr: u32) -> u8 {
         DisplayStallSnapshot {
             forced_blank: self.ppu.forced_blank(),
@@ -644,14 +581,9 @@ impl GbaMemoryBus {
                 self.video_armed = self.dma.has_video_transfer();
             }
             if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
-                // NBA PPU.cc `UpdateVideoTransferDMA` schedules the video
-                // request 3 cycles into the line (`scheduler.Add(3,
-                // PPU_VideoDMA)`; mGBA `GBADMARunDisplayStart` likewise
-                // starts video DMA `now + 3`). The burst-start xI (+2 on
-                // the first unit) no longer carries the sweep phase; the
-                // first unit's xI is absorbed pre-start (see dma.rs), so
-                // the countdown alone sets the HW-pinned phase
-                // (exact-timing HBL SET 500 with a uniform 2/unit rhythm).
+                // Video DMA request lands 3 cycles into the line; the first
+                // unit's xI is absorbed pre-start, so the countdown alone
+                // sets the phase.
                 self.video_countdown = 3;
             }
         }
@@ -667,14 +599,9 @@ impl GbaMemoryBus {
                         event_type: EventType::TimerOverflow(i),
                         seq: 0,
                     });
-                    // DirectSound (GBATEK SOUNDCNT_H + "DMA-Sound Playback
-                    // Procedure"): the overflowing timer clocks one sample
-                    // byte out of each FIFO selecting it. GBATEK SOUNDCNT_X:
-                    // with master-enable bit 7 clear, PSG and FIFO sounds
-                    // are disabled entirely, so no drain or DMA request runs.
-                    // A FIFO holding 12 bytes or fewer requests its Special
-                    // DMA channel (mGBA audio.c: free words > 4 of 8).
-                    // (per-channel: must not trigger an armed DMA3 video).
+                    // The overflowing timer clocks one sample byte out of each
+                    // selecting FIFO; a FIFO at 12 bytes or fewer requests
+                    // its Special DMA channel.
                     if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
                         for (fifo_b, select_bit, enable_mask) in
                             [(false, 10, 0x0300), (true, 14, 0x3000)]
@@ -769,27 +696,10 @@ impl GbaMemoryBus {
                     bit
                 }
             } else if readable_source {
-                // nba burst-into-tears (HW-pinned, source main.c): a 3-unit
-                // 16-bit DMA3 from 0x07FFFFFE (inc) to 0x08000000 (dec)
-                // delivers ROM[2] to OAM[0x3FE] and ROM[4] to OAM[0x3FC],
-                // i.e. dest[i] = mem16(src+2+2i): the 16-bit GamePak read
-                // path pre-increments, latching unit N+1's data into unit
-                // N (with a phantom read past the end). The shift fires
-                // only for primed bursts (head issued outside GamePak ROM;
-                // `DmaTransfer::shift_primed`): bursts sourced entirely
-                // within ROM stream aligned (mgba-suite DMA H rows pin the
-                // plain forced-increment last word 0xDEAD). The shift is a
-                // multi-unit pipeline effect: single-unit 16-bit reads
-                // land on the aligned source (mgba-suite "ROM load DMA1
-                // 16" pins 0xBEEF). It fires when the read lands in ROM
-                // (source or source+2 is GamePak: unit 0 issues from the
-                // OAM mirror but lands at ROM[0]). 32-bit ROM reads are
-                // unaffected (nba 128kb-boundary times pin their
-                // addresses), and non-ROM 16-bit sources are unaffected
-                // (nba latch pins IWRAM 16-bit data exact: 0x12341234).
-                // The read issues on the data stream (forced increment
-                // inside GamePak ROM; see `DmaChannel::data_source`),
-                // while N/S timing follows the programmed counter.
+                // 16-bit GamePak reads pre-increment (dest[i] =
+                // mem16(src+2+2i)), firing only for primed bursts whose
+                // read lands in ROM; single-unit and non-ROM reads are
+                // unaffected. N/S timing follows the programmed counter.
                 let src = transfer.data_source;
                 let read_addr = if transfer.width == 2
                     && transfer.shift_primed
@@ -857,14 +767,9 @@ impl GbaMemoryBus {
         self.irq_line
     }
 
-    /// NBA-model delayed interrupt pipeline: apply due IE/IME/IF pendings
-    /// (1 tick after the write/raise), then propagate IE&IF availability
-    /// (+1) and the CPU IRQ line (+2). Transitions are queued in order (a
-    /// later recompute never cancels an earlier staged edge), so a
-    /// transiently true line is still observable by the CPU before it
-    /// falls again. A late IE/IME clear can therefore still cancel an IRQ
-    /// whose IF was already set (nba cancel-irq-ie/ime): the line only
-    /// stays true if no clear is in flight.
+    /// Delayed interrupt pipeline: apply due pendings, then propagate
+    /// availability (+1) and the CPU line (+2). Queued transitions are
+    /// never cancelled, so transient edges stay observable.
     fn process_irq_pipeline(&mut self) {
         let now = self.current_tcycle;
         if self.pending_at.is_some_and(|at| at <= now) {
@@ -904,13 +809,9 @@ impl GbaMemoryBus {
                 if line != line_cur {
                     self.line_queue.push((line, now + 2));
                 }
-                // Halt wake on the effective IE/IF registers (GBATEK Halt:
-                // paused while (IE AND IF)=0): evaluated here at apply time,
-                // which already sees the final levels (a later write cannot
-                // land between apply and the avail pop: writes run after
-                // the pipeline within each tick). CPU IRQ entry still uses
-                // the delayed line. (nba haltcnt CPUSET-DMA is HW-exact
-                // this way.)
+                // Halt wake on the effective IE/IF registers, evaluated at
+                // apply time (sees final levels); CPU entry uses the
+                // delayed line.
                 if ie & sif & self.halt_irq_mask != 0 {
                     self.evaluate_halt_wake();
                 }
@@ -1007,12 +908,8 @@ impl GbaMemoryBus {
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
-        // Halt entry combines delayed availability (an IRQ already
-        // propagated keeps the CPU running) with the newest IE/IF levels:
-        // a just-written ack (e.g. IntrWait discarding old flags) must be
-        // honored even though it applies next tick, while a just-raised IF
-        // (pending) correctly prevents halting. Pending levels persist, so
-        // they are always current-or-newer than the effective registers.
+        // Halt entry uses delayed availability plus the newest IE/IF levels:
+        // a just-written ack is honored, a just-raised IF prevents halting.
         self.halted =
             !(self.irq_available && self.pending_ie & self.pending_if & self.halt_irq_mask != 0);
     }
@@ -1055,28 +952,10 @@ impl GbaMemoryBus {
                         u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
                     self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
                 }
-                // Every halt wake with the IRQ line live pays the wake-exit
-                // latency and, by stalling past line-rise, lets the wake
-                // dispatch run before the woken thread resumes: on HW the
-                // halted CPU always vectors through IntrMain before
-                // executing past the halt, so e.g. an SIO waiter's timer
-                // stop observes entry+handler+return (mgba-suite
-                // sio-timing measures transfer + 121; without this the
-                // resume wins the race and only transfer + 2 is seen).
-                // With IME=0 no dispatch can follow (the CPU line never
-                // rises), so there is no race to order and the wake stays
-                // free -- nba haltcnt CPUSET-DMA is exact at +0 with
-                // IRQs disabled. IntrWait's 48 covers the real-BIOS
-                // wait-loop/mirror/return (recalibrated 8 -> 48 against
-                // the timers prescaled sums: the per-phase sync anchor
-                // re-snaps the timeline to the /1024 tap grid, so this
-                // latency sets each cell's enable phase); plain Halt
-                // resumes directly, so 32 (sio-timing pins transfer +
-                // 121 exactly with entry + the guest IntrMain). Corner:
-                // IME=1 with CPSR I-set still burns 32 without a dispatch
-                // (accepted). Recalibrate together if either changes. Fitted:
-                // recalibrate against nba irq-delay/cancel-ime and the
-                // suite timers/timer-irq totals if this changes.
+                // A live-line wake pays the exit latency and stalls past
+                // line-rise so the wake dispatch runs before the thread
+                // resumes; an IME=0 wake stays free. IntrWait burns 48,
+                // plain Halt 32. Recalibrate the pair together.
                 self.wake_latency = if clear != 0 {
                     48
                 } else if self.ime {
@@ -1124,12 +1003,8 @@ impl GbaMemoryBus {
             self.apu.reset_sound();
         }
         if flags & 0x80 != 0 {
-            // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts.
-            // Timers are deliberately NOT cleared: the HW-calibrated
-            // RegisterRamReset ROM starts TIMER0 across the call and
-            // requires the full count ($01AB), proving the timer runs
-            // through the reset on hardware (mGBA clears it and cannot
-            // reproduce this).
+            // Timers are NOT cleared: HW RegisterRamReset proves the timer
+            // runs through the reset (mGBA clears it and cannot reproduce).
             self.ppu.reset();
             self.dma.reset();
             self.video_armed = false;
@@ -1162,14 +1037,9 @@ impl GbaMemoryBus {
         std::mem::take(&mut self.access_wait_cycles)
     }
 
-    /// Prefetch erase (mGBA `GBAMemoryStall` port): with prefetch enabled,
-    /// a non-ROM data/internal stall fills the prefetch unit, converting
-    /// this access's N into S and erasing subsequent S waits. Returns the
-    /// delta to add to `access_wait_cycles` INSTEAD of the normal
-    /// `(wait - 1)` contribution (may be negative: the fill overlaps the
-    /// stall). ROM data never stalls (cart bus); prefetch off returns the
-    /// normal contribution delta (0). Computed in mGBA wait-space then
-    /// converted back, so tune against mGBA, not against our +1 totals.
+    /// Prefetch erase: with prefetch on, a non-ROM data/internal stall fills
+    /// the prefetch unit, converting N into S and erasing subsequent S waits.
+    /// Returns the delta INSTEAD of the normal `(wait - 1)` contribution.
     pub(crate) fn prefetch_erase_delta(&mut self, addr: u32, wait_our: u32, is_load: bool) -> i32 {
         if !self.prefetch_enabled || addr >= 0x08000000 {
             return 0;
@@ -1191,15 +1061,8 @@ impl GbaMemoryBus {
             return;
         }
         let delta = self.prefetch_stall_erased(tick_wait as i32) - tick_wait as i32;
-        // HW-fitted MUL floor (mgba-suite Timing MUL P-cells, all 200+
-        // short/long/MLA x ARM/Thumb x P-matrix cells): the tick array is
-        // CPU-internal, so its erase benefit caps at one N-fetch worth
-        // (delta >= -N of the code region at fetch width). The raw
-        // GBAMemoryStall loop over-erases for long tick arrays (it models
-        // bus-idle fills, but MUL ticks hold no bus idle that prefetches
-        // subsequent S waits with). Scoped to GamePak-ROM code where the
-        // N/S split exists; flat-wait regions keep the pure mGBA stall
-        // (their MUL cells already match).
+        // MUL ticks are CPU-internal, so the erase benefit caps at one
+        // N-fetch worth; scoped to GamePak-ROM code.
         let delta = match self.last_opcode_addr {
             Some(pc @ 0x08000000..=0x0DFFFFFF) => {
                 let n_mgba = u32::from(self.gamepak_rom_cycles(pc, fetch_width, false)) - 1;
@@ -1261,15 +1124,9 @@ impl GbaMemoryBus {
         }
     }
 
-    /// HLE SWI entry residual (mgba-suite Timing SWI cells): our inline
-    /// HLE skips the HW exception entry (pipeline flush + BIOS vector +
-    /// refill), whose cost differs from the fitted charge by a tiny
-    /// code-region-dependent constant (ROM-N0 +1, ROM-N1 +0, EWRAM -1;
-    /// uniform across SWI functions, modes, and N/S/P cells). IWRAM is
-    /// deliberately unadjusted: real IWRAM-code timer ROMs (PeterLemon
-    /// BIOSDIV/BIOSSQRT/BIOSARCTAN) match without it, so the IWRAM suite
-    /// residual is a harness-differential artifact, not entry cost.
-    /// No code context (unit tests) yields 0, keeping all HLE pins exact.
+    /// HLE SWI entry residual: the inline HLE skips the HW exception entry,
+    /// whose cost differs by a tiny code-region constant. IWRAM is
+    /// deliberately unadjusted; no code context yields 0.
     pub(crate) fn swi_region_adjust(&self) -> i32 {
         match self.last_opcode_addr {
             Some(0x08000000..=0x09FFFFFF) => {
@@ -1425,12 +1282,8 @@ impl GbaMemoryBus {
             0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
             0x08000000..=0x0CFFFFFF => self.read_rom(addr, width),
             0x0D000000..=0x0DFFFFFF => {
-                // GBATEK Backup Media: on EEPROM cartridges the 0D window
-                // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM:
-                // CPU loads see the chip state). The peek does not consume
-                // stream bits, so DMA bursts stay in sync; idle drives 1
-                // (Ready for the GBATEK `LDRH [DFFFF00h]` poll). Plain ROMs
-                // mirror WS2 here.
+                // On EEPROM cartridges the 0D window is the serial chip, not
+                // ROM; idle drives 1. Plain ROMs mirror WS2 here.
                 if self.is_eeprom() {
                     let bit = self.cartridge.as_ref().is_none_or(|c| c.eeprom_peek_bit());
                     u32::from(bit)
@@ -1445,12 +1298,8 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            // mGBA biosPrefetch concordance, pinned by jsmolka bios.gba
-            // (whose four tests read the live prefetch after boot / SWI /
-            // IRQ / IRQ-return): a protected read returns the latched last
-            // BIOS-fetched opcode, the SAME value on repeat reads. The latch
-            // is refreshed when BIOS-region execution is left (HLE: after
-            // each SWI, at IRQ entry, at IRQ return).
+            // A protected read returns the latched last BIOS-fetched opcode,
+            // same value on repeats; refreshed when BIOS execution is left.
             let raw = self.bios_prefetch;
             let aligned = match width {
                 4 => raw,
@@ -1474,15 +1323,9 @@ impl GbaMemoryBus {
         self.last_prefetch = value;
     }
 
-    /// Reset CPU fetch/data stream tracking on a CPU jump (branch taken,
-    /// IRQ entry): the next access is non-sequential however contiguous it
-    /// looks. Prefetch-erase position (`last_prefetched_pc`) resets to 0
-    /// like mGBA `GBA_MemorySetActiveRegion` (every jump clears it).
-    /// No suite cell currently observes the reset (post-jump targets
-    /// always land 16+ bytes from stale fills, so the overlap cap would
-    /// be empty anyway); it is kept for model faithfulness. DMA
-    /// completion is not a jump and never calls this, matching mGBA
-    /// (DMA leaves the position alone).
+    /// Reset fetch/data stream tracking on a CPU jump (branch taken, IRQ
+    /// entry): the next access is non-sequential. DMA completion is not a
+    /// jump and never calls this.
     pub fn invalidate_prefetch_for_dma(&mut self, _dma_addr: u32) {
         self.prev_addr = None;
         self.prev_width = 0;
@@ -1533,13 +1376,9 @@ impl GbaMemoryBus {
         (raw, wait)
     }
 
-    /// Fetch-stream-break charge (mGBA load/store post-body
-    /// `activeNonseqCycles32 - activeSeqCycles32`): a CPU data access
-    /// breaks the fetch stream, so the next fetch costs N instead of S.
-    /// Pre-paid here per load/store instruction as N32-S32 of the owning
-    /// code region (0 outside GamePak ROM, which carries no N/S split).
-    /// Call once per CPU load/store instruction (LDM/STM/PUSH/POP: once
-    /// per instruction, not per word).
+    /// Fetch-stream-break charge: a CPU data access breaks the fetch stream,
+    /// so the next fetch costs N instead of S. Pre-paid once per load/store
+    /// instruction as N32-S32 of the owning code region.
     pub(crate) fn charge_fetch_stream_break(&mut self) {
         if let Some(pc) = self.last_opcode_addr
             && (0x08000000..=0x0DFFFFFF).contains(&pc)
@@ -1607,12 +1446,8 @@ impl GbaMemoryBus {
         }
     }
 
-    /// Batched-word erase routing. Returns the erase-delta to add for this
-    /// word, or `None` when the word must use the normal per-word path
-    /// (ROM data, prefetch off, or non-ROM code, all bit-for-bit
-    /// preserved). Word 1 (first batched word) erases fully single-style;
-    /// continuation words erase marginally. Only the returned delta lands
-    /// on the accumulator; the caller still adds `(wait-1)` itself.
+    /// Batched-word erase routing: returns the erase-delta for this word, or
+    /// `None` for the normal per-word path. The caller still adds `(wait-1)`.
     fn batch_word_delta(&mut self, addr: u32, wait: u8) -> Option<i32> {
         if !self.block_batching || !self.prefetch_enabled {
             return None;
@@ -1905,13 +1740,8 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => {
-                // GBATEK I/O Map: SAD/DAD are write-only (CPU reads see
-                // open bus); CNT_L instead reads back as 0 ("silent
-                // write-only", mGBA GBAIORead), and CNT_H is R/W so it
-                // reads back the latched control (enable bit included).
-                // (The channel latch itself is untouched; byte-store
-                // merging in write_io reads it back via dma.read
-                // directly.)
+                // SAD/DAD are write-only (reads see open bus); CNT_L reads
+                // back 0, CNT_H reads the latched control.
                 if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
                     self.dma.read(aligned).unwrap_or(0)
                 } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
@@ -2074,12 +1904,8 @@ impl GbaMemoryBus {
         self.open_bus_value = value;
     }
 
-    /// SIOCNT write with per-sub-mode R/W maps (GBATEK SIO chapters;
-    /// mGBA `GBASIOWriteSIOCNT` + `GBAIOWrite` masks). Unreadable bits
-    /// never persist (same convention as the APU masks above), so reads
-    /// return the stored value. Pinned by mgba-suite sio-read (6 mode
-    /// groups); mGBA itself diverges on several (UART SIODATA8, JOY
-    /// TRANS/STAT, G/J SIOCNT, RCNT data bits), so the HW table rules.
+    /// SIOCNT write with per-sub-mode R/W maps. Unreadable bits never
+    /// persist; the suite HW table rules where mGBA diverges.
     fn write_siocnt(&mut self, v: u16) {
         // Bit 15 is always 0 (mGBA GBAIOWrite `value &= 0x7FFF`).
         let mut value = v & 0x7FFF;
@@ -2087,14 +1913,9 @@ impl GbaMemoryBus {
         let sio_block = self.sio_block_selected();
         match sub {
             2 if sio_block => {
-                // Multiplayer (GBATEK R/W map): Slave/Ready/ID/Error are
-                // read-only. Unconnected the unit is a Child (SI-terminal
-                // reads 1, as the suite table shows), ID is 0 (undefined
-                // until the first transfer), Ready reads 1; old RO bits
-                // {2-6} are retained (mGBA no-driver rules). A slave can
-                // never start (it waits for the parent clock), so START
-                // never schedules -- the suite's Multi timing tests rely
-                // on this to time out into self-SKIP.
+                // Multiplayer: Slave/Ready/ID/Error are read-only. A slave
+                // never starts, so START never schedules (Multi tests
+                // self-SKIP on timeout).
                 value &= 0xFF83;
                 value |= 0x0004;
                 value &= !0x0030;
@@ -2227,12 +2048,8 @@ impl GbaMemoryBus {
             }
         }
         let aligned = addr & !1;
-        // GBATEK Address Bus Width: the I/O bus is 16-bit with byte-lane
-        // selectivity (mGBA GBAIOWrite8 merges then dispatches 16-bit).
-        // A sub-word store must preserve the untouched lane instead of
-        // zeroing it (e.g. STRB to a CNT_H low byte must not clear the
-        // start/IRQ bits in the high lane). DMA registers merge against
-        // the latched channel state (CPU reads see open bus, #13).
+        // The I/O bus is 16-bit: a sub-word store must preserve the
+        // untouched lane instead of zeroing it.
         let v16 = if width == 1 {
             let shift = (addr & 1) * 8;
             let lane = (value & 0xFF) << shift;
@@ -2440,12 +2257,9 @@ impl GbaMemoryBus {
             0x05000000..=0x05FFFFFF => self.write_palette(address, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
             0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
-            // GBATEK Memory Map: GamePak SRAM is CPU-only (bytewise) for
-            // DMA0-2 — their stores go nowhere. DMA3 is the backup-media
-            // channel: it programs Flash (parsed as commands, as before)
-            // and plain SRAM (mgba-suite "SRAM store DMA3" pins the
-            // written bytes readable back) alike. EEPROM cartridges have
-            // no SRAM window, so DMA3 stores there still drop.
+            // GamePak SRAM is CPU-only for DMA0-2 (stores go nowhere).
+            // DMA3 programs Flash/plain SRAM alike; EEPROM carts have no
+            // SRAM window, so DMA3 stores there still drop.
             0x0E000000..=0x0FFFFFFF => {
                 if channel == 3
                     && let Some(cart) = self.cartridge.as_mut()

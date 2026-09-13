@@ -21,12 +21,8 @@ pub(crate) struct HleBiosOperation {
     width: u8,
     value: u32,
     phase: TransferPhase,
-    /// The pre-mask source was odd. A 16-bit CpuSet from an odd address
-    /// copies zero-extended bytes (mgba-suite "ROM load swi B 16
-    /// (unaligned)" pins 0x00DE00BE): each unit reads the odd byte, not
-    /// the aligned halfword. Parity is stable (stride 2), so one flag
-    /// covers the whole transfer. 32-bit mode aligns down (pinned),
-    /// except odd SRAM sources (see below).
+    /// Odd 16-bit sources copy zero-extended odd bytes (not aligned halfwords); one flag covers the transfer.
+    /// 32-bit sources align down, except odd SRAM sources (handled below).
     src_odd: bool,
     /// 32-bit CpuSet to an odd SRAM address stores nothing (mgba-suite
     /// "SRAM store swi B 32 (unaligned)" pins residue): the destination
@@ -419,14 +415,9 @@ fn soft_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let flags = regs.r(0) as u8;
     let mut cycles: u32 = 0;
-    // HLE charge self-calibration (same pattern as Huff): the fixed display
-    // totals below assume zero bus waits for Palette/VRAM 32-bit clears, but
-    // GBATEK bus widths charge 1 extra wait each (VRAM/Palette 32bit=2).
-    // Subtract the actually incurred waits so the wall total always equals
-    // the HW-measured display value. EWRAM/IWRAM/OAM keep fixed charges:
-    // EWRAM's 65536 writes vanish mod 0x10000 for any uniform wait, and the
-    // others incur zero waits (GBATEK 1-cycle regions).
-    // mGBA _RegisterRamReset: always DISPCNT=0x0080
+    // Subtract incurred Palette/VRAM waits so the wall total matches the display value.
+    // EWRAM/IWRAM/OAM keep fixed charges (zero or uniform waits).
+    // Always sets DISPCNT=0x0080.
     bus.write16(0x04000000, 0x0080);
     // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
     // 実測 TIMER0 (size=full) から求めた base を size比でスケールする。

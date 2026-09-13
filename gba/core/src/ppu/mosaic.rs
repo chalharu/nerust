@@ -1,18 +1,5 @@
-/// BG mosaic: compress (x,y) to the origin of its mosaic block.
-///
-/// `mosaic` is the line-latched MOSAIC register (sampled at line start, see
-/// `GbaPpu::capture_line_latch`): mid-scanline writes take effect on the next
-/// line. HBlank/VBlank writes (IRQ, HBlank DMA, `sprite-hmosaic` style) still
-/// apply to the next line exactly as before.
-///
-/// The compressed screen coordinate is used *before* the scroll offset is
-/// added (`(x - x % h) + hofs` in `bg.rs`), i.e. mosaic is screen-fixed.
-/// This matches hardware: horizontal mosaic is a post-process output latch on
-/// screen pixels, and vertical mosaic holds the rendered source line
-/// (RadDad772 "Notes on GBA PPU: How mosaic works"; Tonc gfx.htm: the
-/// top-left pixel of each block fills the block). A scroll-inclusive variant
-/// (`(x + hofs) - (x + hofs) % h`) would shift mosaic blocks with scrolling
-/// and does not match hardware for the static-scroll case.
+/// BG mosaic: snap (x,y) to its mosaic-block origin; mosaic is screen-fixed
+/// (applied before the scroll offset). `mosaic` is the line-start latched register.
 pub fn bg_mosaic(mosaic: u16, cnt: u16, x: usize, y: usize) -> (usize, usize) {
     if cnt & (1 << 6) == 0 {
         return (x, y);

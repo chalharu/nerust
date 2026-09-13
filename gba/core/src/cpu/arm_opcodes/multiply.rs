@@ -1,14 +1,8 @@
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
-// Long-multiply carry model.
-//
-// The ARM7TDMI MULLS/MLALS set C from the Booth multiplier array's final
-// carry, not from the 64-bit product (mgba-suite multiply-long pins C=1
-// for e.g. SMULL(0, 0x80000000) whose product is 0). The algorithm below
-// is a Rust port of NanoBoyAdvance's `MultiplyCarrySimple/Lo/Hi`, itself
-// adapted from the original research implementation, and is used under
-// its license terms:
+// Long-multiply carry model: C comes from the Booth array's final carry, not the product.
+// Ported algorithm used under its license terms below.
 //
 //   Multiplication carry flag algorithm has been altered from its original
 //   form. However, they remain under their original license terms.
@@ -200,15 +194,8 @@ fn multiply_carry_lo(rm: u32, rs: u32, accum: u32) -> bool {
     let mut carry = multiplicand.wrapping_mul(booth);
     let mut sum = carry.wrapping_add(accum);
     let mut acc = accum;
-    // Process 8 multiplier bits using 4 booth iterations per group.
-    // The loop is bounded: partial-tick callers guarantee uniform top
-    // bits, so booth always converges within 3 groups (after the shift-7
-    // group booth replicates Rs[24] across the top, matching Rs whenever
-    // the top 8 bits are uniform); full-tick multipliers never reach this
-    // path (they use the Hi model). The bound keeps this a total function
-    // even for unreachable inputs (full-tick Rs here), where the C++
-    // original would spin on the shift-count wraparound. Wrapping keeps
-    // the mod-32 shift semantics of the original in any case.
+    // Loop is bounded: partial-tick inputs converge within 3 groups, keeping this total.
+    // Full-tick inputs never reach this path (they use the Hi model).
     let mut shift = 29i32;
     for _ in 0..4 {
         for _ in 0..4 {

@@ -3,15 +3,9 @@ use super::{SaveBackend, SaveType};
 
 const EEPROM_SIZE: usize = 8192; // 8KB max, covers 512B as subset
 
-/// EEPROM serial state machine (GBATEK Backup Media / EEPROM).
-///
-/// The chip is bit-serial and DMA-only: each 16-bit DMA unit carries one bit
-/// in bit 0. Write frame: `1` start, `0` op, 6/14 address bits (MSB first),
-/// 64 data bits, `0` stop. Read request: `1` start, `1` op, address bits;
-/// the game then DMA-reads 68 units (4 dummy + 64 data bits) from 0D000000h.
-///
-/// 512B vs 8KB is latched from the first decodable frame (mGBA-style):
-/// an exact 73-bit write / 8-bit read request means 512B, 81/16 means 8KB.
+/// EEPROM bit-serial DMA-only state machine.
+/// Write frames carry start/op/address/data/stop; reads return 4 dummy + 64 data bits.
+/// 512B vs 8KB address width is latched from the first decodable frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EepromAddrWidth {
     Bits512,

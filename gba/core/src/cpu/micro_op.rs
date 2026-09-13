@@ -1,15 +1,6 @@
-//! Micro-op scaffold for the per-cycle CPU remodel.
-//!
-//! Design: `nerust-docs/reference/gba/gba-12-per-cycle-cpu-design.md` §4.1.
-//! Instruction-atomic decode is kept (existing handlers own semantics);
-//! each covered instruction expands to micro-ops interpreted one step at
-//! a time. GBATEK-total equivalence with [`crate::cpu::GbaCpu::step`] is
-//! proven per covered class by the differential tests at the bottom.
-//!
-//! Covered so far (slice 1): ALU-immediate without register shift
-//! (ARM MOV/ADD/SUB/CMP, Thumb MOV/CMP/ADD/SUB) and unconditional
-//! branches (ARM B, Thumb B). Everything else returns `None` from the
-//! expanders and stays on the legacy path.
+//! Micro-op expansion for covered instructions, interpreted one step at a time.
+//! Decode stays instruction-atomic; uncovered instructions return `None` (legacy path).
+//! Totals match the legacy step per class, pinned by the differential tests below.
 
 use std::collections::VecDeque;
 
@@ -141,13 +132,8 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
     // Word-immediate class (bits27-26 == 01, I == 0, B == 0).
     if (instr >> 26) & 0x3 == 0b01 && (instr >> 25) & 1 == 0 && (instr >> 22) & 1 == 0 {
         let acc = MemAccess { width: 4, rd, rn, offset: instr & 0xFFF, subtract, is_sp: false };
-        // Cycle sums match the handler returns (load 3, store 2):
-        // the bus calls charge data/erase/break, Internals pad the
-        // GBATEK 1S base + I. (Attribution internalizes under the
-        // arbiter; totals are what the differential pins.)
-        // Fixed bases match the handler returns (load 3, store 2):
-        // the issue clock (+1) plus commit/internal ones. Totals equal
-        // legacy by construction (same bus calls, same bases).
+        // Totals match legacy handler returns (load 3, store 2); Internals pad the base.
+        // Same bus calls and order as legacy, so totals agree by construction.
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
@@ -165,13 +151,7 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
     if (instr >> 25) & 0x7 == 0 && (instr >> 22) & 1 == 1 && (instr >> 4) & 0xF == 0xB {
         let offset = (((instr >> 8) & 0xF) << 4) | (instr & 0xF);
         let acc = MemAccess { width: 2, rd, rn, offset, subtract, is_sp: false };
-        // Cycle sums match the handler returns (load 3, store 2):
-        // the bus calls charge data/erase/break, Internals pad the
-        // GBATEK 1S base + I. (Attribution internalizes under the
-        // arbiter; totals are what the differential pins.)
-        // Fixed bases match the handler returns (load 3, store 2):
-        // the issue clock (+1) plus commit/internal ones. Totals equal
-        // legacy by construction (same bus calls, same bases).
+        // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
@@ -232,13 +212,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             subtract: false,
             is_sp: true,
         };
-        // Cycle sums match the handler returns (load 3, store 2):
-        // the bus calls charge data/erase/break, Internals pad the
-        // GBATEK 1S base + I. (Attribution internalizes under the
-        // arbiter; totals are what the differential pins.)
-        // Fixed bases match the handler returns (load 3, store 2):
-        // the issue clock (+1) plus commit/internal ones. Totals equal
-        // legacy by construction (same bus calls, same bases).
+        // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
@@ -262,13 +236,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             subtract: false,
             is_sp: false,
         };
-        // Cycle sums match the handler returns (load 3, store 2):
-        // the bus calls charge data/erase/break, Internals pad the
-        // GBATEK 1S base + I. (Attribution internalizes under the
-        // arbiter; totals are what the differential pins.)
-        // Fixed bases match the handler returns (load 3, store 2):
-        // the issue clock (+1) plus commit/internal ones. Totals equal
-        // legacy by construction (same bus calls, same bases).
+        // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
@@ -292,13 +260,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             subtract: false,
             is_sp: false,
         };
-        // Cycle sums match the handler returns (load 3, store 2):
-        // the bus calls charge data/erase/break, Internals pad the
-        // GBATEK 1S base + I. (Attribution internalizes under the
-        // arbiter; totals are what the differential pins.)
-        // Fixed bases match the handler returns (load 3, store 2):
-        // the issue clock (+1) plus commit/internal ones. Totals equal
-        // legacy by construction (same bus calls, same bases).
+        // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
@@ -383,18 +345,9 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
 /// the executing instruction is not covered (caller keeps legacy path).
 /// `pipeline`/`regs` layout matches `GbaCpu` (`pipeline[0]` executes).
 #[allow(dead_code)]
-/// Queue-driven single micro-op step (per-cycle remodel slice 3b).
-/// Executes exactly one micro-op per call so the driver can tick
-/// peripherals between ops. Returns the op's true cost WITHOUT any
-/// floor (possibly zero or negative: prefetch erases overlap fills);
-/// the driver floors once per instruction at retire, exactly like the
-/// legacy step. `None` = uncovered fill with zero state change.
-///
-/// True-cost attribution (sums to the handler return per class):
-/// ALU/Branch ops = 1; load issue = 1 + data waits, commit = 1,
-/// trailing internal = 1 (fixed 3); store issue = 1 + waits,
-/// trailing internal = 1 (fixed 2). Bus waits land via
-/// `access_wait_cycles` takes, same calls and order as legacy.
+/// Single micro-op step; runs one op per call so the driver can tick peripherals between ops.
+/// Returns the op's true cost with no floor (may be <= 0 from prefetch erases); driver floors once at retire.
+/// `None` = uncovered fill, queue untouched.
 pub fn step_op(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
@@ -796,13 +749,9 @@ mod tests {
         assert!(follow);
     }
 
-    /// System-cadence tick parity: run a straight-line snippet under the
-    /// legacy step+countdown rhythm vs the micro acc-loop drain rhythm,
-    /// ticking the bus once per elapsed tick in both, with TM0 running.
+    /// Tick parity between legacy and micro drain rhythms, ticking the bus per elapsed tick with TM0 running.
     /// Returns (legacy_ticks, micro_ticks, legacy_tm0, micro_tm0).
-    /// TIMER POLLUTION NOTE: this is the load-bearing invariant behind
-    /// the system.rs drain loop — any tick-count divergence here moves
-    /// every timer-measured suite cell.
+    /// Divergence here shifts every timer-measured cell, pinning the system drain loop.
     fn tick_parity(
         code: &[u32],
         thumb: bool,
