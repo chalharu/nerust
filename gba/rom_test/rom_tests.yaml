@@ -127,8 +127,15 @@ expected_failures:
 #   erases the same for both and steps ARM 4 / Thumb 2 vs HW 4 / 3.
 #   mGBA computes the same 4/2 by construction (mode-blind stall +
 #   N32-S32 == N16-S16 post-body), so the HW +1/Thumb-load lives outside
-#   the mGBA model class; a mode-dependent erase has no HW story (same
-#   address/width access both modes). Per-cycle pipeline territory.
+#   the mGBA model class; a mode-dependent erase has no HW story.
+#   TRUE-BUFFER SIM FALSIFIED (offline /tmp/prefetch_sim, GBATEK-locked:
+#   8 slots, fill on GamePak-idle at S-rate following the code stream,
+#   hit 0 waits, miss N/S by prev-cycle addr+width, branch discards):
+#   the ARM-Thumb gap is a constant 2 for every exec base and every
+#   branch/fill-source variant (S-slow gap 2 matches HW 9-7, but S-fast
+#   stays 2 vs HW 4-3=1). A fill-dynamics buffer cannot produce HW's
+#   fast-S-only gap shrink; the +1 needs an unknown fast-S-specific
+#   Thumb-favoring mechanism. Per-cycle pipeline territory (unvalidated).
 # - B (12, BOXED): LDMIA OAM->ROM overflow + prefetch is -1 in some P
 #   columns (ov1: P.S/PNS, ov2: P../PN., ov3: P.S/PNS; ov4/ov5 pass all).
 #   Non-monotonic in overflow depth (phase lottery on burst N/S
@@ -1520,6 +1527,25 @@ suites:
     #     direction), not a bus tweak. Do NOT pattern-match the DMA
     #     config or hardcode counts; do NOT retune open-bus globally
     #     (memory 1502 at risk).
+    #   LATCH HYPOTHESIS FALSIFIED (analysis only, no code change):
+    #   a DMA bus latch (mGBA-shaped `gba->bus` = last source data,
+    #   served on post-unit unmapped reads) cannot fix either cell:
+    #   - The loop starts post-VBlankIntrWait; the first HBlank unit
+    #     lands ~900 ticks later while loop iterations cost ~15-30 ticks,
+    #     so iterations 0-40 run PRE-first-unit — yet HW bleeds through
+    #     them (breaks at 2724, not 0). Bleed therefore does NOT require
+    #     a prior unit; a post-unit latch breaks at iter 0 either way
+    #     (latch 0xDEAD or open bus, both != pattern) and can never reach
+    #     the Read fix either (Read's Got comes from the iter-0 break,
+    #     pre-unit, open bus — identical with or without latch).
+    #   - The bleed VALUE is underivable: no DMA state (SAD/DAD/CNT are
+    #     EWRAM/0x8401-ish) masks to (v&0xFFC0FFC0)==0x40004000, and
+    #     mGBA's own bus=latch (source data) doesn't match the pattern
+    #     either — sustained armed-bleed needs bus-electrical facts no
+    #     emulator source records. Interleave is equally dead for the
+    #     count (1 unit/line has no between-units gap for the CPU).
+    #   Both sub-hypotheses dead; the pair stays boxed as phase-lottery
+    #   (Break) + unknowable-value (Read/bleed).
     #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
     #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
     #   opposite to timers (needs slower): direct contradiction on

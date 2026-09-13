@@ -11,6 +11,8 @@
 //! branches (ARM B, Thumb B). Everything else returns `None` from the
 //! expanders and stays on the legacy path.
 
+use std::collections::VecDeque;
+
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -143,15 +145,17 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
         // the bus calls charge data/erase/break, Internals pad the
         // GBATEK 1S base + I. (Attribution internalizes under the
         // arbiter; totals are what the differential pins.)
+        // Fixed bases match the handler returns (load 3, store 2):
+        // the issue clock (+1) plus commit/internal ones. Totals equal
+        // legacy by construction (same bus calls, same bases).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
                 MicroOp::Internal,
                 MicroOp::Internal,
-                MicroOp::Internal,
             ]
         } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal, MicroOp::Internal]
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
     }
     // Halfword-immediate class (bits27-25 == 000, imm bit22) with the
@@ -165,15 +169,17 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
         // the bus calls charge data/erase/break, Internals pad the
         // GBATEK 1S base + I. (Attribution internalizes under the
         // arbiter; totals are what the differential pins.)
+        // Fixed bases match the handler returns (load 3, store 2):
+        // the issue clock (+1) plus commit/internal ones. Totals equal
+        // legacy by construction (same bus calls, same bases).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
                 MicroOp::Internal,
                 MicroOp::Internal,
-                MicroOp::Internal,
             ]
         } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal, MicroOp::Internal]
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
     }
     None
@@ -230,15 +236,17 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
         // the bus calls charge data/erase/break, Internals pad the
         // GBATEK 1S base + I. (Attribution internalizes under the
         // arbiter; totals are what the differential pins.)
+        // Fixed bases match the handler returns (load 3, store 2):
+        // the issue clock (+1) plus commit/internal ones. Totals equal
+        // legacy by construction (same bus calls, same bases).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
                 MicroOp::Internal,
                 MicroOp::Internal,
-                MicroOp::Internal,
             ]
         } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal, MicroOp::Internal]
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
     }
     // Immediate-offset word (011, B == 0).
@@ -258,15 +266,17 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
         // the bus calls charge data/erase/break, Internals pad the
         // GBATEK 1S base + I. (Attribution internalizes under the
         // arbiter; totals are what the differential pins.)
+        // Fixed bases match the handler returns (load 3, store 2):
+        // the issue clock (+1) plus commit/internal ones. Totals equal
+        // legacy by construction (same bus calls, same bases).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
                 MicroOp::Internal,
                 MicroOp::Internal,
-                MicroOp::Internal,
             ]
         } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal, MicroOp::Internal]
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
     }
     // Halfword immediate (1000).
@@ -286,15 +296,17 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
         // the bus calls charge data/erase/break, Internals pad the
         // GBATEK 1S base + I. (Attribution internalizes under the
         // arbiter; totals are what the differential pins.)
+        // Fixed bases match the handler returns (load 3, store 2):
+        // the issue clock (+1) plus commit/internal ones. Totals equal
+        // legacy by construction (same bus calls, same bases).
         return Some(if l {
             vec![
                 MicroOp::MemRead(acc),
                 MicroOp::Internal,
                 MicroOp::Internal,
-                MicroOp::Internal,
             ]
         } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal, MicroOp::Internal]
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
     }
     None
@@ -310,8 +322,8 @@ fn resolve_addr(regs: &CpuRegisters, a: MemAccess) -> u32 {
 }
 
 /// Apply one data access with the legacy handler's exact bus-call order
-/// (access, then fetch-stream-break). Adds no cycles itself; the bus
-/// calls charge into `access_wait_cycles`.
+/// (access, writeback, then fetch-stream-break). The issue clock (+1)
+/// lands at the call site; the bus calls charge into `access_wait_cycles`.
 fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     let addr = resolve_addr(regs, a);
     let v = match a.width {
@@ -322,6 +334,9 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     bus.charge_fetch_stream_break();
 }
 
+/// Apply one data store with the legacy handler's exact bus-call order
+/// (access, then fetch-stream-break). The issue clock (+1) lands at the
+/// call site; the bus calls charge into `access_wait_cycles`.
 fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     let addr = resolve_addr(regs, a);
     match a.width {
@@ -368,96 +383,94 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
 /// the executing instruction is not covered (caller keeps legacy path).
 /// `pipeline`/`regs` layout matches `GbaCpu` (`pipeline[0]` executes).
 #[allow(dead_code)]
-pub fn interpret_step(
+/// Queue-driven single micro-op step (per-cycle remodel slice 3b).
+/// Executes exactly one micro-op per call so the driver can tick
+/// peripherals between ops. Returns the op's true cost WITHOUT any
+/// floor (possibly zero or negative: prefetch erases overlap fills);
+/// the driver floors once per instruction at retire, exactly like the
+/// legacy step. `None` = uncovered fill with zero state change.
+///
+/// True-cost attribution (sums to the handler return per class):
+/// ALU/Branch ops = 1; load issue = 1 + data waits, commit = 1,
+/// trailing internal = 1 (fixed 3); store issue = 1 + waits,
+/// trailing internal = 1 (fixed 2). Bus waits land via
+/// `access_wait_cycles` takes, same calls and order as legacy.
+pub fn step_op(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
     pipeline: &mut [u32; 2],
+    queue: &mut VecDeque<MicroOp>,
     is_thumb: bool,
-) -> Option<u32> {
-    // Speculative pure decode FIRST: expansion has no bus/pipeline
-    // effects, so an uncovered instruction returns None here with zero
-    // state change and the legacy path runs untouched. (Running the
-    // fetch/rotate prologue before this point double-advances the
-    // pipeline on fallback.)
-    enum Decoded {
-        Thumb(u16, Vec<MicroOp>),
-        Arm(u32, Vec<MicroOp>),
-    }
-    let decoded = if is_thumb {
-        let execute = (pipeline[0] & 0xFFFF) as u16;
-        Decoded::Thumb(execute, expand_thumb(execute)?)
-    } else {
-        let execute = pipeline[0];
-        // AL-only scaffold: other conds stay legacy (current engine
-        // returns 1S with no effect; keep that behavior out of scope).
-        if execute >> 28 != 0xE {
-            return None;
-        }
-        Decoded::Arm(execute, expand_arm(execute)?)
-    };
-    bus.take_access_wait_cycles();
-    bus.set_current_pc(regs.pc());
-    let pc = regs.pc();
-    let (execute, cycles) = match decoded {
-        Decoded::Thumb(execute, ops) => {
-            let fetched = bus.fetch16(pc) as u32;
-            pipeline[0] = pipeline[1];
-            pipeline[1] = fetched;
-            regs.clear_pc_written();
-            let mut cycles = 0;
-            for op in ops {
-                match op {
-                    MicroOp::Internal => cycles += 1,
-                    MicroOp::CommitAlu(fx) => {
-                        apply_alu(regs, fx);
-                        cycles += 1;
-                    }
-                    MicroOp::TakenBranch(off) => {
-                        regs.set_pc(pc.wrapping_add(off as u32));
-                        cycles += 1;
-                    }
-                    MicroOp::MemRead(a) => apply_read(regs, bus, a),
-                    MicroOp::MemWrite(a) => apply_write(regs, bus, a),
-                }
+) -> Option<i64> {
+    if queue.is_empty() {
+    // Speculative pure decode FIRST (fallback history: touching
+    // bus/pipeline before coverage is known double-advances the
+    // pipeline on legacy fallback).
+        let ops = if is_thumb {
+            expand_thumb((pipeline[0] & 0xFFFF) as u16)?
+        } else {
+            // AL-only: other conds stay legacy.
+            if pipeline[0] >> 28 != 0xE {
+                return None;
             }
-            (execute as u32, cycles)
-        }
-        Decoded::Arm(execute, ops) => {
-            let fetched = bus.fetch32(pc);
-            pipeline[0] = pipeline[1];
-            pipeline[1] = fetched;
-            regs.clear_pc_written();
-            let mut cycles = 0;
-            for op in ops {
-                match op {
-                    MicroOp::Internal => cycles += 1,
-                    MicroOp::CommitAlu(fx) => {
-                        apply_alu(regs, fx);
-                        cycles += 1;
-                    }
-                    MicroOp::TakenBranch(off) => {
-                        regs.set_pc(pc.wrapping_add(off as u32));
-                        cycles += 1;
-                    }
-                    MicroOp::MemRead(a) => apply_read(regs, bus, a),
-                    MicroOp::MemWrite(a) => apply_write(regs, bus, a),
-                }
-            }
-            (execute, cycles)
-        }
-    };
-    let _ = execute;
-    if regs.take_pc_written() {
-        *pipeline = [0; 2];
+            expand_arm(pipeline[0])?
+        };
+        bus.take_access_wait_cycles();
         bus.set_current_pc(regs.pc());
-        bus.invalidate_prefetch_for_dma(regs.pc());
-        fill_pipeline(regs, bus, pipeline);
-        // Legacy `step_arm/step_thumb` returns `cycles` here (plus an IRQ
-        // epilogue only on the trampoline path, out of scope).
-    } else {
-        regs.set_pc(pc.wrapping_add(if is_thumb { 2 } else { 4 }));
+        let pc = regs.pc();
+        let fetched = if is_thumb {
+            bus.fetch16(pc) as u32
+        } else {
+            bus.fetch32(pc)
+        };
+        pipeline[0] = pipeline[1];
+        pipeline[1] = fetched;
+        regs.clear_pc_written();
+        queue.extend(ops);
     }
-    Some((cycles as i64 + bus.take_access_wait_cycles()).max(1) as u32)
+    let pc = regs.pc();
+    let op = queue.pop_front().expect("expansion never yields zero ops");
+    let mut cycles: i64 = 0;
+    match op {
+        MicroOp::Internal => cycles += 1,
+        MicroOp::CommitAlu(fx) => {
+            apply_alu(regs, fx);
+            cycles += 1;
+        }
+        MicroOp::TakenBranch(off) => {
+            regs.set_pc(pc.wrapping_add(off));
+            cycles += 1;
+        }
+        MicroOp::MemRead(a) => {
+            // Legacy-identical issue: bus access, writeback and break in
+            // the issue tick. (A deferred-commit timer re-sample was tried
+            // here and FALSIFIED — it breaks 12 nba DMA pins that pin
+            // issue-time sampling; see the design doc. The queue/drain
+            // machinery stays as the verified-neutral execution model.)
+            apply_read(regs, bus, a);
+            cycles += 1;
+        }
+        MicroOp::MemWrite(a) => {
+            apply_write(regs, bus, a);
+            cycles += 1;
+        }
+    }
+    if queue.is_empty() {
+        if regs.take_pc_written() {
+            *pipeline = [0; 2];
+            bus.set_current_pc(regs.pc());
+            bus.invalidate_prefetch_for_dma(regs.pc());
+            fill_pipeline(regs, bus, pipeline);
+            // Legacy returns `cycles` here (plus an IRQ epilogue only on
+            // the trampoline path, out of scope).
+        } else {
+            regs.set_pc(pc.wrapping_add(if is_thumb { 2 } else { 4 }));
+        }
+    }
+    // No floor here: the driver floors once per instruction at retire,
+    // exactly like the legacy step (per-op flooring would inflate
+    // prefetch-erased instructions).
+    Some(cycles + bus.take_access_wait_cycles())
 }
 
 #[cfg(test)]
@@ -551,15 +564,24 @@ mod tests {
         // Twin-bus check: both setups must agree before stepping.
         assert_eq!(a_cpu.pipeline, b_pipe);
         let (mut ta, mut tb) = (0u32, 0u32);
+        let mut b_queue = std::collections::VecDeque::new();
         for _ in 0..steps {
             // Legacy oracle: step_legacy bypasses the micro-op wiring so
             // the harness stays a true differential even once covered
-            // classes route through interpret_step in production.
+            // classes route through step_op in production.
             ta += a_cpu.step_legacy(&mut a_bus);
-            // Micro-op engine step on the twin (same object layout:
-            // b_cpu.regs is driven through interpret_step directly).
-            tb += interpret_step(&mut b_cpu.regs, &mut b_bus, &mut b_pipe, thumb)
-                .expect("corpus must be covered");
+            // Micro-op engine on the twin: drain one full instruction
+            // (the queue may span several step_op calls), flooring once
+            // at retire exactly like the legacy step.
+            let mut acc = 0i64;
+            loop {
+                acc += step_op(&mut b_cpu.regs, &mut b_bus, &mut b_pipe, &mut b_queue, thumb)
+                    .expect("corpus must be covered");
+                if b_queue.is_empty() {
+                    break;
+                }
+            }
+            tb += acc.max(1) as u32;
         }
         let regs_equal = (0..16).all(|r| a_cpu.regs.r(r) == b_cpu.regs.r(r))
             && a_cpu.regs.cpsr() == b_cpu.regs.cpsr();
@@ -772,5 +794,114 @@ mod tests {
         assert_eq!((ta, tb), (ta, ta));
         assert!(regs);
         assert!(follow);
+    }
+
+    /// System-cadence tick parity: run a straight-line snippet under the
+    /// legacy step+countdown rhythm vs the micro acc-loop drain rhythm,
+    /// ticking the bus once per elapsed tick in both, with TM0 running.
+    /// Returns (legacy_ticks, micro_ticks, legacy_tm0, micro_tm0).
+    /// TIMER POLLUTION NOTE: this is the load-bearing invariant behind
+    /// the system.rs drain loop — any tick-count divergence here moves
+    /// every timer-measured suite cell.
+    fn tick_parity(
+        code: &[u32],
+        thumb: bool,
+        waitcnt: u16,
+        code_base: u32,
+        reg_init: &[(usize, u32)],
+    ) -> (u32, u32, u32, u32) {
+        fn setup(
+            code: &[u32],
+            thumb: bool,
+            waitcnt: u16,
+            code_base: u32,
+            reg_init: &[(usize, u32)],
+        ) -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write16(0x04000204, waitcnt);
+            let stride = if thumb { 2 } else { 4 };
+            for (i, w) in code.iter().enumerate() {
+                let addr = code_base + (i as u32) * stride as u32;
+                if thumb {
+                    bus.write16(addr, (w & 0xFFFF) as u16);
+                } else {
+                    bus.write32(addr, *w);
+                }
+            }
+            for (r, v) in reg_init {
+                cpu.regs.set_r(*r, *v);
+            }
+            if thumb {
+                cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            }
+            cpu.regs.set_pc(code_base);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            // TM0 free-run /1 from 0 (the suite START shape, minus the
+            // control write which the corpus itself performs if needed).
+            bus.write32(0x0400_0100, 0x0080_0000);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        // Legacy rhythm: whole step, then one tick per returned cycle.
+        let (mut a_cpu, mut a_bus) = setup(code, thumb, waitcnt, code_base, reg_init);
+        let mut a_ticks = 0u32;
+        for _ in 0..code.len() {
+            let c = a_cpu.step_legacy(&mut a_bus).max(1);
+            for _ in 0..c {
+                a_bus.tick();
+                a_ticks += 1;
+            }
+        }
+        let a_tm0 = a_bus.read16(0x0400_0100);
+        // Micro rhythm: mirror of the system.rs drain loop, one tick at a
+        // time until every corpus instruction has retired.
+        let (mut b_cpu, mut b_bus) = setup(code, thumb, waitcnt, code_base, reg_init);
+        let mut b_queue = std::collections::VecDeque::new();
+        let mut b_ticks = 0u32;
+        let mut retired = 0usize;
+        while retired < code.len() {
+            let mut acc = 0i64;
+            loop {
+                let c = step_op(
+                    &mut b_cpu.regs,
+                    &mut b_bus,
+                    &mut b_cpu.pipeline,
+                    &mut b_queue,
+                    thumb,
+                )
+                .expect("corpus must be covered");
+                acc += c;
+                if b_queue.is_empty() {
+                    retired += 1;
+                    break;
+                }
+                if acc >= 1 {
+                    break;
+                }
+            }
+            let spend = acc.max(1) as u32;
+            for _ in 0..spend {
+                b_bus.tick();
+                b_ticks += 1;
+            }
+        }
+        let b_tm0 = b_bus.read16(0x0400_0100);
+        (a_ticks, b_ticks, u32::from(a_tm0), u32::from(b_tm0))
+    }
+
+    #[test]
+    fn micro_op_tick_parity_timer_span() {
+        // Calibration shape: TM0 start already running (setup), one
+        // payload read, one control write — the measured span must match
+        // between rhythms (IWRAM code, Thumb).
+        let code = [
+            0x9802u32, // ldr r0, [sp, #8] (sp data, covered)
+            0x9003,    // str r0, [sp, #12]
+        ];
+        let (at, bt, av, bv) = tick_parity(&code, true, 0x0000, 0x0300_0000, &[]);
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
     }
 }

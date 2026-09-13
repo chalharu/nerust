@@ -34,6 +34,11 @@ pub struct GbaCpu {
     /// re-enables IRQ (MSR SYS+clear-I) while an every-tick timer keeps
     /// the line asserted, nesting deeply until testIrq stops it).
     irq_return_stack: Vec<(u32, [u32; 5])>,
+    /// Pending micro-ops of the in-flight instruction (per-cycle remodel
+    /// slice 3b). Non-empty between the op-steps of one instruction;
+    /// IRQ sampling and HLE entry only run at instruction boundaries
+    /// (empty queue).
+    micro_queue: std::collections::VecDeque<crate::cpu::micro_op::MicroOp>,
 }
 
 impl GbaCpu {
@@ -42,6 +47,7 @@ impl GbaCpu {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
             irq_return_stack: Vec::new(),
+            micro_queue: std::collections::VecDeque::new(),
         }
     }
 
@@ -52,8 +58,14 @@ impl GbaCpu {
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
         self.irq_return_stack.clear();
+        self.micro_queue.clear();
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
+    }
+
+    /// True while an instruction's micro-ops are still draining.
+    pub(crate) fn micro_pending(&self) -> bool {
+        !self.micro_queue.is_empty()
     }
 
     pub fn registers(&self) -> &CpuRegisters {
@@ -77,6 +89,7 @@ impl GbaCpu {
         self.regs.set_cpsr(cpsr);
         self.regs.set_pc(pc);
         self.pipeline = [0; 2];
+        self.micro_queue.clear();
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
@@ -130,23 +143,51 @@ impl GbaCpu {
 
     /// 1命令実行し、消費T-cycleを返す。
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        // Micro-op engine (per-cycle remodel slice 1-2): covered classes
-        // execute through expansion with legacy-identical totals (proven
-        // by the micro_op differential tests); everything else, plus any
-        // step inside a user IRQ handler (trampoline return path), stays
-        // on the legacy path.
+        // Micro-op engine (per-cycle remodel slice 3b): covered classes
+        // drain here atomically (no peripheral ticks between ops), so
+        // this keeps instruction-atomic legacy semantics and totals while
+        // the system driver interleaves ticks per op. Everything else,
+        // plus any step inside a user IRQ handler (trampoline return
+        // path), stays on the legacy path.
         if self.irq_return_stack.is_empty() {
             let is_thumb = self.regs.cpsr_t();
-            if let Some(c) = crate::cpu::micro_op::interpret_step(
+            let mut acc = 0i64;
+            let mut drained = false;
+            while let Some(c) = crate::cpu::micro_op::step_op(
                 &mut self.regs,
                 bus,
                 &mut self.pipeline,
+                &mut self.micro_queue,
                 is_thumb,
             ) {
-                return c;
+                acc += c;
+                drained = true;
+                if !self.micro_pending() {
+                    break;
+                }
+            }
+            if drained {
+                return acc.max(1) as u32;
             }
         }
         self.step_legacy(bus)
+    }
+
+    /// Single micro-op step for the system driver (per-op ticks). Returns
+    /// the op's true cost without any floor; `None` only on an uncovered
+    /// fill (queue untouched, caller falls back).
+    pub(crate) fn step_op(&mut self, bus: &mut GbaMemoryBus) -> Option<i64> {
+        if !self.irq_return_stack.is_empty() {
+            return None;
+        }
+        let is_thumb = self.regs.cpsr_t();
+        crate::cpu::micro_op::step_op(
+            &mut self.regs,
+            bus,
+            &mut self.pipeline,
+            &mut self.micro_queue,
+            is_thumb,
+        )
     }
 
     /// Legacy instruction-atomic step (kept as the fallback for uncovered
