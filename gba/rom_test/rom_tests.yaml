@@ -1492,6 +1492,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
     # 6 subtests fail on research-grade micro-behavior:
     # - "DMA Prefetch Break/Read": while an HBlank DMA3 runs, CPU
     #   reads from unmapped (0x10000000+) see DMA-bus bleed matching
@@ -1502,6 +1503,35 @@ suites:
     #   flag edges (halt 0x4D0, rise 0x87, fall 0x3EC, rise 0xE5).
     #   Later flips (0x3EB/0xE3/0x3F3) pass; the first edges need
     #   exact flag/halt micro-timing (PPU Phase 8 follow-up).
+    #   RE-MEASURED with transfer/tick probes (removed before commit;
+    #   current Gots, JSON with sram enrichment: Hblank 0x4D3 (+3),
+    #   Flip1 0x80 (-7), Flip2 0x3ED (+1), Flip3 0xE3 (-2)):
+    #   - Both Halt wakes land EXACTLY one line apart (1232, lat=32
+    #     each, entry at wake+32 each): the +3 lives entirely in
+    #     entry->TM0-read (77 vs 80 ticks).
+    #   - The IRQ handler path (IWRAM 0x03002D88, libgba IntrMain) is
+    #     pc- and cost-identical across both wakes; the divergence is
+    #     AFTER return: wake#2's resume executes THREE extra Thumb movs
+    #     (compiler-generated, real ROM code at 0x03000116-0x11C) before
+    #     its ldrh, each correctly costed at 1. So our w2-w1 = +3 from
+    #     code shape alone — while HW reads flat 1232, forcing HW's
+    #     (entry/handler/ldrh)#1 to exceed #2 by 3 somewhere unobservable
+    #     (IWRAM-flat handler rules out fetch cold/warm; per-insn HW truth
+    #     for that window does not exist).
+    #   - The only remaining structural candidate is HLE-fit residue:
+    #     our entry (23) and wake (32) constants were fitted to
+    #     irq-delay/cancel-ime/sio/timers, which pin them as-is; this cell
+    #     needs them +/-3 the other way. No per-cell knob exists that is
+    #     not per-test fitting (banned).
+    #   - Flips are poll-phase lottery on top: each flip's detection has
+    #     an independent +-8 poll-iteration window (loop re-entry shifts
+    #     phase per flip), and no single shift fits (-7,-1,+2,0,0,0)
+    #     together with Hblank's -3: multi-direction impossibility.
+    #   - The older "+79/+25 RECONFIRMED" note below is SUPERSEDED (stale
+    #     pre-SIO-dispatch era; its own numbers were self-inconsistent,
+    #     1304 vs 0x51F=1311). Current = (+3,-7,+1,-2).
+    #   Boxed; revisit only with per-instruction HW truth for the
+    #   wake-resume window, never by fitting.
     #   Traced (probes removed): both Halt wakes land exactly one line
     #   apart (1232), but the calibration read runs BEFORE its no-op
     #   master dispatch (+1) while the value read runs AFTER (+73),
