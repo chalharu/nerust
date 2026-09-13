@@ -185,6 +185,14 @@ pub struct GbaMemoryBus {
     hle_bios: Option<HleBiosOperation>,
     video_armed: bool,
     video_countdown: u8,
+    /// HBlank IRQ deferred one tick (NBA PPU.cc `BeginHBlankVDraw`
+    /// schedules `PPU_HBlankIRQ` +1 after the flag edge; VBlank/VCount
+    /// IRQs are likewise +1 in NBA but no pin demands them here).
+    /// Raised at the next tick start, ahead of the delayed pipeline, so
+    /// CPU entry timing is unchanged and only same-tick DMA/CPU reads of
+    /// IF observe the lag (exact-timing HBL IRQ 501: the flag-edge
+    /// sample stays clear, the next one sees IF).
+    pending_hblank_irq: bool,
     /// A DMA burst is currently feeding the EEPROM serial chip; closed when
     /// no DMA channel is active or pending (frame decoded at burst end).
     eeprom_burst_open: bool,
@@ -351,6 +359,7 @@ impl GbaMemoryBus {
             hle_bios: None,
             video_armed: false,
             video_countdown: 0,
+            pending_hblank_irq: false,
             eeprom_burst_open: false,
             #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
@@ -569,6 +578,12 @@ impl GbaMemoryBus {
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        // Deferred HBlank IRQ first (NBA +1): same pipeline visibility as
+        // a same-tick raise (processed below), so CPU entry is unchanged.
+        if self.pending_hblank_irq {
+            self.pending_hblank_irq = false;
+            self.request_interrupt(1 << 1);
+        }
         // Delayed interrupt pipeline first: yesterday's IE/IME/IF writes
         // and IRQ raises become effective before devices run this tick.
         self.process_irq_pipeline();
@@ -623,13 +638,15 @@ impl GbaMemoryBus {
                 self.video_armed = self.dma.has_video_transfer();
             }
             if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
-                // Fires 2 cycles into the line: the burst-start xI (+2 on
-                // the first unit) carries the sweep phase, so no extra
-                // countdown offset is needed here. (A uniform +3 offset
-                // fixes the XFER absolute tick but shifts the sweep pins
-                // by -2 indices, so no shared knob fits both; the residual
-                // needs a first-burst-only latency. See rom_tests.yaml.)
-                self.video_countdown = 2;
+                // NBA PPU.cc `UpdateVideoTransferDMA` schedules the video
+                // request 3 cycles into the line (`scheduler.Add(3,
+                // PPU_VideoDMA)`; mGBA `GBADMARunDisplayStart` likewise
+                // starts video DMA `now + 3`). The burst-start xI (+2 on
+                // the first unit) no longer carries the sweep phase; the
+                // first unit's xI is absorbed pre-start (see dma.rs), so
+                // the countdown alone sets the HW-pinned phase
+                // (exact-timing HBL SET 500 with a uniform 2/unit rhythm).
+                self.video_countdown = 3;
             }
         }
         let timer_irq = {
@@ -675,6 +692,13 @@ impl GbaMemoryBus {
             }
         }
         let mut interrupt_mask = event.interrupt_mask | timer_irq;
+        // NBA +1 HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
+        // edge stays immediate, but the IF raise waits a tick. Stash the
+        // HBlank bit for the next tick start instead of raising now.
+        if interrupt_mask & (1 << 1) != 0 {
+            interrupt_mask &= !(1 << 1);
+            self.pending_hblank_irq = true;
+        }
         // SIO Normal-mode transfer completion (scheduled on the START
         // edge): clears START, delivers pulled-high receive data (no link
         // partner drives the lines low) and raises the serial IRQ when
