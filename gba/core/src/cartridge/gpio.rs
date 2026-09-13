@@ -1,12 +1,20 @@
 /// GamePak GPIO overlay at 080000C4h-C8h (data/direction/control).
-/// Lazy attach on first control-enable write; register behavior only, inputs read 0.
+/// Lazy attach on first control-enable write; register behavior only.
+/// Output pins echo the latch; input pins show device levels (RTC SIO on
+/// bit 1, solar FLG on bit 3), both idle-low so un-driven reads see 0.
 /// Pre-enable writes latch but reads fall through to ROM until enabled.
+use super::rtc::Rtc;
+use super::solar::Solar;
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Gpio {
     control: u16,
     direction: u16,
     data: u16,
     attached: bool,
+    rtc: Rtc,
+    solar: Solar,
+    prev_line: u8,
 }
 
 impl Gpio {
@@ -53,7 +61,7 @@ impl Gpio {
         Some(match addr & 0xFF {
             0xC8 => self.control,
             _ if self.control & 1 == 0 => 0,
-            0xC4 => self.data & self.direction,
+            0xC4 => self.line_level(),
             _ => self.direction & 0xF,
         })
     }
@@ -108,11 +116,37 @@ impl Gpio {
         } else {
             self.direction = v & 0xF;
         }
+        self.update_pins();
         if self.control & 1 != 0 {
             self.attached = true;
             return true;
         }
         false
+    }
+
+    /// Effective pin levels: outputs echo the latch, inputs show device
+    /// levels (RTC SIO bit 1, solar FLG bit 3).
+    fn line_level(&self) -> u16 {
+        let driven = (u8::from(self.rtc.sio_out) << 1) | (u8::from(self.solar.flag()) << 3);
+        u16::from((self.data as u8 & self.direction as u8) | (driven & !self.direction as u8))
+    }
+
+    /// Feed pin levels to both devices after a latch change. RTC and solar
+    /// share the bus but select via CS (mGBA): CS high parks solar, CS low
+    /// aborts the RTC, so only one drives at a time.
+    fn update_pins(&mut self) {
+        let line = self.line_level() as u8;
+        let prev = self.prev_line;
+        let at = |b: u8| line & (1 << b) != 0;
+        let was = |b: u8| prev & (1 << b) != 0;
+        self.rtc.pins(at(0), at(1), at(2), was(0), was(2));
+        self.solar.pins(was(0) && !at(0), at(1), at(2));
+        self.prev_line = self.line_level() as u8;
+    }
+
+    /// Ambient light for the solar sensor (0 = blinding .. 0xFF = dark).
+    pub fn set_solar_level(&mut self, level: u8) {
+        self.solar.set_light_level(level);
     }
 
     /// Whether any GPIO register has been enabled (for tests).

@@ -1,6 +1,8 @@
 pub mod gpio;
 pub mod header;
+pub mod rtc;
 pub mod save;
+pub mod solar;
 
 use self::gpio::Gpio;
 use self::header::GbaHeader;
