@@ -255,6 +255,12 @@ impl DisplayStallSnapshot {
         // Palette feeds every rendered pixel (backdrop included).
         let in_draw = self.cycle <= HDRAW_CYCLES;
         let oam_busy = !in_hblank || ((self.dispcnt & (1 << 5)) == 0);
+        // OBJ texture fetch needs the OBJ layer live (nba ram-access
+        // DISPCNT-latch rule: fetch iff CURRENT enable, latch
+        // disregarded). OAM evaluation itself stays ungated: it runs
+        // during draw regardless (nba burst-into-tears needs its 3 OAM
+        // stalls with OBJ disabled, TIME 41 vs 38).
+        let obj_fetch = oam_busy && (self.dispcnt & (1 << 12)) != 0;
         match addr {
             0x05000000..=0x05FFFFFF => u8::from(in_draw),
             0x06000000..=0x06FFFFFF => {
@@ -268,7 +274,7 @@ impl DisplayStallSnapshot {
                 if off < bg_limit {
                     u8::from(in_fetch)
                 } else {
-                    u8::from(oam_busy)
+                    u8::from(obj_fetch)
                 }
             }
             0x07000000..=0x07FFFFFF => u8::from(oam_busy),
