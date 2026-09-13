@@ -136,7 +136,7 @@ impl GbaApu {
             self.sound4cnt_lo = 0;
             self.sound4cnt_hi = 0;
             self.soundcnt_lo = 0;
-            self.soundcnt_hi = 0;
+            self.soundcnt_hi &= 0xFF00;
             self.fifo_a.clear();
             self.fifo_b.clear();
         }
@@ -197,14 +197,14 @@ impl GbaApu {
             0x04000082 => self.soundcnt_hi,
             0x04000084 => self.soundcnt_x,
             0x04000088 => self.soundbias,
-            0x04000090 => u16::from_le_bytes([self.wave_ram[0], self.wave_ram[1]]),
-            0x04000092 => u16::from_le_bytes([self.wave_ram[2], self.wave_ram[3]]),
-            0x04000094 => u16::from_le_bytes([self.wave_ram[4], self.wave_ram[5]]),
-            0x04000096 => u16::from_le_bytes([self.wave_ram[6], self.wave_ram[7]]),
-            0x04000098 => u16::from_le_bytes([self.wave_ram[8], self.wave_ram[9]]),
-            0x0400009A => u16::from_le_bytes([self.wave_ram[10], self.wave_ram[11]]),
-            0x0400009C => u16::from_le_bytes([self.wave_ram[12], self.wave_ram[13]]),
-            0x0400009E => u16::from_le_bytes([self.wave_ram[14], self.wave_ram[15]]),
+            0x04000090 => self.wave_read(0x90),
+            0x04000092 => self.wave_read(0x92),
+            0x04000094 => self.wave_read(0x94),
+            0x04000096 => self.wave_read(0x96),
+            0x04000098 => self.wave_read(0x98),
+            0x0400009A => self.wave_read(0x9A),
+            0x0400009C => self.wave_read(0x9C),
+            0x0400009E => self.wave_read(0x9E),
             // FIFO_A/B (A0/A4) are write-only streaming buffers; reads are open bus.
             _ => return None,
         })
@@ -227,39 +227,15 @@ impl GbaApu {
             0x04000080 => self.soundcnt_lo = value & 0xFF77,
             0x04000082 => self.write_soundcnt_hi(value),
             0x04000084 => self.write_soundcnt_x(value),
-            0x04000088 => self.soundbias = value,
-            0x04000090 => {
-                self.wave_ram[0] = (value & 0xFF) as u8;
-                self.wave_ram[1] = (value >> 8) as u8;
-            }
-            0x04000092 => {
-                self.wave_ram[2] = (value & 0xFF) as u8;
-                self.wave_ram[3] = (value >> 8) as u8;
-            }
-            0x04000094 => {
-                self.wave_ram[4] = (value & 0xFF) as u8;
-                self.wave_ram[5] = (value >> 8) as u8;
-            }
-            0x04000096 => {
-                self.wave_ram[6] = (value & 0xFF) as u8;
-                self.wave_ram[7] = (value >> 8) as u8;
-            }
-            0x04000098 => {
-                self.wave_ram[8] = (value & 0xFF) as u8;
-                self.wave_ram[9] = (value >> 8) as u8;
-            }
-            0x0400009A => {
-                self.wave_ram[10] = (value & 0xFF) as u8;
-                self.wave_ram[11] = (value >> 8) as u8;
-            }
-            0x0400009C => {
-                self.wave_ram[12] = (value & 0xFF) as u8;
-                self.wave_ram[13] = (value >> 8) as u8;
-            }
-            0x0400009E => {
-                self.wave_ram[14] = (value & 0xFF) as u8;
-                self.wave_ram[15] = (value >> 8) as u8;
-            }
+            0x04000088 => self.soundbias = value & 0xC3FE,
+            0x04000090 => self.wave_write(0x90, value),
+            0x04000092 => self.wave_write(0x92, value),
+            0x04000094 => self.wave_write(0x94, value),
+            0x04000096 => self.wave_write(0x96, value),
+            0x04000098 => self.wave_write(0x98, value),
+            0x0400009A => self.wave_write(0x9A, value),
+            0x0400009C => self.wave_write(0x9C, value),
+            0x0400009E => self.wave_write(0x9E, value),
             // FIFO handled by the bus (needs byte-lane info); ignore here.
             _ => return false,
         }

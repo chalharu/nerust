@@ -1,10 +1,9 @@
 use crate::apu::GbaApu;
 use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
-use crate::cartridge::save::helpers::{read_slice, write_slice};
+use crate::cartridge::save::helpers::{read_slice, repeat_byte, selected_write_byte, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
 use crate::ppu::{GbaPpu, HDRAW_CYCLES};
-use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
 use crate::timer::GbaTimers;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +139,6 @@ pub struct GbaMemoryBus {
     /// staging IRQ line; consumed as CPU-stall cycles by the step loop.
     wake_latency: u32,
     bios_prefetch: u32,
-    scheduler: EventScheduler,
     current_tcycle: u64,
     hle_bios: Option<HleBiosOperation>,
     video_armed: bool,
@@ -309,7 +307,6 @@ impl GbaMemoryBus {
             irq_line: false,
             line_queue: Vec::new(),
             bios_prefetch: 0xE129F000,
-            scheduler: EventScheduler::new(),
             current_tcycle: 0,
             hle_bios: None,
             video_armed: false,
@@ -534,7 +531,6 @@ impl GbaMemoryBus {
             // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
             // are frozen; only an interrupt request wakes the machine.
             // (Wake-source subset and IF-not-set are not modeled.)
-            self.check_pending_events();
             return false;
         }
         self.dma.tick_pending();
@@ -544,9 +540,6 @@ impl GbaMemoryBus {
                 self.dma.trigger_channel(3, DmaTrigger::Special);
             }
         }
-        // Schedule next PPU events if needed (for bulk optimization, currently per-cycle)
-        // The scheduler is used for Timer/DMA bulk stepping; PPU/HBlank/VBlank are still
-        // handled directly via ppu.step for accuracy.
         let event = self
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
@@ -555,19 +548,9 @@ impl GbaMemoryBus {
             // scanline, including the hidden scanlines during V-Blank — a
             // repeat HBlank channel fires on lines 0..227, not just <160.
             self.dma.trigger(DmaTrigger::HBlank);
-            self.scheduler.schedule(ScheduledEvent {
-                target_tcycle: self.current_tcycle + 1,
-                event_type: EventType::HBlank,
-                seq: 0,
-            });
         }
         if event.vblank_started {
             self.dma.trigger(DmaTrigger::VBlank);
-            self.scheduler.schedule(ScheduledEvent {
-                target_tcycle: self.current_tcycle + 1,
-                event_type: EventType::VBlank,
-                seq: 0,
-            });
         }
         if event.line_started {
             // NBA model: DMA3 video-capture is latched at vcount==162 (a
@@ -594,11 +577,6 @@ impl GbaMemoryBus {
         if timer_irq != 0 {
             for i in 0..4 {
                 if timer_irq & (1 << (3 + i)) != 0 {
-                    self.scheduler.schedule(ScheduledEvent {
-                        target_tcycle: self.current_tcycle,
-                        event_type: EventType::TimerOverflow(i),
-                        seq: 0,
-                    });
                     // The overflowing timer clocks one sample byte out of each
                     // selecting FIFO; a FIFO at 12 bytes or fewer requests
                     // its Special DMA channel.
@@ -674,11 +652,6 @@ impl GbaMemoryBus {
                     transfer.width
                 );
             }
-            self.scheduler.schedule(ScheduledEvent {
-                target_tcycle: self.current_tcycle,
-                event_type: EventType::DmaTransfer(transfer.channel),
-                seq: 0,
-            });
             let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
             // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
             // other channels/widths see the window as ROM/open bus.
@@ -752,8 +725,6 @@ impl GbaMemoryBus {
                 cart.eeprom_end_burst();
             }
         }
-        // Process any due scheduler events (for bulk optimization, currently just clears)
-        self.check_pending_events();
         event.frame_complete
     }
 
@@ -845,30 +816,6 @@ impl GbaMemoryBus {
 
     pub fn timer_current_cycle(&self) -> u64 {
         self.timers.current_cycle()
-    }
-
-    pub fn timer_set_last_reload(&mut self, ch: usize, cycle: u64) {
-        self.timers.set_last_reload_cycle(ch, cycle);
-    }
-
-    pub fn check_pending_events(&mut self) {
-        let due = self.scheduler.pop_due(self.current_tcycle);
-        for ev in due {
-            match ev.event_type {
-                EventType::TimerOverflow(ch) => {
-                    // Timer overflow already handled in tick via timers.step
-                    let _ = ch;
-                }
-                EventType::DmaTransfer(ch) => {
-                    let _ = ch;
-                }
-                EventType::HBlank | EventType::VBlank => {}
-            }
-        }
-    }
-
-    pub fn next_event_cycle(&self) -> Option<u64> {
-        self.scheduler.next_target()
     }
 
     pub fn set_keyinput(&mut self, value: u16) {
@@ -1672,8 +1619,10 @@ impl GbaMemoryBus {
         if let Some(cart) = &self.cartridge {
             return cart.read_sram(addr, width);
         }
-        let off = Self::aligned_off(addr, width, 0xFFFF);
-        read_slice(&*self.fallback_sram, off, width)
+        // No cartridge: 8-bit save bus replicates the byte on wide
+        // reads (GBATEK ×0101h/×01010101h).
+        let off = (addr & 0xFFFF) as usize;
+        repeat_byte(self.fallback_sram[off], width)
     }
 
     fn is_eeprom(&self) -> bool {
@@ -1898,8 +1847,10 @@ impl GbaMemoryBus {
         if let Some(cart) = &mut self.cartridge {
             cart.write_sram(addr, width, value);
         } else {
-            let off = Self::aligned_off(addr, width, 0xFFFF);
-            write_slice(&mut *self.fallback_sram, off, width, value);
+            // No cartridge: one byte lands on the addressed lane
+            // (GBATEK LSB of ROR).
+            let off = (addr & 0xFFFF) as usize;
+            self.fallback_sram[off] = selected_write_byte(addr, width, value);
         }
         self.open_bus_value = value;
     }
@@ -2130,7 +2081,7 @@ impl GbaMemoryBus {
             0x04000080 => self.apu.soundcnt_lo = v16 & 0xFF77,
             0x04000082 => self.apu.write_soundcnt_hi(v16),
             0x04000084 => self.apu.write_soundcnt_x(v16),
-            0x04000088 => self.apu.soundbias = v16,
+            0x04000088 => self.apu.soundbias = v16 & 0xC3FE,
             0x04000090..=0x0400009E => self.apu.wave_write(aligned, v16),
             // FIFO_A/B are write-only streaming buffers (GBATEK Sound FIFO):
             // each access appends its bytes; 32-bit writes split above into

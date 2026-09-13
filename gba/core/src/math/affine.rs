@@ -13,7 +13,7 @@ pub struct AffineMatrix {
 /// BgAffineSet ソース
 #[derive(Debug, Clone, Copy)]
 pub struct BgAffineSrc {
-    pub cx: i32, // 20.8
+    pub cx: i32, // 24.8
     pub cy: i32,
     pub disp_cx: i16,
     pub disp_cy: i16,
@@ -29,7 +29,7 @@ pub struct BgAffineDst {
     pub pb: Fixed8_8,
     pub pc: Fixed8_8,
     pub pd: Fixed8_8,
-    pub start_x: i32, // 20.8
+    pub start_x: i32, // 24.8
     pub start_y: i32,
 }
 

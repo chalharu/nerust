@@ -1,4 +1,4 @@
-use super::helpers::{read_slice, write_slice};
+use super::helpers::read_slice;
 use super::{SaveBackend, SaveType};
 
 const EEPROM_SIZE: usize = 8192; // 8KB max, covers 512B as subset
@@ -215,9 +215,11 @@ impl SaveBackend for EepromSave {
         self.end_burst();
     }
 
-    fn write(&mut self, addr: u32, width: u8, value: u32) {
-        let off = (addr & 0x1FFF) as usize;
-        write_slice(&mut self.data, off, width, value);
+    fn write(&mut self, _addr: u32, _width: u8, _value: u32) {
+        // GBATEK: manual LDRH/STRH transfers won't work — the chip is
+        // DMA3-serial only. Direct stores are ignored, never bypassing
+        // the protocol.
+        debug_assert!(false, "direct EEPROM write ignored (DMA-only chip)");
     }
 
     fn ram_data(&self) -> Option<&[u8]> {

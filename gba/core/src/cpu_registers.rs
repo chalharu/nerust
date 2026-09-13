@@ -210,6 +210,10 @@ impl CpuRegisters {
         if disable_irq {
             new_cpsr |= 1 << 7;
         }
+        // GBATEK exception entry: F is set by Reset and FIQ only.
+        if mode == 0x11 {
+            new_cpsr |= 1 << 6;
+        }
         self.set_cpsr(new_cpsr);
         self.set_spsr(old_cpsr);
         self.set_lr(return_address);
