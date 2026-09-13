@@ -43,14 +43,7 @@ impl GbaTimers {
             self.channels[channel].pending_control = None;
             self.channels[channel].start_delay = 0;
         } else {
-            let last = self.last_reload_cycle[channel];
-            write_control(
-                &mut self.channels[channel],
-                new_control,
-                self.current_cycle,
-                last,
-                channel,
-            );
+            write_control(&mut self.channels[channel], new_control);
         }
         true
     }
@@ -69,14 +62,7 @@ impl GbaTimers {
             return false;
         };
         if control {
-            let last = self.last_reload_cycle[channel];
-            write_control(
-                &mut self.channels[channel],
-                value & 0x00C7,
-                self.current_cycle,
-                last,
-                channel,
-            );
+            write_control(&mut self.channels[channel], value & 0x00C7);
         } else {
             // GBATEK Timers: writing CNT_L initializes the reload value only
             // (never the running counter); it lands with a one-tick delay
@@ -233,12 +219,6 @@ impl GbaTimers {
         self.current_cycle
     }
 
-    pub fn set_last_reload_cycle(&mut self, ch: usize, cycle: u64) {
-        if ch < 4 {
-            self.last_reload_cycle[ch] = Some(cycle);
-        }
-    }
-
     pub fn read8(&mut self, address: u32) -> Option<u8> {
         let channel = ((address - 0x04000100) / 4) as usize;
         if channel >= 4 || !(0x04000100..=0x0400010D).contains(&address) {
@@ -261,13 +241,7 @@ impl GbaTimers {
     }
 }
 
-fn write_control(
-    timer: &mut TimerChannel,
-    new_control: u16,
-    _current_cycle: u64,
-    _last_reload_cycle: Option<u64>,
-    _index: usize,
-) {
+fn write_control(timer: &mut TimerChannel, new_control: u16) {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     if enabled && !was_enabled {

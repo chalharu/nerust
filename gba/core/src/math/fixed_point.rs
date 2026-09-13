@@ -1,4 +1,4 @@
-/// 8.8 固定小数点 (s7.8) — GBAアフィンで使用
+/// 8.8 固定小数点 (s8.8) — GBAアフィンで使用
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fixed8_8(pub i16);
 

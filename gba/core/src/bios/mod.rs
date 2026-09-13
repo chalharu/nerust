@@ -646,6 +646,9 @@ const SOUND_JUMP_TABLE: [u32; 72] = [
 /// pointers (0x120 byte buffer) to the word-aligned destination.
 fn sound_get_jump_list(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let dest = regs.r(0);
+    if dest & 3 != 0 {
+        return;
+    }
     for (i, entry) in SOUND_JUMP_TABLE.iter().enumerate() {
         bus.write_hle_bios32(dest.wrapping_add((i as u32) * 4), *entry);
     }
@@ -900,6 +903,11 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let unit = if width_32 { 4u64 } else { 2u64 };
     let end = src as u64 + len as u64 * unit;
     if end - unit < 0x0000_4000 {
+        return 1;
+    }
+    // Same unmapped no-copy guard as the HLE path: mgba-suite
+    // out-of-bounds SWI tests pin no copy from below EWRAM.
+    if (0x0000_4000..0x0200_0000).contains(&src) {
         return 1;
     }
     if width_32 {

@@ -116,6 +116,10 @@ impl GbaDma {
 
     pub fn trigger(&mut self, trigger: DmaTrigger) {
         for (channel, dma) in self.channels.iter_mut().enumerate() {
+            // GBATEK: Special on DMA0 is Prohibited — it never fires.
+            if channel == 0 && trigger == DmaTrigger::Special {
+                continue;
+            }
             if dma.control & 0x8000 != 0
                 && timing_for(channel, dma.control) == trigger
                 && !dma.active
@@ -130,6 +134,10 @@ impl GbaDma {
     }
 
     pub fn trigger_channel(&mut self, channel: usize, trigger: DmaTrigger) {
+        // GBATEK: Special on DMA0 is Prohibited — it never fires.
+        if channel == 0 && trigger == DmaTrigger::Special {
+            return;
+        }
         if channel < 4 {
             let dma = &mut self.channels[channel];
             if dma.control & 0x8000 != 0
