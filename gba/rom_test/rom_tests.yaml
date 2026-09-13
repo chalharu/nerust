@@ -1598,6 +1598,44 @@ suites:
     #     count (1 unit/line has no between-units gap for the CPU).
     #   Both sub-hypotheses dead; the pair stays boxed as phase-lottery
     #   (Break) + unknowable-value (Read/bleed).
+    #   PER-CYCLE CPU REMODEL VERDICT (analysis, no code change): the
+    #   remodel cannot reach this pair, so no slice is opened for it.
+    #   The loop is disassembled (misc-edge.o <dmaPrefetch>): 7 Thumb
+    #   insns/iter (cmp, beq-nt, ldmia-unmapped, str-IWRAM, ands, cmp,
+    #   beq-taken) in ROM with the suite P-OFF (WAITCNT never written),
+    #   i.e. ~40-50 T-cycles/iter of GBATEK-exact N-fetches + taken-branch
+    #   refill -- our P-OFF totals here are Timing-pinned exact already
+    #   (non-prefetch perfect), so any remodel that keeps its graduated
+    #   pins produces IDENTICAL totals: no timing delta is available, and
+    #   Break is value-driven anyway (a +-1 timing shift moves it ~+-60
+    #   iters, never 2724 -> ~20).
+    #   With exact totals the pair still needs bus-electrics, eliminated
+    #   three independent ways (iter ~45, unit window ~10/1232, loop span
+    #   ~90-100 lines ~= ~90+ HBlank units, first unit ~900 ticks in):
+    #   (1) BEAT: drift 45/read is ergodic mod 1232 (gcd 1), so ~100 of
+    #   the 2724 reads MUST overlap unit windows; HW shows 0 pattern
+    #   breaks then data -- units are invisible to the latch (armed
+    #   bleed), contradicting every last-driven rule (which breaks at
+    #   iter ~20 on the first unit refresh). Phase-lock avoidance is
+    #   impossible (154 residues incl. window ones).
+    #   (2) GRID: 2724 iters land ~90-100 lines after the VBlank-synced
+    #   loop start, mid-draw; frame-alignment would need ~103/iter (off
+    #   by 2x+), and no bus event exists at any landing (VBlank start
+    #   has no DMA/bus effect here).
+    #   (3) SELF-SUSTAINMENT: the loop stores every read back to IWRAM
+    #   (mapped!) and 90+ identical HBlank units refresh any sane latch
+    #   identically each line -- a constant 2724-long pattern is
+    #   inexpressible without armed-bleed, and the 2724-transition
+    #   (to unit data 0xDEAD0000) has no trigger in {grid, beat, code,
+    #   DMA-state} (repeat-fixed, no counter).
+    #   The remaining HLE-RESIDUE hypothesis (HW's real-BIOS
+    #   VBlankIntrWait leaves a pattern-matching latch; our HLE leaves
+    #   0x00004003, breaking at iter 0) is untestable and unactionable:
+    #   matching it needs real-BIOS execution (architectural, out of
+    #   scope) or a hardcoded pattern constant (banned fitting).
+    #   Verdict: box stands on five legs (latch, interleave, count,
+    #   per-cycle-irrelevance, residue); needs bus-electrical facts no
+    #   CPU remodel supplies. Do NOT open a CPU slice for this pair.
     #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
     #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
     #   opposite to timers (needs slower): direct contradiction on
