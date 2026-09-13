@@ -129,6 +129,14 @@ pub struct GbaPpu {
     /// Effective forced-blank state at the previous line end, for edge
     /// detection above.
     was_blanked: bool,
+    /// Forced-blank sampled at line end for the upcoming scanline (0-lag:
+    /// the live bit7 as the line turns over). BG/OBJ *enables* ride the
+    /// 3-stage dispcnt_latch (NBA HW-confirmed), but blank must follow
+    /// within a line (nba ram-access DISPCNT-latch rule: fetch resumes
+    /// the line after the blank write; the 3-stage chain over-suppresses
+    /// by 2+ lines). forced_blank() ORs this with live (either set
+    /// blanks, matching the ROM rule's latched-AND-current fetch gate).
+    blank_sample: bool,
     /// Line-deferred render latch: OAM bytes and the MOSAIC register sampled
     /// at the first pixel of each scanline. Mid-scanline writes take effect
     /// on the next line. HBlank/VBlank writes (IRQ handlers, HBlank DMA, the
@@ -185,6 +193,7 @@ impl GbaPpu {
             dispcnt_latch: [0; 3],
             blank_restart: 0,
             was_blanked: false,
+            blank_sample: false,
             line: LineLatch::new(),
         }
     }
@@ -236,10 +245,13 @@ impl GbaPpu {
         self.cycle = 0;
         // Refresh the per-line enable/blank reference from the latch for
         // the upcoming scanline (all lines, including VBlank): the
-        // renderer (x==0 capture) and forced_blank()/bg_fetch_active()
-        // share this value, so mid-line DISPCNT writes defer to the next
-        // line in both paths identically.
+        // renderer (x==0 capture) and bg_fetch_active() share
+        // line.enable, so mid-line BG/OBJ-enable writes defer to the next
+        // line in both paths identically. Forced-blank instead samples
+        // live here (blank_sample): enables ride the 3-stage latch but
+        // blank follows within the line (see blank_sample docs).
         self.line.enable = self.dispcnt_latch[0];
+        self.blank_sample = self.registers.dispcnt & (1 << 7) != 0;
         event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
@@ -328,7 +340,7 @@ impl GbaPpu {
     /// the renderer (refreshed every line end), so render and stall paths
     /// can never disagree by a line.
     pub fn forced_blank(&self) -> bool {
-        (self.line.enable | self.registers.dispcnt) & (1 << 7) != 0
+        self.blank_sample || self.registers.dispcnt & (1 << 7) != 0
     }
 
     /// Any BG layer enabled in both the latched and the live DISPCNT
@@ -530,8 +542,9 @@ impl GbaPpu {
             self.line
                 .capture(self.registers.mosaic, oam, self.dispcnt_latch[0]);
         }
-        // NBA ForcedBlank: latched OR live.
-        if (self.line.enable | self.registers.dispcnt) & (1 << 7) != 0 {
+        // Forced blank: sampled (line-start) OR live. Render and stall
+        // paths share forced_blank(), so both follow blank within a line.
+        if self.forced_blank() {
             self.frame[y * WIDTH + x] = color::rgba8888(0x7FFF);
             return;
         }
