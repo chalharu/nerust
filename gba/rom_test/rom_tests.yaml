@@ -103,6 +103,13 @@ expected_failures:
 #   ungated: burst-into-tears needs its OAM stalls OBJ-disabled),
 #   and forced-blank samples live at line turnover (the 3-stage enable
 #   latch over-suppresses by 2+ lines).
+# - ram-access-timing single-access edges (dma_fit access_* pins, same
+#   emit machinery): VRAM BG-bank fetch window rise 223 / fall 1180
+#   (width 957 = fetch clock 32..989); OAM HBlank-free busy only in
+#   draw, rise 191 / fall 1151 (width exactly 960); palette feeds
+#   cyc <= 960 (one wider), rise 191 / fall 1152 (width 961); OBJ-bank
+#   flat stalled iff OBJ enabled, BG-bank/OAM-default flats as gated.
+#   Line-10 cyc 0 sits at delay 191 throughout (joint).
 # The IF pins (HBLANK 1153/VBLANK 146/VMATCH 147) need libgba IntrMain's
 # IF-ack (1153 = next-HBlank re-set after the ack clears the first):
 # guest code our HLE entry runs faithfully via the vector, so no entry
