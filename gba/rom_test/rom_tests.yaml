@@ -109,6 +109,20 @@ expected_failures:
 # divider phases coherent). Regenerate the ref with an hw-validated build;
 # do not fit the timer model to impossible values.
 - PeterLemon_Timers
+# PeterLemon video playback (RLE/LZ DIFF, Rickroll, GRB15/LZ, GRB12/LZ,
+# GRB12/15LZIPS, DevoTimeOutForFun, TouhouBadApple, BigBuckBunny): refs
+# are arbitrary-moment screenshots with no cycle mapping, so no frame
+# budget can target them. Triaged (frame dumps every frame-end, BGR555
+# vs ref; probes removed): playback is verified WORKING (recognizable
+# content, steady ~4-emu-frame cadence, dozens of distinct frames), but
+# no ref matches within the first ~37 video frames (best diffs stay
+# ~30k+/38400; Rickroll structural correlation peaks at 0.18). The
+# decode path itself is proven by the passing static-decoder siblings
+# (GRB12/15Decode, I4Decode, GRB12Decode120x80 match their refs exactly;
+# Gravity matches BGR555-exact, frames 3+ static). Hunting minutes-long
+# clips for an unmapped moment is unbounded search plus manifest-cost
+# for zero component ATV (all components already pinned) -- box the
+# class; revisit only with author frame numbers.
 - PeterLemon_GRB12LZDIFFRLEVideo
 - PeterLemon_Rickroll
 - PeterLemon_GRB15LZVideo
@@ -650,6 +664,19 @@ suites:
       # cpu_irq_disable + REG_IME=0, so no dispatch is possible) the wake
       # stays free, preserving CPUSET-DMA 4154 exact. Verified 5/6 both
       # before and after.
+      # ADDENDUM 2 (uniform-+2 anchor, tick-paired via TTRACE starts +
+      # TM0 reads; raw ours vs HW: DIRECT 14/12, CPUSET 4157/4155,
+      # CPUSET-DMA 4156/4154, TIME-IWRAM 127/125, TIME-ROM 247/249):
+      # four different paths agree on +2, forcing a shared TM0
+      # start/read anchor (HW starts counting +2 later, or equivalently
+      # our post-start paths +2 slower -- unlocalizable between the two
+      # without per-insn truth). TIME-ROM is the opposite-direction pair
+      # (-2 raw, -4 post-anchor: our ROM-HLE-CpuSet path 4 fast, pinned
+      # by the passing suite CpuSet ROM cells). So no uniform knob
+      # (timer start latency would cascade into wake-48 + timers
+      # enable-phase for 4 cells of a still-red case) and no rule fix
+      # (all involved costs are independently pinned correct) -- box,
+      # revisit only with per-insn HW truth for these paths.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
