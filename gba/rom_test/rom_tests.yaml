@@ -127,8 +127,15 @@ expected_failures:
 #   erases the same for both and steps ARM 4 / Thumb 2 vs HW 4 / 3.
 #   mGBA computes the same 4/2 by construction (mode-blind stall +
 #   N32-S32 == N16-S16 post-body), so the HW +1/Thumb-load lives outside
-#   the mGBA model class; a mode-dependent erase has no HW story (same
-#   address/width access both modes). Per-cycle pipeline territory.
+#   the mGBA model class; a mode-dependent erase has no HW story.
+#   TRUE-BUFFER SIM FALSIFIED (offline /tmp/prefetch_sim, GBATEK-locked:
+#   8 slots, fill on GamePak-idle at S-rate following the code stream,
+#   hit 0 waits, miss N/S by prev-cycle addr+width, branch discards):
+#   the ARM-Thumb gap is a constant 2 for every exec base and every
+#   branch/fill-source variant (S-slow gap 2 matches HW 9-7, but S-fast
+#   stays 2 vs HW 4-3=1). A fill-dynamics buffer cannot produce HW's
+#   fast-S-only gap shrink; the +1 needs an unknown fast-S-specific
+#   Thumb-favoring mechanism. Per-cycle pipeline territory (unvalidated).
 # - B (12, BOXED): LDMIA OAM->ROM overflow + prefetch is -1 in some P
 #   columns (ov1: P.S/PNS, ov2: P../PN., ov3: P.S/PNS; ov4/ov5 pass all).
 #   Non-monotonic in overflow depth (phase lottery on burst N/S
