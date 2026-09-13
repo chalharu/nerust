@@ -356,3 +356,247 @@ fn irq_vcount_inc_edge() {
     assert_eq!(irq_sample(227, 0, 0x0000, VCOUNT, 195), 0);
     assert_eq!(irq_sample(227, 0, 0x0000, VCOUNT, 196), 1);
 }
+
+/// Native replication of status-irq-dma test_dma (HBlank/VBlank/Video
+/// DMA absolute TM0 phases; HW 1137/1362/22069). Hand-assembled ARM
+/// equivalent of __test_dma_hblank_irq_handler: same operations in the
+/// same order (IE=0, TM0CNT=0, TM0CNT_H=START, 3x SAD/DAD/CNT programs,
+/// 3x enable-spins, done flag, BX LR). A two-pass builder resolves the
+/// PC-relative literals exactly. Joint offset absorbs code-shape +
+/// IntrMain dispatch like Phase 1 (predict +50 all three).
+const DMAH_BASE: u32 = 0x03002400;
+const DMAH_HB: u32 = 0x03001000;
+const DMAH_VB: u32 = 0x03001004;
+const DMAH_VD: u32 = 0x03001008;
+const DMAH_DONE: u32 = 0x0300100C;
+
+fn build_dma_handler() -> Vec<u32> {
+    // Pass 1: code words (LDRs carry literal indices in low 12 bits
+    // temporarily) + deduped literal pool.
+    let mut code: Vec<u32> = Vec::new();
+    let mut lits: Vec<u32> = Vec::new();
+    macro_rules! lit {
+        ($v:expr) => {{
+            let v: u32 = $v;
+            match lits.iter().position(|&x| x == v) {
+                Some(i) => i,
+                None => {
+                    lits.push(v);
+                    lits.len() - 1
+                }
+            }
+        }};
+    }
+    macro_rules! ldr {
+        ($rd:expr, $v:expr) => {{
+            let li = lit!($v);
+            code.push(0xE59F0000 | (($rd) << 12) | ((li as u32) & 0xFFF));
+        }};
+    }
+    // IE = 0.
+    ldr!(0, 0x04000200);
+    code.push(0xE3A01000); // MOV R1, #0
+    code.push(0xE5801000); // STR R1, [R0]
+    // TM0CNT = 0; TM0CNT_H = TIMER_START.
+    ldr!(0, 0x04000100);
+    code.push(0xE5801000); // STR R1, [R0] (R1 still 0)
+    code.push(0xE3A01080); // MOV R1, #0x80
+    code.push(0xE1C010B2); // STRH R1, [R0, #2]
+    // Program one DMA channel (SAD/DAD/CNT) then spin on its CNT_H.
+    // (sad, dad, dst, cnt, cntval).
+    for (sad, dad, dst, cnt, cntval) in [
+        (
+            0x040000B0u32,
+            0x040000B4u32,
+            DMAH_HB,
+            0x040000B8u32,
+            0xA0000001u32,
+        ),
+        (
+            0x040000BCu32,
+            0x040000C0u32,
+            DMAH_VB,
+            0x040000C4u32,
+            0x90000001u32,
+        ),
+        (
+            0x040000D4u32,
+            0x040000D8u32,
+            DMAH_VD,
+            0x040000DCu32,
+            0xB0000001u32,
+        ),
+    ] {
+        ldr!(0, sad);
+        ldr!(1, 0x04000100); // src = TM0CNT
+        code.push(0xE5801000); // STR R1, [R0]
+        ldr!(0, dad);
+        ldr!(1, dst);
+        code.push(0xE5801000); // STR R1, [R0]
+        ldr!(0, cnt);
+        ldr!(1, cntval);
+        code.push(0xE5801000); // STR R1, [R0]
+    }
+    for cnt_h in [0x040000BAu32, 0x040000C6u32, 0x040000DEu32] {
+        ldr!(0, cnt_h);
+        let top = code.len();
+        // LDRH (not LDR): libgba polls CNT as vu16. A word LDR at CNT_H
+        // is unaligned and RORs in the write-only SAD half (open bus),
+        // whose stale bit15 keeps a TST #0x8000 spinning forever.
+        code.push(0xE1D010B0); // LDRH R1, [R0]
+        code.push(0xE3110080 | (12 << 8)); // TST R1, #0x8000
+        code.push(0x1AFFFFFB); // BNE top
+        let _ = top;
+    }
+    // done flag + return.
+    ldr!(0, DMAH_DONE);
+    code.push(0xE3A01001); // MOV R1, #1
+    code.push(0xE5801000); // STR R1, [R0]
+    code.push(0xE12FFF1E); // BX LR
+    // Pass 2: lay literals after code; patch LDR offsets.
+    // LDR at byte p (from DMAH_BASE) has PC = base+p+8; literal li sits
+    // at base + code.len()*4 + li*4.
+    let base = code.len() * 4;
+    for i in 0..code.len() {
+        if code[i] & 0xFFFF0000 == 0xE59F0000 {
+            let li = (code[i] & 0xFFF) as usize;
+            let off = (base + li * 4) as i32 - (i * 4 + 8) as i32;
+            assert!(off >= 0 && off < 4096, "literal out of range");
+            code[i] = (code[i] & 0xFFFFF000) | off as u32;
+        }
+    }
+    code.extend_from_slice(&lits);
+    code
+}
+
+/// Run one test_dma probe: sync to line 158, arm the HBlank IRQ with the
+/// DMA handler, wait for completion, return (hb, vb, vd, done-tick).
+fn dma_probe() -> (u16, u16, u16) {
+    let mut system = GbaSystem::new();
+    {
+        let regs = system.cpu.registers_mut();
+        regs.set_cpsr(regs.cpsr() & !(1 << 7));
+        regs.set_cpsr_t(true);
+        regs.set_pc(PARK_PC);
+        regs.set_sp(0x03007E00);
+    }
+    system.bus.write16(PARK_PC, 0xE7FE);
+    let blob = build_dma_handler();
+    for (i, w) in blob.iter().enumerate() {
+        system.bus.write32(DMAH_BASE + i as u32 * 4, *w);
+    }
+    for (i, w) in blob.iter().enumerate() {
+        assert_eq!(
+            system.bus.read32(DMAH_BASE + i as u32 * 4),
+            *w,
+            "iwram w32 mismatch"
+        );
+    }
+    system.bus.write32(0x03007FFC, DMAH_BASE);
+    for _ in 0..600000 {
+        if system.bus.read16(0x04000006) == 157 {
+            break;
+        }
+        system.step_tcycle();
+    }
+    for _ in 0..600000 {
+        if system.bus.read16(0x04000006) == 158 {
+            break;
+        }
+        system.step_tcycle();
+    }
+    system.bus.write16(0x04000200, 0x0002);
+    system.bus.write16(0x04000202, 0xFFFF);
+    system.bus.write16(0x04000208, 0x0001);
+    system.bus.write16(0x04000004, 0x0010);
+    system.bus.take_access_wait_cycles();
+    for _ in 0..1200000 {
+        system.step_tcycle();
+        if system.bus.read16(DMAH_DONE) != 0 {
+            break;
+        }
+    }
+    assert_eq!(system.bus.read16(DMAH_DONE), 1, "dma handler did not run");
+    (
+        system.bus.read16(DMAH_HB),
+        system.bus.read16(DMAH_VB),
+        system.bus.read16(DMAH_VD),
+    )
+}
+
+#[test]
+fn dma_handler_layout_selfcheck() {
+    // Verify two-pass literal patching: every LDR resolves into the pool.
+    let blob = build_dma_handler();
+    // Find pool start: first word after BX LR (0xE12FFF1E).
+    let bx = blob.iter().position(|&w| w == 0xE12FFF1E).unwrap();
+    let pool_at = bx + 1;
+    for (i, &w) in blob[..pool_at].iter().enumerate() {
+        if w & 0xFFFF0000 == 0xE59F0000 {
+            let off = w & 0xFFF;
+            let target = (i * 4 + 8 + off as usize) / 4;
+            assert!(
+                target >= pool_at && target < blob.len(),
+                "LDR@{i} escapes pool"
+            );
+        }
+    }
+    // Spots: first three words program IE=0; handler ends with BX LR.
+    assert_eq!(blob[1], 0xE3A01000);
+    assert_eq!(blob[2], 0xE5801000);
+    // Every LDR must target the exact literal the builder assigned
+    // (registers, SAD/DAD/CNT addresses and values, spin CNT_Hs, DONE).
+    let mut want = vec![
+        0x04000200u32,
+        0x04000100,
+        0x040000B0,
+        0x04000100,
+        0x040000B4,
+        DMAH_HB,
+        0x040000B8,
+        0xA0000001,
+        0x040000BC,
+        0x04000100,
+        0x040000C0,
+        DMAH_VB,
+        0x040000C4,
+        0x90000001,
+        0x040000D4,
+        0x04000100,
+        0x040000D8,
+        DMAH_VD,
+        0x040000DC,
+        0xB0000001,
+        0x040000BA,
+        0x040000C6,
+        0x040000DE,
+        DMAH_DONE,
+    ];
+    let mut got = Vec::new();
+    for (i, &w) in blob[..pool_at].iter().enumerate() {
+        if w & 0xFFFF0000 == 0xE59F0000 {
+            let off = w & 0xFFF;
+            let target = (i * 4 + 8 + off as usize) / 4;
+            got.push(blob[target]);
+        }
+    }
+    assert_eq!(got, want, "literal routing");
+}
+
+#[test]
+fn dma_hblank_phase() {
+    // HBLANK DMA TM0 (HW 1137, +55 dispatch/shape offset).
+    assert_eq!(dma_probe().0, 1192);
+}
+
+#[test]
+fn dma_vblank_phase() {
+    // VBLANK DMA TM0 (HW 1362, +56).
+    assert_eq!(dma_probe().1, 1418);
+}
+
+#[test]
+fn dma_video_phase() {
+    // VIDEO DMA TM0 (HW 22069, +56).
+    assert_eq!(dma_probe().2, 22125);
+}
