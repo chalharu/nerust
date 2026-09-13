@@ -86,6 +86,15 @@ expected_failures:
 - nba_ppu_bgx
 - nba_ppu_dispcnt_latch
 - nba_ppu_greenswap
+# nba_ppu_status_irq_dma / nba_ppu_ram_access_timing are INTERACTIVE
+# (ui_show_menu + press_b waits) with no verification hooks headlessly:
+# driving status-irq-dma needs menu navigation plus ~830M cycles of
+# 1232-iteration HBlank-IRQ sweeps (each iteration syncs a near-full
+# frame), far beyond feasible case budgets, and status-irq-dma ships no
+# .elf to locate its counters. Their mechanisms are covered natively
+# instead (dma_fit video_sample_flag/if_edges pin the video phase and
+# HBlank IF lag the sweeps would judge). Revisit only with a recorded
+# input sequence plus a long-run harness mode.
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
@@ -100,6 +109,20 @@ expected_failures:
 # divider phases coherent). Regenerate the ref with an hw-validated build;
 # do not fit the timer model to impossible values.
 - PeterLemon_Timers
+# PeterLemon video playback (RLE/LZ DIFF, Rickroll, GRB15/LZ, GRB12/LZ,
+# GRB12/15LZIPS, DevoTimeOutForFun, TouhouBadApple, BigBuckBunny): refs
+# are arbitrary-moment screenshots with no cycle mapping, so no frame
+# budget can target them. Triaged (frame dumps every frame-end, BGR555
+# vs ref; probes removed): playback is verified WORKING (recognizable
+# content, steady ~4-emu-frame cadence, dozens of distinct frames), but
+# no ref matches within the first ~37 video frames (best diffs stay
+# ~30k+/38400; Rickroll structural correlation peaks at 0.18). The
+# decode path itself is proven by the passing static-decoder siblings
+# (GRB12/15Decode, I4Decode, GRB12Decode120x80 match their refs exactly;
+# Gravity matches BGR555-exact, frames 3+ static). Hunting minutes-long
+# clips for an unmapped moment is unbounded search plus manifest-cost
+# for zero component ATV (all components already pinned) -- box the
+# class; revisit only with author frame numbers.
 - PeterLemon_GRB12LZDIFFRLEVideo
 - PeterLemon_Rickroll
 - PeterLemon_GRB15LZVideo
@@ -641,6 +664,19 @@ suites:
       # cpu_irq_disable + REG_IME=0, so no dispatch is possible) the wake
       # stays free, preserving CPUSET-DMA 4154 exact. Verified 5/6 both
       # before and after.
+      # ADDENDUM 2 (uniform-+2 anchor, tick-paired via TTRACE starts +
+      # TM0 reads; raw ours vs HW: DIRECT 14/12, CPUSET 4157/4155,
+      # CPUSET-DMA 4156/4154, TIME-IWRAM 127/125, TIME-ROM 247/249):
+      # four different paths agree on +2, forcing a shared TM0
+      # start/read anchor (HW starts counting +2 later, or equivalently
+      # our post-start paths +2 slower -- unlocalizable between the two
+      # without per-insn truth). TIME-ROM is the opposite-direction pair
+      # (-2 raw, -4 post-anchor: our ROM-HLE-CpuSet path 4 fast, pinned
+      # by the passing suite CpuSet ROM cells). So no uniform knob
+      # (timer start latency would cascade into wake-48 + timers
+      # enable-phase for 4 cells of a still-red case) and no rule fix
+      # (all involved costs are independently pinned correct) -- box,
+      # revisit only with per-insn HW truth for these paths.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -725,15 +761,28 @@ suites:
     cycles: 20000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 4/7): full pass when the
-      # video-DMA absolute phase model is fixed. Replicated per-subtest:
-      # HBL-SET/UNSET + VCNT-FLAG (500/613/613) pass; DMA3-XFER reads
-      # 0x52D0 vs 0x52D3 (-3, first-burst 3 ticks early). A uniform
-      # countdown 2->5 fixes XFER but shifts the sweep pins to
-      # (498,611,611): no shared knob fits both, so the gap is a
-      # first-burst-only latency or a ROM-wall rule, not the per-line
-      # phase. Listed in expected_failures until then; a fix flips this
-      # to unexpected-pass.
+      # Currently 6/7 (was 4/7): HBL-SET/UNSET + VCNT-FLAG/CHANGE
+      # (500/613/613/613), HBL-DMA 502 and HBL-IRQ 501 all pass. Three
+      # NBA-grounded fixes landed for them: (1) video request countdown
+      # 2->3 (NBA PPU.cc `UpdateVideoTransferDMA` schedules `PPU_VideoDMA`
+      # +3; mGBA `GBADMARunDisplayStart` starts video DMA `now + 3`);
+      # (2) DMA3 video-capture first units skip the burst-start xI (their
+      # xI is absorbed pre-start, giving the uniform 2/unit rhythm the
+      # HBL-DMA TM0 sweep pins: a first interval of 4 would trip it at
+      # index 1; every other channel keeps the xI, pinned by force-nseq
+      # 88/88); (3) HBlank IF raises a tick after the DISPSTAT flag edge
+      # (NBA schedules `PPU_HBlankIRQ` +1; the flag-edge DMA sample stays
+      # clear, the next sees IF). Native pins in dma_fit.rs
+      # (`video_sample_flag_edges`, `video_sample_if_edge`).
+      # DMA3-XFER alone stays out (0x52D1 vs 0x52D3, +2): the video phase
+      # is locked at R0=6 by the six passing cells (no uniform shift fits
+      # all), the VCOUNT edge is locked at line end by VCNT-CHANGE=613,
+      # and the residual is a diffuse +2 over the 10-instruction TM0-start
+      # setup sum (ours 21 from edge to start, HW 19; P-OFF, so no
+      # prefetch-erase involvement; no single rule violation found —
+      # STR32-IO=2 is GBATEK-correct 2N at 1cy/access). Fixing it needs
+      # per-instruction HW truth for that path; revisit with
+      # per-cycle-CPU HW pins, not by fitting.
       - {address: 0x0300062C, value: 7, width: 4}
       - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
@@ -1470,6 +1519,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
     # 6 subtests fail on research-grade micro-behavior:
     # - "DMA Prefetch Break/Read": while an HBlank DMA3 runs, CPU
     #   reads from unmapped (0x10000000+) see DMA-bus bleed matching
@@ -1480,6 +1530,35 @@ suites:
     #   flag edges (halt 0x4D0, rise 0x87, fall 0x3EC, rise 0xE5).
     #   Later flips (0x3EB/0xE3/0x3F3) pass; the first edges need
     #   exact flag/halt micro-timing (PPU Phase 8 follow-up).
+    #   RE-MEASURED with transfer/tick probes (removed before commit;
+    #   current Gots, JSON with sram enrichment: Hblank 0x4D3 (+3),
+    #   Flip1 0x80 (-7), Flip2 0x3ED (+1), Flip3 0xE3 (-2)):
+    #   - Both Halt wakes land EXACTLY one line apart (1232, lat=32
+    #     each, entry at wake+32 each): the +3 lives entirely in
+    #     entry->TM0-read (77 vs 80 ticks).
+    #   - The IRQ handler path (IWRAM 0x03002D88, libgba IntrMain) is
+    #     pc- and cost-identical across both wakes; the divergence is
+    #     AFTER return: wake#2's resume executes THREE extra Thumb movs
+    #     (compiler-generated, real ROM code at 0x03000116-0x11C) before
+    #     its ldrh, each correctly costed at 1. So our w2-w1 = +3 from
+    #     code shape alone — while HW reads flat 1232, forcing HW's
+    #     (entry/handler/ldrh)#1 to exceed #2 by 3 somewhere unobservable
+    #     (IWRAM-flat handler rules out fetch cold/warm; per-insn HW truth
+    #     for that window does not exist).
+    #   - The only remaining structural candidate is HLE-fit residue:
+    #     our entry (23) and wake (32) constants were fitted to
+    #     irq-delay/cancel-ime/sio/timers, which pin them as-is; this cell
+    #     needs them +/-3 the other way. No per-cell knob exists that is
+    #     not per-test fitting (banned).
+    #   - Flips are poll-phase lottery on top: each flip's detection has
+    #     an independent +-8 poll-iteration window (loop re-entry shifts
+    #     phase per flip), and no single shift fits (-7,-1,+2,0,0,0)
+    #     together with Hblank's -3: multi-direction impossibility.
+    #   - The older "+79/+25 RECONFIRMED" note below is SUPERSEDED (stale
+    #     pre-SIO-dispatch era; its own numbers were self-inconsistent,
+    #     1304 vs 0x51F=1311). Current = (+3,-7,+1,-2).
+    #   Boxed; revisit only with per-instruction HW truth for the
+    #   wake-resume window, never by fitting.
     #   Traced (probes removed): both Halt wakes land exactly one line
     #   apart (1232), but the calibration read runs BEFORE its no-op
     #   master dispatch (+1) while the value read runs AFTER (+73),
@@ -1546,6 +1625,44 @@ suites:
     #     count (1 unit/line has no between-units gap for the CPU).
     #   Both sub-hypotheses dead; the pair stays boxed as phase-lottery
     #   (Break) + unknowable-value (Read/bleed).
+    #   PER-CYCLE CPU REMODEL VERDICT (analysis, no code change): the
+    #   remodel cannot reach this pair, so no slice is opened for it.
+    #   The loop is disassembled (misc-edge.o <dmaPrefetch>): 7 Thumb
+    #   insns/iter (cmp, beq-nt, ldmia-unmapped, str-IWRAM, ands, cmp,
+    #   beq-taken) in ROM with the suite P-OFF (WAITCNT never written),
+    #   i.e. ~40-50 T-cycles/iter of GBATEK-exact N-fetches + taken-branch
+    #   refill -- our P-OFF totals here are Timing-pinned exact already
+    #   (non-prefetch perfect), so any remodel that keeps its graduated
+    #   pins produces IDENTICAL totals: no timing delta is available, and
+    #   Break is value-driven anyway (a +-1 timing shift moves it ~+-60
+    #   iters, never 2724 -> ~20).
+    #   With exact totals the pair still needs bus-electrics, eliminated
+    #   three independent ways (iter ~45, unit window ~10/1232, loop span
+    #   ~90-100 lines ~= ~90+ HBlank units, first unit ~900 ticks in):
+    #   (1) BEAT: drift 45/read is ergodic mod 1232 (gcd 1), so ~100 of
+    #   the 2724 reads MUST overlap unit windows; HW shows 0 pattern
+    #   breaks then data -- units are invisible to the latch (armed
+    #   bleed), contradicting every last-driven rule (which breaks at
+    #   iter ~20 on the first unit refresh). Phase-lock avoidance is
+    #   impossible (154 residues incl. window ones).
+    #   (2) GRID: 2724 iters land ~90-100 lines after the VBlank-synced
+    #   loop start, mid-draw; frame-alignment would need ~103/iter (off
+    #   by 2x+), and no bus event exists at any landing (VBlank start
+    #   has no DMA/bus effect here).
+    #   (3) SELF-SUSTAINMENT: the loop stores every read back to IWRAM
+    #   (mapped!) and 90+ identical HBlank units refresh any sane latch
+    #   identically each line -- a constant 2724-long pattern is
+    #   inexpressible without armed-bleed, and the 2724-transition
+    #   (to unit data 0xDEAD0000) has no trigger in {grid, beat, code,
+    #   DMA-state} (repeat-fixed, no counter).
+    #   The remaining HLE-RESIDUE hypothesis (HW's real-BIOS
+    #   VBlankIntrWait leaves a pattern-matching latch; our HLE leaves
+    #   0x00004003, breaking at iter 0) is untestable and unactionable:
+    #   matching it needs real-BIOS execution (architectural, out of
+    #   scope) or a hardcoded pattern constant (banned fitting).
+    #   Verdict: box stands on five legs (latch, interleave, count,
+    #   per-cycle-irrelevance, residue); needs bus-electrical facts no
+    #   CPU remodel supplies. Do NOT open a CPU slice for this pair.
     #   H-BLANK 4 RECONFIRMED (Got re-measured): Hblank +79 (0x51F v
     #   0x4D0), Flip1 +25 (0xA0 v 0x87) -- both need a FASTER line/wake,
     #   opposite to timers (needs slower): direct contradiction on

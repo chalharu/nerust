@@ -272,19 +272,27 @@ impl GbaDma {
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
         // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
         // cost is N/S waits only. The xI internal overhead is a SINGLE
-        // per-burst term (2I), charged with the first unit. (Per-unit
-        // internal overcharges by 2/unit; the old code hid that with a -1
-        // hack on the first two units plus a zeroed I/O wait. With
-        // burst-start xI the HBlank sampling rate is exactly 2.0
-        // cycles/unit with the documented I/O wait restored, and both
-        // the HBlank and video sweep phases match their HW-pinned edges.)
-        // 128K blocks force N (GBATEK GamePak Prefetch), except the final
-        // unit: N/S describes the gap to a successor, and the last unit
-        // has none (nba 128kb-boundary late-cross measures S-cost).
+        // per-burst term (2I), charged with the first unit — EXCEPT on
+        // DMA3 video-capture (Special) bursts, whose first unit costs a
+        // plain 2N: the xI is absorbed in the request-to-start window
+        // (NBA schedules the video request 3 into the line and mGBA
+        // starts it `now + 3`, both covering setup before the first
+        // read). HW-pinned by exact-timing HBL DMA 502: with a first
+        // interval of 4 the TM0 sweep would trip at index 1 instead of
+        // riding a uniform 2/unit rhythm into the HBlank-DMA2
+        // preemption. Every other channel keeps the burst-start xI
+        // (nba force-nseq 88/88 single-unit TIME pins it: the tail holds
+        // CNT_H enable two extra ticks).
         let total_wait = u32::from(src_wait) + u32::from(dst_wait);
         // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
         // burst pays 2I (GBATEK's 4I overshoots); single/non-ROM keep 2I.
-        let internal: u32 = if dma.is_first { 2 } else { 0 };
+        // DMA3 video-capture bursts skip it (see above).
+        let internal: u32 =
+            if dma.is_first && !(channel == 3 && timing(dma.control) == DmaTrigger::Special) {
+                2
+            } else {
+                0
+            };
         dma.delay = (total_wait + internal) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         // Data stream: forced increment inside GamePak ROM (mGBA
