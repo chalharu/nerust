@@ -6,13 +6,13 @@ pub fn fill_pipeline(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, pipeline: 
     let pc = regs.pc();
     if regs.cpsr_t() {
         pipeline[0] = bus.fetch16(pc) as u32;
-        pipeline[1] = bus.fetch16(pc + 2) as u32;
-        regs.set_pc(pc + 4);
+        pipeline[1] = bus.fetch16(pc.wrapping_add(2)) as u32;
+        regs.set_pc(pc.wrapping_add(4));
     } else {
         // ARM: 2 x 32bit
         pipeline[0] = bus.fetch32(pc);
-        pipeline[1] = bus.fetch32(pc + 4);
-        regs.set_pc(pc + 8);
+        pipeline[1] = bus.fetch32(pc.wrapping_add(4));
+        regs.set_pc(pc.wrapping_add(8));
     }
 }
 
