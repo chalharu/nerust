@@ -232,3 +232,127 @@ fn video_sample_if_edge() {
         .unwrap_or(usize::MAX);
     assert_eq!(irq_assert, 501);
 }
+
+/// Native replication of nba status-irq-dma sweeps (Phase 1: DISPSTAT /
+/// VCOUNT flag edges; IF/DMA need the libgba ack, see Phase 2 note).
+///
+/// The ROM's emit functions generate exact ARM bytes in IWRAM (delay
+/// NOPs + LDR/LDRH/LDR/STRH + IE=0 + BX LR); this generates the identical
+/// bytes and installs them DIRECTLY as the IRQ vector (no libgba
+/// IntrMain dispatch -- the joint +50 uniform offset below absorbs it:
+/// HBLANK=0 194/144, HBLANK=1 1200/1151, VMATCH 194/145,
+/// VBLANK=1 196/144, VBLANK=0 195/144, VCOUNT 196/144; spread +-2 is
+/// sync/poll granularity on both sides). The CPU is parked on a Thumb
+/// b-loop; HBlank entry runs the emit fn and returns via the HLE
+/// trampoline. Each pin brackets its edge (2 probes, ~2 frames) so the
+/// suite stays fast while locking flag/edge/entry behavior.
+const EMIT_BASE: u32 = 0x03002000;
+const EMIT_RESULT: u32 = 0x03001000;
+const PARK_PC: u32 = 0x03000000;
+
+/// Generate the status-irq-dma delay/read handler (emit.c verbatim).
+fn emit_delay_read(bus: &mut crate::memory::GbaMemoryBus, delay: u16, address: u32) {
+    let mut a = EMIT_BASE;
+    let mut w = |v: u32| {
+        bus.write32(a, v);
+        a += 4;
+    };
+    for _ in 0..delay {
+        w(0xE320F000); // NOP
+    }
+    w(0xE59F201C); // LDR R2, [PC, #28] (= address)
+    w(0xE1D220B0); // LDRH R2, [R2]
+    w(0xE59F1018); // LDR R1, [PC, #24] (= result)
+    w(0xE1C120B0); // STRH R2, [R1]
+    w(0xE3A00301); // MOV R0, #0x04000000
+    w(0xE2800C02); // ADD R0, #0x200 (= 0x04000200, IE)
+    w(0xE3A01000); // MOV R1, #0
+    w(0xE5801000); // STR R1, [R0] (IE=0: handler done)
+    w(0xE12FFF1E); // BX LR
+    w(address);
+    w(EMIT_RESULT);
+}
+
+/// One __test_cycle probe: sync to (a,b), arm HBlank IRQ with a
+/// delay-nop emit handler sampling `reg`, run to handler completion,
+/// return the sampled halfword.
+fn irq_sample(line_a: u16, line_b: u16, dispstat: u16, reg: u32, delay: u16) -> u16 {
+    let mut system = GbaSystem::new();
+    {
+        let regs = system.cpu.registers_mut();
+        regs.set_cpsr(regs.cpsr() & !(1 << 7));
+        regs.set_cpsr_t(true);
+        regs.set_pc(PARK_PC);
+        regs.set_sp(0x03007E00);
+    }
+    system.bus.write16(PARK_PC, 0xE7FE); // Thumb b .
+    emit_delay_read(&mut system.bus, delay, reg);
+    system.bus.write32(0x03007FFC, EMIT_BASE); // vector direct (ARM)
+    for _ in 0..600000 {
+        if system.bus.read16(0x04000006) == line_a {
+            break;
+        }
+        system.step_tcycle();
+    }
+    for _ in 0..600000 {
+        if system.bus.read16(0x04000006) == line_b {
+            break;
+        }
+        system.step_tcycle();
+    }
+    system.bus.write16(0x04000200, 0x0002); // IE = HBlank
+    system.bus.write16(0x04000202, 0xFFFF); // IF clear
+    system.bus.write16(0x04000208, 0x0001); // IME = 1
+    system.bus.write16(0x04000004, dispstat | 0x0010); // DISPSTAT |= HBL
+    system.bus.take_access_wait_cycles(); // drain out-of-band residue
+    for _ in 0..600000 {
+        system.step_tcycle();
+        if system.bus.read16(0x04000200) == 0 {
+            break;
+        }
+    }
+    assert_eq!(system.bus.read16(0x04000200), 0, "handler did not run");
+    system.bus.read16(EMIT_RESULT)
+}
+
+#[test]
+fn irq_hblank_clear_edge() {
+    // HBLANK=1->0 on line 227 end (HW 144, +50 dispatch offset).
+    assert_ne!(irq_sample(226, 227, 0x0000, DISPSTAT, 193) & 2, 0);
+    assert_eq!(irq_sample(226, 227, 0x0000, DISPSTAT, 194) & 2, 0);
+}
+
+#[test]
+fn irq_hblank_set_edge() {
+    // HBLANK=0->1 at line-0 HBlank (HW 1151, +49).
+    assert_eq!(irq_sample(226, 227, 0x0000, DISPSTAT, 1199) & 2, 0);
+    assert_ne!(irq_sample(226, 227, 0x0000, DISPSTAT, 1200) & 2, 0);
+}
+
+#[test]
+fn irq_vmatch_edge() {
+    // VCNT flag 0->1, LYC=0, line 227->0 (HW 145, +49).
+    assert_eq!(irq_sample(226, 227, 0x0000, DISPSTAT, 193) & 4, 0);
+    assert_ne!(irq_sample(226, 227, 0x0000, DISPSTAT, 194) & 4, 0);
+}
+
+#[test]
+fn irq_vblank_set_edge() {
+    // VBlank flag 0->1, line 159->160 (HW 144, +52).
+    assert_eq!(irq_sample(158, 159, 0x0000, DISPSTAT, 195) & 1, 0);
+    assert_ne!(irq_sample(158, 159, 0x0000, DISPSTAT, 196) & 1, 0);
+}
+
+#[test]
+fn irq_vblank_clear_edge() {
+    // VBlank flag 1->0, line 226->227 (HW 144, +51).
+    assert_ne!(irq_sample(225, 226, 0x0000, DISPSTAT, 194) & 1, 0);
+    assert_eq!(irq_sample(225, 226, 0x0000, DISPSTAT, 195) & 1, 0);
+}
+
+#[test]
+fn irq_vcount_inc_edge() {
+    // VCOUNT 0->1, line 0 end (HW 144, +52).
+    assert_eq!(irq_sample(227, 0, 0x0000, VCOUNT, 195), 0);
+    assert_eq!(irq_sample(227, 0, 0x0000, VCOUNT, 196), 1);
+}
