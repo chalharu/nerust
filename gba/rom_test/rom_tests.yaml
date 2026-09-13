@@ -91,20 +91,18 @@ expected_failures:
 # driving status-irq-dma needs menu navigation plus ~830M cycles of
 # 1232-iteration HBlank-IRQ sweeps (each iteration syncs a near-full
 # frame), far beyond feasible case budgets, and status-irq-dma ships no
-# .elf to locate its counters. Covered natively instead (dma_fit
-# irq_*_edge pins replicate the exact ROM emit bytes with a direct
-# vector; joint +50 uniform offset = libgba IntrMain dispatch):
-# HBLANK=0/1 (194/144, 1200/1151), VMATCH (194/145), VBLANK=1/0
-# (196/144, 195/144), VCOUNT INC (196/144) -- flag/edge/entry behavior
-# locked (spread +-2 is sync/poll granularity both sides).
-# test_dma replicated too (dma_fit dma_*_phase: hand-assembled ARM
-# equivalent of __test_dma_hblank_irq_handler, two-pass literals):
-# HBLANK 1192/1137, VBLANK 1418/1362, VIDEO 22125/22069 (joint +55/+56,
-# same dispatch plus a few hand-vs-O0 shape insns). This pins the
-# HBlank/VBlank/video DMA absolute phases plus TM0 overflow. Lesson
-# recorded in the test: CNT spins must use LDRH like libgba (a word LDR
-# on CNT_H RORs the write-only SAD half (open bus) into bit15 and spins
-# forever -- correct emulator behavior, wrong test code).
+# .elf to locate its counters. Covered natively instead:
+# - status-irq-dma sweeps (dma_fit irq_*_edge + dma_*_phase pins,
+#   exact ROM bytes / hand-equivalent handlers, joint offsets).
+# - ram-access-timing DISPCNT-latch probes (dma_fit latch_* pins):
+#   BG [260,490,490,260] (fetch iff latched+current enable),
+#   BG-blank [260,490,490,260] (blank samples at line turnover),
+#   OBJ [516,516,516,260] (fetch iff CURRENT enable),
+#   OBJ-blank [260,516,516,260]. These graduate two model fixes:
+#   VRAM-OBJ-bank stalls gate on live OBJ enable (OAM itself stays
+#   ungated: burst-into-tears needs its OAM stalls OBJ-disabled),
+#   and forced-blank samples live at line turnover (the 3-stage enable
+#   latch over-suppresses by 2+ lines).
 # The IF pins (HBLANK 1153/VBLANK 146/VMATCH 147) need libgba IntrMain's
 # IF-ack (1153 = next-HBlank re-set after the ack clears the first):
 # guest code our HLE entry runs faithfully via the vector, so no entry

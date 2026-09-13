@@ -600,3 +600,151 @@ fn dma_video_phase() {
     // VIDEO DMA TM0 (HW 22069, +56).
     assert_eq!(dma_probe().2, 22125);
 }
+
+/// Native replication of nba ram-access-timing DISPCNT-latch probes
+/// (bus-only: VCOUNT sync + TM0 + immediate DMA0, no IRQ needed).
+/// Each probe returns the TM0 ticks for a 128-halfword VRAM DMA burst;
+/// the 4-tuple pattern reads out the fetch-gating rule (documented in
+/// the ROM comments from HW observation). Absolute values carry a fixed
+/// setup offset vs the ROM (back-to-back driver writes); only the
+/// fast/slow pattern is asserted.
+fn dma0_burst(bus: &mut crate::memory::GbaMemoryBus) -> u16 {
+    bus.write32(0x04000100, 0);
+    bus.write16(0x04000102, 0x0080); // TM0CNT_H = START
+    bus.write16(0x040000B8, 128);
+    bus.write16(0x040000BA, 0x8140); // ENABLE|16|SRC_FIXED|DST_FIXED
+    for _ in 0..60000 {
+        bus.tick();
+        if bus.read16(0x040000BA) & 0x8000 == 0 {
+            break;
+        }
+    }
+    assert_eq!(bus.read16(0x040000BA) & 0x8000, 0);
+    bus.read16(0x04000100)
+}
+
+fn wait_vcount(bus: &mut crate::memory::GbaMemoryBus, v: u16) {
+    for _ in 0..600000 {
+        if bus.read16(0x04000006) == v {
+            break;
+        }
+        bus.tick();
+    }
+}
+
+/// Native replication of nba ram-access-timing DISPCNT-latch probes:
+/// 128-halfword VRAM DMA0 bursts at lines 2,3,4,5 with enable/blank
+/// flips per the ROM scripts. The tuple pattern reads out fetch gating.
+fn latch_run(
+    init_disp: u16,
+    hofs7: bool,
+    oam_setup: bool,
+    sad_dad: u32,
+    line2_op: u16,
+    line2_clear: bool,
+    line5_op: u16,
+    line5_clear: bool,
+) -> [u16; 4] {
+    use crate::memory::GbaMemoryBus;
+    let mut bus = GbaMemoryBus::new();
+    bus.write16(0x04000000, init_disp);
+    if hofs7 {
+        for r in [0x04000010, 0x04000014, 0x04000018, 0x0400001C] {
+            bus.write16(r, 7);
+        }
+    }
+    if oam_setup {
+        for i in 0..128u32 {
+            bus.write16(0x07000000 + i * 8, 0); // attr0: enable
+            bus.write16(0x07000000 + i * 8 + 2, 0xC000); // attr1: 64x64
+        }
+    }
+    bus.write32(0x040000B0, sad_dad);
+    bus.write32(0x040000B4, sad_dad);
+    // while(VCOUNT==2){} then while(VCOUNT!=2){} from boot (vc=0):
+    // first loop exits at once, second waits for line 2.
+    wait_vcount(&mut bus, 2);
+    let mut d = bus.read16(0x04000000);
+    if line2_clear {
+        d &= !line2_op;
+    } else {
+        d |= line2_op;
+    }
+    bus.write16(0x04000000, d);
+    let r0 = dma0_burst(&mut bus);
+    wait_vcount(&mut bus, 3);
+    let r1 = dma0_burst(&mut bus);
+    wait_vcount(&mut bus, 4);
+    let r2 = dma0_burst(&mut bus);
+    wait_vcount(&mut bus, 5);
+    let mut d = bus.read16(0x04000000);
+    if line5_clear {
+        d &= !line5_op;
+    } else {
+        d |= line5_op;
+    }
+    bus.write16(0x04000000, d);
+    let r3 = dma0_burst(&mut bus);
+    [r0, r1, r2, r3]
+}
+
+#[test]
+fn latch_bg_fetch() {
+    // BG fetch iff latched AND current BG enable (ROM doc rule): line 2
+    // (enables just turned on, latch still off) is fast, lines 3-4 fetch,
+    // line 5 (enables off) is fast.
+    assert_eq!(
+        latch_run(0x0100, true, false, 0x06000000, 0x0F00, false, 0x0F00, true),
+        [260, 490, 490, 260]
+    );
+}
+
+#[test]
+fn latch_bg_fetch_blank() {
+    // BG fetch iff latched-blank-clear AND current-blank-clear: blank
+    // samples at line turnover (not the 3-stage enable latch), so fetch
+    // resumes the line after the blank write: [fast, slow, slow, fast].
+    assert_eq!(
+        latch_run(
+            0x0100 | 0x0080 | 0x0F00,
+            false,
+            false,
+            0x06000000,
+            0x0080,
+            true,
+            0x0080,
+            false
+        ),
+        [260, 490, 490, 260]
+    );
+}
+
+#[test]
+fn latch_obj_fetch() {
+    // OBJ fetch iff CURRENT OBJ enable (latched disregarded): lines 2-4
+    // fetch, line 5 (disabled at line start) does not.
+    assert_eq!(
+        latch_run(0x0100, false, true, 0x06010000, 0x1000, false, 0x1000, true),
+        [516, 516, 516, 260]
+    );
+}
+
+#[test]
+fn latch_obj_fetch_blank() {
+    // OBJ fetch vs forced blank: line 2 (blank just cleared, sampled on)
+    // does not fetch; lines 3-4 (blank clear, OBJ on) fetch; line 5
+    // (blank on) does not. Same gates as above, jointly.
+    assert_eq!(
+        latch_run(
+            0x0100 | 0x0080 | 0x1000,
+            false,
+            true,
+            0x06010000,
+            0x0080,
+            true,
+            0x0080,
+            false
+        ),
+        [260, 516, 516, 260]
+    );
+}
