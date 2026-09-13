@@ -91,10 +91,20 @@ expected_failures:
 # driving status-irq-dma needs menu navigation plus ~830M cycles of
 # 1232-iteration HBlank-IRQ sweeps (each iteration syncs a near-full
 # frame), far beyond feasible case budgets, and status-irq-dma ships no
-# .elf to locate its counters. Their mechanisms are covered natively
-# instead (dma_fit video_sample_flag/if_edges pin the video phase and
-# HBlank IF lag the sweeps would judge). Revisit only with a recorded
-# input sequence plus a long-run harness mode.
+# .elf to locate its counters. Covered natively instead (dma_fit
+# irq_*_edge pins replicate the exact ROM emit bytes with a direct
+# vector; joint +50 uniform offset = libgba IntrMain dispatch):
+# HBLANK=0/1 (194/144, 1200/1151), VMATCH (194/145), VBLANK=1/0
+# (196/144, 195/144), VCOUNT INC (196/144) -- flag/edge/entry behavior
+# locked (spread +-2 is sync/poll granularity both sides).
+# The IF pins (HBLANK 1153/VBLANK 146/VMATCH 147) need libgba IntrMain's
+# IF-ack (1153 = next-HBlank re-set after the ack clears the first):
+# guest code our HLE entry runs faithfully via the vector, so no entry
+# change is needed or wanted (global auto-ack would blind suite
+# handlers reading IF); ROM-drive only. test_dma (1137/1362/22069)
+# likewise (DMA+TM0 races, mechanisms covered by dma/exact-timing pins).
+# Revisit only with a recorded input sequence plus a long-run harness
+# mode.
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
