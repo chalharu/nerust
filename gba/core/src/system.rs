@@ -90,9 +90,27 @@ impl GbaSystem {
         self.frame_buffer()
     }
 
+    /// Drain micro-ops within one tick: run ops while they cost nothing
+    /// yet; stop at the first tick-consuming op (or retire). Returns the
+    /// raw tick budget (possibly zero/negative; the caller floors once
+    /// per instruction at retire, exactly like the legacy step), or None
+    /// on an uncovered fill (queue empty there by construction).
+    fn drain_micro(&mut self) -> Option<i64> {
+        let mut acc = 0i64;
+        loop {
+            acc += self.cpu.step_op(&mut self.bus)?;
+            if !self.cpu.micro_pending() {
+                break;
+            }
+            if acc >= 1 {
+                break;
+            }
+        }
+        Some(acc)
+    }
+
     /// CPUとバスを1 T-cycleだけ進行する。
-    pub fn step_tcycle(&mut self) -> bool {
-        if self.bus.dma_active() {
+    pub fn step_tcycle(&mut self) -> bool {        if self.bus.dma_active() {
             // HW/mGBA cpuBlocked: the CPU is stalled for the whole burst;
             // only the bus advances, the in-flight op resumes afterwards.
         } else {
@@ -100,17 +118,35 @@ impl GbaSystem {
                 if self.bus.hle_bios_active() {
                     self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
                 } else {
-                    let irq_source_pc = self.cpu.registers().pc();
-                    let irq_entry_cycles = IRQ_ENTRY_CYCLES
-                        + u32::from(
-                            self.bus
-                                .nonsequential_cycles_for(irq_source_pc, 4)
-                                .saturating_sub(1),
-                        );
-                    if self.cpu.service_irq(&mut self.bus) {
-                        self.cpu_cycles_remaining = irq_entry_cycles;
+                    // At an instruction boundary (queue empty) sample IRQ
+                    // first (legacy order: dispatch wins boundary ties);
+                    // mid-instruction (queue draining) never samples (ARM
+                    // takes exceptions at instruction boundaries only).
+                    // Falls through to the shared epilogue below in all
+                    // cases (no early return: the decrement is load-bearing
+                    // for dispatch timing).
+                    if !self.cpu.micro_pending() {
+                        let irq_source_pc = self.cpu.registers().pc();
+                        let irq_entry_cycles = IRQ_ENTRY_CYCLES
+                            + u32::from(
+                                self.bus
+                                    .nonsequential_cycles_for(irq_source_pc, 4)
+                                    .saturating_sub(1),
+                            );
+                        if self.cpu.service_irq(&mut self.bus) {
+                            self.cpu_cycles_remaining = irq_entry_cycles;
+                        } else if let Some(acc) = self.drain_micro() {
+                            self.cpu_cycles_remaining = acc.max(1) as u32;
+                        } else {
+                            self.cpu_cycles_remaining =
+                                self.cpu.step_legacy(&mut self.bus).max(1);
+                        }
+                    } else if let Some(acc) = self.drain_micro() {
+                        self.cpu_cycles_remaining = acc.max(1) as u32;
                     } else {
-                        self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+                        // Unreachable (queue was non-empty, so the first
+                        // pop succeeds); consume the tick safely.
+                        self.cpu_cycles_remaining = 1;
                     }
                 }
             }
