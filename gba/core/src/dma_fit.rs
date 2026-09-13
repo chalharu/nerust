@@ -188,3 +188,47 @@ fn video_sample_flag_edges() {
         .unwrap_or(usize::MAX);
     assert_eq!((hbl_set, hbl_unset, vcnt_set), (500, 613, 613));
 }
+
+/// Replicates exact-timing `test_hblank_irq`: video DMA3 samples IF with
+/// the HBlank IRQ enabled; analysis finds the first HBLANK-bit sample.
+/// The ROM spins clearing IF until the burst takes the bus, so clear IF
+/// at line-2 start natively. Pins the video phase (countdown 3) together
+/// with the +1 HBlank IRQ deferral: the flag-edge sample (index 500)
+/// must still read clear, the next one set (HW 501).
+#[test]
+fn video_sample_if_edge() {
+    use crate::memory::GbaMemoryBus;
+    let mut bus = GbaMemoryBus::new();
+    bus.write16(DISPSTAT, 1 << 4); // HBlank IRQ enable
+    while bus.read16(VCOUNT) != 0 {
+        bus.tick();
+    }
+    bus.write32(0x040000D4, 0x04000202); // DMA3SAD = IF
+    bus.write32(0x040000D8, 0x03001000); // DMA3DAD
+    bus.write16(0x040000DC, 616); // count 616
+    bus.write16(0x040000DE, 0x8000 | (2 << 7) | (3 << 12)); // ENABLE | SRC_FIXED | SPECIAL | 16-bit
+    // The video-arm latch (vcount==162) delays the first burst a frame;
+    // the ROM spins clearing IF until the burst takes the bus, so clear
+    // IF at the firing frame's line-2 start (stale line 162..1 HBlanks
+    // would otherwise trip sample 0).
+    while bus.read16(VCOUNT) != 162 {
+        bus.tick();
+    }
+    while bus.read16(VCOUNT) != 2 {
+        bus.tick();
+    }
+    bus.write16(0x04000202, 0xFFFF); // clear IF like the ROM spin loop
+    for _ in 0..600000 {
+        bus.tick();
+        if bus.read16(0x040000DE) & 0x8000 == 0 {
+            break;
+        }
+    }
+    assert_eq!(bus.read16(0x040000DE) & 0x8000, 0);
+    let samples: Vec<u16> = (0..616).map(|i| bus.read16(0x03001000 + i * 2)).collect();
+    let irq_assert = samples
+        .iter()
+        .position(|&s| s & 2 != 0)
+        .unwrap_or(usize::MAX);
+    assert_eq!(irq_assert, 501);
+}

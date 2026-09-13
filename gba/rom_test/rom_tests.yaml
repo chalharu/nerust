@@ -86,6 +86,15 @@ expected_failures:
 - nba_ppu_bgx
 - nba_ppu_dispcnt_latch
 - nba_ppu_greenswap
+# nba_ppu_status_irq_dma / nba_ppu_ram_access_timing are INTERACTIVE
+# (ui_show_menu + press_b waits) with no verification hooks headlessly:
+# driving status-irq-dma needs menu navigation plus ~830M cycles of
+# 1232-iteration HBlank-IRQ sweeps (each iteration syncs a near-full
+# frame), far beyond feasible case budgets, and status-irq-dma ships no
+# .elf to locate its counters. Their mechanisms are covered natively
+# instead (dma_fit video_sample_flag/if_edges pin the video phase and
+# HBlank IF lag the sweeps would judge). Revisit only with a recorded
+# input sequence plus a long-run harness mode.
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
@@ -725,15 +734,28 @@ suites:
     cycles: 20000000
     verify:
       memory:
-      # Upstream-known-correct goals (currently 4/7): full pass when the
-      # video-DMA absolute phase model is fixed. Replicated per-subtest:
-      # HBL-SET/UNSET + VCNT-FLAG (500/613/613) pass; DMA3-XFER reads
-      # 0x52D0 vs 0x52D3 (-3, first-burst 3 ticks early). A uniform
-      # countdown 2->5 fixes XFER but shifts the sweep pins to
-      # (498,611,611): no shared knob fits both, so the gap is a
-      # first-burst-only latency or a ROM-wall rule, not the per-line
-      # phase. Listed in expected_failures until then; a fix flips this
-      # to unexpected-pass.
+      # Currently 6/7 (was 4/7): HBL-SET/UNSET + VCNT-FLAG/CHANGE
+      # (500/613/613/613), HBL-DMA 502 and HBL-IRQ 501 all pass. Three
+      # NBA-grounded fixes landed for them: (1) video request countdown
+      # 2->3 (NBA PPU.cc `UpdateVideoTransferDMA` schedules `PPU_VideoDMA`
+      # +3; mGBA `GBADMARunDisplayStart` starts video DMA `now + 3`);
+      # (2) DMA3 video-capture first units skip the burst-start xI (their
+      # xI is absorbed pre-start, giving the uniform 2/unit rhythm the
+      # HBL-DMA TM0 sweep pins: a first interval of 4 would trip it at
+      # index 1; every other channel keeps the xI, pinned by force-nseq
+      # 88/88); (3) HBlank IF raises a tick after the DISPSTAT flag edge
+      # (NBA schedules `PPU_HBlankIRQ` +1; the flag-edge DMA sample stays
+      # clear, the next sees IF). Native pins in dma_fit.rs
+      # (`video_sample_flag_edges`, `video_sample_if_edge`).
+      # DMA3-XFER alone stays out (0x52D1 vs 0x52D3, +2): the video phase
+      # is locked at R0=6 by the six passing cells (no uniform shift fits
+      # all), the VCOUNT edge is locked at line end by VCNT-CHANGE=613,
+      # and the residual is a diffuse +2 over the 10-instruction TM0-start
+      # setup sum (ours 21 from edge to start, HW 19; P-OFF, so no
+      # prefetch-erase involvement; no single rule violation found —
+      # STR32-IO=2 is GBATEK-correct 2N at 1cy/access). Fixing it needs
+      # per-instruction HW truth for that path; revisit with
+      # per-cycle-CPU HW pins, not by fitting.
       - {address: 0x0300062C, value: 7, width: 4}
       - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
