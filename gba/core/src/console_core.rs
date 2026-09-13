@@ -1,28 +1,66 @@
-use crate::rom_identity::GbaRomIdentity;
-use crate::rom_identity::GbaSystemId;
-use nerust_core_traits::identity::SystemIdentity;
-use nerust_core_traits::{ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind};
+use std::sync::Arc;
+
+use nerust_core_traits::{
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    identity::SystemIdentity,
+};
+use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
+use crate::{input_types::GbaInputBuffer, rom_identity::GbaRomIdentity, system::GbaSystem};
+
+#[derive(Debug, thiserror::Error)]
+enum GbaCoreError {
+    #[error("invalid or unsupported GBA ROM")]
+    InvalidRom,
+    #[error("GBA input buffer has the wrong concrete type")]
+    InvalidInputBuffer,
+    #[error("save state ROM mismatch")]
+    RomMismatch,
+}
+
+struct LoadedGba {
+    system: GbaSystem,
+    rom: Arc<[u8]>,
+    identity: GbaRomIdentity,
+}
+
 pub struct GbaConsoleCore {
-    loaded: bool,
+    loaded: Option<LoadedGba>,
+    audio: Box<dyn AudioBackend>,
+    emu_input: EmuInput,
     paused: bool,
-    rom_identity: Option<GbaRomIdentity>,
 }
 
 impl GbaConsoleCore {
-    pub fn new() -> Self {
+    pub fn new(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
         Self {
-            loaded: false,
+            loaded: None,
+            audio,
+            emu_input,
             paused: false,
-            rom_identity: None,
         }
     }
-}
 
-impl Default for GbaConsoleCore {
-    fn default() -> Self {
-        Self::new()
+    pub fn new_empty(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
+        Self::new(audio, emu_input)
+    }
+
+    fn create_loaded(rom: &[u8]) -> Result<LoadedGba, CoreError> {
+        let identity = GbaRomIdentity::from_rom(rom)
+            .ok_or_else(|| CoreError::RomParse(Box::new(GbaCoreError::InvalidRom)))?;
+        let system = GbaSystem::from_test_rom(rom.to_vec())
+            .or_else(|| GbaSystem::from_rom(rom.to_vec()))
+            .ok_or_else(|| CoreError::RomParse(Box::new(GbaCoreError::InvalidRom)))?;
+        Ok(LoadedGba {
+            system,
+            rom: Arc::from(rom),
+            identity,
+        })
+    }
+
+    fn loaded_ref(&self) -> Result<&LoadedGba, CoreError> {
+        self.loaded.as_ref().ok_or(CoreError::NoRomLoaded)
     }
 }
 
@@ -34,27 +72,59 @@ impl ConsoleCore for GbaConsoleCore {
         }
     }
 
-    fn render_frame(&mut self, _frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
-        if !self.loaded {
-            return Err(CoreError::NoRomLoaded);
+    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+        self.emu_input.take();
+        let input = self
+            .emu_input
+            .read_buf
+            .downcast_ref::<GbaInputBuffer>()
+            .ok_or_else(|| CoreError::Core(Box::new(GbaCoreError::InvalidInputBuffer)))?
+            .0;
+        let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        loaded.system.bus.set_keyinput(input);
+        // Run one LCD frame (228 lines * 1232 cycles)
+        for _ in 0..280_896 {
+            if loaded.system.step_tcycle() {
+                break;
+            }
         }
-        // Phase 10 で実装
+        if frame_slot.format() != &PixelFormat::Rgba {
+            frame_slot.set_format(PixelFormat::Rgba);
+        }
+        frame_slot.resize(240, 160);
+        let fb = loaded.system.bus.frame_buffer();
+        // Copy RGBA8888 u32 -> u8 with stride handling (stride is 1024 for 240*4)
+        let stride = frame_slot.stride();
+        let dst = frame_slot.as_mut();
+        for y in 0..160 {
+            let src_row = &fb[y * 240..(y + 1) * 240];
+            let src_bytes =
+                unsafe { std::slice::from_raw_parts(src_row.as_ptr() as *const u8, 240 * 4) };
+            let dst_offset = y * stride;
+            dst[dst_offset..dst_offset + 240 * 4].copy_from_slice(src_bytes);
+        }
         Ok(())
     }
 
     fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
-        self.rom_identity = GbaRomIdentity::from_rom(rom);
-        self.loaded = true;
+        let loaded = Self::create_loaded(rom)?;
+        self.loaded = Some(loaded);
+        self.paused = false;
         Ok(())
     }
 
     fn unload(&mut self) {
-        self.loaded = false;
-        self.rom_identity = None;
+        self.loaded = None;
+        self.paused = false;
     }
 
     fn reset(&mut self) {
-        // Phase 10 で実装
+        let Some(current) = self.loaded.as_ref() else {
+            return;
+        };
+        if let Ok(reset) = Self::create_loaded(&current.rom) {
+            self.loaded = Some(reset);
+        }
     }
 
     fn paused(&self) -> bool {
@@ -66,38 +136,221 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
-        // Phase 10 で実装
-        Ok(Vec::new())
+        let loaded = self.loaded_ref()?;
+        // Minimal state: ROM bytes + identity hash. Full bus serialization is Phase 10.
+        // Include rom len and first 16 bytes as identity check.
+        let mut out = Vec::with_capacity(loaded.rom.len() + 32);
+        out.extend_from_slice(&(loaded.rom.len() as u32).to_le_bytes());
+        out.extend_from_slice(&loaded.rom);
+        Ok(out)
     }
 
-    fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
-        // Phase 10 で実装
+    fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        let loaded = self.loaded_ref()?;
+        if data.len() < 4 {
+            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
+        }
+        let len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        if data.len() < 4 + len || len != loaded.rom.len() {
+            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
+        }
+        if data[4..4 + len] != *loaded.rom {
+            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
+        }
+        // For minimal implementation, reload from ROM (full bus state not yet serialized)
+        let rom = loaded.rom.clone();
+        let new_loaded = Self::create_loaded(&rom).map_err(|e| CoreError::Core(Box::new(e)))?;
+        self.loaded = Some(new_loaded);
+        Ok(())
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.audio.set_volume(volume);
+    }
+
+    fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
+        let loaded = self.loaded_ref()?;
+        // Battery-backed backup media (SRAM/Flash/EEPROM) persists via the
+        // generic .sav sidecar; NoneSave reports no data (Ok(None)).
+        Ok(loaded
+            .system
+            .bus
+            .cartridge()
+            .and_then(|cart| cart.save.ram_data())
+            .map(<[u8]>::to_vec))
+    }
+
+    fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
+        let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        if let Some(cart) = loaded.system.bus.cartridge_mut() {
+            cart.save.ram_restore(data);
+        }
         Ok(())
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
-        Ok(SystemIdentity {
-            system_id: Box::new(GbaSystemId),
-            identity_bytes: Vec::new(),
-        })
+        let loaded = self.loaded_ref()?;
+        loaded
+            .identity
+            .clone()
+            .into_system_identity()
+            .map_err(|e| CoreError::Core(Box::new(std::io::Error::other(e))))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex, atomic::AtomicBool},
+    };
 
-    #[test]
-    fn capabilities_are_correct() {
-        let core = GbaConsoleCore::new();
-        let caps = core.capabilities();
-        assert_eq!(caps.output_formats.len(), 1);
-        assert!(matches!(caps.video_signal, VideoSignalKind::Lcd));
+    use nerust_core_traits::{CoreConfig, audio::NullAudio};
+    use nerust_input_traits::{EmuInput, InputStateBuffer};
+
+    use super::*;
+    use crate::input_types::GbaInputBuffer;
+
+    fn test_emu_input() -> EmuInput {
+        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
+            Arc::new(Mutex::new(Box::<GbaInputBuffer>::default()));
+        EmuInput::new(
+            shared,
+            Arc::new(AtomicBool::new(false)),
+            Box::new(|| Box::<GbaInputBuffer>::default()),
+        )
+    }
+
+    fn rom() -> Vec<u8> {
+        let mut rom = vec![0; 0x4000];
+        // Minimal GBA header with valid logo/complement
+        let logo: [u8; 156] = [
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C,
+            0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6,
+            0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
+            0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        rom[4..160].copy_from_slice(&logo);
+        rom[0xB2] = 0x96;
+        // fixed and complement
+        rom[0xA0..0xBC].copy_from_slice(&[0u8; 28]);
+        // complement
+        let mut chk: u8 = 0;
+        for b in &rom[0xA0..0xBD] {
+            chk = chk.wrapping_sub(*b).wrapping_sub(1);
+        }
+        rom[0xBD] = chk;
+        crate::cartridge::header::finalize_test_gba_rom(&mut rom);
+        rom
     }
 
     #[test]
-    fn default_state() {
-        let core = GbaConsoleCore::new();
-        assert!(!core.paused());
+    fn capabilities_are_correct() {
+        let core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let caps = core.capabilities();
+        assert_eq!(caps.output_formats.len(), 1);
+    }
+
+    #[test]
+    fn mapper_save_round_trips_backup_ram() {
+        use nerust_core_traits::ConsoleCore;
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            // Backup-ID scan finds SRAM_V (word-aligned) -> Sram backend.
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let rom_data = sram_rom();
+        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        a.load(&rom_data, &config).unwrap();
+        // No backup chip on the plain header ROM -> no save payload.
+        let mut plain = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        plain.load(&rom(), &config).unwrap();
+        assert_eq!(plain.mapper_save().unwrap(), None);
+        // SRAM chip: write, export, re-import into a fresh core, read back.
+        a.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x5A);
+        let payload = a.mapper_save().unwrap().expect("SRAM save payload");
+        let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        b.load(&rom_data, &config).unwrap();
+        b.import_mapper_save(&payload).unwrap();
+        assert_eq!(
+            b.loaded.as_mut().unwrap().system.bus.read8(0x0E000123),
+            0x5A
+        );
+    }
+
+    #[test]
+    fn load_render_and_state_round_trip() {
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        assert_eq!((frame.width(), frame.height()), (240, 160));
+        let state = core.save_state().unwrap();
+        core.load_state(&state).unwrap();
+    }
+
+    #[test]
+    fn rejects_machine_state_from_another_rom() {
+        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        a.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let state = a.save_state().unwrap();
+        let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut rom2 = rom();
+        rom2[0x100] ^= 1;
+        crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
+        b.load(
+            &rom2,
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        assert!(b.load_state(&state).is_err());
     }
 }

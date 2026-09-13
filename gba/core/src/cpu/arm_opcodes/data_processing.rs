@@ -9,25 +9,42 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
     let register_shift = !i && (instr >> 4) & 1 != 0;
+    if register_shift {
+        // Register-specified shifts take an internal cycle (GBATEK);
+        // carried in the base below, no fetch-stream break.
+    }
     // Operand2 always passes through the barrel shifter, including immediates.
     let (op2, shifter_carry) = operand2(regs, instr, i);
     let rn_value = register_operand(regs, rn, register_shift);
     let (result, carry, overflow) = execute(opcode, rn_value, op2, shifter_carry, regs.cpsr_c());
     // TST/TEQ/CMP/CMN update flags without writing Rd.
     let flag_only = matches!(opcode, 0x8..=0xB);
+    // USR/SYS have no SPSR (mGBA _ARMModeHasSPSR guard): exception-return
+    // restores only apply in modes with an SPSR bank.
+    let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
     if flag_only && rd == 15 && s {
         // Unpredictable on later ARM cores; ARM7TDMI restores CPSR without writing PC.
-        regs.set_cpsr(regs.spsr());
+        if has_spsr {
+            regs.set_cpsr(regs.spsr());
+            // Exception return: pipeline refill (+1S+1N).
+            return 3 + u32::from(register_shift);
+        }
+        update_flags(regs, opcode, result, carry, overflow);
         return 1 + u32::from(register_shift);
     }
     if !flag_only {
         write_result(regs, rd, result, s);
     }
-    if s && !(rd == 15 && !flag_only) {
+    if s && (!(rd == 15 && !flag_only) || !has_spsr) {
         update_flags(regs, opcode, result, carry, overflow);
     }
-    // Register-specified shifts consume one additional internal cycle.
-    1 + u32::from(register_shift)
+    // GBATEK: data processing = 1S (+1I if SHIFT(Rs), +1S+1N if R15
+    // written — pipeline refill, same convention as B).
+    let mut cycles = 1 + u32::from(register_shift);
+    if rd == 15 && !flag_only {
+        cycles += 2;
+    }
+    cycles
 }
 
 fn operand2(regs: &CpuRegisters, instr: u32, immediate: bool) -> (u32, bool) {
@@ -89,8 +106,12 @@ fn execute(opcode: u8, left: u32, right: u32, shift_carry: bool, carry: bool) ->
 fn write_result(regs: &mut CpuRegisters, destination: usize, result: u32, set_flags: bool) {
     regs.set_r(destination, result);
     if destination == 15 && set_flags {
-        // Data-processing with S and Rd=PC returns from an exception via SPSR.
-        regs.set_cpsr(regs.spsr());
+        // Data-processing with S and Rd=PC returns from an exception via
+        // SPSR — except in USR/SYS, which have none (mGBA guard): there
+        // the PC write stands and flags update at the call site.
+        if !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+            regs.set_cpsr(regs.spsr());
+        }
     }
 }
 

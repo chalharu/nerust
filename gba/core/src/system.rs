@@ -2,6 +2,18 @@ use crate::cartridge::Cartridge;
 use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
+/// HLE IRQ entry cost. Hardware runs the real BIOS IRQ prologue
+/// (exception entry 2S+1N plus the BIOS handler at 0x18: register save,
+/// IntrCheck dispatch to the user vector) before the first user handler
+/// instruction; the HLE trampoline skips that prologue and charges this
+/// fitted constant instead. Calibrated against the nba irq-delay
+/// ROM-observed totals (92/112/120 timer ticks for IWRAM/EWRAM/ROM):
+/// with GBATEK-correct CPU costs (notably STM = (n-1)S+2N, which the
+/// libgba master ISR prologue STMFD executes once on the measurement
+/// path) the skip stands in for 23 cycles. Recalibrate against those
+/// three ROM pins if anything else on the entry path changes.
+const IRQ_ENTRY_CYCLES: u32 = 23;
+
 pub struct GbaSystem {
     pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
@@ -69,14 +81,87 @@ impl GbaSystem {
         &mut self.cpu
     }
 
-    /// CPUとバスを1 T-cycleだけ進行する。
-    pub fn step_tcycle(&mut self) -> bool {
-        if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
-            self.cpu_cycles_remaining = self.cpu.step(&mut self.bus).max(1);
+    pub fn frame_buffer(&self) -> &[u32] {
+        self.bus.frame_buffer()
+    }
+
+    pub fn run_frame(&mut self) -> &[u32] {
+        while !self.step_tcycle() {}
+        self.frame_buffer()
+    }
+
+    /// Drain micro-ops within one tick: run ops while they cost nothing
+    /// yet; stop at the first tick-consuming op (or retire). Returns the
+    /// raw tick budget (possibly zero/negative; the caller floors once
+    /// per instruction at retire, exactly like the legacy step), or None
+    /// on an uncovered fill (queue empty there by construction).
+    fn drain_micro(&mut self) -> Option<i64> {
+        let mut acc = 0i64;
+        loop {
+            acc += self.cpu.step_op(&mut self.bus)?;
+            if !self.cpu.micro_pending() {
+                break;
+            }
+            if acc >= 1 {
+                break;
+            }
         }
-        self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
+        Some(acc)
+    }
+
+    /// CPUとバスを1 T-cycleだけ進行する。
+    pub fn step_tcycle(&mut self) -> bool {        if self.bus.dma_active() {
+            // HW/mGBA cpuBlocked: the CPU is stalled for the whole burst;
+            // only the bus advances, the in-flight op resumes afterwards.
+        } else {
+            if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+                if self.bus.hle_bios_active() {
+                    self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
+                } else {
+                    // At an instruction boundary (queue empty) sample IRQ
+                    // first (legacy order: dispatch wins boundary ties);
+                    // mid-instruction (queue draining) never samples (ARM
+                    // takes exceptions at instruction boundaries only).
+                    // Falls through to the shared epilogue below in all
+                    // cases (no early return: the decrement is load-bearing
+                    // for dispatch timing).
+                    if !self.cpu.micro_pending() {
+                        let irq_source_pc = self.cpu.registers().pc();
+                        let irq_entry_cycles = IRQ_ENTRY_CYCLES
+                            + u32::from(
+                                self.bus
+                                    .nonsequential_cycles_for(irq_source_pc, 4)
+                                    .saturating_sub(1),
+                            );
+                        if self.cpu.service_irq(&mut self.bus) {
+                            self.cpu_cycles_remaining = irq_entry_cycles;
+                        } else if let Some(acc) = self.drain_micro() {
+                            self.cpu_cycles_remaining = acc.max(1) as u32;
+                        } else {
+                            self.cpu_cycles_remaining =
+                                self.cpu.step_legacy(&mut self.bus).max(1);
+                        }
+                    } else if let Some(acc) = self.drain_micro() {
+                        self.cpu_cycles_remaining = acc.max(1) as u32;
+                    } else {
+                        // Unreachable (queue was non-empty, so the first
+                        // pop succeeds); consume the tick safely.
+                        self.cpu_cycles_remaining = 1;
+                    }
+                }
+            }
+            self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
+        }
         self.tick = self.tick.wrapping_add(1);
-        self.bus.tick()
+        let frame_end = self.bus.tick();
+        // IntrWait wake-exit latency (see `wake_latency`): burn as
+        // CPU-stall cycles so the staging IRQ line wins the race against
+        // the woken thread. Subsumed by any longer in-flight charge.
+        let wake_latency = self.bus.take_wake_latency();
+        if wake_latency > 0 {
+            self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
+        }
+        frame_end
     }
 }
 
@@ -90,6 +175,14 @@ impl Default for GbaSystem {
 mod tests {
     use super::*;
     use crate::cartridge::header::finalize_test_gba_rom;
+
+    fn start_cpu_set(system: &mut GbaSystem, source: u32, destination: u32, len_mode: u32) {
+        let registers = system.cpu.registers_mut();
+        registers.set_r(0, source);
+        registers.set_r(1, destination);
+        registers.set_r(2, len_mode);
+        crate::bios::handle_swi(registers, &mut system.bus, 0x0B);
+    }
 
     #[test]
     fn step_tcycle_advances_exactly_one_cycle() {
@@ -109,6 +202,104 @@ mod tests {
             system.step_tcycle();
         }
         assert_eq!(system.cpu.registers().pc(), pc);
+    }
+
+    #[test]
+    fn hle_bios_operation_blocks_caller_until_complete() {
+        let mut system = GbaSystem::new();
+        system.bus.write32(0x03000000, 0x12345678);
+        start_cpu_set(&mut system, 0x03000000, 0x03000004, (1 << 26) | 1);
+        let caller_pc = system.cpu.registers().pc();
+
+        while system.bus.hle_bios_active() {
+            system.step_tcycle();
+            assert_eq!(system.cpu.registers().pc(), caller_pc);
+        }
+
+        assert_eq!(system.bus.read32(0x03000004), 0x12345678);
+    }
+
+    #[test]
+    fn hle_bios_operation_resumes_after_halt() {
+        let mut system = GbaSystem::new();
+        system.bus.write16(0x04000200, 1);
+        system.bus.write32(0x03000000, 1);
+        start_cpu_set(&mut system, 0x03000000, 0x04000300, (1 << 26) | 1);
+
+        while !system.bus.is_halted() {
+            system.step_tcycle();
+        }
+        assert!(system.bus.hle_bios_active());
+        for _ in 0..4 {
+            system.step_tcycle();
+        }
+        assert!(system.bus.hle_bios_active());
+
+        system.bus.request_interrupt(1);
+        while system.bus.hle_bios_active() {
+            system.step_tcycle();
+        }
+        assert!(!system.bus.is_halted());
+    }
+
+    #[test]
+    fn dma_preempts_hle_bios_transfer() {
+        let mut system = GbaSystem::new();
+        for index in 0..8 {
+            system
+                .bus
+                .write32(0x03000000 + index * 4, 0x10000000 + index);
+        }
+        start_cpu_set(&mut system, 0x03000000, 0x03000040, (1 << 26) | 8);
+
+        while system.bus.read32(0x03000040) == 0 {
+            system.step_tcycle();
+        }
+
+        for index in 0..4 {
+            system
+                .bus
+                .write32(0x03000100 + index * 4, 0xA0000000 + index);
+        }
+        system.bus.write32(0x040000D4, 0x03000100);
+        system.bus.write32(0x040000D8, 0x02000000);
+        system.bus.write32(0x040000DC, 0x84000004);
+
+        while !system.bus.dma_active() {
+            system.step_tcycle();
+        }
+        assert!(system.bus.dma_active());
+        assert_eq!(system.bus.read32(0x03000040), 0x10000000);
+        assert_eq!(system.bus.read32(0x0300005C), 0);
+
+        while system.bus.dma_active() || system.bus.hle_bios_active() {
+            system.step_tcycle();
+        }
+        assert_eq!(system.bus.read32(0x0200000C), 0xA0000003);
+        for index in 0..8 {
+            assert_eq!(
+                system.bus.read32(0x03000040 + index * 4),
+                0x10000000 + index
+            );
+        }
+    }
+
+    #[test]
+    fn run_frame_advances_one_lcd_frame() {
+        let mut system = GbaSystem::new();
+        assert_eq!(
+            system.run_frame().len(),
+            crate::ppu::WIDTH * crate::ppu::HEIGHT
+        );
+        assert_eq!(system.tick, 280896);
+    }
+
+    #[test]
+    fn irq_entry_cycles_use_nonsequential_source_wait() {
+        let bus = GbaMemoryBus::new();
+        assert_eq!(bus.nonsequential_cycles_for(0x03000000, 4), 1);
+        assert_eq!(bus.nonsequential_cycles_for(0x02000000, 4), 6);
+        assert_eq!(bus.nonsequential_cycles_for(0x08000000, 4), 8);
     }
 
     #[test]

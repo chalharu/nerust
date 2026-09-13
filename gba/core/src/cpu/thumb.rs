@@ -9,7 +9,22 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
         0x0000..=0x17FF => thumb_opcodes::move_shifted::handle(regs, instr),
         0x1800..=0x1FFF => thumb_opcodes::add_sub::handle(regs, instr),
         0x2000..=0x3FFF => thumb_opcodes::alu::handle_imm(regs, instr),
-        0x4000..=0x43FF => thumb_opcodes::alu::handle(regs, instr),
+        0x4000..=0x43FF => {
+            // MUL breaks the fetch stream (mGBA Thumb MUL post-body
+            // N16-S16) and fills prefetch P-ON (mGBA ARM_WAIT_SMUL stall
+            // on m, m from the incoming Rd). Register shifts carry their
+            // I-cycle in the base only (no suite timing cell covers them;
+            // mGBA charges no post for shifts either).
+            let op = ((instr >> 6) & 0xF) as u8;
+            if op == 0xD {
+                let ticks = crate::cpu::arm_opcodes::multiply::multiplier_cycles(
+                    regs.r((instr & 0x7) as usize),
+                );
+                bus.charge_fetch_stream_break();
+                bus.erase_for_multiply(ticks, 2);
+            }
+            thumb_opcodes::alu::handle(regs, instr)
+        }
         0x4400..=0x47FF => thumb_opcodes::hi_register::handle(regs, bus, instr),
         0x4800..=0x4FFF => thumb_opcodes::load_store::handle_pc_relative(regs, bus, instr),
         0x5000..=0x51FF | 0x5400..=0x55FF | 0x5800..=0x59FF | 0x5C00..=0x5DFF => {

@@ -23,6 +23,20 @@ pub trait SaveBackend: std::fmt::Debug + Send {
     fn save_type(&self) -> SaveType;
     fn read(&self, addr: u32, width: u8) -> u32;
     fn write(&mut self, addr: u32, width: u8, value: u32);
+    /// Feed one serial bit of a DMA write burst (EEPROM bit-serial protocol).
+    fn eeprom_write_bit(&mut self, _bit: bool) {}
+    /// Pop one response bit for a DMA read (EEPROM bit-serial protocol).
+    fn eeprom_read_bit(&mut self) -> bool {
+        true
+    }
+    /// Peek the current response level WITHOUT consuming it (mGBA
+    /// GBASavedataReadEEPROM concordance for CPU loads): idle chip drives
+    /// 1 (pulled up = Ready for the GBATEK `LDRH [DFFFF00h]` poll).
+    fn eeprom_peek_bit(&self) -> bool {
+        true
+    }
+    /// End of a DMA burst touching the backup chip.
+    fn eeprom_end_burst(&mut self) {}
     fn has_battery(&self) -> bool {
         !matches!(self.save_type(), SaveType::None)
     }
@@ -33,15 +47,16 @@ pub trait SaveBackend: std::fmt::Debug + Send {
 }
 
 pub fn detect_save_type(rom: &[u8]) -> SaveType {
-    // GBAヘッダにセーブ情報がないため SDK文字列を word-aligned step_by(4) でスキャン
+    // GBAヘッダにセーブ情報がないため SDK文字列をバイト単位でスキャン
+    // (SDK文字列のアライン保証はないため step_by(4) では見逃す)。
     // 優先順: FLASH1M > FLASH512/FLASH > SRAM > EEPROM > None
     let mut found_sram = false;
     let mut found_eeprom = false;
     let mut found_flash = false;
     let mut found_flash1m = false;
 
-    // Efficient scan: check every 4 bytes for known strings
-    for i in (0..rom.len()).step_by(4) {
+    // Byte-wise scan for known strings.
+    for i in 0..rom.len() {
         let slice = &rom[i..];
         if slice.starts_with(b"FLASH1M_V") {
             found_flash1m = true;
@@ -66,7 +81,8 @@ pub fn detect_save_type(rom: &[u8]) -> SaveType {
         return SaveType::Sram;
     }
     if found_eeprom {
-        // EEPROM_Vだけでは 512B/8KB 区別不可。常時8KBで確保するため Eeprom8k を返す。
+        // EEPROM_Vだけでは 512B/8KB 区別不可。EepromSave がバス上の
+        // フレーム長で動的に解決するため、ここでは Eeprom8k を返す。
         return SaveType::Eeprom8k;
     }
     SaveType::None

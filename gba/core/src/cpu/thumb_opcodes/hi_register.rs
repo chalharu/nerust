@@ -9,10 +9,10 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u16) -> u
     let rd = (instr & 0x7) as usize + if high_destination { 8 } else { 0 };
     match op {
         0b00 => {
-            // ADD Rd, Rs
+            // ADD Rd, Rs (a write to PC is a branch: 2S+1N like BX)
             let v = regs.r(rd).wrapping_add(regs.r(rs));
             regs.set_r(rd, v);
-            1
+            if rd == 15 { 3 } else { 1 }
         }
         0b01 => {
             // CMP Rd, Rs
@@ -25,13 +25,11 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u16) -> u
             1
         }
         0b10 => {
-            // MOV Rd, Rs
+            // MOV Rd, Rs (a write to PC is a branch: 2S+1N like BX;
+            // Thumb MOV PC does not interwork, unlike BX)
             let v = regs.r(rs);
             regs.set_r(rd, v);
-            if rd == 15 {
-                // MOV PC, Rs may switch via bit0? In Thumb, MOV PC doesn't switch T via bit0? Actually BX does.
-            }
-            1
+            if rd == 15 { 3 } else { 1 }
         }
         0b11 => {
             // BX Rs

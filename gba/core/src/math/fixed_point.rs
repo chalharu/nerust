@@ -2,6 +2,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fixed8_8(pub i16);
 
+#[allow(clippy::should_implement_trait)]
 impl Fixed8_8 {
     pub const fn from_raw(raw: i16) -> Self {
         Self(raw)
@@ -30,6 +31,7 @@ impl Fixed8_8 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fixed20_8(pub i32);
 
+#[allow(clippy::should_implement_trait)]
 impl Fixed20_8 {
     pub const fn from_raw(raw: i32) -> Self {
         Self(raw)

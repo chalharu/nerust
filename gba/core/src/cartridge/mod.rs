@@ -1,6 +1,8 @@
+pub mod gpio;
 pub mod header;
 pub mod save;
 
+use self::gpio::Gpio;
 use self::header::GbaHeader;
 use self::save::helpers::read_slice;
 use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
@@ -10,6 +12,7 @@ pub struct Cartridge {
     pub header: GbaHeader,
     pub rom: Vec<u8>,
     pub save: Box<dyn SaveBackend>,
+    pub gpio: Gpio,
 }
 
 impl Cartridge {
@@ -17,20 +20,43 @@ impl Cartridge {
         let header = GbaHeader::parse(&rom)?;
         let save_type = detect_save_type(&rom);
         let save = create_save_backend(save_type);
-        Some(Self { header, rom, save })
+        Some(Self {
+            header,
+            rom,
+            save,
+            gpio: Gpio::new(),
+        })
     }
 
     pub fn read_rom(&self, addr: u32, width: u8) -> u32 {
         let len = self.rom.len();
         if len == 0 {
-            return 0xFFFFFFFF;
+            // No cartridge: the bus returns the incrementing
+            // (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable Things").
+            let half = (addr >> 1) & 0xFFFF;
+            return if width == 4 {
+                half | (half << 16)
+            } else {
+                half
+            };
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
+        // The GBA fetches from the aligned address and rotates the result
+        // (`align_read` / `read_ldr_halfword` in the memory bus): halfword
+        // loads align down like every other region (`aligned_off`), so an
+        // odd LDRH sees the aligned halfword rotated (mgba-suite "ROM
+        // load U16 (unaligned)" pins 0xEF0000BE, not the odd bytes).
+        // Word loads align to 4; byte loads are exact.
+        let aligned_off = match width {
+            4 => raw_off & !3,
+            2 => raw_off & !1,
+            _ => raw_off,
+        };
         let off = if len.is_power_of_two() {
-            raw_off & (len - 1)
+            aligned_off & (len - 1)
         } else {
-            raw_off % len
+            aligned_off % len
         };
         read_slice(&self.rom, off, width)
     }
@@ -45,6 +71,26 @@ impl Cartridge {
 
     pub fn save_type(&self) -> SaveType {
         self.save.save_type()
+    }
+
+    /// Feed one EEPROM serial bit (DMA write burst to 0D000000h).
+    pub fn eeprom_write_bit(&mut self, bit: bool) {
+        self.save.eeprom_write_bit(bit);
+    }
+
+    /// Pop one EEPROM response bit (DMA read from 0D000000h).
+    pub fn eeprom_read_bit(&mut self) -> bool {
+        self.save.eeprom_read_bit()
+    }
+
+    /// Peek the EEPROM response level without consuming (CPU load).
+    pub fn eeprom_peek_bit(&self) -> bool {
+        self.save.eeprom_peek_bit()
+    }
+
+    /// End of a DMA burst touching the backup chip.
+    pub fn eeprom_end_burst(&mut self) {
+        self.save.eeprom_end_burst();
     }
 
     pub fn has_battery(&self) -> bool {

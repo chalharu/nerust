@@ -18,28 +18,59 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
     let count = list.count_ones() + u32::from(link);
     let mut address = regs.sp().wrapping_sub(count * 4);
     regs.set_sp(address);
+    let mut first = true;
+    bus.begin_block_batch(false, 2);
     for register in selected_registers(list) {
+        // First word N; continuation words follow bus order.
+        let continuation = !first && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
         bus.write32(address, regs.r(register));
         address = address.wrapping_add(4);
+        first = false;
     }
     if link {
+        let continuation = !first && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
         bus.write32(address, regs.lr());
     }
-    3 + count
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
+    bus.charge_fetch_stream_break();
+    // Thumb PUSH: (n-1)S+2N (GBATEK STM formula), i.e. 1+count.
+    1 + count
 }
 
 fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
     let mut address = regs.sp();
+    let mut first = true;
+    bus.begin_block_batch(true, 2);
     for register in selected_registers(list) {
-        regs.set_r(register, bus.read32(address));
+        // GBATEK forces align for PUSH/POP (mGBA LoadMultiple aligns).
+        // First word N; continuation words follow bus order.
+        let continuation = !first && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
+        regs.set_r(register, bus.read_aligned32(address));
         address = address.wrapping_add(4);
+        first = false;
     }
     if pc {
-        regs.set_pc(bus.read32(address));
+        let continuation = !first && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
+        let target = bus.read_aligned32(address);
+        // GBATEK THUMB.14: POP {PC} ignores the LSB — the processor remains
+        // in Thumb state even if bit0 was cleared (LSB-switch is ARM9-only;
+        // use POP/BX to switch). set_pc masks bit0 in Thumb state.
+        regs.set_pc(target);
         address = address.wrapping_add(4);
     }
     regs.set_sp(address);
-    3 + list.count_ones() + u32::from(pc)
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
+    bus.charge_fetch_stream_break();
+    // Thumb POP: nS+1N+1I (2+count); with PC: (n+1)S+2N+1I (4+count),
+    // n including PC (GBATEK THUMB cycle times).
+    let count = list.count_ones() + u32::from(pc);
+    if pc { 4 + count } else { 2 + count }
 }
 
 fn selected_registers(list: u16) -> impl Iterator<Item = usize> {

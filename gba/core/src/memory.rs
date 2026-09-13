@@ -1,7 +1,11 @@
-use std::collections::VecDeque;
-
+use crate::apu::GbaApu;
+use crate::bios::HleBiosOperation;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, write_slice};
+use crate::dma::{DmaTrigger, GbaDma};
+use crate::ppu::{GbaPpu, HDRAW_CYCLES};
+use crate::scheduler::{EventScheduler, EventType, ScheduledEvent};
+use crate::timer::GbaTimers;
 
 // ---------------------------------------------------------------------------
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
@@ -23,50 +27,260 @@ pub struct GbaMemoryBus {
     palette_ram: Box<[u8; PALETTE_SIZE]>,
     vram: Box<[u8; VRAM_SIZE]>,
     oam: Box<[u8; OAM_SIZE]>,
+    ppu: GbaPpu,
+    dma: GbaDma,
+    timers: GbaTimers,
+    apu: GbaApu,
     cartridge: Option<Cartridge>,
     // Fallback SRAM for Phase 3 tests when no cartridge is loaded
     fallback_sram: Box<[u8; 0x10000]>,
 
     // レジスタ — Phase 3 基本16件
-    disp_cnt: u16,
-    disp_stat: u16,
-    vcount: u16,
     wait_cnt: u16,
     ie: u16,
     sif: u16,
     ime: bool,
+    /// NBA-model delayed interrupt state (nba-emu/NanoBoyAdvance hw/irq):
+    /// IE/IME/IF writes and IRQ raises land in pending levels, applied to
+    /// the effective registers 1 tick later; irq_available (IE&IF) follows
+    /// 1 tick after that; the CPU irq_line (IME && available) 2 ticks after
+    /// that. A late IE/IME clear can therefore still cancel an IRQ whose IF
+    /// was already set (nba cancel-irq-ie/ime), and the CPU observes the
+    /// line ~3 ticks after the request. Reads return effective values.
+    pending_ie: u16,
+    pending_ime: bool,
+    pending_if: u16,
+    pending_at: Option<u64>,
+    irq_available: bool,
+    avail_queue: Vec<(bool, u64)>,
+    irq_line: bool,
+    line_queue: Vec<(bool, u64)>,
     postflg: u8,
+    /// Write-only HALTCNT latch (GBATEK System Control). Reads return open
+    /// bus; bit 7 selects Stop mode (wake mask IE&0x3080, SIO+Keypad+Pak).
+    #[allow(dead_code)]
     haltcnt: u8,
+    /// 4000800h Internal Memory Control (GBATEK System Control, R/W, init
+    /// 0D000020h, mirrored each 64K). Stored only: the WRAM remap/wait bits
+    /// have no observable effect implemented (no test coverage).
+    mem_control: u32,
     keyinput: u16,
     keycnt: u16,
     siocnt: u16,
-    siodata8: u8,
+    siodata8: u16,
     siodata32: u32,
     rcnt: u16,
+    joycnt: u16,
+    /// Pending SIO Normal-mode transfer: T-cycles until completion (0 =
+    /// idle) and whether it is 32-bit. Scheduled on the START edge;
+    /// completion clears START, delivers pulled-high receive data and
+    /// raises the serial IRQ when enabled.
+    sio_xfer_cycles: u32,
+    sio_xfer_32: bool,
 
     // Bus制御
-    // TODO(gba-open-bus): last_prefetch と open_bus_value は現状常に同値。
-    // Phase 8.5 Timer/DMAで last_prefetch をパイプライン用に分離する可能性があるため
-    // 現状は冗長だが据置。イベントスケジューラ導入時に統合/分離を再検討する。
     last_prefetch: u32,
     open_bus_value: u32,
-    prefetch_queue: VecDeque<()>,
+    /// GamePak prefetch enable (WAITCNT bit 14). With mGBA-shaped N/S the
+    /// enable gates only the prefetch erase (`prefetch_erase_delta`):
+    /// opcode fetches always follow the fetch stream at S/N cost (the
+    /// suite proves pure-fetch streams get no ride discount: nop P.. = 6
+    /// = S+S), and prefetch hides data/internal stalls via erases.
     prefetch_enabled: bool,
+    /// Block-transfer continuation flag (mGBA-shaped N/S): CPU data
+    /// accesses are always nonsequential EXCEPT LDM/STM/PUSH/POP words
+    /// after the first, which follow bus order (sequential unless
+    /// crossing the 128KB line or regions) via
+    /// `data_continuation_sequential`. Reset by the loop when done; DMA
+    /// and HLE paths never set it.
+    data_sequential_override: bool,
+    /// Block-transfer erase batching (LDM/STM/PUSH/POP with 2+ words).
+    /// HW-observed law (mgba-suite Timing LDM/STM/OAM P-cells, ARM+Thumb):
+    /// word 1 erases like a single access (GBALoad +2 / GBAStore +1
+    /// convention); continuation words erase marginally
+    /// `min(-1, S_code - w_conv)` each (`w_conv` = region wait +2/+1);
+    /// the instruction's total erase benefit floors at one N-fetch worth
+    /// (`-N` of the code region at fetch width, same floor as MUL ticks).
+    /// Per-word independent stalls over-erase (each word re-fills), while
+    /// mGBA's single whole-total stall under-erases; HW sits between.
+    /// While set by `begin_block_batch`, non-ROM data words with prefetch
+    /// on and ROM code route here instead of erasing per word.
+    /// Per-word `(wait-1)` contributions still land normally; ROM data
+    /// words and prefetch-off/flat-code paths never batch (bit-for-bit
+    /// preserved).
+    block_batching: bool,
+    block_batch_any: bool,
+    block_batch_words: u32,
+    block_batch_erase_sum: i32,
+    block_batch_is_load: bool,
+    block_batch_fetch_width: u8,
+    /// True when a ROM word appeared inside the batch (OAM-overflow LDM
+    /// into ROM): HW (mgba-suite Timing OAM cells) applies NO prefetch
+    /// erase at all then, so `end_block_batch` undoes the tracked erases.
+    /// Pure non-ROM bursts keep word1 + marginals + floor.
+    block_batch_has_rom: bool,
+    /// Raw bulk mode (HLE CpuSet/CpuFastSet loops): HW BIOS runs from
+    /// BIOS ROM (flat waits, no GamePak-prefetch erase dynamics), so bulk
+    /// words accrue raw `(wait-1)` with no erase at all. Set with
+    /// `begin_block_batch_raw`; bypasses even the ROM-code gate.
+    block_batch_raw: bool,
+    /// Address of the most recently fetched opcode. Scopes the
+    /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
+    /// owning code region, like mGBA's PC-tracked active region.
+    /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
+    /// owning code region, like mGBA's PC-tracked active region.
+    last_opcode_addr: Option<u32>,
+    /// mGBA `lastPrefetchedPc`: end address of the current prefetch run,
+    /// capping overlap fills in `prefetch_erase_delta`.
+    last_prefetched_pc: u32,
     bios_protect: bool,
     current_pc: u32,
     prev_addr: Option<u32>,
     prev_width: u8,
-    access_wait_cycles: u32,
+    /// Opcode-fetch N/S stream, independent from the data stream above.
+    /// GBATEK "GamePak Prefetch": prefetch feeds on during load/store data
+    /// accesses, so a data access never breaks code sequentiality (mGBA
+    /// likewise fetches unconditionally sequential and charges data only
+    /// the N-S delta). Conversely an opcode fetch never makes the next
+    /// data access sequential (a literal load is a 1N data access even
+    /// when its address happens to follow the fetch).
+    fetch_addr: Option<u32>,
+    fetch_width: u8,
+    /// Signed prefetch-erase deltas (mGBA `GBAMemoryStall`) routinely
+    /// drive this negative mid-instruction (e.g. a Thumb fetch (+2) with
+    /// an IWRAM-load erase (-4)); the per-instruction net plus the CPU
+    /// base stays positive. It MUST stay signed until `take_*` at the
+    /// instruction boundary: a u32 `saturating_add_signed` clamped the
+    /// erase at zero whenever it exceeded the so-far waits and every
+    /// Thumb P-cell overshot (mgba-suite Timing P residuals, all +).
+    access_wait_cycles: i64,
     halted: bool,
     halt_irq_mask: u16,
-    // HLE BIOS open bus: jsmolka bios.gba は BIOS保護中の読出しが
-    // 直前にフェッチされたBIOS命令を返すことを期待する。
-    // 実BIOSの最終プリフェッチ値は 0xDC+8, 0x188+8, 0x134+8...と遷移するが
-    // HLEでは実BIOSを実行しないため、期待値シーケンスでエミュレートする。
+    /// Stop mode latched (HALTCNT bit 7, GBATEK "System Control"): the CPU
+    /// stays parked until a wake interrupt arrives. GBATEK SWI 03h stops the
+    /// CPU, system clock, sound, video, SIO-shift clock, DMAs and timers, so
+    /// the PPU/timers/DMA are frozen here too (see `tick`'s stopped branch);
+    /// only the IRQ pipeline keeps running so a wake request can land.
+    stopped: bool,
+    /// IntrWait/VBlankIntrWait wake-clear mask (GBATEK: waited flags are
+    /// reset in the BIOS RAM mirror upon wake). Plain Halt leaves this zero.
+    wake_clear_mask: u16,
+    /// IntrWait/VBlankIntrWait wake-exit latency (real-BIOS exit-path cost,
+    /// in T-cycles). The HLE returns from the SWI inline, so without this
+    /// the woken thread runs 1-2 instructions before the just-raised IRQ
+    /// line finishes staging (+2 after apply); on HW the BIOS exit path
+    /// (~10+ cycles: flag check, mirror reset, restore, return) always
+    /// loses that race, so the pending IRQ dispatches BEFORE the thread
+    /// resumes. Missing it strands mgba-suite Timer count-up: the wake
+    /// dispatch lands between `irqCounter = ii` and the timer start, eats
+    /// ii, and the storm then wraps the counter forever. Armed by
+    /// `evaluate_halt_wake` on every halt wake (IntrWait and plain Halt
+    /// alike: HW always vectors through IntrMain before resuming past the
+    /// halt); consumed by the system step loop as CPU-stall cycles (time
+    /// still advances, so the line stages during the burn).
+    wake_latency: u32,
     bios_prefetch: u32,
-    bios_read_seq: usize,
+    scheduler: EventScheduler,
+    current_tcycle: u64,
+    hle_bios: Option<HleBiosOperation>,
+    video_armed: bool,
+    video_countdown: u8,
+    /// HBlank IRQ deferred one tick (NBA PPU.cc `BeginHBlankVDraw`
+    /// schedules `PPU_HBlankIRQ` +1 after the flag edge; VBlank/VCount
+    /// IRQs are likewise +1 in NBA but no pin demands them here).
+    /// Raised at the next tick start, ahead of the delayed pipeline, so
+    /// CPU entry timing is unchanged and only same-tick DMA/CPU reads of
+    /// IF observe the lag (exact-timing HBL IRQ 501: the flag-edge
+    /// sample stays clear, the next one sees IF).
+    pending_hblank_irq: bool,
+    /// A DMA burst is currently feeding the EEPROM serial chip; closed when
+    /// no DMA channel is active or pending (frame decoded at burst end).
+    eeprom_burst_open: bool,
+    /// Test-ROM log sink behind the `mgba-debug-log` cargo feature
+    /// (mGBA debug-log protocol, mgba-emu/suite `src/mgba.c`):
+    /// 0x04FFF600-0x04FFF6FF string buffer, 0x04FFF700 flags (bit 8 =
+    /// send, low 3 bits = level), 0x04FFF780 enable (0xC0DE -> on, reads
+    /// back 0x1DEA). No hardware counterpart exists, so accesses cost
+    /// zero waits and never touch prefetch / N-S / Disable-Bug state.
+    /// Production frontends build without the feature; the addresses
+    /// then behave as plain open bus, exactly as before.
+    #[cfg(feature = "mgba-debug-log")]
+    mgba_debug_enable: bool,
+    #[cfg(feature = "mgba-debug-log")]
+    mgba_debug_buf: [u8; 256],
+    #[cfg(feature = "mgba-debug-log")]
+    mgba_debug_logs: Vec<MgbaDebugLog>,
+}
 
-    tick: u64,
+/// One committed mGBA debug-log line (`mgba_printf` in suite sources).
+/// Only exists with the `mgba-debug-log` cargo feature (test harness).
+#[cfg(feature = "mgba-debug-log")]
+#[derive(Debug, Clone)]
+pub struct MgbaDebugLog {
+    /// `MGBA_LOG_*` level from the flags write (`INFO = 3`, `DEBUG = 4`).
+    pub level: u8,
+    /// NUL-terminated string buffer content at commit time.
+    pub text: String,
+}
+
+/// Snapshot of the PPU state relevant to display-controller contention.
+/// Lets DMA cost computation query contention without borrowing the bus
+/// while a DMA channel is mutably borrowed.
+#[derive(Clone, Copy)]
+struct DisplayStallSnapshot {
+    forced_blank: bool,
+    vcount: u16,
+    cycle: u16,
+    dispcnt: u16,
+    bg_fetch_active: bool,
+}
+
+impl DisplayStallSnapshot {
+    fn stall(self, addr: u32) -> u8 {
+        if self.forced_blank {
+            return 0;
+        }
+        if self.vcount >= 160 {
+            return 0;
+        }
+        // BG/palette data is fetched during draw only. OAM stays busy
+        // through HBlank too, unless H-Blank Interval Free idles it. The
+        // HBlank free window opens at HDraw end (cycle 960, GBATEK LCD
+        // Dimensions: 240 draw dots + 68 blank dots) — not at the HBlank
+        // flag (1006), which only marks the flag/IRQ edge.
+        let in_hblank = self.cycle >= HDRAW_CYCLES;
+        // BG fetch clock (archive/ppu/mode3): contention only while the
+        // fetcher runs and a BG is enabled (latched AND live).
+        let in_fetch = (32..989).contains(&self.cycle) && self.bg_fetch_active;
+        // Palette feeds every rendered pixel (backdrop included).
+        let in_draw = self.cycle <= HDRAW_CYCLES;
+        let oam_busy = !in_hblank || ((self.dispcnt & (1 << 5)) == 0);
+        // OBJ texture fetch needs the OBJ layer live (nba ram-access
+        // DISPCNT-latch rule: fetch iff CURRENT enable, latch
+        // disregarded). OAM evaluation itself stays ungated: it runs
+        // during draw regardless (nba burst-into-tears needs its 3 OAM
+        // stalls with OBJ disabled, TIME 41 vs 38).
+        let obj_fetch = oam_busy && (self.dispcnt & (1 << 12)) != 0;
+        match addr {
+            0x05000000..=0x05FFFFFF => u8::from(in_draw),
+            0x06000000..=0x06FFFFFF => {
+                let bitmap_mode = (self.dispcnt & 7) >= 3;
+                let bg_limit = if bitmap_mode { 0x14000 } else { 0x10000 };
+                // Classify by the same folded offset the data path uses:
+                // 0x18000-0x1FFFF mirrors 0x10000-0x17FFF (OBJ bank), so a
+                // raw-mask test would misfile mirror accesses as OBJ-busy.
+                let off = addr & 0x1FFFF;
+                let off = if off >= 0x18000 { off - 0x8000 } else { off };
+                if off < bg_limit {
+                    u8::from(in_fetch)
+                } else {
+                    u8::from(obj_fetch)
+                }
+            }
+            0x07000000..=0x07FFFFFF => u8::from(oam_busy),
+            _ => 0,
+        }
+    }
 }
 
 impl GbaMemoryBus {
@@ -75,7 +289,6 @@ impl GbaMemoryBus {
         // 未HLE SWIがSVCベクタへ遷移した場合、安全にベクタ上で待機する。
         bios[0x08..0x0C].copy_from_slice(&0xEAFF_FFFEu32.to_le_bytes());
         // jsmolka bios.gba が期待するBIOS内容を最低限埋める
-        // 0x00: E129F000, 0xE4: E129F000, 0x190: E3A02004, 0x13C: E25EF004, 0x144: E55EC002
         bios[0x00..0x04].copy_from_slice(&0xE129F000u32.to_le_bytes());
         bios[0xE4..0xE8].copy_from_slice(&0xE129F000u32.to_le_bytes());
         bios[0x190..0x194].copy_from_slice(&0xE3A02004u32.to_le_bytes());
@@ -88,39 +301,78 @@ impl GbaMemoryBus {
             palette_ram: Box::new([0u8; PALETTE_SIZE]),
             vram: Box::new([0u8; VRAM_SIZE]),
             oam: Box::new([0u8; OAM_SIZE]),
+            ppu: GbaPpu::new(),
+            dma: GbaDma::default(),
+            timers: GbaTimers::default(),
+            apu: GbaApu::new(),
             cartridge: None,
             fallback_sram: Box::new([0u8; 0x10000]),
 
-            disp_cnt: 0x0080, // Force Blank post-BIOS
-            disp_stat: 0,
-            vcount: 0,
             wait_cnt: 0,
             ie: 0,
             sif: 0,
             ime: false,
-            postflg: 0,
+            postflg: 1,
             haltcnt: 0,
+            mem_control: 0x0D00_0020,
             keyinput: 0x03FF,
             keycnt: 0,
             siocnt: 0,
             siodata8: 0,
             siodata32: 0,
-            rcnt: 0,
+            rcnt: 0x8000,
+            joycnt: 0,
+            sio_xfer_cycles: 0,
+            sio_xfer_32: false,
 
             last_prefetch: 0xE129F000,
             open_bus_value: 0xE129F000,
-            prefetch_queue: VecDeque::with_capacity(8),
             prefetch_enabled: false,
+            data_sequential_override: false,
+            block_batching: false,
+            block_batch_any: false,
+            block_batch_words: 0,
+            block_batch_erase_sum: 0,
+            block_batch_is_load: true,
+            block_batch_fetch_width: 4,
+            block_batch_has_rom: false,
+            block_batch_raw: false,
+            last_opcode_addr: None,
+            last_prefetched_pc: 0,
             bios_protect: true,
             current_pc: 0x08000000,
             prev_addr: None,
             prev_width: 0,
+            fetch_addr: None,
+            fetch_width: 0,
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
+            stopped: false,
+            wake_clear_mask: 0,
+            wake_latency: 0,
+            pending_ie: 0,
+            pending_ime: false,
+            pending_if: 0,
+            pending_at: None,
+            irq_available: false,
+            avail_queue: Vec::new(),
+            irq_line: false,
+            line_queue: Vec::new(),
             bios_prefetch: 0xE129F000,
-            bios_read_seq: 0,
-            tick: 0,
+            scheduler: EventScheduler::new(),
+            current_tcycle: 0,
+            hle_bios: None,
+            video_armed: false,
+            video_countdown: 0,
+            pending_hblank_irq: false,
+            eeprom_burst_open: false,
+            #[cfg(feature = "mgba-debug-log")]
+            mgba_debug_enable: false,
+            #[cfg(feature = "mgba-debug-log")]
+            mgba_debug_buf: [0; 256],
+            #[cfg(feature = "mgba-debug-log")]
+            mgba_debug_logs: Vec::new(),
         }
     }
 
@@ -129,18 +381,31 @@ impl GbaMemoryBus {
     // -----------------------------------------------------------------------
 
     pub fn read8(&mut self, addr: u32) -> u8 {
-        let (data, _wait) = self.read_internal(addr, 1);
+        let (data, _wait) = self.read_internal(addr, 1, false);
         (data & 0xFF) as u8
     }
 
+    /// RCNT top-mode bit selects the SIO block (00) over GPIO (10) and
+    /// Joybus (11): only in SIO mode do the SIOCNT sub-mode and transfer
+    /// engine apply (mGBA `_switchMode`).
+    fn sio_block_selected(&self) -> bool {
+        self.rcnt & 0xC000 == 0
+    }
+
+    /// SIO sub-mode from SIOCNT bits 12-13: 0 = Normal-8, 1 = Normal-32,
+    /// 2 = Multiplayer, 3 = UART.
+    fn sio_submode(siocnt: u16) -> u8 {
+        ((siocnt >> 12) & 3) as u8
+    }
+
     pub fn read16(&mut self, addr: u32) -> u16 {
-        let (data, _wait) = self.read_internal(addr, 2);
+        let (data, _wait) = self.read_internal(addr, 2, false);
         self.align_read(addr, 2, data) as u16
     }
 
     /// ARM7TDMI LDRH result, including the 32-bit ROR 8 result for odd addresses.
     pub fn read_ldr_halfword(&mut self, addr: u32) -> u32 {
-        let (data, _wait) = self.read_internal(addr, 2);
+        let (data, _wait) = self.read_internal(addr, 2, false);
         if addr & 1 != 0 {
             (data & 0xFFFF).rotate_right(8)
         } else {
@@ -149,36 +414,79 @@ impl GbaMemoryBus {
     }
 
     pub fn read32(&mut self, addr: u32) -> u32 {
-        let (data, _wait) = self.read_internal(addr, 4);
+        let (data, _wait) = self.read_internal(addr, 4, false);
         self.align_read(addr, 4, data)
     }
 
     /// Aligned word transfer used by LDM, which ignores address bits 0-1 without ROR.
     pub fn read_aligned32(&mut self, addr: u32) -> u32 {
-        self.read_internal(addr & !3, 4).0
+        self.read_internal(addr & !3, 4, false).0
     }
 
     pub fn write8(&mut self, addr: u32, value: u8) {
-        self.write_internal(addr, 1, value as u32);
+        self.write_internal(addr, 1, value as u32, false);
     }
 
     pub fn write16(&mut self, addr: u32, value: u16) {
-        self.write_internal(addr, 2, value as u32);
+        self.write_internal(addr, 2, value as u32, false);
     }
 
     pub fn write32(&mut self, addr: u32, value: u32) {
-        self.write_internal(addr, 4, value);
+        self.write_internal(addr, 4, value, false);
+    }
+
+    pub fn write_hle_bios16(&mut self, addr: u32, value: u16) {
+        self.write_internal(addr, 2, value as u32, true);
+    }
+
+    pub fn write_hle_bios8(&mut self, addr: u32, value: u8) {
+        self.write_internal(addr, 1, value as u32, true);
+    }
+
+    pub fn write_hle_bios32(&mut self, addr: u32, value: u32) {
+        self.write_internal(addr, 4, value, true);
+    }
+
+    pub(crate) fn start_hle_bios(&mut self, operation: HleBiosOperation) {
+        debug_assert!(self.hle_bios.is_none());
+        self.hle_bios = Some(operation);
+    }
+
+    pub(crate) fn hle_bios_active(&self) -> bool {
+        self.hle_bios.is_some()
+    }
+
+    pub(crate) fn step_hle_bios(&mut self) -> u32 {
+        self.take_access_wait_cycles();
+        let mut operation = self.hle_bios.take().expect("active HLE BIOS operation");
+        let step = operation.step(self);
+        if !step.complete {
+            self.hle_bios = Some(operation);
+        }
+        (step.cycles as i64 + self.take_access_wait_cycles()).max(0) as u32
     }
 
     pub fn fetch16(&mut self, addr: u32) -> u16 {
-        self.read16(addr)
+        let (data, _wait) = self.read_internal(addr, 2, true);
+        self.align_read(addr, 2, data) as u16
     }
 
     pub fn fetch32(&mut self, addr: u32) -> u32 {
-        self.read32(addr)
+        let (data, _wait) = self.read_internal(addr, 4, true);
+        self.align_read(addr, 4, data)
     }
 
+    /// Wait cycles for a data access.
     pub fn cycles_for(&self, addr: u32, width: u8) -> u8 {
+        self.cycles_for_access(addr, width, false)
+    }
+
+    /// Wait cycles for an opcode fetch (prefetch buffer + Disable Bug apply).
+    pub fn opcode_cycles_for(&self, addr: u32, width: u8) -> u8 {
+        self.cycles_for_access(addr, width, true)
+    }
+
+    fn cycles_for_access(&self, addr: u32, width: u8, is_opcode: bool) -> u8 {
         match addr {
             0x00000000..=0x00003FFF => 1,
             0x02000000..=0x02FFFFFF => {
@@ -189,43 +497,504 @@ impl GbaMemoryBus {
                 }
             }
             0x03000000..=0x03FFFFFF => 1,
+            // I/O stays width-insensitive at 1 cycle: twelve HW-pinned
+            // 128kb-boundary DMA fits measure three 32-bit setup stores
+            // (SAD/DAD/CNT) at 1 cycle each. The 16-bit-bus theory would
+            // charge 2 and overshoots every one of them by exactly +3.
             0x04000000..=0x040003FE => 1,
-            0x05000000..=0x05FFFFFF => 1,
-            0x06000000..=0x06FFFFFF => 1,
-            0x07000000..=0x07FFFFFF => 1,
+            0x05000000..=0x05FFFFFF => {
+                // GBATEK bus widths: Palette 16bit=1, 32bit=2 (+display stall).
+                (if width == 4 { 2 } else { 1 }) + self.display_stall(addr)
+            }
+            0x06000000..=0x06FFFFFF => {
+                // GBATEK bus widths: VRAM 16bit=1, 32bit=2 (+display stall).
+                (if width == 4 { 2 } else { 1 }) + self.display_stall(addr)
+            }
+            // OAM stays width-insensitive at 1 cycle: the HW-pinned
+            // 128kb-boundary LDM from 0x07FFFFF8 measures 28 with two
+            // 32-bit OAM loads at 1 cycle each (the sprite engine itself
+            // fetches A01 32-bit, i.e. a 32-bit bus). Palette/VRAM keep
+            // the 16-bit-bus 32bit=2 split.
+            0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
-                if self.is_sequential(addr, width)
-                    && self.prefetch_enabled
-                    && !self.prefetch_queue.is_empty()
-                {
-                    if width == 4 { 2 } else { 1 }
+                // mGBA-shaped N/S (mgba-emu/suite Timing truth): opcode
+                // fetches always follow the fetch stream (linear code is
+                // sequential even with prefetch off or across data
+                // accesses); data accesses are always nonsequential
+                // (block-transfer continuation words use the explicit
+                // sequential data path). The fetch-stream break a data
+                // access causes is pre-paid per instruction by
+                // `charge_fetch_stream_break` (mGBA load/store post-body).
+                let sequential = if is_opcode {
+                    // Fetches issued while a DMA burst is pending (trigger
+                    // stored, bus handover imminent) cost N: the arbitrated
+                    // bus is non-sequential (HW-pinned by nba
+                    // force-nseq-access: post-trigger nops cost 1N).
+                    !self.dma.has_pending() && self.is_fetch_sequential(addr)
                 } else {
-                    self.gamepak_rom_cycles(addr, width)
+                    self.data_sequential_override
+                };
+                if is_opcode {
+                    self.gamepak_rom_cycles(addr, width, sequential)
+                } else {
+                    // Data reads use N/S waitstates and never the buffer.
+                    self.gamepak_rom_cycles(addr, width, sequential)
                 }
             }
             0x0E000000..=0x0FFFFFFF => {
+                // GBATEK WAITCNT: SRAM Wait Control selects 4/3/2/8
+                // waitstates, and like every access the total is 1 clock
+                // cycle PLUS waitstates. The SRAM bus is 8-bit and wide CPU
+                // accesses move a single byte (GBATEK SRAM data semantics),
+                // so there is no width multiplier.
                 const SRAM_WAIT: [u8; 4] = [4, 3, 2, 8];
-                SRAM_WAIT[(self.wait_cnt & 0b11) as usize].saturating_mul(width)
+                SRAM_WAIT[(self.wait_cnt & 0b11) as usize] + 1
             }
             _ => 1,
         }
     }
 
-    /// 1 T-cycle 進行。VCOUNT を更新し、フレーム境界で true を返す。
-    /// TODO(gba-tick-frame): Phase 3では常に false（PPU未実装）。Phase 8で VCOUNT 0..227 境界で true に拡張。
-    pub fn tick(&mut self) -> bool {
-        self.tick = self.tick.wrapping_add(1);
-        // 簡易 VCOUNT: 1232 T-cycle / scanline として 280896 T-cycle / frame
-        self.vcount = ((self.tick / 1232) % 228) as u16;
-        self.tick != 0 && self.tick.is_multiple_of(280896)
+    pub(crate) fn nonsequential_cycles_for(&self, addr: u32, width: u8) -> u8 {
+        match addr {
+            0x08000000..=0x0DFFFFFF => self.gamepak_rom_cycles(addr, width, false),
+            _ => self.cycles_for(addr, width),
+        }
     }
 
-    /// 将来イベントスケジューラの入口。Phase 3では no-op。
-    /// TODO(gba-event-scheduler): Phase 8.5で BinaryHeap<ScheduledEvent> に置換
-    pub fn check_pending_events(&mut self) {}
+    /// Extra wait cycle when the CPU touches video memory while the LCD
+    /// controller is fetching it. GBATEK ("VRAM, OAM, and Palette RAM Access")
+    /// and Tonc agree: the CPU may access at any time and data is never
+    /// corrupted (unlike the GBC); a waitstate is inserted automatically on
+    /// contention. This mirrors mGBA's `GBAMemoryStallVRAM`/`stallMask` in
+    /// simplified form: +1 cycle while the controller is actively drawing,
+    /// 0 during blanks or forced blank (controller idle, fast access).
+    /// Display-controller contention snapshot (usable without borrowing
+    /// the bus, e.g. for DMA costs while a channel is mutably borrowed).
+    fn display_stall(&self, addr: u32) -> u8 {
+        DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
+        }
+        .stall(addr)
+    }
+
+    /// Advance the LCD controller by exactly one T-cycle.
+    pub fn tick(&mut self) -> bool {
+        self.current_tcycle = self.current_tcycle.wrapping_add(1);
+        // Deferred HBlank IRQ first (NBA +1): same pipeline visibility as
+        // a same-tick raise (processed below), so CPU entry is unchanged.
+        if self.pending_hblank_irq {
+            self.pending_hblank_irq = false;
+            self.request_interrupt(1 << 1);
+        }
+        // Delayed interrupt pipeline first: yesterday's IE/IME/IF writes
+        // and IRQ raises become effective before devices run this tick.
+        self.process_irq_pipeline();
+        if self.stopped {
+            // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
+            // are frozen; only an interrupt request wakes the machine.
+            // (Wake-source subset and IF-not-set are not modeled.)
+            self.check_pending_events();
+            return false;
+        }
+        self.dma.tick_pending();
+        if self.video_countdown > 0 {
+            self.video_countdown -= 1;
+            if self.video_countdown == 0 {
+                self.dma.trigger_channel(3, DmaTrigger::Special);
+            }
+        }
+        // Schedule next PPU events if needed (for bulk optimization, currently per-cycle)
+        // The scheduler is used for Timer/DMA bulk stepping; PPU/HBlank/VBlank are still
+        // handled directly via ppu.step for accuracy.
+        let event = self
+            .ppu
+            .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
+        if event.hblank_started {
+            // GBATEK DISPSTAT: H-Blank conditions are generated once per
+            // scanline, including the hidden scanlines during V-Blank — a
+            // repeat HBlank channel fires on lines 0..227, not just <160.
+            self.dma.trigger(DmaTrigger::HBlank);
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle + 1,
+                event_type: EventType::HBlank,
+                seq: 0,
+            });
+        }
+        if event.vblank_started {
+            self.dma.trigger(DmaTrigger::VBlank);
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle + 1,
+                event_type: EventType::VBlank,
+                seq: 0,
+            });
+        }
+        if event.line_started {
+            // NBA model: DMA3 video-capture is latched at vcount==162 (a
+            // stale still-running transfer is stopped) and fires 3 cycles
+            // into each line of vcount in [2, 162).
+            let vcount = self.ppu.vcount();
+            if vcount == 162 {
+                if self.video_armed {
+                    self.dma.stop_video_transfer();
+                }
+                self.video_armed = self.dma.has_video_transfer();
+            }
+            if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
+                // NBA PPU.cc `UpdateVideoTransferDMA` schedules the video
+                // request 3 cycles into the line (`scheduler.Add(3,
+                // PPU_VideoDMA)`; mGBA `GBADMARunDisplayStart` likewise
+                // starts video DMA `now + 3`). The burst-start xI (+2 on
+                // the first unit) no longer carries the sweep phase; the
+                // first unit's xI is absorbed pre-start (see dma.rs), so
+                // the countdown alone sets the HW-pinned phase
+                // (exact-timing HBL SET 500 with a uniform 2/unit rhythm).
+                self.video_countdown = 3;
+            }
+        }
+        let timer_irq = {
+            self.timers.set_current_cycle(self.current_tcycle);
+            self.timers.step()
+        };
+        if timer_irq != 0 {
+            for i in 0..4 {
+                if timer_irq & (1 << (3 + i)) != 0 {
+                    self.scheduler.schedule(ScheduledEvent {
+                        target_tcycle: self.current_tcycle,
+                        event_type: EventType::TimerOverflow(i),
+                        seq: 0,
+                    });
+                    // DirectSound (GBATEK SOUNDCNT_H + "DMA-Sound Playback
+                    // Procedure"): the overflowing timer clocks one sample
+                    // byte out of each FIFO selecting it. GBATEK SOUNDCNT_X:
+                    // with master-enable bit 7 clear, PSG and FIFO sounds
+                    // are disabled entirely, so no drain or DMA request runs.
+                    // A FIFO holding 12 bytes or fewer requests its Special
+                    // DMA channel (mGBA audio.c: free words > 4 of 8).
+                    // (per-channel: must not trigger an armed DMA3 video).
+                    if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
+                        for (fifo_b, select_bit, enable_mask) in
+                            [(false, 10, 0x0300), (true, 14, 0x3000)]
+                        {
+                            if self.apu.soundcnt_hi & enable_mask == 0 {
+                                continue;
+                            }
+                            let timer = (self.apu.soundcnt_hi >> select_bit) & 1;
+                            if timer as usize != i {
+                                continue;
+                            }
+                            self.apu.drain_fifo(fifo_b);
+                            if self.apu.fifo_len(fifo_b) <= 12
+                                && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
+                            {
+                                self.dma.trigger_channel(ch, DmaTrigger::Special);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut interrupt_mask = event.interrupt_mask | timer_irq;
+        // NBA +1 HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
+        // edge stays immediate, but the IF raise waits a tick. Stash the
+        // HBlank bit for the next tick start instead of raising now.
+        if interrupt_mask & (1 << 1) != 0 {
+            interrupt_mask &= !(1 << 1);
+            self.pending_hblank_irq = true;
+        }
+        // SIO Normal-mode transfer completion (scheduled on the START
+        // edge): clears START, delivers pulled-high receive data (no link
+        // partner drives the lines low) and raises the serial IRQ when
+        // enabled. Pinned by mgba-suite sio-timing (measured = transfer
+        // cycles + a constant 121-cycle setup/exit path).
+        if self.sio_xfer_cycles > 0 {
+            self.sio_xfer_cycles -= 1;
+            if self.sio_xfer_cycles == 0 {
+                self.siocnt &= !0x0080;
+                if self.sio_xfer_32 {
+                    self.siodata32 = 0xFFFF_FFFF;
+                } else {
+                    self.siodata8 = 0x00FF;
+                }
+                if self.siocnt & 0x4000 != 0 {
+                    self.request_interrupt(1 << 7);
+                }
+            }
+        }
+        let stall_snapshot = DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
+        };
+        if let Some(transfer) = self
+            .dma
+            .step(self.wait_cnt, &|addr| stall_snapshot.stall(addr))
+        {
+            if std::env::var("GBA_DTRACE").is_ok() {
+                eprintln!(
+                    "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
+                    transfer.channel,
+                    self.current_tcycle,
+                    stall_snapshot.vcount,
+                    stall_snapshot.cycle,
+                    transfer.data_source,
+                    transfer.destination,
+                    transfer.width
+                );
+            }
+            self.scheduler.schedule(ScheduledEvent {
+                target_tcycle: self.current_tcycle,
+                event_type: EventType::DmaTransfer(transfer.channel),
+                seq: 0,
+            });
+            let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
+            // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
+            // other channels/widths see the window as ROM/open bus.
+            let use_eeprom = transfer.channel == 3
+                && transfer.width == 2
+                && self.is_eeprom()
+                && (in_eeprom_range(transfer.data_source) || in_eeprom_range(transfer.destination));
+            let readable_source = transfer.data_source >= 0x02000000;
+            let value = if use_eeprom && in_eeprom_range(transfer.data_source) {
+                // EEPROM DMA read: one response bit per 16-bit unit.
+                let bit = self.next_eeprom_read_bit();
+                if transfer.width == 4 {
+                    bit | bit << 16
+                } else {
+                    bit
+                }
+            } else if readable_source {
+                // nba burst-into-tears (HW-pinned, source main.c): a 3-unit
+                // 16-bit DMA3 from 0x07FFFFFE (inc) to 0x08000000 (dec)
+                // delivers ROM[2] to OAM[0x3FE] and ROM[4] to OAM[0x3FC],
+                // i.e. dest[i] = mem16(src+2+2i): the 16-bit GamePak read
+                // path pre-increments, latching unit N+1's data into unit
+                // N (with a phantom read past the end). The shift fires
+                // only for primed bursts (head issued outside GamePak ROM;
+                // `DmaTransfer::shift_primed`): bursts sourced entirely
+                // within ROM stream aligned (mgba-suite DMA H rows pin the
+                // plain forced-increment last word 0xDEAD). The shift is a
+                // multi-unit pipeline effect: single-unit 16-bit reads
+                // land on the aligned source (mgba-suite "ROM load DMA1
+                // 16" pins 0xBEEF). It fires when the read lands in ROM
+                // (source or source+2 is GamePak: unit 0 issues from the
+                // OAM mirror but lands at ROM[0]). 32-bit ROM reads are
+                // unaffected (nba 128kb-boundary times pin their
+                // addresses), and non-ROM 16-bit sources are unaffected
+                // (nba latch pins IWRAM 16-bit data exact: 0x12341234).
+                // The read issues on the data stream (forced increment
+                // inside GamePak ROM; see `DmaChannel::data_source`),
+                // while N/S timing follows the programmed counter.
+                let src = transfer.data_source;
+                let read_addr = if transfer.width == 2
+                    && transfer.shift_primed
+                    && !transfer.single_unit
+                    && ((0x08000000..=0x0DFFFFFF).contains(&src)
+                        || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))
+                {
+                    src.wrapping_add(2)
+                } else {
+                    src
+                };
+                let value = self.read_dma_source(read_addr, transfer.width);
+                self.dma
+                    .update_latch(transfer.channel, transfer.width, value);
+                value
+            } else if transfer.width == 2 && transfer.destination & 2 != 0 {
+                transfer.latched_value >> 16
+            } else {
+                transfer.latched_value
+            };
+            if use_eeprom && in_eeprom_range(transfer.destination) {
+                // EEPROM DMA write: each unit carries serial bit(s).
+                self.feed_eeprom_write(transfer.width, value);
+            } else {
+                self.write_dma_value(
+                    transfer.channel,
+                    transfer.destination,
+                    transfer.width,
+                    value,
+                );
+            }
+            // DMA owns the bus between CPU accesses: the CPU's next access
+            // is non-sequential (GBATEK DMA owns the bus).
+            self.prev_addr = None;
+            self.prev_width = 0;
+            self.fetch_addr = None;
+            self.fetch_width = 0;
+            // Completion IRQs are raised via take_completion_interrupts
+            // below (one tick after the final write).
+        }
+        interrupt_mask |= self.dma.take_completion_interrupts();
+        if interrupt_mask != 0 {
+            self.request_interrupt(interrupt_mask);
+        }
+        // Close an EEPROM serial burst once no DMA is in flight: the
+        // buffered frame is decoded (and 512B/8KB latched) at burst end.
+        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
+            self.eeprom_burst_open = false;
+            if let Some(cart) = self.cartridge.as_mut() {
+                cart.eeprom_end_burst();
+            }
+        }
+        // Process any due scheduler events (for bulk optimization, currently just clears)
+        self.check_pending_events();
+        event.frame_complete
+    }
+
+    pub fn dma_active(&self) -> bool {
+        self.dma.is_active()
+    }
+
+    pub fn irq_pending(&self) -> bool {
+        // Delayed CPU IRQ line (NBA hw/irq: IME && IE&IF, ~3 ticks after
+        // the request). Sampled by the CPU once per instruction.
+        self.irq_line
+    }
+
+    /// NBA-model delayed interrupt pipeline: apply due IE/IME/IF pendings
+    /// (1 tick after the write/raise), then propagate IE&IF availability
+    /// (+1) and the CPU IRQ line (+2). Transitions are queued in order (a
+    /// later recompute never cancels an earlier staged edge), so a
+    /// transiently true line is still observable by the CPU before it
+    /// falls again. A late IE/IME clear can therefore still cancel an IRQ
+    /// whose IF was already set (nba cancel-irq-ie/ime): the line only
+    /// stays true if no clear is in flight.
+    fn process_irq_pipeline(&mut self) {
+        let now = self.current_tcycle;
+        if self.pending_at.is_some_and(|at| at <= now) {
+            self.pending_at = None;
+            let ie = self.pending_ie;
+            let ime = self.pending_ime;
+            let sif = self.pending_if;
+            if ie != self.ie || ime != self.ime || sif != self.sif {
+                self.ie = ie;
+                self.ime = ime;
+                self.sif = sif;
+                // GBATEK Stop wake sources are "as far as enabled in IE
+                // register" (present tense): while stopped, track IE edits
+                // instead of keeping enter_stop's entry-time snapshot.
+                // (Plain Halt never sets `stopped`, so its IntrWait mask is
+                // unaffected.)
+                if self.stopped {
+                    self.halt_irq_mask = ie & 0x3080;
+                }
+                // BIOS IRQ-flags mirror follows the effective IF.
+                self.iwram[0x7FF8..0x7FFA].copy_from_slice(&sif.to_le_bytes());
+                let avail = ie & sif != 0;
+                let avail_cur = self
+                    .avail_queue
+                    .last()
+                    .map(|(v, _)| *v)
+                    .unwrap_or(self.irq_available);
+                if avail != avail_cur {
+                    self.avail_queue.push((avail, now + 1));
+                }
+                let line = ime && avail;
+                let line_cur = self
+                    .line_queue
+                    .last()
+                    .map(|(v, _)| *v)
+                    .unwrap_or(self.irq_line);
+                if line != line_cur {
+                    self.line_queue.push((line, now + 2));
+                }
+                // Halt wake on the effective IE/IF registers (GBATEK Halt:
+                // paused while (IE AND IF)=0): evaluated here at apply time,
+                // which already sees the final levels (a later write cannot
+                // land between apply and the avail pop: writes run after
+                // the pipeline within each tick). CPU IRQ entry still uses
+                // the delayed line. (nba haltcnt CPUSET-DMA is HW-exact
+                // this way.)
+                if ie & sif & self.halt_irq_mask != 0 {
+                    self.evaluate_halt_wake();
+                }
+            }
+        }
+        while self.avail_queue.first().is_some_and(|(_, at)| *at <= now) {
+            let (avail, _) = self.avail_queue.remove(0);
+            self.irq_available = avail;
+        }
+        while self.line_queue.first().is_some_and(|(_, at)| *at <= now) {
+            let (line, _) = self.line_queue.remove(0);
+            self.irq_line = line;
+        }
+    }
+
+    pub fn frame_buffer(&self) -> &[u32] {
+        self.ppu.frame_buffer()
+    }
+
+    pub fn ppu_bgcnt(&self, bg: usize) -> u16 {
+        self.ppu.bgcnt(bg)
+    }
+
+    pub fn ppu_hofs(&self, bg: usize) -> u16 {
+        self.ppu.hofs(bg)
+    }
+
+    pub fn timer_last_reload(&self, ch: usize) -> Option<u64> {
+        self.timers.last_reload_cycle(ch)
+    }
+
+    pub fn timer_current_cycle(&self) -> u64 {
+        self.timers.current_cycle()
+    }
+
+    pub fn timer_set_last_reload(&mut self, ch: usize, cycle: u64) {
+        self.timers.set_last_reload_cycle(ch, cycle);
+    }
+
+    pub fn check_pending_events(&mut self) {
+        let due = self.scheduler.pop_due(self.current_tcycle);
+        for ev in due {
+            match ev.event_type {
+                EventType::TimerOverflow(ch) => {
+                    // Timer overflow already handled in tick via timers.step
+                    let _ = ch;
+                }
+                EventType::DmaTransfer(ch) => {
+                    let _ = ch;
+                }
+                EventType::HBlank | EventType::VBlank => {}
+            }
+        }
+    }
+
+    pub fn next_event_cycle(&self) -> Option<u64> {
+        self.scheduler.next_target()
+    }
 
     pub fn set_keyinput(&mut self, value: u16) {
         self.keyinput = value | 0xFC00;
+        self.check_keycnt();
+    }
+
+    /// GBATEK KEYCNT: with bit 14 set, a keypad condition (bit 15:
+    /// 0 = any selected key pressed, 1 = all selected keys pressed;
+    /// KEYINPUT bits are 0 when pressed) raises IF bit 12.
+    fn check_keycnt(&mut self) {
+        if self.keycnt & (1 << 14) == 0 {
+            return;
+        }
+        let mask = self.keycnt & 0x3FF;
+        if mask == 0 {
+            return;
+        }
+        let pressed = !self.keyinput & 0x3FF;
+        let hit = if self.keycnt & (1 << 15) != 0 {
+            pressed & mask == mask
+        } else {
+            pressed & mask != 0
+        };
+        if hit {
+            self.request_interrupt(1 << 12);
+        }
     }
 
     pub fn set_current_pc(&mut self, pc: u32) {
@@ -237,56 +1006,303 @@ impl GbaMemoryBus {
     }
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
-        self.halted = true;
         self.halt_irq_mask = irq_mask;
+        // Halt entry combines delayed availability (an IRQ already
+        // propagated keeps the CPU running) with the newest IE/IF levels:
+        // a just-written ack (e.g. IntrWait discarding old flags) must be
+        // honored even though it applies next tick, while a just-raised IF
+        // (pending) correctly prevents halting. Pending levels persist, so
+        // they are always current-or-newer than the effective registers.
+        self.halted =
+            !(self.irq_available && self.pending_ie & self.pending_if & self.halt_irq_mask != 0);
+    }
+
+    /// SWI Stop / HALTCNT-stop: park the CPU with clocks down.
+    pub fn enter_stop(&mut self) {
+        self.stopped = true;
+        // GBATEK HALTCNT Stop: only keypad, GamePak and serial interrupts
+        // wake the machine (timers/DMA/video cannot).
+        self.enter_halt(self.ie & 0x3080);
     }
 
     pub fn is_halted(&self) -> bool {
         self.halted
     }
 
+    /// Take a pending IntrWait wake-exit latency (see `wake_latency`).
+    pub fn take_wake_latency(&mut self) -> u32 {
+        std::mem::take(&mut self.wake_latency)
+    }
+
     pub fn request_interrupt(&mut self, mask: u16) {
+        // NBA hw/irq Raise: OR into the pending IF level; applied (with the
+        // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
+        // is evaluated when availability propagates, not here.
         let mask = mask & 0x3FFF;
-        self.sif |= mask;
-        let flags = u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) | mask;
-        self.iwram[0x7FF8..0x7FFA].copy_from_slice(&flags.to_le_bytes());
+        self.pending_if |= mask;
+        self.pending_at = Some(self.current_tcycle + 1);
+    }
+
+    /// Wake a halted/stopped CPU once delayed availability arrives.
+    fn evaluate_halt_wake(&mut self) {
         if self.ie & self.sif & self.halt_irq_mask != 0 {
+            if self.halted {
+                // IntrWait wake: reset the waited flags in the BIOS RAM
+                // mirror (GBATEK IntrWait/VBlankIntrWait).
+                let clear = std::mem::take(&mut self.wake_clear_mask);
+                if clear != 0 {
+                    let kept =
+                        u16::from_le_bytes([self.iwram[0x7FF8], self.iwram[0x7FF9]]) & !clear;
+                    self.iwram[0x7FF8..0x7FFA].copy_from_slice(&kept.to_le_bytes());
+                }
+                // Every halt wake with the IRQ line live pays the wake-exit
+                // latency and, by stalling past line-rise, lets the wake
+                // dispatch run before the woken thread resumes: on HW the
+                // halted CPU always vectors through IntrMain before
+                // executing past the halt, so e.g. an SIO waiter's timer
+                // stop observes entry+handler+return (mgba-suite
+                // sio-timing measures transfer + 121; without this the
+                // resume wins the race and only transfer + 2 is seen).
+                // With IME=0 no dispatch can follow (the CPU line never
+                // rises), so there is no race to order and the wake stays
+                // free -- nba haltcnt CPUSET-DMA is exact at +0 with
+                // IRQs disabled. IntrWait's 48 covers the real-BIOS
+                // wait-loop/mirror/return (recalibrated 8 -> 48 against
+                // the timers prescaled sums: the per-phase sync anchor
+                // re-snaps the timeline to the /1024 tap grid, so this
+                // latency sets each cell's enable phase); plain Halt
+                // resumes directly, so 32 (sio-timing pins transfer +
+                // 121 exactly with entry + the guest IntrMain). Corner:
+                // IME=1 with CPSR I-set still burns 32 without a dispatch
+                // (accepted). Recalibrate together if either changes. Fitted:
+                // recalibrate against nba irq-delay/cancel-ime and the
+                // suite timers/timer-irq totals if this changes.
+                self.wake_latency = if clear != 0 {
+                    48
+                } else if self.ime {
+                    32
+                } else {
+                    0
+                };
+            }
             self.halted = false;
+            self.stopped = false;
         }
     }
 
+    /// Raw pending interrupt flags (IE-independent), for IntrWait's r0=0 check.
+    /// GBATEK: return immediately when an OLD flag is already set — that is
+    /// the raw IF level, not the +1-tick-delayed effective `sif`. A flag
+    /// raised just before the SWI (still in `pending_if`) must count.
+    pub fn irq_flags(&self) -> u16 {
+        self.pending_if
+    }
+
+    /// Arm the IntrWait wake-clear mask (cleared on next halt wake).
+    pub fn set_wake_clear_mask(&mut self, mask: u16) {
+        self.wake_clear_mask = mask & 0x1FFF;
+    }
+
     pub fn reset_io_groups(&mut self, flags: u8) {
+        // GBATEK RegisterRamReset bug: LSBs of SIODATA32 are always
+        // destroyed, even when bit 5 (SIO) is clear.
+        self.siodata32 &= 0xFFFF0000;
         if flags & 0x20 != 0 {
+            // mGBA _RegisterRamReset SIO: SIOCNT=0, RCNT=RCNT_INITIAL(0x8000),
+            // SIOMLT_SEND=0, JOYCNT=0, JOY_RECV=0, JOY_TRANS=0 (the JOY
+            // data regs read 0 here regardless, so only the latch and
+            // transfer state need clearing).
             self.siocnt = 0;
-            self.siodata8 = 0;
+            self.rcnt = 0x8000;
             self.siodata32 = 0;
-            self.rcnt = 0;
+            self.siodata8 = 0;
+            self.joycnt = 0;
+            self.sio_xfer_cycles = 0;
+            self.sio_xfer_32 = false;
         }
-        // Sound registers are introduced in Phase 9; bit 0x40 has no state yet.
+        if flags & 0x40 != 0 {
+            self.apu.reset_sound();
+        }
         if flags & 0x80 != 0 {
-            self.disp_cnt = 0x0080;
-            self.disp_stat = 0;
+            // mGBA OTHER: DISPSTAT etc via ppu.reset + DMA + timers + interrupts.
+            // Timers are deliberately NOT cleared: the HW-calibrated
+            // RegisterRamReset ROM starts TIMER0 across the call and
+            // requires the full count ($01AB), proving the timer runs
+            // through the reset on hardware (mGBA clears it and cannot
+            // reproduce this).
+            self.ppu.reset();
+            self.dma.reset();
+            self.video_armed = false;
+            self.video_countdown = 0;
             self.ie = 0;
             self.sif = 0;
             self.ime = false;
+            // Keep the delayed pipeline in sync with the direct clear.
+            self.pending_ie = 0;
+            self.pending_ime = false;
+            self.pending_if = 0;
+            self.pending_at = None;
+            self.irq_available = false;
+            self.avail_queue.clear();
+            self.irq_line = false;
+            self.line_queue.clear();
             self.wait_cnt = 0;
             self.keycnt = 0;
             self.postflg = 0;
             self.haltcnt = 0;
             self.prefetch_enabled = false;
-            self.prefetch_queue.clear();
+            self.last_prefetched_pc = 0;
             self.halted = false;
             self.halt_irq_mask = 0;
+            self.wake_clear_mask = 0;
         }
     }
 
-    pub fn take_access_wait_cycles(&mut self) -> u32 {
+    pub fn take_access_wait_cycles(&mut self) -> i64 {
         std::mem::take(&mut self.access_wait_cycles)
+    }
+
+    /// Prefetch erase (mGBA `GBAMemoryStall` port): with prefetch enabled,
+    /// a non-ROM data/internal stall fills the prefetch unit, converting
+    /// this access's N into S and erasing subsequent S waits. Returns the
+    /// delta to add to `access_wait_cycles` INSTEAD of the normal
+    /// `(wait - 1)` contribution (may be negative: the fill overlaps the
+    /// stall). ROM data never stalls (cart bus); prefetch off returns the
+    /// normal contribution delta (0). Computed in mGBA wait-space then
+    /// converted back, so tune against mGBA, not against our +1 totals.
+    pub(crate) fn prefetch_erase_delta(&mut self, addr: u32, wait_our: u32, is_load: bool) -> i32 {
+        if !self.prefetch_enabled || addr >= 0x08000000 {
+            return 0;
+        }
+        // mGBA-space wait: GBALoad adds +2, GBAStore +1 over the raw table.
+        // Our raw already carries +1 base, so loads add one more.
+        let base_adj = if is_load { 1 } else { 0 };
+        let wait_mgba = wait_our as i32 + base_adj;
+        self.prefetch_stall_erased(wait_mgba) - wait_mgba
+    }
+
+    /// Multiply-tick erase (mGBA `ARM_WAIT_MUL` stall): the m-tick array
+    /// fills prefetch P-ON. `tick_wait` is WAIT+m in mGBA-space (MUL 0+m,
+    /// MLA/SMULL/UMULL 1+m, SMLAL/UMLAL 2+m); the handler base already
+    /// carries the un-erased ticks, so only the delta lands on the bus.
+    /// P-ON-gated like the data erase (P-OFF the stall is identity).
+    pub(crate) fn erase_for_multiply(&mut self, tick_wait: u32, fetch_width: u8) {
+        if !self.prefetch_enabled {
+            return;
+        }
+        let delta = self.prefetch_stall_erased(tick_wait as i32) - tick_wait as i32;
+        // HW-fitted MUL floor (mgba-suite Timing MUL P-cells, all 200+
+        // short/long/MLA x ARM/Thumb x P-matrix cells): the tick array is
+        // CPU-internal, so its erase benefit caps at one N-fetch worth
+        // (delta >= -N of the code region at fetch width). The raw
+        // GBAMemoryStall loop over-erases for long tick arrays (it models
+        // bus-idle fills, but MUL ticks hold no bus idle that prefetches
+        // subsequent S waits with). Scoped to GamePak-ROM code where the
+        // N/S split exists; flat-wait regions keep the pure mGBA stall
+        // (their MUL cells already match).
+        let delta = match self.last_opcode_addr {
+            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
+                let n_mgba = u32::from(self.gamepak_rom_cycles(pc, fetch_width, false)) - 1;
+                delta.max(-(n_mgba as i32))
+            }
+            _ => delta,
+        };
+        self.access_wait_cycles += i64::from(delta);
+    }
+
+    /// mGBA `GBAMemoryStall` core: erase a wait (mGBA-space) via prefetch
+    /// fills, returning the erased wait (possibly larger when the fill
+    /// itself costs, possibly negative when it overlaps).
+    fn prefetch_stall_erased(&mut self, wait_mgba: i32) -> i32 {
+        let mut wait = wait_mgba;
+        // Code-region S16/N16 in mGBA-space (our totals minus base 1).
+        let (n16_our, s16_our) = self.code_wait16();
+        let s = s16_our as i32 - 1;
+        let n = n16_our as i32 - 1;
+        // Overlap cap with the previous prefetch (mGBA lastPrefetchedPc).
+        let dist = self.last_prefetched_pc.wrapping_sub(self.current_pc);
+        let prev = if dist < 16 { (dist >> 1) as i32 } else { 0 };
+        let max_loads = 8 - prev;
+        // Halfword slots the stall can fill.
+        let mut stall = s + 1;
+        let mut loads = 1;
+        while stall < wait && loads < max_loads {
+            stall += s;
+            loads += 1;
+        }
+        self.last_prefetched_pc = self
+            .current_pc
+            .wrapping_add(2 * (loads + prev - 1).max(0) as u32);
+        if stall > wait {
+            wait = stall;
+        }
+        // This access used to have an N: convert to S; the filled slots
+        // erase subsequent S waits (possibly driving this term negative).
+        wait -= n - s;
+        wait -= stall;
+        wait
+    }
+
+    /// S16/N16 wait totals (our +1 convention) of the owning code region,
+    /// for the prefetch erase. ROM uses the WAITCNT shifts; other regions
+    /// carry no N/S split (N == S == the flat access cost).
+    fn code_wait16(&self) -> (u32, u32) {
+        match self.last_opcode_addr {
+            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
+                let n = self.gamepak_rom_cycles(pc, 2, false);
+                let s = self.gamepak_rom_cycles(pc, 2, true);
+                (u32::from(n), u32::from(s))
+            }
+            Some(pc) => {
+                let c = u32::from(self.cycles_for(pc, 2));
+                (c, c)
+            }
+            None => (1, 1),
+        }
+    }
+
+    /// HLE SWI entry residual (mgba-suite Timing SWI cells): our inline
+    /// HLE skips the HW exception entry (pipeline flush + BIOS vector +
+    /// refill), whose cost differs from the fitted charge by a tiny
+    /// code-region-dependent constant (ROM-N0 +1, ROM-N1 +0, EWRAM -1;
+    /// uniform across SWI functions, modes, and N/S/P cells). IWRAM is
+    /// deliberately unadjusted: real IWRAM-code timer ROMs (PeterLemon
+    /// BIOSDIV/BIOSSQRT/BIOSARCTAN) match without it, so the IWRAM suite
+    /// residual is a harness-differential artifact, not entry cost.
+    /// No code context (unit tests) yields 0, keeping all HLE pins exact.
+    pub(crate) fn swi_region_adjust(&self) -> i32 {
+        match self.last_opcode_addr {
+            Some(0x08000000..=0x09FFFFFF) => {
+                if (self.wait_cnt >> 2) & 3 == 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            Some(0x02000000..=0x02FFFFFF) => -1,
+            _ => 0,
+        }
+    }
+
+    /// True when the calling code runs from IWRAM (HLE bulk-call overhead
+    /// and SWI entry match HW there; see `swi_region_adjust`).
+    pub(crate) fn swi_caller_is_iwram(&self) -> bool {
+        matches!(
+            self.last_opcode_addr,
+            Some(0x03000000..=0x03FFFFFF)
+        )
+    }
+
+    /// HLE charge self-calibration: waits accumulated so far (the HLE
+    /// body reads this before/after its bus accesses and subtracts the
+    /// actual incurred waits from its displayed cycle count, so the total
+    /// stays correct under any bus-wait model).
+    pub fn accumulated_wait_cycles(&self) -> i64 {
+        self.access_wait_cycles
     }
 
     pub fn set_cartridge(&mut self, cart: Cartridge) {
         self.cartridge = Some(cart);
-        self.prefetch_queue.clear();
     }
 
     pub fn cartridge(&self) -> Option<&Cartridge> {
@@ -297,26 +1313,61 @@ impl GbaMemoryBus {
         self.cartridge.as_mut()
     }
 
+    pub(crate) fn apu_mut(&mut self) -> &mut GbaApu {
+        &mut self.apu
+    }
+
+    pub(crate) fn apu(&self) -> &GbaApu {
+        &self.apu
+    }
+
     pub fn take_cartridge(&mut self) -> Option<Cartridge> {
         self.cartridge.take()
+    }
+
+    pub fn bios_checksum(&self) -> u32 {
+        // GBATEK GetBiosChecksum: the real 16K BIOS sums to $BAAE187F (GBA /
+        // GBA SP; $BAAE1880 on NDS/3DS-in-GBA-mode). The HLE BIOS image
+        // carries no ROM bytes, so report the hardware value directly
+        // instead of summing the (zero) placeholder. Pinned by the
+        // PeterLemon BIOSCHECKSUM ROM's in-ROM `cmp r0,$BAAE187F` check.
+        0xBAAE_187F
     }
 
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    fn is_sequential(&self, addr: u32, _width: u8) -> bool {
-        if let Some(prev) = self.prev_addr {
-            // 32bit ROM領域で連続アドレスか
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    fn is_fetch_sequential(&self, addr: u32) -> bool {
+        Self::seq_in_rom(self.fetch_addr, self.fetch_width, addr)
+    }
+
+    /// Bus-order contiguity for block-transfer continuation words (LDM/STM
+    /// words 2+): sequential to the previous bus access of any kind,
+    /// including the 128KB-boundary N-force and region changes (nba
+    /// 128kb-boundary LDM pins: boundary-crossing words stay N). Single
+    /// data accesses are always N; only block loops query this.
+    pub(crate) fn data_continuation_sequential(&self, addr: u32) -> bool {
+        Self::seq_in_rom(self.prev_addr, self.prev_width, addr)
+    }
+
+    fn seq_in_rom(prev: Option<u32>, prev_w: u8, addr: u32) -> bool {
+        if let Some(prev) = prev {
+            // 32bit ROM領域で連続アドレスか、かつ128KB境界を跨がない
             (0x08000000..=0x0DFFFFFF).contains(&addr)
                 && (0x08000000..=0x0DFFFFFF).contains(&prev)
-                && addr == prev.wrapping_add(u32::from(self.prev_width))
+                && addr == prev.wrapping_add(u32::from(prev_w))
+                && (addr & !0x1FFFF) == (prev & !0x1FFFF)
         } else {
             false
         }
     }
 
-    fn gamepak_rom_cycles(&self, addr: u32, width: u8) -> u8 {
+    fn gamepak_rom_cycles(&self, addr: u32, width: u8, sequential: bool) -> u8 {
         const FIRST: [u8; 4] = [4, 3, 2, 8];
         let (first_shift, second_shift, second_slow) = match addr {
             0x08000000..=0x09FFFFFF => (2, 4, 2),
@@ -329,12 +1380,16 @@ impl GbaMemoryBus {
         } else {
             1
         };
-        if self.is_sequential(addr, width) {
-            second * if width == 4 { 2 } else { 1 }
+        if sequential {
+            second * if width == 4 { 2 } else { 1 } + if width == 4 { 2 } else { 1 }
         } else if width == 4 {
-            first + second
+            first + second + 2
         } else {
-            first
+            // GBATEK WAITCNT: "the actual access time is 1 clock cycle PLUS
+            // the number of waitstates" — sub-32-bit totals carry the +1
+            // base (N16=5/S16=3 at WS0 defaults, matching mGBA's
+            // waitstatesNonseq16/Seq16 + 1).
+            first + 1
         }
     }
 
@@ -356,15 +1411,33 @@ impl GbaMemoryBus {
     }
 
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
+        // GBATEK Backup Media / EEPROM: on EEPROM cartridges the 0D window
+        // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM: CPU
+        // loads see the chip state); plain ROMs mirror WS2 here.
         match addr {
             0x00000000..=0x00003FFF => self.read_bios_guarded(addr, width),
             0x02000000..=0x02FFFFFF => self.read_ewram(addr, width),
             0x03000000..=0x03FFFFFF => self.read_iwram(addr, width),
             0x04000000..=0x040003FE => self.read_io(addr, width),
+            a if is_mem_control(a) => self.read_io(addr, width),
             0x05000000..=0x05FFFFFF => self.read_palette(addr, width),
             0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
             0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
-            0x08000000..=0x0DFFFFFF => self.read_rom(addr, width),
+            0x08000000..=0x0CFFFFFF => self.read_rom(addr, width),
+            0x0D000000..=0x0DFFFFFF => {
+                // GBATEK Backup Media: on EEPROM cartridges the 0D window
+                // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM:
+                // CPU loads see the chip state). The peek does not consume
+                // stream bits, so DMA bursts stay in sync; idle drives 1
+                // (Ready for the GBATEK `LDRH [DFFFF00h]` poll). Plain ROMs
+                // mirror WS2 here.
+                if self.is_eeprom() {
+                    let bit = self.cartridge.as_ref().is_none_or(|c| c.eeprom_peek_bit());
+                    u32::from(bit)
+                } else {
+                    self.read_rom(addr, width)
+                }
+            }
             0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
             _ => self.open_bus_value,
         }
@@ -372,22 +1445,20 @@ impl GbaMemoryBus {
 
     fn read_bios_guarded(&mut self, addr: u32, width: u8) -> u32 {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
-            // HLE: BIOS保護中は最後にプリフェッチされたBIOS命令を返す
-            // jsmolka bios.gba の期待シーケンス: 0->E129F000, 1->E3A02004, 2->E25EF004, 3->E55EC002
-            const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-            let raw = SEQ[self.bios_read_seq.min(SEQ.len() - 1)];
+            // mGBA biosPrefetch concordance, pinned by jsmolka bios.gba
+            // (whose four tests read the live prefetch after boot / SWI /
+            // IRQ / IRQ-return): a protected read returns the latched last
+            // BIOS-fetched opcode, the SAME value on repeat reads. The latch
+            // is refreshed when BIOS-region execution is left (HLE: after
+            // each SWI, at IRQ entry, at IRQ return).
+            let raw = self.bios_prefetch;
             let aligned = match width {
                 4 => raw,
-                2 => (raw & 0xFFFF) as u32,
-                _ => (raw & 0xFF) as u32,
+                2 => raw & 0xFFFF,
+                _ => raw & 0xFF,
             };
-            // 読出し毎に次へ進む（jsmolka bios.gba は順に読むため）
-            if self.bios_read_seq + 1 < SEQ.len() {
-                self.bios_read_seq += 1;
-                self.bios_prefetch = SEQ[self.bios_read_seq];
-                self.open_bus_value = self.bios_prefetch;
-                self.last_prefetch = self.bios_prefetch;
-            }
+            self.open_bus_value = raw;
+            self.last_prefetch = raw;
             let _ = addr;
             aligned
         } else {
@@ -395,85 +1466,325 @@ impl GbaMemoryBus {
         }
     }
 
-    /// SWI/IRQ 遷移でBIOSプリフェッチを更新する（HLEで実BIOSを実行しないため）
-    pub fn update_bios_prefetch(&mut self, seq: usize) {
-        const SEQ: [u32; 4] = [0xE129F000, 0xE3A02004, 0xE25EF004, 0xE55EC002];
-        self.bios_read_seq = seq.min(SEQ.len() - 1);
-        self.bios_prefetch = SEQ[self.bios_read_seq];
-        self.open_bus_value = self.bios_prefetch;
-        self.last_prefetch = self.bios_prefetch;
+    /// Latch a new BIOS prefetch value (HLE synthesis of mGBA's
+    /// region-leave update).
+    pub fn set_bios_prefetch(&mut self, value: u32) {
+        self.bios_prefetch = value;
+        self.open_bus_value = value;
+        self.last_prefetch = value;
     }
 
-    fn update_prefetch_queue(&mut self, addr: u32, sequential: bool) {
-        let is_rom = (0x08000000..=0x0DFFFFFF).contains(&addr);
-        if is_rom {
-            if sequential && !self.prefetch_queue.is_empty() {
-                let _ = self.prefetch_queue.pop_front();
-            } else if !sequential {
-                self.refill_prefetch_queue(addr);
+    /// Reset CPU fetch/data stream tracking on a CPU jump (branch taken,
+    /// IRQ entry): the next access is non-sequential however contiguous it
+    /// looks. Prefetch-erase position (`last_prefetched_pc`) resets to 0
+    /// like mGBA `GBA_MemorySetActiveRegion` (every jump clears it).
+    /// No suite cell currently observes the reset (post-jump targets
+    /// always land 16+ bytes from stale fills, so the overlap cap would
+    /// be empty anyway); it is kept for model faithfulness. DMA
+    /// completion is not a jump and never calls this, matching mGBA
+    /// (DMA leaves the position alone).
+    pub fn invalidate_prefetch_for_dma(&mut self, _dma_addr: u32) {
+        self.prev_addr = None;
+        self.prev_width = 0;
+        self.fetch_addr = None;
+        self.fetch_width = 0;
+        self.last_prefetched_pc = 0;
+        self.data_sequential_override = false;
+    }
+
+    fn read_internal(&mut self, addr: u32, width: u8, is_opcode: bool) -> (u32, u8) {
+        // Test-ROM log sink (only with the `mgba-debug-log` feature; see
+        // field docs). Without the feature these addresses fall through
+        // to plain open bus below.
+        #[cfg(feature = "mgba-debug-log")]
+        if !is_opcode && (0x04FFF600..=0x04FFF7FF).contains(&addr) {
+            let raw = self.read_mgba_debug(addr, width);
+            self.last_prefetch = raw;
+            self.open_bus_value = raw;
+            return (raw, 0);
+        }
+        let wait = self.cycles_for_access(addr, width, is_opcode);
+        if is_opcode {
+            self.last_opcode_addr = Some(addr);
+        }
+        // Prefetch erase replaces the normal contribution for non-ROM
+        // data (may go negative: overlapped fills); opcodes keep (wait-1).
+        let mut contrib = u32::from(wait.saturating_sub(1)) as i32;
+        if !is_opcode {
+            if let Some(batch_delta) = self.batch_word_delta(addr, wait) {
+                contrib += batch_delta;
+            } else {
+                contrib += self.prefetch_erase_delta(addr, u32::from(wait), true);
             }
         }
-        // Non-ROM, non-I/O accesses keep queue (only ROM non-sequential flushes)
-    }
-
-    /// DMA転送やCPU分岐等の非連続アクセスでプリフェッチを無効化する。
-    /// DMAはCPUとバスを共有するため、ROMからのDMA読み出しはCPUの連続性を破壊する。
-    pub fn invalidate_prefetch_for_dma(&mut self, dma_addr: u32) {
-        if self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&dma_addr) {
-            self.prefetch_queue.clear();
-        }
-        // DMAアクセスでCPUの連続性も破壊
-        self.prev_addr = Some(dma_addr);
-        self.prev_width = 0;
-    }
-
-    fn refill_prefetch_queue(&mut self, _addr: u32) {
-        self.prefetch_queue.clear();
-        if !self.prefetch_enabled {
-            return;
-        }
-        for _ in 0..8 {
-            self.prefetch_queue.push_back(());
-        }
-    }
-
-    fn read_internal(&mut self, addr: u32, width: u8) -> (u32, u8) {
-        let wait = self.cycles_for(addr, width);
-        self.access_wait_cycles += u32::from(wait.saturating_sub(1));
-        let sequential = self.is_sequential(addr, width) && self.prefetch_enabled;
+        self.access_wait_cycles += i64::from(contrib);
         let raw = self.read_mapped(addr, width);
-        self.update_prefetch_queue(addr, sequential);
+        // prev_* tracks the last bus access of ANY kind (GBATEK N/S bus
+        // order); fetch_* tracks the opcode stream for the prefetch-ON
+        // fetch path above.
         self.prev_addr = Some(addr);
         self.prev_width = width;
+        if is_opcode {
+            self.fetch_addr = Some(addr);
+            self.fetch_width = width;
+        }
         self.last_prefetch = raw;
         self.open_bus_value = raw;
         (raw, wait)
     }
 
-    fn write_internal(&mut self, addr: u32, width: u8, value: u32) {
+    /// Fetch-stream-break charge (mGBA load/store post-body
+    /// `activeNonseqCycles32 - activeSeqCycles32`): a CPU data access
+    /// breaks the fetch stream, so the next fetch costs N instead of S.
+    /// Pre-paid here per load/store instruction as N32-S32 of the owning
+    /// code region (0 outside GamePak ROM, which carries no N/S split).
+    /// Call once per CPU load/store instruction (LDM/STM/PUSH/POP: once
+    /// per instruction, not per word).
+    pub(crate) fn charge_fetch_stream_break(&mut self) {
+        if let Some(pc) = self.last_opcode_addr
+            && (0x08000000..=0x0DFFFFFF).contains(&pc)
+        {
+            let n = self.gamepak_rom_cycles(pc, 4, false);
+            let s = self.gamepak_rom_cycles(pc, 4, true);
+            self.access_wait_cycles += i64::from(n.saturating_sub(s));
+        }
+    }
+
+    /// Mark block-transfer continuation words (LDM/STM/PUSH/POP after the
+    /// first) sequential per bus order (mGBA `GBALoadMultiple` first-N
+    /// plus contiguity, including the 128KB N-force). The loop must reset
+    /// to false when done.
+    pub(crate) fn set_data_sequential(&mut self, sequential: bool) {
+        self.data_sequential_override = sequential;
+    }
+
+    /// Open a block-transfer erase batch (call once per LDM/STM/PUSH/POP
+    /// instruction around the word loop). `is_load` selects the
+    /// GBALoad (+2) / GBAStore (+1) word convention; `fetch_width` (4 for
+    /// ARM, 2 for Thumb) selects the erase-floor N.
+    pub(crate) fn begin_block_batch(&mut self, is_load: bool, fetch_width: u8) {
+        self.block_batching = true;
+        self.block_batch_any = false;
+        self.block_batch_words = 0;
+        self.block_batch_erase_sum = 0;
+        self.block_batch_is_load = is_load;
+        self.block_batch_fetch_width = fetch_width;
+        self.block_batch_has_rom = false;
+        self.block_batch_raw = false;
+    }
+
+    /// Raw bulk batch (HLE loops): words accrue `(wait-1)` with no erase,
+    /// regardless of code region (HW BIOS sees flat waits).
+    pub(crate) fn begin_raw_batch(&mut self) {
+        self.block_batching = true;
+        self.block_batch_any = false;
+        self.block_batch_words = 0;
+        self.block_batch_erase_sum = 0;
+        self.block_batch_has_rom = false;
+        self.block_batch_raw = true;
+    }
+
+    /// Close the batch: undo all tracked erases when a ROM word appeared
+    /// (mixed ROM-overflow bursts apply no prefetch erase at all), else
+    /// floor the instruction's total erase benefit at one N-fetch worth
+    /// (ROM code only). No-op when nothing batched.
+    pub(crate) fn end_block_batch(&mut self) {
+        self.block_batching = false;
+        if !self.block_batch_any {
+            return;
+        }
+        if self.block_batch_has_rom {
+            self.access_wait_cycles -= i64::from(self.block_batch_erase_sum);
+            return;
+        }
+        if let Some(pc @ 0x08000000..=0x0DFFFFFF) = self.last_opcode_addr {
+            let n_mgba =
+                u32::from(self.gamepak_rom_cycles(pc, self.block_batch_fetch_width, false)) - 1;
+            let floor = -(n_mgba as i32);
+            if self.block_batch_erase_sum < floor {
+                self.access_wait_cycles += i64::from(floor - self.block_batch_erase_sum);
+            }
+        }
+    }
+
+    /// Batched-word erase routing. Returns the erase-delta to add for this
+    /// word, or `None` when the word must use the normal per-word path
+    /// (ROM data, prefetch off, or non-ROM code, all bit-for-bit
+    /// preserved). Word 1 (first batched word) erases fully single-style;
+    /// continuation words erase marginally. Only the returned delta lands
+    /// on the accumulator; the caller still adds `(wait-1)` itself.
+    fn batch_word_delta(&mut self, addr: u32, wait: u8) -> Option<i32> {
+        if !self.block_batching || !self.prefetch_enabled {
+            return None;
+        }
+        if addr >= 0x08000000 {
+            // ROM word inside the batch (OAM-overflow LDM): flag mixed
+            // burst (end undoes all erases); the word itself uses the
+            // normal N/S path with no erase.
+            self.block_batch_has_rom = true;
+            return None;
+        }
+        // Raw bulk (HLE): no erase at all, any code region.
+        if self.block_batch_raw {
+            return Some(0);
+        }
+        if !matches!(self.last_opcode_addr, Some(0x08000000..=0x0DFFFFFF)) {
+            return None;
+        }
+        let region = u32::from(wait.saturating_sub(1)) as i32;
+        // Single-access conventions: GBALoad region+2, GBAStore region+1.
+        let single_input = region + if self.block_batch_is_load { 2 } else { 1 };
+        let delta = if self.block_batch_words == 0 {
+            // Word 1: full single-access stall (updates lastPrefetchedPc).
+            self.prefetch_stall_erased(single_input) - single_input
+        } else {
+            // Continuation words: marginal `min(-1, S - single_input)`;
+            // no lastPrefetchedPc update (word 1's fills persist).
+            let (_, s16_our) = self.code_wait16();
+            let s = s16_our as i32 - 1;
+            (s - single_input).min(-1)
+        };
+        self.block_batch_words += 1;
+        self.block_batch_any = true;
+        self.block_batch_erase_sum += delta;
+        Some(delta)
+    }
+
+    fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
+        // Test-ROM log sink (only with the `mgba-debug-log` feature; see
+        // field docs). Without the feature these addresses fall through
+        // to the open-bus default below.
+        #[cfg(feature = "mgba-debug-log")]
+        if (0x04FFF600..=0x04FFF7FF).contains(&addr) {
+            self.write_mgba_debug(addr, width, value);
+            self.prev_addr = Some(addr);
+            self.prev_width = width;
+            return;
+        }
+        // GBATEK Backup Media / EEPROM: CPU stores to 0D000000h are open bus;
+        // only DMA bursts reach the serial chip (handled in the tick loop).
         let wait = self.cycles_for(addr, width);
-        self.access_wait_cycles += u32::from(wait.saturating_sub(1));
+        // Stores erase like loads (mGBA GBAStore stall, +1 base convention).
+        let mut contrib = u32::from(wait.saturating_sub(1)) as i32;
+        if let Some(batch_delta) = self.batch_word_delta(addr, wait) {
+            contrib += batch_delta;
+        } else {
+            contrib += self.prefetch_erase_delta(addr, u32::from(wait), false);
+        }
+        self.access_wait_cycles += i64::from(contrib);
         match addr {
             0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
             0x03000000..=0x03FFFFFF => self.write_iwram(addr, width, value),
-            0x04000000..=0x040003FE => self.write_io(addr, width, value),
+            0x04000000..=0x040003FE => self.write_io(addr, width, value, bios),
+            a if is_mem_control(a) => self.write_io(addr, width, value, bios),
             0x05000000..=0x05FFFFFF => self.write_palette(addr, width, value),
             0x06000000..=0x06FFFFFF => self.write_vram(addr, width, value),
             0x07000000..=0x07FFFFFF => self.write_oam(addr, width, value),
             0x0E000000..=0x0FFFFFFF => self.write_sram(addr, width, value),
             _ => {
-                // 未マッピング・ROM・BIOSへの書き込みは無視だが open_bus は更新
+                // Attached GPIO registers overlay ROM (see read_rom).
+                if let Some(cart) = self.cartridge.as_mut()
+                    && cart.gpio.write(addr, width, value)
+                {
+                    self.open_bus_value = value;
+                    self.prev_addr = Some(addr);
+                    self.prev_width = width;
+                    return;
+                }
                 self.open_bus_value = value;
             }
         }
-        // 非ROMへの書き込みでプリフェッチはフラッシュしない（ROM連続性のみで判定）
-        if (0x08000000..=0x0DFFFFFF).contains(&addr) {
-            self.prev_addr = Some(addr);
-            self.prev_width = width;
-        }
+        self.prev_addr = Some(addr);
+        self.prev_width = width;
     }
 
     // -- Region readers --
+
+    /// Drain committed test-ROM debug-log lines (oldest first). Only
+    /// exists with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
+    pub fn drain_mgba_debug_logs(&mut self) -> Vec<MgbaDebugLog> {
+        std::mem::take(&mut self.mgba_debug_logs)
+    }
+
+    /// Whether the guest enabled the test-ROM log sink. Only exists
+    /// with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
+    pub fn mgba_debug_enabled(&self) -> bool {
+        self.mgba_debug_enable
+    }
+
+    /// Test-ROM log-sink write (mGBA debug-log protocol, mgba-emu/suite
+    /// `src/mgba.c`): `strncpy` into the string buffer, commit on a
+    /// flags write with bit 8 set, enable on `0xC0DE` (`mgba_close`
+    /// writes 0). Byte-granular so any store width works. Only compiled
+    /// with the `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
+    fn write_mgba_debug(&mut self, addr: u32, width: u8, value: u32) {
+        match addr {
+            0x04FFF600..=0x04FFF6FF => {
+                let bytes = value.to_le_bytes();
+                for (i, byte) in bytes.iter().enumerate().take(usize::from(width)) {
+                    let off = (addr as usize).wrapping_sub(0x4FFF600) + i;
+                    if off < self.mgba_debug_buf.len() {
+                        self.mgba_debug_buf[off] = *byte;
+                    }
+                }
+            }
+            0x04FFF700 => {
+                if width >= 2 && value & 0x100 != 0 {
+                    let len = self
+                        .mgba_debug_buf
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(self.mgba_debug_buf.len());
+                    let text = String::from_utf8_lossy(&self.mgba_debug_buf[..len]).into_owned();
+                    self.mgba_debug_logs.push(MgbaDebugLog {
+                        level: (value & 7) as u8,
+                        text,
+                    });
+                    self.mgba_debug_buf = [0; 256];
+                }
+            }
+            0x04FFF780 if width >= 2 => {
+                self.mgba_debug_enable = match (value & 0xFFFF) as u16 {
+                    0xC0DE => true,
+                    0 => false,
+                    _ => self.mgba_debug_enable,
+                };
+            }
+            _ => {}
+        }
+        self.open_bus_value = value;
+    }
+
+    /// Test-ROM log-sink read: buffer bytes, or `0x1DEA` from the
+    /// enable register while enabled (handshake); disabled reads fall
+    /// through to open bus (prior behavior). Only compiled with the
+    /// `mgba-debug-log` cargo feature (test harness).
+    #[cfg(feature = "mgba-debug-log")]
+    fn read_mgba_debug(&mut self, addr: u32, width: u8) -> u32 {
+        match addr {
+            0x04FFF600..=0x04FFF6FF => {
+                let off = (addr as usize).wrapping_sub(0x4FFF600);
+                let mut bytes = [0u8; 4];
+                for (i, byte) in bytes.iter_mut().enumerate().take(usize::from(width)) {
+                    if off + i < self.mgba_debug_buf.len() {
+                        *byte = self.mgba_debug_buf[off + i];
+                    }
+                }
+                u32::from_le_bytes(bytes)
+            }
+            0x04FFF780 => {
+                if self.mgba_debug_enable {
+                    0x1DEA
+                } else {
+                    self.open_bus_value
+                }
+            }
+            _ => self.open_bus_value,
+        }
+    }
 
     fn read_bios(&self, addr: u32, width: u8) -> u32 {
         let off = Self::aligned_off(addr, width, 0x3FFF);
@@ -496,9 +1807,8 @@ impl GbaMemoryBus {
     }
 
     fn read_vram(&self, addr: u32, width: u8) -> u32 {
-        // TODO(gba-vram-mirror): 実機は 0x06018000以降で32KBミラー (&0x1FFFF 説あり)。Phase 3は &0x17FFF で検証。
-        let off = Self::aligned_off(addr, width, 0x17FFF) % VRAM_SIZE;
-        read_slice(&*self.vram, off, width)
+        self.vram_offset(addr, width)
+            .map_or(0, |off| read_slice(&*self.vram, off, width))
     }
 
     fn read_oam(&self, addr: u32, width: u8) -> u32 {
@@ -508,12 +1818,22 @@ impl GbaMemoryBus {
 
     fn read_rom(&self, addr: u32, width: u8) -> u32 {
         if let Some(cart) = &self.cartridge {
+            // Attached GPIO registers overlay ROM (GBATEK cartridge GPIO).
+            if let Some(value) = cart.gpio.read(addr, width) {
+                return value;
+            }
             return cart.read_rom(addr, width);
         }
         self.open_bus_value
     }
 
     fn read_sram(&self, addr: u32, width: u8) -> u32 {
+        // GBATEK backup detection order starts with an SRAM probe: on
+        // EEPROM carts there is no 0E window, so CPU reads see open bus
+        // (only the DMA3 serial protocol reaches the chip).
+        if self.is_eeprom() {
+            return self.open_bus_value;
+        }
         if let Some(cart) = &self.cartridge {
             return cart.read_sram(addr, width);
         }
@@ -521,50 +1841,168 @@ impl GbaMemoryBus {
         read_slice(&*self.fallback_sram, off, width)
     }
 
+    fn is_eeprom(&self) -> bool {
+        self.cartridge.as_ref().is_some_and(|c| {
+            matches!(
+                c.save_type(),
+                crate::cartridge::save::SaveType::Eeprom512
+                    | crate::cartridge::save::SaveType::Eeprom8k
+            )
+        })
+    }
+
+    /// Feed EEPROM serial bits for a DMA write burst to 0D000000h.
+    /// Each 16-bit unit carries one bit (GBATEK). Wider units are
+    /// undefined on hardware; only bit 0 is consumed.
+    fn feed_eeprom_write(&mut self, width: u8, value: u32) {
+        if let Some(cart) = self.cartridge.as_mut() {
+            cart.eeprom_write_bit(value & 1 != 0);
+            let _ = width;
+            self.eeprom_burst_open = true;
+        }
+    }
+
+    /// Pop one EEPROM response bit for a DMA read from 0D000000h.
+    fn next_eeprom_read_bit(&mut self) -> u32 {
+        if let Some(cart) = self.cartridge.as_mut() {
+            u32::from(cart.eeprom_read_bit())
+        } else {
+            1
+        }
+    }
+
     fn read_io(&mut self, addr: u32, width: u8) -> u32 {
+        self.timers.set_current_cycle(self.current_tcycle);
+        // 4000800h Internal Memory Control, mirrored each 64K.
+        if is_mem_control(addr) {
+            let shift = (addr & 3) * 8;
+            return (self.mem_control >> shift) & (u32::MAX >> (8 * (4 - u32::from(width))));
+        }
+        if width == 1 && (0x04000100..=0x0400010D).contains(&addr) {
+            return self.timers.read8(addr).unwrap_or(0) as u32;
+        }
+        if width == 4 {
+            return self.read_io(addr, 2) | (self.read_io(addr + 2, 2) << 16);
+        }
         if width == 1 {
             match addr {
                 0x04000300 => return self.postflg as u32,
-                0x04000301 => return self.haltcnt as u32,
+                // HALTCNT is write-only (GBATEK System Control): reads see
+                // open bus, never the latch.
+                0x04000301 => return self.open_bus_value & 0xFF,
                 _ => {}
             }
         }
         let aligned = addr & !1;
         let val: u16 = match aligned {
-            0x04000000 => self.disp_cnt,
-            0x04000004 => self.disp_stat,
-            0x04000006 => self.vcount,
+            0x04000000..=0x04000006 | 0x04000008..=0x0400000E | 0x04000048..=0x04000052 => {
+                match self.ppu.read_register(aligned) {
+                    Some(v) => v,
+                    None => {
+                        // Write-only register (MOSAIC, BLDY, HOFS, affine, WINH/V, ...)
+                        return self.open_bus_value;
+                    }
+                }
+            }
+            0x040000B0..=0x040000DE => {
+                // GBATEK I/O Map: SAD/DAD are write-only (CPU reads see
+                // open bus); CNT_L instead reads back as 0 ("silent
+                // write-only", mGBA GBAIORead), and CNT_H is R/W so it
+                // reads back the latched control (enable bit included).
+                // (The channel latch itself is untouched; byte-store
+                // merging in write_io reads it back via dma.read
+                // directly.)
+                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
+                    self.dma.read(aligned).unwrap_or(0)
+                } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
+                    0
+                } else {
+                    (self.open_bus_value & 0xFFFF) as u16
+                }
+            }
+            0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
+                    eprintln!("T tmread @{}", self.current_tcycle);
+                }
+                self.timers.read(aligned).unwrap_or(0)
+            }
+            0x04000060 => self.apu.sound1cnt_lo,
+            0x04000062 => self.apu.sound1cnt_hi,
+            0x04000064 => self.apu.sound1cnt_x,
+            0x04000068 => self.apu.sound2cnt_lo,
+            0x0400006C => self.apu.sound2cnt_hi,
+            0x04000070 => self.apu.sound3cnt_lo,
+            0x04000072 => self.apu.sound3cnt_hi,
+            0x04000074 => self.apu.sound3cnt_x,
+            0x04000078 => self.apu.sound4cnt_lo,
+            0x0400007C => self.apu.sound4cnt_hi,
+            0x04000080 => self.apu.soundcnt_lo,
+            0x04000082 => self.apu.soundcnt_hi,
+            0x04000084 => self.apu.soundcnt_x,
+            0x04000088 => self.apu.soundbias,
+            0x04000090..=0x0400009E => self.apu.wave_read(aligned),
+            // FIFO_A/B (A0/A4) are write-only; reads return open bus.
             0x04000128 => self.siocnt,
-            0x0400012A => self.siodata8 as u16,
-            0x04000120 => (self.siodata32 & 0xFFFF) as u16,
-            0x04000122 => ((self.siodata32 >> 16) & 0xFFFF) as u16,
+            // 0x12A is SIOMLT_SEND (multi), SIODATA8 (normal-8/32) or a
+            // plain latch (GPIO/Joybus); in UART mode reads come from the
+            // empty receive FIFO, i.e. 0 (suite table).
+            0x0400012A => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
+                    0
+                } else {
+                    self.siodata8
+                }
+            }
+            // 0x120/0x122 latch only in Normal-32 SIO mode (send data);
+            // every other mode reads the idle receive path as 0.
+            0x04000120 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    (self.siodata32 & 0xFFFF) as u16
+                } else {
+                    0
+                }
+            }
+            0x04000122 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    ((self.siodata32 >> 16) & 0xFFFF) as u16
+                } else {
+                    0
+                }
+            }
+            // SIOMULTI2/3 (and SIOMULTI0/1 outside Normal-32) are receive
+            // registers: 0 with no transfer (suite table; writes ignored).
+            0x04000124 | 0x04000126 => 0,
             0x04000130 => self.keyinput,
             0x04000132 => self.keycnt,
-            0x04000134 => self.rcnt,
+            0x04000134 => self.read_rcnt(),
+            0x04000140 => self.joycnt,
+            // JOY_RECV/TRANS read 0 with no link transfer (suite table);
+            // JOYSTAT has no status source yet either (0x15A reads 0).
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 => 0,
+            // JOYSTAT (0x158) has no status source with no link transfer.
+            0x04000158 => 0,
             0x04000200 => self.ie,
             0x04000202 => self.sif,
             0x04000204 => self.wait_cnt,
             0x04000208 => self.ime as u16,
-            0x04000300 => self.postflg as u16,
-            0x04000301 => self.haltcnt as u16,
+            0x04000300 => (self.postflg as u16) | (self.open_bus_value & 0xFF00) as u16,
+            // Unused I/O reads return 0, NOT open bus (mGBA GBAIORead
+            // "Read from unused I/O register" list; the mgba-suite
+            // io-read table is the HW capture: 0x20A reads 0 too, as
+            // the empty high half of the 1-bit IME register).
+            0x04000066 | 0x0400006A | 0x0400006E | 0x04000076 | 0x0400007A | 0x0400007E
+            | 0x04000086 | 0x0400008A | 0x04000136 | 0x04000142 | 0x0400015A | 0x04000206
+            | 0x0400020A | 0x04000302 => 0,
             _ => {
-                // 未実装/ライト専用レジスタは open_bus を返す
-                return self.open_bus_value;
+                // Unimplemented/write-only registers return the recently
+                // prefetched opcode, not the last written value (GBATEK
+                // "Unpredictable Things": open bus tracks the prefetch,
+                // with a zero-mix rule for partially-readable ports that
+                // is not modeled here).
+                return self.last_prefetch & 0xFFFF;
             }
         };
-        if width == 4 {
-            // 32bit読みは隣接レジスタを結合（簡易）
-            let low = val as u32;
-            let high_addr = aligned + 2;
-            let high: u32 = match high_addr {
-                0x04000002 => 0,
-                0x04000006 => self.vcount as u32,
-                0x04000122 => (self.siodata32 >> 16) & 0xFFFF,
-                0x04000202 => self.sif as u32,
-                _ => 0,
-            };
-            low | (high << 16)
-        } else if width == 1 && (addr & 1) == 1 {
+        if width == 1 && (addr & 1) == 1 {
             ((val >> 8) & 0xFF) as u32
         } else {
             val as u32
@@ -597,11 +2035,12 @@ impl GbaMemoryBus {
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
-        // TODO(gba-vram-mirror): 同上
-        let off = Self::aligned_off(addr, width, 0x17FFF);
-        let off = off % VRAM_SIZE;
+        let Some(off) = self.vram_offset(addr, width) else {
+            self.open_bus_value = value;
+            return;
+        };
         if width == 1 {
-            let bitmap_mode = self.disp_cnt & 7 >= 3;
+            let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
             let object_start = if bitmap_mode { 0x14000 } else { 0x10000 };
             if off < object_start {
                 write_slice(&mut *self.vram, off & !1, 2, (value & 0xFF) * 0x0101);
@@ -621,6 +2060,11 @@ impl GbaMemoryBus {
     }
 
     fn write_sram(&mut self, addr: u32, width: u8, value: u32) {
+        // No 0E window on EEPROM carts (see read_sram): stores go nowhere.
+        if self.is_eeprom() {
+            self.open_bus_value = value;
+            return;
+        }
         if let Some(cart) = &mut self.cartridge {
             cart.write_sram(addr, width, value);
         } else {
@@ -630,16 +2074,152 @@ impl GbaMemoryBus {
         self.open_bus_value = value;
     }
 
-    fn write_io(&mut self, addr: u32, width: u8, value: u32) {
+    /// SIOCNT write with per-sub-mode R/W maps (GBATEK SIO chapters;
+    /// mGBA `GBASIOWriteSIOCNT` + `GBAIOWrite` masks). Unreadable bits
+    /// never persist (same convention as the APU masks above), so reads
+    /// return the stored value. Pinned by mgba-suite sio-read (6 mode
+    /// groups); mGBA itself diverges on several (UART SIODATA8, JOY
+    /// TRANS/STAT, G/J SIOCNT, RCNT data bits), so the HW table rules.
+    fn write_siocnt(&mut self, v: u16) {
+        // Bit 15 is always 0 (mGBA GBAIOWrite `value &= 0x7FFF`).
+        let mut value = v & 0x7FFF;
+        let sub = Self::sio_submode(value);
+        let sio_block = self.sio_block_selected();
+        match sub {
+            2 if sio_block => {
+                // Multiplayer (GBATEK R/W map): Slave/Ready/ID/Error are
+                // read-only. Unconnected the unit is a Child (SI-terminal
+                // reads 1, as the suite table shows), ID is 0 (undefined
+                // until the first transfer), Ready reads 1; old RO bits
+                // {2-6} are retained (mGBA no-driver rules). A slave can
+                // never start (it waits for the parent clock), so START
+                // never schedules -- the suite's Multi timing tests rely
+                // on this to time out into self-SKIP.
+                value &= 0xFF83;
+                value |= 0x0004;
+                value &= !0x0030;
+                value |= self.siocnt & 0x00FC;
+                value |= 0x0008;
+            }
+            3 if sio_block => {
+                // UART SCCNT_L (GBATEK): Send-Full (4) reads 0 and Error
+                // (6) reads 0 while idle; Receive-Empty (5) reads 1; the
+                // baud/parity/enable bits are R/W.
+                value &= !0x8050;
+            }
+            _ => {
+                // Normal-8/32, and GPIO/Joybus (SIOCNT keeps its
+                // sub-format there): bits 4-6 always read 0 (GBATEK
+                // "Not used"), bits 8-11 are R/W latches, and SI floats
+                // high with no link partner (mGBA `FillSi`).
+                value &= !0x8070;
+                value |= 0x0004;
+            }
+        }
+        let started = value & 0x0080 != 0 && self.siocnt & 0x0080 == 0;
+        self.siocnt = value;
+        // Normal-mode transfer (mGBA `GBASIOTransferCycles`, no partner):
+        // 8/32 bits at 256KHz (64 T-cycles/bit) or 2MHz (8 T-cycles/bit).
+        if started && sio_block && (sub == 0 || sub == 1) {
+            let bit: u32 = if value & 0x0002 != 0 { 8 } else { 64 };
+            self.sio_xfer_32 = sub == 1;
+            self.sio_xfer_cycles = (if sub == 1 { 32 } else { 8 }) * bit;
+        }
+    }
+
+    /// RCNT write latch (mGBA `GBAIOWrite` mask `0xC1FF` + per-mode maps).
+    /// Data pins {0-3} are live state composed at read time; only the
+    /// direction/control bits {4-8} latch here.
+    fn write_rcnt(&mut self, v: u16) {
+        let value = v & 0xC1FF;
+        self.rcnt = match value & 0xC000 {
+            // GPIO: full {0-8} latch.
+            0x8000 => value,
+            // Joybus: {2-8} latch; SC/SD read 0.
+            0xC000 => (value & 0xC1FC) | 0xC000,
+            // SIO: {4-8} latch; data pins are forced at read.
+            _ => value & 0xC1F0,
+        };
+    }
+
+    /// RCNT read: latched {4-8,14-15} plus live data pins. With no link
+    /// partner the pins float high in Multi/UART mode, while Normal mode
+    /// shows SC+SI high (suite HW table: M/U 0xF, N8/N32 0x5).
+    fn read_rcnt(&self) -> u16 {
+        let mut value = self.rcnt;
+        if self.sio_block_selected() {
+            let sub = Self::sio_submode(self.siocnt);
+            let data = if sub == 0 || sub == 1 { 0x0005 } else { 0x000F };
+            value = (value & !0x000F) | data;
+        }
+        value
+    }
+
+    fn write_io(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
+        self.timers.set_current_cycle(self.current_tcycle);
+        // 4000800h Internal Memory Control, mirrored each 64K. Only the
+        // documented bits are stored (0-3, 5, 24-31); sub-word writes merge
+        // lanes. Remap/wait effects are not modeled.
+        if is_mem_control(addr) {
+            let shift = (addr & 3) * 8;
+            let mask = (u32::MAX >> (8 * (4 - u32::from(width)))) << shift;
+            self.mem_control = (self.mem_control & !mask) | ((value << shift) & mask & 0xFF00_002F);
+            self.open_bus_value = value;
+            return;
+        }
+        if width == 4 && self.timers.write32(addr, value) {
+            self.open_bus_value = value;
+            return;
+        }
+        if width > 1 && addr == 0x04000300 {
+            // POSTFLG/HALTCNT are BIOS-gated (NBA/mGBA HW behavior, confirmed
+            // by nba haltcnt): CPU writes from outside the BIOS are ignored;
+            // HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT bit
+            // 7 = 0 halts, bit 7 = 1 stops (CPU parked until IRQ in both).
+            let gated = bios || self.current_pc <= 0x3FFF;
+            if gated {
+                self.postflg |= (value & 1) as u8;
+            }
+            self.haltcnt = (value >> 8) as u8;
+            if gated {
+                if value & 0x8000 == 0 {
+                    self.enter_halt(self.ie);
+                } else {
+                    // Direct Stop uses the same restricted wake mask as SWI
+                    // Stop (keypad/GamePak/serial only): timers, DMA and
+                    // video are paused in Stop mode and cannot wake it.
+                    self.enter_stop();
+                }
+            }
+            self.open_bus_value = value;
+            return;
+        }
+        if width == 4 {
+            self.write_io(addr, 2, value & 0xFFFF, bios);
+            self.write_io(addr + 2, 2, value >> 16, bios);
+            return;
+        }
         if width == 1 {
             match addr {
                 0x04000300 => {
-                    self.postflg = value as u8;
+                    let gated = bios || self.current_pc <= 0x3FFF;
+                    if gated {
+                        self.postflg |= (value & 1) as u8;
+                    }
                     self.open_bus_value = value;
                     return;
                 }
                 0x04000301 => {
+                    let gated = bios || self.current_pc <= 0x3FFF;
                     self.haltcnt = value as u8;
+                    if gated {
+                        if value & 0x80 == 0 {
+                            self.enter_halt(self.ie);
+                        } else {
+                            // Same restricted wake mask as SWI Stop (see above).
+                            self.enter_stop();
+                        }
+                    }
                     self.open_bus_value = value;
                     return;
                 }
@@ -647,38 +2227,174 @@ impl GbaMemoryBus {
             }
         }
         let aligned = addr & !1;
-        let v16 = value as u16;
+        // GBATEK Address Bus Width: the I/O bus is 16-bit with byte-lane
+        // selectivity (mGBA GBAIOWrite8 merges then dispatches 16-bit).
+        // A sub-word store must preserve the untouched lane instead of
+        // zeroing it (e.g. STRB to a CNT_H low byte must not clear the
+        // start/IRQ bits in the high lane). DMA registers merge against
+        // the latched channel state (CPU reads see open bus, #13).
+        let v16 = if width == 1 {
+            let shift = (addr & 1) * 8;
+            let lane = (value & 0xFF) << shift;
+            let cur = if (0x040000B0..=0x040000DE).contains(&aligned) {
+                u32::from(self.dma.read(aligned).unwrap_or(0))
+            } else {
+                self.read_io(aligned, 2)
+            };
+            ((cur & !(0xFF << shift)) | lane) as u16
+        } else {
+            value as u16
+        };
         match aligned {
-            0x04000000 => self.disp_cnt = v16,
-            0x04000004 => self.disp_stat = v16,
+            0x04000000..=0x04000054 if aligned != 0x04000006 => {
+                let irq = self.ppu.write_register(aligned, v16);
+                if irq != 0 {
+                    self.request_interrupt(irq);
+                }
+            }
+            0x040000B0..=0x040000DE => {
+                if std::env::var("GBA_TTRACE").is_ok()
+                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+                    && v16 & 0x8000 != 0
+                {
+                    eprintln!(
+                        "T dmaen ch{} @{}",
+                        (aligned - 0xB0) / 12,
+                        self.current_tcycle
+                    );
+                }
+                self.dma.write(aligned, v16);
+                // Immediate CNT_H arming with prefetch on starts one tick
+                // sooner (pending 4->3): prefetch overlaps the enabling
+                // bus cycle, so short P-ON triggers still park before the
+                // next CPU step (mgba-suite Timing Thumb P../PN. race).
+                // P-OFF, event triggers, and nba pins keep pending=4.
+                if self.prefetch_enabled
+                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+                    && v16 & 0x8000 != 0
+                    && (v16 >> 12) & 3 == 0
+                {
+                    let channel = ((aligned - 0x040000B0) / 12) as usize;
+                    self.dma.retime_pending(channel, 3);
+                }
+                // GBATEK "STR to DMA CNT forces NSEQ": only the CNT_H
+                // commit write breaks code sequentiality. SAD/DAD/CNT_L
+                // setup writes never touch the GamePak bus, so the
+                // prefetch buffer and the fetch stream stay valid across
+                // them (clearing there made ROM setup code spuriously N).
+                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
+                    self.prev_addr = None;
+                    self.prev_width = 0;
+                    self.fetch_addr = None;
+                    self.fetch_width = 0;
+                }
+            }
+            0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
+                    eprintln!("T start @{}", self.current_tcycle);
+                }
+                self.timers.write(aligned, v16);
+            }
             // 0x04000006 VCOUNT は RO
-            0x04000128 => self.siocnt = v16,
-            0x0400012A => self.siodata8 = (value & 0xFF) as u8,
+            // APU readable-bit masks are applied at write time (mGBA
+            // GBAIOWrite `value &= mask`; GBATEK R/W maps): unreadable
+            // bits never persist, so reads return the stored value.
+            // mgba-suite io-read pins write-0xFFFF -> each mask.
+            0x04000060 => self.apu.sound1cnt_lo = v16 & 0x007F,
+            0x04000062 => self.apu.sound1cnt_hi = v16 & 0xFFC0,
+            0x04000064 => self.apu.sound1cnt_x = v16 & 0x4000,
+            0x04000068 => self.apu.sound2cnt_lo = v16 & 0xFFC0,
+            0x0400006C => self.apu.sound2cnt_hi = v16 & 0x4000,
+            0x04000070 => self.apu.sound3cnt_lo = v16 & 0x00E0,
+            0x04000072 => self.apu.sound3cnt_hi = v16 & 0xE000,
+            0x04000074 => self.apu.sound3cnt_x = v16 & 0x4000,
+            0x04000078 => self.apu.sound4cnt_lo = v16 & 0xFF00,
+            0x0400007C => self.apu.sound4cnt_hi = v16 & 0x40FF,
+            0x04000080 => self.apu.soundcnt_lo = v16 & 0xFF77,
+            0x04000082 => self.apu.write_soundcnt_hi(v16),
+            0x04000084 => self.apu.write_soundcnt_x(v16),
+            0x04000088 => self.apu.soundbias = v16,
+            0x04000090..=0x0400009E => self.apu.wave_write(aligned, v16),
+            // FIFO_A/B are write-only streaming buffers (GBATEK Sound FIFO):
+            // each access appends its bytes; 32-bit writes split above into
+            // two halfword pushes in LSB-first order, matching DMA bursts.
+            0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
+            0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
+            0x04000128 => self.write_siocnt(v16),
+            // 0x12A latches except in UART mode (send FIFO is not
+            // readable back; receive side is empty).
+            0x0400012A => {
+                if !(self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3) {
+                    self.siodata8 = v16;
+                }
+            }
             0x04000120 => {
-                if width == 4 {
-                    self.siodata32 = value;
-                } else {
-                    self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    if width == 4 {
+                        self.siodata32 = value;
+                    } else {
+                        self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
+                    }
                 }
             }
             0x04000122 => {
-                self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
-            }
-            // 0x04000130 KEYINPUT は RO
-            0x04000132 => self.keycnt = v16,
-            0x04000134 => self.rcnt = v16,
-            0x04000200 => self.ie = v16 & 0x3FFF,
-            0x04000202 => self.sif &= !v16, // 書き込みでクリア（1のbitがクリア）
-            0x04000204 => {
-                self.wait_cnt = v16;
-                self.prefetch_enabled = (v16 & (1 << 14)) != 0;
-                if !self.prefetch_enabled {
-                    self.prefetch_queue.clear();
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
                 }
             }
-            0x04000208 => self.ime = (v16 & 1) != 0,
-            0x04000300 => self.postflg = (value & 0xFF) as u8,
-            0x04000301 => self.haltcnt = (value & 0xFF) as u8,
+            // Receive-register writes land nowhere readable.
+            0x04000124 | 0x04000126 => {}
+            // 0x04000130 KEYINPUT は RO
+            0x04000132 => {
+                self.keycnt = v16 & 0xC3FF;
+                self.check_keycnt();
+            }
+            0x04000134 => self.write_rcnt(v16),
+            // JOYCNT (mGBA `GBASIOWriteRegister`, all modes): only the
+            // reset bit persists from the new value; old flag bits clear
+            // where the new value selects them. From reset this turns a
+            // 0xFFFF write into 0x0040 (suite table).
+            0x04000140 => {
+                self.joycnt = (v16 & 0x0040) | (self.joycnt & !(v16 & 7) & !0x0040);
+            }
+            // JOY_RECV/TRANS/JOYSTAT writes have no observable effect
+            // with no link transfer (suite table reads all zero).
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 | 0x04000158 => {}
+            0x04000200 => {
+                // Delayed (NBA hw/irq): merges into the pending level,
+                // applied 1 tick later; reads still return the effective IE.
+                // (32-bit stores are split into halfword writes before this
+                // match, so IE+IF / IF+WAITCNT pairs land in order.)
+                self.pending_ie = v16 & 0x3FFF;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
+            0x04000202 => {
+                // IF acknowledge: only written 1-bits clear (NBA hw/irq).
+                // A byte store acks its lane only, not the merged halfword.
+                let bits = if width == 1 {
+                    ((value & 0xFF) << ((addr & 1) * 8)) as u16
+                } else {
+                    (value & 0xFFFF) as u16
+                };
+                self.pending_if &= !bits;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
+            0x04000204 => {
+                // Bit 15 (GamePak type) and bit 13 are read-only/unused.
+                self.wait_cnt = v16 & !(0x8000 | 0x2000);
+                self.prefetch_enabled = (v16 & (1 << 14)) != 0;
+            }
+            0x04000208 => {
+                // Delayed like IE (NBA hw/irq).
+                self.pending_ime = (v16 & 1) != 0;
+                self.pending_at = Some(self.current_tcycle + 1);
+                self.open_bus_value = value;
+                return;
+            }
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
                 self.open_bus_value = value;
@@ -698,6 +2414,70 @@ impl GbaMemoryBus {
             _ => (addr & mask) as usize,
         }
     }
+
+    /// VRAM is 96 KiB at 06000000-06017FFF; 06018000-0601FFFF mirrors
+    /// 06010000-06017FFF (`offset - 0x8000`). In bitmap BG modes (3-5) the
+    /// 06018000-0601BFFF window reads as 0 (bad access), matching mGBA's
+    /// `GBALoad16/32` (`(addr & 0x1C000) == 0x18000 && mode >= 3 -> 0`).
+    fn vram_offset(&self, addr: u32, width: u8) -> Option<usize> {
+        let offset = Self::aligned_off(addr, width, 0x1FFFF);
+        if offset < VRAM_SIZE {
+            return Some(offset);
+        }
+        let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
+        if bitmap_mode && offset < 0x1C000 {
+            None
+        } else {
+            Some(offset - 0x8000)
+        }
+    }
+
+    fn write_dma_value(&mut self, channel: usize, address: u32, width: u8, value: u32) {
+        match address {
+            0x02000000..=0x02FFFFFF => self.write_ewram(address, width, value),
+            0x03000000..=0x03FFFFFF => self.write_iwram(address, width, value),
+            0x04000000..=0x040003FE => self.write_io(address, width, value, true),
+            0x05000000..=0x05FFFFFF => self.write_palette(address, width, value),
+            0x06000000..=0x06FFFFFF => self.write_vram(address, width, value),
+            0x07000000..=0x07FFFFFF => self.write_oam(address, width, value),
+            // GBATEK Memory Map: GamePak SRAM is CPU-only (bytewise) for
+            // DMA0-2 — their stores go nowhere. DMA3 is the backup-media
+            // channel: it programs Flash (parsed as commands, as before)
+            // and plain SRAM (mgba-suite "SRAM store DMA3" pins the
+            // written bytes readable back) alike. EEPROM cartridges have
+            // no SRAM window, so DMA3 stores there still drop.
+            0x0E000000..=0x0FFFFFFF => {
+                if channel == 3
+                    && let Some(cart) = self.cartridge.as_mut()
+                    && !matches!(
+                        cart.save_type(),
+                        crate::cartridge::save::SaveType::Eeprom512
+                            | crate::cartridge::save::SaveType::Eeprom8k
+                    )
+                {
+                    cart.write_sram(address, width, value);
+                } else {
+                    self.open_bus_value = value;
+                }
+            }
+            _ => self.open_bus_value = value,
+        }
+    }
+
+    fn read_dma_source(&mut self, address: u32, width: u8) -> u32 {
+        if is_unreadable_io(address) {
+            let halfword = self.last_prefetch & 0xFFFF;
+            return if width == 4 {
+                halfword | (halfword << 16)
+            } else {
+                halfword
+            };
+        }
+        // GamePak SRAM has no DMA restriction on the read path in practice
+        // (jsmolka save/none t002 requires the 0E-0F mirror to read back;
+        // only DMA *stores* are dropped, as before).
+        self.read_mapped(address, width)
+    }
 }
 
 impl Default for GbaMemoryBus {
@@ -706,9 +2486,49 @@ impl Default for GbaMemoryBus {
     }
 }
 
+/// 4000800h Internal Memory Control mirror test (GBATEK: repeated each 64K
+/// across 0x04000000-0x04FFFFFF).
+fn is_mem_control(address: u32) -> bool {
+    address & 0xFF00_0000 == 0x0400_0000 && matches!(address & 0xFFFF, 0x0800..=0x0803)
+}
+
+fn is_unreadable_io(address: u32) -> bool {
+    matches!(
+        address & !1,
+        0x04000010..=0x04000046
+            | 0x0400004C
+            | 0x04000054
+            | 0x04000060..=0x040000FE
+            | 0x04000110..=0x0400011E
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "mgba-debug-log")]
+    #[test]
+    fn mgba_debug_handshake_and_log_commit() {
+        // mgba-emu/suite `mgba_open` handshake + `mgba_printf` commit.
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.mgba_debug_enabled());
+        bus.write16(0x04FFF780, 0xC0DE);
+        assert!(bus.mgba_debug_enabled());
+        assert_eq!(bus.read16(0x04FFF780), 0x1DEA);
+        for (i, &b) in b"PASS: x".iter().enumerate() {
+            bus.write8(0x04FFF600 + i as u32, b);
+        }
+        bus.write8(0x04FFF600 + 7, 0);
+        bus.write16(0x04FFF700, 4 | 0x100);
+        let logs = bus.drain_mgba_debug_logs();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].level, 4);
+        assert_eq!(logs[0].text, "PASS: x");
+        assert!(bus.drain_mgba_debug_logs().is_empty());
+        bus.write16(0x04FFF780, 0);
+        assert!(!bus.mgba_debug_enabled());
+    }
 
     #[test]
     fn read_wram_bounds() {
@@ -717,6 +2537,24 @@ mod tests {
         bus.write8(0x0203FFFF, 0xCD);
         assert_eq!(bus.read8(0x02000000), 0xAB);
         assert_eq!(bus.read8(0x0203FFFF), 0xCD);
+    }
+
+    #[test]
+    fn waitcnt_type_flag_and_reserved_bits_are_read_only() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 0xFFFF);
+        // Bit 15 (GamePak type, GBATEK read-only) and bit 13 (unused)
+        // never stick; everything else does.
+        assert_eq!(bus.read16(0x04000204), 0x5FFF);
+    }
+
+    #[test]
+    fn interrupt_enable_covers_gamepak_irq_bit() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, 0xFFFF);
+        // IE writes apply 1 tick later (delayed interrupt pipeline).
+        bus.tick();
+        assert_eq!(bus.read16(0x04000200) & 0x3FFF, 0x3FFF);
     }
 
     #[test]
@@ -733,13 +2571,17 @@ mod tests {
     #[test]
     fn read_vram_mirror() {
         let mut bus = GbaMemoryBus::new();
-        bus.write8(0x06000000, 0x11);
-        // TODO(gba-vram-mirror): 0x06018000 mirror — currently &0x17FFF
-        assert_eq!(bus.read8(0x06000000), 0x11);
-        assert_eq!(
-            bus.read8(0x06010000),
-            bus.read8(0x06000000 + (0x10000 & 0x17FFF) as u32)
-        );
+        bus.write16(0x06018000, 0x1111);
+        bus.write16(0x0601C000, 0x2222);
+        assert_eq!(bus.read16(0x06010000), 0x1111);
+        assert_eq!(bus.read16(0x06014000), 0x2222);
+
+        bus.write16(0x04000000, 3);
+        bus.write16(0x06018000, 0x3333);
+        bus.write16(0x0601C000, 0x4444);
+        assert_eq!(bus.read16(0x06018000), 0);
+        assert_eq!(bus.read16(0x06014000), 0x4444);
+        assert_eq!(bus.read16(0x0601C000), 0x4444);
     }
 
     #[test]
@@ -785,12 +2627,17 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         bus.write32(0x02000000, 0x12345678);
         let _ = bus.read32(0x02000000);
-        // VCOUNT は RO だが read は可能。未実装レジスタ 0x04000008 は open_bus
-        assert_eq!(bus.read16(0x04000008), 0x5678); // open_bus lower 16
-        // 正確には open_bus_value の下位16bit
+        // BG0CNT (0x04000008) is R/W, so it returns the register value (default 0).
+        assert_eq!(bus.read16(0x04000008), 0);
+        bus.write16(0x04000008, 0x1234);
+        assert_eq!(bus.read16(0x04000008), 0x1234);
+        // Write-only MOSAIC (0x0400004C) still returns open_bus.
+        bus.write32(0x02000000, 0x12345678);
+        let _ = bus.read32(0x02000000);
+        assert_eq!(bus.read16(0x0400004C), 0x5678); // open_bus lower 16
         bus.write32(0x03000000, 0xAABBCCDD);
         let _ = bus.read32(0x03000000);
-        assert_eq!(bus.read16(0x04000008), 0xCCDD);
+        assert_eq!(bus.read16(0x0400004C), 0xCCDD);
     }
 
     #[test]
@@ -805,8 +2652,9 @@ mod tests {
     #[test]
     fn waitcnt_rom_ws() {
         let bus = GbaMemoryBus::new();
-        assert_eq!(bus.cycles_for(0x08000000, 2), 4);
-        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
+        // GBATEK WAITCNT totals (1 base + waits): N16=5, N32=8 at defaults.
+        assert_eq!(bus.cycles_for(0x08000000, 2), 5);
+        assert_eq!(bus.cycles_for(0x08000000, 4), 8);
     }
 
     #[test]
@@ -815,29 +2663,116 @@ mod tests {
         bus.write16(0x04000204, 1 << 14); // prefetch enable
         assert!(bus.prefetch_enabled);
         // 非連続 → 通常 wait
-        assert_eq!(bus.cycles_for(0x08000000, 4), 6);
-        // 連続読みでプリフェッチキューが貯まる
-        let _ = bus.read32(0x08000000);
-        // 次の連続アドレスはプリフェッチヒットで 1 cycle
-        assert_eq!(bus.cycles_for(0x08000004, 4), 2);
-        bus.write16(0x04000204, 0); // disable clears queue
+        assert_eq!(bus.opcode_cycles_for(0x08000000, 4), 8);
+        // 連続fetchはSコスト (mGBA-shape: pure-fetchにride割引なし。
+        // suite nop P.. = 6 が証拠)。キューは撤去済み。
+        let _ = bus.fetch32(0x08000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 4), 6);
+        // データリードはバッファに乗らず常にN (mGBA GBALoad: Nonseq):
+        // N32 = 8 at WS0.
+        assert_eq!(bus.cycles_for(0x08000004, 4), 8);
+        bus.write16(0x04000204, 0);
         assert!(!bus.prefetch_enabled);
-        assert!(bus.prefetch_queue.is_empty());
     }
 
     #[test]
-    fn dma_invalidates_prefetch() {
+    fn pipeline_flush_makes_next_gamepak_access_nonsequential() {
+        let mut bus = GbaMemoryBus::new();
+        bus.read32(0x08000000);
+        bus.invalidate_prefetch_for_dma(0x08000004);
+
+        assert_eq!(bus.cycles_for(0x08000004, 4), 8);
+    }
+
+    #[test]
+    fn dma_invalidates_prefetch_tracking() {
+        // DMA owns the bus: CPU fetch/data stream tracking resets, so the
+        // next access is non-sequential however contiguous it looks.
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x04000204, 1 << 14); // prefetch enable
-        let _ = bus.read32(0x08000000);
-        assert!(!bus.prefetch_queue.is_empty());
+        let _ = bus.fetch32(0x08000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 4), 6);
         bus.invalidate_prefetch_for_dma(0x08000004);
-        assert!(bus.prefetch_queue.is_empty());
-        // Non-ROM DMA should not clear (I/O)
-        let _ = bus.read32(0x08000000);
-        assert!(!bus.prefetch_queue.is_empty());
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 4), 8);
         bus.invalidate_prefetch_for_dma(0x04000000);
-        assert!(!bus.prefetch_queue.is_empty());
+        // Non-ROM target: same tracking reset.
+        assert_eq!(bus.opcode_cycles_for(0x08000008, 4), 8);
+    }
+
+    #[test]
+    fn dma_pending_n_ifies_fetches() {
+        // Bus arbitration: fetches issued while an immediate DMA burst is
+        // pending (trigger stored, handover imminent) cost N even when
+        // fetch-stream-contiguous (HW-pinned by nba force-nseq-access:
+        // post-trigger nops cost 1N, TIME 88).
+        let mut bus = GbaMemoryBus::new();
+        let _ = bus.fetch32(0x08000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 4), 6);
+        bus.write32(0x040000C4, 0x80000001); // DMA1CNT: ENABLE|16|IMM|1
+        assert!(bus.dma_active() || bus.dma.has_pending());
+        assert_eq!(bus.opcode_cycles_for(0x08000008, 4), 8);
+    }
+
+    #[test]
+    fn fetch_stream_survives_data_reads() {
+        // mGBA-shaped N/S: data reads advance neither the fetch stream
+        // nor its sequentiality. Linear fetches stay S (3 total at WS0);
+        // a fetch jumping ahead of the stream costs N (5 total).
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.prefetch_enabled);
+        // Plain sequential fetches: S timing (WS0: 3 cycles/halfword total).
+        let _ = bus.fetch16(0x08000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000002, 2), 3);
+        // A data read leaves the stream alone: the next in-stream fetch
+        // is still S ...
+        let _ = bus.read16(0x08000004);
+        let _ = bus.fetch16(0x08000002);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 3);
+        // ... while a fetch jumping ahead of the stream is N.
+        assert_eq!(bus.opcode_cycles_for(0x08000008, 2), 5);
+    }
+
+    #[test]
+    fn prefetch_on_data_access_keeps_fetch_stream() {
+        // mGBA-shaped N/S: a data access to another area never breaks code
+        // sequentiality — the next ROM fetch costs S (3 total at WS0),
+        // never N. Prefetch hides the stall via erases, not via ride
+        // discounts (pure-fetch streams pay full S: suite nop P.. = 6).
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14); // prefetch enable
+        let _ = bus.fetch16(0x08000000);
+        let _ = bus.fetch16(0x08000002);
+        // Data access to I/O: must not poison the ROM fetch stream.
+        let _ = bus.read16(0x04000000);
+        // Next ROM fetch still sequential: S cost, not 1N.
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 3);
+    }
+
+    #[test]
+    fn prefetch_off_data_access_breaks_bus_sequence() {
+        // mGBA-shaped N/S (mgba-suite Timing truth): opcode fetches follow
+        // the fetch stream, so the same I/O access leaves the next ROM
+        // fetch sequential (1S = 3 total at WS0). This is the suite `nop`
+        // cell (HW 6 = S+S fetch + 1 internal).
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.prefetch_enabled);
+        let _ = bus.fetch16(0x08000000);
+        let _ = bus.fetch16(0x08000002);
+        let _ = bus.read16(0x04000000);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 3);
+    }
+
+    #[test]
+    fn fetch_stream_discontinuity_is_nonsequential() {
+        // A fetch discontinuous with the fetch stream costs N (5 total at
+        // WS0), even with no data access involved: IWRAM-resident code
+        // fetching ROM directly (real flow reaches this only via a branch,
+        // which refills N the same way).
+        let mut bus = GbaMemoryBus::new();
+        assert!(!bus.prefetch_enabled);
+        let _ = bus.fetch16(0x03000000);
+        let _ = bus.read16(0x08000002);
+        assert_eq!(bus.opcode_cycles_for(0x08000004, 2), 5);
     }
 
     #[test]
@@ -858,12 +2793,57 @@ mod tests {
     }
 
     #[test]
+    fn display_stall_inserts_wait_during_draw() {
+        let mut bus = GbaMemoryBus::new();
+        // Reset state keeps forced blank set (DISPCNT=0x0080): no contention.
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        // Mode 0, BG0 on: the enable propagates through the 3-stage
+        // DISPCNT latch (shifts at +40 cycles/line, shared per-line
+        // reference), then BG-VRAM stalls during the fetch window and
+        // palette during pixel output.
+        bus.write16(0x04000000, 0x0100);
+        for _ in 0..4000 {
+            bus.tick();
+        }
+        assert_eq!(bus.cycles_for(0x06000000, 2), 2);
+        assert_eq!(bus.cycles_for(0x05000000, 2), 2);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 2);
+        // HBlank: BG/palette idle, OAM still busy (H-Blank Interval Free off).
+        while bus.ppu.cycle() < 1006 {
+            bus.tick();
+        }
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x05000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 2);
+        // Forced blank idles the controller: no stalls anywhere.
+        bus.write16(0x04000000, 1 << 7);
+        assert_eq!(bus.cycles_for(0x06000000, 2), 1);
+        assert_eq!(bus.cycles_for(0x07000000, 2), 1);
+    }
+
+    #[test]
+    fn internal_memory_control_mirror() {
+        // GBATEK System Control: R/W, init 0D000020h, mirrored each 64K.
+        let mut bus = GbaMemoryBus::new();
+        assert_eq!(bus.read32(0x04000800), 0x0D00_0020);
+        assert_eq!(bus.read32(0x04100800), 0x0D00_0020);
+        bus.write32(0x04200800, 0xFFFF_FFFF);
+        // Only documented bits stick (0-3, 5, 24-31).
+        assert_eq!(bus.read32(0x04000800), 0xFF00_002F);
+        assert_eq!(bus.read8(0x04000801), 0x00);
+    }
+
+    #[test]
     fn write_if_clears() {
         let mut bus = GbaMemoryBus::new();
-        bus.sif = 0x0003;
+        bus.request_interrupt(0x0003);
+        bus.tick();
+        assert_eq!(bus.sif, 0x0003);
         bus.write16(0x04000202, 0x0001);
+        bus.tick();
         assert_eq!(bus.sif, 0x0002);
         bus.write16(0x04000202, 0x0002);
+        bus.tick();
         assert_eq!(bus.sif, 0x0000);
     }
 
@@ -874,6 +2854,232 @@ mod tests {
         assert_eq!(bus.read16(0x04000130) & 0xFC00, 0xFC00);
         bus.set_keyinput(0x03FF);
         assert_eq!(bus.read16(0x04000130), 0x03FF | 0xFC00);
+    }
+
+    #[test]
+    fn fifo_writes_append_bytes() {
+        // GBATEK Sound FIFO: writes append to the 32-byte buffer;
+        // reads are open bus (not wave RAM).
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x040000A0, 0x04030201);
+        assert_eq!(bus.apu.fifo_a.len(), 4);
+        assert_eq!(
+            bus.apu.fifo_a.iter().copied().collect::<Vec<_>>(),
+            vec![0x01, 0x02, 0x03, 0x04]
+        );
+        bus.write16(0x040000A4, 0x0B0A);
+        assert_eq!(
+            bus.apu.fifo_b.iter().copied().collect::<Vec<_>>(),
+            vec![0x0A, 0x0B]
+        );
+        bus.write16(0x04000090, 0x1234);
+        // Default NR30 selects bank 0 for playback, so the CPU sees bank 1.
+        assert_eq!(bus.apu.wave_ram[16], 0x34);
+        assert_eq!(bus.read16(0x04000090), 0x1234);
+        // Selecting bank 1 flips the CPU window to bank 0.
+        bus.write16(0x04000070, 1 << 6);
+        bus.write16(0x04000090, 0x5678);
+        assert_eq!(bus.apu.wave_ram[0], 0x78);
+        assert_eq!(bus.read16(0x04000090), 0x5678);
+    }
+
+    #[test]
+    fn keycnt_raises_keypad_interrupt() {
+        // GBATEK KEYCNT: enable + OR over button A; pressing A sets IF bit 12.
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000132, (1 << 14) | (1 << 0));
+        bus.set_keyinput(0x03FF); // nothing pressed
+        assert_eq!(bus.sif & (1 << 12), 0);
+        bus.set_keyinput(0x03FE); // A pressed (bit 0 = 0)
+        // Keypad raises apply 1 tick later (delayed interrupt pipeline).
+        bus.tick();
+        assert_ne!(bus.sif & (1 << 12), 0);
+    }
+
+    #[test]
+    fn eeprom_dma_bitstream_roundtrip() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // EEPROM-detected cart: CPU access must not consume stream bits.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        // CPU loads from the EEPROM window see the chip state (mGBA
+        // GBASavedataReadEEPROM): idle drives 1 (Ready), never open bus.
+        bus.write32(0x02000000, 0x12345678);
+        let _ = bus.read32(0x02000000);
+        bus.write8(0x0D000000, 0x42);
+        assert_eq!(bus.read8(0x0D000000), 1);
+        // DMA write burst: 8K frame (start, write-op, 14-bit addr 0, data, stop).
+        let data = [0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04];
+        let mut bits = vec![true, false];
+        bits.extend_from_slice(&[false; 14]);
+        for byte in data {
+            for i in (0..8).rev() {
+                bits.push((byte >> i) & 1 != 0);
+            }
+        }
+        bits.push(false);
+        assert_eq!(bits.len(), 81);
+        // Program the source in IWRAM, then DMA it to 0D000000h.
+        for (i, bit) in bits.iter().enumerate() {
+            bus.write16(0x03000000 + (i as u32) * 2, u16::from(*bit));
+        }
+        bus.write32(0x040000D4, 0x03000000); // DMA3 SAD
+        bus.write32(0x040000D8, 0x0D000000); // DMA3 DAD
+        bus.write16(0x040000DC, bits.len() as u16); // count
+        bus.write16(0x040000DE, 0x8000); // enable, 16-bit, immediate
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        for _ in 0..10 {
+            bus.tick();
+        }
+        let cart = bus.cartridge().unwrap();
+        assert_eq!(&cart.ram_data().unwrap()[0..8], &data);
+        // DMA read back: request (start, read-op, addr 0) then 68-unit read.
+        let mut req = vec![true, true];
+        req.extend_from_slice(&[false; 14]);
+        for (i, bit) in req.iter().enumerate() {
+            bus.write16(0x03001000 + (i as u32) * 2, u16::from(*bit));
+        }
+        bus.write32(0x040000D4, 0x03001000);
+        bus.write32(0x040000D8, 0x0D000000);
+        bus.write16(0x040000DC, req.len() as u16);
+        bus.write16(0x040000DE, 0x8000);
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        for _ in 0..10 {
+            bus.tick();
+        }
+        bus.write32(0x040000D4, 0x0D000000);
+        bus.write32(0x040000D8, 0x03002000);
+        bus.write16(0x040000DC, 68);
+        bus.write16(0x040000DE, 0x8000);
+        for _ in 0..100000 {
+            bus.tick();
+            if !bus.dma_active() && !bus.dma.has_pending() {
+                break;
+            }
+        }
+        let mut got = [0u8; 8];
+        for i in 0..64 {
+            let bit = bus.read16(0x03002000 + 8 + (i as u32) * 2) & 1;
+            if bit != 0 {
+                got[i / 8] |= 1 << (7 - (i % 8));
+            }
+        }
+        assert_eq!(got, data);
+    }
+
+    #[test]
+    fn eeprom_cart_has_no_cpu_sram_window() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // GBATEK backup detection: an SRAM probe on an EEPROM cart must
+        // fail (open bus), not read back a phantom direct window.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x200..0x20A].copy_from_slice(b"EEPROM_V12");
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        bus.write32(0x02000000, 0x12345678);
+        bus.write16(0x0E000000, 0xBEEF);
+        // Re-point open bus at EWRAM, then prove 0E stored nothing.
+        assert_eq!(bus.read32(0x02000000), 0x12345678);
+        assert_eq!(bus.read16(0x0E000000), 0x5678);
+    }
+
+    #[test]
+    fn gpio_overlay_attaches_on_control_write() {
+        use crate::cartridge::Cartridge;
+        use crate::cartridge::header::finalize_test_gba_rom;
+        // Plain ROM data shows through until the first GPIO enable.
+        let mut rom = vec![0u8; 0x1000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0xC4] = 0x12;
+        rom[0xC5] = 0x34;
+        let mut bus = GbaMemoryBus::new();
+        bus.set_cartridge(Cartridge::new(rom).unwrap());
+        assert_eq!(bus.read16(0x080000C4), 0x3412);
+        bus.write16(0x080000C8, 1);
+        bus.write16(0x080000C6, 0b1010);
+        bus.write16(0x080000C4, 0b1111);
+        assert_eq!(bus.read16(0x080000C4), 0b1010);
+    }
+
+    #[test]
+    fn hblank_dma_fires_on_all_lines_including_vblank() {
+        // GBATEK DISPSTAT: H-Blank conditions are generated once per
+        // scanline, including hidden V-Blank scanlines — one full frame of
+        // a repeat HBlank channel transfers 228 units, not 160.
+        let mut bus = GbaMemoryBus::new();
+        for i in 0..256u16 {
+            bus.write16(0x03000000 + u32::from(i) * 2, 0xABCD);
+        }
+        bus.write32(0x040000B0, 0x03000000); // DMA0SAD
+        bus.write32(0x040000B4, 0x03001000); // DMA0DAD
+        bus.write16(0x040000B8, 1); // count 1
+        // ENABLE | REPEAT | HBLANK | 16-bit (DMA0CNT_H)
+        bus.write16(0x040000BA, 0x8000 | (1 << 9) | (2 << 12));
+        let mut frames = 0;
+        for _ in 0..300000 {
+            if bus.tick() {
+                frames += 1;
+                break;
+            }
+        }
+        assert_eq!(frames, 1);
+        let written = (0..256u16)
+            .filter(|&i| bus.read16(0x03001000 + u32::from(i) * 2) != 0)
+            .count();
+        assert_eq!(written, 228);
+    }
+
+    #[test]
+    fn video_dma_runs_after_line_162_latch() {
+        // DMA3 video-capture: latched at vcount==162, runs on lines [2,162)
+        // of the next frame (NBA model). Must not transfer before the latch.
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x03000000, 0x1111);
+        bus.write16(0x03000002, 0x2222);
+        bus.write16(0x03000004, 0x3333);
+        bus.write16(0x03000006, 0x4444);
+        bus.write32(0x040000D4, 0x03000000); // DMA3SAD
+        bus.write32(0x040000D8, 0x03001000); // DMA3DAD
+        bus.write16(0x040000DC, 4); // count 4
+        // ENABLE | SPECIAL | 16-bit
+        bus.write16(0x040000DE, 0x8000 | (3 << 12));
+        for _ in 0..100000 {
+            bus.tick();
+        }
+        // Still frame 0, before the line-162 latch: nothing transferred.
+        assert_eq!(bus.read16(0x03001000), 0);
+        // Run until the transfer completes (must happen, capped).
+        let mut done = false;
+        for _ in 0..500000 {
+            bus.tick();
+            if bus.read16(0x040000DE) & 0x8000 == 0 {
+                done = true;
+                break;
+            }
+        }
+        assert!(done, "video DMA never completed");
+        assert_eq!(bus.read16(0x03001000), 0x1111);
+        assert_eq!(bus.read16(0x03001002), 0x2222);
+        assert_eq!(bus.read16(0x03001004), 0x3333);
+        assert_eq!(bus.read16(0x03001006), 0x4444);
+        // Completed early in the next frame (lines 2..3), not mid-frame 0.
+        assert!(bus.read16(0x04000006) < 10);
     }
 
     #[test]
@@ -901,15 +3107,65 @@ mod tests {
     #[test]
     fn haltcnt_byte_access_and_interrupt_wakeup() {
         let mut bus = GbaMemoryBus::new();
+        // Stop mode (bit 7 set) latches without halting (unmodeled).
         bus.write8(0x04000301, 0x80);
+        assert!(!bus.is_halted());
+        // HALTCNT is write-only: reads see open bus (here: the written value
+        // itself, then stale after an intervening access).
         assert_eq!(bus.read8(0x04000301), 0x80);
-        assert_eq!(bus.read8(0x04000300), 0);
+        bus.write8(0x02000000, 0x12);
+        let _ = bus.read8(0x02000000);
+        assert_eq!(bus.read8(0x04000301), 0x12);
+        assert_eq!(bus.read8(0x04000300), 1);
 
         bus.write16(0x04000200, 1);
         bus.enter_halt(1);
         bus.request_interrupt(1);
+        // Wake propagates through the delayed pipeline (apply +1,
+        // availability +1).
+        bus.tick();
+        bus.tick();
         assert!(!bus.is_halted());
         assert_eq!(bus.read16(0x03007FF8) & 1, 1);
+    }
+
+    #[test]
+    fn cpu_haltcnt_writes_are_bios_gated() {
+        // NBA/mGBA HW behavior (nba haltcnt): CPU writes from outside the
+        // BIOS are ignored; HLE BIOS and DMA writes act.
+        let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x03000000);
+        bus.write16(0x04000300, 0x0001);
+        assert!(!bus.is_halted());
+        bus.write8(0x04000301, 0x00);
+        assert!(!bus.is_halted());
+        // POSTFLG likewise ignores non-BIOS writes (stays at reset 1).
+        bus.write16(0x04000300, 0x0000);
+        assert_eq!(bus.read8(0x04000300), 1);
+
+        // BIOS-context (HLE) writes halt and set POSTFLG.
+        let mut bus = GbaMemoryBus::new();
+        bus.write_hle_bios16(0x04000300, 0x0001);
+        assert!(bus.is_halted());
+
+        let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x00000000);
+        bus.write8(0x04000301, 0x00);
+        assert!(bus.is_halted());
+    }
+
+    #[test]
+    fn halt_wakes_once_irq_availability_propagates() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000200, 1);
+        bus.request_interrupt(1);
+        bus.enter_halt(1);
+        // Halt parks first (availability propagates with delay)...
+        assert!(bus.is_halted());
+        // ...then the pending IRQ wakes it once availability arrives.
+        bus.tick();
+        bus.tick();
+        assert!(!bus.is_halted());
     }
 
     #[test]
@@ -917,5 +3173,42 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         bus.set_current_pc(0x08);
         assert_eq!(bus.read32(0x08), 0xEAFF_FFFE);
+    }
+
+    #[test]
+    fn immediate_dma_transfers_memory_and_clears_enable() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x03000000, 0xDEADBEEF);
+        bus.write32(0x040000D4, 0x03000000);
+        bus.write32(0x040000D8, 0x02000000);
+        bus.write32(0x040000DC, 0x84000001);
+        // Memory is sampled after the 3 CPU-visible startup cycles
+        // (mGBA `when = now + 3` start latency plus the enabling bus
+        // cycle; nba start-delay pins the first read one tick later).
+        // The channel remains active for the transfer cycles after this.
+        for _ in 0..3 {
+            bus.tick();
+            assert_eq!(bus.read32(0x02000000), 0);
+        }
+        bus.tick();
+        assert_eq!(bus.read32(0x02000000), 0xDEADBEEF);
+        while bus.dma_active() {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x040000DE) & 0x8000, 0);
+    }
+
+    #[test]
+    fn timer_overflow_sets_if_and_cascades() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x04000104, 0x00840000);
+        bus.write32(0x04000100, 0x00C0FFFE);
+        for _ in 0..4 {
+            bus.tick();
+        }
+        // The overflow's IF propagates 1 tick after the request.
+        bus.tick();
+        assert_ne!(bus.read16(0x04000202) & (1 << 3), 0);
+        assert_eq!(bus.read16(0x04000104), 1);
     }
 }

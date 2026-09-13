@@ -22,6 +22,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
                 up: u,
                 writeback: w,
                 load: l,
+                s_bit: s,
             },
         );
     }
@@ -32,8 +33,12 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     } else {
         base.wrapping_sub(reg_list.count_ones() * 4)
     };
-    let stored_base = (!l && reg_list & (1 << rn) != 0 && rn != reg_list.trailing_zeros() as usize)
-        .then_some((rn, writeback_value));
+    // Without writeback the base register is unchanged, so a stored base
+    // uses the OLD value; only W=1 stores the NEW (post-increment) value
+    // for non-first occurrences.
+    let stored_base =
+        (w && !l && reg_list & (1 << rn) != 0 && rn != reg_list.trailing_zeros() as usize)
+            .then_some((rn, writeback_value));
     let transfer_user_bank = s && !(l && reg_list & (1 << 15) != 0);
     let transferred = transfer_registers(
         regs,
@@ -61,6 +66,9 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         }
     }
 
+    // The block breaks the fetch stream (mGBA load/store post-body:
+    // once per instruction, not per word).
+    bus.charge_fetch_stream_break();
     transfer_cycles(l, reg_list, transferred)
 }
 
@@ -80,6 +88,7 @@ struct EmptyTransferSpec {
     up: bool,
     writeback: bool,
     load: bool,
+    s_bit: bool,
 }
 
 fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
@@ -94,7 +103,14 @@ fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
 fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: TransferSpec) -> u32 {
     let mut address = spec.start;
     let mut transferred = 0;
+    // mGBA LoadMultiple/StoreMultiple: ONE prefetch stall on the
+    // whole-word total (see begin/end_block_batch).
+    bus.begin_block_batch(spec.load, 4);
     for register in (0..16).filter(|register| spec.list & (1 << register) != 0) {
+        // First word N; continuation words follow bus order (sequential
+        // unless crossing the 128KB line or regions).
+        let continuation = transferred > 0 && bus.data_continuation_sequential(address);
+        bus.set_data_sequential(continuation);
         if spec.load {
             load_register(
                 regs,
@@ -117,6 +133,8 @@ fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: Tra
         address = address.wrapping_add(4);
         transferred += 1;
     }
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
     transferred
 }
 
@@ -132,11 +150,18 @@ fn load_register(
     if user_bank {
         regs.set_user_r(register, value);
     } else {
+        // ARMv4 (ARM7TDMI) LDM to PC leaves CPSR.T unchanged (GBATEK ARM
+        // block transfer); interworking LDM-PC arrived with ARMv5T. (Thumb
+        // POP/LDM still interwork via their own handlers.)
         regs.set_r(register, value);
     }
     if restore && register == 15 {
-        // LDM^ including PC returns from an exception and restores CPSR from SPSR.
-        regs.set_cpsr(regs.spsr());
+        // LDM^ including PC returns from an exception and restores CPSR
+        // from SPSR — but USR/SYS have no SPSR (mGBA _ARMModeHasSPSR
+        // guard): skip instead of zeroing CPSR into an invalid mode.
+        if !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+            regs.set_cpsr(regs.spsr());
+        }
     }
 }
 
@@ -173,6 +198,7 @@ fn handle_empty_list(
     let address = start_address(spec.base, 16, spec.pre, spec.up);
     if spec.load {
         let target = bus.read_aligned32(address);
+        bus.charge_fetch_stream_break();
         if spec.writeback {
             regs.set_r(
                 spec.base_register,
@@ -184,9 +210,20 @@ fn handle_empty_list(
             );
         }
         regs.set_pc(target);
+        // GBATEK: with the S bit set, an LDM^ loading PC also restores CPSR
+        // from SPSR (same as a non-empty LDM^ with PC in the list).
+        if spec.s_bit {
+            regs.set_cpsr(regs.spsr());
+        }
+        // GBATEK Block Transfer: an empty Rlist transfers R15 only
+        // (Rb+=0x40 is address arithmetic, not 16 words), so n=1:
+        // LDM+PC = nS+1N+1I +1S+1N refill = 5.
         5
     } else {
+        // Empty STM stores the PC value only (R15 is not banked, so the S
+        // bit's user-bank selection has no visible effect here).
         bus.write32(address, regs.pc().wrapping_add(4));
+        bus.charge_fetch_stream_break();
         if spec.writeback {
             regs.set_r(
                 spec.base_register,
@@ -197,16 +234,24 @@ fn handle_empty_list(
                 },
             );
         }
-        18
+        // GBATEK: empty list stores R15 only, so n=1: STM = (n-1)S+2N = 2.
+        2
     }
 }
 
 fn transfer_cycles(load: bool, list: u32, transferred: u32) -> u32 {
-    // Loading PC also incurs the pipeline refill cost.
-    if load && list & (1 << 15) != 0 {
-        5
+    // GBATEK ARM cycle times: LDM = nS+1N+1I (+1S+1N if R15 loaded),
+    // STM = (n-1)S+2N. Bus waits ride separately via access_wait_cycles;
+    // the handler carries the 1-cycle-memory internal part: LDM = 2+n
+    // (+2 refill when PC is loaded), STM = 1+n.
+    if load {
+        if list & (1 << 15) != 0 {
+            4 + transferred
+        } else {
+            2 + transferred
+        }
     } else {
-        2 + transferred
+        1 + transferred
     }
 }
 

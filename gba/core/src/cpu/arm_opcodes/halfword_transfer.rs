@@ -29,14 +29,19 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if l {
         regs.set_r(rd, load(bus, addr, s, h));
     } else {
-        let val = regs.r(rd);
+        // Like single_transfer: Rn=R15 stores PC+12 (r(15) already holds
+        // PC+8), only the low halfword reaches the bus.
+        let val = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
         bus.write16(addr, (val & 0xFFFF) as u16);
     }
 
     if writeback && !(l && rd == rn) {
         regs.set_r(rn, wb_addr);
     }
-    if l { 3 } else { 2 }
+    // The data access breaks the fetch stream (mGBA load/store post-body).
+    bus.charge_fetch_stream_break();
+    // GBATEK: LDRH/SH/SB = 1S+1N+1I (+1S+1N if R15 loaded).
+    if l { if rd == 15 { 5 } else { 3 } } else { 2 }
 }
 
 fn load(bus: &mut GbaMemoryBus, address: u32, signed: bool, halfword: bool) -> u32 {

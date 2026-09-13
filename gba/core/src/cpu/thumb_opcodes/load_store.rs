@@ -7,6 +7,7 @@ pub fn handle_pc_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let addr = (regs.pc() & !3).wrapping_add(imm);
     let val = bus.read32(addr);
     regs.set_r(rd, val);
+    bus.charge_fetch_stream_break();
     3
 }
 
@@ -25,6 +26,7 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         let val = regs.r(rd);
@@ -33,6 +35,7 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
         } else {
             bus.write32(addr, val);
         }
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -46,14 +49,17 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
     match op {
         0b00 => {
             bus.write16(addr, regs.r(rd) as u16); // STRH
+            bus.charge_fetch_stream_break();
             2
         }
         0b01 => {
             regs.set_r(rd, bus.read8(addr) as i8 as i32 as u32); // LDRSB
+            bus.charge_fetch_stream_break();
             3
         }
         0b10 => {
             regs.set_r(rd, bus.read_ldr_halfword(addr)); // LDRH
+            bus.charge_fetch_stream_break();
             3
         }
         _ => {
@@ -63,6 +69,7 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
                 bus.read16(addr) as i16 as i32 as u32
             };
             regs.set_r(rd, value); // LDRSH
+            bus.charge_fetch_stream_break();
             3
         }
     }
@@ -86,6 +93,7 @@ pub fn handle_imm_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         let val = regs.r(rd);
@@ -94,6 +102,7 @@ pub fn handle_imm_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
         } else {
             bus.write32(addr, val);
         }
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -107,9 +116,11 @@ pub fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
     if l {
         let val = bus.read_ldr_halfword(addr);
         regs.set_r(rd, val);
+        bus.charge_fetch_stream_break();
         3
     } else {
         bus.write16(addr, regs.r(rd) as u16);
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -121,9 +132,11 @@ pub fn handle_sp_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let addr = regs.sp().wrapping_add(imm);
     if l {
         regs.set_r(rd, bus.read32(addr));
+        bus.charge_fetch_stream_break();
         3
     } else {
         bus.write32(addr, regs.r(rd));
+        bus.charge_fetch_stream_break();
         2
     }
 }
@@ -145,36 +158,54 @@ pub fn handle_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u
 fn ldm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
     let mut count = 0;
+    bus.begin_block_batch(true, 2);
     for i in 0..8 {
         if (rlist >> i) & 1 == 0 {
             continue;
         }
-        regs.set_r(i, bus.read32(addr));
+        // First word N; continuation words follow bus order.
+        let continuation = count > 0 && bus.data_continuation_sequential(addr);
+        bus.set_data_sequential(continuation);
+        regs.set_r(i, bus.read_aligned32(addr));
         addr = addr.wrapping_add(4);
         count += 1;
     }
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
+    bus.charge_fetch_stream_break();
     if (rlist >> rb) & 1 == 0 {
         regs.set_r(rb, addr);
     }
-    3 + count
+    // Thumb LDMIA: nS+1N+1I (GBATEK). The I cycle is accounted here as 2+count
+    // (1N for the first word is handled via waitstates, 1I plus loop overhead).
+    // Previously 3+count overcounted by 1I, causing nba 128KB-boundary LDM timings to be +1.
+    2 + count
 }
 
 fn stm_multiple(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, rb: usize, rlist: u16) -> u32 {
     let mut addr = regs.r(rb);
-    let final_addr = addr.wrapping_add(u32::from(rlist.count_ones()) * 4);
+    let final_addr = addr.wrapping_add(rlist.count_ones() * 4);
     let first_register = rlist.trailing_zeros() as usize;
     let mut count = 0;
+    bus.begin_block_batch(false, 2);
     for i in 0..8 {
         if (rlist >> i) & 1 == 0 {
             continue;
         }
         let value = stm_value(regs, rb, i, first_register, final_addr);
+        // First word N; continuation words follow bus order.
+        let continuation = count > 0 && bus.data_continuation_sequential(addr);
+        bus.set_data_sequential(continuation);
         bus.write32(addr, value);
         addr = addr.wrapping_add(4);
         count += 1;
     }
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
+    bus.charge_fetch_stream_break();
     regs.set_r(rb, addr);
-    2 + count
+    // Thumb STMIA: (n-1)S+2N (GBATEK), i.e. 1+count at 1-cycle memory.
+    1 + count
 }
 
 #[inline]
@@ -201,15 +232,25 @@ fn handle_empty_multiple(
 ) -> u32 {
     let address = regs.r(base_register);
     if load {
-        let target = bus.read32(address);
+        // Empty LDM ignores addr[1:0] like every other LDM (forced align,
+        // matching the ARM empty path and the non-empty path above).
+        let target = bus.read_aligned32(address);
+        bus.charge_fetch_stream_break();
         regs.set_r(base_register, address.wrapping_add(0x40));
+        // GBATEK THUMB.14: like POP {PC}, the LSB is ignored on ARMv4T.
         regs.set_pc(target);
-        19
+        // GBATEK: empty list loads R15 only (n=1): (n+1)S+2N+1I = 5.
+        5
     } else {
-        // Empty STM stores the PC value observed by the following Thumb instruction.
+        // Empty STM stores R15+2 in Thumb state (mGBA GBAStoreMultiple:
+        // +WORD_SIZE_THUMB; ARM uses +WORD_SIZE_ARM) — pinned by jsmolka
+        // thumb t229, which compares the stored word against a
+        // `mov r1, pc` one instruction later.
         bus.write32(address, regs.pc().wrapping_add(2));
+        bus.charge_fetch_stream_break();
         regs.set_r(base_register, address.wrapping_add(0x40));
-        18
+        // GBATEK: empty list stores R15 only (n=1): (n-1)S+2N = 2.
+        2
     }
 }
 
@@ -248,6 +289,7 @@ mod tests {
         regs.set_r(0, 0x03000000);
         handle_multiple(&mut regs, &mut bus, 0xC000);
         assert_eq!(regs.r(0), 0x03000040);
+        // Empty STM stores R15+2 in Thumb state (mGBA; jsmolka t229).
         assert_eq!(bus.read32(0x03000000), 0x08000306);
     }
 }

@@ -6,25 +6,36 @@
 |---|---|---|
 | `jsmolka_gba-tests/` | https://github.com/jsmolka/gba-tests | MIT |
 | `nba-emu_hw-test/` | https://codeberg.org/nba-emu/hw-test | BSD 3-Clause |
+| `armwrestler-gba-fixed/` | https://github.com/destoer/armwrestler-gba-fixed | MIT (assumed) |
+| `PeterLemon-GBA/` | https://github.com/PeterLemon/GBA | MIT (assumed) |
+| `mgba-suite/` | https://github.com/mgba-emu/suite | MPL-2.0 |
 
-Each upstream is imported as a squashed Git subtree.
+Each upstream is imported as a squashed Git subtree under `repo/` where build is required (like `gbc`).
 
 - `jsmolka_gba-tests`: squashed from commit `a7113b67` (merge `b1693061` / `e221ce14`)
-- `nba-emu_hw-test`: squashed from commit `fbc99140e06f083c0a47612467cfbb02470e56dc` (squash `8b81fc11`)
+- `nba-emu_hw-test`: squashed from commit `fbc99140e06f083c0a47612467cfbb02470e56dc` (squash `8b81fc11`) under `nba-emu_hw-test/`
+- `armwrestler-gba-fixed`: squashed from commit `802e55a` (master, destoer/armwrestler-gba-fixed) under `armwrestler-gba-fixed/`
+- `PeterLemon-GBA`: squashed from commit `efdb535` (master, PeterLemon/GBA) under `PeterLemon-GBA/`
+- `mgba-suite`: squashed from commit `e694203` (master, mgba-emu/suite) under `mgba-suite/repo/`
 
 ## Build and artifact provenance
 
 - jsmolka `gba-tests` ROMs are assembled with [FASMARM](https://arm.flatassembler.net/). The repository includes prebuilt `.gba` files; rebuild with `fasmarm` if needed.
 - `nba-emu/hw-test` ROMs are built with `devkitARM` (`arm-none-eabi-gcc` + `libgba`). Each test directory contains a `Makefile` requiring `DEVKITARM`; prebuilt `.gba` files are included in the subtree and used directly.
+- `armwrestler-gba-fixed` and `PeterLemon-GBA` are FASMARM bare-metal demos; prebuilt `.gba` are included.
+- `mgba-suite` requires `devkitARM` + `libgba` to build `suite.gba` from `mgba-suite/repo`. Like `gbc` (`repo/mgblib` submodules), the source is under `mgba-suite/repo/` and must be built with `make -C roms/gba/mgba-suite/repo` (requires `DEVKITARM`/`DEVKITPRO`). Prebuilt `suite.gba` is *not* committed; CI builds it on demand and the headless matrix skips the suite if the artifact is missing.
 
 ## Pass criteria
 
 - `jsmolka_gba-tests` aggregate ROMs (`arm`, `thumb`, `memory`, `save/*`, `bios`) leave the first failed test number in `R12` (`thumb` uses `R7`). `0` means all embedded tests passed. The current matrix runs 8 cases (`jsmolka_arm`, `jsmolka_thumb`, `jsmolka_memory`, `jsmolka_bios`, `jsmolka_save_*`) all passing.
-- `nba-emu/hw-test` non-PPU suites are timing-sensitive (bus, DMA, timers, IRQ, haltcnt). Each ROM prints `PASS`/`FAIL` via `test_expect*` in `lib/source/test.c` and `congratulations!` when all sub-tests pass. The headless runner currently executes them for 10M T-cycles and checks a stable memory location (`0x0203FFE0 == 0x00`) as a smoke check; full timing verification will be tightened when Timer/DMA accuracy improves in Phase 8.5. The current matrix runs 13 cases (`nba_128kb-boundary`, `nba_burst-into-tears`, `nba_force-nseq-access`, `nba_latch`, `nba_start-delay`, `nba_haltcnt`, `nba_irq-delay`, `nba_reload`, `nba_start-stop`, `nba_tick-before-reload`, `nba_cancel-irq-*`) all passing. PPU tests (`ppu/**`, `archive/ppu/**`) are excluded from the headless matrix and require visual comparison against `expected.png`/`expected.jpg`.
+- `nba-emu/hw-test` suites print `PASS`/`FAIL` via `test_expect*` and store `test_count`/`test_pass_count` in IWRAM. The headless matrix verifies those counters for the three Timer ROMs plus `dma/start-delay` and `dma/latch`; all registered sub-tests must pass. `dma/force-nseq-access` and `dma/burst-into-tears` remain unregistered because Game Pak NSEQ restart timing and 128MB-boundary DMA sequencing are not yet accurate. PPU timing ROMs that require HBlank IRQ/DMA remain pending full-frame comparison.
+- `armwrestler-gba-fixed` (`armwrestler-gba-fixed.gba`, `armwrestler.gba`) is an interactive menu-driven ARM7TDMI instruction test (Mic 2004, Normmatt 2012, destoer fixed). The headless matrix runs one case `armwrestler_menu` that checks the Mode 3 menu frame (`0x06000000` bitmap, `0x03000008` TESTNUM=10) renders the border at `0,0` as black (`0x0000`) after `2M` T-cycles.
+- `PeterLemon-GBA` is a collection of 76 bare-metal demos (FASMARM, krom/Peter Lemon) covering BIOS calls, 3D, sound etc. Each `*.gba` has a prebuilt `*.png` reference (240x160) and is run headless for `1M` T-cycles with automatic `expected.png` diff; demos without reference are checked only for not crashing (`0,0` black).
+- `mgba-suite` (`suite.gba` 14 suites: memory, timing, DMA, video etc.) is an interactive menu-driven suite (endless 2015). It prints `PASS/FAIL` via `mgba_printf` (`0x4FF600`) and `savprintf` to SRAM (`0x0E000000`). Headless runs will drive the menu via `0x03000000+8` `activeTestInfo` and check SRAM, like `armwrestler`.
 
 ## Usage
 
-Test ROMs are executed via the `nerust_gba_rom_test` crate (`gba/rom_test/`). The manifest `gba/rom_test/rom_tests.yaml` defines `rom_root: ../../roms/gba` and suites `jsmolka_gba-tests` and `nba-emu_hw-test` (via `case_patterns` excluding `ppu/**`). Run with:
+Test ROMs are executed via the `nerust_gba_rom_test` crate (`gba/rom_test/`). The manifest `gba/rom_test/rom_tests.yaml` defines `rom_root: ../../roms/gba` and suites `jsmolka_gba-tests`, `nba-emu_hw-test`, `armwrestler-gba-fixed`, `PeterLemon-GBA` and `mgba-suite` (if built). Run with:
 
 ```sh
 cargo run -p nerust_gba_rom_test

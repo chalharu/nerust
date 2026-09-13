@@ -40,13 +40,16 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         let value = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
         store(bus, addr, value, b);
     }
+    // The data access breaks the fetch stream (mGBA load/store post-body).
+    bus.charge_fetch_stream_break();
 
     if writeback && !(l && rd == rn) {
         // Avoid writeback when Rd == Rn for LDR (UNPREDICTABLE)
         regs.set_r(rn, wb_addr);
     }
 
-    if l { 3 } else { 2 }
+    // GBATEK: LDR = 1S+1N+1I (+1S+1N if R15 loaded); STR = 2N.
+    if l { if rd == 15 { 5 } else { 3 } } else { 2 }
 }
 
 fn load(bus: &mut GbaMemoryBus, address: u32, byte: bool) -> u32 {
