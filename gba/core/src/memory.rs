@@ -71,10 +71,24 @@ pub struct GbaMemoryBus {
     /// raises the serial IRQ when enabled.
     sio_xfer_cycles: u32,
     sio_xfer_32: bool,
+    /// UART shift state: true while a UART frame is on the wire.
+    sio_xfer_uart: bool,
+    /// UART FIFOs (4-deep each when enabled, single unit otherwise).
+    uart_tx: std::collections::VecDeque<u8>,
+    uart_rx: std::collections::VecDeque<u8>,
+    /// Latched UART error flag (cleared by SIOCNT read, GBATEK).
+    uart_err: bool,
+    /// Previous UART IRQ-source levels for edge detection.
+    uart_prev_irqsrc: u8,
 
     // Bus制御
     last_prefetch: u32,
-    open_bus_value: u32,
+    /// Last two fetched opcodes ([older, newer]) for open-bus modeling
+    /// (mGBA `cpu->prefetch`; updated by opcode fetches only — data
+    /// reads/writes never touch the bus latch, GBATEK "Unpredictable").
+    prefetch_win: [u32; 2],
+    /// Whether the newest fetch was Thumb (16-bit window composition).
+    prefetch_thumb: bool,
     /// GamePak prefetch enable (WAITCNT bit 14). With mGBA-shaped N/S the
     /// enable gates only the prefetch erase (`prefetch_erase_delta`):
     /// opcode fetches always follow the fetch stream at S/N cost (the
@@ -271,9 +285,15 @@ impl GbaMemoryBus {
             joycnt: 0,
             sio_xfer_cycles: 0,
             sio_xfer_32: false,
+            sio_xfer_uart: false,
+            uart_tx: std::collections::VecDeque::new(),
+            uart_rx: std::collections::VecDeque::new(),
+            uart_err: false,
+            uart_prev_irqsrc: 0,
 
             last_prefetch: 0xE129F000,
-            open_bus_value: 0xE129F000,
+            prefetch_win: [0xE129F000, 0xE129F000],
+            prefetch_thumb: false,
             prefetch_enabled: false,
             data_sequential_override: false,
             block_batching: false,
@@ -534,6 +554,9 @@ impl GbaMemoryBus {
             return false;
         }
         self.dma.tick_pending();
+        if self.apu.tick() {
+            crate::bios::sound_driver::mix_driver_grid(self);
+        }
         if self.video_countdown > 0 {
             self.video_countdown -= 1;
             if self.video_countdown == 0 {
@@ -618,14 +641,31 @@ impl GbaMemoryBus {
         if self.sio_xfer_cycles > 0 {
             self.sio_xfer_cycles -= 1;
             if self.sio_xfer_cycles == 0 {
-                self.siocnt &= !0x0080;
-                if self.sio_xfer_32 {
-                    self.siodata32 = 0xFFFF_FFFF;
+                if self.sio_xfer_uart {
+                    // UART frame done: the sent byte leaves, an idle-high
+                    // byte arrives when receive is enabled (overrun sets
+                    // the error flag), then chained frames kick.
+                    self.sio_xfer_uart = false;
+                    self.uart_tx.pop_front();
+                    if self.siocnt & 0x0800 != 0 {
+                        if self.uart_rx.len() >= self.uart_fifo_cap() {
+                            self.uart_err = true;
+                        } else {
+                            self.uart_rx.push_back(0xFF);
+                        }
+                    }
+                    self.uart_eval_irq();
+                    self.kick_uart();
                 } else {
-                    self.siodata8 = 0x00FF;
-                }
-                if self.siocnt & 0x4000 != 0 {
-                    self.request_interrupt(1 << 7);
+                    self.siocnt &= !0x0080;
+                    if self.sio_xfer_32 {
+                        self.siodata32 = 0xFFFF_FFFF;
+                    } else {
+                        self.siodata8 = 0x00FF;
+                    }
+                    if self.siocnt & 0x4000 != 0 {
+                        self.request_interrupt(1 << 7);
+                    }
                 }
             }
         }
@@ -945,6 +985,11 @@ impl GbaMemoryBus {
             self.joycnt = 0;
             self.sio_xfer_cycles = 0;
             self.sio_xfer_32 = false;
+            self.sio_xfer_uart = false;
+            self.uart_tx.clear();
+            self.uart_rx.clear();
+            self.uart_err = false;
+            self.uart_prev_irqsrc = 0;
         }
         if flags & 0x40 != 0 {
             self.apu.reset_sound();
@@ -1214,6 +1259,37 @@ impl GbaMemoryBus {
         }
     }
 
+    /// Open-bus 32-bit value (mGBA `GBALoadBad`, CPU path): the prefetch
+    /// window, combined by execute-region in Thumb mode. DMA never
+    /// interleaves here — the CPU stalls while DMA owns the bus, and HLE
+    /// bulk copies are CPU-side accesses.
+    fn open_bus32(&self) -> u32 {
+        let [p0, p1] = self.prefetch_win;
+        if !self.prefetch_thumb {
+            return p1;
+        }
+        match self.current_pc >> 24 {
+            0x00 | 0x06 => (p1 << 16) | (p0 & 0xFFFF),
+            0x03 => {
+                if self.current_pc & 2 != 0 {
+                    (p1 << 16) | (p0 & 0xFFFF)
+                } else {
+                    p1 | ((p0 & 0xFFFF) << 16)
+                }
+            }
+            _ => p1 | (p1 << 16),
+        }
+    }
+
+    /// Lane-selected open-bus reads (mGBA `GBALoad8/16` bad paths).
+    fn open_bus8(&self, addr: u32) -> u32 {
+        (self.open_bus32() >> ((addr & 3) * 8)) & 0xFF
+    }
+
+    fn open_bus16(&self, addr: u32) -> u32 {
+        (self.open_bus32() >> ((addr & 2) * 8)) & 0xFFFF
+    }
+
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
         // GBATEK Backup Media / EEPROM: on EEPROM cartridges the 0D window
         // is the serial chip, not ROM (mGBA GBASavedataReadEEPROM: CPU
@@ -1239,7 +1315,12 @@ impl GbaMemoryBus {
                 }
             }
             0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
-            _ => self.open_bus_value,
+            // Unmapped: prefetch-latch open bus, lane-selected by width.
+            _ => match width {
+                4 => self.open_bus32(),
+                2 => self.open_bus16(addr),
+                _ => self.open_bus8(addr),
+            },
         }
     }
 
@@ -1253,8 +1334,6 @@ impl GbaMemoryBus {
                 2 => raw & 0xFFFF,
                 _ => raw & 0xFF,
             };
-            self.open_bus_value = raw;
-            self.last_prefetch = raw;
             let _ = addr;
             aligned
         } else {
@@ -1266,8 +1345,10 @@ impl GbaMemoryBus {
     /// region-leave update).
     pub fn set_bios_prefetch(&mut self, value: u32) {
         self.bios_prefetch = value;
-        self.open_bus_value = value;
         self.last_prefetch = value;
+        self.prefetch_win = [value, value];
+        // BIOS entry/exit synthesis is ARM code.
+        self.prefetch_thumb = false;
     }
 
     /// Reset fetch/data stream tracking on a CPU jump (branch taken, IRQ
@@ -1289,8 +1370,6 @@ impl GbaMemoryBus {
         #[cfg(feature = "mgba-debug-log")]
         if !is_opcode && (0x04FFF600..=0x04FFF7FF).contains(&addr) {
             let raw = self.read_mgba_debug(addr, width);
-            self.last_prefetch = raw;
-            self.open_bus_value = raw;
             return (raw, 0);
         }
         let wait = self.cycles_for_access(addr, width, is_opcode);
@@ -1317,9 +1396,12 @@ impl GbaMemoryBus {
         if is_opcode {
             self.fetch_addr = Some(addr);
             self.fetch_width = width;
+            // Opcode fetches slide the prefetch window (data accesses and
+            // stores leave the bus latch alone, GBATEK "Unpredictable").
+            self.prefetch_win = [self.prefetch_win[1], raw];
+            self.prefetch_thumb = width == 2;
+            self.last_prefetch = raw;
         }
-        self.last_prefetch = raw;
-        self.open_bus_value = raw;
         (raw, wait)
     }
 
@@ -1468,13 +1550,11 @@ impl GbaMemoryBus {
                 if let Some(cart) = self.cartridge.as_mut()
                     && cart.gpio.write(addr, width, value)
                 {
-                    self.open_bus_value = value;
-                    self.prev_addr = Some(addr);
+                                self.prev_addr = Some(addr);
                     self.prev_width = width;
                     return;
                 }
-                self.open_bus_value = value;
-            }
+                    }
         }
         self.prev_addr = Some(addr);
         self.prev_width = width;
@@ -1537,7 +1617,6 @@ impl GbaMemoryBus {
             }
             _ => {}
         }
-        self.open_bus_value = value;
     }
 
     /// Test-ROM log-sink read: buffer bytes, or `0x1DEA` from the
@@ -1561,10 +1640,18 @@ impl GbaMemoryBus {
                 if self.mgba_debug_enable {
                     0x1DEA
                 } else {
-                    self.open_bus_value
+                    match width {
+                        4 => self.open_bus32(),
+                        2 => self.open_bus16(addr),
+                        _ => self.open_bus8(addr),
+                    }
                 }
             }
-            _ => self.open_bus_value,
+            _ => match width {
+                4 => self.open_bus32(),
+                2 => self.open_bus16(addr),
+                _ => self.open_bus8(addr),
+            },
         }
     }
 
@@ -1606,7 +1693,12 @@ impl GbaMemoryBus {
             }
             return cart.read_rom(addr, width);
         }
-        self.open_bus_value
+        // No cartridge: prefetch-latch open bus, lane-selected by width.
+        match width {
+            4 => self.open_bus32(),
+            2 => self.open_bus16(addr),
+            _ => self.open_bus8(addr),
+        }
     }
 
     fn read_sram(&self, addr: u32, width: u8) -> u32 {
@@ -1614,7 +1706,11 @@ impl GbaMemoryBus {
         // EEPROM carts there is no 0E window, so CPU reads see open bus
         // (only the DMA3 serial protocol reaches the chip).
         if self.is_eeprom() {
-            return self.open_bus_value;
+            return match width {
+                4 => self.open_bus32(),
+                2 => self.open_bus16(addr),
+                _ => self.open_bus8(addr),
+            };
         }
         if let Some(cart) = &self.cartridge {
             return cart.read_sram(addr, width);
@@ -1673,7 +1769,7 @@ impl GbaMemoryBus {
                 0x04000300 => return self.postflg as u32,
                 // HALTCNT is write-only (GBATEK System Control): reads see
                 // open bus, never the latch.
-                0x04000301 => return self.open_bus_value & 0xFF,
+                0x04000301 => return self.open_bus8(addr),
                 _ => {}
             }
         }
@@ -1684,7 +1780,7 @@ impl GbaMemoryBus {
                     Some(v) => v,
                     None => {
                         // Write-only register (MOSAIC, BLDY, HOFS, affine, WINH/V, ...)
-                        return self.open_bus_value;
+                        return self.open_bus16(aligned);
                     }
                 }
             }
@@ -1696,7 +1792,7 @@ impl GbaMemoryBus {
                 } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
                     0
                 } else {
-                    (self.open_bus_value & 0xFFFF) as u16
+                    self.open_bus16(aligned) as u16
                 }
             }
             0x04000100..=0x0400010E => {
@@ -1717,17 +1813,31 @@ impl GbaMemoryBus {
             0x0400007C => self.apu.sound4cnt_hi,
             0x04000080 => self.apu.soundcnt_lo,
             0x04000082 => self.apu.soundcnt_hi,
-            0x04000084 => self.apu.soundcnt_x,
+            0x04000084 => self.apu.soundcnt_x_read(),
             0x04000088 => self.apu.soundbias,
             0x04000090..=0x0400009E => self.apu.wave_read(aligned),
             // FIFO_A/B (A0/A4) are write-only; reads return open bus.
-            0x04000128 => self.siocnt,
+            // UART SIOCNT: bits 4-6 are live status (send-full,
+            // receive-empty, error); the error latch clears on read.
+            0x04000128 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
+                    let out = (self.siocnt & !0x0070) | (u16::from(self.uart_irqsrc()) << 4);
+                    self.uart_err = false;
+                    self.uart_prev_irqsrc = self.uart_irqsrc();
+                    out
+                } else {
+                    self.siocnt
+                }
+            }
             // 0x12A is SIOMLT_SEND (multi), SIODATA8 (normal-8/32) or a
-            // plain latch (GPIO/Joybus); in UART mode reads come from the
-            // empty receive FIFO, i.e. 0 (suite table).
+            // plain latch (GPIO/Joybus); in UART mode it addresses the
+            // FIFOs — reads pop receive bytes (0 when empty, suite table).
             0x0400012A => {
                 if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
-                    0
+                    let byte = self.uart_rx.pop_front().unwrap_or(0) as u16;
+                    // Draining to empty raises the receive flag (IRQ edge).
+                    self.uart_eval_irq();
+                    byte
                 } else {
                     self.siodata8
                 }
@@ -1764,7 +1874,7 @@ impl GbaMemoryBus {
             0x04000202 => self.sif,
             0x04000204 => self.wait_cnt,
             0x04000208 => self.ime as u16,
-            0x04000300 => (self.postflg as u16) | (self.open_bus_value & 0xFF00) as u16,
+            0x04000300 => (self.postflg as u16) | (self.open_bus32() & 0xFF00) as u16,
             // Unused I/O reads return 0, NOT open bus (mGBA GBAIORead
             // "Read from unused I/O register" list; the mgba-suite
             // io-read table is the HW capture: 0x20A reads 0 too, as
@@ -1793,13 +1903,11 @@ impl GbaMemoryBus {
     fn write_ewram(&mut self, addr: u32, width: u8, value: u32) {
         let off = Self::aligned_off(addr, width, 0x3FFFF);
         write_slice(&mut *self.ewram, off, width, value);
-        self.open_bus_value = value;
     }
 
     fn write_iwram(&mut self, addr: u32, width: u8, value: u32) {
         let off = Self::aligned_off(addr, width, 0x7FFF);
         write_slice(&mut *self.iwram, off, width, value);
-        self.open_bus_value = value;
     }
 
     fn write_palette(&mut self, addr: u32, width: u8, value: u32) {
@@ -1810,13 +1918,11 @@ impl GbaMemoryBus {
         } else {
             write_slice(&mut *self.palette_ram, off, width, value);
         }
-        self.open_bus_value = value;
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
         let Some(off) = self.vram_offset(addr, width) else {
-            self.open_bus_value = value;
-            return;
+                return;
         };
         if width == 1 {
             let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
@@ -1827,7 +1933,6 @@ impl GbaMemoryBus {
         } else {
             write_slice(&mut *self.vram, off, width, value);
         }
-        self.open_bus_value = value;
     }
 
     fn write_oam(&mut self, addr: u32, width: u8, value: u32) {
@@ -1835,14 +1940,12 @@ impl GbaMemoryBus {
         if width != 1 {
             write_slice(&mut *self.oam, off, width, value);
         }
-        self.open_bus_value = value;
     }
 
     fn write_sram(&mut self, addr: u32, width: u8, value: u32) {
         // No 0E window on EEPROM carts (see read_sram): stores go nowhere.
         if self.is_eeprom() {
-            self.open_bus_value = value;
-            return;
+                return;
         }
         if let Some(cart) = &mut self.cartridge {
             cart.write_sram(addr, width, value);
@@ -1852,7 +1955,6 @@ impl GbaMemoryBus {
             let off = (addr & 0xFFFF) as usize;
             self.fallback_sram[off] = selected_write_byte(addr, width, value);
         }
-        self.open_bus_value = value;
     }
 
     /// SIOCNT write with per-sub-mode R/W maps. Unreadable bits never
@@ -1860,13 +1962,15 @@ impl GbaMemoryBus {
     fn write_siocnt(&mut self, v: u16) {
         // Bit 15 is always 0 (mGBA GBAIOWrite `value &= 0x7FFF`).
         let mut value = v & 0x7FFF;
+        let old_fifo_en = self.siocnt & 0x0100 != 0;
         let sub = Self::sio_submode(value);
         let sio_block = self.sio_block_selected();
         match sub {
             2 if sio_block => {
-                // Multiplayer: Slave/Ready/ID/Error are read-only. A slave
-                // never starts, so START never schedules (Multi tests
-                // self-SKIP on timeout).
+                // Multiplayer: Slave/Ready/ID/Error are read-only. A solo
+                // master is the parent waiting for children that never
+                // answer, so START never completes (mgba-suite sio-timing
+                // Multi/* cells pin timedOut=true); slaves never start.
                 value &= 0xFF83;
                 value |= 0x0004;
                 value &= !0x0030;
@@ -1874,10 +1978,10 @@ impl GbaMemoryBus {
                 value |= 0x0008;
             }
             3 if sio_block => {
-                // UART SCCNT_L (GBATEK): Send-Full (4) reads 0 and Error
-                // (6) reads 0 while idle; Receive-Empty (5) reads 1; the
-                // baud/parity/enable bits are R/W.
-                value &= !0x8050;
+                // UART SCCNT_L (GBATEK): bits 4-6 are RO status composed
+                // at read time; bit 7 is the R/W data length (NOT start);
+                // error/send-full never persist from the written value.
+                value &= !0x0070;
             }
             _ => {
                 // Normal-8/32, and GPIO/Joybus (SIOCNT keeps its
@@ -1895,8 +1999,62 @@ impl GbaMemoryBus {
         if started && sio_block && (sub == 0 || sub == 1) {
             let bit: u32 = if value & 0x0002 != 0 { 8 } else { 64 };
             self.sio_xfer_32 = sub == 1;
+            self.sio_xfer_uart = false;
             self.sio_xfer_cycles = (if sub == 1 { 32 } else { 8 }) * bit;
         }
+        if sub == 3 && sio_block {
+            // FIFO content resets when FIFO is disabled (GBATEK).
+            if old_fifo_en && self.siocnt & 0x0100 == 0 {
+                self.uart_tx.clear();
+                self.uart_rx.clear();
+                self.uart_eval_irq();
+            }
+            self.kick_uart();
+        }
+    }
+
+    /// UART FIFO depth (4 with enable, single unit without).
+    fn uart_fifo_cap(&self) -> usize {
+        if self.siocnt & 0x0100 != 0 { 4 } else { 1 }
+    }
+
+    /// UART IRQ-source levels {send_full, recv_empty, err}.
+    fn uart_irqsrc(&self) -> u8 {
+        let cap = self.uart_fifo_cap();
+        (u8::from(self.uart_tx.len() >= cap))
+            | (u8::from(self.uart_rx.is_empty()) << 1)
+            | (u8::from(self.uart_err) << 2)
+    }
+
+    /// UART IRQ on rising source edges (GBATEK bit 14: IRQ when any of
+    /// bits 4/5/6 become set).
+    fn uart_eval_irq(&mut self) {
+        let now = self.uart_irqsrc();
+        if self.siocnt & 0x4000 != 0 && (now & !self.uart_prev_irqsrc) != 0 {
+            self.request_interrupt(1 << 7);
+        }
+        self.uart_prev_irqsrc = now;
+    }
+
+    /// Start a UART frame when send is enabled, data waits and the wire is
+    /// idle. CTS set blocks (SC floats high with no peer); blind senders
+    /// transmit as soon as Send Enable is set (GBATEK).
+    fn kick_uart(&mut self) {
+        if self.sio_xfer_cycles != 0
+            || !self.sio_block_selected()
+            || Self::sio_submode(self.siocnt) != 3
+            || self.siocnt & 0x0400 == 0
+            || self.uart_tx.is_empty()
+            || self.siocnt & 0x0004 != 0
+        {
+            return;
+        }
+        const BIT_CYCLES: [u32; 4] = [1748, 437, 291, 146];
+        let baud = (self.siocnt & 3) as usize;
+        let data_bits = if self.siocnt & 0x0080 != 0 { 8 } else { 7 };
+        let parity = if self.siocnt & 0x0200 != 0 { 1 } else { 0 };
+        self.sio_xfer_cycles = (1 + data_bits + parity + 1) * BIT_CYCLES[baud];
+        self.sio_xfer_uart = true;
     }
 
     /// RCNT write latch (mGBA `GBAIOWrite` mask `0xC1FF` + per-mode maps).
@@ -1936,12 +2094,10 @@ impl GbaMemoryBus {
             let shift = (addr & 3) * 8;
             let mask = (u32::MAX >> (8 * (4 - u32::from(width)))) << shift;
             self.mem_control = (self.mem_control & !mask) | ((value << shift) & mask & 0xFF00_002F);
-            self.open_bus_value = value;
-            return;
+                return;
         }
         if width == 4 && self.timers.write32(addr, value) {
-            self.open_bus_value = value;
-            return;
+                return;
         }
         if width > 1 && addr == 0x04000300 {
             // POSTFLG/HALTCNT are BIOS-gated (NBA/mGBA HW behavior, confirmed
@@ -1963,8 +2119,7 @@ impl GbaMemoryBus {
                     self.enter_stop();
                 }
             }
-            self.open_bus_value = value;
-            return;
+                return;
         }
         if width == 4 {
             self.write_io(addr, 2, value & 0xFFFF, bios);
@@ -1978,8 +2133,7 @@ impl GbaMemoryBus {
                     if gated {
                         self.postflg |= (value & 1) as u8;
                     }
-                    self.open_bus_value = value;
-                    return;
+                                return;
                 }
                 0x04000301 => {
                     let gated = bios || self.current_pc <= 0x3FFF;
@@ -1992,8 +2146,7 @@ impl GbaMemoryBus {
                             self.enter_stop();
                         }
                     }
-                    self.open_bus_value = value;
-                    return;
+                                return;
                 }
                 _ => {}
             }
@@ -2068,16 +2221,16 @@ impl GbaMemoryBus {
             // GBAIOWrite `value &= mask`; GBATEK R/W maps): unreadable
             // bits never persist, so reads return the stored value.
             // mgba-suite io-read pins write-0xFFFF -> each mask.
-            0x04000060 => self.apu.sound1cnt_lo = v16 & 0x007F,
-            0x04000062 => self.apu.sound1cnt_hi = v16 & 0xFFC0,
-            0x04000064 => self.apu.sound1cnt_x = v16 & 0x4000,
-            0x04000068 => self.apu.sound2cnt_lo = v16 & 0xFFC0,
-            0x0400006C => self.apu.sound2cnt_hi = v16 & 0x4000,
-            0x04000070 => self.apu.sound3cnt_lo = v16 & 0x00E0,
-            0x04000072 => self.apu.sound3cnt_hi = v16 & 0xE000,
-            0x04000074 => self.apu.sound3cnt_x = v16 & 0x4000,
-            0x04000078 => self.apu.sound4cnt_lo = v16 & 0xFF00,
-            0x0400007C => self.apu.sound4cnt_hi = v16 & 0x40FF,
+            0x04000060 => self.apu.write_sound1cnt_lo(v16),
+            0x04000062 => self.apu.write_sound1cnt_hi(v16),
+            0x04000064 => self.apu.write_sound1cnt_x(v16),
+            0x04000068 => self.apu.write_sound2cnt_lo(v16),
+            0x0400006C => self.apu.write_sound2cnt_hi(v16),
+            0x04000070 => self.apu.write_sound3cnt_lo(v16),
+            0x04000072 => self.apu.write_sound3cnt_hi(v16),
+            0x04000074 => self.apu.write_sound3cnt_x(v16),
+            0x04000078 => self.apu.write_sound4cnt_lo(v16),
+            0x0400007C => self.apu.write_sound4cnt_hi(v16),
             0x04000080 => self.apu.soundcnt_lo = v16 & 0xFF77,
             0x04000082 => self.apu.write_soundcnt_hi(v16),
             0x04000084 => self.apu.write_soundcnt_x(v16),
@@ -2089,10 +2242,16 @@ impl GbaMemoryBus {
             0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
             0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
             0x04000128 => self.write_siocnt(v16),
-            // 0x12A latches except in UART mode (send FIFO is not
-            // readable back; receive side is empty).
+            // 0x12A latches except in UART mode, where only the low byte
+            // reaches the send FIFO (GBATEK: upper 8 bits unused).
             0x0400012A => {
-                if !(self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3) {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
+                    if self.uart_tx.len() < self.uart_fifo_cap() {
+                        self.uart_tx.push_back((v16 & 0xFF) as u8);
+                    }
+                    self.uart_eval_irq();
+                    self.kick_uart();
+                } else {
                     self.siodata8 = v16;
                 }
             }
@@ -2135,8 +2294,7 @@ impl GbaMemoryBus {
                 // match, so IE+IF / IF+WAITCNT pairs land in order.)
                 self.pending_ie = v16 & 0x3FFF;
                 self.pending_at = Some(self.current_tcycle + 1);
-                self.open_bus_value = value;
-                return;
+                        return;
             }
             0x04000202 => {
                 // IF acknowledge: only written 1-bits clear (NBA hw/irq).
@@ -2148,8 +2306,7 @@ impl GbaMemoryBus {
                 };
                 self.pending_if &= !bits;
                 self.pending_at = Some(self.current_tcycle + 1);
-                self.open_bus_value = value;
-                return;
+                        return;
             }
             0x04000204 => {
                 // Bit 15 (GamePak type) and bit 13 are read-only/unused.
@@ -2160,18 +2317,15 @@ impl GbaMemoryBus {
                 // Delayed like IE (NBA hw/irq).
                 self.pending_ime = (v16 & 1) != 0;
                 self.pending_at = Some(self.current_tcycle + 1);
-                self.open_bus_value = value;
-                return;
+                        return;
             }
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
-                self.open_bus_value = value;
-                return;
+                        return;
             }
         }
         // 32bit書き込みで2レジスタ跨ぎの場合、上位側も反映されるが簡易実装では上記で十分
         let _ = width;
-        self.open_bus_value = value;
     }
 
     #[inline]
@@ -2221,11 +2375,11 @@ impl GbaMemoryBus {
                     )
                 {
                     cart.write_sram(address, width, value);
-                } else {
-                    self.open_bus_value = value;
                 }
             }
-            _ => self.open_bus_value = value,
+            // Stores to unmapped memory vanish (the bus latch is
+            // fetch-driven; stores never publish).
+            _ => {}
         }
     }
 
@@ -2381,28 +2535,31 @@ mod tests {
     #[test]
     fn open_bus_returns_last_prefetch() {
         let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x02000000);
         bus.write32(0x02000000, 0xDEADBEEF);
-        let _ = bus.read32(0x02000000);
-        // 未マッピング領域は open_bus を返す
+        let _ = bus.fetch32(0x02000000);
+        // Unmapped reads see the fetch latch (ARM: newest opcode whole).
+        assert_eq!(bus.read32(0x04000400), 0xDEADBEEF);
+        assert_eq!(bus.read16(0x04000402), 0xDEAD);
+        // Stores never publish to the bus latch.
+        bus.write32(0x02000004, 0x12345678);
+        let _ = bus.read32(0x02000004);
         assert_eq!(bus.read32(0x04000400), 0xDEADBEEF);
     }
 
     #[test]
     fn write_only_reg_returns_open_bus() {
         let mut bus = GbaMemoryBus::new();
+        bus.set_current_pc(0x02000000);
         bus.write32(0x02000000, 0x12345678);
-        let _ = bus.read32(0x02000000);
+        let _ = bus.fetch32(0x02000000);
         // BG0CNT (0x04000008) is R/W, so it returns the register value (default 0).
         assert_eq!(bus.read16(0x04000008), 0);
         bus.write16(0x04000008, 0x1234);
         assert_eq!(bus.read16(0x04000008), 0x1234);
-        // Write-only MOSAIC (0x0400004C) still returns open_bus.
-        bus.write32(0x02000000, 0x12345678);
-        let _ = bus.read32(0x02000000);
-        assert_eq!(bus.read16(0x0400004C), 0x5678); // open_bus lower 16
-        bus.write32(0x03000000, 0xAABBCCDD);
-        let _ = bus.read32(0x03000000);
-        assert_eq!(bus.read16(0x0400004C), 0xCCDD);
+        // Write-only MOSAIC (0x0400004C) sees the fetch latch, not the
+        // last stored value.
+        assert_eq!(bus.read16(0x0400004C), 0x5678);
     }
 
     #[test]
@@ -2759,8 +2916,12 @@ mod tests {
         bus.set_cartridge(Cartridge::new(rom).unwrap());
         bus.write32(0x02000000, 0x12345678);
         bus.write16(0x0E000000, 0xBEEF);
-        // Re-point open bus at EWRAM, then prove 0E stored nothing.
-        assert_eq!(bus.read32(0x02000000), 0x12345678);
+        // Point the fetch latch at EWRAM, then prove 0E stored nothing
+        // (stores never publish to the bus latch).
+        let _ = bus.fetch32(0x02000000);
+        assert_eq!(bus.read16(0x0E000000), 0x5678);
+        bus.write32(0x02000004, 0xAABBCCDD);
+        let _ = bus.read32(0x02000004);
         assert_eq!(bus.read16(0x0E000000), 0x5678);
     }
 
@@ -2875,12 +3036,14 @@ mod tests {
         // Stop mode (bit 7 set) latches without halting (unmodeled).
         bus.write8(0x04000301, 0x80);
         assert!(!bus.is_halted());
-        // HALTCNT is write-only: reads see open bus (here: the written value
-        // itself, then stale after an intervening access).
-        assert_eq!(bus.read8(0x04000301), 0x80);
+        // HALTCNT is write-only: reads see the fetch latch (lane 1),
+        // never the written value or later data traffic.
+        bus.write32(0x02000000, 0x12345678);
+        let _ = bus.fetch32(0x02000000);
+        assert_eq!(bus.read8(0x04000301), 0x56);
         bus.write8(0x02000000, 0x12);
         let _ = bus.read8(0x02000000);
-        assert_eq!(bus.read8(0x04000301), 0x12);
+        assert_eq!(bus.read8(0x04000301), 0x56);
         assert_eq!(bus.read8(0x04000300), 1);
 
         bus.write16(0x04000200, 1);
@@ -2975,5 +3138,36 @@ mod tests {
         bus.tick();
         assert_ne!(bus.read16(0x04000202) & (1 << 3), 0);
         assert_eq!(bus.read16(0x04000104), 1);
+    }
+
+    #[test]
+    fn uart_transfers_idle_high_bytes() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000134, 0);
+        // UART, 115200 baud, 8-bit, FIFO + send/recv enable.
+        bus.write16(0x04000128, 0x3D83);
+        // Idle status: send not full, receive empty, no error.
+        assert_eq!(bus.read16(0x04000128) & 0x0070, 0x0020);
+        bus.write16(0x0400012A, 0x42);
+        // 10-bit frame at 146 T-cycles/bit.
+        for _ in 0..2000 {
+            bus.tick();
+        }
+        assert_eq!(bus.read16(0x0400012A), 0xFF);
+        // Drained receive FIFO reads empty again.
+        assert_eq!(bus.read16(0x0400012A), 0);
+    }
+
+    #[test]
+    fn multiplayer_start_never_completes_solo() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000134, 0);
+        // Multi, 115200 baud, START as parent-would: the solo master
+        // waits for children forever (suite timeout cells).
+        bus.write16(0x04000128, 0x2080);
+        for _ in 0..200_000 {
+            bus.tick();
+        }
+        assert_ne!(bus.read16(0x04000128) & 0x0080, 0);
     }
 }
