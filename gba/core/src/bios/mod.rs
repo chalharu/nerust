@@ -1,4 +1,5 @@
 pub mod decompress;
+pub mod sound_driver;
 
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -330,6 +331,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(SOUND_DRIVER_MODE_CYCLES)
         }
         0x1C => {
+            sound_driver::sound_driver_main(bus);
             // PeterLemon BIOSSoundDriverMain expects TIMER0 = $0041
             SwiResult::Return(SOUND_DRIVER_MAIN_CYCLES)
         }
@@ -583,12 +585,17 @@ fn sound_channel_clear(bus: &mut GbaMemoryBus) {
 fn sound_driver_init(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let area = regs.r(0);
     bus.apu_mut().sound_area = area;
+    bus.apu_mut().driver_voices = [sound_driver::DriverVoice::default(); 12];
     // GBATEK SoundArea.ident: flag the system checks for initialization.
     bus.write_hle_bios32(area, 1);
     // The driver-owned header (DmaCount, reverb, d1) starts clean; full
     // music-player emulation is out of scope for HLE.
     bus.write_hle_bios16(area.wrapping_add(4), 0);
     bus.write_hle_bios16(area.wrapping_add(6), 0);
+    // Voice control array starts stopped (sf = 0 on zeroed RAM).
+    for i in 0..12u32 {
+        bus.write_hle_bios8(area.wrapping_add(20 + i * 48), 0);
+    }
 }
 
 /// SWI 1Bh SoundDriverMode (GBATEK): set operation mode (reverb, channel

@@ -7,7 +7,10 @@ use nerust_core_traits::{
 use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
-use crate::{input_types::GbaInputBuffer, rom_identity::GbaRomIdentity, system::GbaSystem};
+use crate::{
+    core_options::GbaCoreOptions, input_types::GbaInputBuffer, rom_identity::GbaRomIdentity,
+    system::GbaSystem,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum GbaCoreError {
@@ -88,6 +91,11 @@ impl ConsoleCore for GbaConsoleCore {
                 break;
             }
         }
+        // Drain native-grid audio at the device rate.
+        let rate = self.audio.sample_rate();
+        for sample in loaded.system.bus.apu_mut().drain_resampled(rate) {
+            self.audio.push(sample);
+        }
         if frame_slot.format() != &PixelFormat::Rgba {
             frame_slot.set_format(PixelFormat::Rgba);
         }
@@ -106,8 +114,19 @@ impl ConsoleCore for GbaConsoleCore {
         Ok(())
     }
 
-    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
-        let loaded = Self::create_loaded(rom)?;
+    fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
+        let options = if let Some(options) = &config.core_options {
+            *options
+                .clone()
+                .downcast::<GbaCoreOptions>()
+                .map_err(|_| CoreError::InvalidCoreOptions)?
+        } else {
+            GbaCoreOptions::default()
+        };
+        let mut loaded = Self::create_loaded(rom)?;
+        if let Some(cart) = loaded.system.bus.cartridge_mut() {
+            cart.gpio.set_solar_level(options.solar_light_level);
+        }
         self.loaded = Some(loaded);
         self.paused = false;
         Ok(())
