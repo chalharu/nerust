@@ -830,15 +830,16 @@ suites:
       # (NBA schedules `PPU_HBlankIRQ` +1; the flag-edge DMA sample stays
       # clear, the next sees IF). Native pins in dma_fit.rs
       # (`video_sample_flag_edges`, `video_sample_if_edge`).
-      # DMA3-XFER alone stays out (0x52D1 vs 0x52D3, +2): the video phase
-      # is locked at R0=6 by the six passing cells (no uniform shift fits
-      # all), the VCOUNT edge is locked at line end by VCNT-CHANGE=613,
-      # and the residual is a diffuse +2 over the 10-instruction TM0-start
-      # setup sum (ours 21 from edge to start, HW 19; P-OFF, so no
-      # prefetch-erase involvement; no single rule violation found —
-      # STR32-IO=2 is GBATEK-correct 2N at 1cy/access). Fixing it needs
-      # per-instruction HW truth for that path; revisit with
-      # per-cycle-CPU HW pins, not by fitting.
+      # DMA3-XFER alone stays out (0x52D1 vs 0x52D3, +2): six-locked
+      # impossibility (traced per-op, TEMP probes removed). Burst phase
+      # measured exact (616 reads at 2-cycle rhythm, 2->3 flip at sample
+      # 613 = first in line 3: first-read line+6/+7, edge {1231,1232}).
+      # Edge->TM0-start 9 insns GBATEK-exact (16=16; STR-IO 2N correct),
+      # poll loop period-7 exact with zero IRQ gaps, TM0-start-latency
+      # refuted (start-stop 1ST=3 same path passes). Remainder is the
+      # upstream poll-grid phase (HW grid 5 vs ours 0 mod 7: net -2 over
+      # ~2.25M exact cycles, no intermediate HW observable). No local
+      # mechanism with a HW story; revisit only with phase truth.
       - {address: 0x0300062C, value: 7, width: 4}
       - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
