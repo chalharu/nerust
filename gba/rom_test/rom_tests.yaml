@@ -119,8 +119,6 @@ expected_failures:
 - alyosha_timer
 - alyosha_timer_disable
 - alyosha_timer_reset
-- alyosha_Unused_location_update_bus
-
 suites:
 - name: jsmolka_gba-tests
   cases:

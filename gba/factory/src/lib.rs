@@ -98,7 +98,7 @@ impl CoreFactory for GbaFactory {
 
 impl SystemDefaults for GbaFactory {
     fn default_system_settings(&self) -> Option<Box<dyn nerust_settings_traits::SystemSettings>> {
-        Some(Box::new(GbaSettings))
+        Some(Box::new(GbaSettings::default()))
     }
 
     fn resolve_label(&self, label_id: &str, language: &str) -> Option<String> {

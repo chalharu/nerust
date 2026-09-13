@@ -10,14 +10,14 @@ use nerust_core_traits::factory::{
 };
 use nerust_gba_core::core_options::GbaCoreOptions;
 use nerust_gba_settings::{
-    GbaSettings,
+    GbaSettings, SolarLight,
     field::{GbaSettingChoice, GbaSettingField},
 };
 
-const EXPOSED_FIELDS: [GbaSettingField; 0] = [];
+const EXPOSED_FIELDS: [GbaSettingField; 1] = [GbaSettingField::PeripheralSolarLight];
 
 pub(crate) fn gba_settings_page(view: &FactorySettingsView) -> SystemSettingsPageModel {
-    let defaults = GbaSettings;
+    let defaults = GbaSettings::default();
     let settings = view
         .system_config
         .as_deref()
@@ -51,19 +51,32 @@ pub(crate) fn apply_gba_settings_choice(
     if !EXPOSED_FIELDS.contains(&field) {
         return Err(FactoryError::InvalidChoice(field_id.as_str().to_string()));
     }
-    let _choice = choice_id
+    let choice = choice_id
         .as_str()
         .parse::<GbaSettingChoice>()
         .map_err(|_| FactoryError::InvalidChoice(choice_id.as_str().to_string()))?;
-    let _settings = view
+    let settings = view
         .system_config
         .as_deref_mut()
         .and_then(|value| value.downcast_mut::<GbaSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    // TODO(gba-settings): EXPOSED_FIELDS is currently empty (Phase 2).
-    // When adding a new field (e.g. GbaVideoFilter), extend the match below
-    // to handle (field, choice) pairs, mirroring gbc/factory/src/settings.rs:66-92.
-    // At that time, ensure labels.rs and field.rs label_id mappings are updated together.
+    match (field, choice) {
+        (GbaSettingField::PeripheralSolarLight, GbaSettingChoice::Blinding) => {
+            settings.core.solar_light = SolarLight::Blinding;
+        }
+        (GbaSettingField::PeripheralSolarLight, GbaSettingChoice::Bright) => {
+            settings.core.solar_light = SolarLight::Bright;
+        }
+        (GbaSettingField::PeripheralSolarLight, GbaSettingChoice::Normal) => {
+            settings.core.solar_light = SolarLight::Normal;
+        }
+        (GbaSettingField::PeripheralSolarLight, GbaSettingChoice::Dim) => {
+            settings.core.solar_light = SolarLight::Dim;
+        }
+        (GbaSettingField::PeripheralSolarLight, GbaSettingChoice::Dark) => {
+            settings.core.solar_light = SolarLight::Dark;
+        }
+    }
     Ok(())
 }
 
@@ -71,7 +84,7 @@ pub(crate) fn resolve_gba_load_request(
     view: &FactorySettingsView,
     options: Box<dyn DynSystemLoadOptions>,
 ) -> Result<ResolvedLoadRequest, FactoryError> {
-    let _settings = view
+    let settings = view
         .system_config
         .as_deref()
         .and_then(|value| value.downcast_ref::<GbaSettings>())
@@ -80,7 +93,10 @@ pub(crate) fn resolve_gba_load_request(
         .into_inner::<GbaLoadOptions>()
         .map_err(|_| FactoryError::Resolve("failed to downcast GBA load options".to_string()))?;
     Ok(ResolvedLoadRequest {
-        options: GbaCoreOptions.into(),
+        options: GbaCoreOptions {
+            solar_light_level: settings.core.solar_light.level(),
+        }
+        .into(),
     })
 }
 
@@ -95,14 +111,14 @@ mod tests {
     fn view() -> FactorySettingsView {
         FactorySettingsView {
             language: Language::SystemDefault,
-            system_config: Some(Box::new(GbaSettings)),
+            system_config: Some(Box::new(GbaSettings::default())),
         }
     }
 
     #[test]
-    fn page_exposes_no_fields() {
+    fn page_exposes_solar_light_field() {
         let page = gba_settings_page(&view());
-        assert_eq!(page.fields.len(), 0);
+        assert_eq!(page.fields.len(), 1);
     }
 
     #[test]
@@ -122,6 +138,27 @@ mod tests {
     fn resolves_with_default_options() {
         let view = view();
         let resolved = resolve_gba_load_request(&view, GbaLoadOptions.into()).unwrap();
-        assert!(resolved.options.downcast_ref::<GbaCoreOptions>().is_some());
+        let options = resolved
+            .options
+            .downcast_ref::<GbaCoreOptions>()
+            .expect("gba core options");
+        assert_eq!(options.solar_light_level, 0x60);
+    }
+
+    #[test]
+    fn apply_solar_light_round_trip() {
+        let mut v = view();
+        apply_gba_settings_choice(
+            &mut v,
+            &SystemSettingsFieldId(Cow::Borrowed("peripheral.solar_light")),
+            &SystemSettingsChoiceId(Cow::Borrowed("dark")),
+        )
+        .unwrap();
+        let resolved = resolve_gba_load_request(&v, GbaLoadOptions.into()).unwrap();
+        let options = resolved
+            .options
+            .downcast_ref::<GbaCoreOptions>()
+            .expect("gba core options");
+        assert_eq!(options.solar_light_level, 0xE0);
     }
 }
