@@ -11,13 +11,8 @@ pub fn bit_unpack(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 }
 
 fn cycles_for(spec: &BitUnpackSpec) -> u32 {
-    // BitUnPack は CORDIC 14-step (1792*dst) から WRAM wait 1280*dst を差し引いた
-    // 512*dst に、前処理コスト base を加えた HLE = base + 512*dst で再現できる。
-    // base は source_width の3次多項式で近似し、4点 (1BPP/2BPP/4BPP/8BPP,
-    // units=8192) を誤差0で通る多項式 a*x^3+b*x^2+c*x+d (a=-8192/21,
-    // b=57344/21, c=164864/21, d=-207737/21) を用いる。特定値とそれ以外を
-    // 区別せず、units と dst に比例させることで size比例となり、任意の
-    // source_len/dst でも 30ステップで完了しないことを保証する。
+    // HLE cost is base + 512*dst, scaled by units and dst so large transfers stay size-proportional.
+    // Base follows a cubic in source_width fitted through the four BPP points.
     let units = spec.source_len * 8 / spec.source_width;
     let x = spec.source_width as i64;
     // base_8192 は units=8192 での base

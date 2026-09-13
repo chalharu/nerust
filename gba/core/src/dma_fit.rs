@@ -1,10 +1,5 @@
-//! Native replication of nba hw-test DMA/PPU timing measurements.
-//!
-//! Executes the exact ROM instruction sequences (128kb-boundary) or the
-//! exact DMA programs (basic/exact-timing sampling) and asserts the
-//! hardware constants embedded in the test sources. This gives a joint
-//! fit target for DMA timing: 128kb-boundary (18 constants) plus the
-//! HBlank/video burst rates derived from basic/exact-timing.
+//! Joint DMA timing fit target: replicates ROM instruction/DMA programs
+//! and asserts the embedded hardware constants.
 
 use crate::system::GbaSystem;
 
@@ -189,12 +184,8 @@ fn video_sample_flag_edges() {
     assert_eq!((hbl_set, hbl_unset, vcnt_set), (500, 613, 613));
 }
 
-/// Replicates exact-timing `test_hblank_irq`: video DMA3 samples IF with
-/// the HBlank IRQ enabled; analysis finds the first HBLANK-bit sample.
-/// The ROM spins clearing IF until the burst takes the bus, so clear IF
-/// at line-2 start natively. Pins the video phase (countdown 3) together
-/// with the +1 HBlank IRQ deferral: the flag-edge sample (index 500)
-/// must still read clear, the next one set (HW 501).
+/// Samples IF with video DMA3 to pin the HBlank IRQ phase: index 500
+/// reads clear, 501 set.
 #[test]
 fn video_sample_if_edge() {
     use crate::memory::GbaMemoryBus;
@@ -233,19 +224,8 @@ fn video_sample_if_edge() {
     assert_eq!(irq_assert, 501);
 }
 
-/// Native replication of nba status-irq-dma sweeps (Phase 1: DISPSTAT /
-/// VCOUNT flag edges; IF/DMA need the libgba ack, see Phase 2 note).
-///
-/// The ROM's emit functions generate exact ARM bytes in IWRAM (delay
-/// NOPs + LDR/LDRH/LDR/STRH + IE=0 + BX LR); this generates the identical
-/// bytes and installs them DIRECTLY as the IRQ vector (no libgba
-/// IntrMain dispatch -- the joint +50 uniform offset below absorbs it:
-/// HBLANK=0 194/144, HBLANK=1 1200/1151, VMATCH 194/145,
-/// VBLANK=1 196/144, VBLANK=0 195/144, VCOUNT 196/144; spread +-2 is
-/// sync/poll granularity on both sides). The CPU is parked on a Thumb
-/// b-loop; HBlank entry runs the emit fn and returns via the HLE
-/// trampoline. Each pin brackets its edge (2 probes, ~2 frames) so the
-/// suite stays fast while locking flag/edge/entry behavior.
+/// Sweeps DISPSTAT/VCOUNT flag edges via generated IRQ handlers with
+/// a joint dispatch offset; each edge is bracketed by two probes.
 const EMIT_BASE: u32 = 0x03002000;
 const EMIT_RESULT: u32 = 0x03001000;
 const PARK_PC: u32 = 0x03000000;
@@ -360,13 +340,8 @@ fn irq_vcount_inc_edge() {
     assert_eq!(irq_sample(227, 0, 0x0100, 0x0000, VCOUNT, 196), 1);
 }
 
-/// Native replication of status-irq-dma test_dma (HBlank/VBlank/Video
-/// DMA absolute TM0 phases; HW 1137/1362/22069). Hand-assembled ARM
-/// equivalent of __test_dma_hblank_irq_handler: same operations in the
-/// same order (IE=0, TM0CNT=0, TM0CNT_H=START, 3x SAD/DAD/CNT programs,
-/// 3x enable-spins, done flag, BX LR). A two-pass builder resolves the
-/// PC-relative literals exactly. Joint offset absorbs code-shape +
-/// IntrMain dispatch like Phase 1 (predict +50 all three).
+/// Probes HBlank/VBlank/Video DMA TM0 phases with a hand-assembled
+/// handler; a joint offset absorbs code shape and dispatch.
 const DMAH_BASE: u32 = 0x03002400;
 const DMAH_HB: u32 = 0x03001000;
 const DMAH_VB: u32 = 0x03001004;
@@ -604,13 +579,8 @@ fn dma_video_phase() {
     assert_eq!(dma_probe().2, 22125);
 }
 
-/// Native replication of nba ram-access-timing DISPCNT-latch probes
-/// (bus-only: VCOUNT sync + TM0 + immediate DMA0, no IRQ needed).
-/// Each probe returns the TM0 ticks for a 128-halfword VRAM DMA burst;
-/// the 4-tuple pattern reads out the fetch-gating rule (documented in
-/// the ROM comments from HW observation). Absolute values carry a fixed
-/// setup offset vs the ROM (back-to-back driver writes); only the
-/// fast/slow pattern is asserted.
+/// Probes VRAM burst cost at lines 2-5; only the fast/slow pattern is
+/// asserted, absolute values carry a driver setup offset.
 fn dma0_burst(bus: &mut crate::memory::GbaMemoryBus) -> u16 {
     bus.write32(0x04000100, 0);
     bus.write16(0x04000102, 0x0080); // TM0CNT_H = START

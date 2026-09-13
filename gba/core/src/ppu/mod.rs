@@ -129,28 +129,13 @@ pub struct GbaPpu {
     /// Effective forced-blank state at the previous line end, for edge
     /// detection above.
     was_blanked: bool,
-    /// Forced-blank sampled at line end for the upcoming scanline (0-lag:
-    /// the live bit7 as the line turns over). BG/OBJ *enables* ride the
-    /// 3-stage dispcnt_latch (NBA HW-confirmed), but blank must follow
-    /// within a line (nba ram-access DISPCNT-latch rule: fetch resumes
-    /// the line after the blank write; the 3-stage chain over-suppresses
-    /// by 2+ lines). forced_blank() ORs this with live (either set
-    /// blanks, matching the ROM rule's latched-AND-current fetch gate).
+    /// Forced-blank sample taken at line end for the next scanline.
+    /// Unlike BG/OBJ enables (3-stage latch), blank applies within a line,
+    /// so `forced_blank()` ORs this sample with the live bit.
     blank_sample: bool,
-    /// Line-deferred render latch: OAM bytes and the MOSAIC register sampled
-    /// at the first pixel of each scanline. Mid-scanline writes take effect
-    /// on the next line. HBlank/VBlank writes (IRQ handlers, HBlank DMA, the
-    /// standard raster techniques) land before the next line starts, so they
-    /// behave exactly as before; only cycle-timed mid-draw writes change
-    /// behavior (from tearing the current line to applying on the next line).
-    ///
-    /// Model note: mGBA (`video.c:_startHblank`) renders each scanline at
-    /// HBlank start from live state, so mid-draw writes there apply to the
-    /// whole current line retroactively; GBATEK/Tonc document no sampling
-    /// point and no hw-test in tree pins the real mid-draw behavior down.
-    /// The line-start latch is the deterministic choice consistent with the
-    /// per-line OBJ cycle budget and line-held vertical mosaic. DISPCNT,
-    /// BGxCNT, scroll and window registers stay live (out of scope).
+    /// Per-line latch: OAM and MOSAIC sampled at the first pixel of each line.
+    /// Mid-draw writes defer to the next line; HBlank/VBlank writes are unaffected.
+    /// Other registers (DISPCNT, BGxCNT, scroll, windows) stay live.
     line: LineLatch,
 }
 
@@ -243,13 +228,8 @@ impl GbaPpu {
 
     fn handle_line_end(&mut self, event: &mut PpuEvent) {
         self.cycle = 0;
-        // Refresh the per-line enable/blank reference from the latch for
-        // the upcoming scanline (all lines, including VBlank): the
-        // renderer (x==0 capture) and bg_fetch_active() share
-        // line.enable, so mid-line BG/OBJ-enable writes defer to the next
-        // line in both paths identically. Forced-blank instead samples
-        // live here (blank_sample): enables ride the 3-stage latch but
-        // blank follows within the line (see blank_sample docs).
+        // Refresh per-line enable/blank refs for the next scanline:
+        // enables ride the latch, blank samples live for within-line response.
         self.line.enable = self.dispcnt_latch[0];
         self.blank_sample = self.registers.dispcnt & (1 << 7) != 0;
         event.line_started = true;
@@ -533,12 +513,8 @@ impl GbaPpu {
 
     fn render_pixel(&mut self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
         if x == 0 {
-            // Line-start sample: HBlank/VBlank-period writes are already in
-            // `oam`/registers and apply to this line; writes later in this
-            // line's draw period defer to the next line. Sampling at the
-            // first fetch (cycle 32, before the +40 DISPCNT shift) also seeds
-            // the very first frame and keeps the latch fresh across VBlank
-            // lines (which never render) and forced-blank lines.
+            // Latch OAM/MOSAIC/enable at the first fetch of the line;
+            // later mid-draw writes defer to the next line.
             self.line
                 .capture(self.registers.mosaic, oam, self.dispcnt_latch[0]);
         }

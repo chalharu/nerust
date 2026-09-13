@@ -37,12 +37,8 @@ impl GbaTimers {
         let new_control = (value >> 16) as u16 & 0x00C7;
         let was_enabled = self.channels[channel].control & 0x80 != 0;
         if was_enabled && new_control & 0x80 == 0 {
-            // 32-bit disable lands immediately, while a 16-bit CNT_H stop
-            // defers one tick via pending_control (write_control). The
-            // asymmetry is HW-pinned, not an oversight: nba start-stop
-            // (16-bit stop, 2ND=8) observes the counter ticking once more
-            // after the stop write, and nba reload (32-bit reset/start)
-            // pins the immediate path (7/7). Do not "unify" them.
+            // 32-bit disable is immediate but a 16-bit stop defers one tick
+            // (observed hardware asymmetry; do not unify).
             self.channels[channel].control = new_control;
             self.channels[channel].pending_control = None;
             self.channels[channel].start_delay = 0;
@@ -116,14 +112,7 @@ impl GbaTimers {
         if timer.control & 0x80 == 0 {
             return (false, 0);
         }
-        // CNT_L landing is uniform one tick: consume a pending reload
-        // even inside start-delay ticks. (Previously the early return
-        // below skipped the take, delaying delay-window overwrites by
-        // up to 2 extra ticks. The skip was an implementation artifact
-        // of the early return, not modeled HW behavior: nba schedules
-        // OnReloadWritten unconditionally +1. The normal path below is
-        // untouched, so overflow-vs-landing races keep their order.
-        // Verified zero-effect across the full 123-case manifest.)
+        // CNT_L landing is a uniform one tick, even inside start-delay ticks.
         if timer.start_delay != 0
             && let Some(reload) = timer.reload_pending.take()
         {
@@ -177,16 +166,9 @@ impl GbaTimers {
                 Some((false, 0))
             }
             2 => {
-                // Enabling takes one cycle to load the reload value. The
-                // stale counter only ticks (and can overflow, even
-                // cascading) when the prescaler tap fires this tick, and
-                // never for count-up enables (which load the reload
-                // outright) -- nba OnControlWritten / issue #331. An
-                // unconditional stale tick fabricates a +1 overflow IRQ on
-                // prescaled re-enables (mgba-suite timers prologues reuse
-                // TM0 across prescalers with a 0xFFFF stale), spawning a
-                // dispatch race HW never runs. (/1 taps fire every tick,
-                // so tick-before-reload and all 0b behavior is unchanged.)
+                // Stale counter ticks only if the prescaler tap fires, never
+                // for count-up enables; otherwise re-enables gain a spurious
+                // overflow IRQ.
                 timer.start_delay = 1;
                 let count_up = index != 0 && timer.control & 4 != 0;
                 if count_up {
@@ -295,12 +277,8 @@ fn write_control(
         if let Some(reload) = timer.reload_pending.take() {
             timer.reload = reload;
         }
-        // GBATEK Timers / HW determinism: the reload value is loaded on the
-        // first latency tick (see handle_start_delay), so the counter keeps
-        // its stale value here. A stale tick (even overflow) may fire before
-        // the load (nba tick-before-reload).
-        // Fixed 2-cycle start latency (was a reload/elapsed fit that only
-        // ever triggered for 0xFFFC and broke the cancel-irq race).
+        // Reload loads on the first latency tick; a stale tick may fire
+        // before the load. Start latency is a fixed 2 cycles.
         timer.start_delay = 2;
         // No phase seeding: the shared prescaler is free-running and never
         // reset by enables (mGBA lastEvent = now & ~tickMask;

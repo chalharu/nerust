@@ -13,15 +13,8 @@ use crate::memory::GbaMemoryBus;
 
 const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
-/// Real-BIOS IRQ epilogue cost (fitted): the HLE return trampoline skips
-/// the register-restore + exception-return sequence the real BIOS runs
-/// after the user handler on HW. Fitted at 7 against the mgba-suite
-/// timers dispatch rounds (cascade sums need the longer pause while the
-/// frozen 1d1i exit values prefer ~5; 7 is the least-bad compromise --
-/// see the timers note in rom_tests.yaml). Pin-verified: timer-irq fail
-/// sets identical, cancel-ime/if + timer reload/start-stop/tick-before-
-/// reload pass, Timing and misc_edge unchanged. Recalibrate against
-/// those if this changes.
+/// HLE IRQ return skips the real-BIOS restore sequence; fitted epilogue cost.
+/// Recalibrate against the timers and timing suites if this changes.
 const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
 
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
@@ -143,12 +136,8 @@ impl GbaCpu {
 
     /// 1命令実行し、消費T-cycleを返す。
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        // Micro-op engine (per-cycle remodel slice 3b): covered classes
-        // drain here atomically (no peripheral ticks between ops), so
-        // this keeps instruction-atomic legacy semantics and totals while
-        // the system driver interleaves ticks per op. Everything else,
-        // plus any step inside a user IRQ handler (trampoline return
-        // path), stays on the legacy path.
+        // Covered micro-ops drain here atomically (legacy totals kept); the rest stays on the legacy path.
+        // IRQ-handler steps also stay legacy.
         if self.irq_return_stack.is_empty() {
             let is_thumb = self.regs.cpsr_t();
             let mut acc = 0i64;

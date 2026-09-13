@@ -17,13 +17,8 @@ pub struct DmaTransfer {
     pub destination: u32,
     pub width: u8,
     pub latched_value: u32,
-    /// True when the burst head issued outside GamePak ROM. The 16-bit
-    /// GamePak read-path shift (unit N latches unit N+1's halfword) only
-    /// fires for such primed bursts (HW-pinned by nba burst-into-tears,
-    /// whose head issues from the OAM mirror): bursts sourced entirely
-    /// within ROM stream aligned (HW-pinned by mgba-suite DMA H rows,
-    /// which expect the plain forced-increment last word 0xDEAD, not the
-    /// shifted 0xBEF1/0xBEEE).
+    /// True when the burst head issued outside GamePak ROM; only such
+    /// bursts apply the 16-bit ROM read-path shift.
     pub shift_primed: bool,
     /// True when this unit is the only unit of its burst. The 16-bit
     /// GamePak pre-increment read (dest[i] = mem16(src+2+2i)) is a
@@ -55,13 +50,8 @@ struct DmaChannel {
     /// for the burst (re-arms keep it), so the flag needs no per-unit
     /// update.
     shift_primed: bool,
-    /// Data-stream source, latched at enable alongside `current_source`
-    /// and advanced per unit. GamePak-ROM sources always increment (mGBA
-    /// dma.c `sourceOffset = width`) while the N/S timing follows the
-    /// programmed counter: HW-pinned both ways (mgba-suite DMA data rows
-    /// deliver the 4th word up for fixed/inc/dec ROM sources; nba
-    /// 128kb-boundary dec rows time the descending counter, e.g. 70 vs
-    /// 68 across the 128K line). Outside ROM both streams coincide.
+    /// Data-stream source: forced increment inside GamePak ROM while
+    /// N/S timing follows the programmed counter.
     data_source: u32,
     completing: bool,
     completion_interrupt: bool,
@@ -210,20 +200,9 @@ impl GbaDma {
         };
         let source = dma.current_source & !(u32::from(width) - 1);
         let destination = dma.current_destination & !(u32::from(width) - 1);
-        // The 16-bit GamePak read path pre-increments (memory.rs: the bus
-        // carries source+2, dest[i] = mem16(src+2+2i), HW-pinned by nba
-        // burst-into-tears). The shift fires when the read lands in ROM,
-        // i.e. the source or the source+2 is GamePak: unit 0 of
-        // burst-into-tears issues from the OAM mirror (0x07FFFFFE) but its
-        // bus read lands at ROM[0]. Sequentiality describes gaps between
-        // bus addresses, so the N/S state machine must track the phantom
-        // stream: an OAM-mirror -> ROM logical transition (burst-into-tears
-        // unit 1) is a sequential ROM ROM gap on the bus (S, not N), which
-        // is exactly the 2-cycle TIME overshoot (43 vs 41). Region waits
-        // below stay on the logical address; only the stream position is
-        // phantom. 32-bit units have no shift (128kb-boundary pins), and
-        // non-ROM 16-bit sources are unaffected (nba latch pins IWRAM
-        // 16-bit data exact: 0x12341234).
+        // 16-bit GamePak reads pre-increment (bus carries source+2);
+        // track the phantom stream for N/S, with no shift for 32-bit
+        // or non-ROM sources.
         let lands_in_rom = is_rom(source) || is_rom(source.wrapping_add(2));
         let bus_src = if width == 2 && lands_in_rom {
             source.wrapping_add(2)
@@ -270,19 +249,8 @@ impl GbaDma {
         };
         let src_wait = dma_bus_wait(source, width, is_seq_src, waitcnt, stall(source));
         let dst_wait = dma_bus_wait(destination, width, is_seq_dst, waitcnt, stall(destination));
-        // GBATEK DMA transfer timing: 2N+2(n-1)S+xI, where the per-unit
-        // cost is N/S waits only. The xI internal overhead is a SINGLE
-        // per-burst term (2I), charged with the first unit — EXCEPT on
-        // DMA3 video-capture (Special) bursts, whose first unit costs a
-        // plain 2N: the xI is absorbed in the request-to-start window
-        // (NBA schedules the video request 3 into the line and mGBA
-        // starts it `now + 3`, both covering setup before the first
-        // read). HW-pinned by exact-timing HBL DMA 502: with a first
-        // interval of 4 the TM0 sweep would trip at index 1 instead of
-        // riding a uniform 2/unit rhythm into the HBlank-DMA2
-        // preemption. Every other channel keeps the burst-start xI
-        // (nba force-nseq 88/88 single-unit TIME pins it: the tail holds
-        // CNT_H enable two extra ticks).
+        // Per-burst cost is N/S waits plus a single 2I on the first unit,
+        // except DMA3 video-capture bursts which start with plain 2N.
         let total_wait = u32::from(src_wait) + u32::from(dst_wait);
         // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
         // burst pays 2I (GBATEK's 4I overshoots); single/non-ROM keep 2I.
@@ -326,12 +294,7 @@ impl GbaDma {
         if finished {
             dma.completing = true;
             dma.completion_interrupt = dma.control & (1 << 14) != 0;
-            // No single-unit completion tails (completion_extra /
-            // completion_tail_single removed): they compensated the
-            // pre-Phase-A CPU model, which lacked the load/store
-            // fetch-stream-break charge. Under the corrected model nba
-            // force-nseq (88/88) and suite Trivial DMA pass without them;
-            // multi-unit fits never saw them anyway.
+            // No completion tail: the corrected CPU model needs none.
         }
         Some(DmaTransfer {
             channel,
@@ -404,12 +367,8 @@ impl GbaDma {
 
 fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
     let was_enabled = dma.control & 0x8000 != 0;
-    // GBATEK DMA: DRQ (bit 11) exists on DMA3 only (mGBA masks 0xF7E0 below).
-    // NOTE: GBATEK's "Repeat must be zero if DRQ is set" is a programming
-    // constraint, not latch behavior: the mgba-suite io-read HW capture
-    // reads back both bits (DMA3CNT_HI == 0xFFE0), so the latch is kept
-    // verbatim here. The guard lives in finish(): a DRQ channel never
-    // re-arms.
+    // DRQ exists on DMA3 only; latch Repeat+DRQ verbatim, never re-arm
+    // a DRQ+Repeat channel.
     dma.control = value & if channel == 3 { 0xFFE0 } else { 0xF7E0 };
     if dma.control & 0x8000 != 0 && !was_enabled {
         dma.current_source = dma.source

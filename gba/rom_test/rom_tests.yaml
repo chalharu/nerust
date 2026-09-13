@@ -1,34 +1,15 @@
 rom_root: ../../roms/gba
 expected_failures:
-# Box verdicts live in nerust-docs/reference/gba/gba-rom-test-box-verdicts.md
-# (§N pointers below). Yaml keeps status + one-line mechanism only.
-# nba_dma_burst_into_tears GRADUATED 3/3 (see §1): 16-bit GamePak reads
-# pre-increment (dest[i] = mem16(src+2+2i)); N/S tracks the phantom bus
-# stream; fires only when the read lands in ROM.
-# nba_dma_force_nseq GRADUATED 2/2 (88/88, see §1): single-unit non-ROM
-# bursts complete with the unconditional completing tick only; window =
-# trigger-store + 4 nops + return + TM0 read (first nop 1N arbitration).
-# nba_archive_irq_cancel_ie (see §2): rows 0,1,3,5,6,7 pass; rows 2 and 4
-# fail on 1-tick race boundaries (row 2 needs a stale-FFFF phase artifact
-# of printf timing, not logic). Do NOT re-break CPU/DMA fits for them.
+# burst_into_tears: GRADUATED 3/3. force_nseq: GRADUATED 88/88.
+# cancel_ie: rows 2/4 fail on 1-tick race boundaries; do not refit.
 - nba_archive_irq_cancel_ie
-# nba_irq_delay (see §2): IWRAM 95 vs HW 92 (+3 line propagation the fine
-# loop observes; EWRAM 112 / ROM 120 pass). No uniform (entry, line-delay)
-# pair fits all three; true fix is sub-tick entry overlap (research).
+# irq_delay: IWRAM reads +3; no uniform setting fits all three regions.
 - nba_irq_delay
-# nba_archive_irq_cancel_ime GRADUATED 8/8 by the delayed interrupt
-# pipeline (+1/+1/+2; see §1-2).
-# Affine refs fail on REFERENCE STATE, not emulation (see §3): $1234
-# checks pass, GBATEK resimulation bit-exact; shipped PNGs show
-# uninteractible states (0.55x zoom; rotated sprites + old-emu colors).
-# Velocity (169xL + B + 22 flights) and Acceleration (48xLeft) drive their
-# states and bottom out at ~90 old-emu edge-rounding pixels (round-half-up
-# made it worse: 95 -> 850). BGRotZoomMode2 has no reproducible rigid state.
+# cancel_ime: GRADUATED 8/8.
+# Affine refs fail on reference state, not emulation.
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
-# Photo refs (see §3): dimensions fail before pixels (4000x3000 vs 240x160).
-# PPU mechanisms verified separately (OBJ-live, affine gating, blank
-# restart, mid-line DMA visibility).
+# Photo refs fail on dimensions first (4000x3000 vs 240x160).
 - nba_archive_ppu_mode2
 - nba_archive_ppu_mode3
 - nba_archive_ppu_mode4
@@ -37,22 +18,15 @@ expected_failures:
 - nba_ppu_bgx
 - nba_ppu_dispcnt_latch
 - nba_ppu_greenswap
-# nba_ppu_status_irq_dma / nba_ppu_ram_access_timing are INTERACTIVE with
-# no headless hooks (see §3). Covered natively (dma_fit irq/phase/latch/
-# access pins; IF pins need libgba IntrMain's ack — ROM-drive only).
-# Revisit only with a recorded input sequence plus a long-run harness mode.
+# status_irq_dma / ram_access_timing are interactive; no headless hooks.
 - nba_ppu_ram_access_timing
 - nba_ppu_sprite_hmosaic
 - nba_ppu_status_irq_dma
 - PeterLemon_FastLine
 - PeterLemon_FastLineClip
-# PeterLemon_Timers (see §3): ref mutually inconsistent with one 3M-cycle
-# snapshot (TM1 $CB64 needs 3.33M ticks etc.). Ours internally exact.
-# Regenerate with an hw-validated build; never fit timers to it.
+# PeterLemon_Timers: inconsistent ref; never fit timers to it.
 - PeterLemon_Timers
-# PeterLemon video class (see §3): refs are unmapped-moment screenshots;
-# playback verified WORKING but unmatchable in early frames; decoders proven
-# by passing static siblings. Boxed; reopen only with author frame numbers.
+# Video class: refs are unmapped-moment screenshots.
 - PeterLemon_GRB12LZDIFFRLEVideo
 - PeterLemon_Rickroll
 - PeterLemon_GRB15LZVideo
@@ -64,29 +38,12 @@ expected_failures:
 - PeterLemon_BigBuckBunny
 - PeterLemon_3DEngine
 - PeterLemon_CylinderMap
-# Velocity/Acceleration: see the affine note above (interacted refs).
+# Velocity/Acceleration: interacted refs.
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
-# mgba_suite_timing: research-grade (76/2020 fail; non-prefetch PERFECT).
-# Details in box-verdicts §5 (A/B/C+D/E) and §6 (GBAHawk port, reverted).
-# A (18): Thumb stack loads + prefetch + S-fast, -1 (mode-blind model
-# can't express it; true-buffer sim falsified). B (12): LDMIA OAM->ROM
-# overflow phase lottery (ov4/ov5 pin undo-all). E (32): DMA/ROM
-# per-transfer -1, overconstrained X-vs-Y. C+D (14): IWRAM SWI +3 /
-# CpuSet -66 with contradictory PeterLemon truths (per-path fitting
-# banned). Port fixed 11 A-cells but regressed ~540 (kept on
-# exp/gba-prefetch-buffer). See the suite's timing.c P/N/S matrix.
+# mgba_suite_timing: research-grade; non-prefetch cells all pass.
 - mgba_suite_timing
-# mgba_suite_timers: EXPECTED-FAIL (653/936; was quarantined hang, fixed
-# via wake_latency burn + prescaler-tap-gated stale tick — see §8).
-# Tried and reverted: register-settle/line-sample split + entry 23->25,
-# sub-tick trial (380/936, races winnable but unfittable + pin cost).
-# Details in box-verdicts §8 (trace findings, epi=7/wake=48 HLE-omission
-# charges, remaining 283, and every closed follow-up: audit, staging
-# split, storm structure, compensation, triangulation, HLE validation,
-# tri-region, GBATEK反証, NON-HLE, rigidity, multi-direction, single-cell,
-# fastraise, two-cause, high-grid, HLE-fidelity). Do NOT retune timer
-# phase/charges/staging or fit IntrWait timing to chase single cells.
+# mgba_suite_timers: EXPECTED-FAIL. Do not retune to chase cells.
 - mgba_suite_timers
 
 suites:
@@ -222,11 +179,7 @@ suites:
     verify:
       memory:
       - {address: 0x030004EC, value: 6, width: 4}
-      # Status (see §4): DIRECT 12 pass; CPUSET 4157 vs 4155 (+2: HLE
-      # CpuSet phases need HW anchoring, not a timing revert); POSTFLG
-      # pass; CPUSET-DMA 4154 exact; TIME-IWRAM 125 pass; TIME-ROM 245
-      # vs 249 (-4, opposite direction: no uniform knob). Boxed until
-      # the HLE phases are HW-anchored.
+      # haltcnt: boxed. HLE phases need HW anchoring.
       - {address: 0x030004F0, value: 6, width: 4}
   - id: nba_ppu_bgpd
     rom: ppu/bgpd/bgpd.gba
@@ -261,8 +214,7 @@ suites:
     cycles: 3000000
     verify:
       memory:
-      # Graduated 3/3 (see header note): pre-increment 16-bit GamePak reads
-      # plus phantom-stream N/S give values and TIME 41 exactly.
+      # Graduated 3/3.
       - {address: 0x03000234, value: 3, width: 4}
       - {address: 0x070003FE, value: 0xEA00, width: 2}
       - {address: 0x070003FC, value: 0xFF24, width: 2}
@@ -272,9 +224,7 @@ suites:
     cycles: 3000000
     verify:
       memory:
-      # Counters (this .gba's layout; the stale .elf disagrees):
-      # test_count @0x0300014C (=2), test_pass_count @0x03000150 (=2:
-      # 88/88). Per-burst +2 tried and reverted (breaks 128kb fits).
+      # Counters follow this .gba's layout. Graduated 88/88.
       - {address: 0x0300014C, value: 2, width: 4}
       - {address: 0x03000150, value: 2, width: 4}
   - id: nba_bus_128kb_boundary
@@ -301,11 +251,7 @@ suites:
     cycles: 20000000
     verify:
       memory:
-      # Currently 6/7 (see §7): HBL-SET/UNSET + VCNT-FLAG/CHANGE, HBL-DMA
-      # 502, HBL-IRQ 501 pass (video countdown +3, first-unit xI
-      # absorption, HBlank IF +1 lag). DMA3-XFER stays out (0x52D1 vs
-      # 0x52D3, +2: six-locked impossibility, upstream poll-grid phase;
-      # revisit only with phase truth).
+      # 6/7; DMA3-XFER stays out (+2, upstream phase).
       - {address: 0x0300062C, value: 7, width: 4}
       - {address: 0x03000630, value: 7, width: 4}
   - id: nba_archive_ppu_mode3
@@ -477,11 +423,7 @@ suites:
     skip_screenshot: true
     verify:
       memory:
-      # Host-decoded BG.h8 prefix (GBATEK HUFF8 tree walk). The full
-      # 76800-byte stream needs ~90M cycles on this N/S model (random
-      # tree accesses, prefetch off); the 3K prefix proves the tree walk
-      # bit-exact, and full-image equivalence is covered by LZ77Decode
-      # (both streams decode to identical bytes, verified at 3 points).
+      # 3K prefix proves the tree walk bit-exact.
       - {address: 0x02000000, value: 0x62714E0E, width: 4}
       - {address: 0x02000400, value: 0x190814E8, width: 4}
       - {address: 0x02000800, value: 0x4DCC51CC, width: 4}
@@ -518,9 +460,7 @@ suites:
     skip_screenshot: true
     verify:
       memory:
-      # BRR decode prefix in EWRAM (host BRRDecode.py, strb low bytes).
-      # Full 235216-sample decode exceeds the budget; the 1K prefix proves
-      # the nibble/filter pipeline runs bit-exact.
+      # 1K prefix proves the pipeline bit-exact.
       - {address: 0x02000000, value: 0x00000000, width: 4}
       - {address: 0x02000040, value: 0x00000000, width: 4}
       - {address: 0x02000100, value: 0x00000000, width: 4}
@@ -531,12 +471,7 @@ suites:
     skip_screenshot: true
     verify:
       memory:
-      # PlaySoundA @48kHz setup: SoundA FIFO reset + L/R + 100%,
-      # master enable, and the repeat/special DMA itself enabled.
-      # (TM0CNT_L is a free-running counter, not a setup constant.)
-      # SOUNDCNT_H reads 0x0304: the ROM writes 0x0B04, but the FIFO
-      # reset bit 11 is an edge action that reads 0 on HW (GBATEK "W?";
-      # mGBA masks stores with 0x770F; suite io-read pins 0x770F).
+      # FIFO reset bits read 0 on HW.
       - {address: 0x040000C6, value: 0xB640, width: 2}
       - {address: 0x04000082, value: 0x0304, width: 2}
       - {address: 0x04000084, value: 0x80, width: 1}
@@ -546,9 +481,7 @@ suites:
     skip_screenshot: true
     verify:
       memory:
-      # PlaySoundAB @48kHz: both sound DMAs enabled, SoundA timer0 +
-      # SoundB timer1 enables in SOUNDCNT_H. The ROM writes 0xDA0C;
-      # the bus reads 0x520C (FIFO reset bits 11/15 read 0 on HW).
+      # The bus reads 0x520C (FIFO reset bits read 0).
       - {address: 0x040000C6, value: 0xB640, width: 2}
       - {address: 0x040000D2, value: 0xB640, width: 2}
       - {address: 0x04000082, value: 0x520C, width: 2}
@@ -559,8 +492,7 @@ suites:
     skip_screenshot: true
     verify:
       memory:
-      # TIMER var stores full TM0CNT (high half echoes CNT_H); the ROM
-      # itself checks only the low 16 bits against $0047.
+      # TIMER var stores full TM0CNT; ROM checks low 16 bits only.
       - {address: 0x03000584, value: 0x47, width: 2}
   - id: PeterLemon_BIOSSoundChannelClear
     rom: BIOS/Sound/ChannelClear/BIOSSoundChannelClear.gba
@@ -605,9 +537,7 @@ suites:
   - id: PeterLemon_BIOSDIV
     rom: BIOS/Arithmetic/DIV/BIOSDIV.gba
     cycles: 2000000
-  # BIOSCHECKSUM pins B1 (GetBiosChecksum $BAAE187F) twice: the ROM's embedded
-  # `cmp r0,$BAAE187F` prints PASS/FAIL, the TIMER0 self-check pins the HLE
-  # $A033 charge, and the sibling BIOSCHECKSUM.png (PASS/PASS) is auto-compared.
+  # BIOSCHECKSUM pins B1 twice.
   - id: PeterLemon_BIOSCHECKSUM
     rom: BIOS/Misc/CHECKSUM/BIOSCHECKSUM.gba
     cycles: 2000000
@@ -730,8 +660,7 @@ suites:
     cycles: 1000000
   - id: PeterLemon_Velocity
     rom: Physics/2D/Velocity/Velocity.gba
-    # Interacted ref reproduction (see §3): 169xL + B + 22 flights;
-    # matches except ~90 old-emu edge-rounding pixels.
+    # Interacted ref: 169xL + B + 22 flights; matches except ~90 edge pixels.
     cycles: 54430048
     inputs:
     - {cycle: 0, buttons: [l]}
@@ -740,20 +669,15 @@ suites:
     - {cycle: 48470336, buttons: []}
   - id: PeterLemon_Acceleration
     rom: Physics/2D/Acceleration/Acceleration.gba
-    # Interacted ref reproduction (see §3): 48xLeft; matches except ~95
-    # old-emu edge-rounding pixels. Stays in expected_failures.
+    # Interacted ref: 48xLeft; matches except ~95 edge pixels.
     cycles: 14381920
     inputs:
     - {cycle: 0, buttons: [left]}
     - {cycle: 13820128, buttons: []}
 - name: mgba-suite
   cases:
-  # Menu-driven multi-test ROM (mgba-emu/suite): each case navigates from
-  # a fresh boot (DOWN taps + A), holds no buttons during the run, and
-  # branches the suite's PASS:/FAIL: debug-log lines into per-subtest
-  # checks. expected_checks lists subtests with reference-side or
-  # research-grade causes (see notes); the mGBA debug MMIO backing this
-  # is in GbaMemoryBus (0x04FFF600/700/780).
+  # Menu-driven multi-test ROM: each case boots fresh (DOWN taps + A),
+  # no buttons during the run; PASS:/FAIL: log lines branch per subtest.
   - id: mgba_suite_memory
     rom: suite.gba
     description: mgba suite - Memory tests
@@ -769,9 +693,7 @@ suites:
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
         sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
-    # 1502/1552 pass. The 50 below are reference-side or research-grade
-    # (see §10): 38x stale ROM-mirror table, 10x HLE BIOS-content gap,
-    # 2x open-bus latch micro-state (no uniform model).
+    # 1502/1552 pass. The 50 below are reference-side, not emulation.
     expected_checks:
     - 'ROM out-of-bounds load U8'
     - 'ROM out-of-bounds load S8'
@@ -823,12 +745,8 @@ suites:
     - 'BIOS load 32 (unaligned 3)'
     - 'BIOS out-of-bounds load S16 (unaligned)'
     - 'Out-of-bounds load S16 (unaligned)'
-  # The remaining mgba-suite groups are menu-driven (DOWN x N, A to run,
-  # END logged, results viewer dismissed). Each case boots fresh, so the
-  # menu always starts at index 0 (0 Memory, 1 I/O read, 2 Timing,
-  # 3 Timer count-up, 4 Timer IRQ, 5 Shifter, 6 Carry, 7 Multiply long,
-  # 8 BIOS math, 9 DMA, 10 SIO R/W, 11 SIO timing, 12 Misc edge,
-  # 13 Video (interactive/visual: out of scope for log verify)).
+  # Remaining groups are menu-driven (DOWN x N, A to run). Each case
+  # boots fresh, so the menu always starts at index 0.
   - id: mgba_suite_io_read
     rom: suite.gba
     description: mgba suite - I/O read tests
@@ -845,12 +763,8 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # All subtests pass. The 12 APU readable-bit masks are applied at
-    # write time (mGBA GBAIOWrite `value &= mask`; GBATEK R/W maps), so
-    # unreadable bits never persist: e.g. SOUND1CNT_LO 0x007F,
-    # SOUND3CNT_LO 0x00E0, SOUNDCNT_HI 0x770F. SOUNDCNT_X reads 0x0080
-    # (master-enable latch; channel flags stay 0: the stub PSG never
-    # runs). Pinned end-to-end by synthetic_apu_read_masks.
+    # All subtests pass. Unreadable APU bits never persist (write-time
+    # masks); SOUNDCNT_X reads 0x0080.
   - id: mgba_suite_shifter
     rom: suite.gba
     description: mgba suite - Shifter tests
@@ -914,12 +828,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # All 72 subtests pass. MULLS C comes from the Booth multiplier
-    # array's final carry, not the product (e.g. SMULL(0, $80) -> C=1 on
-    # a zero product); the core models it with the zaydlang/calc84maniac
-    # carry-save algorithm (full-tick Rs -> Hi model over RdHi, early-out
-    # Rs -> Lo model over RdLo), pinned by synthetic_mull_nzcv_writeback
-    # and the mull_carry_matches_suite_table unit test.
+    # All 72 pass. MULLS C is the multiplier's final carry, not the product.
   - id: mgba_suite_bios_math
     rom: suite.gba
     description: mgba suite - BIOS math tests
@@ -968,11 +877,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 90/90 subtests pass (GRADUATED). SIO register file per the suite HW
-    # table (sio-read.c) + GBATEK R/W maps, mGBA (sio.c/io.c) where it
-    # matches HW. Register-level rules live in code comments at the
-    # implementation; unconnected multi is a SLAVE (START never
-    # schedules, so Multi timing tests self-SKIP).
+    # 90/90 GRADUATED. Unconnected multi is a slave (Multi tests self-SKIP).
   - id: mgba_suite_misc_edge
     rom: suite.gba
     description: mgba suite - Misc. edge case tests
@@ -1001,11 +906,7 @@ suites:
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
         sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
-    # 6 subtests fail on research-grade micro-behavior (see §10):
-    # DMA Prefetch Break/Read (bus bleed + unknowable value; both
-    # sub-hypotheses dead; no CPU slice helps) and H-blank bit flips
-    # (opposite-direction pairs +3/-7/+1/-2; timers ties pin the shared
-    # line the other way). Boxed; sub-tick evidence only.
+    # 6 fail on research-grade micro-behavior; boxed.
     expected_checks:
     - 'DMA Prefetch Break'
     - 'DMA Prefetch Read'
@@ -1035,8 +936,7 @@ suites:
   - id: mgba_suite_timers
     rom: suite.gba
     description: mgba suite - Timer count-up tests
-    # Full suite needs ~61M tcycles to reach END (see expected_failures
-    # note); the 100M budget keeps headroom without slowing Timeout.
+    # Full suite needs ~61M tcycles to reach END; 100M keeps headroom.
     cycles: 100000000
     skip_screenshot: true
     script:
@@ -1071,9 +971,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 36 fail on start-latency phase (see §9): diagonal drift (FFFF from
-    # nop 2 ... FFF8 at 9); only sub-tick ordering remains (global).
-    # Box re-stands (re-challenged with per-tick traces).
+    # 36 fail on start-latency phase (diagonal drift); boxed.
     expected_checks:
     - 'FFFF 2 nops'
     - 'FFFF 3 nops'
@@ -1135,11 +1033,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # All subtests pass (END: 1244/1244). Two de-facto HW rules (mGBA
-    # dma.c-conformant): GamePak-ROM sources always increment (4th word
-    # delivered; ch0 SAD mask makes it a BIOS-mirror + stale latch);
-    # 16-bit GamePak +2 shift fires only for primed bursts (head outside
-    # ROM). Pinned by synthetic_dma_rom_*.
+    # All pass (END: 1244/1244). ROM sources increment; +2 shift needs primed bursts.
   - id: mgba_suite_sio_timing
     rom: suite.gba
     description: mgba suite - SIO timing tests
@@ -1166,8 +1060,4 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # All 8 subtests pass (GRADUATED): 4 Normal = transfer-cycles + 121
-    # (mGBA GBASIOTransferCycles + setup/Halt-wake/entry/IntrMain); 4
-    # Multi self-SKIP (unconnected slave never starts). Plain-Halt
-    # wake stalls past line-rise (dispatch before resume); IntrWait 48,
-    # plain Halt 32 (IME=1 only, else haltcnt CPUSET-DMA breaks).
+    # All 8 GRADUATED. 4 Normal = transfer-cycles + 121; 4 Multi self-SKIP.

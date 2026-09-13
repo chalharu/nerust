@@ -42,12 +42,8 @@ impl Cartridge {
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
-        // The GBA fetches from the aligned address and rotates the result
-        // (`align_read` / `read_ldr_halfword` in the memory bus): halfword
-        // loads align down like every other region (`aligned_off`), so an
-        // odd LDRH sees the aligned halfword rotated (mgba-suite "ROM
-        // load U16 (unaligned)" pins 0xEF0000BE, not the odd bytes).
-        // Word loads align to 4; byte loads are exact.
+        // Unaligned loads read from the aligned address (halfword/word align down).
+        // Byte loads use the exact address.
         let aligned_off = match width {
             4 => raw_off & !3,
             2 => raw_off & !1,

@@ -233,15 +233,8 @@ fn signed_origin(value: u16, threshold: i32, modulus: i32) -> i32 {
     }
 }
 
-/// GBATEK OBJ Overview: per-line OBJ rendering cycle budget.
-/// 1210 cycles if H-Blank Interval Free (DISPCNT bit5) is 0, else 954.
-/// Normal OBJ costs `width` cycles, affine costs `10 + field_width*2`
-/// (GBATEK; mGBA uses 8 as its affine base). OBJs that are disabled,
-/// prohibited, or fully off the line (vertically OR horizontally) cost the
-/// 2-cycle gap. Higher-priority (lower-index) offscreen OBJs also consume
-/// cycles, so once the budget is exceeded this line drops the OBJ and all
-/// lower-priority ones. Partially left-clipped OBJs pay less (mGBA
-/// `common.c`: affine `+= x`, normal `+= x>>1` for negative x).
+/// Per-line OBJ cycle budget (1210 cycles, 954 with H-Blank Interval Free).
+/// Over budget, this OBJ and all lower-priority ones are dropped for the line.
 fn cycle_drop_mask(registers: &PpuRegisters, oam: &[u8], y: usize) -> [bool; 128] {
     let mut dropped = [false; 128];
     let budget: u32 = if registers.dispcnt & (1 << 5) != 0 {

@@ -2,16 +2,7 @@ use crate::cartridge::Cartridge;
 use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
-/// HLE IRQ entry cost. Hardware runs the real BIOS IRQ prologue
-/// (exception entry 2S+1N plus the BIOS handler at 0x18: register save,
-/// IntrCheck dispatch to the user vector) before the first user handler
-/// instruction; the HLE trampoline skips that prologue and charges this
-/// fitted constant instead. Calibrated against the nba irq-delay
-/// ROM-observed totals (92/112/120 timer ticks for IWRAM/EWRAM/ROM):
-/// with GBATEK-correct CPU costs (notably STM = (n-1)S+2N, which the
-/// libgba master ISR prologue STMFD executes once on the measurement
-/// path) the skip stands in for 23 cycles. Recalibrate against those
-/// three ROM pins if anything else on the entry path changes.
+/// HLE IRQ entry cost: cycles charged for the skipped BIOS IRQ prologue.
 const IRQ_ENTRY_CYCLES: u32 = 23;
 
 pub struct GbaSystem {
@@ -118,13 +109,8 @@ impl GbaSystem {
                 if self.bus.hle_bios_active() {
                     self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
                 } else {
-                    // At an instruction boundary (queue empty) sample IRQ
-                    // first (legacy order: dispatch wins boundary ties);
-                    // mid-instruction (queue draining) never samples (ARM
-                    // takes exceptions at instruction boundaries only).
-                    // Falls through to the shared epilogue below in all
-                    // cases (no early return: the decrement is load-bearing
-                    // for dispatch timing).
+                    // Sample IRQ only at instruction boundaries; mid-instruction never samples.
+                    // Falls through to the shared epilogue (decrement sets dispatch timing).
                     if !self.cpu.micro_pending() {
                         let irq_source_pc = self.cpu.registers().pc();
                         let irq_entry_cycles = IRQ_ENTRY_CYCLES

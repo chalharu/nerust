@@ -1,21 +1,6 @@
-/// GamePak GPIO (General-Purpose I/O) port overlay at 080000C4h-C8h.
-///
-/// GBATEK `#gbacartioportgpio`: 4-bit bidirectional port used by RTC
-/// (S3511), solar sensor (Boktai), tilt/gyro/rumble carts. Data at C4h,
-/// direction at C6h, control at C8h (bit 0 = port enable). Control bit 0
-/// selects Write-Only vs Read/Write: in write-only mode READS return 00h,
-/// but WRITES still latch (only reads are gated). Pre-enable setup bytes
-/// therefore survive until the port is enabled.
-///
-/// Attachment is lazy: the overlay stays dormant (reads return ROM data,
-/// writes latch open bus as before) until the first control write with
-/// bit 0 set. Games without GPIO hardware never write there (ROM is
-/// read-only), so this cannot misfire on normal carts.
-///
-/// Modeled here: register behavior only. Attached DEVICES (RTC time,
-/// solar light level, gyro, rumble) are out of scope: input pins read 0.
-/// This already fixes presence detection and control flow for GPIO games;
-/// titles needing live sensor data remain unsupported (residual G13).
+/// GamePak GPIO overlay at 080000C4h-C8h (data/direction/control).
+/// Lazy attach on first control-enable write; register behavior only, inputs read 0.
+/// Pre-enable writes latch but reads fall through to ROM until enabled.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Gpio {
     control: u16,
