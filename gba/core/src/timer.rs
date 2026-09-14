@@ -35,16 +35,11 @@ impl GbaTimers {
         self.channels[channel].reload_pending = Some(reload);
         self.last_reload_cycle[channel] = Some(self.current_cycle);
         let new_control = (value >> 16) as u16 & 0x00C7;
-        let was_enabled = self.channels[channel].control & 0x80 != 0;
-        if was_enabled && new_control & 0x80 == 0 {
-            // 32-bit disable is immediate but a 16-bit stop defers one tick
-            // (observed hardware asymmetry; do not unify).
-            self.channels[channel].control = new_control;
-            self.channels[channel].pending_control = None;
-            self.channels[channel].start_delay = 0;
-        } else {
-            write_control(&mut self.channels[channel], new_control);
-        }
+        // Stops defer one tick like 16-bit writes (NBA routes both widths
+        // through the same +1-tick control events). The deferred 16-bit
+        // stop is HW-pinned (nba start-stop 2ND=8); no HW test covers the
+        // 32-bit stop, so the NBA-unified model rules here.
+        write_control(&mut self.channels[channel], new_control);
         true
     }
 
@@ -244,8 +239,14 @@ impl GbaTimers {
 fn write_control(timer: &mut TimerChannel, new_control: u16) {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
-    if enabled && !was_enabled {
+    // A stop queued this same tick (no tick elapsed) followed by an enable
+    // is a restart, not a running write: the disable never took effect.
+    let restarted = enabled && timer.pending_control.is_some();
+    if (enabled && !was_enabled) || restarted {
         timer.control = new_control;
+        // A fresh start supersedes any deferred stop: leaving a stale
+        // pending stop would kill the new run a tick later.
+        timer.pending_control = None;
         // A reload written together with (or just before) the enable is
         // visible to the startup load: flush the one-tick landing delay.
         if let Some(reload) = timer.reload_pending.take() {
