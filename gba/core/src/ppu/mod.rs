@@ -9,6 +9,11 @@ pub const WIDTH: usize = 240;
 pub const HEIGHT: usize = 160;
 pub const CYCLES_PER_LINE: u16 = 1232;
 pub const HDRAW_CYCLES: u16 = 960;
+/// HBlank flag edge. NBA/GBAHawk use 1007 in their own event coordinates,
+/// but the HW-pinned joint observable (nba basic-timing: HBL UNSET 111,
+/// VCNT SET 111 / UNSET 727, exact) reproduces at 1006 with this core's
+/// DMA phase; 1007 shifts every index by one. Edge constant is not
+/// portable across cores — only the joint (edge, DMA phase) is HW truth.
 pub const HBLANK_FLAG_CYCLES: u16 = 1006;
 pub const LINES_PER_FRAME: u16 = 228;
 /// BG fetch clock (nba hw-test archive/ppu/mode3): the PPU fetches pixel x
@@ -112,7 +117,11 @@ pub struct GbaPpu {
     cycle: u16,
     vcount: u16,
     frame: Box<[u32]>,
-    ref_written: [bool; 2],
+    /// BGX/Y written flags (NBA `bgx.written`): a write stores the
+    /// register and arms the flag; the internal copy lands at the next
+    /// line start (or vcount 0), never immediately.
+    written_x: [bool; 2],
+    written_y: [bool; 2],
     /// Last sub-boundary BG VRAM halfword (NBA `vram_bg_latch`): BG fetches
     /// at/above the OBJ boundary return this instead of physical VRAM.
     bg_latch: u16,
@@ -121,27 +130,18 @@ pub struct GbaPpu {
     /// `latch[0] & live`, forced blank on `latch[0] | live` (NBA `Merge.cc`,
     /// `PPU.hh::ForcedBlank`). Window enables stay live.
     dispcnt_latch: [u16; 3],
-    /// Forced-blank restart (GBATEK DISPCNT: when a forced blank during a
-    /// display period is cancelled, the display restarts from the beginning
-    /// after two vertical lines). Counts down line_ends after a blank 1->0
-    /// transition with vcount<160; at zero the scanline counter resets.
-    blank_restart: u8,
-    /// Effective forced-blank state at the previous line end, for edge
-    /// detection above.
-    was_blanked: bool,
     /// Forced-blank sample taken at line end for the next scanline.
     /// Unlike BG/OBJ enables (3-stage latch), blank applies within a line,
     /// so `forced_blank()` ORs this sample with the live bit.
     blank_sample: bool,
-    /// Per-line latch: OAM and MOSAIC sampled at the first pixel of each line.
-    /// Mid-draw writes defer to the next line; HBlank/VBlank writes are unaffected.
+    /// Per-line latch: OAM sampled at the first pixel of each line.
+    /// MOSAIC stays live (NBA/Hawk: sizes read per-pixel).
     /// Other registers (DISPCNT, BGxCNT, scroll, windows) stay live.
     line: LineLatch,
 }
 
 #[derive(Debug)]
 struct LineLatch {
-    mosaic: u16,
     oam: Box<[u8; 1024]>,
     /// `dispcnt_latch[0]` sampled at the first fetch of the line (cycle 32,
     /// before the +40 shift): the enable/blank reference for this scanline.
@@ -151,14 +151,12 @@ struct LineLatch {
 impl LineLatch {
     fn new() -> Self {
         Self {
-            mosaic: 0,
             oam: Box::new([0; 1024]),
             enable: 0,
         }
     }
 
-    fn capture(&mut self, mosaic: u16, oam: &[u8], enable: u16) {
-        self.mosaic = mosaic;
+    fn capture(&mut self, oam: &[u8], enable: u16) {
         self.oam.copy_from_slice(oam);
         self.enable = enable;
     }
@@ -173,11 +171,10 @@ impl GbaPpu {
             cycle: 0,
             vcount: 0,
             frame: vec![color::rgba8888(0x7FFF); WIDTH * HEIGHT].into_boxed_slice(),
-            ref_written: [false; 2],
+            written_x: [false; 2],
+            written_y: [false; 2],
             bg_latch: 0,
             dispcnt_latch: [0; 3],
-            blank_restart: 0,
-            was_blanked: false,
             blank_sample: false,
             line: LineLatch::new(),
         }
@@ -235,22 +232,20 @@ impl GbaPpu {
         event.line_started = true;
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
-        // Forced-blank restart edge: blanked 1->0 with vcount<160 restarts
-        // the frame after two more vertical lines (GBATEK DISPCNT).
-        let blanked = self.forced_blank();
-        if self.was_blanked && !blanked && self.vcount < HEIGHT as u16 {
-            self.blank_restart = 2;
-        }
-        self.was_blanked = blanked;
-        if self.blank_restart > 0 {
-            self.blank_restart -= 1;
-            if self.blank_restart == 0 {
-                // Restart the frame: the next scanline rendered is line 0.
-                self.vcount = 0;
-                return;
+        self.advance_vcount(event);
+        // NBA InitBackground: pending BGX/Y writes land in the internal
+        // registers at the next line start (or unconditionally at vcount 0).
+        let first_scanline = self.vcount == 0;
+        for affine in 0..2 {
+            if self.written_x[affine] || first_scanline {
+                self.internal_x[affine] = self.registers.ref_x[affine];
+                self.written_x[affine] = false;
+            }
+            if self.written_y[affine] || first_scanline {
+                self.internal_y[affine] = self.registers.ref_y[affine];
+                self.written_y[affine] = false;
             }
         }
-        self.advance_vcount(event);
         self.update_vcount_match(event);
     }
 
@@ -269,7 +264,6 @@ impl GbaPpu {
             &mut self.internal_y,
             self.registers.pb,
             self.registers.pd,
-            &mut self.ref_written,
             enabled,
         );
     }
@@ -288,13 +282,6 @@ impl GbaPpu {
         } else if self.vcount == LINES_PER_FRAME {
             self.vcount = 0;
             self.registers.dispstat &= !1;
-            // NBA #177: VBlank internal copy, per enabled BG.
-            for affine in 0..2 {
-                if self.registers.dispcnt & (1 << (10 + affine)) != 0 {
-                    self.internal_x[affine] = self.registers.ref_x[affine];
-                    self.internal_y[affine] = self.registers.ref_y[affine];
-                }
-            }
             event.frame_complete = true;
         }
     }
@@ -421,17 +408,14 @@ impl GbaPpu {
             0x04000028..=0x0400002E | 0x04000038..=0x0400003E => {
                 let affine = usize::from(address >= 0x04000038);
                 self.write_reference(address, value);
-                // GBATEK: outside VBlank the write is copied to internal immediately.
-                // For per-scanline affine (BGMode7) the HBlank write must not be
-                // incremented again at line end, so mark dirty to skip advance.
-                // "During H-Blank" is the blanking period starting at HDraw
-                // end (cycle 960), not the DISPSTAT flag edge (1006).
-                if self.vcount < 160 && self.registers.dispcnt & (1 << (10 + affine)) != 0 {
-                    self.internal_x[affine] = self.registers.ref_x[affine];
-                    self.internal_y[affine] = self.registers.ref_y[affine];
-                    if self.cycle >= HDRAW_CYCLES {
-                        self.ref_written[affine] = true;
-                    }
+                // NBA: the write only arms the pending flag; the internal
+                // copy lands at the next line start (see handle_line_end).
+                if (0x04000028..=0x0400002A).contains(&address)
+                    || (0x04000038..=0x0400003A).contains(&address)
+                {
+                    self.written_x[affine] = true;
+                } else {
+                    self.written_y[affine] = true;
                 }
                 0
             }
@@ -513,10 +497,9 @@ impl GbaPpu {
 
     fn render_pixel(&mut self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
         if x == 0 {
-            // Latch OAM/MOSAIC/enable at the first fetch of the line;
-            // later mid-draw writes defer to the next line.
-            self.line
-                .capture(self.registers.mosaic, oam, self.dispcnt_latch[0]);
+            // Latch OAM at the first fetch of the line; later mid-draw
+            // writes defer to the next line. MOSAIC stays live.
+            self.line.capture(oam, self.dispcnt_latch[0]);
         }
         // Forced blank: sampled (line-start) OR live. Render and stall
         // paths share forced_blank(), so both follow blank within a line.
@@ -547,7 +530,7 @@ impl GbaPpu {
                     bg_index,
                     (x, y),
                     &mut self.bg_latch,
-                    self.line.mosaic,
+                    self.registers.mosaic,
                 )
             {
                 layers.push(pixel);
@@ -562,7 +545,7 @@ impl GbaPpu {
                 &self.line.oam[..],
                 (x, y),
                 false,
-                self.line.mosaic,
+                self.registers.mosaic,
             )
         {
             layers.push(pixel);
@@ -626,7 +609,7 @@ impl GbaPpu {
             vram,
             palette,
             &self.line.oam[..],
-            self.line.mosaic,
+            self.registers.mosaic,
         )
     }
 }

@@ -102,7 +102,7 @@ impl GbaSystem {
 
     /// CPUとバスを1 T-cycleだけ進行する。
     pub fn step_tcycle(&mut self) -> bool {        if self.bus.dma_active() {
-            // HW/mGBA cpuBlocked: the CPU is stalled for the whole burst;
+            // HW behavior: the CPU is stalled for the whole burst;
             // only the bus advances, the in-flight op resumes afterwards.
         } else {
             if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
@@ -140,6 +140,8 @@ impl GbaSystem {
         }
         self.tick = self.tick.wrapping_add(1);
         let frame_end = self.bus.tick();
+        // Age the post-LDM^ bank-conflict window once per T-cycle.
+        self.cpu.registers_mut().tick_ldm_conflict();
         // IntrWait wake-exit latency (see `wake_latency`): burn as
         // CPU-stall cycles so the staging IRQ line wins the race against
         // the woken thread. Subsumed by any longer in-flight charge.

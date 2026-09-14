@@ -10,11 +10,10 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
         0x1800..=0x1FFF => thumb_opcodes::add_sub::handle(regs, instr),
         0x2000..=0x3FFF => thumb_opcodes::alu::handle_imm(regs, instr),
         0x4000..=0x43FF => {
-            // MUL breaks the fetch stream (mGBA Thumb MUL post-body
-            // N16-S16) and fills prefetch P-ON (mGBA ARM_WAIT_SMUL stall
-            // on m, m from the incoming Rd). Register shifts carry their
-            // I-cycle in the base only (no suite timing cell covers them;
-            // mGBA charges no post for shifts either).
+            // MUL breaks the fetch stream (N16-S16 post-body) and fills
+            // prefetch P-ON (tick erase on m, m from the incoming Rd).
+            // Register shifts carry their I-cycle in the base only (no
+            // suite timing cell covers them).
             let op = ((instr >> 6) & 0xF) as u8;
             if op == 0xD {
                 let ticks = crate::cpu::arm_opcodes::multiply::multiplier_cycles(

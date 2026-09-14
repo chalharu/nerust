@@ -132,7 +132,7 @@ impl Gpio {
     }
 
     /// Feed pin levels to both devices after a latch change. RTC and solar
-    /// share the bus but select via CS (mGBA): CS high parks solar, CS low
+    /// share the bus but select via CS: CS high parks solar, CS low
     /// aborts the RTC, so only one drives at a time.
     fn update_pins(&mut self) {
         let line = self.line_level() as u8;

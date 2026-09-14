@@ -66,7 +66,7 @@ pub struct GbaDma {
 impl GbaDma {
     /// The bus stays owned through the completion tick: the CPU resumes
     /// once the last unit's delay has fully elapsed and the channel state
-    /// has settled (mGBA cpuBlocked until the DMA event completes).
+    /// has settled.
     pub fn is_active(&self) -> bool {
         self.channels.iter().any(|dma| dma.active)
     }
@@ -101,10 +101,7 @@ impl GbaDma {
                 // A destination rewrite on an idle enabled channel can turn
                 // it into FIFO DMA (enable latched it as a plain transfer);
                 // re-latch the 4x32-bit burst. Never touch a running burst.
-                if !dma.active
-                    && dma.control & 0x8000 != 0
-                    && sound_dma(channel, dma.control, dma.destination)
-                {
+                if !dma.active && dma.control & 0x8000 != 0 && sound_dma(channel, dma.control) {
                     dma.remaining = 4;
                 }
             }
@@ -125,8 +122,8 @@ impl GbaDma {
                 && !dma.active
                 && dma.pending == 0
             {
-                // mGBA `when = now + 3`: the DMA owns the bus 3 cycles
-                // after the start condition fires.
+                // The DMA owns the bus 3 cycles after the start
+                // condition fires (NBA/GBAHawk agree).
                 dma.pending = 3;
                 dma.is_first = true;
             }
@@ -199,9 +196,8 @@ impl GbaDma {
             return None;
         }
         let raw_width = if dma.control & (1 << 10) != 0 { 4 } else { 2 };
-        let raw_dest = dma.current_destination & !(u32::from(raw_width) - 1);
         // Sound-FIFO DMA always moves 32-bit units (GBATEK DMA).
-        let width = if sound_dma(channel, dma.control, raw_dest) {
+        let width = if sound_dma(channel, dma.control) {
             4
         } else {
             raw_width
@@ -228,8 +224,7 @@ impl GbaDma {
                 1 => cur == prev.wrapping_sub(u32::from(width)),
                 0 => cur == prev.wrapping_add(u32::from(width)),
                 // GBATEK transfer rate ("Except for the first data unit,
-                // all units are transferred by sequential reads and writes",
-                // mGBA dma.c caches Seq for every later unit).
+                // all units are transferred by sequential reads and writes").
                 _ => true,
             };
             if (0x08000000..=0x0DFFFFFF).contains(&bus_src) {
@@ -243,9 +238,9 @@ impl GbaDma {
             }
         };
         // GBATEK transfer rate ("Except for the first data unit, all
-        // units are transferred by sequential reads and writes", mGBA
-        // dma.c caches Seq for every later unit): every destination mode,
-        // including fixed, is sequential after the first unit.
+        // units are transferred by sequential reads and writes"): every
+        // destination mode, including fixed, is sequential after the
+        // first unit.
         let is_seq_dst = if dma.is_first {
             // HW-observed (mgba-suite Timing ROM-to-ROM cells): a both-ROM
             // burst streams the destination from the first unit (S); all
@@ -271,9 +266,8 @@ impl GbaDma {
             };
         dma.delay = (total_wait + internal) as u8;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
-        // Data stream: forced increment inside GamePak ROM (mGBA
-        // `sourceOffset = width`, re-evaluated per unit like mGBA's
-        // region-crossing refresh); programmed mode elsewhere, where it
+        // Data stream: forced increment inside GamePak ROM, re-evaluated
+        // per unit on region crossing; programmed mode elsewhere, where it
         // coincides with the counter above.
         let data_source = dma.data_source & !(u32::from(width) - 1);
         let data_mode = if is_rom(data_source) {
@@ -282,7 +276,7 @@ impl GbaDma {
             source_mode(dma.control)
         };
         dma.data_source = advance(dma.data_source, data_mode, width, false);
-        if sound_dma(channel, dma.control, destination) {
+        if sound_dma(channel, dma.control) {
             // GBATEK DMA: sound FIFO transfers never increment the
             // destination; the 4x32-bit burst always lands in the FIFO.
         } else {
@@ -325,17 +319,16 @@ impl GbaDma {
         std::mem::take(&mut self.completion_interrupts)
     }
 
-    /// Find an enabled Special channel (1 or 2) targeting a sound FIFO,
-    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H). Like the
-    /// transfer path, a Repeat-less channel is not FIFO DMA.
+    /// Find an enabled Special channel (1 or 2) feeding a sound FIFO,
+    /// for timer-overflow-driven sound DMA (GBATEK SOUNDCNT_H). The FIFO
+    /// side follows the destination word (A0/A2 -> A, A4/A6 -> B).
     pub fn sound_channel_for_fifo(&self, fifo_b: bool) -> Option<usize> {
-        let want = if fifo_b { 0x0400_00A4 } else { 0x0400_00A0 };
         [1, 2].into_iter().find(|&channel| {
             let dma = &self.channels[channel];
             dma.control & 0x8000 != 0
                 && timing(dma.control) == DmaTrigger::Special
-                && dma.control & (1 << 9) != 0
-                && (dma.destination & !3) == want
+                && ((dma.destination & 4) != 0) == fifo_b
+                && matches!(dma.destination & !7, 0x0400_00A0 | 0x0400_00A4)
         })
     }
 
@@ -391,7 +384,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
             } else {
                 0x07FF_FFFF
             };
-        dma.remaining = if sound_dma(channel, dma.control, dma.destination) {
+        dma.remaining = if sound_dma(channel, dma.control) {
             // GBATEK DMA: sound transfers ignore CNT_L and always move
             // 4x32-bit per timer overflow.
             4
@@ -408,7 +401,7 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
         dma.completing = false;
         dma.completion_interrupt = false;
         if timing_for(channel, dma.control) == DmaTrigger::Immediate {
-            // GBATEK/mGBA startup + the enabling bus cycle: event-triggered
+            // GBATEK startup + the enabling bus cycle: event-triggered
             // DMA starts 3 cycles after its trigger (pending=3), but an
             // Immediate channel pays one more cycle for the CNT_H enabling
             // write itself (nba start-delay reads 20, not 19).
@@ -438,7 +431,7 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
     dma.completing = false;
     dma.completion_interrupt = false;
     if repeat {
-        dma.remaining = if sound_dma(channel, dma.control, dma.destination) {
+        dma.remaining = if sound_dma(channel, dma.control) {
             4
         } else {
             effective_count(channel, dma.count)
@@ -455,8 +448,8 @@ fn finish(dma: &mut DmaChannel, channel: usize) {
         }
         if timing_for(channel, dma.control) == DmaTrigger::Immediate {
             // Immediate has no recurring start condition, so Repeat cannot
-            // re-arm it (mGBA dma.c forces noRepeat for TIMING_NOW):
-            // clear Enable like the non-repeat path instead of looping.
+            // re-arm it: clear Enable like the non-repeat path instead
+            // of looping.
             dma.control &= !0x8000;
         }
     } else {
@@ -488,27 +481,20 @@ fn timing(control: u16) -> DmaTrigger {
 }
 
 /// Per-channel start timing. GBATEK DMA Start Timing: Special on DMA0 is
-/// Prohibited — it has no start source, so it never fires (mGBA never
-/// schedules CUSTOM on ch0). Return the raw timing so no enable, trigger,
-/// or repeat path can mistake it for Immediate.
+/// Prohibited — it has no start source, so it never fires. Return the raw
+/// timing so no enable, trigger, or repeat path can mistake it for
+/// Immediate.
 fn timing_for(_channel: usize, control: u16) -> DmaTrigger {
     timing(control)
 }
 
-/// Sound-FIFO DMA (GBATEK "DMA-Sound Playback Procedure"): a Special-timed
-/// transfer with Repeat set, targeting FIFO_A/B, always moves 4x32-bit
-/// with a fixed destination. GBATEK restricts sound DMA to channels 1/2
+/// Sound-FIFO DMA (NBA/GBAHawk agree: no destination condition): a
+/// Special-timed transfer on channel 1/2 always moves 4x32-bit with a
+/// fixed destination. GBATEK restricts sound DMA to channels 1/2
 /// (DMA0 Special is Prohibited, DMA3 Special is Video Capture), so the
 /// channel gates the quirk: other channels fall through to normal timing.
-fn sound_dma(channel: usize, control: u16, destination: u32) -> bool {
-    (channel == 1 || channel == 2)
-        && timing(control) == DmaTrigger::Special
-        && control & (1 << 9) != 0
-        && is_fifo_dest(destination)
-}
-
-fn is_fifo_dest(destination: u32) -> bool {
-    matches!(destination & !3, 0x0400_00A0 | 0x0400_00A4)
+fn sound_dma(channel: usize, control: u16) -> bool {
+    (channel == 1 || channel == 2) && timing(control) == DmaTrigger::Special
 }
 
 fn is_rom(address: u32) -> bool {
@@ -527,7 +513,7 @@ fn advance(address: u32, mode: u16, width: u8, destination: bool) -> u32 {
     match mode {
         1 => address.wrapping_sub(u32::from(width)),
         2 => address,
-        // GBATEK marks source mode 3 "Prohibited"; de-facto HW/mGBA behavior
+        // GBATEK marks source mode 3 "Prohibited"; de-facto HW behavior
         // is increment, which is what the fallthrough implements.
         // Destination mode 3 is Increment+Reload (reload handled at finish).
         3 if destination => address.wrapping_add(u32::from(width)),

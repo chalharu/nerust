@@ -65,9 +65,13 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
             regs.set_r(rn, wb_val);
         }
     }
+    // NBA LDM^ bus conflict: a user-mode load (S set, no PC) executed
+    // outside USR/SYS leaves r8-r14 dual-banked for the next two cycles.
+    if l && transfer_user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+        regs.arm_ldm_conflict();
+    }
 
-    // The block breaks the fetch stream (mGBA load/store post-body:
-    // once per instruction, not per word).
+    // The block breaks the fetch stream (once per instruction, not per word).
     bus.charge_fetch_stream_break();
     transfer_cycles(l, reg_list, transferred)
 }
@@ -103,8 +107,7 @@ fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
 fn transfer_registers(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, spec: TransferSpec) -> u32 {
     let mut address = spec.start;
     let mut transferred = 0;
-    // mGBA LoadMultiple/StoreMultiple: ONE prefetch stall on the
-    // whole-word total (see begin/end_block_batch).
+    // ONE prefetch stall on the whole-word total (see begin/end_block_batch).
     bus.begin_block_batch(spec.load, 4);
     for register in (0..16).filter(|register| spec.list & (1 << register) != 0) {
         // First word N; continuation words follow bus order (sequential
@@ -157,8 +160,8 @@ fn load_register(
     }
     if restore && register == 15 {
         // LDM^ including PC returns from an exception and restores CPSR
-        // from SPSR — but USR/SYS have no SPSR (mGBA _ARMModeHasSPSR
-        // guard): skip instead of zeroing CPSR into an invalid mode.
+        // from SPSR — but USR/SYS have no SPSR (ARM ARM): skip instead
+        // of zeroing CPSR into an invalid mode.
         if !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
             regs.set_cpsr(regs.spsr());
         }

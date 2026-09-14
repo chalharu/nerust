@@ -40,7 +40,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         let value = regs.r(rd).wrapping_add(u32::from(rd == 15) * 4);
         store(bus, addr, value, b);
     }
-    // The data access breaks the fetch stream (mGBA load/store post-body).
+    // The data access breaks the fetch stream (once per instruction).
     bus.charge_fetch_stream_break();
 
     if writeback && !(l && rd == rn) {

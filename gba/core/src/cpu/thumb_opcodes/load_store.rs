@@ -242,8 +242,8 @@ fn handle_empty_multiple(
         // GBATEK: empty list loads R15 only (n=1): (n+1)S+2N+1I = 5.
         5
     } else {
-        // Empty STM stores R15+2 in Thumb state (mGBA GBAStoreMultiple:
-        // +WORD_SIZE_THUMB; ARM uses +WORD_SIZE_ARM) — pinned by jsmolka
+        // Empty STM stores R15+2 in Thumb state (+WORD_SIZE_THUMB;
+        // ARM uses +WORD_SIZE_ARM) — pinned by jsmolka
         // thumb t229, which compares the stored word against a
         // `mov r1, pc` one instruction later.
         bus.write32(address, regs.pc().wrapping_add(2));
@@ -289,7 +289,7 @@ mod tests {
         regs.set_r(0, 0x03000000);
         handle_multiple(&mut regs, &mut bus, 0xC000);
         assert_eq!(regs.r(0), 0x03000040);
-        // Empty STM stores R15+2 in Thumb state (mGBA; jsmolka t229).
+        // Empty STM stores R15+2 in Thumb state (jsmolka t229).
         assert_eq!(bus.read32(0x03000000), 0x08000306);
     }
 }

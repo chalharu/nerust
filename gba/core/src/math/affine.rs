@@ -34,7 +34,7 @@ pub struct BgAffineDst {
 }
 
 pub fn bg_affine_set(src: &BgAffineSrc, dst: &mut BgAffineDst) {
-    // mGBA: theta = (alpha>>8)/128 * PI,  sin/cos via table truncated to 8bit
+    // theta = (alpha>>8)/128 * PI, sin/cos via table truncated to 8bit
     let sin = sin_fixed(src.alpha) as i32;
     let cos = cos_fixed(src.alpha) as i32;
     let sx = src.sx.to_raw() as i32;
@@ -45,7 +45,7 @@ pub fn bg_affine_set(src: &BgAffineSrc, dst: &mut BgAffineDst) {
     dst.pc = Fixed8_8::from_raw(((sin * sy) >> 8) as i16);
     dst.pd = Fixed8_8::from_raw(((cos * sy) >> 8) as i16);
 
-    // mGBA: rx = ox - (a*cx + b*cy)
+    // rx = ox - (a*cx + b*cy)
     dst.start_x = src.cx
         - (src.disp_cx as i32 * dst.pa.to_raw() as i32
             + src.disp_cy as i32 * dst.pb.to_raw() as i32);
@@ -89,7 +89,7 @@ mod tests {
     fn bg_affine_set_demo_params() {
         // PeterLemon BGRotZoomMode2 defaults: 1024px map centered at
         // (512,512) shown at screen (120,80), scale 1.0, no rotation.
-        // rx = ox - (a*cx + b*cy) per mGBA/GBATEK BgAffineSet.
+        // rx = ox - (a*cx + b*cy) per GBATEK BgAffineSet.
         let s = BgAffineSrc {
             cx: 0x20000,
             cy: 0x20000,

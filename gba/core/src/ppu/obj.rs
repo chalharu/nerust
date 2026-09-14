@@ -181,7 +181,7 @@ impl Object {
     fn tile_number(&self, registers: &PpuRegisters, x: usize, y: usize, color256: bool) -> usize {
         // NBA sprite.cc: rows and columns wrap independently in 2D mapping
         // (32x32-tile matrix), 1D wraps the whole number at 10 bits.
-        // The 256-color lower-bit mask applies to 2D only (GBATEK/mGBA/NBA).
+        // The 256-color lower-bit mask applies to 2D only (GBATEK/NBA).
         let block_x = x / 8;
         let block_y = y / 8;
         let base = usize::from(self.attr2 & 0x3FF);
@@ -286,9 +286,9 @@ fn line_cost(oam: &[u8], index: usize, y: usize) -> u32 {
     if (y as i32) < origin_y || (y as i32) >= origin_y + field_height as i32 {
         return 2;
     }
-    // Horizontal participation (mGBA CleanOAM): 9-bit X wraps (256..511 =
-    // -256..-1); fully offscreen left or right costs the 2-cycle gap
-    // instead of the full width (parked OBJs must not burn 64 cycles).
+    // Horizontal participation: 9-bit X wraps (256..511 = -256..-1);
+    // fully offscreen left or right costs the 2-cycle gap instead of the
+    // full width (parked OBJs must not burn 64 cycles).
     let x_raw = attr1 & 0x1FF;
     let origin_x = if x_raw >= 256 {
         x_raw as i32 - 512
@@ -298,7 +298,7 @@ fn line_cost(oam: &[u8], index: usize, y: usize) -> u32 {
     if origin_x + field_width as i32 <= 0 || origin_x >= 240 {
         return 2;
     }
-    // Left-clipped remainder (mGBA clip adjustments on our GBATEK bases).
+    // Left-clipped remainder on the GBATEK cycle bases.
     let clip = origin_x.min(0);
     if affine {
         (10 + field_width as i32 * 2 + clip).max(2) as u32

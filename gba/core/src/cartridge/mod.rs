@@ -34,8 +34,8 @@ impl Cartridge {
         let len = self.rom.len();
         if len == 0 {
             // No cartridge: the bus returns the incrementing
-            // (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable Things",
-            // mGBA LOAD_CART: high half reads (addr+2)/2).
+            // (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable Things";
+            // high half reads (addr+2)/2, matching NBA).
             let base = addr & !3;
             let half = (base >> 1) & 0xFFFF;
             return if width == 4 {

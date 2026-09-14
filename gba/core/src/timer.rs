@@ -105,10 +105,10 @@ impl GbaTimers {
             timer.reload = reload;
         }
         if let Some((c, irq)) = Self::handle_start_delay(timer, index, prescaler) {
-            // mGBA GBATimerUpdate cascades synchronously: a lower timer's
-            // overflow still clocks this counter during enable latency
-            // (applied after the state's own action, so the state-2 reload
-            // load keeps mGBA's preload-then-++ order).
+            // Cascades apply synchronously: a lower timer's overflow still
+            // clocks this counter during enable latency (applied after the
+            // state's own action, so the state-2 reload load keeps
+            // preload-then-++ order).
             if incoming_cascade {
                 let cascade_out = increment(timer);
                 let cascade_irq = if cascade_out && timer.control & (1 << 6) != 0 {
@@ -255,8 +255,7 @@ fn write_control(timer: &mut TimerChannel, new_control: u16) {
         // before the load. Start latency is a fixed 2 cycles.
         timer.start_delay = 2;
         // No phase seeding: the shared prescaler is free-running and never
-        // reset by enables (mGBA lastEvent = now & ~tickMask;
-        // NBA prescaler_offset = now & mask).
+        // reset by enables (NBA offsets by now & mask instead).
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {

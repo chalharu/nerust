@@ -57,7 +57,7 @@ pub struct GbaApu {
     /// Native-grid stereo mix buffer (f32 pairs at 32.768kHz).
     mix_buffer: Vec<(f32, f32)>,
     /// W-only voice latches (length/duty/frequency never read back;
-    /// the stored registers keep readable bits only, mGBA-masked).
+    /// the stored registers keep readable bits only).
     freq1: u16,
     freq2: u16,
     freq3: u16,
@@ -128,7 +128,7 @@ impl GbaApu {
 
     pub fn reset(&mut self) {
         *self = Self::default();
-        // mGBA RegisterRamReset SOUND sets bias 0x200 and clears wave
+        // RegisterRamReset SOUND sets bias 0x200 and clears wave
         self.soundbias = 0x200;
         self.wave_ram.fill(0);
     }
@@ -198,10 +198,8 @@ impl GbaApu {
     }
 
     /// SOUNDCNT_H write: FIFO reset bits (11/15) act on the written value,
-    /// then the R/W mask 0x770F is stored (mGBA GBAIOWrite `value &= 0x770F`;
-    /// GBATEK marks 11/15 "W?", and mgba-suite io-read pins write-0xFFFF ->
-    /// 0x770F, i.e. both reset bits read 0). SOUND1CNT_LO..SOUNDCNT_LO use
-    /// the same write-time masking at the bus (see `GbaMemoryBus` writes).
+    /// then the R/W mask 0x770F is stored (GBATEK R/W map; both reset bits
+    /// read 0, pinned by mgba-suite io-read).
     pub fn write_soundcnt_hi(&mut self, value: u16) {
         if value & (1 << 11) != 0 {
             self.fifo_a.clear();
@@ -214,11 +212,6 @@ impl GbaApu {
 
     /// SOUNDCNT_X write: only bit 7 is R/W; clearing master enable resets PSG state.
     pub fn write_soundcnt_x(&mut self, value: u16) {
-        if value & 0x80 != 0 && self.soundcnt_x & 0x80 == 0 {
-            // mGBA master-enable: the frame counter restarts at 7, so the
-            // first post-enable step is a length step.
-            self.seq_step = 7;
-        }
         if value & 0x80 == 0 && self.soundcnt_x & 0x80 != 0 {
             self.sound1cnt_lo = 0;
             self.sound1cnt_hi = 0;
@@ -260,7 +253,7 @@ impl GbaApu {
 
     /// NR11/12 write: length + duty latch (W-only), envelope stays live.
     /// Envelope 0 (bits 11-15 clear) powers the DAC off and stops the
-    /// channel at once (Pan Docs DAC power; mGBA `_writeEnvelope` false).
+    /// channel at once (Pan Docs DAC power; NBA/GBAHawk agree).
     pub fn write_sound1cnt_hi(&mut self, value: u16) {
         self.sound1cnt_hi = value & 0xFFC0;
         self.len1 = 64 - (value & 0x3F) as u8;
@@ -366,6 +359,7 @@ impl GbaApu {
         } else {
             0
         };
+        self.wave.dimension_64 = self.sound3cnt_lo & (1 << 5) != 0;
         self.wave.trigger(
             self.len3,
             self.sound3cnt_lo & (1 << 5) != 0,
@@ -415,12 +409,10 @@ impl GbaApu {
         self.seq_timer -= 1;
         if self.seq_timer == 0 {
             self.seq_timer = T_CYCLES_PER_SEQ_STEP;
-            // mGBA UpdateFrame: the sequencer only advances while the
-            // master is enabled (period timing still free-runs).
-            if self.soundcnt_x & 0x80 != 0 {
-                self.seq_step = (self.seq_step + 1) & 7;
-                self.tick_sequencer();
-            }
+            // NBA: the 512Hz sequencer free-runs from boot (no master-off
+            // freeze, no enable reset); channels gate individually.
+            self.seq_step = (self.seq_step + 1) & 7;
+            self.tick_sequencer();
         }
         self.mix_timer -= 1;
         if self.mix_timer == 0 {
@@ -439,10 +431,10 @@ impl GbaApu {
             let l2 = self.sound2cnt_hi & (1 << 14) != 0;
             let l3 = self.sound3cnt_x & (1 << 14) != 0;
             let l4 = self.sound4cnt_hi & (1 << 14) != 0;
-            self.sq1.core.tick_length(l1, 64);
-            self.sq2.core.tick_length(l2, 64);
-            self.wave.tick_length(l3, 256);
-            self.noise.core.tick_length(l4, 64);
+            self.sq1.core.tick_length(l1);
+            self.sq2.core.tick_length(l2);
+            self.wave.tick_length(l3);
+            self.noise.core.tick_length(l4);
         }
         if step == 2 || step == 6 {
             self.sq1.tick_sweep();
@@ -632,7 +624,7 @@ impl GbaApu {
     }
 
     pub fn write(&mut self, addr: u32, value: u16) -> bool {
-        // Write-time R/W masks (mGBA GBAIOWrite; GBATEK R/W maps).
+        // Write-time R/W masks (GBATEK R/W maps; NBA register model agrees).
         // Unreadable bits never persist, so reads return the stored value.
         match addr {
             0x04000060 => self.write_sound1cnt_lo(value),

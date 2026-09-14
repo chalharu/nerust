@@ -233,14 +233,14 @@ pub fn huff(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
 
 fn valid_huffman_size(source: u32, header: u32, bits: u32) -> Option<u32> {
     let size = header >> 8;
-    // GBATEK: "normally 4 or 8"; mGBA rejects 1 as unaligned, so accept 2|4|8.
+    // GBATEK: "normally 4 or 8"; 1-bit trees are unaligned, so accept 2|4|8.
     (valid_source(source) && header & 0xF0 == 0x20 && matches!(bits, 2 | 4 | 8) && size > 0)
         .then_some(size)
 }
 
 fn read_huffman_tree(bus: &mut GbaMemoryBus, source: u32) -> Vec<u8> {
     let tree_size = u32::from(bus.read8(source + 4));
-    // mGBA準拠: treesize = (value<<1)+1
+    // Huffman tree: treesize = (value<<1)+1
     let tree_bytes = (tree_size << 1) + 1;
     let mut tree_table = vec![0u8; tree_bytes as usize];
     for i in 0..tree_bytes {
@@ -257,7 +257,7 @@ fn decode_huffman(
     size: u32,
     tree: &[u8],
 ) {
-    // mGBA _unHuffman 準拠: source+5+treesize から bitstream、32bit MSB先頭
+    // Tree layout: source+5+treesize starts the bitstream, 32bit MSB-first
     let tree_base = source + 5;
     let mut bitstream_addr = source + 5 + tree.len() as u32;
     let mut remaining = size;
@@ -532,7 +532,7 @@ mod tests {
         let mut bus = GbaMemoryBus::new();
         let src = 0x02000000;
         bus.write32(src, 0x00000424); // 4 output bytes, Huffman 4-bit
-        // mGBA準拠 treesize = (value<<1)+1, value=1 => 3 bytes tree
+        // treesize = (value<<1)+1, value=1 => 3 bytes tree
         bus.write8(src + 4, 1);
         bus.write8(src + 5, 0xC0); // both children are leaves
         bus.write8(src + 6, 0x0A);
