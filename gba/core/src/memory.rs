@@ -895,8 +895,11 @@ impl GbaMemoryBus {
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
-        // Halt entry uses delayed availability plus the newest IE/IF levels:
-        // a just-written ack is honored, a just-raised IF prevents halting.
+        // Halt entry samples the not-yet-applied level: pending IE/IF is
+        // exactly what the 1-tick pipeline will apply, so a just-raised IF
+        // prevents halting while a just-written ack is honored. Unconditional
+        // entry was tried and regressed nba_haltcnt (5 -> 4 vs 6 expected);
+        // the wake path samples the same level one tick later (applied).
         self.halted =
             !(self.irq_available && self.pending_ie & self.pending_if & self.halt_irq_mask != 0);
     }
@@ -2186,8 +2189,10 @@ impl GbaMemoryBus {
                 // Immediate CNT_H arming with prefetch on starts one tick
                 // sooner (pending 4->3): prefetch overlaps the enabling
                 // bus cycle, so short P-ON triggers still park before the
-                // next CPU step (mgba-suite Timing Thumb P../PN. race).
-                // P-OFF, event triggers, and nba pins keep pending=4.
+                // next CPU step (mgba-suite Timing Thumb P.. race: without
+                // the retime those cells read 3 instead of 7/11/37).
+                // P-OFF, event triggers, and nba pins keep pending=4
+                // (uniform 3 was tried: start-delay reads 19, not 20).
                 if self.prefetch_enabled
                     && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
                     && v16 & 0x8000 != 0

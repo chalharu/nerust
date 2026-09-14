@@ -3,6 +3,10 @@ use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
 /// HLE IRQ entry cost: cycles charged for the skipped BIOS IRQ prologue.
+/// The +(N-1) source term is load-bearing, not decorative: flattening to a
+/// constant drops nba_irq_delay from 2/3 to 0/3 sub-checks, so any
+/// replacement (e.g. vector-fetch+refill shape) must reproduce the same
+/// per-source totals — observably identical, hence not adopted.
 const IRQ_ENTRY_CYCLES: u32 = 23;
 
 pub struct GbaSystem {

@@ -404,7 +404,8 @@ fn write_control(dma: &mut DmaChannel, channel: usize, value: u16) {
             // GBATEK startup + the enabling bus cycle: event-triggered
             // DMA starts 3 cycles after its trigger (pending=3), but an
             // Immediate channel pays one more cycle for the CNT_H enabling
-            // write itself (nba start-delay reads 20, not 19).
+            // write itself (nba start-delay reads 20, not 19; uniform 3
+            // was tried and fails the pin, so the +1 stays).
             dma.pending = 4;
             dma.active = false;
         }
