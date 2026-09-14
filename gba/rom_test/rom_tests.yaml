@@ -69,6 +69,9 @@ expected_failures:
 - alyosha_halt_pc
 - alyosha_halt_pc_2
 - alyosha_halt_pc_3
+# halt_pc_2/3 timer residuals (+1/-1) need opposite-sign fixes; no uniform
+# entry/wake change fits both (verified). halt_pc lr split (0xB8 vs 0x74)
+# across identical-layout binaries is not HW-explainable; do not refit.
 - alyosha_IE
 - alyosha_IF
 - alyosha_IF_Timer
@@ -96,6 +99,11 @@ expected_failures:
 - alyosha_prefetcher_full_thumb
 - alyosha_psr
 - alyosha_serial_time
+# serial_time +8 (0xA0 vs 0x98): EWRAM-data prepay removal moves it to
+# 0x9B/0x95 but breaks cpy_data_bios and 128kb-boundary; full removal
+# undershoots to 0x93. Residual is in prefetch-overlap around EWRAM-busy
+# windows (comparison §4 area). mgba sio-timing (transfer + setup/exit)
+# passes, so the SIO engine itself is correct.
 - alyosha_serial_time_2
 - alyosha_serial_time_2M
 - alyosha_serial_time_2M_2
