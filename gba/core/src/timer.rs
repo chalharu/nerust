@@ -35,10 +35,10 @@ impl GbaTimers {
         self.channels[channel].reload_pending = Some(reload);
         self.last_reload_cycle[channel] = Some(self.current_cycle);
         let new_control = (value >> 16) as u16 & 0x00C7;
-        // Stops defer one tick like 16-bit writes (NBA routes both widths
-        // through the same +1-tick control events). The deferred 16-bit
-        // stop is HW-pinned (nba start-stop 2ND=8); no HW test covers the
-        // 32-bit stop, so the NBA-unified model rules here.
+        // Stops defer one tick like 16-bit writes (both widths share the
+        // +1-tick control events). The deferred 16-bit stop is HW-pinned
+        // (nba start-stop 2ND=8); no HW test covers the 32-bit stop, so
+        // the unified model rules here.
         write_control(&mut self.channels[channel], new_control);
         true
     }
@@ -256,7 +256,7 @@ fn write_control(timer: &mut TimerChannel, new_control: u16) {
         // before the load. Start latency is a fixed 2 cycles.
         timer.start_delay = 2;
         // No phase seeding: the shared prescaler is free-running and never
-        // reset by enables (NBA offsets by now & mask instead).
+        // reset by enables.
     } else if !enabled && was_enabled {
         timer.pending_control = Some(new_control);
     } else {

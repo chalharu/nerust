@@ -9,18 +9,18 @@ pub const WIDTH: usize = 240;
 pub const HEIGHT: usize = 160;
 pub const CYCLES_PER_LINE: u16 = 1232;
 pub const HDRAW_CYCLES: u16 = 960;
-/// HBlank flag edge. NBA/GBAHawk use 1007 in their own event coordinates,
-/// but the HW-pinned joint observable (nba basic-timing: HBL UNSET 111,
+/// HBlank flag edge. Other emulators use 1007 in their own event
+/// coordinates, but the HW-pinned joint observable (hw-test basic-timing: HBL UNSET 111,
 /// VCNT SET 111 / UNSET 727, exact) reproduces at 1006 with this core's
 /// DMA phase; 1007 shifts every index by one. Edge constant is not
 /// portable across cores — only the joint (edge, DMA phase) is HW truth.
 pub const HBLANK_FLAG_CYCLES: u16 = 1006;
 pub const LINES_PER_FRAME: u16 = 228;
-/// BG fetch clock (nba hw-test archive/ppu/mode3): the PPU fetches pixel x
+/// BG fetch clock (hw-test archive/ppu/mode3): the PPU fetches pixel x
 /// at 32+4x cycles into the scanline, one pixel every four cycles.
 pub const FETCH_START_CYCLES: u16 = 32;
 pub const FETCH_END_CYCLES: u16 = 988;
-/// DISPCNT latch shift point (NBA `LatchDISPCNT`, +40 cycles into the line).
+/// DISPCNT latch shift point (+40 cycles into the line).
 pub const DISPCNT_LATCH_CYCLES: u16 = 40;
 
 pub fn bgr555_to_rgba8888(color: u16) -> u32 {
@@ -117,25 +117,24 @@ pub struct GbaPpu {
     cycle: u16,
     vcount: u16,
     frame: Box<[u32]>,
-    /// BGX/Y written flags (NBA `bgx.written`): a write stores the
-    /// register and arms the flag; the internal copy lands at the next
-    /// line start (or vcount 0), never immediately.
+    /// BGX/Y written flags: a write stores the register and arms the
+    /// flag; the internal copy lands at the next line start (or vcount
+    /// 0), never immediately.
     written_x: [bool; 2],
     written_y: [bool; 2],
-    /// Last sub-boundary BG VRAM halfword (NBA `vram_bg_latch`): BG fetches
+    /// Last sub-boundary BG VRAM halfword: BG fetches at/above the OBJ
     /// at/above the OBJ boundary return this instead of physical VRAM.
     bg_latch: u16,
-    /// DISPCNT 3-stage shift latch (NBA `dispcnt_latch`, HW-confirmed):
-    /// shifted at +40 cycles of every scanline. BG/OBJ enables gate on
-    /// `latch[0] & live`, forced blank on `latch[0] | live` (NBA `Merge.cc`,
-    /// `PPU.hh::ForcedBlank`). Window enables stay live.
+    /// DISPCNT 3-stage shift latch (HW-confirmed): shifted at +40 cycles
+    /// of every scanline. BG/OBJ enables gate on `latch[0] & live`,
+    /// forced blank on `latch[0] | live`. Window enables stay live.
     dispcnt_latch: [u16; 3],
     /// Forced-blank sample taken at line end for the next scanline.
     /// Unlike BG/OBJ enables (3-stage latch), blank applies within a line,
     /// so `forced_blank()` ORs this sample with the live bit.
     blank_sample: bool,
     /// Per-line latch: OAM sampled at the first pixel of each line.
-    /// MOSAIC stays live (NBA/Hawk: sizes read per-pixel).
+    /// MOSAIC stays live (sizes read per-pixel).
     /// Other registers (DISPCNT, BGxCNT, scroll, windows) stay live.
     line: LineLatch,
 }
@@ -201,7 +200,7 @@ impl GbaPpu {
             );
         }
         if self.cycle == DISPCNT_LATCH_CYCLES {
-            // NBA LatchDISPCNT: 3-stage shift of the DISPCNT enable latch.
+            // 3-stage shift of the DISPCNT enable latch.
             self.dispcnt_latch[0] = self.dispcnt_latch[1];
             self.dispcnt_latch[1] = self.dispcnt_latch[2];
             self.dispcnt_latch[2] = self.registers.dispcnt;
@@ -233,8 +232,8 @@ impl GbaPpu {
         self.registers.dispstat &= !(1 << 1);
         self.advance_affine();
         self.advance_vcount(event);
-        // NBA InitBackground: pending BGX/Y writes land in the internal
-        // registers at the next line start (or unconditionally at vcount 0).
+        // Pending BGX/Y writes land in the internal registers at the
+        // next line start (or unconditionally at vcount 0).
         let first_scanline = self.vcount == 0;
         for affine in 0..2 {
             if self.written_x[affine] || first_scanline {
@@ -253,7 +252,7 @@ impl GbaPpu {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
-        // NBA #177: internal affine registers advance only while their BG
+        // Internal affine registers advance only while their BG
         // is enabled (BG2 -> affine 0, BG3 -> affine 1).
         let enabled = [
             self.registers.dispcnt & (1 << 10) != 0,
@@ -302,7 +301,7 @@ impl GbaPpu {
         self.registers.dispcnt
     }
 
-    /// NBA `ForcedBlank`: blanked when the bit is set in the latched OR the
+    /// Forced blank: blanked when the bit is set in the latched OR the
     /// live DISPCNT. The latched half is the per-line reference shared with
     /// the renderer (refreshed every line end), so render and stall paths
     /// can never disagree by a line.
@@ -310,8 +309,8 @@ impl GbaPpu {
         self.blank_sample || self.registers.dispcnt & (1 << 7) != 0
     }
 
-    /// Any BG layer enabled in both the latched and the live DISPCNT
-    /// (NBA Background/Merge gating); gates BG-VRAM fetch contention.
+    /// Any BG layer enabled in both the latched and the live DISPCNT;
+    /// gates BG-VRAM fetch contention.
     pub fn bg_fetch_active(&self) -> bool {
         self.line.enable & self.registers.dispcnt & 0x0F00 != 0
     }
@@ -379,8 +378,8 @@ impl GbaPpu {
             }
             0x04000008..=0x0400000E => {
                 let bg = ((address - 0x04000008) / 2) as usize;
-                // NBA registers.cc: display-area-overflow (bit 13) exists
-                // only on BG2/BG3; writes to BG0/BG1 ignore it.
+                // Display-area-overflow (bit 13) exists only on BG2/BG3;
+                // writes to BG0/BG1 ignore it.
                 let mask = if bg < 2 { !(1 << 13) } else { u16::MAX };
                 self.registers.bgcnt[bg] = value & mask;
                 0
@@ -408,8 +407,8 @@ impl GbaPpu {
             0x04000028..=0x0400002E | 0x04000038..=0x0400003E => {
                 let affine = usize::from(address >= 0x04000038);
                 self.write_reference(address, value);
-                // NBA: the write only arms the pending flag; the internal
-                // copy lands at the next line start (see handle_line_end).
+                // The write only arms the pending flag; the internal copy
+                // lands at the next line start (see handle_line_end).
                 if (0x04000028..=0x0400002A).contains(&address)
                     || (0x04000038..=0x0400003A).contains(&address)
                 {
@@ -436,7 +435,7 @@ impl GbaPpu {
                 0
             }
             0x04000048 => {
-                // NBA WindowLayerSelect: only 6 bits per byte are stored.
+                // WindowLayerSelect: only 6 bits per byte are stored.
                 self.registers.winin = value & 0x3F3F;
                 0
             }
@@ -507,10 +506,9 @@ impl GbaPpu {
             self.frame[y * WIDTH + x] = color::rgba8888(0x7FFF);
             return;
         }
-        // NBA Background/Merge: layer enables gate on latched AND live.
-        // OBJ is the exception: its fetch keys off the LIVE enable only
-        // (NBA LatchDISPCNT: latched DISPCNT disregarded for OBJ), so it
-        // reacts to HBlank toggling immediately while BGs lag 3 lines.
+        // Layer enables gate on latched AND live. OBJ is the exception:
+        // its fetch keys off the LIVE enable only, so it reacts to HBlank
+        // toggling immediately while BGs lag 3 lines.
         let enables = self.line.enable & self.registers.dispcnt;
         let mask = self.window_mask(x, y, vram, palette);
         let mut layers = Vec::with_capacity(6);
@@ -865,7 +863,7 @@ mod tests {
 
     #[test]
     fn dispcnt_enable_latch_delays_and_blank_is_or() {
-        // NBA HW-confirmed model: BG enables gate on latched AND live
+        // HW-confirmed model: BG enables gate on latched AND live
         // (3-stage shift at +40 cycles/line), forced blank on latched OR live.
         let mut ppu = GbaPpu::new();
         let mut vram = vec![0; 0x18000];
@@ -1064,7 +1062,7 @@ mod tests {
     #[test]
     fn write_masks_follow_hardware() {
         let mut ppu = GbaPpu::new();
-        // BG0/BG1 have no bit-13 overflow flag (NBA registers.cc).
+        // BG0/BG1 have no bit-13 overflow flag.
         ppu.write_register(0x04000008, 0xFFFF);
         assert_eq!(ppu.read_register(0x04000008), Some(0xDFFF));
         ppu.write_register(0x0400000C, 0xFFFF);

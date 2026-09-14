@@ -65,7 +65,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
             regs.set_r(rn, wb_val);
         }
     }
-    // NBA LDM^ bus conflict: a user-mode load (S set, no PC) executed
+    // Post-LDM^ bus conflict: a user-mode load (S set, no PC) executed
     // outside USR/SYS leaves r8-r14 dual-banked for the next two cycles.
     if l && transfer_user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
         regs.arm_ldm_conflict();

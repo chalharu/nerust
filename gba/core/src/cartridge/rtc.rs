@@ -1,9 +1,9 @@
-/// GamePak RTC (Seiko S3511 3-wire serial) after NBA `HW/GamePak/GPIO/RTC`,
-/// cross-checked against GBAHawk `Mappers.h`, GBATEK "Game Pak RTC".
+/// GamePak RTC (Seiko S3511 3-wire serial; GBATEK "Game Pak RTC" plus the
+/// S-35180 command detail; behavior cross-checked against HW test ROMs).
 ///
 /// Pins: 0 = SCK, 1 = SIO, 2 = CS. CS low aborts; the command byte is
 /// clocked LSB-first on SCK rises (MSB-first senders are auto-detected
-/// by the `0110b` magic, NBA-style). Data bytes shift out on SCK falls.
+/// by the `0110b` magic). Data bytes shift out on SCK falls.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Rtc {
     phase: Phase,
@@ -23,7 +23,7 @@ pub struct Rtc {
     pub sio_out: bool,
 }
 
-/// Argument byte counts per command (NBA/GBAHawk agree).
+/// Argument byte counts per command (0,0,7,0,1,0,3,0 per GBATEK).
 const ARG_COUNT: [u8; 8] = [0, 0, 7, 0, 1, 0, 3, 0];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

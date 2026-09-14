@@ -253,7 +253,7 @@ impl GbaApu {
 
     /// NR11/12 write: length + duty latch (W-only), envelope stays live.
     /// Envelope 0 (bits 11-15 clear) powers the DAC off and stops the
-    /// channel at once (Pan Docs DAC power; NBA/GBAHawk agree).
+    /// channel at once (Pan Docs DAC power).
     pub fn write_sound1cnt_hi(&mut self, value: u16) {
         self.sound1cnt_hi = value & 0xFFC0;
         self.len1 = 64 - (value & 0x3F) as u8;
@@ -409,7 +409,7 @@ impl GbaApu {
         self.seq_timer -= 1;
         if self.seq_timer == 0 {
             self.seq_timer = T_CYCLES_PER_SEQ_STEP;
-            // NBA: the 512Hz sequencer free-runs from boot (no master-off
+            // The 512Hz sequencer free-runs from boot (no master-off
             // freeze, no enable reset); channels gate individually.
             self.seq_step = (self.seq_step + 1) & 7;
             self.tick_sequencer();
@@ -446,9 +446,9 @@ impl GbaApu {
         }
     }
 
-    /// One native-grid stereo sample. Integer 10-bit mix after NBA:
-    /// PSG voices scaled by SOUNDCNT_H/L, FIFO latches x2/x4, plus bias,
-    /// clipped to 0..0x3FF and centered.
+    /// One native-grid stereo sample. Integer 10-bit mix: PSG voices
+    /// scaled by SOUNDCNT_H/L, FIFO latches x2/x4, plus bias, clipped to
+    /// 0..0x3FF and centered.
     fn mix_grid(&mut self) -> (f32, f32) {
         if self.soundcnt_x & 0x80 == 0 {
             let bias = f32::from((self.soundbias >> 1) & 0x1FF);
@@ -480,7 +480,7 @@ impl GbaApu {
                 sum_r += out;
             }
         }
-        // (master+1)>>5 after NBA: voices x mul x (vol) >> 5.
+        // (master+1)>>5: voices x mul x (vol) >> 5.
         sum_l = (sum_l * psg_mul * l_vol) >> 5;
         sum_r = (sum_r * psg_mul * r_vol) >> 5;
         let fifo_gain = |fifo: bool| {
@@ -624,7 +624,7 @@ impl GbaApu {
     }
 
     pub fn write(&mut self, addr: u32, value: u16) -> bool {
-        // Write-time R/W masks (GBATEK R/W maps; NBA register model agrees).
+        // Write-time R/W masks (GBATEK R/W maps).
         // Unreadable bits never persist, so reads return the stored value.
         match addr {
             0x04000060 => self.write_sound1cnt_lo(value),

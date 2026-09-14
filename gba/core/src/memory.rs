@@ -119,9 +119,9 @@ pub struct GbaMemoryBus {
     block_batch_raw: bool,
     /// Address of the most recently fetched opcode. Scopes the
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
-    /// owning code region (NBA tracks the same PC-tagged active region).
+    /// owning code region (PC-tagged, like the CPU pipeline it models).
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
-    /// owning code region (NBA tracks the same PC-tagged active region).
+    /// owning code region (PC-tagged, like the CPU pipeline it models).
     last_opcode_addr: Option<u32>,
     /// End address of the current prefetch run, capping overlap fills in
     /// `prefetch_erase_delta`.
@@ -216,11 +216,11 @@ impl DisplayStallSnapshot {
         // Palette feeds every rendered pixel (backdrop included).
         let in_draw = self.cycle <= HDRAW_CYCLES;
         let oam_busy = !in_hblank || ((self.dispcnt & (1 << 5)) == 0);
-        // OBJ texture fetch needs the OBJ layer live (nba ram-access
-        // DISPCNT-latch rule: fetch iff CURRENT enable, latch
+        // OBJ texture fetch needs the OBJ layer live (hw-test ROM
+        // ram-access DISPCNT-latch rule: fetch iff CURRENT enable, latch
         // disregarded). OAM evaluation itself stays ungated: it runs
-        // during draw regardless (nba burst-into-tears needs its 3 OAM
-        // stalls with OBJ disabled, TIME 41 vs 38).
+        // during draw regardless (hw-test ROM burst-into-tears needs
+        // its 3 OAM stalls with OBJ disabled, TIME 41 vs 38).
         let obj_fetch = oam_busy && (self.dispcnt & (1 << 12)) != 0;
         match addr {
             0x05000000..=0x05FFFFFF => u8::from(in_draw),
@@ -489,7 +489,7 @@ impl GbaMemoryBus {
                 let sequential = if is_opcode {
                     // Fetches issued while a DMA burst is pending (trigger
                     // stored, bus handover imminent) cost N: the arbitrated
-                    // bus is non-sequential (HW-pinned by nba
+                    // bus is non-sequential (HW-pinned by hw-test ROM
                     // force-nseq-access: post-trigger nops cost 1N).
                     !self.dma.has_pending() && self.is_fetch_sequential(addr)
                 } else {
@@ -538,7 +538,7 @@ impl GbaMemoryBus {
     /// Advance the LCD controller by exactly one T-cycle.
     pub fn tick(&mut self) -> bool {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
-        // Deferred HBlank IRQ first (NBA +1): same pipeline visibility as
+        // Deferred HBlank IRQ first (+1 tick): same pipeline visibility as
         // a same-tick raise (processed below), so CPU entry is unchanged.
         if self.pending_hblank_irq {
             self.pending_hblank_irq = false;
@@ -576,7 +576,7 @@ impl GbaMemoryBus {
             self.dma.trigger(DmaTrigger::VBlank);
         }
         if event.line_started {
-            // NBA model: DMA3 video-capture is latched at vcount==162 (a
+            // DMA3 video-capture is latched at vcount==162 (a
             // stale still-running transfer is stopped) and fires 3 cycles
             // into each line of vcount in [2, 162).
             let vcount = self.ppu.vcount();
@@ -626,7 +626,7 @@ impl GbaMemoryBus {
             }
         }
         let mut interrupt_mask = event.interrupt_mask | timer_irq;
-        // NBA +1 HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
+        // +1-tick HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
         // edge stays immediate, but the IF raise waits a tick. Stash the
         // HBlank bit for the next tick start instead of raising now.
         if interrupt_mask & (1 << 1) != 0 {
@@ -773,7 +773,7 @@ impl GbaMemoryBus {
     }
 
     pub fn irq_pending(&self) -> bool {
-        // Delayed CPU IRQ line (NBA hw/irq: IME && IE&IF, ~3 ticks after
+        // Delayed CPU IRQ line (IME && IE&IF, ~3 ticks after
         // the request). Sampled by the CPU once per instruction.
         self.irq_line
     }
@@ -922,7 +922,7 @@ impl GbaMemoryBus {
     }
 
     pub fn request_interrupt(&mut self, mask: u16) {
-        // NBA hw/irq Raise: OR into the pending IF level; applied (with the
+        // Raise: OR into the pending IF level; applied (with the
         // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
         // is evaluated when availability propagates, not here.
         let mask = mask & 0x3FFF;
@@ -1200,7 +1200,7 @@ impl GbaMemoryBus {
 
     /// Bus-order contiguity for block-transfer continuation words (LDM/STM
     /// words 2+): sequential to the previous bus access of any kind,
-    /// including the 128KB-boundary N-force and region changes (nba
+    /// including the 128KB-boundary N-force and region changes (hw-test
     /// 128kb-boundary LDM pins: boundary-crossing words stay N). Single
     /// data accesses are always N; only block loops query this.
     pub(crate) fn data_continuation_sequential(&self, addr: u32) -> bool {
@@ -1262,8 +1262,8 @@ impl GbaMemoryBus {
     }
 
     /// Open-bus 32-bit value (CPU path): the prefetch window, combined by
-    /// execute-region in Thumb mode (window structure as in NBA; lane
-    /// selection below; validated by nba_dma_latch BUS LATCH 0x46C046C0).
+    /// execute-region in Thumb mode with address-lane selection below
+    /// (validated by nba_dma_latch BUS LATCH 0x46C046C0).
     /// DMA never interleaves here — the CPU stalls while DMA owns the bus,
     /// and HLE bulk copies are CPU-side accesses.
     fn open_bus32(&self) -> u32 {
@@ -1284,7 +1284,7 @@ impl GbaMemoryBus {
         }
     }
 
-    /// Lane-selected open-bus reads (address-lane shift as in NBA).
+    /// Lane-selected open-bus reads (shift by address lane).
     fn open_bus8(&self, addr: u32) -> u32 {
         (self.open_bus32() >> ((addr & 3) * 8)) & 0xFF
     }
@@ -1717,7 +1717,7 @@ impl GbaMemoryBus {
             return cart.read_sram(addr, width);
         }
         // No cartridge: no backup chip answers, so the bus floats high
-        // (NBA/GBAHawk agree on 0xFF, not stored-byte echo).
+        // (0xFF, not stored-byte echo).
         repeat_byte(0xFF, width)
     }
 
@@ -1969,8 +1969,9 @@ impl GbaMemoryBus {
                 // Multiplayer: Slave/Ready/ID/Error are read-only. A solo
                 // master is the parent waiting for children that never
                 // answer, so START never completes (mgba-suite sio-timing
-                // Multi/* cells pin timedOut=true on hardware; NBA/GBAHawk
-                // complete solo transfers, but the HW suite rules here).
+                // Multi/* cells pin timedOut=true on hardware; other
+                // emulators complete solo transfers, but the HW suite
+                // rules here).
                 // Slaves never start.
                 value &= 0xFF83;
                 value |= 0x0004;
@@ -2101,8 +2102,8 @@ impl GbaMemoryBus {
                 return;
         }
         if width > 1 && addr == 0x04000300 {
-            // POSTFLG/HALTCNT are BIOS-gated (NBA HW behavior, confirmed
-            // by nba haltcnt): CPU writes from outside the BIOS are ignored;
+            // POSTFLG/HALTCNT are BIOS-gated (confirmed by hw-test ROM
+            // haltcnt): CPU writes from outside the BIOS are ignored;
             // HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT bit
             // 7 = 0 halts, bit 7 = 1 stops (CPU parked until IRQ in both).
             let gated = bios || self.current_pc <= 0x3FFF;
@@ -2191,7 +2192,7 @@ impl GbaMemoryBus {
                 // bus cycle, so short P-ON triggers still park before the
                 // next CPU step (mgba-suite Timing Thumb P.. race: without
                 // the retime those cells read 3 instead of 7/11/37).
-                // P-OFF, event triggers, and nba pins keep pending=4
+                // P-OFF, event triggers, and hw-test pins keep pending=4
                 // (uniform 3 was tried: start-delay reads 19, not 20).
                 if self.prefetch_enabled
                     && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
@@ -2291,7 +2292,7 @@ impl GbaMemoryBus {
             // with no link transfer (suite table reads all zero).
             0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 | 0x04000158 => {}
             0x04000200 => {
-                // Delayed (NBA hw/irq): merges into the pending level,
+                // Delayed: merges into the pending level,
                 // applied 1 tick later; reads still return the effective IE.
                 // (32-bit stores are split into halfword writes before this
                 // match, so IE+IF / IF+WAITCNT pairs land in order.)
@@ -2300,7 +2301,7 @@ impl GbaMemoryBus {
                         return;
             }
             0x04000202 => {
-                // IF acknowledge: only written 1-bits clear (NBA hw/irq).
+                // IF acknowledge: only written 1-bits clear.
                 // A byte store acks its lane only, not the merged halfword.
                 let bits = if width == 1 {
                     ((value & 0xFF) << ((addr & 1) * 8)) as u16
@@ -2317,7 +2318,7 @@ impl GbaMemoryBus {
                 self.prefetch_enabled = (v16 & (1 << 14)) != 0;
             }
             0x04000208 => {
-                // Delayed like IE (NBA hw/irq).
+                // Delayed like IE.
                 self.pending_ime = (v16 & 1) != 0;
                 self.pending_at = Some(self.current_tcycle + 1);
                         return;
@@ -2343,7 +2344,7 @@ impl GbaMemoryBus {
     /// VRAM is 96 KiB at 06000000-06017FFF; 06018000-0601FFFF mirrors
     /// 06010000-06017FFF (`offset - 0x8000`). In bitmap BG modes (3-5) the
     /// 06018000-0601BFFF window reads as 0 (bad access) in bitmap modes
-    /// (NBA/GBAHawk agree: 0x14000 boundary for modes 3-5, else mirror).
+    /// (0x14000 boundary for modes 3-5, else mirror).
     fn vram_offset(&self, addr: u32, width: u8) -> Option<usize> {
         let offset = Self::aligned_off(addr, width, 0x1FFFF);
         if offset < VRAM_SIZE {
@@ -2390,8 +2391,8 @@ impl GbaMemoryBus {
         if is_unreadable_io(address) {
             // nba_dma_latch BUS LATCH cell pins this: DMA from unreadable
             // I/O reads regular open bus (the prefetched instruction), not
-            // the stale DMA latch. NBA/GBAHawk return the stale latch here
-            // and contradict the HW ROM, so the prefetch window rules.
+            // the stale DMA latch. A stale-latch model contradicts the HW
+            // ROM, so the prefetch window rules.
             return if width == 4 {
                 self.open_bus32()
             } else {
@@ -2522,7 +2523,7 @@ mod tests {
     fn read_sram_bounds() {
         let mut bus = GbaMemoryBus::new();
         // No cartridge: no backup chip answers, the bus floats high
-        // (NBA/GBAHawk agree on 0xFF, not stored-byte echo).
+        // (0xFF, not stored-byte echo).
         bus.write8(0x0E000000, 0x42);
         bus.write8(0x0E00FFFF, 0x99);
         assert_eq!(bus.read8(0x0E000000), 0xFF);
@@ -2633,7 +2634,7 @@ mod tests {
     fn dma_pending_n_ifies_fetches() {
         // Bus arbitration: fetches issued while an immediate DMA burst is
         // pending (trigger stored, handover imminent) cost N even when
-        // fetch-stream-contiguous (HW-pinned by nba force-nseq-access:
+        // fetch-stream-contiguous (HW-pinned by hw-test ROM force-nseq-access:
         // post-trigger nops cost 1N, TIME 88).
         let mut bus = GbaMemoryBus::new();
         let _ = bus.fetch32(0x08000000);
@@ -2982,7 +2983,7 @@ mod tests {
     #[test]
     fn video_dma_runs_after_line_162_latch() {
         // DMA3 video-capture: latched at vcount==162, runs on lines [2,162)
-        // of the next frame (NBA model). Must not transfer before the latch.
+        // of the next frame. Must not transfer before the latch.
         let mut bus = GbaMemoryBus::new();
         bus.write16(0x03000000, 0x1111);
         bus.write16(0x03000002, 0x2222);
@@ -3067,7 +3068,7 @@ mod tests {
 
     #[test]
     fn cpu_haltcnt_writes_are_bios_gated() {
-        // NBA HW behavior (nba haltcnt): CPU writes from outside the
+        // HW behavior (hw-test ROM haltcnt): CPU writes from outside the
         // BIOS are ignored; HLE BIOS and DMA writes act.
         let mut bus = GbaMemoryBus::new();
         bus.set_current_pc(0x03000000);
@@ -3119,8 +3120,8 @@ mod tests {
         bus.write32(0x040000D8, 0x02000000);
         bus.write32(0x040000DC, 0x84000001);
         // Memory is sampled after the 3 CPU-visible startup cycles
-        // (3-cycle start latency plus the enabling bus cycle; nba
-        // cycle; nba start-delay pins the first read one tick later).
+        // (3-cycle start latency plus the enabling bus cycle; hw-test
+        // ROM start-delay pins the first read one tick later).
         // The channel remains active for the transfer cycles after this.
         for _ in 0..3 {
             bus.tick();

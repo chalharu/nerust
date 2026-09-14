@@ -179,9 +179,9 @@ impl Object {
     }
 
     fn tile_number(&self, registers: &PpuRegisters, x: usize, y: usize, color256: bool) -> usize {
-        // NBA sprite.cc: rows and columns wrap independently in 2D mapping
-        // (32x32-tile matrix), 1D wraps the whole number at 10 bits.
-        // The 256-color lower-bit mask applies to 2D only (GBATEK/NBA).
+        // Rows and columns wrap independently in 2D mapping (32x32-tile
+        // matrix), 1D wraps the whole number at 10 bits.
+        // The 256-color lower-bit mask applies to 2D only (GBATEK).
         let block_x = x / 8;
         let block_y = y / 8;
         let base = usize::from(self.attr2 & 0x3FF);
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn tile_2d_wraps_rows_and_columns_independently() {
         // 16x16 4bpp at base 31: column wraps within the 32-tile row,
-        // the row part does not carry (NBA sprite.cc 2D formulas).
+        // the row part does not carry.
         let regs = regs_2d();
         let mut oam = vec![0u8; 0x400];
         oam[0..2].copy_from_slice(&0u16.to_le_bytes()); // square
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn tile_1d_wraps_at_10_bits() {
-        // 64x64 4bpp/8bpp 1D at high bases wrap mod 1024 (NBA masking).
+        // 64x64 4bpp/8bpp 1D at high bases wrap mod 1024.
         let mut regs = regs_2d();
         regs.dispcnt |= 1 << 6; // 1D
         let mut oam = vec![0u8; 0x400];

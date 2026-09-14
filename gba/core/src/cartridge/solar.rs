@@ -1,5 +1,4 @@
-/// Boktai solar sensor (ramp ADC) after NBA `HW/GamePak/GPIO/SolarSensor`,
-/// cross-checked against GBAHawk `Mappers.h`, GBATEK "Game Pak Solar Sensor".
+/// Boktai solar sensor (ramp ADC; GBATEK "Game Pak Solar Sensor").
 ///
 /// Pins: 0 = CLK, 1 = RST, 3 = FLG. RST high resets the counter; each
 /// CLK falling edge (with RST and CS low) increments it; FLG reads high

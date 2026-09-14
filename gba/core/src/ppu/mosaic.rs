@@ -10,7 +10,7 @@ pub fn bg_mosaic(mosaic: u16, cnt: u16, x: usize, y: usize) -> (usize, usize) {
 }
 
 /// OBJ mosaic: the held *screen* pixel feeds the sprite (output-latch model,
-/// like BG mosaic; NBA/Hawk phase by output position, not by sprite-local
+/// like BG mosaic; phases by output position, not by sprite-local
 /// position). A mosaic block starting off-sprite clamps to the sprite
 /// edge pixel.
 pub fn apply_obj_mosaic(

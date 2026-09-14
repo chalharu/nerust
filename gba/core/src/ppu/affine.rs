@@ -2,7 +2,7 @@
 //! Provides PPU-specific internal-reference accumulator stepping.
 
 /// Advance the internal affine accumulators by one scanline (PB/PD),
-/// skipping disabled BGs entirely (NBA, HW-confirmed).
+/// skipping disabled BGs entirely (HW-confirmed).
 #[inline]
 pub fn advance_line(
     internal_x: &mut [i32; 2],
