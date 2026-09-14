@@ -51,7 +51,6 @@ expected_failures:
 - alyosha_BL_IRQ_3
 - alyosha_BL_IRQ_R14
 - alyosha_bounday_test_1
-- alyosha_cpy_data_bios
 - alyosha_dma_from_bios
 - alyosha_DMA_Mode_Change
 - alyosha_DMA_pause_timing_end_1
