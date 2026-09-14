@@ -3,8 +3,7 @@ expected_failures:
 # burst_into_tears: GRADUATED 3/3. force_nseq: GRADUATED 88/88.
 # cancel_ie: rows 2/4 fail on 1-tick race boundaries; do not refit.
 - nba_archive_irq_cancel_ie
-# irq_delay: IWRAM reads +3; no uniform setting fits all three regions.
-- nba_irq_delay
+# irq_delay: GRADUATED 3/3 (write-asserted line, +1).
 # cancel_ime: GRADUATED 8/8.
 # Affine refs fail on reference state, not emulation.
 - PeterLemon_BGRotZoomMode2
