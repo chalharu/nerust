@@ -397,7 +397,7 @@ pub fn step_op(
         MicroOp::MemRead(a) => {
             // Legacy-identical issue: bus access, writeback and break in
             // the issue tick. (A deferred-commit timer re-sample was tried
-            // here and FALSIFIED — it breaks 12 nba DMA pins that pin
+            // here and FALSIFIED — it breaks 12 hw-test DMA pins that pin
             // issue-time sampling; see the design doc. The queue/drain
             // machinery stays as the verified-neutral execution model.)
             apply_read(regs, bus, a);

@@ -1,10 +1,10 @@
 /// GBA PSG channels (GBATEK sound chapters; sweep/envelope/length rules
-/// follow NBA `HW/APU/PSG/`, cross-checked against GBAHawk).
+/// validated against HW test ROMs and cross-checked across emulators).
 ///
 /// Clocks are CPU T-cycles (16.78MHz):
 /// - square timer period: 16 * (2048 - freq)
 /// - wave timer period: 8 * (2048 - rate)
-/// - noise timer: NBA form `(64 << shift)` scaled by ratio
+/// - noise timer: `(64 << shift)` scaled by ratio
 /// - frame sequencer: 32768 T-cycles per step (512Hz), 8 steps.
 ///
 /// 4-step duty patterns (GBATEK: 12.5/25/50/75%).
@@ -29,8 +29,8 @@ impl LengthEnvelope {
         if self.length == 0 {
             self.length = init_len;
         }
-        // Retrigger quirk (NBA/GBAHawk agree): a trigger landing just
-        // before a length step consumes one extra tick immediately.
+        // Retrigger quirk: a trigger landing just before a length step
+        // consumes one extra tick immediately.
         if seq_odd {
             self.length = self.length.saturating_sub(1);
         }
@@ -53,8 +53,8 @@ impl LengthEnvelope {
         if !self.active {
             return;
         }
-        // Saturated envelopes go dead (NBA `active=false`): volume holds,
-        // ticking stops. Output is identical either way (clamped).
+        // Saturated envelopes go dead: volume holds, ticking stops
+        // (output matches either way: clamped at 15/0).
         let inc = env_reg & (1 << 11) != 0;
         if (inc && self.volume >= 15) || (!inc && self.volume == 0) {
             return;
@@ -112,7 +112,7 @@ impl Square {
         self.sweep_pace != 8 || self.sweep_shift != 0
     }
 
-    /// NR10 write (GBATEK sweep; zombie rule per GBAHawk).
+    /// NR10 write (GBATEK sweep, incl. direction-flip zombie rule).
     pub fn write_sweep(&mut self, value: u8) {
         let shift = value & 7;
         let dec = value & (1 << 3) != 0;
@@ -260,7 +260,7 @@ impl Wave {
     }
 
     /// Current digit nibble from the PLAYING bank; holds the last digit
-    /// while disabled (NBA `m_sample` persistence).
+    /// while disabled.
     pub fn nibble(&mut self, wave_ram: &[u8; 0x20]) -> u8 {
         if !self.active {
             return self.hold;
@@ -322,7 +322,7 @@ impl Noise {
             return;
         }
         if self.timer == 0 {
-            // NBA interval form: (64 << shift), ratio 0 halves.
+            // Interval form: (64 << shift), ratio 0 halves.
             let mut interval = 64u32 << shift.min(12);
             if ratio == 0 {
                 interval /= 2;

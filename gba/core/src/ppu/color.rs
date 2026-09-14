@@ -12,7 +12,7 @@ pub(crate) fn rgba8888(color: u16) -> u32 {
 }
 
 pub(crate) fn alpha_blend(first: u16, second: u16, eva: u8, evb: u8) -> u16 {
-    // NBA Merge: blend rounds to nearest (not truncation). The hardware
+    // Blend rounds to nearest (not truncation). The hardware
     // also keeps a 6th green bit through the blend; its exact source
     // (palette bit layout) is unconfirmed, so only rounding is modeled
     // here — recorded as residual P14 investigation.

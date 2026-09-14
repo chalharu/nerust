@@ -22,7 +22,7 @@ pub struct DmaTransfer {
     pub shift_primed: bool,
     /// True when this unit is the only unit of its burst. The 16-bit
     /// GamePak pre-increment read (dest[i] = mem16(src+2+2i)) is a
-    /// multi-unit pipeline effect (HW-pinned by nba burst-into-tears,
+    /// multi-unit pipeline effect (HW-pinned by hw-test ROM burst-into-tears,
     /// count 3): single-unit 16-bit reads land on the aligned source
     /// (mgba-suite "ROM load DMA1 16" pins 0xBEEF, not 0xDEAD).
     pub single_unit: bool,
@@ -123,7 +123,7 @@ impl GbaDma {
                 && dma.pending == 0
             {
                 // The DMA owns the bus 3 cycles after the start
-                // condition fires (NBA/GBAHawk agree).
+                // condition fires.
                 dma.pending = 3;
                 dma.is_first = true;
             }
@@ -338,7 +338,7 @@ impl GbaDma {
         dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special
     }
 
-    /// Stop a DMA3 video transfer (NBA `StopVideoTransferDMA`).
+    /// Stop a DMA3 video transfer.
     pub fn stop_video_transfer(&mut self) {
         let dma = &mut self.channels[3];
         if dma.control & 0x8000 != 0 && timing(dma.control) == DmaTrigger::Special {
@@ -489,11 +489,11 @@ fn timing_for(_channel: usize, control: u16) -> DmaTrigger {
     timing(control)
 }
 
-/// Sound-FIFO DMA (NBA/GBAHawk agree: no destination condition): a
-/// Special-timed transfer on channel 1/2 always moves 4x32-bit with a
-/// fixed destination. GBATEK restricts sound DMA to channels 1/2
-/// (DMA0 Special is Prohibited, DMA3 Special is Video Capture), so the
-/// channel gates the quirk: other channels fall through to normal timing.
+/// Sound-FIFO DMA: a Special-timed transfer on channel 1/2 always moves
+/// 4x32-bit with a fixed destination (no destination-address condition).
+/// GBATEK restricts sound DMA to channels 1/2 (DMA0 Special is Prohibited,
+/// DMA3 Special is Video Capture), so the channel gates the quirk: other
+/// channels fall through to normal timing.
 fn sound_dma(channel: usize, control: u16) -> bool {
     (channel == 1 || channel == 2) && timing(control) == DmaTrigger::Special
 }
@@ -538,8 +538,9 @@ fn dma_bus_wait(address: u32, width: u8, is_seq: bool, waitcnt: u16, stall: u8) 
         0x05000000..=0x05FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
         0x06000000..=0x06FFFFFF => (if width == 4 { 2 } else { 1 }) + stall,
         // DMA owns the bus but still contends with the display controller
-        // on video memory (nba burst-into-tears: 3 draw-phase OAM accesses
-        // stall +1 each; without them TIME reads 38 instead of 41).
+        // on video memory (hw-test ROM burst-into-tears: 3 draw-phase
+        // OAM accesses stall +1 each; without them TIME reads 38
+        // instead of 41).
         0x07000000..=0x07FFFFFF => 1 + stall,
         0x08000000..=0x0DFFFFFF => {
             const FIRST: [u8; 4] = [4, 3, 2, 8];

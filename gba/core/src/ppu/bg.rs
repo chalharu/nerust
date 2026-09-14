@@ -3,8 +3,7 @@ use crate::ppu::color::read_color;
 use crate::ppu::mosaic::bg_mosaic;
 
 /// Per-pixel BG render context: registers, affine accumulators, memories,
-/// the hardware BG VRAM fetch latch (NBA `vram_bg_latch`), and the
-/// line-latched MOSAIC value (mid-scanline MOSAIC writes defer to next line).
+/// the hardware BG VRAM fetch latch, and the live MOSAIC value.
 struct BgContext<'a> {
     registers: &'a PpuRegisters,
     internal: ([i32; 2], [i32; 2]),
@@ -16,7 +15,7 @@ struct BgContext<'a> {
 }
 
 impl BgContext<'_> {
-    /// BG VRAM fetch with the hardware fetch latch (NBA `FetchVRAM_BG`):
+    /// BG VRAM fetch with the hardware fetch latch: reads below the OBJ
     /// reads below the OBJ boundary update the latch with the aligned
     /// halfword; reads at/above it return the latched bytes instead of
     /// physical VRAM.
@@ -66,7 +65,7 @@ pub(crate) fn pixel(
         _ => return None,
     };
     // OBJ VRAM boundary for BG fetches: 0x10000 in tile modes,
-    // 0x14000 in bitmap modes (NBA `GetSpriteVRAMBoundary`).
+    // 0x14000 in bitmap modes.
     let boundary = if mode >= 3 { 0x14000 } else { 0x10000 };
     let cnt = registers.bgcnt[bg];
     let mut ctx = BgContext {

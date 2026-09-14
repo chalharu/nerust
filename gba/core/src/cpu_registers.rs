@@ -8,8 +8,9 @@ pub struct CpuRegisters {
     bank_r13: [u32; 6],         // USR/SYS 共用 + FIQ/SVC/ABT/IRQ/UND
     bank_r14: [u32; 6],
     pc_written: bool,
-    /// Post-LDM^ user-bank conflict window (NBA `ldm_usermode_conflict`):
-    /// T-cycles remaining in which r8-r14 accesses hit both banks.
+    /// Post-LDM^ user-bank conflict window: T-cycles remaining in which
+    /// r8-r14 accesses hit both banks (HW bus conflict after a user-mode
+    /// LDM; ARM ARM covers banking, the 2-cycle window is HW-measured).
     ldm_conflict: u8,
 }
 
@@ -87,7 +88,7 @@ impl CpuRegisters {
 
     pub fn r(&self, idx: usize) -> u32 {
         let idx = idx & 0xF;
-        // NBA LDM^ bus conflict: for two cycles after a user-mode LDM,
+        // Post-LDM^ bus conflict: for two cycles after a user-mode LDM,
         // r8-r14 read from both the current and the user bank.
         if self.ldm_conflict > 0 && matches!(idx, 8..=14) {
             return self.r[idx] | self.user_r(idx);
@@ -212,8 +213,9 @@ impl CpuRegisters {
     // -- SPSR --
 
     pub fn spsr(&self) -> u32 {
-        // NBA/GBAHawk agree: modes without a banked SPSR (USR/SYS) read
-        // back CPSR instead of zero.
+        // Modes without a banked SPSR (USR/SYS) read back CPSR instead
+        // of zero (ARM ARM: MRS SPSR there is UNPREDICTABLE; CPSR is the
+        // defined resolution).
         let idx = Self::spsr_index(self.cpsr_mode());
         if let Some(i) = idx {
             self.spsr[i]
