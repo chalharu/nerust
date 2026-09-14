@@ -69,7 +69,6 @@ expected_failures:
 - alyosha_halt_pc
 - alyosha_halt_pc_2
 - alyosha_halt_pc_3
-- alyosha_halt_pc_4
 - alyosha_IE
 - alyosha_IF
 - alyosha_IF_Timer

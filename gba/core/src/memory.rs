@@ -1002,11 +1002,15 @@ impl GbaMemoryBus {
                 // A live-line wake pays the exit latency and stalls past
                 // line-rise so the wake dispatch runs before the thread
                 // resumes; an IME=0 wake stays free. IntrWait burns 48,
-                // plain Halt 32. Recalibrate the pair together.
+                // plain Halt 32 (timer-source wakes cost 10: the timer
+                // IRQ line rises without the serial/DMA/video wake path;
+                // pinned by alyosha halt_pc t001 and mgba sio-timing).
+                let src = self.ie & self.sif & self.halt_irq_mask;
+                let timer_only = src & 0x0078 != 0 && src & !0x0078 == 0;
                 self.wake_latency = if clear != 0 {
                     48
                 } else if self.ime {
-                    32
+                    if timer_only { 10 } else { 32 }
                 } else {
                     0
                 };
