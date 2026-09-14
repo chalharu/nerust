@@ -2971,8 +2971,13 @@ mod tests {
     #[test]
     fn fifo_writes_append_bytes() {
         // GBATEK Sound FIFO: writes append to the 32-byte buffer;
-        // reads are open bus (not wave RAM).
+        // reads are open bus (not wave RAM). FIFO writes land only
+        // while the sound master enable is on (HW-observed: an empty
+        // FIFO stays empty with the master off).
         let mut bus = GbaMemoryBus::new();
+        bus.write32(0x040000A0, 0x04030201);
+        assert!(bus.apu.fifo_a.is_empty());
+        bus.write16(0x04000084, 0x0080);
         bus.write32(0x040000A0, 0x04030201);
         assert_eq!(bus.apu.fifo_a.len(), 4);
         assert_eq!(

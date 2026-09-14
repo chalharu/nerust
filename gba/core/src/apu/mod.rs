@@ -580,7 +580,14 @@ impl GbaApu {
     /// Push bytes into a DirectSound FIFO (max 32 bytes; overflow is dropped,
     /// approximating full-FIFO HW where extra writes have no effect).
     /// `bytes` are appended LSB-first from `value` for `width` bytes.
+    /// Writes while master enable (SOUNDCNT_X bit 7) is off are dropped:
+    /// HW leaves the FIFO empty so a later timer overflow still requests
+    /// its DMA channel (alyosha fifo t002 observes DMA fire with the
+    /// FIFO supposedly loaded).
     pub fn push_fifo(&mut self, fifo_b: bool, value: u32, width: u8) {
+        if self.soundcnt_x & 0x80 == 0 {
+            return;
+        }
         let fifo = if fifo_b {
             &mut self.fifo_b
         } else {
