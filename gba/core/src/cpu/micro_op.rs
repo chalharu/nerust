@@ -412,7 +412,7 @@ pub fn step_op(
         if regs.take_pc_written() {
             *pipeline = [0; 2];
             bus.set_current_pc(regs.pc());
-            bus.invalidate_prefetch_for_dma(regs.pc());
+            bus.invalidate_prefetch_for_branch();
             fill_pipeline(regs, bus, pipeline);
             // Legacy returns `cycles` here (plus an IRQ epilogue only on
             // the trampoline path, out of scope).

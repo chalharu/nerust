@@ -140,6 +140,15 @@ pub struct GbaMemoryBus {
     /// accesses never break code sequentiality and vice versa.
     fetch_addr: Option<u32>,
     fetch_width: u8,
+    /// GamePak prefetch buffer window [pf_start, pf_end) of buffered
+    /// bytes (8 halfwords). A ROM opcode fetch inside the window costs S
+    /// (sliding the window as background refills keep up); outside costs
+    /// N and refills ahead (capped at the next 128KiB boundary, where the
+    /// prefetcher stops). HW-pinned by the alyosha prefetcher suite
+    /// (branch-to-buffered costs S, boundary stops, full pauses).
+    pf_start: u32,
+    pf_end: u32,
+    pf_valid: bool,
     /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
     /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
     access_wait_cycles: i64,
@@ -319,6 +328,9 @@ impl GbaMemoryBus {
             prev_width: 0,
             fetch_addr: None,
             fetch_width: 0,
+            pf_start: 0,
+            pf_end: 0,
+            pf_valid: false,
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
@@ -490,15 +502,24 @@ impl GbaMemoryBus {
             // the 16-bit-bus 32bit=2 split.
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
-                // Opcode fetches follow the fetch stream; data accesses are
-                // nonsequential (continuation words use the sequential data
-                // path); the fetch-stream break is pre-paid per instruction.
+                // Opcode fetches follow the prefetch buffer window (S on
+                // hit, N on miss); data accesses are nonsequential
+                // (continuation words use the sequential data path); the
+                // fetch-stream break is pre-paid per instruction.
                 let sequential = if is_opcode {
                     // Fetches issued while a DMA burst is pending (trigger
                     // stored, bus handover imminent) cost N: the arbitrated
                     // bus is non-sequential (HW-pinned by hw-test ROM
                     // force-nseq-access: post-trigger nops cost 1N).
-                    !self.dma.has_pending() && self.is_fetch_sequential(addr)
+                    // With prefetch off there is no buffer: plain address
+                    // sequentiality decides (fetch_stream unit tests pin
+                    // S for in-stream, N for jumps ahead).
+                    !self.dma.has_pending()
+                        && (if self.prefetch_enabled {
+                            self.fetch_buffer_hit(addr)
+                        } else {
+                            self.is_fetch_sequential(addr)
+                        })
                 } else {
                     self.data_sequential_override
                 };
@@ -776,6 +797,7 @@ impl GbaMemoryBus {
             self.prev_width = 0;
             self.fetch_addr = None;
             self.fetch_width = 0;
+            self.pf_valid = false;
             // Completion IRQs are raised via take_completion_interrupts
             // below (one tick after the final write).
         }
@@ -1224,6 +1246,39 @@ impl GbaMemoryBus {
         Self::seq_in_rom(self.fetch_addr, self.fetch_width, addr)
     }
 
+    /// Pure buffer-hit check (no mutation): ROM addr inside [pf_start,
+    /// pf_end). Used by the S/N decision; mutation happens separately in
+    /// `fetch_buffer_update`, so read-only cost queries see the same hit.
+    fn fetch_buffer_hit(&self, addr: u32) -> bool {
+        (0x08000000..=0x0DFFFFFF).contains(&addr)
+            && self.pf_valid
+            && self.pf_start <= addr
+            && addr < self.pf_end
+    }
+
+    /// Slide/refill the buffer after a ROM opcode fetch of `width` bytes.
+    /// Hits consume (drain); misses refill ahead. Background refills from
+    /// idle cycles arrive via `fetch_buffer_idle` (non-ROM data accesses).
+    fn fetch_buffer_update(&mut self, addr: u32, width: u8) {
+        if self.fetch_buffer_hit(addr) {
+            self.pf_start = addr.wrapping_add(u32::from(width));
+        } else {
+            let new_start = addr.wrapping_add(u32::from(width));
+            let boundary = (addr & !0x1FFFF).wrapping_add(0x20000);
+            self.pf_start = new_start;
+            self.pf_end = new_start.wrapping_add(16).min(boundary);
+            self.pf_valid = true;
+        }
+    }
+
+    /// Background refill during idle (non-ROM-bus) data accesses:
+    /// any idle refills fully (sweep trial).
+    fn fetch_buffer_idle(&mut self, _wait: u8) {
+        if self.prefetch_enabled && self.pf_valid {
+            self.pf_end = self.pf_start.wrapping_add(16);
+        }
+    }
+
     /// Bus-order contiguity for block-transfer continuation words (LDM/STM
     /// words 2+): sequential to the previous bus access of any kind,
     /// including the 128KB-boundary N-force and region changes (hw-test
@@ -1410,6 +1465,20 @@ impl GbaMemoryBus {
         self.prev_width = 0;
         self.fetch_addr = None;
         self.fetch_width = 0;
+        self.pf_valid = false;
+        self.last_prefetched_pc = 0;
+        self.data_sequential_override = false;
+    }
+
+    /// Branch/PC-write invalidate: address streams reset (next data/fetch
+    /// is N by address), but the prefetch buffer window survives — a
+    /// branch into buffered addresses costs S (HW-pinned by the alyosha
+    /// prefetcher branch suite). DMA/IRQ keep the full invalidate above.
+    pub fn invalidate_prefetch_for_branch(&mut self) {
+        self.prev_addr = None;
+        self.prev_width = 0;
+        self.fetch_addr = None;
+        self.fetch_width = 0;
         self.last_prefetched_pc = 0;
         self.data_sequential_override = false;
     }
@@ -1423,7 +1492,27 @@ impl GbaMemoryBus {
             let raw = self.read_mgba_debug(addr, width);
             return (raw, 0);
         }
+        // GamePak prefetch buffer: ROM opcode fetches slide/check the
+        // window when prefetch is enabled (data/DMA never touch it here;
+        // DMA completion and invalidate paths reset validity below).
+        // With prefetch off there is no buffer (plain address stream).
         let wait = self.cycles_for_access(addr, width, is_opcode);
+        if is_opcode
+            && self.prefetch_enabled
+            && (0x08000000..=0x0DFFFFFF).contains(&addr)
+        {
+            self.fetch_buffer_update(addr, width);
+        } else if !is_opcode && !(0x08000000..=0x0DFFFFFF).contains(&addr) {
+            // Non-ROM data accesses free the ROM bus: background refill,
+            // except EWRAM traffic which abandons the buffer (shared
+            // external-bus arbitration; HW-pinned by branch_thumb_2+ EWRAM
+            // fillers (N) vs timer-only t001 (S), and by the Bus suite).
+            if (0x02000000..=0x02FFFFFF).contains(&addr) {
+                self.pf_valid = false;
+            } else {
+                self.fetch_buffer_idle(wait);
+            }
+        }
         if is_opcode {
             self.last_opcode_addr = Some(addr);
         }
@@ -1586,6 +1675,15 @@ impl GbaMemoryBus {
             contrib += self.prefetch_erase_delta(addr, u32::from(wait), false);
         }
         self.access_wait_cycles += i64::from(contrib);
+        if !(0x08000000..=0x0DFFFFFF).contains(&addr) {
+            // Non-ROM stores free the ROM bus: background refill, except
+            // EWRAM traffic which abandons (see read path).
+            if (0x02000000..=0x02FFFFFF).contains(&addr) {
+                self.pf_valid = false;
+            } else {
+                self.fetch_buffer_idle(wait);
+            }
+        }
         match addr {
             0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
             0x03000000..=0x03FFFFFF => self.write_iwram(addr, width, value),
