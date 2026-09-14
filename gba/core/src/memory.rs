@@ -1076,6 +1076,21 @@ impl GbaMemoryBus {
         }
     }
 
+    /// 16-bit GamePak lane merge into the shared bus latch (odd
+    /// addresses drive the high lane, even use the A1 lane). GamePak
+    /// only; other regions never drive the latch here.
+    pub(crate) fn merge_rom_half(&mut self, addr: u32, half: u32) {
+        if !(0x08000000..=0x0CFFFFFF).contains(&addr) {
+            return;
+        }
+        let half = half & 0xFFFF;
+        if addr & 1 == 1 || addr & 2 == 2 {
+            self.cpu_bus = (self.cpu_bus & 0xFFFF) | (half << 16);
+        } else {
+            self.cpu_bus = (self.cpu_bus & 0xFFFF_0000) | half;
+        }
+    }
+
     pub fn take_access_wait_cycles(&mut self) -> i64 {
         std::mem::take(&mut self.access_wait_cycles)
     }
