@@ -1279,6 +1279,19 @@ impl GbaMemoryBus {
         }
     }
 
+    /// Pre-refill the window ahead of a mode-switching branch target
+    /// (the branch execution gives the prefetcher time to fill, so the
+    /// target fetch hits; HW-pinned by branch_thumb_arm_4: ARM->Thumb
+    /// bx lands on a buffered target). Regular branches preserve.
+    pub fn refill_prefetch_for_switch(&mut self, target: u32) {
+        if self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&target) {
+            let boundary = (target & !0x1FFFF).wrapping_add(0x20000);
+            self.pf_start = target;
+            self.pf_end = target.wrapping_add(16).min(boundary);
+            self.pf_valid = true;
+        }
+    }
+
     /// Bus-order contiguity for block-transfer continuation words (LDM/STM
     /// words 2+): sequential to the previous bus access of any kind,
     /// including the 128KB-boundary N-force and region changes (hw-test
