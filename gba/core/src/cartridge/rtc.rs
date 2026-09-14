@@ -1,5 +1,5 @@
-/// GamePak RTC (Seiko S3511 3-wire serial) after mGBA `cart/gpio.c` and
-/// NBA `HW/GamePak/GPIO/RTC.cc`, GBATEK "Game Pak RTC" + NDS S-35180 detail.
+/// GamePak RTC (Seiko S3511 3-wire serial) after NBA `HW/GamePak/GPIO/RTC`,
+/// cross-checked against GBAHawk `Mappers.h`, GBATEK "Game Pak RTC".
 ///
 /// Pins: 0 = SCK, 1 = SIO, 2 = CS. CS low aborts; the command byte is
 /// clocked LSB-first on SCK rises (MSB-first senders are auto-detected
@@ -23,7 +23,7 @@ pub struct Rtc {
     pub sio_out: bool,
 }
 
-/// Argument byte counts per command (mGBA `RTC_BYTES`).
+/// Argument byte counts per command (NBA/GBAHawk agree).
 const ARG_COUNT: [u8; 8] = [0, 0, 7, 0, 1, 0, 3, 0];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,7 @@ impl Rtc {
     /// driven SIO level is visible in `sio_out`.
     pub fn pins(&mut self, sck: bool, sio: bool, cs: bool, prev_sck: bool, prev_cs: bool) {
         if !cs {
-            // CS low aborts any transaction (mGBA).
+            // CS low aborts any transaction.
             if prev_cs {
                 self.phase = Phase::Idle;
                 self.sio_out = false;
@@ -78,7 +78,7 @@ impl Rtc {
                 self.phase = Phase::Idle;
             }
         } else if self.phase == Phase::Sending && prev_sck && !sck {
-            // Data shifts out on the falling edge (mGBA).
+            // Data shifts out on the falling edge.
             let i = (self.out_bit / 8) as usize;
             self.sio_out = self.out[i] >> (self.out_bit % 8) & 1 != 0;
             self.out_bit += 1;

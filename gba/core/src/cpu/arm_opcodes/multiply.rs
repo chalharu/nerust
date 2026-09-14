@@ -34,8 +34,7 @@ use crate::memory::GbaMemoryBus;
 
 pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     // Multiplies take internal cycles (GBATEK 1S+mI); carried in the base
-    // below, plus the fetch-stream break (mGBA MUL post-body N32-S32) and
-    // the P-ON tick erase (mGBA ARM_WAIT_MUL stall).
+    // below, plus the fetch-stream break (N32-S32) and the P-ON tick erase.
     let is_long = (instr >> 23) & 1 != 0;
     if is_long {
         // UMULL/UMLAL/SMULL/SMLAL produce an RdHi:RdLo pair.
@@ -59,8 +58,8 @@ fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, 
     if a {
         result = result.wrapping_add(regs.r(rn));
     }
-    // UNPREDICTABLE Rd=R15 (mGBA isa-arm.c skips the write): never let a
-    // multiply hijack the PC and trigger a spurious pipeline refill.
+    // UNPREDICTABLE Rd=R15 (ARM ARM): never let a multiply hijack the PC
+    // and trigger a spurious pipeline refill.
     if rd != 15 {
         regs.set_r(rd, result);
     }
@@ -72,8 +71,7 @@ fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, 
     let cycles = multiplier_cycles(rs_val);
     // GBATEK/ARM ARM: MUL=1S+mI, MLA=1S+mI+1I (the 1S is the execute cycle;
     // the opcode fetch is charged separately by the bus). The tick array
-    // also breaks the fetch stream (mGBA MUL post-body) and fills prefetch
-    // P-ON (mGBA ARM_WAIT_MUL stall on WAIT+m, WAIT=0/1).
+    // also breaks the fetch stream and fills prefetch P-ON.
     bus.charge_fetch_stream_break();
     bus.erase_for_multiply(cycles + u32::from(a), 4);
     if a { cycles + 2 } else { cycles + 1 }
@@ -123,7 +121,7 @@ fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, i
     }
     // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
     let ticks = multiplier_cycles_long(rs_value, signed);
-    // mGBA long-MUL post-body + tick erase (WAIT: xMLAL 2+m, xMULL 1+m).
+    // Long-MUL post-body breaks the stream; tick erase (xMLAL 2+m, xMULL 1+m).
     bus.charge_fetch_stream_break();
     bus.erase_for_multiply(ticks + 1 + u32::from(accumulate), 4);
     ticks + 2 + u32::from(accumulate)

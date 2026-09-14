@@ -1,5 +1,5 @@
 /// GBA PSG channels (GBATEK sound chapters; sweep/envelope/length rules
-/// concordant with mGBA `gb/audio.c` and NBA `HW/APU/PSG/`).
+/// follow NBA `HW/APU/PSG/`, cross-checked against GBAHawk).
 ///
 /// Clocks are CPU T-cycles (16.78MHz):
 /// - square timer period: 16 * (2048 - freq)
@@ -29,8 +29,8 @@ impl LengthEnvelope {
         if self.length == 0 {
             self.length = init_len;
         }
-        // mGBA retrigger quirk: a trigger landing just before a length
-        // step consumes one extra tick immediately.
+        // Retrigger quirk (NBA/GBAHawk agree): a trigger landing just
+        // before a length step consumes one extra tick immediately.
         if seq_odd {
             self.length = self.length.saturating_sub(1);
         }
@@ -39,25 +39,28 @@ impl LengthEnvelope {
         self.active = self.length != 0;
     }
 
-    pub fn tick_length(&mut self, enabled: bool, init_len: u8) {
-        if !enabled {
+    pub fn tick_length(&mut self, enabled: bool) {
+        if !enabled || self.length == 0 {
             return;
         }
-        if self.length > 0 {
-            self.length -= 1;
-            if self.length == 0 {
-                self.active = false;
-            }
-        } else {
-            // Length written as 0 while expired reloads the full counter
-            // without reviving the channel (mGBA length path).
-            self.length = init_len;
+        self.length -= 1;
+        if self.length == 0 {
+            self.active = false;
         }
     }
 
     pub fn tick_envelope(&mut self, env_reg: u16) {
+        if !self.active {
+            return;
+        }
+        // Saturated envelopes go dead (NBA `active=false`): volume holds,
+        // ticking stops. Output is identical either way (clamped).
+        let inc = env_reg & (1 << 11) != 0;
+        if (inc && self.volume >= 15) || (!inc && self.volume == 0) {
+            return;
+        }
         let pace = (env_reg >> 8) as u8 & 7;
-        if pace == 0 || !self.active {
+        if pace == 0 {
             return;
         }
         if self.env_timer == 0 {
@@ -109,7 +112,7 @@ impl Square {
         self.sweep_pace != 8 || self.sweep_shift != 0
     }
 
-    /// NR10 write (GBATEK sweep; mGBA `_writeSweep` incl. zombie rule).
+    /// NR10 write (GBATEK sweep; zombie rule per GBAHawk).
     pub fn write_sweep(&mut self, value: u8) {
         let shift = value & 7;
         let dec = value & (1 << 3) != 0;
@@ -210,6 +213,7 @@ pub struct Wave {
     timer: u32,
     pub phase: u8,
     pub bank: usize,
+    pub dimension_64: bool,
     pub hold: u8,
 }
 
@@ -227,8 +231,7 @@ impl Wave {
         if dimension_64 {
             self.bank = 0;
         }
-        // Triggered retrigger latches the first nibble immediately
-        // (mGBA wave trigger path).
+        // Triggered retrigger latches the first nibble immediately.
     }
 
     pub fn tick_timer(&mut self, rate: u16) {
@@ -238,21 +241,21 @@ impl Wave {
         if self.timer == 0 {
             self.timer = 8 * u32::from(2048 - rate.min(2047));
             self.phase = (self.phase + 1) & 31;
+            if self.phase == 0 && self.dimension_64 {
+                // 64-digit mode alternates banks every 32 digits.
+                self.bank ^= 1;
+            }
         }
         self.timer -= 1;
     }
 
-    pub fn tick_length(&mut self, enabled: bool, init_len: u16) {
-        if !enabled {
+    pub fn tick_length(&mut self, enabled: bool) {
+        if !enabled || self.length == 0 {
             return;
         }
-        if self.length > 0 {
-            self.length -= 1;
-            if self.length == 0 {
-                self.active = false;
-            }
-        } else {
-            self.length = init_len;
+        self.length -= 1;
+        if self.length == 0 {
+            self.active = false;
         }
     }
 
@@ -383,9 +386,9 @@ mod tests {
         let mut le = LengthEnvelope::default();
         le.trigger(2, 8, 0, false);
         assert!(le.active);
-        le.tick_length(true, 64);
+        le.tick_length(true);
         assert!(le.active);
-        le.tick_length(true, 64);
+        le.tick_length(true);
         assert!(!le.active);
     }
 

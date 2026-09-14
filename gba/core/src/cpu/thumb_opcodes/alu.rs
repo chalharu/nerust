@@ -30,7 +30,7 @@ fn logical(regs: &mut CpuRegisters, destination: usize, op: u8, left: u32, right
     regs.set_r(destination, result);
     update_nz(regs, result);
     // GBATEK/ARM ARM: Thumb MUL is 1S+mI like ARM, with m from the
-    // incoming Rd value (mGBA isa-thumb.c ARM_WAIT_SMUL(gprs[rd])); here
+    // incoming Rd value (NBA agrees: Thumb times Rs=dst); here
     // `left` is the incoming Rd (Rd = Rd*Rs).
     if op == 0xD {
         1 + crate::cpu::arm_opcodes::multiply::multiplier_cycles(left)

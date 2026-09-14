@@ -47,7 +47,7 @@ fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
     if rotation == 0 {
         // Register ROR with a multiple of 32 (but nonzero low byte): the
         // 5-bit rotate amount is 0, so the result is unchanged, but carry
-        // is set to bit 31 (mGBA/NBA agree; jsmolka_thumb pins this).
+        // is set to bit 31 (ARM ARM; jsmolka_thumb pins this).
         // Only a zero low *byte* preserves carry (handled above).
         (value, value >> 31 != 0)
     } else {

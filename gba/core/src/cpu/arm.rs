@@ -100,7 +100,7 @@ fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     if rd != 15 {
         regs.set_r(rd, mem_val);
     }
-    // Load+store breaks the fetch stream (mGBA post-body, once).
+    // Load+store breaks the fetch stream (once per instruction).
     bus.charge_fetch_stream_break();
     4
 }

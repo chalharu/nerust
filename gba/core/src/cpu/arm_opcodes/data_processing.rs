@@ -19,7 +19,7 @@ pub fn handle(regs: &mut CpuRegisters, _bus: &mut GbaMemoryBus, instr: u32) -> u
     let (result, carry, overflow) = execute(opcode, rn_value, op2, shifter_carry, regs.cpsr_c());
     // TST/TEQ/CMP/CMN update flags without writing Rd.
     let flag_only = matches!(opcode, 0x8..=0xB);
-    // USR/SYS have no SPSR (mGBA _ARMModeHasSPSR guard): exception-return
+    // USR/SYS have no SPSR (ARM ARM): exception-return restores only
     // restores only apply in modes with an SPSR bank.
     let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
     if flag_only && rd == 15 && s {
@@ -107,7 +107,7 @@ fn write_result(regs: &mut CpuRegisters, destination: usize, result: u32, set_fl
     regs.set_r(destination, result);
     if destination == 15 && set_flags {
         // Data-processing with S and Rd=PC returns from an exception via
-        // SPSR — except in USR/SYS, which have none (mGBA guard): there
+        // SPSR — except in USR/SYS, which have none (ARM ARM): there
         // the PC write stands and flags update at the call site.
         if !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
             regs.set_cpsr(regs.spsr());

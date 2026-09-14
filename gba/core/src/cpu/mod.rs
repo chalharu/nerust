@@ -192,8 +192,7 @@ impl GbaCpu {
         };
         // Signed bus take: prefetch erases drive the accumulator negative
         // mid-instruction; the per-instruction net plus the base stays
-        // positive (clamped at 1, like mGBA's per-instruction currentCycles
-        // floor of the 1-cycle prefetch base).
+        // positive (clamped at 1, covering the 1-cycle prefetch base).
         (cycles as i64 + bus.take_access_wait_cycles()).max(1) as u32
     }
 

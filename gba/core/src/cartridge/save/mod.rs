@@ -29,9 +29,8 @@ pub trait SaveBackend: std::fmt::Debug + Send {
     fn eeprom_read_bit(&mut self) -> bool {
         true
     }
-    /// Peek the current response level WITHOUT consuming it (mGBA
-    /// GBASavedataReadEEPROM concordance for CPU loads): idle chip drives
-    /// 1 (pulled up = Ready for the GBATEK `LDRH [DFFFF00h]` poll).
+    /// Peek the current response level WITHOUT consuming it: idle chip
+    /// drives 1 (pulled up = Ready for the GBATEK `LDRH [DFFFF00h]` poll).
     fn eeprom_peek_bit(&self) -> bool {
         true
     }

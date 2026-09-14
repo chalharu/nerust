@@ -45,7 +45,7 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
     let mut first = true;
     bus.begin_block_batch(true, 2);
     for register in selected_registers(list) {
-        // GBATEK forces align for PUSH/POP (mGBA LoadMultiple aligns).
+        // GBATEK forces align for PUSH/POP.
         // First word N; continuation words follow bus order.
         let continuation = !first && bus.data_continuation_sequential(address);
         bus.set_data_sequential(continuation);

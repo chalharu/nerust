@@ -372,7 +372,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         }
         _ => SwiResult::Unsupported,
     };
-    // mGBA concordance: leaving the BIOS region latches the last fetched
+    // GBATEK BIOS guard: leaving the BIOS region latches the last fetched
     // opcode for protected reads (jsmolka bios t002).
     if !matches!(result, SwiResult::Unsupported) {
         bus.set_bios_prefetch(0xE3A02004);
@@ -423,7 +423,7 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     bus.write16(0x04000000, 0x0080);
     // 各リージョンのクリアは size に比例し、30ステップで終わることはない。
     // 実測 TIMER0 (size=full) から求めた base を size比でスケールする。
-    // mGBA _RegisterRamReset 準拠の範囲を正確に再現する。
+    // クリア範囲はGBATEK RegisterRamResetのflag定義通り。
     if flags & 1 != 0 {
         for addr in (0x02000000..0x02040000).step_by(4) {
             bus.write32(addr, 0);
@@ -436,7 +436,7 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
             bus.write32(addr, 0);
         }
         // Don't clear 0x03007E00-0x03007FFF (stack + test code)
-        // IWRAM 0x7E00 bytes, 0x1F80 writes, 実測 0x342A (size比例, mGBA準拠)
+        // IWRAM 0x7E00 bytes, 0x1F80 writes, 実測 0x342A (size比例)
         cycles = cycles.wrapping_add(0x342A);
     }
     if flags & 4 != 0 {
@@ -473,11 +473,11 @@ fn register_ram_reset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // SIO/SOUND/OTHER はレジスタクリアで size小、実測値をそのまま加算
     // これらも size (レジスタ数) に比例し、30ステップで終わらない
     if flags & 0x20 != 0 {
-        // SIO 0x0154 (mGBA: SIOCNT/RCNT/JOYCNT/JOY_RECV/TRANS)
+        // SIO 0x0154 (SIOCNT/RCNT/JOYCNT/JOY_RECV/TRANS)
         cycles += 0x0154u32;
     }
     if flags & 0x40 != 0 {
-        // SOUND 0x0185 (mGBA: 14 sound regs + wave RAM)
+        // SOUND 0x0185 (14 sound regs + wave RAM)
         cycles += 0x0185u32;
     }
     if flags & 0x80 != 0 {
@@ -622,8 +622,8 @@ fn sound_driver_vsync(bus: &mut GbaMemoryBus) {
     }
 }
 
-/// SWI 1Fh MidiKey2Freq (GBATEK + mGBA bios.c): fr = WaveData.freq /
-/// 2^((180 - key - fine/256) / 12).
+/// SWI 1Fh MidiKey2Freq (GBATEK formula; pinned by PeterLemon
+/// BIOSMidiKey2Freq): fr = WaveData.freq / 2^((180 - key - fine/256) / 12).
 fn midi_key_2_freq(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     let wave_freq = bus.read32(regs.r(0) + 4);
     // GBATEK: r1 = u8 key (mk), r2 = u8 fine (fp) — mask both.
@@ -679,9 +679,10 @@ fn div(regs: &mut CpuRegisters) {
     let num = regs.r(0) as i32;
     let den = regs.r(1) as i32;
     if den == 0 {
-        // mGBA _Div concordance (GBATEK Div by zero): r0 = sign(num),
-        // r1 = num, r3 = 1. (Charges unchanged: operand-dependent stall
-        // would break the ROM-pinned $E2/$E5 TIMER0 values.)
+        // Zero-division result (pinned by PeterLemon BIOSDIV; GBATEK
+        // Div by zero): r0 = sign(num), r1 = num, r3 = 1. (Charges
+        // unchanged: operand-dependent stall would break the ROM-pinned
+        // $E2/$E5 TIMER0 values.)
         regs.set_r(0, if num < 0 { -1i32 as u32 } else { 1 });
         regs.set_r(1, num as u32);
         regs.set_r(3, 1);
@@ -699,7 +700,7 @@ fn div_arm(regs: &mut CpuRegisters) {
     let den = regs.r(0) as i32;
     let num = regs.r(1) as i32;
     if den == 0 {
-        // Same div-by-zero convention as Div (mGBA _Div).
+        // Same div-by-zero convention as Div above.
         regs.set_r(0, if num < 0 { -1i32 as u32 } else { 1 });
         regs.set_r(1, num as u32);
         regs.set_r(3, 1);
@@ -730,7 +731,7 @@ fn sqrt_charge(n: u32) -> u32 {
     }
 }
 
-/// Real BIOS ArcTan core (mGBA `_ArcTan` concordance): a fixed-point
+/// Real BIOS ArcTan core (pinned by PeterLemon BIOSARCTAN): a fixed-point
 /// polynomial in the FULL 32-bit input with wraparound arithmetic — not a
 /// libm atan, and not truncated to 16 bits. Truncating the input first and
 /// compensating with an offset was the old bug; the polynomial reproduces
@@ -1000,7 +1001,7 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         return 1;
     }
     let fixed = len_mode & (1 << 24) != 0;
-    // mGBA準拠の高速コピー（HLEで即時完了）。固定fillは単発サンプル。
+    // 高速コピー（HLEで即時完了）。固定fillは単発サンプル。
     // Bulk words (including the fill sample) accrue raw: same raw-bulk
     // treatment as CpuSet (see above).
     bus.begin_raw_batch();
@@ -1149,7 +1150,7 @@ mod tests {
 
     #[test]
     fn div_by_zero_uses_documented_result() {
-        // mGBA _Div concordance: r0 = sign(num), r1 = num, r3 = 1.
+        // r0 = sign(num), r1 = num, r3 = 1 (PeterLemon BIOSDIV).
         let mut regs = CpuRegisters::post_bios();
         let mut bus = GbaMemoryBus::new();
         regs.set_r(0, -7i32 as u32);
