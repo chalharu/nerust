@@ -16,6 +16,21 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) -> u3
 
 fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) -> u32 {
     let count = list.count_ones() + u32::from(link);
+    if count == 0 && !link {
+        // Empty PUSH stores a single word (ARM empty-STM analog: R15);
+        // SP moves by one word (HW-pinned by Push_no_regs timer + popback).
+        let address = regs.sp().wrapping_sub(4);
+        regs.set_sp(address);
+        bus.begin_block_batch(false, 2);
+        bus.set_data_sequential(false);
+        // Empty PUSH stores R15+4 like ARM empty-STM (regs.pc() already
+        // leads by 2 in Thumb execute stage, hence +2).
+        bus.write32(address, regs.pc().wrapping_add(2));
+        bus.set_data_sequential(false);
+        bus.end_block_batch();
+        bus.charge_fetch_stream_break();
+        return 2;
+    }
     let mut address = regs.sp().wrapping_sub(count * 4);
     regs.set_sp(address);
     let mut first = true;
@@ -41,6 +56,21 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
 }
 
 fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> u32 {
+    if list == 0 && !pc {
+        // Empty POP loads PC and advances SP by 0x40 (ARM empty-LDM
+        // analog: Rb+=0x40 address arithmetic; HW-pinned by Pop_no_regs).
+        let address = regs.sp();
+        bus.begin_block_batch(true, 2);
+        bus.set_data_sequential(false);
+        let target = bus.read_aligned32(address);
+        bus.set_data_sequential(false);
+        bus.end_block_batch();
+        regs.set_pc(target);
+        regs.set_sp(address.wrapping_add(0x40));
+        bus.charge_fetch_stream_break();
+        // Thumb empty-POP (n=1 with PC): 2N+1S+1I.
+        return 6;
+    }
     let mut address = regs.sp();
     let mut first = true;
     bus.begin_block_batch(true, 2);

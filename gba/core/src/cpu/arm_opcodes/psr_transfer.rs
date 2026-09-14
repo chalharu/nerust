@@ -36,6 +36,11 @@ fn write_psr(regs: &mut CpuRegisters, instr: u32, saved: bool) {
         // THUMB/ARM switching use BX". Keep the live T bit on MSR to CPSR
         // (SPSR writes keep bit 5, which exception entry stores itself).
         value = (value & !(1 << 5)) | (current & (1 << 5));
+        // Writing an illegal mode (< 0x10) keeps bit 4 set (HW-tested:
+        // MSR 0x03 lands in 0x13, not 0x03).
+        if value & 0x10 == 0 {
+            value |= 0x10;
+        }
     }
     if saved {
         regs.set_spsr(value);
