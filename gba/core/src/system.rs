@@ -2,13 +2,6 @@ use crate::cartridge::Cartridge;
 use crate::cpu::GbaCpu;
 use crate::memory::GbaMemoryBus;
 
-/// HLE IRQ entry cost: cycles charged for the skipped BIOS IRQ prologue.
-/// The +(N-1) source term is load-bearing, not decorative: flattening to a
-/// constant drops nba_irq_delay from 2/3 to 0/3 sub-checks, so any
-/// replacement (e.g. vector-fetch+refill shape) must reproduce the same
-/// per-source totals — observably identical, hence not adopted.
-const IRQ_ENTRY_CYCLES: u32 = 23;
-
 pub struct GbaSystem {
     pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
@@ -116,14 +109,10 @@ impl GbaSystem {
                     // Sample IRQ only at instruction boundaries; mid-instruction never samples.
                     // Falls through to the shared epilogue (decrement sets dispatch timing).
                     if !self.cpu.micro_pending() {
-                        let irq_source_pc = self.cpu.registers().pc();
-                        let irq_entry_cycles = IRQ_ENTRY_CYCLES
-                            + u32::from(
-                                self.bus
-                                    .nonsequential_cycles_for(irq_source_pc, 4)
-                                    .saturating_sub(1),
-                            );
-                        if self.cpu.service_irq(&mut self.bus) {
+                        // Sample IRQ only at instruction boundaries; mid-instruction never samples.
+                        // Falls through to the shared epilogue (decrement sets dispatch timing).
+                        // Entry cost comes from service_irq (real refill waits + prologue count).
+                        if let Some(irq_entry_cycles) = self.cpu.service_irq(&mut self.bus) {
                             self.cpu_cycles_remaining = irq_entry_cycles;
                         } else if let Some(acc) = self.drain_micro() {
                             self.cpu_cycles_remaining = acc.max(1) as u32;
@@ -284,14 +273,6 @@ mod tests {
             crate::ppu::WIDTH * crate::ppu::HEIGHT
         );
         assert_eq!(system.tick, 280896);
-    }
-
-    #[test]
-    fn irq_entry_cycles_use_nonsequential_source_wait() {
-        let bus = GbaMemoryBus::new();
-        assert_eq!(bus.nonsequential_cycles_for(0x03000000, 4), 1);
-        assert_eq!(bus.nonsequential_cycles_for(0x02000000, 4), 6);
-        assert_eq!(bus.nonsequential_cycles_for(0x08000000, 4), 8);
     }
 
     #[test]

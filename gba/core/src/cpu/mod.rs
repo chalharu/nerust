@@ -17,6 +17,13 @@ const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 /// Recalibrate against the timers and timing suites if this changes.
 const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
 
+/// Skipped BIOS vector+prologue cycle count (region-independent): vector
+/// fetch pair, branch refill, push6, mov, adr, ldr-pc, exception entry
+/// internals, and the base cycles no HLE instruction absorbs. Anchored to
+/// the HW-pinned IWRAM-handler entry total; region dependence now comes
+/// from the real entry bus part, not a source-region term.
+const HLE_IRQ_PROLOGUE_CYCLES: u32 = 23;
+
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
     regs: CpuRegisters,
@@ -87,10 +94,17 @@ impl GbaCpu {
         bus.take_access_wait_cycles();
     }
 
-    pub fn service_irq(&mut self, bus: &mut GbaMemoryBus) -> bool {
+    /// Take a pending IRQ: returns the entry charge (discarded source
+    /// fetch + handler refill bus waits + skipped-BIOS prologue count),
+    /// or None when no IRQ is taken.
+    pub fn service_irq(&mut self, bus: &mut GbaMemoryBus) -> Option<u32> {
         if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
-            return false;
+            return None;
         }
+        // Interrupted PC/mode for the discarded read below (registers
+        // change on exception entry).
+        let src_pc = self.regs.pc();
+        let src_thumb = self.regs.cpsr_t();
         let vector = bus.read32(0x03007FFC);
         // The real BIOS jumps to [03007FFCh] blindly; a handler can live in
         // any executable memory (IWRAM/EWRAM, any ROM mirror 08-0D, SRAM).
@@ -124,14 +138,24 @@ impl GbaCpu {
         self.pipeline = [0; 2];
         bus.set_current_pc(target);
         bus.invalidate_prefetch_for_dma(target);
+        // Discarded in-flight read at the interrupted PC: charged, result
+        // dropped. The flush restarts the prefetch stream first, so this
+        // is non-sequential (source-region N).
+        if src_thumb {
+            bus.fetch16(src_pc & !1);
+        } else {
+            bus.fetch32(src_pc & !3);
+        }
+        // First handler fetch evolved N (cold tags) but the word was
+        // prefetched on the prologue's free ROM bus: refund N-S so the
+        // refill costs S+S while the window keeps its natural tail.
+        bus.credit_entry_refill(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
-        // Single-source IRQ entry accounting: the vector+refill bus waits
-        // above are intentionally discarded here (not leaked into the next
-        // step). The HLE entry cost IRQ_ENTRY_CYCLES + (N-1) in system.rs is
-        // the sole charge, so entry is location-independent by design;
-        // sub-tick entry overlap is future research (see rom_tests.yaml).
-        bus.take_access_wait_cycles();
-        true
+        // Entry accounting: the vector+refill bus waits above are the real
+        // charge (handler-region dependent), plus the skipped-BIOS prologue
+        // count. No source-region term beyond the discarded fetch.
+        let entry_bus = bus.take_access_wait_cycles().max(0) as u32;
+        Some(entry_bus + HLE_IRQ_PROLOGUE_CYCLES)
     }
 
     /// 1命令実行し、消費T-cycleを返す。
@@ -391,7 +415,7 @@ mod tests {
         for _ in 0..4 {
             bus.tick();
         }
-        assert!(cpu.service_irq(&mut bus));
+        assert!(cpu.service_irq(&mut bus).is_some());
         assert_eq!(cpu.regs.cpsr_mode(), 0x12);
         assert_ne!(cpu.regs.cpsr() & (1 << 7), 0);
         assert_eq!(cpu.regs.spsr() & 0x1F, 0x1F);
