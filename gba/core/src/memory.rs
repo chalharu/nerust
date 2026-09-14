@@ -1503,15 +1503,8 @@ impl GbaMemoryBus {
         {
             self.fetch_buffer_update(addr, width);
         } else if !is_opcode && !(0x08000000..=0x0DFFFFFF).contains(&addr) {
-            // Non-ROM data accesses free the ROM bus: background refill,
-            // except EWRAM traffic which abandons the buffer (shared
-            // external-bus arbitration; HW-pinned by branch_thumb_2+ EWRAM
-            // fillers (N) vs timer-only t001 (S), and by the Bus suite).
-            if (0x02000000..=0x02FFFFFF).contains(&addr) {
-                self.pf_valid = false;
-            } else {
-                self.fetch_buffer_idle(wait);
-            }
+            // Non-ROM data accesses free the ROM bus: background refill.
+            self.fetch_buffer_idle(wait);
         }
         if is_opcode {
             self.last_opcode_addr = Some(addr);
@@ -1676,13 +1669,8 @@ impl GbaMemoryBus {
         }
         self.access_wait_cycles += i64::from(contrib);
         if !(0x08000000..=0x0DFFFFFF).contains(&addr) {
-            // Non-ROM stores free the ROM bus: background refill, except
-            // EWRAM traffic which abandons (see read path).
-            if (0x02000000..=0x02FFFFFF).contains(&addr) {
-                self.pf_valid = false;
-            } else {
-                self.fetch_buffer_idle(wait);
-            }
+            // Non-ROM stores free the ROM bus: background refill.
+            self.fetch_buffer_idle(wait);
         }
         match addr {
             0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
