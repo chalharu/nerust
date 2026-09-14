@@ -89,6 +89,12 @@ pub struct GbaMemoryBus {
     prefetch_win: [u32; 2],
     /// Whether the newest fetch was Thumb (16-bit window composition).
     prefetch_thumb: bool,
+    /// Shared CPU/DMA open-bus latch (power-on 0xFFFFFFFF): driven by DMA
+    /// reads from accessible sources and by CPU OAM loads (full OAM word);
+    /// returned (lane-selected, never updated) for CPU reads from
+    /// IO-unmapped addresses and Thumb-mode DMA reads from unreadable
+    /// sources (HW-pinned by the alyosha Bus suite).
+    cpu_bus: u32,
     /// GamePak prefetch enable (WAITCNT bit 14). The enable gates only
     /// the prefetch erase (`prefetch_erase_delta`): opcode fetches always
     /// follow the fetch stream at S/N cost (the suite proves pure-fetch
@@ -294,6 +300,7 @@ impl GbaMemoryBus {
             last_prefetch: 0xE129F000,
             prefetch_win: [0xE129F000, 0xE129F000],
             prefetch_thumb: false,
+            cpu_bus: 0xFFFF_FFFF,
             prefetch_enabled: false,
             data_sequential_override: false,
             block_batching: false,
@@ -730,6 +737,22 @@ impl GbaMemoryBus {
                 let value = self.read_dma_source(read_addr, transfer.width);
                 self.dma
                     .update_latch(transfer.channel, transfer.width, value);
+                // DMA reads from accessible sources also drive the shared
+                // bus latch (HW-pinned by DMA_IWRAM_Bus: the ROM word read
+                // by the priming DMA is what the racing DMA samples).
+                // Inaccessible sources leave it alone (DMA_CPU_Bus needs
+                // the power-on 0xFF to survive the priming DMA).
+                let inaccessible = is_unreadable_io(read_addr)
+                    || ((0x04000800..=0x04FFFFFF).contains(&read_addr)
+                        && !is_mem_control(read_addr));
+                if !inaccessible {
+                    self.cpu_bus = if transfer.width == 4 {
+                        value
+                    } else {
+                        let half = value & 0xFFFF;
+                        half | (half << 16)
+                    };
+                }
                 value
             } else if transfer.width == 2 && transfer.destination & 2 != 0 {
                 transfer.latched_value >> 16
@@ -1308,7 +1331,14 @@ impl GbaMemoryBus {
             a if is_mem_control(a) => self.read_io(addr, width),
             0x05000000..=0x05FFFFFF => self.read_palette(addr, width),
             0x06000000..=0x06FFFFFF => self.read_vram(addr, width),
-            0x07000000..=0x07FFFFFF => self.read_oam(addr, width),
+            0x07000000..=0x07FFFFFF => {
+                // OAM loads drive the whole word onto the shared bus
+                // (HW-pinned by DMA_OAM_Bus: concurrent ldrh exposes the
+                // full OAM word to a racing DMA).
+                let word = self.read_oam(addr & !3, 4);
+                self.cpu_bus = word;
+                self.read_oam(addr, width)
+            }
             0x08000000..=0x0CFFFFFF => self.read_rom(addr, width),
             0x0D000000..=0x0DFFFFFF => {
                 // On EEPROM cartridges the 0D window is the serial chip, not
@@ -1321,6 +1351,21 @@ impl GbaMemoryBus {
                 }
             }
             0x0E000000..=0x0FFFFFFF => self.read_sram(addr, width),
+            // Unmapped IO-block and beyond (mem_control mirrors are
+            // handled above): 32-bit CPU reads see the shared bus latch
+            // (HW-pinned by DMA_CPU_Bus_Interaction: power-on 0xFF survives
+            // untouched by CPU setup traffic); sub-32-bit reads see the
+            // prefetch window (HW-pinned by mgba_suite io_read INVALID
+            // 100C: ldrh returns the 0xDEAD literal prefetched after).
+            0x04000800..=0x04FFFFFF => {
+                if width == 4 {
+                    self.cpu_bus
+                } else if width == 2 {
+                    self.open_bus16(addr)
+                } else {
+                    self.open_bus8(addr)
+                }
+            }
             // Unmapped: prefetch-latch open bus, lane-selected by width.
             _ => match width {
                 4 => self.open_bus32(),
@@ -2391,11 +2436,30 @@ impl GbaMemoryBus {
     }
 
     fn read_dma_source(&mut self, address: u32, width: u8) -> u32 {
+        // Register-gap I/O always reads the prefetch window, in either
+        // mode (nba_dma_latch BUS LATCH 0x46C046C0, whose Thumb NOP sled
+        // the window replicates).
         if is_unreadable_io(address) {
             // nba_dma_latch BUS LATCH cell pins this: DMA from unreadable
             // I/O reads regular open bus (the prefetched instruction), not
             // the stale DMA latch. A stale-latch model contradicts the HW
             // ROM, so the prefetch window rules.
+            return if width == 4 {
+                self.open_bus32()
+            } else {
+                self.open_bus16(address)
+            };
+        }
+        // Unmapped IO block past the register file (alyosha DMA#2 source
+        // 0x04001000): ARM samples prefetch (Unused_location_update_bus),
+        // Thumb samples the shared latch (DMA_IWRAM_Bus/DMA_OAM_Bus).
+        if (0x04000800..=0x04FFFFFF).contains(&address) && !is_mem_control(address) {
+            if self.prefetch_thumb {
+                return match width {
+                    4 => self.cpu_bus,
+                    _ => (self.cpu_bus >> ((address & 2) * 8)) & 0xFFFF,
+                };
+            }
             return if width == 4 {
                 self.open_bus32()
             } else {
