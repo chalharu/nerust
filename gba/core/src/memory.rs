@@ -45,6 +45,12 @@ pub struct GbaMemoryBus {
     pending_ime: bool,
     pending_if: u16,
     pending_at: Option<u64>,
+    /// An IE/IME register write armed the pending apply: the CPU line
+    /// asserts one tick after apply for write-triggered asserts (the
+    /// write is bus-synchronous), while device raises synchronize an
+    /// extra tick. Pinned by nba-emu irq-delay (92/112/120) against
+    /// mgba timer-irq and cancel-irq-ime (raise-triggered, +2).
+    line_write_assert: bool,
     irq_available: bool,
     avail_queue: Vec<(bool, u64)>,
     irq_line: bool,
@@ -341,6 +347,7 @@ impl GbaMemoryBus {
             pending_ime: false,
             pending_if: 0,
             pending_at: None,
+            line_write_assert: false,
             irq_available: false,
             avail_queue: Vec::new(),
             irq_line: false,
@@ -833,6 +840,7 @@ impl GbaMemoryBus {
         let now = self.current_tcycle;
         if self.pending_at.is_some_and(|at| at <= now) {
             self.pending_at = None;
+            let line_fast = std::mem::replace(&mut self.line_write_assert, false);
             let ie = self.pending_ie;
             let ime = self.pending_ime;
             let sif = self.pending_if;
@@ -866,7 +874,8 @@ impl GbaMemoryBus {
                     .map(|(v, _)| *v)
                     .unwrap_or(self.irq_line);
                 if line != line_cur {
-                    self.line_queue.push((line, now + 2));
+                    let delay = if line && line_fast { 1 } else { 2 };
+                    self.line_queue.push((line, now + delay));
                 }
                 // Halt wake on the effective IE/IF registers, evaluated at
                 // apply time (sees final levels); CPU entry uses the
@@ -1060,6 +1069,7 @@ impl GbaMemoryBus {
             self.pending_ime = false;
             self.pending_if = 0;
             self.pending_at = None;
+            self.line_write_assert = false;
             self.irq_available = false;
             self.avail_queue.clear();
             self.irq_line = false;
@@ -2460,6 +2470,7 @@ impl GbaMemoryBus {
                 // match, so IE+IF / IF+WAITCNT pairs land in order.)
                 self.pending_ie = v16 & 0x3FFF;
                 self.pending_at = Some(self.current_tcycle + 1);
+                self.line_write_assert = true;
                         return;
             }
             0x04000202 => {
@@ -2483,6 +2494,7 @@ impl GbaMemoryBus {
                 // Delayed like IE.
                 self.pending_ime = (v16 & 1) != 0;
                 self.pending_at = Some(self.current_tcycle + 1);
+                self.line_write_assert = true;
                         return;
             }
             _ => {
