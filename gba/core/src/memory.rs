@@ -550,13 +550,6 @@ impl GbaMemoryBus {
         }
     }
 
-    pub(crate) fn nonsequential_cycles_for(&self, addr: u32, width: u8) -> u8 {
-        match addr {
-            0x08000000..=0x0DFFFFFF => self.gamepak_rom_cycles(addr, width, false),
-            _ => self.cycles_for(addr, width),
-        }
-    }
-
     /// Extra wait while the LCD controller fetches the same video memory.
     /// +1 while actively drawing, 0 during blanks/forced blank.
     fn display_stall(&self, addr: u32) -> u8 {
@@ -1305,6 +1298,21 @@ impl GbaMemoryBus {
     fn fetch_buffer_idle(&mut self, _wait: u8) {
         if self.prefetch_enabled && self.pf_valid {
             self.pf_end = self.pf_start.wrapping_add(16);
+        }
+    }
+
+    /// IRQ-entry refill credit: the skipped BIOS prologue leaves the ROM
+    /// bus free, so the first handler word is already prefetched. Refund
+    /// its N-S when it evolved N (cold tags), keeping the natural window
+    /// tail for the rest of the handler stream. ROM + prefetch only.
+    pub(crate) fn credit_entry_refill(&mut self, target: u32) {
+        if self.prefetch_enabled
+            && (0x08000000..=0x0DFFFFFF).contains(&target)
+            && !self.fetch_buffer_hit(target)
+        {
+            let n = self.gamepak_rom_cycles(target, 4, false);
+            let s = self.gamepak_rom_cycles(target, 4, true);
+            self.access_wait_cycles -= i64::from(n.saturating_sub(s));
         }
     }
 
