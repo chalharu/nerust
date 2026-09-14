@@ -63,8 +63,16 @@ pub fn handle_sign_extended(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, ins
             3
         }
         _ => {
+            // LDRSH from an odd address: a single aligned halfword bus
+            // transfer (timing identical to the legacy byte read); r0 gets
+            // the odd byte sign-extended (high byte of the half, matching
+            // legacy behavior), while the bus carries the halfword in the
+            // high lane (HW-pinned by LDRSH_misaligned: a racing DMA
+            // samples byte 0x24, not the stale latch).
             let value = if addr & 1 != 0 {
-                bus.read8(addr) as i8 as i32 as u32
+                let half = bus.read_ldr_halfword(addr & !1) & 0xFFFF;
+                bus.merge_rom_half(addr, half);
+                ((half >> 8) as u8) as i8 as i32 as u32
             } else {
                 bus.read16(addr) as i16 as i32 as u32
             };
