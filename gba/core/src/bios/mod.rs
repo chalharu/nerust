@@ -972,7 +972,14 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
         let base_len = 0x800u32;
         let disp = base_disp * len / base_len;
         let wait = base_wait * len / base_len;
-        disp.saturating_sub(wait)
+        let ret = disp.saturating_sub(wait);
+        // HW BIOS CpuSet from ROM costs ~93 cycles more than the WRAM-fit
+        // formula (HW-pinned by cpy_data_bios TIM1 0xA5).
+        if (0x08000000..=0x0DFFFFFF).contains(&src) {
+            ret.wrapping_add(93)
+        } else {
+            ret
+        }
     }
 }
 
