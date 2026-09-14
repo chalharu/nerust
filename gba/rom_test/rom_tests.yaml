@@ -84,7 +84,6 @@ expected_failures:
 - alyosha_IRQ_sub
 - alyosha_IRQ_sub_slow
 - alyosha_LDRSH_misaligned
-- alyosha_Pop_no_regs
 - alyosha_prefetch_enable
 - alyosha_prefetch_enable_2
 - alyosha_prefetcher_boundary_1
@@ -103,8 +102,6 @@ expected_failures:
 - alyosha_prefetcher_full_arm_2
 - alyosha_prefetcher_full_thumb
 - alyosha_psr
-- alyosha_Push_no_regs
-- alyosha_serial_read_data
 - alyosha_serial_time
 - alyosha_serial_time_2
 - alyosha_serial_time_2M

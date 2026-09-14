@@ -661,7 +661,10 @@ impl GbaMemoryBus {
                     if self.sio_xfer_32 {
                         self.siodata32 = 0xFFFF_FFFF;
                     } else {
-                        self.siodata8 = 0x00FF;
+                        // No link partner: only the receive lane reads
+                        // pulled-high; the send high byte is preserved
+                        // (HW-pinned by serial_read_data).
+                        self.siodata8 = (self.siodata8 & 0xFF00) | 0x00FF;
                     }
                     if self.siocnt & 0x4000 != 0 {
                         self.request_interrupt(1 << 7);
