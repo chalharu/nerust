@@ -64,8 +64,9 @@ fn decode_software_or_coprocessor(
 
 fn handle_und(regs: &mut CpuRegisters) -> u32 {
     let return_address = regs.pc().wrapping_sub(4);
-    regs.enter_exception(0x1B, 0x04, return_address, false);
-    3
+    regs.enter_exception(0x1B, 0x04, return_address, true);
+    // GBATEK ARM Undefined: Execution time 2S+1I+1N.
+    4
 }
 
 fn handle_coprocessor_und(regs: &mut CpuRegisters) -> u32 {
@@ -95,7 +96,12 @@ fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     } else {
         bus.write32(addr, rm_val);
     }
-    regs.set_r(rd, mem_val);
+    // Rd == R15 is UNPREDICTABLE (ARM ARM): skip the write like MUL.
+    if rd != 15 {
+        regs.set_r(rd, mem_val);
+    }
+    // Load+store breaks the fetch stream (once per instruction).
+    bus.charge_fetch_stream_break();
     4
 }
 fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
