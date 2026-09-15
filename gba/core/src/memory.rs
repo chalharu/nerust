@@ -2407,17 +2407,13 @@ impl GbaMemoryBus {
                     let channel = ((aligned - 0x040000B0) / 12) as usize;
                     self.dma.retime_pending(channel, 3);
                 }
-                // GBATEK "STR to DMA CNT forces NSEQ": only the CNT_H
-                // commit write breaks code sequentiality. SAD/DAD/CNT_L
-                // setup writes never touch the GamePak bus, so the
-                // prefetch buffer and the fetch stream stay valid across
-                // them (clearing there made ROM setup code spuriously N).
-                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
-                    self.prev_addr = None;
-                    self.prev_width = 0;
-                    self.fetch_addr = None;
-                    self.fetch_width = 0;
-                }
+                // DMA CNT_H commit writes no longer break the CPU fetch
+                // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
+                // the DMA unit's own first access (modeled via is_first),
+                // not CPU opcode fetches: breaking the stream here cost +2
+                // on DMA_Mode_Change (HW-pinned S-continuation, also passing
+                // on mgba) with no HW pin supporting the break. SAD/DAD/
+                // CNT_L setup writes never touched the stream either.
             }
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
