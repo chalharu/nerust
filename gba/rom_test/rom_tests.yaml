@@ -45,13 +45,14 @@ expected_failures:
 # mgba_suite_timers: EXPECTED-FAIL. Do not retune to chase cells.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
+# (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
+# across DMA CNT_H commits; matrix 157/95/0, lib 277 green.)
 - alyosha_BL_IRQ
 - alyosha_BL_IRQ_2
 - alyosha_BL_IRQ_3
 - alyosha_BL_IRQ_R14
 - alyosha_bounday_test_1
 - alyosha_dma_from_bios
-- alyosha_DMA_Mode_Change
 - alyosha_DMA_pause_timing_end_1
 - alyosha_DMA_pause_timing_end_2
 - alyosha_DMA_pause_timing_end_3
