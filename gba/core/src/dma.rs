@@ -123,10 +123,8 @@ impl GbaDma {
                 && dma.pending == 0
             {
                 // The DMA owns the bus 3 cycles after the start
-                // condition fires (Mesen default-2 + pre-idle 1, NBA
-                // schedule-2 + pre-Step 1, ares waiting 2 + framing,
-                // GBAHawk FIFO 3 all total 3; dma_fit HBlank/VBlank
-                // phases pin it against a split).
+                // condition fires (event-triggered latency; dma_fit
+                // HBlank/VBlank phases pin it against shorter values).
                 dma.pending = 3;
                 dma.is_first = true;
             }
