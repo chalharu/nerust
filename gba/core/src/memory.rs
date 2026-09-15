@@ -810,7 +810,15 @@ impl GbaMemoryBus {
             self.prev_width = 0;
             self.fetch_addr = None;
             self.fetch_width = 0;
-            self.pf_valid = false;
+            // The ROM prefetch buffer survives DMA that never touches
+            // GamePak ROM (NBA EWRAM/IWRAM/IO paths leave the buffer
+            // alone; Mesen never resets it on DMA; ares maintains it
+            // across bursts). Only ROM-touching DMA restarts the buffer
+            // (NBA StopPrefetch on ROM DMA).
+            if crate::dma::is_rom(transfer.data_source) || crate::dma::is_rom(transfer.destination)
+            {
+                self.pf_valid = false;
+            }
             // Completion IRQs are raised via take_completion_interrupts
             // below (one tick after the final write).
         }

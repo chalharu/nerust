@@ -123,7 +123,10 @@ impl GbaDma {
                 && dma.pending == 0
             {
                 // The DMA owns the bus 3 cycles after the start
-                // condition fires.
+                // condition fires (Mesen default-2 + pre-idle 1, NBA
+                // schedule-2 + pre-Step 1, ares waiting 2 + framing,
+                // GBAHawk FIFO 3 all total 3; dma_fit HBlank/VBlank
+                // phases pin it against a split).
                 dma.pending = 3;
                 dma.is_first = true;
             }
@@ -498,7 +501,7 @@ fn sound_dma(channel: usize, control: u16) -> bool {
     (channel == 1 || channel == 2) && timing(control) == DmaTrigger::Special
 }
 
-fn is_rom(address: u32) -> bool {
+pub(crate) fn is_rom(address: u32) -> bool {
     (0x08000000..=0x0DFFFFFF).contains(&address)
 }
 
