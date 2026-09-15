@@ -65,6 +65,12 @@ expected_failures:
 - alyosha_fifo_3
 - alyosha_fifo_4
 - alyosha_fifo_5
+# fifo_6 (0x76 vs 0x7B): pre-15f291f1 "pass" was a false positive
+# (SOUNDCNT_H routing gate blocked every sound-DMA fire, IRQ never ran,
+# r7 stayed 0 so f001a reported r12=0). Gate removal unmasked the honest
+# -5 (EWRAM32 sound burst + DMA-completion IRQ reads TIM1 5 early).
+# No ref supports the +5 (Mesen/NBA unit costs match); do not refit.
+- alyosha_fifo_6
 - alyosha_fifo_dma_disable_4
 - alyosha_halt_pc
 - alyosha_halt_pc_2
