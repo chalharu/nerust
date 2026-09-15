@@ -639,11 +639,10 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
-    /// GamePak-ROM DMA sources always increment (mGBA dma.c
-    /// `sourceOffset = width`), ignoring the programmed source mode:
-    /// fixed/inc/dec ROM sources all deliver the 4th word to a fixed
-    /// destination (HW-pinned by the mgba-suite DMA table: W srcR[6],
-    /// H 0xDEAD). 32-bit fixed-source pin.
+    /// GamePak-ROM DMA sources always increment, ignoring the programmed
+    /// source mode: fixed/inc/dec ROM sources all deliver the 4th word
+    /// to a fixed destination (HW-pinned by the mgba-suite DMA table:
+    /// W srcR[6], H 0xDEAD). 32-bit fixed-source pin.
     #[test]
     fn synthetic_dma_rom_forced_increment_w() {
         let mut asm = MiniAsm::new();
@@ -997,8 +996,8 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
-    /// Unused I/O reads return 0, not open bus (mGBA GBAIORead list):
-    /// a sound-block gap and the empty high half of IME.
+    /// Unused I/O reads return 0, not open bus: a sound-block gap and
+    /// the empty high half of IME.
     #[test]
     fn synthetic_unused_io_reads_zero() {
         let mut asm = MiniAsm::new();
@@ -1021,7 +1020,7 @@ mod tests {
     }
 
     /// DMA count registers are silent write-only: storing 0xFFFF then
-    /// reading back yields 0 (mGBA GBAIORead; suite HW capture).
+    /// reading back yields 0 (suite HW capture).
     #[test]
     fn synthetic_dma_cnt_lo_reads_zero() {
         let mut asm = MiniAsm::new();
@@ -1059,8 +1058,8 @@ mod tests {
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
     }
 
-    /// SIODATA8/SIOMLT_SEND latch the full halfword (mGBA stores the
-    /// whole value absent a transfer); halfword reads echo it back.
+    /// SIODATA8/SIOMLT_SEND latch the full halfword on write; halfword
+    /// reads echo it back.
     #[test]
     fn synthetic_siodata8_halfword_latch() {
         let mut asm = MiniAsm::new();
@@ -1125,8 +1124,8 @@ mod tests {
     }
 
     /// APU readable-bit masks (mgba-suite io-read): write 0xFFFF to each
-    /// PSG/SOUNDCNT register and read back the R/W mask (mGBA GBAIOWrite
-    /// write-time masking; GBATEK R/W maps). SOUNDCNT_X is covered by the
+    /// PSG/SOUNDCNT register and read back the R/W mask (write-time
+    /// masking per GBATEK R/W maps). SOUNDCNT_X is covered by the
     /// suite itself (0x0080); SOUNDBIAS is out of scope here.
     #[test]
     fn synthetic_apu_read_masks() {

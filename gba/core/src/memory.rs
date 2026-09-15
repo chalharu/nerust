@@ -194,7 +194,8 @@ pub struct GbaMemoryBus {
     mgba_debug_logs: Vec<MgbaDebugLog>,
 }
 
-/// One committed mGBA debug-log line (`mgba_printf` in suite sources).
+/// One committed suite debug-log line (the suite sources call it
+/// `mgba_printf`).
 /// Only exists with the `mgba-debug-log` cargo feature (test harness).
 #[cfg(feature = "mgba-debug-log")]
 #[derive(Debug, Clone)]
@@ -632,12 +633,12 @@ impl GbaMemoryBus {
                     // selecting FIFO; a FIFO at 14 bytes or fewer requests
                     // its Special DMA channel. Every overflow clocks the
                     // sample stream, whether or not the timer IRQ is
-                    // enabled (NBA/ares agree; the IRQ bit only raises IF).
+                    // enabled (the IRQ bit only raises IF).
                     if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
                         // SOUNDCNT_H bits 8/9/12/13 are output routing, not
-                        // a DMA gate (GBATEK); only the timer-select bits
-                        // pick which overflow clocks each FIFO (NBA/ares
-                        // gate on master enable + timer select only).
+                        // a DMA gate (GBATEK SOUNDCNT_H); only the
+                        // timer-select bits pick which overflow clocks
+                        // each FIFO.
                         for (fifo_b, select_bit) in [(false, 10), (true, 14)] {
                             let timer = (self.apu.soundcnt_hi >> select_bit) & 1;
                             if timer as usize != i {
@@ -653,9 +654,9 @@ impl GbaMemoryBus {
                             if self.timers.overflows_since_enable(i) != 1 {
                                 self.apu.drain_fifo(fifo_b);
                             }
-                            // Post-drain <=14 bytes requests DMA (GBAHawk;
-                            // alyosha fifo t002b/fifo_3 pin fire-at-14:
-                            // pre-pop <=12 never fires there).
+                            // Post-drain <=14 bytes requests DMA (alyosha fifo
+                            // t002b/fifo_3 pin fire-at-14: pre-pop <=12
+                            // never fires there).
                             if self.apu.fifo_len(fifo_b) <= 14
                                 && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
                             {
@@ -811,10 +812,9 @@ impl GbaMemoryBus {
             self.fetch_addr = None;
             self.fetch_width = 0;
             // The ROM prefetch buffer survives DMA that never touches
-            // GamePak ROM (NBA EWRAM/IWRAM/IO paths leave the buffer
-            // alone; Mesen never resets it on DMA; ares maintains it
-            // across bursts). Only ROM-touching DMA restarts the buffer
-            // (NBA StopPrefetch on ROM DMA).
+            // GamePak ROM (ROM contents can't change under DMA, so the
+            // buffered opcodes stay valid). Only ROM-touching DMA
+            // restarts the buffer.
             if crate::dma::is_rom(transfer.data_source) || crate::dma::is_rom(transfer.destination)
             {
                 self.pf_valid = false;
@@ -2907,10 +2907,10 @@ mod tests {
 
     #[test]
     fn prefetch_off_data_access_breaks_bus_sequence() {
-        // mGBA-shaped N/S (mgba-suite Timing truth): opcode fetches follow
-        // the fetch stream, so the same I/O access leaves the next ROM
-        // fetch sequential (1S = 3 total at WS0). This is the suite `nop`
-        // cell (HW 6 = S+S fetch + 1 internal).
+        // N/S follows the fetch stream (mgba-suite Timing truth), so the
+        // same I/O access leaves the next ROM fetch sequential (1S = 3
+        // total at WS0). This is the suite `nop` cell (HW 6 = S+S fetch
+        // + 1 internal).
         let mut bus = GbaMemoryBus::new();
         assert!(!bus.prefetch_enabled);
         let _ = bus.fetch16(0x08000000);
