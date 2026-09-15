@@ -22,6 +22,10 @@ pub struct GbaTimers {
     prescaler: u16,
     current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
+    /// Overflows since the last fresh enable, per channel (saturates).
+    /// The first overflow primes downstream sample pipelines (sound
+    /// FIFO: arms without consuming); later overflows drain.
+    overflows_since_enable: [u8; 4],
 }
 
 impl GbaTimers {
@@ -39,7 +43,12 @@ impl GbaTimers {
         // +1-tick control events). The deferred 16-bit stop is HW-pinned
         // (nba start-stop 2ND=8); no HW test covers the 32-bit stop, so
         // the unified model rules here.
-        write_control(&mut self.channels[channel], new_control);
+        if write_control(&mut self.channels[channel], new_control) {
+            // A fresh enable re-primes downstream sample pipelines: the
+            // next overflow arms without consuming (alyosha fifo_4 pins
+            // the skipped first pop).
+            self.overflows_since_enable[channel] = 0;
+        }
         true
     }
 
@@ -57,7 +66,9 @@ impl GbaTimers {
             return false;
         };
         if control {
-            write_control(&mut self.channels[channel], value & 0x00C7);
+            if write_control(&mut self.channels[channel], value & 0x00C7) {
+                self.overflows_since_enable[channel] = 0;
+            }
         } else {
             // GBATEK Timers: writing CNT_L initializes the reload value only
             // (never the running counter); it lands with a one-tick delay
@@ -71,16 +82,35 @@ impl GbaTimers {
 
     /// Advance all four timers by one CPU T-cycle and return Timer IRQ bits 3..6.
     pub fn step(&mut self) -> u16 {
+        self.step_full().0
+    }
+
+    /// Advance one T-cycle, returning Timer IRQ bits 3..6 plus raw
+    /// overflow bits 0..3. Overflows clock downstream hardware (sound
+    /// FIFO sample drains, count-up timers) whether or not the timer's
+    /// IRQ is enabled; only the IRQ bits may raise IF.
+    pub fn step_full(&mut self) -> (u16, u16) {
         self.prescaler = self.prescaler.wrapping_add(1);
         let prescaler = self.prescaler;
         let mut irq = 0;
+        let mut overflow = 0;
         let mut cascade = false;
         for index in 0..4 {
             let (next_cascade, channel_irq) = self.step_channel(index, cascade, prescaler);
             cascade = next_cascade;
             irq |= channel_irq;
+            if next_cascade {
+                overflow |= 1 << index;
+                self.overflows_since_enable[index] =
+                    self.overflows_since_enable[index].saturating_add(1);
+            }
         }
-        irq
+        (irq, overflow)
+    }
+
+    /// Overflows since this channel's last fresh enable (saturates at 255).
+    pub fn overflows_since_enable(&self, channel: usize) -> u8 {
+        self.overflows_since_enable[channel]
     }
 
     fn step_channel(
@@ -236,7 +266,7 @@ impl GbaTimers {
     }
 }
 
-fn write_control(timer: &mut TimerChannel, new_control: u16) {
+fn write_control(timer: &mut TimerChannel, new_control: u16) -> bool {
     let was_enabled = timer.control & 0x80 != 0;
     let enabled = new_control & 0x80 != 0;
     // A stop queued this same tick (no tick elapsed) followed by an enable
@@ -268,6 +298,7 @@ fn write_control(timer: &mut TimerChannel, new_control: u16) {
             timer.start_delay = 0;
         }
     }
+    (enabled && !was_enabled) || restarted
 }
 
 fn increment(timer: &mut TimerChannel) -> bool {

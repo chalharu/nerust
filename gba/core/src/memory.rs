@@ -621,29 +621,42 @@ impl GbaMemoryBus {
                 self.video_countdown = 3;
             }
         }
-        let timer_irq = {
+        let (timer_irq, timer_overflow) = {
             self.timers.set_current_cycle(self.current_tcycle);
-            self.timers.step()
+            self.timers.step_full()
         };
-        if timer_irq != 0 {
+        if timer_overflow != 0 {
             for i in 0..4 {
-                if timer_irq & (1 << (3 + i)) != 0 {
+                if timer_overflow & (1 << i) != 0 {
                     // The overflowing timer clocks one sample byte out of each
-                    // selecting FIFO; a FIFO at 12 bytes or fewer requests
-                    // its Special DMA channel.
+                    // selecting FIFO; a FIFO at 14 bytes or fewer requests
+                    // its Special DMA channel. Every overflow clocks the
+                    // sample stream, whether or not the timer IRQ is
+                    // enabled (NBA/ares agree; the IRQ bit only raises IF).
                     if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
-                        for (fifo_b, select_bit, enable_mask) in
-                            [(false, 10, 0x0300), (true, 14, 0x3000)]
-                        {
-                            if self.apu.soundcnt_hi & enable_mask == 0 {
-                                continue;
-                            }
+                        // SOUNDCNT_H bits 8/9/12/13 are output routing, not
+                        // a DMA gate (GBATEK); only the timer-select bits
+                        // pick which overflow clocks each FIFO (NBA/ares
+                        // gate on master enable + timer select only).
+                        for (fifo_b, select_bit) in [(false, 10), (true, 14)] {
                             let timer = (self.apu.soundcnt_hi >> select_bit) & 1;
                             if timer as usize != i {
                                 continue;
                             }
-                            self.apu.drain_fifo(fifo_b);
-                            if self.apu.fifo_len(fifo_b) <= 12
+                            // The first overflow after the selecting timer's
+                            // enable primes the sample pipeline without
+                            // consuming (alyosha fifo_4: a preloaded FIFO
+                            // must still hold 16 at the second overflow, so
+                            // the third — not the second — fires the DMA).
+                            // The level check still runs (an empty FIFO
+                            // fires its DMA here).
+                            if self.timers.overflows_since_enable(i) != 1 {
+                                self.apu.drain_fifo(fifo_b);
+                            }
+                            // Post-drain <=14 bytes requests DMA (GBAHawk;
+                            // alyosha fifo t002b/fifo_3 pin fire-at-14:
+                            // pre-pop <=12 never fires there).
+                            if self.apu.fifo_len(fifo_b) <= 14
                                 && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
                             {
                                 self.dma.trigger_channel(ch, DmaTrigger::Special);
