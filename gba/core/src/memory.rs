@@ -1236,13 +1236,10 @@ impl GbaMemoryBus {
         }
     }
 
-    /// True when the calling code runs from IWRAM (HLE bulk-call overhead
-    /// and SWI entry match HW there; see `swi_region_adjust`).
+    /// True when the calling code runs from IWRAM (FastSet EWRAM-source
+    /// bulk residual below; see `swi_region_adjust`).
     pub(crate) fn swi_caller_is_iwram(&self) -> bool {
-        matches!(
-            self.last_opcode_addr,
-            Some(0x03000000..=0x03FFFFFF)
-        )
+        matches!(self.last_opcode_addr, Some(0x03000000..=0x03FFFFFF))
     }
 
     /// HLE charge self-calibration: waits accumulated so far (the HLE
