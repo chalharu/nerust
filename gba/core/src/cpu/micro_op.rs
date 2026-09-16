@@ -144,6 +144,10 @@ pub struct MemAccess {
     pub signed_load: bool,
     pub post_indexed: bool,
     pub writeback: bool,
+    /// Thumb LDRSH odd-address bus quirk (halfword read + ROM merge +
+    /// high-byte sign). ARM LDRSH at odd addresses is a plain
+    /// sign-extended byte read like the legacy halfword handler.
+    pub halfword_odd_quirk: bool,
     /// Precomputed store word (ARM STR of R15: instruction+12).
     /// Snapshot at expansion; registers are frozen across one
     /// instruction, matching the legacy in-handler evaluation.
@@ -473,28 +477,49 @@ fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             post_indexed: !pre_indexed,
             writeback,
             store_value,
+            halfword_odd_quirk: false,
         };
         // Same bus calls and order as legacy, so totals agree by construction.
         return Some(ops(acc));
     }
-    // Halfword-immediate class (bits27-25 == 000, imm bit22) with the
-    // full 1SH1 tag (bits7-4 == 1011, S:H == 0:1 unsigned). The full tag
-    // is load-bearing: data-processing register-shift BIC/MVN/RSB/... can
-    // otherwise mimic the halfword shape (e.g. `bic rd, rn, rm, lsl #N`).
-    if (instr >> 25) & 0x7 == 0 && (instr >> 22) & 1 == 1 && (instr >> 4) & 0xF == 0xB {
-        let offset = (((instr >> 8) & 0xF) << 4) | (instr & 0xF);
+    // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
+    // register offsets, all S:H shapes (unsigned half, signed byte /
+    // half; S:H == 00 behaves as halfword like the legacy handler).
+    // Multiply/SWP/PSR/BX patterns carry the tag too, so the decoder
+    // exclusions are mirrored (decode tests them first).
+    if (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090 {
+        if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
+            return None; // Multiply.
+        }
+        if (instr & 0x0FB00FF0) == 0x01000090 {
+            return None; // SWP.
+        }
+        if is_psr_transfer(instr) {
+            return None;
+        }
+        if (instr & 0x0FFFFFF0) == 0x012FFF10 {
+            return None; // BX.
+        }
+        let signed = (instr >> 6) & 1 != 0;
+        let half = (instr >> 5) & 1 != 0;
+        let offset = if (instr >> 22) & 1 != 0 {
+            (((instr >> 8) & 0xF) << 4) | (instr & 0xF)
+        } else {
+            regs.r((instr & 0xF) as usize)
+        };
         let acc = MemAccess {
-            width: 2,
+            width: if signed && !half { 1 } else { 2 },
             rd,
             rn,
             offset,
             offset_register: None,
             subtract,
             is_sp: false,
-            signed_load: false,
+            signed_load: signed,
             post_indexed: !pre_indexed,
             writeback,
             store_value,
+            halfword_odd_quirk: false,
         };
         return Some(ops(acc));
     }
@@ -803,6 +828,8 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             post_indexed: false,
             writeback: false,
             store_value: None,
+            // Only the Thumb LDRSH carries the odd-address bus quirk.
+            halfword_odd_quirk: load && width == 2 && signed_load,
         };
         return Some(if load {
             vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
@@ -826,6 +853,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             post_indexed: false,
             writeback: false,
             store_value: None,
+            halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -851,6 +879,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             post_indexed: false,
             writeback: false,
             store_value: None,
+            halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -876,6 +905,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             post_indexed: false,
             writeback: false,
             store_value: None,
+            halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -909,9 +939,16 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
         (4, _) => bus.read32(addr),
         (2, false) => bus.read_ldr_halfword(addr),
         (2, true) if addr & 1 != 0 => {
-            let half = bus.read_ldr_halfword(addr & !1) & 0xFFFF;
-            bus.merge_rom_half(addr, half);
-            ((half >> 8) as u8) as i8 as i32 as u32
+            if a.halfword_odd_quirk {
+                // Thumb LDRSH odd-address bus quirk (see field docs).
+                let half = bus.read_ldr_halfword(addr & !1) & 0xFFFF;
+                bus.merge_rom_half(addr, half);
+                ((half >> 8) as u8) as i8 as i32 as u32
+            } else {
+                // ARM LDRSH at odd addresses is a plain sign-extended
+                // byte read (legacy `halfword_transfer`).
+                bus.read8(addr) as i8 as i32 as u32
+            }
         }
         (2, true) => bus.read16(addr) as i16 as i32 as u32,
         (1, true) => bus.read8(addr) as i8 as i32 as u32,
@@ -2247,13 +2284,13 @@ mod tests {
     #[test]
     fn arm_dpreg_gates_stay_legacy() {
         let regs = CpuRegisters::post_bios();
-        // SWP / MRS / BX / LDRSH-register share the DP class (MUL is
-        // covered by its own branch, asserted in arm_mul_padding).
+        // SWP / MRS / BX share the DP class (MUL and LDRSH-reg are
+        // covered by their own branches, asserted in arm_mul_padding
+        // and arm_hwrest_shapes_and_gates).
         for instr in [
             0xE102_0091, // swp r0, r1, [r2]
             0xE10F_0000, // mrs r0, cpsr
             0xE12F_FF11, // bx r1
-            0xE112_00F3, // ldrsh r0, [r2, r3]
         ] {
             assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
         }
@@ -2924,6 +2961,194 @@ mod tests {
             0x0300_0000,
             &ARM_SINGLEREST_REGS,
             ARM_SINGLEREST_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 13 corpus: ARM halfword remainder (signed imm/reg,
+    // LDRH reg-offset, STRH reg-offset, LDRSH [pc]). Cell A holds
+    // 0x80FF so signedness is observable.
+    const ARM_HWREST_CORPUS: [u32; 9] = [
+        0xE1D1_00F0, // ldrsh r0, [r1] (imm)
+        0xE1D1_00D0, // ldrsb r0, [r1] (imm)
+        0xE191_00B2, // ldrh r0, [r1, r2] (reg)
+        0xE191_00F2, // ldrsh r0, [r1, r2] (reg)
+        0xE191_00D2, // ldrsb r0, [r1, r2] (reg)
+        0xE181_00B2, // strh r0, [r1, r2] (reg)
+        0xE1DF_00F0, // ldrsh r0, [pc] (R15 base)
+        0xE3A0_7007, // mov r7, #7
+        0x0000_80FF, // pool halfword (never executed)
+    ];
+    const ARM_HWREST_MEM: [(u32, u8, u32); 1] = [(0x0200_0000, 4, 0x0000_80FF)];
+    const ARM_HWREST_REGS: [(usize, u32); 2] = [(1, 0x0200_0000), (2, 0)];
+
+    #[test]
+    fn micro_op_arm_hwrest_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_HWREST_CORPUS,
+                false,
+                waitcnt,
+                8,
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &ARM_HWREST_MEM,
+                &ARM_HWREST_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_HWREST_CORPUS,
+                false,
+                waitcnt,
+                8,
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &ARM_HWREST_MEM,
+                &ARM_HWREST_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_hwrest_shapes_and_gates() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(1, 0x0200_0000);
+        regs.set_r(2, 4);
+        // Signed/reg-offset forms expand like the unsigned-imm ones.
+        for instr in [
+            0xE1D1_00F0,
+            0xE1D1_00D0,
+            0xE191_00B2,
+            0xE191_00F2,
+            0xE1DF_00F0,
+        ] {
+            let ops = expand_arm(instr, &regs).expect("halfword form expands");
+            assert_eq!(ops.len(), 3, "{instr:#010X}");
+        }
+        let ops = expand_arm(0xE181_00B2, &regs).expect("strh-reg expands");
+        assert_eq!(ops.len(), 2);
+        // Multiply/SWP keep the decoder-first routing (legacy here).
+        assert!(expand_arm_single(0xE000_0090, &regs).is_none());
+        assert!(expand_arm_single(0xE102_0091, &regs).is_none());
+    }
+
+    #[test]
+    fn arm_hwrest_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in ARM_HWREST_CORPUS.iter().enumerate() {
+                bus.write32(0x0300_0000 + (i as u32) * 4, *w);
+            }
+            for (addr, width, val) in ARM_HWREST_MEM {
+                match width {
+                    4 => bus.write32(addr, val),
+                    2 => bus.write16(addr, (val & 0xFFFF) as u16),
+                    _ => bus.write8(addr, (val & 0xFF) as u8),
+                }
+            }
+            for (r, v) in ARM_HWREST_REGS {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..8 {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, 8);
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        assert_eq!(a_cpu.regs.cpsr(), b_cpu.regs.cpsr());
+        assert_eq!(a_bus.read32(0x0200_0000), b_bus.read32(0x0200_0000));
+    }
+
+    /// ARM LDRSH at an odd BIOS address issues a guarded byte read,
+    /// never the Thumb odd-address quirk (guarded halfword + merge).
+    /// The latch widths differ (0x78 vs 0x56 below), so this pins the
+    /// bus call itself, not just the sign math. The mgba-suite memory
+    /// cells pin the same property on hardware (regression: the quirk
+    /// broke ROM-OOB/SRAM-mirror/BIOS signed cells).
+    #[test]
+    fn arm_ldrsh_odd_guarded_byte_read() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE1D1_00F0); // ldrsh r0, [r1]
+            bus.set_bios_prefetch(0x1234_5678);
+            cpu.regs.set_r(1, 0x0000_0001); // odd BIOS address
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        // Guarded byte read: low latch byte, sign-extended.
+        assert_eq!(a_cpu.regs.r(0), 0x78);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("ldrsh must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.r(0), 0x78);
+    }
+
+    #[test]
+    fn arm_hwrest_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_HWREST_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_HWREST_REGS,
+            8,
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
