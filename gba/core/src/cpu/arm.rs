@@ -79,7 +79,7 @@ fn handle_data_processing(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
 fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::halfword_transfer::handle(regs, bus, instr)
 }
-fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+pub(crate) fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let b = (instr >> 22) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
