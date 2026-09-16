@@ -38,6 +38,14 @@ pub enum MicroOp {
     /// (fetch break + P-ON erase) plus the ALU handler. Costs +1; the
     /// m internal ticks become trailing `Internal` event points.
     CommitMul(MulEffect),
+    /// Long-BL high half: sign-extended (offset11<<12); writes LR.
+    BlHigh(u32),
+    /// Long-BL low half: (offset11<<1); target=LR+offset,
+    /// LR=(pc-2)|1, branches (retire flushes).
+    BlLow(u32),
+    /// BX target snapshotted at expansion (mode bit included);
+    /// switches T and branches (retire flushes).
+    Bx(u32),
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
@@ -489,6 +497,29 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
                 offset: offset as u32,
                 link: false,
             }),
+        ]);
+    }
+    // Long BL: high half sets LR (1 cycle); low half refills like B.
+    if instr >> 11 == 0b11110 {
+        let offset = ((instr & 0x7FF) as i32) << 12;
+        let offset = (offset << 9) >> 9; // sign extend
+        return Some(vec![MicroOp::BlHigh(offset as u32)]);
+    }
+    if instr >> 11 == 0b11111 {
+        let offset = ((instr & 0x7FF) as u32) << 1;
+        return Some(vec![
+            MicroOp::Internal,
+            MicroOp::Internal,
+            MicroOp::BlLow(offset),
+        ]);
+    }
+    // BX (the whole 0x4700 range is op 0b11): interworking branch.
+    if (instr & 0xFF00) == 0x4700 {
+        let rs = ((instr >> 3) & 0xF) as usize;
+        return Some(vec![
+            MicroOp::Internal,
+            MicroOp::Internal,
+            MicroOp::Bx(regs.r(rs)),
         ]);
     }
     // MOV/CMP/ADD/SUB immediate.
@@ -947,6 +978,21 @@ pub fn step_op(
                 regs.set_lr(pc.wrapping_sub(4));
             }
             regs.set_pc(pc.wrapping_add(branch.offset));
+            cycles += 1;
+        }
+        MicroOp::BlHigh(offset) => {
+            regs.set_lr(pc.wrapping_add(offset));
+            cycles += 1;
+        }
+        MicroOp::BlLow(offset) => {
+            let target = regs.lr().wrapping_add(offset);
+            regs.set_lr(pc.wrapping_sub(2) | 1);
+            regs.set_pc(target & !1);
+            cycles += 1;
+        }
+        MicroOp::Bx(target) => {
+            regs.set_cpsr((regs.cpsr() & !(1 << 5)) | ((target & 1) << 5));
+            regs.set_pc(target & !1);
             cycles += 1;
         }
         MicroOp::MemRead(a) => {
@@ -2292,6 +2338,125 @@ mod tests {
             &THUMB_MUL_REGS,
             THUMB_MUL_CORPUS.len(),
         );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 9 corpus: Thumb long-BL call and BX return. The call
+    // targets 0x10 (high 0xF000, low 0xF806); the subroutine returns
+    // via BX LR to the MOV, which then skips over the subroutine.
+    const THUMB_BL_CORPUS: [u32; 11] = [
+        0xF000, // bl-hi
+        0xF806, // bl-lo (target 0x10, LR=0x05)
+        0x2707, // mov r7, #7 (return landing)
+        0xE005, // b 0x14
+        0x2000, // (padding)
+        0x2000, // (padding)
+        0x2000, // (padding)
+        0x2000, // (padding)
+        0x2001, // 0x10: mov r0, #1
+        0x4770, // bx lr
+        0x2102, // 0x14: mov r1, #2
+    ];
+
+    #[test]
+    fn micro_op_thumb_bl_bx_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_BL_CORPUS,
+                true,
+                waitcnt,
+                6,
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_BL_CORPUS,
+                true,
+                waitcnt,
+                6,
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn thumb_bl_bx_shapes_and_gates() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_lr(0x0300_0005);
+        // BL-high: single LR op. BL-low / BX: refill pair + commit.
+        let bl_hi = expand_thumb(0xF000, &regs).expect("bl-hi expands");
+        assert_eq!(bl_hi.len(), 1);
+        let bl_lo = expand_thumb(0xF806, &regs).expect("bl-lo expands");
+        assert_eq!(bl_lo.len(), 3);
+        let bx = expand_thumb(0x4770, &regs).expect("bx expands");
+        assert_eq!(bx.len(), 3);
+        // Hi-reg ADD beside BX stays legacy (future slice).
+        assert!(expand_thumb(0x4400, &regs).is_none());
+        assert!(expand_thumb(0x4478, &regs).is_none());
+    }
+
+    /// BX to an ARM (even) target switches mode; the retire refills
+    /// with the ARM width (+8 lead).
+    #[test]
+    fn bx_switches_mode_like_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write16(0x0300_0000, 0x4708); // bx r1
+            bus.write32(0x0200_0100, 0xE3A0_7007); // mov r7, #7 (ARM target)
+            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            cpu.regs.set_r(1, 0x0200_0100);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                true,
+            )
+            .expect("bx must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.pc(), 0x0200_0108);
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+        assert!(!b_cpu.regs.cpsr_t());
+        assert_eq!(b_cpu.regs.cpsr_t(), a_cpu.regs.cpsr_t());
+    }
+
+    #[test]
+    fn thumb_bl_bx_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(&THUMB_BL_CORPUS, true, 0x0000, 0x0300_0000, &[], 6);
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
