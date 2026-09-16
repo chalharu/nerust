@@ -2868,6 +2868,20 @@ mod tests {
     }
 
     #[test]
+    fn mode_switch_prefill_starts_active_linear_stream() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14);
+        let _ = bus.fetch32(0x08000000);
+        bus.invalidate_prefetch_for_branch();
+        bus.refill_prefetch_for_switch(0x08000100);
+
+        for address in (0x08000100..0x08000120).step_by(4) {
+            assert_eq!(bus.opcode_cycles_for(address, 4), 6);
+            let _ = bus.fetch32(address);
+        }
+    }
+
+    #[test]
     fn pipeline_flush_makes_next_gamepak_access_nonsequential() {
         let mut bus = GbaMemoryBus::new();
         bus.read32(0x08000000);

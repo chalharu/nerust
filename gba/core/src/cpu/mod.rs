@@ -231,11 +231,6 @@ impl GbaCpu {
         let cycles = arm::decode_arm(&mut self.regs, bus, execute);
         let pc_written = self.regs.take_pc_written();
         if pc_written {
-            // Mode-switching branch (ARM->Thumb): pre-refill the target
-            // (branch execution fills the prefetcher).
-            if self.regs.cpsr_t() {
-                bus.refill_prefetch_for_switch(self.regs.pc());
-            }
             // True when this pc-write returns from a user IRQ handler
             // through the HLE trampoline (see HLE_IRQ_EPILOGUE_CYCLES).
             let mut irq_epilogue = 0;
@@ -255,6 +250,12 @@ impl GbaCpu {
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             bus.invalidate_prefetch_for_branch();
+            // ARM->Thumb gives the prefetcher time to fill at the final
+            // target. Apply this after ordinary branch invalidation so the
+            // prefilled stream is active rather than marked drain-only.
+            if self.regs.cpsr_t() {
+                bus.refill_prefetch_for_switch(self.regs.pc());
+            }
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
             return cycles + irq_epilogue;
         } else {
@@ -272,10 +273,6 @@ impl GbaCpu {
         self.regs.clear_pc_written();
         let cycles = thumb::decode_thumb(&mut self.regs, bus, execute);
         if self.regs.take_pc_written() {
-            // Mode-switching branch (Thumb->ARM): pre-refill the target.
-            if !self.regs.cpsr_t() {
-                bus.refill_prefetch_for_switch(self.regs.pc());
-            }
             // Thumb user handlers return through the same trampoline (the
             // ARM side has handled it all along; the Thumb side previously
             // lacked the check). Same epilogue charge as ARM.
@@ -294,6 +291,11 @@ impl GbaCpu {
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
             bus.invalidate_prefetch_for_branch();
+            // Thumb->ARM prefill starts a fresh active stream after the
+            // normal branch state has been invalidated.
+            if !self.regs.cpsr_t() {
+                bus.refill_prefetch_for_switch(self.regs.pc());
+            }
             fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
             return cycles + irq_epilogue;
         } else {
