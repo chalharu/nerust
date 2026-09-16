@@ -4206,6 +4206,112 @@ mod tests {
         assert_eq!(bad, 0);
     }
 
+    /// Coverage manifest: every instruction class is either expanded
+    /// or intentionally legacy. Intentional-legacy (None): empty block
+    /// lists (quirk paths), UND/SWI (exceptions), coprocessor (UND on
+    /// GBA). Everything else in both ISAs must expand; add new classes
+    /// here when extending coverage.
+    #[test]
+    fn coverage_manifest() {
+        let regs = CpuRegisters::post_bios();
+        // Intentionally legacy ARM: empty lists, SWI, coprocessor UND.
+        for instr in [
+            0xE8A0_0000, // empty stmia
+            0xE8F0_0000, // empty ldmia^
+            0xEF00_0000, // swi
+            0xEE00_0010, // coprocessor (UND)
+            0xEC00_0000, // coprocessor (UND)
+        ] {
+            assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
+        }
+        // Intentionally legacy Thumb: empty lists, UND, SWI.
+        let mut tregs = CpuRegisters::post_bios();
+        tregs.set_cpsr(tregs.cpsr() | (1 << 5));
+        for instr in [
+            0xB400, // empty push
+            0xBC00, // empty pop
+            0xC000, // empty stmia
+            0xC800, // empty ldmia
+            0xDE00, // undefined
+            0xDF00, // swi
+        ] {
+            assert!(expand_thumb(instr, &tregs).is_none(), "{instr:#06X}");
+        }
+        // Covered ARM representatives (one per class/form).
+        let mut aregs = CpuRegisters::post_bios();
+        aregs.set_r(0, 0x0200_0000);
+        aregs.set_r(1, 0xFF00_FF00);
+        aregs.set_r(2, 4);
+        aregs.set_r(5, 0x0200_0008);
+        for instr in [
+            0xE3A0_0001, // dp-imm mov
+            0xE211_04FF, // dp-imm S+rot
+            0xE3A0_F005, // dp-imm Rd==15
+            0xE081_0002, // dp-reg
+            0xE1B0_0213, // dp-reg shift
+            0xE10F_1000, // mrs
+            0xE129_F000, // msr-reg
+            0xE32B_F000, // msr-imm
+            0xE12F_FF11, // bx
+            0xE000_0291, // mul
+            0xE022_0391, // mla
+            0xE083_2190, // umull
+            0xE102_0091, // swp
+            0xE581_0004, // str imm
+            0xE791_0002, // ldr reg-offset
+            0xE59F_5000, // ldr literal (rn==pc)
+            0xE59F_F000, // ldr pc (Rd==15)
+            0xE1D1_00B0, // ldrh imm (S:H == 01)
+            0xE1D1_00F0, // ldrsh imm (S:H == 11)
+            0xE1D1_00D0, // ldrsb imm (S:H == 10)
+            0xE191_00B2, // ldrh reg-offset
+            0xE7C1_3004, // strb reg-offset
+            0xE1D1_00F0, // ldrsh imm
+            0xE191_00B2, // ldrh reg-offset
+            0xE8A0_0006, // stmia
+            0xE8B5_0018, // ldmia
+            0xE8F5_4018, // ldmia^ (S bit)
+            0xE890_8000, // ldmia pc
+            0xEA00_0001, // b
+            0xEB00_0001, // bl (link)
+        ] {
+            assert!(expand_arm(instr, &aregs).is_some(), "{instr:#010X}");
+        }
+        // Covered Thumb representatives (one per class/form).
+        for instr in [
+            0x0041, // lsl imm
+            0x1881, // add reg
+            0x2001, // mov imm
+            0x4341, // mul
+            0x4001, // and reg
+            0x41C1, // ror reg (+1I)
+            0x4400, // add hi-reg
+            0x4487, // add pc (+2)
+            0x4580, // cmp hi-reg
+            0x4770, // bx
+            0x4801, // ldr literal
+            0x5088, // str reg-offset
+            0x5E8F, // ldrsh reg-offset
+            0x6088, // str imm-offset
+            0x8090, // strh
+            0x9010, // str sp-relative
+            0x9D10, // ldr sp-relative
+            0xA004, // add pc
+            0xB00A, // add sp
+            0xB40F, // push
+            0xBCF0, // pop
+            0xBD02, // pop pc
+            0xC10F, // stmia
+            0xCB18, // ldmia (base in list)
+            0xD001, // cond branch
+            0xE001, // b
+            0xF000, // bl high
+            0xF806, // bl low
+        ] {
+            assert!(expand_thumb(instr, &tregs).is_some(), "{instr:#06X}");
+        }
+    }
+
     #[test]
     fn micro_op_rom_code_matches_legacy() {
         for waitcnt in [0x0000u16, 0x4010, 0x4014] {
