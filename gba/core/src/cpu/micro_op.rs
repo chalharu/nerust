@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use crate::cpu::arm::is_psr_transfer;
+use crate::cpu::arm::{handle_swp as swp_handle, is_psr_transfer};
 use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
 use crate::cpu::arm_opcodes::helpers::{barrel_shift, condition_passed};
@@ -41,6 +41,11 @@ pub enum MicroOp {
     /// (fetch break + P-ON erase) plus the ALU handler. Costs +1; the
     /// m internal ticks become trailing `Internal` event points.
     CommitMul(MulEffect),
+    /// SWP commit: raw word, applied atomically by the legacy handler
+    /// (the HW bus lock forbids DMA between the read and the write, so
+    /// the pair never splits across ops). Costs +1; the remaining base
+    /// becomes trailing `Internal` event points.
+    CommitSwp(u32),
     /// Thumb ALU remainder (move-shifted, ADD/SUB, reg-ALU, hi-reg):
     /// raw halfword; the apply step delegates to the legacy handler
     /// for the matching class. Costs +1; multi-cycle forms (reg
@@ -216,7 +221,8 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         .or_else(|| expand_arm_single(instr, regs))
         .or_else(|| expand_arm_block(instr, regs))
         .or_else(|| expand_arm_dp_reg(instr, regs))
-        .or_else(|| expand_arm_mul(instr, regs))?;
+        .or_else(|| expand_arm_mul(instr, regs))
+        .or_else(|| expand_arm_swp(instr))?;
     Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
@@ -300,6 +306,21 @@ fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     })];
     ops.extend(vec![MicroOp::Internal; trailing as usize]);
     Some(ops)
+}
+
+/// ARM SWP/SWPB: the exact decoder mask. Expansion is [CommitSwp,
+/// I, I, I] padded to the legacy base (4); the read+write pair stays
+/// atomic inside the commit, modeling the HW bus lock.
+fn expand_arm_swp(instr: u32) -> Option<Vec<MicroOp>> {
+    if (instr & 0x0FB00FF0) != 0x01000090 {
+        return None;
+    }
+    Some(vec![
+        MicroOp::CommitSwp(instr),
+        MicroOp::Internal,
+        MicroOp::Internal,
+        MicroOp::Internal,
+    ])
 }
 
 /// ARM LDM/STM, non-empty lists including the S bit (user-bank
@@ -1121,6 +1142,12 @@ pub fn step_op(
             } else {
                 mul_handle(regs, bus, m.instr);
             }
+            cycles += 1;
+        }
+        MicroOp::CommitSwp(instr) => {
+            // Atomic read+write inside the legacy handler (bus lock);
+            // carry +1, trailing Internals pad the base.
+            swp_handle(regs, bus, instr);
             cycles += 1;
         }
         MicroOp::TakenBranch(branch) => {
@@ -2323,11 +2350,10 @@ mod tests {
     #[test]
     fn arm_dpreg_gates_stay_legacy() {
         let regs = CpuRegisters::post_bios();
-        // SWP / MRS / BX share the DP class (MUL and LDRSH-reg are
-        // covered by their own branches, asserted in arm_mul_padding
-        // and arm_hwrest_shapes_and_gates).
+        // MRS / BX share the DP class (MUL, LDRSH-reg and SWP are
+        // covered by their own branches, asserted in arm_mul_padding,
+        // arm_hwrest_shapes_and_gates and arm_swp_shapes).
         for instr in [
-            0xE102_0091, // swp r0, r1, [r2]
             0xE10F_0000, // mrs r0, cpsr
             0xE12F_FF11, // bx r1
         ] {
@@ -3410,6 +3436,124 @@ mod tests {
             0x0300_0000,
             &ARM_SBIT_REGS,
             ARM_SBIT_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 15 corpus: ARM SWP/SWPB roundtrip through an EWRAM cell.
+    const ARM_SWP_CORPUS: [u32; 3] = [
+        0xE102_0091, // swp r0, r1, [r2]
+        0xE142_0091, // swpb r0, r1, [r2]
+        0xE3A0_7007, // mov r7, #7
+    ];
+
+    #[test]
+    fn micro_op_arm_swp_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SWP_CORPUS,
+                false,
+                waitcnt,
+                ARM_SWP_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[(0x0200_0000, 4, 0x5555_5555)],
+                &[(1, 0xAAAA_AAAA), (2, 0x0200_0000)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SWP_CORPUS,
+                false,
+                waitcnt,
+                ARM_SWP_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[(0x0200_0000, 4, 0x5555_5555)],
+                &[(1, 0xAAAA_AAAA), (2, 0x0200_0000)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_swp_shapes() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(2, 0x0200_0000);
+        // Atomic commit + 3 trailing = 4.
+        let ops = expand_arm(0xE102_0091, &regs).expect("swp expands");
+        assert_eq!(ops.len(), 4);
+        let ops = expand_arm(0xE142_0091, &regs).expect("swpb expands");
+        assert_eq!(ops.len(), 4);
+        // The single-transfer branch must not claim the SWP mask.
+        assert!(expand_arm_single(0xE102_0091, &regs).is_none());
+    }
+
+    #[test]
+    fn arm_swp_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in ARM_SWP_CORPUS.iter().enumerate() {
+                bus.write32(0x0300_0000 + (i as u32) * 4, *w);
+            }
+            bus.write32(0x0200_0000, 0x5555_5555);
+            cpu.regs.set_r(1, 0xAAAA_AAAA);
+            cpu.regs.set_r(2, 0x0200_0000);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..ARM_SWP_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, ARM_SWP_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        // SWP exchanged, SWPB rewrote the low byte with itself.
+        assert_eq!(a_bus.read32(0x0200_0000), 0xAAAA_AAAA);
+        assert_eq!(b_bus.read32(0x0200_0000), 0xAAAA_AAAA);
+    }
+
+    #[test]
+    fn arm_swp_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_SWP_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &[(1, 0xAAAA_AAAA), (2, 0x0200_0000)],
+            ARM_SWP_CORPUS.len(),
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
