@@ -12,6 +12,7 @@ use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
 use crate::cpu::thumb_opcodes::alu::handle as thumb_alu_handle;
+use crate::cpu::thumb_opcodes::{add_sub, hi_register, move_shifted};
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -38,6 +39,11 @@ pub enum MicroOp {
     /// (fetch break + P-ON erase) plus the ALU handler. Costs +1; the
     /// m internal ticks become trailing `Internal` event points.
     CommitMul(MulEffect),
+    /// Thumb ALU remainder (move-shifted, ADD/SUB, reg-ALU, hi-reg):
+    /// raw halfword; the apply step delegates to the legacy handler
+    /// for the matching class. Costs +1; multi-cycle forms (reg
+    /// shifts, hi-reg PC writes) pad trailing `Internal`s.
+    CommitThumb(u16),
     /// Long-BL high half: sign-extended (offset11<<12); writes LR.
     BlHigh(u32),
     /// Long-BL low half: (offset11<<1); target=LR+offset,
@@ -552,6 +558,9 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         ops.extend(vec![MicroOp::Internal; m as usize]);
         return Some(ops);
     }
+    if let Some(ops) = expand_thumb_alu_rest(instr) {
+        return Some(ops);
+    }
     expand_thumb_push_pop(instr, regs)
         .or_else(|| expand_thumb_multiple(instr, regs))
         .or_else(|| expand_thumb_pcrel(instr, regs))
@@ -632,6 +641,34 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     }));
     // Pad the legacy handler base (LDM 2+count, STM 1+count).
     ops.extend(vec![MicroOp::Internal; if load { 2 } else { 1 }]);
+    Some(ops)
+}
+
+/// Thumb ALU remainder: move-shifted (0x0000..=0x17FF, 1 cycle),
+/// ADD/SUB (0x1800..=0x1FFF, 1 cycle), register ALU (0x4000..=0x43FF
+/// except MUL: 1 cycle, 2 for register shifts), hi-reg
+/// (0x4400..=0x47FF except BX: 1 cycle, 3 for ADD/MOV to PC).
+/// Expansion is [CommitThumb] padded to the legacy base; the commit
+/// delegates, so only the cycle split is new.
+fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
+    let trailing: usize = if instr <= 0x1FFF {
+        0
+    } else if (0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD {
+        let op = ((instr >> 6) & 0xF) as u8;
+        if matches!(op, 0x2..=0x4 | 0x7) { 1 } else { 0 }
+    } else if (0x4400..=0x47FF).contains(&instr) && (instr & 0xFF00) != 0x4700 {
+        let op = (instr >> 8) & 0b11;
+        let rd = (instr & 0x7) + if (instr >> 7) & 1 != 0 { 8 } else { 0 };
+        if rd == 15 && (op == 0b00 || op == 0b10) {
+            2
+        } else {
+            0
+        }
+    } else {
+        return None;
+    };
+    let mut ops = vec![MicroOp::CommitThumb(instr)];
+    ops.extend(vec![MicroOp::Internal; trailing]);
     Some(ops)
 }
 
@@ -950,6 +987,19 @@ pub fn step_op(
         MicroOp::Internal => cycles += 1,
         MicroOp::CommitAlu(fx) => {
             apply_alu(regs, fx);
+            cycles += 1;
+        }
+        MicroOp::CommitThumb(instr) => {
+            // Single-cycle ALU remainder (plus padded Internals for
+            // the multi-cycle forms): delegate to the matching legacy
+            // handler, which performs no bus access.
+            match instr {
+                0x0000..=0x17FF => move_shifted::handle(regs, instr),
+                0x1800..=0x1FFF => add_sub::handle(regs, instr),
+                0x4000..=0x43FF => thumb_alu_handle(regs, instr),
+                // Gate guarantees hi-reg non-BX here.
+                _ => hi_register::handle(regs, bus, instr),
+            };
             cycles += 1;
         }
         MicroOp::CommitDpReg(instr) => {
@@ -2321,8 +2371,8 @@ mod tests {
         let mut regs = CpuRegisters::post_bios();
         regs.set_cpsr(regs.cpsr() | (1 << 5));
         regs.set_r(1, 4);
-        // AND beside the MUL encoding stays legacy.
-        assert!(expand_thumb(0x4008, &regs).is_none());
+        // AND beside the MUL encoding is covered by the ALU-remainder
+        // branch (asserted in thumb_alu_rest_shapes_and_gates).
         // MUL m=1 (Rd=4): commit + 1I.
         let ops = expand_thumb(0x4341, &regs).expect("thumb mul expands");
         assert_eq!(ops.len(), 2);
@@ -2407,9 +2457,8 @@ mod tests {
         assert_eq!(bl_lo.len(), 3);
         let bx = expand_thumb(0x4770, &regs).expect("bx expands");
         assert_eq!(bx.len(), 3);
-        // Hi-reg ADD beside BX stays legacy (future slice).
-        assert!(expand_thumb(0x4400, &regs).is_none());
-        assert!(expand_thumb(0x4478, &regs).is_none());
+        // Hi-reg ADD beside BX is covered by the ALU-remainder branch
+        // (asserted in thumb_alu_rest_shapes_and_gates).
     }
 
     /// BX to an ARM (even) target switches mode; the retire refills
@@ -2457,6 +2506,93 @@ mod tests {
     #[test]
     fn thumb_bl_bx_tick_parity() {
         let (at, bt, av, bv) = tick_parity(&THUMB_BL_CORPUS, true, 0x0000, 0x0300_0000, &[], 6);
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 10 corpus: Thumb ALU remainder (shifts, ADD/SUB,
+    // reg-ALU incl. ROR, hi-reg CMP/ADD).
+    const THUMB_ALU_CORPUS: [u32; 10] = [
+        0x0041, // lsl r1, r0, #1
+        0x0801, // lsr r1, r0, #32
+        0x1042, // asr r2, r0, #1
+        0x1881, // add r1, r0, r2
+        0x1EC1, // sub r1, r0, #3
+        0x4001, // and r1, r0
+        0x41C1, // ror r1, r0
+        0x4580, // cmp r8, r0
+        0x4480, // add r8, r0
+        0x2707, // mov r7, #7
+    ];
+    const THUMB_ALU_REGS: [(usize, u32); 5] =
+        [(0, 0x8000_0001), (1, 0x100), (2, 4), (3, 0xFF), (8, 0x10)];
+
+    #[test]
+    fn micro_op_thumb_alu_rest_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_ALU_CORPUS,
+                true,
+                waitcnt,
+                THUMB_ALU_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &THUMB_ALU_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_ALU_CORPUS,
+                true,
+                waitcnt,
+                THUMB_ALU_CORPUS.len(),
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &THUMB_ALU_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn thumb_alu_rest_shapes_and_gates() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        // Single-cycle forms: commit only.
+        for instr in [0x0041, 0x1881, 0x4001, 0x4580] {
+            let ops = expand_thumb(instr, &regs).expect("alu form expands");
+            assert_eq!(ops.len(), 1, "{instr:#06X}");
+        }
+        // Register shift: commit + 1I. ADD PC: commit + 2I.
+        let ops = expand_thumb(0x41C1, &regs).expect("ror expands");
+        assert_eq!(ops.len(), 2);
+        let ops = expand_thumb(0x4487, &regs).expect("add-pc expands");
+        assert_eq!(ops.len(), 3);
+        // MUL and BX keep their own branches; SWI stays legacy.
+        assert!(expand_thumb_alu_rest(0x4341).is_none());
+        assert!(expand_thumb_alu_rest(0x4708).is_none());
+        assert!(expand_thumb(0xDF00, &regs).is_none());
+    }
+
+    #[test]
+    fn thumb_alu_rest_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &THUMB_ALU_CORPUS,
+            true,
+            0x0000,
+            0x0300_0000,
+            &THUMB_ALU_REGS,
+            THUMB_ALU_CORPUS.len(),
+        );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
