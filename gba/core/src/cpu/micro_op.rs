@@ -188,13 +188,52 @@ pub struct AluEffect {
     pub thumb_mov: bool,
 }
 
-/// Covered ALU-immediate operations.
+/// Covered ALU-immediate operations (full ARM DP-imm set; Thumb uses
+/// Mov/Cmp/Add/Sub).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AluImmOp {
     Mov,
     Add,
     Sub,
     Cmp,
+    And,
+    Eor,
+    Rsb,
+    Adc,
+    Sbc,
+    Rsc,
+    Tst,
+    Teq,
+    Cmn,
+    Orr,
+    Bic,
+    Mvn,
+}
+
+impl AluImmOp {
+    /// TST/TEQ/CMP/CMN update flags without writing Rd.
+    fn is_flag_only(self) -> bool {
+        matches!(
+            self,
+            AluImmOp::Tst | AluImmOp::Teq | AluImmOp::Cmp | AluImmOp::Cmn
+        )
+    }
+
+    /// Logical operations preserve V; arithmetic operations replace it
+    /// (legacy `update_flags` rule).
+    fn replaces_v(self) -> bool {
+        matches!(
+            self,
+            AluImmOp::Add
+                | AluImmOp::Sub
+                | AluImmOp::Rsb
+                | AluImmOp::Adc
+                | AluImmOp::Sbc
+                | AluImmOp::Rsc
+                | AluImmOp::Cmp
+                | AluImmOp::Cmn
+        )
+    }
 }
 
 /// Expand an ARM instruction. `None` = not covered yet (legacy path).
@@ -464,11 +503,22 @@ fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     }
     let opcode = ((instr >> 21) & 0xF) as u8;
     let op = match opcode {
-        0xD => AluImmOp::Mov,
-        0x4 => AluImmOp::Add,
+        0x0 => AluImmOp::And,
+        0x1 => AluImmOp::Eor,
         0x2 => AluImmOp::Sub,
+        0x3 => AluImmOp::Rsb,
+        0x4 => AluImmOp::Add,
+        0x5 => AluImmOp::Adc,
+        0x6 => AluImmOp::Sbc,
+        0x7 => AluImmOp::Rsc,
+        0x8 => AluImmOp::Tst,
+        0x9 => AluImmOp::Teq,
         0xA => AluImmOp::Cmp,
-        _ => return None,
+        0xB => AluImmOp::Cmn,
+        0xC => AluImmOp::Orr,
+        0xD => AluImmOp::Mov,
+        0xE => AluImmOp::Bic,
+        _ => AluImmOp::Mvn,
     };
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
@@ -1059,27 +1109,68 @@ fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
 }
 
 fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
+    // Shifter carry for the covered forms (rot == 0, or S == 0 where
+    // the rotation is flag-neutral): the incoming CPSR carry.
+    let carry_in = regs.cpsr_c();
+    let rn_val = regs.r(fx.rn);
     let (result, carry, overflow) = match fx.op {
-        AluImmOp::Mov => (fx.imm, regs.cpsr_c(), false),
-        AluImmOp::Add => {
-            let (r, c) = regs.r(fx.rn).overflowing_add(fx.imm);
-            let v = ((!(regs.r(fx.rn) ^ fx.imm)) & (regs.r(fx.rn) ^ r) & 0x8000_0000) != 0;
+        AluImmOp::Mov => (fx.imm, carry_in, false),
+        AluImmOp::Mvn => (!fx.imm, carry_in, false),
+        AluImmOp::And | AluImmOp::Tst => (rn_val & fx.imm, carry_in, false),
+        AluImmOp::Eor | AluImmOp::Teq => (rn_val ^ fx.imm, carry_in, false),
+        AluImmOp::Orr => (rn_val | fx.imm, carry_in, false),
+        AluImmOp::Bic => (rn_val & !fx.imm, carry_in, false),
+        AluImmOp::Add | AluImmOp::Cmn => {
+            let (r, c) = rn_val.overflowing_add(fx.imm);
+            let v = ((!(rn_val ^ fx.imm)) & (rn_val ^ r) & 0x8000_0000) != 0;
             (r, c, v)
         }
         AluImmOp::Sub | AluImmOp::Cmp => {
-            let (r, b) = regs.r(fx.rn).overflowing_sub(fx.imm);
-            let v = ((regs.r(fx.rn) ^ fx.imm) & (regs.r(fx.rn) ^ r) & 0x8000_0000) != 0;
+            let (r, b) = rn_val.overflowing_sub(fx.imm);
+            let v = ((rn_val ^ fx.imm) & (rn_val ^ r) & 0x8000_0000) != 0;
             (r, !b, v)
         }
+        AluImmOp::Rsb => {
+            let (r, b) = fx.imm.overflowing_sub(rn_val);
+            let v = ((fx.imm ^ rn_val) & (fx.imm ^ r) & 0x8000_0000) != 0;
+            (r, !b, v)
+        }
+        AluImmOp::Adc => {
+            let c_in = u32::from(carry_in);
+            let (r1, c1) = rn_val.overflowing_add(fx.imm);
+            let (r, c2) = r1.overflowing_add(c_in);
+            // Overflow via the exact signed total (legacy formula: a
+            // two-stage OR diverges on borrow chains).
+            let signed = rn_val as i32 as i64 + fx.imm as i32 as i64 + i64::from(c_in);
+            let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
+            (r, c1 || c2, v)
+        }
+        AluImmOp::Sbc => {
+            // SBC = Rn - imm - !C.
+            let not_c = 1 - u32::from(carry_in);
+            let (r1, b1) = rn_val.overflowing_sub(fx.imm);
+            let (r, b2) = r1.overflowing_sub(not_c);
+            let signed = rn_val as i32 as i64 - fx.imm as i32 as i64 - i64::from(not_c);
+            let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
+            (r, !(b1 || b2), v)
+        }
+        AluImmOp::Rsc => {
+            // RSC = imm - Rn - !C.
+            let not_c = 1 - u32::from(carry_in);
+            let (r1, b1) = fx.imm.overflowing_sub(rn_val);
+            let (r, b2) = r1.overflowing_sub(not_c);
+            let signed = fx.imm as i32 as i64 - rn_val as i32 as i64 - i64::from(not_c);
+            let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
+            (r, !(b1 || b2), v)
+        }
     };
-    if !matches!(fx.op, AluImmOp::Cmp) {
+    if !fx.op.is_flag_only() {
         regs.set_r(fx.rd, result);
     }
     if fx.set_flags {
         // N: Thumb MOV-imm forces 0 (legacy quirk); otherwise bit 31.
-        // V: MOV preserves it in both modes (logical class); arithmetic
-        // replaces it. C: shift-carry (preserved here: rot == 0 or S == 0
-        // gate) for MOV, computed carry otherwise.
+        // V: logical class preserves it; arithmetic replaces it. C: the
+        // shifter carry (preserved here by the rot == 0 / S == 0 gate).
         regs.set_cpsr_n(if fx.thumb_mov {
             false
         } else {
@@ -1087,7 +1178,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
         });
         regs.set_cpsr_z(result == 0);
         regs.set_cpsr_c(carry);
-        if !matches!(fx.op, AluImmOp::Mov) {
+        if fx.op.replaces_v() {
             regs.set_cpsr_v(overflow);
         }
     }
@@ -3721,6 +3812,78 @@ mod tests {
             0x0300_0000,
             &ARM_PSRBX_REGS,
             7,
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 17 corpus: ARM DP-imm full set (logical, reverse and
+    // carry arithmetic, flag-only forms, rotated S=0). r1 carries
+    // 0xFF00FF00; the SUBS seeds C=1 for the SBC/RSC chain.
+    const ARM_ALUFULL_CORPUS: [u32; 16] = [
+        0xE201_00FF, // and r0, r1, #0xFF
+        0xE221_00FF, // eor r0, r1, #0xFF
+        0xE251_0001, // subs r0, r1, #1 (C=1)
+        0xE2C1_0000, // sbc r0, r1, #0
+        0xE2E1_0000, // rsc r0, r1, #0
+        0xE261_0001, // rsb r0, r1, #1
+        0xE2A1_0001, // adc r0, r1, #1
+        0xE311_00FF, // tst r1, #0xFF
+        0xE111_0000, // teq r1, r0 (S=0: flags untouched)
+        0xE371_0001, // cmn r1, #1
+        0xE381_0001, // orr r0, r1, #1
+        0xE3C1_00FF, // bic r0, r1, #0xFF
+        0xE3E0_0000, // mvn r0, #0
+        0xE201_04FF, // and r0, r1, #0xFF000000 (rotated, S=0)
+        0xE3A0_3005, // mov r3, #5
+        0xE3A0_7007, // mov r7, #7
+    ];
+
+    #[test]
+    fn micro_op_arm_alufull_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_ALUFULL_CORPUS,
+                false,
+                waitcnt,
+                ARM_ALUFULL_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &[(1, 0xFF00_FF00)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_ALUFULL_CORPUS,
+                false,
+                waitcnt,
+                ARM_ALUFULL_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[(1, 0xFF00_FF00)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_alufull_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_ALUFULL_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &[(1, 0xFF00_FF00)],
+            ARM_ALUFULL_CORPUS.len(),
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
