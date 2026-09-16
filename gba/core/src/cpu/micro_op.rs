@@ -25,6 +25,10 @@ pub enum MicroOp {
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
+    /// Thumb LDR-literal: pool address snapshotted at expansion
+    /// (`(pc & !3) + imm`, pc frozen pre-instruction like the legacy
+    /// handler's execute-stage read).
+    PcRelRead(PcRelRead),
     /// Open the block batch (`begin_block_batch(is_load, fetch_width)`).
     /// Zero-cost structural op.
     BlockStart(BlockStartEffect),
@@ -49,6 +53,13 @@ pub struct BlockStartEffect {
 pub struct BlockEndEffect {
     pub sp: Option<u32>,
     pub writeback: Option<(usize, u32)>,
+}
+
+/// Thumb LDR (literal): word-aligned pool address plus dest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PcRelRead {
+    pub addr: u32,
+    pub rd: usize,
 }
 
 /// One block word (PUSH/POP, LDM/STM). `addr` is snapshotted at expansion (queue-fill
@@ -398,7 +409,25 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     expand_thumb_push_pop(instr, regs)
         .or_else(|| expand_thumb_multiple(instr, regs))
+        .or_else(|| expand_thumb_pcrel(instr, regs))
         .or_else(|| expand_thumb_load_store(instr))
+}
+
+/// Thumb LDR (literal) 0x4800..=0x4FFF. Expands to [Read, I, I] (= 3),
+/// matching `handle_pc_relative` (bus read32, then fetch-stream-break).
+fn expand_thumb_pcrel(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if !(0x4800..=0x4FFF).contains(&instr) {
+        return None;
+    }
+    let addr = (regs.pc() & !3).wrapping_add(((instr & 0xFF) as u32) << 2);
+    Some(vec![
+        MicroOp::PcRelRead(PcRelRead {
+            addr,
+            rd: ((instr >> 8) & 0x7) as usize,
+        }),
+        MicroOp::Internal,
+        MicroOp::Internal,
+    ])
 }
 
 /// Thumb LDMIA/STMIA, non-empty lists only (empty forms keep the
@@ -796,6 +825,12 @@ pub fn step_op(
         }
         MicroOp::MemWrite(a) => {
             apply_write(regs, bus, a);
+            cycles += 1;
+        }
+        MicroOp::PcRelRead(r) => {
+            // Legacy-identical order: bus access, then fetch-stream-break.
+            regs.set_r(r.rd, bus.read32(r.addr));
+            bus.charge_fetch_stream_break();
             cycles += 1;
         }
         MicroOp::BlockStart(e) => {
@@ -1789,6 +1824,103 @@ mod tests {
             &ARM_BLOCK_REGS,
             ARM_BLOCK_CORPUS.len(),
         );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 6 corpus: Thumb LDR (literal). Both loads target the
+    // pool word at 0x0C (the second sits at pc=0x06, pinning the
+    // `pc & !3` alignment); the tail never executes the pool.
+    const THUMB_PCREL_CORPUS: [u32; 6] = [
+        0x4801, // ldr r0, [pc, #4] -> 0x0C
+        0x4901, // ldr r1, [pc, #4] -> 0x0C (pc=0x06, aligned down)
+        0x2707, // mov r7, #7
+        0x2000, // (padding)
+        0xBEEF, // pool lo
+        0xDEAD, // pool hi -> 0xDEADBEEF
+    ];
+
+    #[test]
+    fn micro_op_pcrel_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_PCREL_CORPUS,
+                true,
+                waitcnt,
+                3,
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        // ROM-code variant: pool word in ROM (prefetch-window path).
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_PCREL_CORPUS,
+                true,
+                waitcnt,
+                3,
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    /// LDR-literal value and alignment: an odd-halfword instruction
+    /// must align pc down before adding the offset.
+    #[test]
+    fn pcrel_load_value_and_align() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write16(0x0300_0000, 0x4800); // (padding)
+            bus.write16(0x0300_0002, 0x4901); // ldr r1, [pc, #4]
+            bus.write32(0x0300_0008, 0xCAFE_BABE);
+            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            cpu.regs.set_pc(0x0300_0002);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        // pc=0x06 at execute, &!3=0x04, +4 -> 0x08 pool.
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                true,
+            )
+            .expect("pcrel must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(a_cpu.regs.r(1), 0xCAFE_BABE);
+        assert_eq!(b_cpu.regs.r(1), 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn pcrel_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(&THUMB_PCREL_CORPUS, true, 0x0000, 0x0300_0000, &[], 3);
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
