@@ -11,7 +11,9 @@ use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
-use crate::cpu::thumb_opcodes::alu::handle as thumb_alu_handle;
+use crate::cpu::thumb_opcodes::alu::{
+    handle as thumb_alu_handle, handle_load_address, handle_sp_offset,
+};
 use crate::cpu::thumb_opcodes::{add_sub, hi_register, move_shifted};
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
@@ -373,9 +375,11 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 
 /// ARM data-processing immediate, no R15, no S+rotate (see gate above).
 fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
-    // Data-processing class (bits27-26 == 00): excludes SWI (11) and
-    // anything outside DP. Immediate form, no register shift.
-    if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 1 || (instr >> 4) & 1 == 1 {
+    // Data-processing class (bits27-26 == 00), immediate form (I==1).
+    // With I==1 the decoder can only route to DP or PSR-immediate
+    // (multiply/SWP/BX/halfword all require I==0); PSR-immediate
+    // always carries Rd==15, excluded below. Bit4 is plain imm12 here.
+    if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 1 {
         return None;
     }
     let opcode = ((instr >> 21) & 0xF) as u8;
@@ -647,11 +651,12 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
 /// Thumb ALU remainder: move-shifted (0x0000..=0x17FF, 1 cycle),
 /// ADD/SUB (0x1800..=0x1FFF, 1 cycle), register ALU (0x4000..=0x43FF
 /// except MUL: 1 cycle, 2 for register shifts), hi-reg
-/// (0x4400..=0x47FF except BX: 1 cycle, 3 for ADD/MOV to PC).
+/// (0x4400..=0x47FF except BX: 1 cycle, 3 for ADD/MOV to PC),
+/// ADD SP/PC (0xA000..=0xAFFF) and SP offset (0xB000..=0xB0FF).
 /// Expansion is [CommitThumb] padded to the legacy base; the commit
 /// delegates, so only the cycle split is new.
 fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
-    let trailing: usize = if instr <= 0x1FFF {
+    let trailing: usize = if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
         0
     } else if (0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD {
         let op = ((instr >> 6) & 0xF) as u8;
@@ -997,6 +1002,8 @@ pub fn step_op(
                 0x0000..=0x17FF => move_shifted::handle(regs, instr),
                 0x1800..=0x1FFF => add_sub::handle(regs, instr),
                 0x4000..=0x43FF => thumb_alu_handle(regs, instr),
+                0xA000..=0xAFFF => handle_load_address(regs, instr),
+                0xB000..=0xB0FF => handle_sp_offset(regs, instr),
                 // Gate guarantees hi-reg non-BX here.
                 _ => hi_register::handle(regs, bus, instr),
             };
@@ -2593,6 +2600,116 @@ mod tests {
             &THUMB_ALU_REGS,
             THUMB_ALU_CORPUS.len(),
         );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 11 corpus: Thumb ADD SP/PC and SP offset (bus-free).
+    const THUMB_SPADD_CORPUS: [u32; 5] = [
+        0xA004, // add r0, pc, #0x10
+        0xA910, // add r1, sp, #0x40
+        0xB00A, // add sp, #0x28
+        0xB08A, // sub sp, #0x28
+        0x2707, // mov r7, #7
+    ];
+
+    #[test]
+    fn micro_op_thumb_spadd_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_SPADD_CORPUS,
+                true,
+                waitcnt,
+                THUMB_SPADD_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_SPADD_CORPUS,
+                true,
+                waitcnt,
+                THUMB_SPADD_CORPUS.len(),
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    // Slice 11b: ARM ALU-immediate with imm bit4 set (previously gated
+    // to legacy; I==1 routes to DP or Rd==15 PSR-imm, both safe).
+    const ARM_IMM4_CORPUS: [u32; 4] = [
+        0xE3A0_00FF, // mov r0, #0xFF
+        0xE281_101F, // add r1, r1, #0x1F
+        0xE252_20F0, // subs r2, r2, #0xF0
+        0xE3A0_3005, // mov r3, #5
+    ];
+
+    #[test]
+    fn micro_op_arm_imm_bit4_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_IMM4_CORPUS,
+                false,
+                waitcnt,
+                ARM_IMM4_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &[(1, 1), (2, 0x100)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_IMM4_CORPUS,
+                false,
+                waitcnt,
+                ARM_IMM4_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[(1, 1), (2, 0x100)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn spadd_shapes_and_imm4_gate() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        for instr in [0xA004, 0xA910, 0xB00A, 0xB08A] {
+            let ops = expand_thumb(instr, &regs).expect("sp-add expands");
+            assert_eq!(ops.len(), 1, "{instr:#06X}");
+        }
+        // Imm bit4 no longer gates the ARM immediate form.
+        let ops = expand_arm(0xE3A0_00FF, &regs).expect("bit4 imm expands");
+        assert_eq!(ops.len(), 1);
+        // MSR-immediate still excluded via Rd==15.
+        assert!(expand_arm(0xE329_F000, &regs).is_none());
+    }
+
+    #[test]
+    fn spadd_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(&THUMB_SPADD_CORPUS, true, 0x0000, 0x0300_0000, &[], 5);
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
