@@ -4,7 +4,9 @@
 
 use std::collections::VecDeque;
 
+use crate::cpu::arm::is_psr_transfer;
 use crate::cpu::arm_opcodes::block_transfer::start_address;
+use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
 use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
@@ -22,6 +24,11 @@ use crate::memory::GbaMemoryBus;
 pub enum MicroOp {
     Internal,
     CommitAlu(AluEffect),
+    /// ARM data-processing (register form): raw word, applied by the
+    /// legacy handler with its base returned separately (trailing
+    /// `Internal`s pad it). Costs +1 here; the legacy path performs no
+    /// bus access, so only the cycle split is new.
+    CommitDpReg(u32),
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
@@ -156,7 +163,8 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     let ops = expand_arm_alu_imm(instr)
         .or_else(|| expand_arm_single(instr))
-        .or_else(|| expand_arm_block(instr, regs))?;
+        .or_else(|| expand_arm_block(instr, regs))
+        .or_else(|| expand_arm_dp_reg(instr, regs))?;
     Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
@@ -164,7 +172,56 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     })
 }
 
-/// ARM LDM/STM, non-empty lists without the S bit (user-bank and
+/// ARM data-processing (register form, I==0). Claims exactly the
+/// subset `decode_arm` routes to `data_processing::handle`: the DP
+/// class minus multiply/SWP/PSR/BX/halfword (masks copied from the
+/// decoder; MRS/MSR/BX would otherwise be misclaimed). Failed
+/// conditions are handled by the caller. Expansion is
+/// [CommitDpReg, I..] padded to the legacy base (register shifts
+/// carry +1I, R15 writes +2 refill); the commit itself delegates to
+/// the legacy handler, so semantics match by construction and only
+/// the cycle split is new.
+fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
+        return None;
+    }
+    if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
+        return None; // Multiply.
+    }
+    if (instr & 0x0FB00FF0) == 0x01000090 {
+        return None; // SWP.
+    }
+    if is_psr_transfer(instr) {
+        return None;
+    }
+    if (instr & 0x0FFFFFF0) == 0x012FFF10 {
+        return None; // BX.
+    }
+    if (instr & 0x00000090) == 0x00000090 {
+        return None; // Halfword / signed transfers.
+    }
+    let opcode = ((instr >> 21) & 0xF) as u8;
+    let rd = ((instr >> 12) & 0xF) as usize;
+    let s = (instr >> 20) & 1 != 0;
+    let register_shift = (instr >> 4) & 1 != 0;
+    let flag_only = matches!(opcode, 0x8..=0xB);
+    // USR/SYS have no SPSR (ARM ARM): exception-return restores only
+    // apply in modes with an SPSR bank (mode frozen mid-instruction).
+    let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
+    // Legacy `handle` base, minus the +1 the commit op carries.
+    let trailing = if flag_only && rd == 15 && s {
+        if has_spsr {
+            2 + u32::from(register_shift)
+        } else {
+            u32::from(register_shift)
+        }
+    } else {
+        u32::from(register_shift) + if rd == 15 && !flag_only { 2 } else { 0 }
+    };
+    let mut ops = vec![MicroOp::CommitDpReg(instr)];
+    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    Some(ops)
+}
 /// CPSR-restoring forms stay on the legacy path). P/U address modes,
 /// writeback (skipped for the UNPREDICTABLE load-with-base-in-list),
 /// the STM stored-base quirk, and PC loads (retire flushes) are
@@ -805,6 +862,13 @@ pub fn step_op(
         MicroOp::Internal => cycles += 1,
         MicroOp::CommitAlu(fx) => {
             apply_alu(regs, fx);
+            cycles += 1;
+        }
+        MicroOp::CommitDpReg(instr) => {
+            // Data-processing performs no bus access: delegate to the
+            // legacy handler (frozen oracle) and carry +1; trailing
+            // Internals pad the legacy base.
+            dp_handle(regs, bus, instr);
             cycles += 1;
         }
         MicroOp::TakenBranch(branch) => {
@@ -1921,6 +1985,92 @@ mod tests {
     #[test]
     fn pcrel_tick_parity() {
         let (at, bt, av, bv) = tick_parity(&THUMB_PCREL_CORPUS, true, 0x0000, 0x0300_0000, &[], 3);
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 7 corpus: ARM data-processing (register form). Immediate
+    // shifts (LSL/LSR), a register shift (+1I), flag-only TST, and S
+    // set/clear across opcodes.
+    const ARM_DPREG_CORPUS: [u32; 7] = [
+        0xE1A0_0001, // mov r0, r1
+        0xE081_0002, // add r0, r1, r2
+        0xE051_0002, // subs r0, r1, r2
+        0xE111_0002, // tst r1, r2
+        0xE1B0_0213, // mov r0, r3, lsl r2 (register shift)
+        0xE1A0_0122, // mov r0, r2, lsr #2
+        0xE3A0_3005, // mov r3, #5
+    ];
+    const ARM_DPREG_REGS: [(usize, u32); 3] = [(1, 0x100), (2, 4), (3, 0xFF)];
+
+    #[test]
+    fn micro_op_arm_dpreg_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_DPREG_CORPUS,
+                false,
+                waitcnt,
+                ARM_DPREG_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &ARM_DPREG_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_DPREG_CORPUS,
+                false,
+                waitcnt,
+                ARM_DPREG_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &ARM_DPREG_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_dpreg_gates_stay_legacy() {
+        let regs = CpuRegisters::post_bios();
+        // Multiply / SWP / MRS / BX / LDRSH-register share the DP class.
+        // (Immediate halfwords like 0xE1D200B0 stay single-covered.)
+        for instr in [
+            0xE002_0091, // mul r2, r0, r1
+            0xE102_0091, // swp r0, r1, [r2]
+            0xE10F_0000, // mrs r0, cpsr
+            0xE12F_FF11, // bx r1
+            0xE112_00F3, // ldrsh r0, [r2, r3]
+        ] {
+            assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
+        }
+        let ops = expand_arm(0xE081_0002, &regs).expect("add-reg expands");
+        // Commit + 0 trailing = 1.
+        assert_eq!(ops.len(), 1);
+        let ops = expand_arm(0xE1B0_0213, &regs).expect("reg-shift expands");
+        // Commit + 1I = 2.
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn arm_dpreg_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_DPREG_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_DPREG_REGS,
+            ARM_DPREG_CORPUS.len(),
+        );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }

@@ -43,7 +43,7 @@ fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32
     handle_data_processing(regs, bus, instr)
 }
 
-fn is_psr_transfer(instr: u32) -> bool {
+pub(crate) fn is_psr_transfer(instr: u32) -> bool {
     (instr & 0x0FBF0FFF) == 0x010F0000
         || (instr & 0x0FB0FFF0) == 0x0120F000
         || (instr & 0x0FB0F000) == 0x0320F000
