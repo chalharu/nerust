@@ -42,7 +42,9 @@ expected_failures:
 - PeterLemon_Acceleration
 # mgba_suite_timing: research-grade; non-prefetch cells all pass.
 - mgba_suite_timing
-# mgba_suite_timers: EXPECTED-FAIL. Do not retune to chase cells.
+# mgba_suite_timers: 283/468 subchecks fail. SRAM details show mixed
+# loop-sum and counter-phase residuals across HLE IRQ entry/exit; do not
+# retune the timer start delay to chase them.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
@@ -1041,6 +1043,7 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
+        sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
   - id: mgba_suite_timer_irq
     rom: suite.gba
     description: mgba suite - Timer IRQ tests
