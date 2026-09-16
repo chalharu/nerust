@@ -80,11 +80,14 @@ pub struct BlockStartEffect {
 /// Instruction-end commit for a block transfer. `sp` goes through
 /// `set_sp` exactly like the legacy PUSH/POP path (NOT `set_r`, which
 /// also spills to the user bank inside the LDM^ conflict window);
-/// `writeback` is the LDM/STM base update via `set_r`.
+/// `writeback` is the LDM/STM base update via `set_r`; `ldm_conflict`
+/// arms the post-LDM^ bank-conflict window (ARM S-bit loads to the
+/// user bank outside USR/SYS).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockEndEffect {
     pub sp: Option<u32>,
     pub writeback: Option<(usize, u32)>,
+    pub ldm_conflict: bool,
 }
 
 /// Thumb LDR (literal): word-aligned pool address plus dest.
@@ -107,6 +110,14 @@ pub struct BlockWord {
     pub first: bool,
     /// POP {..,PC} final word: `set_pc` (retire flushes the pipeline).
     pub pc_load: bool,
+    /// ARM LDM^ (S bit, no PC in list): loads land in the user bank.
+    /// Snapshot at expansion (mode frozen until a PC load, which is
+    /// always last and never takes this path).
+    pub user_bank: bool,
+    /// ARM LDM^ loading PC: restore CPSR from SPSR (skipped in
+    /// USR/SYS, which have none). Evaluated at execution, before any
+    /// mode change within this instruction.
+    pub restore_cpsr: bool,
     /// Precomputed store word (STM base-in-list quirk: non-first
     /// occurrences of the base store the final address). Snapshot at
     /// expansion; registers are frozen across the words of one
@@ -291,20 +302,18 @@ fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     Some(ops)
 }
 
-/// ARM LDM/STM, non-empty lists without the S bit (user-bank and
-/// CPSR-restoring forms stay on the legacy path). P/U address modes,
-/// writeback (skipped for the UNPREDICTABLE load-with-base-in-list),
-/// the STM stored-base quirk, and PC loads (retire flushes) are
-/// covered; the empty-list transfer stays legacy.
+/// ARM LDM/STM, non-empty lists including the S bit (user-bank
+/// transfers and CPSR-restoring exception returns). P/U address
+/// modes, writeback (skipped for the UNPREDICTABLE load-with-base-
+/// in-list), the STM stored-base quirk, and PC loads (retire
+/// flushes) are covered; the empty-list transfer stays legacy.
 fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 25) & 0x7 != 0b100 {
         return None;
     }
     let pre = (instr >> 24) & 1 != 0;
     let up = (instr >> 23) & 1 != 0;
-    if (instr >> 22) & 1 != 0 {
-        return None; // S bit: user-bank / exception-return forms.
-    }
+    let s = (instr >> 22) & 1 != 0;
     let writeback_flag = (instr >> 21) & 1 != 0;
     let load = (instr >> 20) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
@@ -326,30 +335,34 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let stored_base =
         (writeback_flag && !load && list & (1 << rn) != 0 && rn != list.trailing_zeros() as usize)
             .then_some((rn, final_addr));
+    // User-bank selection (S without a PC load); snapshot at expansion
+    // like the legacy pre-loop computation (mode frozen until a PC
+    // load, which clears this flag).
+    let user_bank = s && !(load && list & (1 << 15) != 0);
     let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
         is_load: load,
         fetch_width: 4,
     })];
     for (i, reg) in slots.iter().enumerate() {
-        // STM store words snapshot at expansion (frozen registers);
-        // r15 stores instruction+12 (legacy `store_register` +4).
+        // STM store words snapshot at expansion (frozen registers and
+        // mode): user-bank reads, the stored-base quirk, and r15 as
+        // instruction+12 (legacy `store_register`).
         let store_value = if load {
             None
         } else {
-            Some(
-                stored_base
-                    .filter(|(base_register, _)| *base_register == *reg)
-                    .map_or_else(
-                        || {
-                            if *reg == 15 {
-                                regs.r(15).wrapping_add(4)
-                            } else {
-                                regs.r(*reg)
-                            }
-                        },
-                        |(_, value)| value,
-                    ),
-            )
+            let base_val = stored_base
+                .filter(|(base_register, _)| *base_register == *reg)
+                .map_or_else(
+                    || {
+                        if user_bank {
+                            regs.user_r(*reg)
+                        } else {
+                            regs.r(*reg)
+                        }
+                    },
+                    |(_, value)| value,
+                );
+            Some(base_val.wrapping_add(if *reg == 15 { 4 } else { 0 }))
         };
         ops.push(MicroOp::BlockWord(BlockWord {
             addr: start.wrapping_add(i as u32 * 4),
@@ -357,6 +370,8 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             load,
             first: i == 0,
             pc_load: load && *reg == 15,
+            user_bank: load && user_bank,
+            restore_cpsr: load && s && *reg == 15,
             store_value,
         }));
     }
@@ -366,9 +381,13 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     } else {
         None
     };
+    // Post-LDM^ conflict, armed exactly like the legacy tail (the PC
+    // case never sets user_bank, so expansion-time mode is exact).
+    let conflict = load && user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
     ops.push(MicroOp::BlockEnd(BlockEndEffect {
         sp: None,
         writeback,
+        ldm_conflict: conflict,
     }));
     // Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
@@ -681,6 +700,8 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
             load,
             first: i == 0,
             pc_load: false,
+            user_bank: false,
+            restore_cpsr: false,
             store_value,
         }));
     }
@@ -693,6 +714,7 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     ops.push(MicroOp::BlockEnd(BlockEndEffect {
         sp: None,
         writeback,
+        ldm_conflict: false,
     }));
     // Pad the legacy handler base (LDM 2+count, STM 1+count).
     ops.extend(vec![MicroOp::Internal; if load { 2 } else { 1 }]);
@@ -768,6 +790,8 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
             load: !push,
             first: i == 0,
             pc_load: *pc_load,
+            user_bank: false,
+            restore_cpsr: false,
             store_value: None,
         }));
     }
@@ -778,6 +802,7 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
             sp.wrapping_add(count * 4)
         }),
         writeback: None,
+        ldm_conflict: false,
     }));
     // Pad the legacy handler base: PUSH 1+count, POP 2+count,
     // POP+PC 4+count (words already carry +1 each).
@@ -1152,8 +1177,15 @@ pub fn step_op(
                 let v = bus.read_aligned32(w.addr);
                 if w.pc_load {
                     regs.set_pc(v);
+                } else if w.user_bank {
+                    regs.set_user_r(w.reg, v);
                 } else {
                     regs.set_r(w.reg, v);
+                }
+                // LDM^ exception return (modes with an SPSR bank only);
+                // the mode read precedes any change below.
+                if w.restore_cpsr && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+                    regs.set_cpsr(regs.spsr());
                 }
             } else {
                 let v = match w.store_value {
@@ -1178,6 +1210,9 @@ pub fn step_op(
             }
             if let Some((reg, val)) = e.writeback {
                 regs.set_r(reg, val);
+            }
+            if e.ldm_conflict {
+                regs.arm_ldm_conflict();
             }
             bus.charge_fetch_stream_break();
         }
@@ -1956,10 +1991,10 @@ mod tests {
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
 
-    // Slice 5a corpus: ARM LDM/STM (non-empty, S=0; S-bit and empty
-    // forms stay legacy). Bases preset in Rust (EWRAM cell A); the
-    // corpus exercises IA/DB modes, the STM stored-base quirk (r0 in
-    // its own list) and the LDM base-in-list no-writeback rule.
+    // Slice 5a corpus: ARM LDM/STM (non-empty, S=0; empty forms stay
+    // legacy; S-bit forms are covered by the slice-14 corpus below).
+    // This corpus exercises IA/DB modes, the STM stored-base quirk
+    // (r0 in its own list) and the LDM base-in-list no-writeback rule.
     const ARM_BLOCK_CORPUS: [u32; 6] = [
         0xE8A0_0006, // stmia r0!, {r1,r2}
         0xE8B5_0018, // ldmia r5!, {r3,r4}
@@ -2018,10 +2053,14 @@ mod tests {
     fn arm_block_gates_stay_legacy() {
         let mut regs = CpuRegisters::post_bios();
         regs.set_r(0, 0x0200_0000);
-        // S bit (user-bank / exception-return forms).
-        assert!(expand_arm(0xE8B5_0018 | (1 << 22), &regs).is_none());
-        // Empty list.
+        // S bit now expands (user-bank forms, asserted below); only the
+        // empty list stays legacy.
+        let ops = expand_arm(0xE8B5_0018 | (1 << 22), &regs).expect("ldmia^ expands");
+        // BlockStart + 2 words + BlockEnd + 2 trailing = 6.
+        assert_eq!(ops.len(), 6);
+        // Empty list (plain and S-bit).
         assert!(expand_arm(0xE8A0_0000, &regs).is_none());
+        assert!(expand_arm(0xE8A0_0000 | (1 << 22), &regs).is_none());
         let ops = expand_arm(0xE8A0_0006, &regs).expect("plain stmia expands");
         // BlockStart + 2 words + BlockEnd + 1 trailing = 5.
         assert_eq!(ops.len(), 5);
@@ -3149,6 +3188,228 @@ mod tests {
             0x0300_0000,
             &ARM_HWREST_REGS,
             8,
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 14 corpus: ARM LDM/STM S-bit forms (run in SYS, where
+    // the user bank aliases the current one) plus a plain STM with PC
+    // (stored-base quirk + instruction+12 value).
+    const ARM_SBIT_CORPUS: [u32; 4] = [
+        0xE965_0006, // stmdb r5!, {r1,r2}^
+        0xE8F5_4018, // ldmia r5!, {r3,r4}^
+        0xE8A6_8042, // stmia r6!, {r1,r6,r15}
+        0xE3A0_7007, // mov r7, #7
+    ];
+    const ARM_SBIT_REGS: [(usize, u32); 5] = [
+        (1, 0x1111_1111),
+        (2, 0x2222_2222),
+        (5, 0x0200_0008),
+        (6, 0x0200_0100),
+        (7, 0),
+    ];
+
+    #[test]
+    fn micro_op_arm_sbit_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SBIT_CORPUS,
+                false,
+                waitcnt,
+                ARM_SBIT_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &ARM_SBIT_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SBIT_CORPUS,
+                false,
+                waitcnt,
+                ARM_SBIT_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &ARM_SBIT_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    /// S-bit block memory effects in SYS: roundtrip words plus the
+    /// STM-PC value slot must agree.
+    #[test]
+    fn arm_sbit_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in ARM_SBIT_CORPUS.iter().enumerate() {
+                bus.write32(0x0300_0000 + (i as u32) * 4, *w);
+            }
+            for (r, v) in ARM_SBIT_REGS {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..ARM_SBIT_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, ARM_SBIT_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        for addr in [
+            0x0200_0000,
+            0x0200_0004,
+            0x0200_0100,
+            0x0200_0104,
+            0x0200_0108,
+        ] {
+            assert_eq!(a_bus.read32(addr), b_bus.read32(addr), "cell {addr:#010X}");
+        }
+    }
+
+    /// User-bank transfer in IRQ mode: STM^ stores the user SP (not
+    /// the banked IRQ SP) and LDM^ loads the user LR.
+    #[test]
+    fn arm_block_s_user_bank_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE8C5_2000); // stmia r5, {r13}^
+            bus.write32(0x0300_0004, 0xE8D5_4000); // ldmia r5, {r14}^
+            cpu.regs.enter_exception(0x12, 0x18, 0x0800_0000, true);
+            cpu.regs.set_r(13, 0x0300_7000); // IRQ stack (banked)
+            cpu.regs.set_r(5, 0x0200_0000);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..2 {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        // The user SP (not the IRQ SP) hits memory.
+        assert_eq!(a_bus.read32(0x0200_0000), 0x0300_7F00);
+        let (mut b_cpu, mut b_bus) = setup();
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, 2);
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_bus.read32(0x0200_0000), 0x0300_7F00);
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        // User LR received the cell (bank-to-bank through memory).
+        assert_eq!(a_cpu.regs.user_r(14), 0x0300_7F00);
+        assert_eq!(b_cpu.regs.user_r(14), 0x0300_7F00);
+    }
+
+    /// LDM^ with PC in IRQ mode: CPSR restores from SPSR (back to SYS)
+    /// and PC loads; retire refills at the target.
+    #[test]
+    fn arm_ldm_s_pc_restore_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE8D5_8001); // ldmia r5, {r0,pc}^
+            bus.write32(0x0200_0000, 0);
+            bus.write32(0x0200_0004, 0x0300_0010);
+            bus.write32(0x0300_0010, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.enter_exception(0x12, 0x18, 0x0800_0000, true);
+            // spsr_irq already holds pre-exception SYS cpsr (0x1F).
+            cpu.regs.set_r(5, 0x0200_0000);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        assert_eq!(a_cpu.regs.cpsr_mode(), 0x1F);
+        assert_eq!(a_cpu.regs.pc(), 0x0300_0018);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("ldm^-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.cpsr_mode(), 0x1F);
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0018);
+        assert_eq!(b_cpu.regs.r(0), 0);
+        assert_eq!(b_cpu.regs.r(0), a_cpu.regs.r(0));
+    }
+
+    #[test]
+    fn arm_sbit_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_SBIT_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_SBIT_REGS,
+            ARM_SBIT_CORPUS.len(),
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
