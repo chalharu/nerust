@@ -186,6 +186,10 @@ pub struct AluEffect {
     /// Thumb MOV-imm forces N=0 (legacy `handle_imm` quirk); ARM MOVS
     /// takes N from bit 31. V is preserved by MOV in both modes.
     pub thumb_mov: bool,
+    /// Shifter carry-out for S with a rotated immediate
+    /// (bit(rot-1) of the imm8). None selects the live CPSR carry
+    /// (rot == 0, or flag-neutral without S).
+    pub carry: Option<bool>,
 }
 
 /// Covered ALU-immediate operations (full ARM DP-imm set; Thumb uses
@@ -261,7 +265,7 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if condition == 0xF {
         return None;
     }
-    let ops = expand_arm_alu_imm(instr)
+    let ops = expand_arm_alu_imm(instr, regs)
         .or_else(|| expand_arm_single(instr, regs))
         .or_else(|| expand_arm_block(instr, regs))
         .or_else(|| expand_arm_dp_reg(instr, regs))
@@ -493,13 +497,16 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// above). Rn==15 (PC) reads are covered: the effect resolves Rn live
 /// at execution, matching the handler's execute-stage read (PC still
 /// leads by 8; advance lands at retire).
-fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
+fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // Data-processing class (bits27-26 == 00), immediate form (I==1).
     // With I==1 the decoder can only route to DP or PSR-immediate
-    // (multiply/SWP/BX/halfword all require I==0); PSR-immediate
-    // always carries Rd==15, excluded below. Bit4 is plain imm12 here.
+    // (multiply/SWP/BX/halfword all require I==0); the MSR-immediate
+    // mask keeps the latter on the PSR branch. Bit4 is plain imm12.
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 1 {
         return None;
+    }
+    if (instr & 0x0FB0F000) == 0x0320F000 {
+        return None; // MSR-immediate.
     }
     let opcode = ((instr >> 21) & 0xF) as u8;
     let op = match opcode {
@@ -522,24 +529,39 @@ fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     };
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
-    if rd == 15 {
-        return None;
-    }
+    let set_flags = instr >> 20 & 1 == 1;
     let rot = ((instr >> 8) & 0xF) * 2;
     let imm = (instr & 0xFF).rotate_right(rot);
-    // Shifted immediates keep legacy flag semantics when S is set
-    // (shifter carry-out); without S the rotation is flag-neutral.
-    if rot != 0 && instr >> 20 & 1 == 1 {
-        return None;
-    }
-    Some(vec![MicroOp::CommitAlu(AluEffect {
+    // Shifter carry-out for S with a rotated immediate; otherwise the
+    // live CPSR carry (rot == 0) or flag-neutral (without S).
+    let carry = if rot != 0 && set_flags {
+        Some((instr & 0xFF) & (1 << (rot - 1)) != 0)
+    } else {
+        None
+    };
+    // S with Rd==15 is an exception return (or flags-only form);
+    // USR/SYS have no SPSR (mode frozen mid-instruction).
+    let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
+    // Legacy base minus the commit's +1: flag-only Rd15 restores (3)
+    // or updates flags (1); Rd15 writes refill (+2).
+    let trailing = if op.is_flag_only() && rd == 15 && set_flags {
+        if has_spsr { 2 } else { 0 }
+    } else if rd == 15 && !op.is_flag_only() {
+        2
+    } else {
+        0
+    };
+    let mut ops = vec![MicroOp::CommitAlu(AluEffect {
         op,
         rd,
         rn,
         imm,
-        set_flags: instr >> 20 & 1 == 1,
+        set_flags,
         thumb_mov: false,
-    })])
+        carry,
+    })];
+    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    Some(ops)
 }
 
 /// ARM LDR/STR word/byte (immediate and register offset) and
@@ -722,6 +744,7 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             imm,
             set_flags: true,
             thumb_mov: matches!(op, AluImmOp::Mov),
+            carry: None,
         })]);
     }
     // Thumb MUL (op 0xD in 0x4000..=0x43FF): m from the incoming Rd,
@@ -1109,17 +1132,20 @@ fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
 }
 
 fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
-    // Shifter carry for the covered forms (rot == 0, or S == 0 where
-    // the rotation is flag-neutral): the incoming CPSR carry.
-    let carry_in = regs.cpsr_c();
+    // Shifter carry-out: snapshot for S with a rotated immediate, else
+    // the live CPSR carry. Arithmetic carry-INS always read the live
+    // CPSR carry (legacy `execute` takes both separately; conflating
+    // them breaks ADC/SBC/RSC with rotation).
+    let cpsr_carry = regs.cpsr_c();
+    let shift_carry = fx.carry.unwrap_or(cpsr_carry);
     let rn_val = regs.r(fx.rn);
     let (result, carry, overflow) = match fx.op {
-        AluImmOp::Mov => (fx.imm, carry_in, false),
-        AluImmOp::Mvn => (!fx.imm, carry_in, false),
-        AluImmOp::And | AluImmOp::Tst => (rn_val & fx.imm, carry_in, false),
-        AluImmOp::Eor | AluImmOp::Teq => (rn_val ^ fx.imm, carry_in, false),
-        AluImmOp::Orr => (rn_val | fx.imm, carry_in, false),
-        AluImmOp::Bic => (rn_val & !fx.imm, carry_in, false),
+        AluImmOp::Mov => (fx.imm, shift_carry, false),
+        AluImmOp::Mvn => (!fx.imm, shift_carry, false),
+        AluImmOp::And | AluImmOp::Tst => (rn_val & fx.imm, shift_carry, false),
+        AluImmOp::Eor | AluImmOp::Teq => (rn_val ^ fx.imm, shift_carry, false),
+        AluImmOp::Orr => (rn_val | fx.imm, shift_carry, false),
+        AluImmOp::Bic => (rn_val & !fx.imm, shift_carry, false),
         AluImmOp::Add | AluImmOp::Cmn => {
             let (r, c) = rn_val.overflowing_add(fx.imm);
             let v = ((!(rn_val ^ fx.imm)) & (rn_val ^ r) & 0x8000_0000) != 0;
@@ -1136,7 +1162,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
             (r, !b, v)
         }
         AluImmOp::Adc => {
-            let c_in = u32::from(carry_in);
+            let c_in = u32::from(cpsr_carry);
             let (r1, c1) = rn_val.overflowing_add(fx.imm);
             let (r, c2) = r1.overflowing_add(c_in);
             // Overflow via the exact signed total (legacy formula: a
@@ -1147,7 +1173,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
         }
         AluImmOp::Sbc => {
             // SBC = Rn - imm - !C.
-            let not_c = 1 - u32::from(carry_in);
+            let not_c = 1 - u32::from(cpsr_carry);
             let (r1, b1) = rn_val.overflowing_sub(fx.imm);
             let (r, b2) = r1.overflowing_sub(not_c);
             let signed = rn_val as i32 as i64 - fx.imm as i32 as i64 - i64::from(not_c);
@@ -1156,7 +1182,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
         }
         AluImmOp::Rsc => {
             // RSC = imm - Rn - !C.
-            let not_c = 1 - u32::from(carry_in);
+            let not_c = 1 - u32::from(cpsr_carry);
             let (r1, b1) = fx.imm.overflowing_sub(rn_val);
             let (r, b2) = r1.overflowing_sub(not_c);
             let signed = fx.imm as i32 as i64 - rn_val as i32 as i64 - i64::from(not_c);
@@ -1168,18 +1194,33 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
         regs.set_r(fx.rd, result);
     }
     if fx.set_flags {
-        // N: Thumb MOV-imm forces 0 (legacy quirk); otherwise bit 31.
-        // V: logical class preserves it; arithmetic replaces it. C: the
-        // shifter carry (preserved here by the rot == 0 / S == 0 gate).
-        regs.set_cpsr_n(if fx.thumb_mov {
-            false
-        } else {
-            result >> 31 != 0
-        });
-        regs.set_cpsr_z(result == 0);
-        regs.set_cpsr_c(carry);
-        if fx.op.replaces_v() {
-            regs.set_cpsr_v(overflow);
+        // USR/SYS have no SPSR: exception-return restores only apply in
+        // modes with an SPSR bank (mode read precedes any change here).
+        let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
+        let rd_pc_write = fx.rd == 15 && !fx.op.is_flag_only();
+        // S with Rd==15 restores CPSR (flag-only forms without touching
+        // PC; writes via `write_result` above); a privileged Rd==15
+        // write then skips the flag update (CPSR replaced wholesale).
+        if fx.rd == 15 && has_spsr {
+            regs.set_cpsr(regs.spsr());
+            if fx.op.is_flag_only() || rd_pc_write {
+                return;
+            }
+        }
+        if !(rd_pc_write && has_spsr) {
+            // N: Thumb MOV-imm forces 0 (legacy quirk); otherwise
+            // bit 31. V: logical class preserves it; arithmetic
+            // replaces it. C: the shifter carry.
+            regs.set_cpsr_n(if fx.thumb_mov {
+                false
+            } else {
+                result >> 31 != 0
+            });
+            regs.set_cpsr_z(result == 0);
+            regs.set_cpsr_c(carry);
+            if fx.op.replaces_v() {
+                regs.set_cpsr_v(overflow);
+            }
         }
     }
 }
@@ -2967,11 +3008,12 @@ mod tests {
         // Imm bit4 no longer gates the ARM immediate form.
         let ops = expand_arm(0xE3A0_00FF, &regs).expect("bit4 imm expands");
         assert_eq!(ops.len(), 1);
-        // MSR-immediate routes to the PSR branch (not DP-imm); DP-imm
-        // with Rd==15 stays legacy (refill).
+        // MSR-immediate routes to the PSR branch (not DP-imm); MOV
+        // with Rd==15 (S=0) expands with refill padding.
         let ops = expand_arm(0xE329_F000, &regs).expect("msr-imm expands");
         assert_eq!(ops.len(), 1);
-        assert!(expand_arm(0xE3A0_F005, &regs).is_none());
+        let ops = expand_arm(0xE3A0_F005, &regs).expect("mov-pc expands");
+        assert_eq!(ops.len(), 3);
     }
 
     #[test]
@@ -3887,6 +3929,281 @@ mod tests {
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 18 corpus: S with rotated immediates (shifter carry).
+    const ARM_SROT_CORPUS: [u32; 5] = [
+        0xE211_04FF, // ands r0, r1, #0xFF000000 (C=1)
+        0xE291_04FF, // adds r0, r1, #0xFF000000
+        0xE3B0_04FF, // movs r0, #0xFF000000 (N=1, C=1)
+        0xE3A0_3005, // mov r3, #5
+        0xE3A0_7007, // mov r7, #7
+    ];
+
+    #[test]
+    fn micro_op_arm_srot_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SROT_CORPUS,
+                false,
+                waitcnt,
+                ARM_SROT_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &[(1, 1)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SROT_CORPUS,
+                false,
+                waitcnt,
+                ARM_SROT_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &[(1, 1)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    /// SUBS pc, lr, #4 in IRQ mode (immediate form): CPSR restores
+    /// from SPSR (to SVC here) and PC loads; retire refills.
+    #[test]
+    fn arm_subs_pc_restore_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE25E_F004); // subs pc, lr, #4
+            bus.write32(0x0300_0010, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.enter_exception(0x12, 0x18, 0x0800_0000, true);
+            cpu.regs.set_spsr(0x13); // return to SVC on restore
+            cpu.regs.set_lr(0x0300_0014);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        assert_eq!(a_cpu.regs.cpsr_mode(), 0x13);
+        assert_eq!(a_cpu.regs.pc(), 0x0300_0018);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("subs-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.cpsr_mode(), 0x13);
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0018);
+    }
+
+    /// MOVS pc, lr in IRQ mode (register form, delegate path): same
+    /// restore + load contract through CommitDpReg.
+    #[test]
+    fn arm_movs_pc_restore_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE1B0_F00E); // movs pc, lr
+            bus.write32(0x0300_0010, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.enter_exception(0x12, 0x18, 0x0800_0000, true);
+            cpu.regs.set_spsr(0x13); // return to SVC on restore
+            cpu.regs.set_lr(0x0300_0010);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        assert_eq!(a_cpu.regs.cpsr_mode(), 0x13);
+        assert_eq!(a_cpu.regs.pc(), 0x0300_0018);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("movs-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.cpsr_mode(), 0x13);
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0018);
+    }
+
+    /// SUBS pc, lr, #0 in SYS mode (no SPSR): PC writes and flags
+    /// update, no restore.
+    #[test]
+    fn arm_subs_pc_sys_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE25E_F000); // subs pc, lr, #0
+            bus.write32(0x0300_0010, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.set_lr(0x0300_0010);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("subs-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0018);
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+        assert_eq!(b_cpu.regs.cpsr(), a_cpu.regs.cpsr());
+    }
+
+    /// Flag-only Rd==15 with S in IRQ mode: CPSR restores, PC advances
+    /// without a flush (legacy refill count, no latch).
+    #[test]
+    fn arm_tst_pc_restore_no_flush() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE111_F00E); // tst pc, lr (S=1)
+            bus.write32(0x0300_0004, 0xE3A0_7007); // mov r7, #7
+            cpu.regs.enter_exception(0x12, 0x18, 0x0800_0000, true);
+            cpu.regs.set_spsr(0x1F); // restore SYS (ARM)
+            cpu.regs.set_lr(0x0300_0100);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        assert_eq!(a_cpu.regs.cpsr_mode(), 0x1F);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("tst-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.cpsr_mode(), 0x1F);
+        // No flush: sequential advance past the restored stream.
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+    }
+
+    #[test]
+    fn arm_srot_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_SROT_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &[(1, 1)],
+            ARM_SROT_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    /// Differential grid over S+rotated DP-immediate space: all 16
+    /// opcodes, rotation fields, low immediates and base registers.
+    /// Pins the shifter-carry snapshot against the live CPSR carry
+    /// (ADC/SBC/RSC read the latter even under rotation).
+    #[test]
+    fn arm_dpimm_srot_grid() {
+        let mut bad = 0;
+        for opcode in 0..16u32 {
+            for rot in [1u32, 2, 4, 7, 15] {
+                for imm8 in [0u32, 1, 0xFF, 0x80] {
+                    for rn in [0usize, 1] {
+                        let instr = 0xE000_0000
+                            | (opcode << 21)
+                            | (1 << 20)
+                            | ((rn as u32) << 16)
+                            | (rot << 8)
+                            | imm8
+                            | (1 << 25);
+                        let code = [instr, 0xE3A0_7007];
+                        let (ta, tb, regs, follow) = differential(
+                            &code,
+                            false,
+                            0x0000,
+                            1,
+                            0xE1DD_20B0,
+                            0x0300_0000,
+                            None,
+                            &[],
+                            &[(0, 0x1234_5678), (1, 0xFF00_FF00)],
+                        );
+                        if ta != tb || !regs || !follow {
+                            eprintln!(
+                                "DIVERGE op={:#X} rot={} imm={:#X} rn={}: ta={} tb={} regs={} follow={}",
+                                opcode, rot, imm8, rn, ta, tb, regs, follow
+                            );
+                            bad += 1;
+                            if bad > 8 {
+                                panic!("too many divergences");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(bad, 0);
     }
 
     #[test]
