@@ -11,6 +11,7 @@ use crate::cpu::arm_opcodes::helpers::{barrel_shift, condition_passed};
 use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
+use crate::cpu::arm_opcodes::psr_transfer::handle as psr_handle;
 use crate::cpu::thumb_opcodes::alu::{
     handle as thumb_alu_handle, handle_load_address, handle_sp_offset,
 };
@@ -46,6 +47,10 @@ pub enum MicroOp {
     /// the pair never splits across ops). Costs +1; the remaining base
     /// becomes trailing `Internal` event points.
     CommitSwp(u32),
+    /// ARM MRS/MSR: raw word, applied by the legacy handler (pure
+    /// registers, no bus; T-bit preserving, so no mode-switch flush).
+    /// Single op carrying the whole base of 1.
+    CommitPsr(u32),
     /// Thumb ALU remainder (move-shifted, ADD/SUB, reg-ALU, hi-reg):
     /// raw halfword; the apply step delegates to the legacy handler
     /// for the matching class. Costs +1; multi-cycle forms (reg
@@ -222,7 +227,9 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         .or_else(|| expand_arm_block(instr, regs))
         .or_else(|| expand_arm_dp_reg(instr, regs))
         .or_else(|| expand_arm_mul(instr, regs))
-        .or_else(|| expand_arm_swp(instr))?;
+        .or_else(|| expand_arm_swp(instr))
+        .or_else(|| expand_arm_psr(instr))
+        .or_else(|| expand_arm_bx(instr, regs))?;
     Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
@@ -320,6 +327,28 @@ fn expand_arm_swp(instr: u32) -> Option<Vec<MicroOp>> {
         MicroOp::Internal,
         MicroOp::Internal,
         MicroOp::Internal,
+    ])
+}
+
+/// ARM MRS/MSR: exactly the decoder predicate (all three masks).
+/// Single commit op; the handler is pure registers with base 1.
+fn expand_arm_psr(instr: u32) -> Option<Vec<MicroOp>> {
+    if !is_psr_transfer(instr) {
+        return None;
+    }
+    Some(vec![MicroOp::CommitPsr(instr)])
+}
+
+/// ARM BX: the exact decoder mask. Reuses the interworking branch
+/// op ([I, I, Bx]); retire flushes with the switched width.
+fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if (instr & 0x0FFFFFF0) != 0x012FFF10 {
+        return None;
+    }
+    Some(vec![
+        MicroOp::Internal,
+        MicroOp::Internal,
+        MicroOp::Bx(regs.r((instr & 0xF) as usize)),
     ])
 }
 
@@ -421,7 +450,10 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     Some(ops)
 }
 
-/// ARM data-processing immediate, no R15, no S+rotate (see gate above).
+/// ARM data-processing immediate, no R15 dest, no S+rotate (see gate
+/// above). Rn==15 (PC) reads are covered: the effect resolves Rn live
+/// at execution, matching the handler's execute-stage read (PC still
+/// leads by 8; advance lands at retire).
 fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     // Data-processing class (bits27-26 == 00), immediate form (I==1).
     // With I==1 the decoder can only route to DP or PSR-immediate
@@ -440,7 +472,7 @@ fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     };
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
-    if rn == 15 || rd == 15 {
+    if rd == 15 {
         return None;
     }
     let rot = ((instr >> 8) & 0xF) * 2;
@@ -1148,6 +1180,10 @@ pub fn step_op(
             // Atomic read+write inside the legacy handler (bus lock);
             // carry +1, trailing Internals pad the base.
             swp_handle(regs, bus, instr);
+            cycles += 1;
+        }
+        MicroOp::CommitPsr(instr) => {
+            psr_handle(regs, instr);
             cycles += 1;
         }
         MicroOp::TakenBranch(branch) => {
@@ -2350,14 +2386,18 @@ mod tests {
     #[test]
     fn arm_dpreg_gates_stay_legacy() {
         let regs = CpuRegisters::post_bios();
-        // MRS / BX share the DP class (MUL, LDRSH-reg and SWP are
-        // covered by their own branches, asserted in arm_mul_padding,
-        // arm_hwrest_shapes_and_gates and arm_swp_shapes).
+        // The DP-register branch itself must not misclaim multiply,
+        // SWP, MRS/MSR, BX or halfword shapes (they have their own
+        // branches or stay legacy); assert on the branch directly.
         for instr in [
-            0xE10F_0000, // mrs r0, cpsr
-            0xE12F_FF11, // bx r1
+            0xE002_0091, // mul
+            0xE102_0091, // swp
+            0xE10F_0000, // mrs
+            0xE129_F000, // msr
+            0xE12F_FF11, // bx
+            0xE112_00F3, // ldrsh-reg
         ] {
-            assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
+            assert!(expand_arm_dp_reg(instr, &regs).is_none(), "{instr:#010X}");
         }
         let ops = expand_arm(0xE081_0002, &regs).expect("add-reg expands");
         // Commit + 0 trailing = 1.
@@ -2836,8 +2876,11 @@ mod tests {
         // Imm bit4 no longer gates the ARM immediate form.
         let ops = expand_arm(0xE3A0_00FF, &regs).expect("bit4 imm expands");
         assert_eq!(ops.len(), 1);
-        // MSR-immediate still excluded via Rd==15.
-        assert!(expand_arm(0xE329_F000, &regs).is_none());
+        // MSR-immediate routes to the PSR branch (not DP-imm); DP-imm
+        // with Rd==15 stays legacy (refill).
+        let ops = expand_arm(0xE329_F000, &regs).expect("msr-imm expands");
+        assert_eq!(ops.len(), 1);
+        assert!(expand_arm(0xE3A0_F005, &regs).is_none());
     }
 
     #[test]
@@ -3554,6 +3597,130 @@ mod tests {
             0x0300_0000,
             &[(1, 0xAAAA_AAAA), (2, 0x0200_0000)],
             ARM_SWP_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 16 corpus: ARM MRS/MSR + BX over a relative target
+    // (ADD pc keeps the corpus position-independent for the ROM
+    // variant). MSR sets N via r0; TST observes it; BX skips two.
+    const ARM_PSRBX_CORPUS: [u32; 10] = [
+        0xE10F_1000, // mrs r1, cpsr
+        0xE129_F000, // msr cpsr_f, r0
+        0xE111_0000, // tst r1, r0
+        0xE28F_300C, // add r3, pc, #12
+        0xE12F_FF13, // bx r3
+        0xE3A0_4005, // mov r4, #5 (skipped)
+        0xE3A0_5006, // mov r5, #6 (skipped)
+        0xE3A0_2009, // mov r2, #9 (skipped)
+        0xE3A0_6007, // mov r6, #7 (BX landing)
+        0xE3A0_7008, // mov r7, #8
+    ];
+    const ARM_PSRBX_REGS: [(usize, u32); 2] = [(0, 0x8000_0000), (3, 0)];
+
+    #[test]
+    fn micro_op_arm_psrbx_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_PSRBX_CORPUS,
+                false,
+                waitcnt,
+                7,
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &ARM_PSRBX_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_PSRBX_CORPUS,
+                false,
+                waitcnt,
+                7,
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &ARM_PSRBX_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_psrbx_shapes_and_gates() {
+        let regs = CpuRegisters::post_bios();
+        // PSR forms: single commit op.
+        for instr in [0xE10F_1000, 0xE129_F000, 0xE32B_F000] {
+            let ops = expand_arm(instr, &regs).expect("psr expands");
+            assert_eq!(ops.len(), 1, "{instr:#010X}");
+        }
+        // ARM BX: refill pair + commit.
+        let ops = expand_arm(0xE12F_FF13, &regs).expect("arm bx expands");
+        assert_eq!(ops.len(), 3);
+        // DP-imm with Rn==PC reads the execute-stage PC (bus-free).
+        let ops = expand_arm(0xE28F_300C, &regs).expect("add-pc expands");
+        assert_eq!(ops.len(), 1);
+    }
+
+    /// ARM BX to Thumb: mode switches at execution; retire refills
+    /// with halfword width.
+    #[test]
+    fn arm_bx_to_thumb_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0200_0000, 0xE12F_FF10); // bx r0
+            bus.write16(0x0300_0040, 0x2707); // mov r7, #7 (Thumb target)
+            cpu.regs.set_r(0, 0x0300_0041); // bit0 set: Thumb
+            cpu.regs.set_pc(0x0200_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("arm bx must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0044); // target + Thumb lead
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+        assert!(b_cpu.regs.cpsr_t());
+        assert_eq!(b_cpu.regs.cpsr_t(), a_cpu.regs.cpsr_t());
+    }
+
+    #[test]
+    fn arm_psrbx_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_PSRBX_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_PSRBX_REGS,
+            7,
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
