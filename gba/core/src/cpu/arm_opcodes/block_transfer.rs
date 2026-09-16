@@ -95,7 +95,7 @@ struct EmptyTransferSpec {
     s_bit: bool,
 }
 
-fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
+pub(crate) fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
     match (up, pre) {
         (true, true) => base.wrapping_add(4),
         (true, false) => base,

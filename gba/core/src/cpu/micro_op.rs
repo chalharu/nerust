@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
@@ -24,15 +25,22 @@ pub enum MicroOp {
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
-    /// Open the block batch (`begin_block_batch(is_load, 2)`).
+    /// Open the block batch (`begin_block_batch(is_load, fetch_width)`).
     /// Zero-cost structural op.
-    BlockStart(bool),
+    BlockStart(BlockStartEffect),
     BlockWord(BlockWord),
     /// Close the batch, land end-commits, single fetch-stream break.
     /// Zero-cost structural op; trailing `Internal`s pad the base.
     BlockEnd(BlockEndEffect),
 }
 
+/// Block-batch opener: `is_load` selects the GBALoad/GBAStore word
+/// convention, `fetch_width` (4 ARM, 2 Thumb) the erase-floor N.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockStartEffect {
+    pub is_load: bool,
+    pub fetch_width: u8,
+}
 /// Instruction-end commit for a block transfer. `sp` goes through
 /// `set_sp` exactly like the legacy PUSH/POP path (NOT `set_r`, which
 /// also spills to the user bank inside the LDM^ conflict window);
@@ -43,7 +51,7 @@ pub struct BlockEndEffect {
     pub writeback: Option<(usize, u32)>,
 }
 
-/// One PUSH/POP word. `addr` is snapshotted at expansion (queue-fill
+/// One block word (PUSH/POP, LDM/STM). `addr` is snapshotted at expansion (queue-fill
 /// runs on pre-instruction state); values are read at execution, which
 /// matches the legacy loop because no CPU register changes between the
 /// words of one instruction (bus ticks never touch registers).
@@ -111,12 +119,13 @@ pub enum AluImmOp {
 }
 
 /// Expand an ARM instruction. `None` = not covered yet (legacy path).
-pub fn expand_arm(instr: u32, cpsr: u32) -> Option<Vec<MicroOp>> {
+/// `regs` snapshots base pointers and STM store words at queue-fill.
+pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // B/BL: failed conditions retire in one sequential cycle; taken
     // branches expose both refill cycles independently to the bus.
     if (instr >> 25) & 0x7 == 0b101 {
         let condition = (instr >> 28) as u8;
-        if !condition_passed(cpsr, condition) {
+        if !condition_passed(regs.cpsr(), condition) {
             return Some(vec![MicroOp::Internal]);
         }
         let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
@@ -134,12 +143,104 @@ pub fn expand_arm(instr: u32, cpsr: u32) -> Option<Vec<MicroOp>> {
     if condition == 0xF {
         return None;
     }
-    let ops = expand_arm_alu_imm(instr).or_else(|| expand_arm_single(instr))?;
-    Some(if condition_passed(cpsr, condition) {
+    let ops = expand_arm_alu_imm(instr)
+        .or_else(|| expand_arm_single(instr))
+        .or_else(|| expand_arm_block(instr, regs))?;
+    Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
         vec![MicroOp::Internal]
     })
+}
+
+/// ARM LDM/STM, non-empty lists without the S bit (user-bank and
+/// CPSR-restoring forms stay on the legacy path). P/U address modes,
+/// writeback (skipped for the UNPREDICTABLE load-with-base-in-list),
+/// the STM stored-base quirk, and PC loads (retire flushes) are
+/// covered; the empty-list transfer stays legacy.
+fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if (instr >> 25) & 0x7 != 0b100 {
+        return None;
+    }
+    let pre = (instr >> 24) & 1 != 0;
+    let up = (instr >> 23) & 1 != 0;
+    if (instr >> 22) & 1 != 0 {
+        return None; // S bit: user-bank / exception-return forms.
+    }
+    let writeback_flag = (instr >> 21) & 1 != 0;
+    let load = (instr >> 20) & 1 != 0;
+    let rn = ((instr >> 16) & 0xF) as usize;
+    let list = instr & 0xFFFF;
+    if list == 0 {
+        return None;
+    }
+    let base = regs.r(rn);
+    let count = list.count_ones();
+    let slots: Vec<usize> = (0..16).filter(|i| list & (1 << i) != 0).collect();
+    let start = start_address(base, count, pre, up);
+    // Without writeback the stored base uses the OLD value; only W=1
+    // stores the NEW value for non-first occurrences (legacy logic).
+    let final_addr = if up {
+        base.wrapping_add(count * 4)
+    } else {
+        base.wrapping_sub(count * 4)
+    };
+    let stored_base =
+        (writeback_flag && !load && list & (1 << rn) != 0 && rn != list.trailing_zeros() as usize)
+            .then_some((rn, final_addr));
+    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+        is_load: load,
+        fetch_width: 4,
+    })];
+    for (i, reg) in slots.iter().enumerate() {
+        // STM store words snapshot at expansion (frozen registers);
+        // r15 stores instruction+12 (legacy `store_register` +4).
+        let store_value = if load {
+            None
+        } else {
+            Some(
+                stored_base
+                    .filter(|(base_register, _)| *base_register == *reg)
+                    .map_or_else(
+                        || {
+                            if *reg == 15 {
+                                regs.r(15).wrapping_add(4)
+                            } else {
+                                regs.r(*reg)
+                            }
+                        },
+                        |(_, value)| value,
+                    ),
+            )
+        };
+        ops.push(MicroOp::BlockWord(BlockWord {
+            addr: start.wrapping_add(i as u32 * 4),
+            reg: *reg,
+            load,
+            first: i == 0,
+            pc_load: load && *reg == 15,
+            store_value,
+        }));
+    }
+    // Writeback not allowed if base in list and L==1 (UNPREDICTABLE).
+    let writeback = if writeback_flag && !(load && (list >> rn) & 1 != 0) {
+        Some((rn, final_addr))
+    } else {
+        None
+    };
+    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+        sp: None,
+        writeback,
+    }));
+    // Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
+    // STM 1+n; words already carry +1 each).
+    let trailing = if load {
+        if list & (1 << 15) != 0 { 4 } else { 2 }
+    } else {
+        1
+    };
+    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    Some(ops)
 }
 
 /// ARM data-processing immediate, no R15, no S+rotate (see gate above).
@@ -322,7 +423,10 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     // the final address (legacy `stm_value`).
     let final_addr = base.wrapping_add(count * 4);
     let first = rlist.trailing_zeros() as usize;
-    let mut ops = vec![MicroOp::BlockStart(load)];
+    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+        is_load: load,
+        fetch_width: 2,
+    })];
     for (i, reg) in slots.iter().enumerate() {
         let store_value = if load {
             None
@@ -381,7 +485,10 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     if extra {
         slots.push((if push { 14 } else { 15 }, !push));
     }
-    let mut ops = vec![MicroOp::BlockStart(!push)];
+    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+        is_load: !push,
+        fetch_width: 2,
+    })];
     for (i, (reg, pc_load)) in slots.iter().enumerate() {
         let addr = if push {
             sp.wrapping_sub(count * 4).wrapping_add(i as u32 * 4)
@@ -647,7 +754,7 @@ pub fn step_op(
         let ops = if is_thumb {
             expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
         } else {
-            expand_arm(pipeline[0], regs.cpsr())?
+            expand_arm(pipeline[0], regs)?
         };
         bus.take_access_wait_cycles();
         bus.set_current_pc(regs.pc());
@@ -691,8 +798,8 @@ pub fn step_op(
             apply_write(regs, bus, a);
             cycles += 1;
         }
-        MicroOp::BlockStart(is_load) => {
-            bus.begin_block_batch(is_load, 2);
+        MicroOp::BlockStart(e) => {
+            bus.begin_block_batch(e.is_load, e.fetch_width);
         }
         MicroOp::BlockWord(w) => {
             // Legacy-identical per-word order: continuation query, then
@@ -1503,6 +1610,184 @@ mod tests {
             0x0300_0000,
             &THUMB_MULT_REGS,
             THUMB_MULT_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 5a corpus: ARM LDM/STM (non-empty, S=0; S-bit and empty
+    // forms stay legacy). Bases preset in Rust (EWRAM cell A); the
+    // corpus exercises IA/DB modes, the STM stored-base quirk (r0 in
+    // its own list) and the LDM base-in-list no-writeback rule.
+    const ARM_BLOCK_CORPUS: [u32; 6] = [
+        0xE8A0_0006, // stmia r0!, {r1,r2}
+        0xE8B5_0018, // ldmia r5!, {r3,r4}
+        0xE925_0006, // stmdb r5!, {r1,r2}
+        0xE8A0_0003, // stmia r0!, {r1,r0} (stored-base quirk)
+        0xE8B0_0009, // ldmia r0, {r0,r3} (base in list: no writeback)
+        0xE3A0_7007, // mov r7, #7
+    ];
+    const ARM_BLOCK_REGS: [(usize, u32); 5] = [
+        (0, 0x0200_0000),
+        (1, 0x1111_1111),
+        (2, 0x2222_2222),
+        (5, 0x0200_0000),
+        (6, 0x0300_0400),
+    ];
+
+    #[test]
+    fn micro_op_arm_block_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_BLOCK_CORPUS,
+                false,
+                waitcnt,
+                ARM_BLOCK_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &ARM_BLOCK_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        // ROM-code variant: data still hits EWRAM, batch erase is the
+        // ROM-code whole-word path (fetch_width 4).
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_BLOCK_CORPUS,
+                false,
+                waitcnt,
+                ARM_BLOCK_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &ARM_BLOCK_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_block_gates_stay_legacy() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(0, 0x0200_0000);
+        // S bit (user-bank / exception-return forms).
+        assert!(expand_arm(0xE8B5_0018 | (1 << 22), &regs).is_none());
+        // Empty list.
+        assert!(expand_arm(0xE8A0_0000, &regs).is_none());
+        let ops = expand_arm(0xE8A0_0006, &regs).expect("plain stmia expands");
+        // BlockStart + 2 words + BlockEnd + 1 trailing = 5.
+        assert_eq!(ops.len(), 5);
+    }
+
+    /// ARM block memory effects under both engines: cell words as well
+    /// as registers and totals must agree.
+    #[test]
+    fn arm_block_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in ARM_BLOCK_CORPUS.iter().enumerate() {
+                bus.write32(0x0300_0000 + (i as u32) * 4, *w);
+            }
+            for (r, v) in ARM_BLOCK_REGS {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..ARM_BLOCK_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, ARM_BLOCK_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        assert_eq!(a_cpu.regs.cpsr(), b_cpu.regs.cpsr());
+        for addr in (0x0200_0000..0x0200_0020).step_by(4) {
+            assert_eq!(a_bus.read32(addr), b_bus.read32(addr), "cell {addr:#010X}");
+        }
+    }
+
+    /// ARM LDM with PC in the list: PC lands word-aligned, the retire
+    /// flushes the pipeline at the target (+ ARM lead).
+    #[test]
+    fn arm_ldm_pc_matches_legacy_and_flushes() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE890_8000); // ldmia r0, {r15} (no writeback)
+            bus.write32(0x0200_0000, 0x0200_0100);
+            bus.write32(0x0200_0100, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.set_r(0, 0x0200_0000);
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("ldm-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.pc(), 0x0200_0108); // target + ARM pipeline lead
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+        assert_eq!(b_cpu.regs.r(0), 0x0200_0000);
+        assert_eq!(b_cpu.regs.r(0), a_cpu.regs.r(0));
+    }
+
+    #[test]
+    fn arm_block_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_BLOCK_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_BLOCK_REGS,
+            ARM_BLOCK_CORPUS.len(),
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
