@@ -188,12 +188,14 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
         0x06 => {
             // Operand-dependent Div latency (mgba-suite Timing SWI cells
             // + BIOSDIV TIMER0 screenshot + div_e2 unit pin):
-            // fast path (73) when |num| < |den| (trivial quotient 0);
-            // slow path 226 for 13+-bit divisors, +107 below (extra
-            // normalization for small divisors; HW-measured at 8 bits).
+            // fast path when |num| < |den| (trivial quotient 0); slow
+            // path 226 for 13+-bit divisors with +107 below (extra
+            // normalization for small divisors). IWRAM callers observe
+            // -3 on the fast/slow paths (mgba anchors); the base,
+            // PeterLemon's 13-bit path, and div_e2 stay put.
             let num = regs.r(0) as i32;
             let den = regs.r(1) as i32;
-            let charge = div_charge(num, den);
+            let charge = div_charge(num, den, bus.swi_caller_is_iwram());
             div(regs);
             SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
@@ -201,26 +203,32 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             // DivArm swaps r0/r1 and costs 3 over Div (div_arm_e5 pin).
             let den = regs.r(0) as i32;
             let num = regs.r(1) as i32;
-            let charge = div_charge(num, den).wrapping_add(3);
+            let charge = div_charge(num, den, bus.swi_caller_is_iwram()).wrapping_add(3);
             div_arm(regs);
             SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x08 => {
             // Operand-dependent Sqrt latency (mgba-suite Timing Sqrt
             // cells + BIOSSQRT TIMER0 screenshot + sqrt_fedcba98 pin):
-            // HW-anchored piecewise-linear in the input bit length
-            // (0->102, 8->217, 29->1133, 32->585; interior rounds down,
-            // games never assert exact Sqrt timing).
+            // HW-anchored piecewise-linear in the input bit length;
+            // IWRAM callers observe -3 on the 0/8/29-bit anchors, the
+            // 32-bit anchor (PeterLemon's sole displayed input) stays.
             let n = regs.r(0);
-            let charge = sqrt_charge(n);
+            let charge = sqrt_charge(n, bus.swi_caller_is_iwram());
             sqrt(regs);
             SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x09 => {
-            // ArcTan sign path (suite 0xFF vs fedcba98 pin): negative
-            // inputs cost one extra branch refill (+4).
+            // ArcTan: IWRAM callers observe base 0x63 (mgba positive
+            // anchor) with +7 for negative inputs (keeps the fedcba98
+            // 0x6A pin: 0x63 + 7); other callers keep 0x66 + 4.
             let i = regs.r(0) as i32;
-            let charge = 0x66u32 + if i < 0 { 4 } else { 0 };
+            let (base, sign) = if bus.swi_caller_is_iwram() {
+                (0x63u32, 7u32)
+            } else {
+                (0x66u32, 4u32)
+            };
+            let charge = base + if i < 0 { sign } else { 0 };
             arc_tan(regs);
             SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
@@ -663,16 +671,24 @@ fn sound_get_jump_list(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
 /// Operand-dependent Div latency (see SWI 0x06 call site for the HW
 /// evidence). Magnitudes drive the normalizing shift loop; the quotient-0
 /// fast path skips it.
-fn div_charge(num: i32, den: i32) -> u32 {
+fn div_charge(num: i32, den: i32, iwram: bool) -> u32 {
     if den == 0 {
         return 0xE2;
     }
     let (num_m, den_m) = (num.unsigned_abs(), den.unsigned_abs());
     if num_m < den_m {
-        return 73;
+        // Fast path (mgba-suite Timing anchor for IWRAM callers;
+        // PeterLemon only exercises the slow/base paths).
+        return if iwram { 70 } else { 73 };
     }
     let den_bits = 32 - den_m.leading_zeros();
-    0xE2 + if den_bits < 13 { 107 } else { 0 }
+    // Slow path +104/+107 for sub-13-bit divisors (mgba 8-bit-divisor
+    // anchor vs fitted value; PeterLemon uses 13-bit divisors here).
+    0xE2 + if den_bits < 13 {
+        if iwram { 104 } else { 107 }
+    } else {
+        0
+    }
 }
 
 fn div(regs: &mut CpuRegisters) {
@@ -719,14 +735,18 @@ fn sqrt(regs: &mut CpuRegisters) {
 }
 
 /// Operand-dependent Sqrt latency: HW-measured anchor points in the
-/// unsigned input bit length ((0,102), (8,217), (29,1133), (32,585)),
-/// linear between anchors (integer division rounds down; anchors exact).
-fn sqrt_charge(n: u32) -> u32 {
+/// unsigned input bit length ((0,99/102), (8,214/217), (29,1130/1133),
+/// (32,585)), linear between anchors (integer division rounds down).
+/// IWRAM callers observe the lower anchors (mgba-suite Timing cells);
+/// other callers keep the fitted values, and the 32-bit anchor stays
+/// pinned by sqrt_fedcba98 (0x249, PeterLemon's sole displayed input).
+fn sqrt_charge(n: u32, iwram: bool) -> u32 {
+    let sub = if iwram { 3 } else { 0 };
     let bits = 32 - n.leading_zeros();
     match bits {
-        0 => 102,
-        1..=8 => 102 + 115 * bits / 8,
-        9..=29 => 217 + 916 * (bits - 8) / 21,
+        0 => 102 - sub,
+        1..=8 => 102 + 115 * bits / 8 - sub,
+        9..=29 => 217 + 916 * (bits - 8) / 21 - sub,
         _ => 1133 - 548 * (bits - 29) / 3,
     }
 }
@@ -1037,6 +1057,16 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let base_len = 0x400u32;
     let disp = base_disp * len / base_len;
     let wait = base_wait * len / base_len;
+    // EWRAM-source bulk called from IWRAM costs a flat +66 over the
+    // fitted rate (mgba-suite Timing CpuSet cells, len 0x100
+    // EWRAM->EWRAM). ROM callers (mgba ROM/WRAM cells) and IWRAM-source
+    // bulk (PeterLemon display stays exactly base_disp) are excluded,
+    // like the 16-bit ROM-source +93 below.
+    let src_adjust = if (0x02000000..=0x02FFFFFF).contains(&src) && bus.swi_caller_is_iwram() {
+        66
+    } else {
+        0
+    };
     // BIOS call fixed overhead (exception entry + prologue/epilogue,
     // mgba-suite Timing CpuSet cells: flat +69 after raw-bulk) plus the
     // SWI region entry residual (shared with Div/Sqrt/ArcTan). Both skip
@@ -1048,6 +1078,7 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     };
     disp.saturating_sub(wait)
         .wrapping_add(overhead)
+        .wrapping_add(src_adjust)
         .saturating_add_signed(bus.swi_region_adjust())
 }
 
