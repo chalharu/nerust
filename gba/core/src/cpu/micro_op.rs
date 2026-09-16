@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use crate::cpu::arm_opcodes::helpers::condition_passed;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -12,14 +13,63 @@ use crate::memory::GbaMemoryBus;
 /// prefetch-fill point); `CommitAlu`/`TakenBranch`/`MemRead`/`MemWrite`
 /// land register/pc/memory effects at their execute-stage points, with
 /// the legacy handler's exact bus-call order (access, then
-/// fetch-stream-break).
+/// fetch-stream-break). `BlockStart`/`BlockWord`/`BlockEnd` slice one
+/// PUSH/POP across ops so timer/DMA/IRQ bus events can land between
+/// words; the batch open/close and the single fetch-stream break stay
+/// instruction-scoped exactly like the legacy loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicroOp {
     Internal,
     CommitAlu(AluEffect),
-    TakenBranch(u32),
+    TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
+    /// Open the block batch (`begin_block_batch(is_load, 2)`).
+    /// Zero-cost structural op.
+    BlockStart(bool),
+    BlockWord(BlockWord),
+    /// Close the batch, land end-commits, single fetch-stream break.
+    /// Zero-cost structural op; trailing `Internal`s pad the base.
+    BlockEnd(BlockEndEffect),
+}
+
+/// Instruction-end commit for a block transfer. `sp` goes through
+/// `set_sp` exactly like the legacy PUSH/POP path (NOT `set_r`, which
+/// also spills to the user bank inside the LDM^ conflict window);
+/// `writeback` is the LDM/STM base update via `set_r`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockEndEffect {
+    pub sp: Option<u32>,
+    pub writeback: Option<(usize, u32)>,
+}
+
+/// One PUSH/POP word. `addr` is snapshotted at expansion (queue-fill
+/// runs on pre-instruction state); values are read at execution, which
+/// matches the legacy loop because no CPU register changes between the
+/// words of one instruction (bus ticks never touch registers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockWord {
+    pub addr: u32,
+    /// Source/dest low register, or 14 for the PUSH LR slot.
+    pub reg: usize,
+    pub load: bool,
+    pub first: bool,
+    /// POP {..,PC} final word: `set_pc` (retire flushes the pipeline).
+    pub pc_load: bool,
+    /// Precomputed store word (STM base-in-list quirk: non-first
+    /// occurrences of the base store the final address). Snapshot at
+    /// expansion; registers are frozen across the words of one
+    /// instruction, so this matches the legacy in-loop evaluation.
+    pub store_value: Option<u32>,
+}
+
+/// Final execute-stage effect of a direct branch. The two preceding
+/// `Internal` ops model pipeline refill cycles; BL writes LR only when
+/// this final op executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchEffect {
+    pub offset: u32,
+    pub link: bool,
 }
 
 /// One data access. `addr = base +/- offset` is resolved at interpret
@@ -30,8 +80,12 @@ pub struct MemAccess {
     pub rd: usize,
     pub rn: usize,
     pub offset: u32,
+    pub offset_register: Option<usize>,
     pub subtract: bool,
     pub is_sp: bool,
+    pub signed_load: bool,
+    pub post_indexed: bool,
+    pub writeback: bool,
 }
 
 /// Register effect of an ALU-immediate instruction, fully decoded.
@@ -57,23 +111,35 @@ pub enum AluImmOp {
 }
 
 /// Expand an ARM instruction. `None` = not covered yet (legacy path).
-pub fn expand_arm(instr: u32) -> Option<Vec<MicroOp>> {
-    // B (AL only for the scaffold).
-    if instr >> 24 == 0xEA {
+pub fn expand_arm(instr: u32, cpsr: u32) -> Option<Vec<MicroOp>> {
+    // B/BL: failed conditions retire in one sequential cycle; taken
+    // branches expose both refill cycles independently to the bus.
+    if (instr >> 25) & 0x7 == 0b101 {
+        let condition = (instr >> 28) as u8;
+        if !condition_passed(cpsr, condition) {
+            return Some(vec![MicroOp::Internal]);
+        }
         let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
         let offset = (offset << 6) >> 6;
-        return Some(vec![MicroOp::Internal, MicroOp::Internal, MicroOp::TakenBranch(offset as u32)]);
+        return Some(vec![
+            MicroOp::Internal,
+            MicroOp::Internal,
+            MicroOp::TakenBranch(BranchEffect {
+                offset: offset as u32,
+                link: instr & (1 << 24) != 0,
+            }),
+        ]);
     }
-    if instr >> 28 != 0xE {
+    let condition = (instr >> 28) as u8;
+    if condition == 0xF {
         return None;
     }
-    if let Some(ops) = expand_arm_alu_imm(instr) {
-        return Some(ops);
-    }
-    if let Some(ops) = expand_arm_single(instr) {
-        return Some(ops);
-    }
-    None
+    let ops = expand_arm_alu_imm(instr).or_else(|| expand_arm_single(instr))?;
+    Some(if condition_passed(cpsr, condition) {
+        ops
+    } else {
+        vec![MicroOp::Internal]
+    })
 }
 
 /// ARM data-processing immediate, no R15, no S+rotate (see gate above).
@@ -103,43 +169,47 @@ fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     if rot != 0 && instr >> 20 & 1 == 1 {
         return None;
     }
-    Some(vec![
-        MicroOp::CommitAlu(AluEffect {
-            op,
-            rd,
-            rn,
-            imm,
-            set_flags: instr >> 20 & 1 == 1,
-            thumb_mov: false,
-        }),
-    ])
+    Some(vec![MicroOp::CommitAlu(AluEffect {
+        op,
+        rd,
+        rn,
+        imm,
+        set_flags: instr >> 20 & 1 == 1,
+        thumb_mov: false,
+    })])
 }
 
 /// ARM LDR/STR word-immediate and LDRH/STRH unsigned-immediate
 /// (P=1, W=0, no R15). Load expands to [Read, I, I] (= 3) and store to
 /// [Write, I] (= 2), matching `single_transfer`/`halfword_transfer`.
 fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
-    if (instr >> 24) & 1 != 1 || (instr >> 21) & 1 == 1 {
-        return None;
-    }
     let l = (instr >> 20) & 1 == 1;
+    let pre_indexed = (instr >> 24) & 1 == 1;
+    let writeback = !pre_indexed || (instr >> 21) & 1 == 1;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
     if rn == 15 || rd == 15 {
         return None;
     }
     let subtract = (instr >> 23) & 1 == 0;
-    // Word-immediate class (bits27-26 == 01, I == 0, B == 0).
-    if (instr >> 26) & 0x3 == 0b01 && (instr >> 25) & 1 == 0 && (instr >> 22) & 1 == 0 {
-        let acc = MemAccess { width: 4, rd, rn, offset: instr & 0xFFF, subtract, is_sp: false };
+    // Word/byte immediate class (bits27-26 == 01, I == 0).
+    if (instr >> 26) & 0x3 == 0b01 && (instr >> 25) & 1 == 0 {
+        let acc = MemAccess {
+            width: if instr & (1 << 22) != 0 { 1 } else { 4 },
+            rd,
+            rn,
+            offset: instr & 0xFFF,
+            offset_register: None,
+            subtract,
+            is_sp: false,
+            signed_load: false,
+            post_indexed: !pre_indexed,
+            writeback,
+        };
         // Totals match legacy handler returns (load 3, store 2); Internals pad the base.
         // Same bus calls and order as legacy, so totals agree by construction.
         return Some(if l {
-            vec![
-                MicroOp::MemRead(acc),
-                MicroOp::Internal,
-                MicroOp::Internal,
-            ]
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
         } else {
             vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
@@ -150,14 +220,21 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
     // otherwise mimic the halfword shape (e.g. `bic rd, rn, rm, lsl #N`).
     if (instr >> 25) & 0x7 == 0 && (instr >> 22) & 1 == 1 && (instr >> 4) & 0xF == 0xB {
         let offset = (((instr >> 8) & 0xF) << 4) | (instr & 0xF);
-        let acc = MemAccess { width: 2, rd, rn, offset, subtract, is_sp: false };
+        let acc = MemAccess {
+            width: 2,
+            rd,
+            rn,
+            offset,
+            offset_register: None,
+            subtract,
+            is_sp: false,
+            signed_load: false,
+            post_indexed: !pre_indexed,
+            writeback,
+        };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
-            vec![
-                MicroOp::MemRead(acc),
-                MicroOp::Internal,
-                MicroOp::Internal,
-            ]
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
         } else {
             vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
@@ -166,12 +243,38 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
 }
 
 /// Expand a Thumb instruction. `None` = not covered yet (legacy path).
-pub fn expand_thumb(instr: u16) -> Option<Vec<MicroOp>> {
+/// `regs` snapshots stack/base pointers and STM store words at
+/// queue-fill (pre-instruction state; registers are frozen across the
+/// words of one instruction).
+pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    // Conditional B. SWI/UND encodings (cond >= 0xE) remain legacy.
+    if instr >> 12 == 0xD && ((instr >> 8) & 0xF) < 0xE {
+        let condition = ((instr >> 8) & 0xF) as u8;
+        if !condition_passed(regs.cpsr(), condition) {
+            return Some(vec![MicroOp::Internal]);
+        }
+        let offset = ((instr & 0xFF) as i8 as i32) << 1;
+        return Some(vec![
+            MicroOp::Internal,
+            MicroOp::Internal,
+            MicroOp::TakenBranch(BranchEffect {
+                offset: offset as u32,
+                link: false,
+            }),
+        ]);
+    }
     // B (unconditional).
     if instr >> 11 == 0b11100 {
         let offset = ((instr & 0x7FF) as i32) << 1;
         let offset = (offset << 20) >> 20;
-        return Some(vec![MicroOp::Internal, MicroOp::Internal, MicroOp::TakenBranch(offset as u32)]);
+        return Some(vec![
+            MicroOp::Internal,
+            MicroOp::Internal,
+            MicroOp::TakenBranch(BranchEffect {
+                offset: offset as u32,
+                link: false,
+            }),
+        ]);
     }
     // MOV/CMP/ADD/SUB immediate.
     if instr >> 13 == 0b001 {
@@ -183,23 +286,180 @@ pub fn expand_thumb(instr: u16) -> Option<Vec<MicroOp>> {
         };
         let rd = ((instr >> 8) & 0x7) as usize;
         let imm = (instr & 0xFF) as u32;
-        return Some(vec![
-            MicroOp::CommitAlu(AluEffect {
-                op,
-                rd,
-                rn: rd,
-                imm,
-                set_flags: true,
-                thumb_mov: matches!(op, AluImmOp::Mov),
-            }),
-        ]);
+        return Some(vec![MicroOp::CommitAlu(AluEffect {
+            op,
+            rd,
+            rn: rd,
+            imm,
+            set_flags: true,
+            thumb_mov: matches!(op, AluImmOp::Mov),
+        })]);
     }
-    expand_thumb_load_store(instr)
+    expand_thumb_push_pop(instr, regs)
+        .or_else(|| expand_thumb_multiple(instr, regs))
+        .or_else(|| expand_thumb_load_store(instr))
+}
+
+/// Thumb LDMIA/STMIA, non-empty lists only (empty forms keep the
+/// legacy PC-transfer/+0x40 quirk path). Same block slicing as
+/// PUSH/POP: per-word continuation at execution, batch open/close and
+/// the single fetch-stream break instruction-scoped, base writeback
+/// (LDM skips it when the base is loaded) in the end commit.
+fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if instr >> 12 != 0xC {
+        return None;
+    }
+    let load = (instr >> 11) & 1 == 1;
+    let rb = ((instr >> 8) & 0x7) as usize;
+    let rlist = instr & 0xFF;
+    if rlist == 0 {
+        return None;
+    }
+    let base = regs.r(rb);
+    let count = rlist.count_ones();
+    let slots: Vec<usize> = (0..8).filter(|i| rlist & (1 << i) != 0).collect();
+    // STM stored-base quirk: a non-first occurrence of the base stores
+    // the final address (legacy `stm_value`).
+    let final_addr = base.wrapping_add(count * 4);
+    let first = rlist.trailing_zeros() as usize;
+    let mut ops = vec![MicroOp::BlockStart(load)];
+    for (i, reg) in slots.iter().enumerate() {
+        let store_value = if load {
+            None
+        } else {
+            Some(if *reg == rb && rb != first {
+                final_addr
+            } else {
+                regs.r(*reg)
+            })
+        };
+        ops.push(MicroOp::BlockWord(BlockWord {
+            addr: base.wrapping_add(i as u32 * 4),
+            reg: *reg,
+            load,
+            first: i == 0,
+            pc_load: false,
+            store_value,
+        }));
+    }
+    // LDM writes the base back only when it is not itself loaded.
+    let writeback = if load && (rlist >> rb) & 1 != 0 {
+        None
+    } else {
+        Some((rb, final_addr))
+    };
+    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+        sp: None,
+        writeback,
+    }));
+    // Pad the legacy handler base (LDM 2+count, STM 1+count).
+    ops.extend(vec![MicroOp::Internal; if load { 2 } else { 1 }]);
+    Some(ops)
+}
+
+/// Thumb PUSH/POP, non-empty lists only (empty forms keep the legacy
+/// quirk path: PC-store / PC-load with +0x40 SP arithmetic). Mirrors
+/// the decoder ranges exactly (subset of the legacy route, no extra
+/// validation: the handler itself does not validate either).
+fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    let push = match instr {
+        0xB400..=0xB5FF => true,
+        0xBC00..=0xBDFF => false,
+        _ => return None,
+    };
+    let sp = regs.sp();
+    let extra = instr & (1 << 8) != 0; // LR for PUSH, PC for POP
+    let list = instr & 0xFF;
+    let count = list.count_ones() + u32::from(extra);
+    if count == 0 {
+        return None;
+    }
+    let mut slots: Vec<(usize, bool)> = (0..8)
+        .filter(|r| list & (1 << r) != 0)
+        .map(|r| (r as usize, false))
+        .collect();
+    if extra {
+        slots.push((if push { 14 } else { 15 }, !push));
+    }
+    let mut ops = vec![MicroOp::BlockStart(!push)];
+    for (i, (reg, pc_load)) in slots.iter().enumerate() {
+        let addr = if push {
+            sp.wrapping_sub(count * 4).wrapping_add(i as u32 * 4)
+        } else {
+            sp.wrapping_add(i as u32 * 4)
+        };
+        ops.push(MicroOp::BlockWord(BlockWord {
+            addr,
+            reg: *reg,
+            load: !push,
+            first: i == 0,
+            pc_load: *pc_load,
+            store_value: None,
+        }));
+    }
+    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+        sp: Some(if push {
+            sp.wrapping_sub(count * 4)
+        } else {
+            sp.wrapping_add(count * 4)
+        }),
+        writeback: None,
+    }));
+    // Pad the legacy handler base: PUSH 1+count, POP 2+count,
+    // POP+PC 4+count (words already carry +1 each).
+    let trailing = if push {
+        1
+    } else if extra {
+        4
+    } else {
+        2
+    };
+    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    Some(ops)
 }
 
 /// Thumb word LDR/STR (immediate offset and SP-relative) and
 /// LDRH/STRH immediate. Same [Read, I, I] / [Write, I] shape as ARM.
 pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
+    // Register-offset word/byte and signed/halfword transfers (0101).
+    if instr >> 12 == 0b0101 {
+        let op = (instr >> 10) & 0x3;
+        let ro = ((instr >> 6) & 0x7) as usize;
+        let rb = ((instr >> 3) & 0x7) as usize;
+        let rd = (instr & 0x7) as usize;
+        let signed_group = instr & 0x0200 != 0;
+        let (load, width, signed_load) = if signed_group {
+            match op {
+                0b00 => (false, 2, false), // STRH
+                0b01 => (true, 1, true),   // LDRSB
+                0b10 => (true, 2, false),  // LDRH
+                _ => (true, 2, true),      // LDRSH
+            }
+        } else {
+            (
+                instr & (1 << 11) != 0,
+                if instr & (1 << 10) != 0 { 1 } else { 4 },
+                false,
+            )
+        };
+        let acc = MemAccess {
+            width,
+            rd,
+            rn: rb,
+            offset: 0,
+            offset_register: Some(ro),
+            subtract: false,
+            is_sp: false,
+            signed_load,
+            post_indexed: false,
+            writeback: false,
+        };
+        return Some(if load {
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
+        } else {
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        });
+    }
     // SP-relative (1001): addr = SP + imm8<<2.
     if instr >> 12 == 0b1001 {
         let l = (instr >> 11) & 1 == 1;
@@ -209,16 +469,16 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             rd,
             rn: 13,
             offset: ((instr & 0xFF) as u32) << 2,
+            offset_register: None,
             subtract: false,
             is_sp: true,
+            signed_load: false,
+            post_indexed: false,
+            writeback: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
-            vec![
-                MicroOp::MemRead(acc),
-                MicroOp::Internal,
-                MicroOp::Internal,
-            ]
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
         } else {
             vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
@@ -233,16 +493,16 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             rd,
             rn: rb,
             offset: (((instr >> 6) & 0x1F) as u32) << 2,
+            offset_register: None,
             subtract: false,
             is_sp: false,
+            signed_load: false,
+            post_indexed: false,
+            writeback: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
-            vec![
-                MicroOp::MemRead(acc),
-                MicroOp::Internal,
-                MicroOp::Internal,
-            ]
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
         } else {
             vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
@@ -257,16 +517,16 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             rd,
             rn: rb,
             offset: (((instr >> 6) & 0x1F) as u32) << 1,
+            offset_register: None,
             subtract: false,
             is_sp: false,
+            signed_load: false,
+            post_indexed: false,
+            writeback: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
-            vec![
-                MicroOp::MemRead(acc),
-                MicroOp::Internal,
-                MicroOp::Internal,
-            ]
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
         } else {
             vec![MicroOp::MemWrite(acc), MicroOp::Internal]
         });
@@ -274,25 +534,41 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
     None
 }
 
-fn resolve_addr(regs: &CpuRegisters, a: MemAccess) -> u32 {
+fn resolve_addr(regs: &CpuRegisters, a: MemAccess) -> (u32, u32) {
     let base = if a.is_sp { regs.sp() } else { regs.r(a.rn) };
-    if a.subtract {
-        base.wrapping_sub(a.offset)
+    let offset = a
+        .offset_register
+        .map_or(a.offset, |register| regs.r(register));
+    let adjusted = if a.subtract {
+        base.wrapping_sub(offset)
     } else {
-        base.wrapping_add(a.offset)
-    }
+        base.wrapping_add(offset)
+    };
+    (if a.post_indexed { base } else { adjusted }, adjusted)
 }
 
 /// Apply one data access with the legacy handler's exact bus-call order
 /// (access, writeback, then fetch-stream-break). The issue clock (+1)
 /// lands at the call site; the bus calls charge into `access_wait_cycles`.
 fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
-    let addr = resolve_addr(regs, a);
-    let v = match a.width {
-        4 => bus.read32(addr),
-        _ => bus.read_ldr_halfword(addr),
+    let (addr, writeback) = resolve_addr(regs, a);
+    let v = match (a.width, a.signed_load) {
+        (4, _) => bus.read32(addr),
+        (2, false) => bus.read_ldr_halfword(addr),
+        (2, true) if addr & 1 != 0 => {
+            let half = bus.read_ldr_halfword(addr & !1) & 0xFFFF;
+            bus.merge_rom_half(addr, half);
+            ((half >> 8) as u8) as i8 as i32 as u32
+        }
+        (2, true) => bus.read16(addr) as i16 as i32 as u32,
+        (1, true) => bus.read8(addr) as i8 as i32 as u32,
+        (1, false) => u32::from(bus.read8(addr)),
+        _ => unreachable!(),
     };
     regs.set_r(a.rd, v);
+    if a.writeback && a.rd != a.rn {
+        regs.set_r(a.rn, writeback);
+    }
     bus.charge_fetch_stream_break();
 }
 
@@ -300,10 +576,15 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
 /// (access, then fetch-stream-break). The issue clock (+1) lands at the
 /// call site; the bus calls charge into `access_wait_cycles`.
 fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
-    let addr = resolve_addr(regs, a);
+    let (addr, writeback) = resolve_addr(regs, a);
     match a.width {
         4 => bus.write32(addr, regs.r(a.rd)),
-        _ => bus.write16(addr, regs.r(a.rd) as u16),
+        2 => bus.write16(addr, regs.r(a.rd) as u16),
+        1 => bus.write8(addr, regs.r(a.rd) as u8),
+        _ => unreachable!(),
+    }
+    if a.writeback {
+        regs.set_r(a.rn, writeback);
     }
     bus.charge_fetch_stream_break();
 }
@@ -330,7 +611,11 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
         // V: MOV preserves it in both modes (logical class); arithmetic
         // replaces it. C: shift-carry (preserved here: rot == 0 or S == 0
         // gate) for MOV, computed carry otherwise.
-        regs.set_cpsr_n(if fx.thumb_mov { false } else { result >> 31 != 0 });
+        regs.set_cpsr_n(if fx.thumb_mov {
+            false
+        } else {
+            result >> 31 != 0
+        });
         regs.set_cpsr_z(result == 0);
         regs.set_cpsr_c(carry);
         if !matches!(fx.op, AluImmOp::Mov) {
@@ -356,17 +641,13 @@ pub fn step_op(
     is_thumb: bool,
 ) -> Option<i64> {
     if queue.is_empty() {
-    // Speculative pure decode FIRST (fallback history: touching
-    // bus/pipeline before coverage is known double-advances the
-    // pipeline on legacy fallback).
+        // Speculative pure decode FIRST (fallback history: touching
+        // bus/pipeline before coverage is known double-advances the
+        // pipeline on legacy fallback).
         let ops = if is_thumb {
-            expand_thumb((pipeline[0] & 0xFFFF) as u16)?
+            expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
         } else {
-            // AL-only: other conds stay legacy.
-            if pipeline[0] >> 28 != 0xE {
-                return None;
-            }
-            expand_arm(pipeline[0])?
+            expand_arm(pipeline[0], regs.cpsr())?
         };
         bus.take_access_wait_cycles();
         bus.set_current_pc(regs.pc());
@@ -390,8 +671,11 @@ pub fn step_op(
             apply_alu(regs, fx);
             cycles += 1;
         }
-        MicroOp::TakenBranch(off) => {
-            regs.set_pc(pc.wrapping_add(off));
+        MicroOp::TakenBranch(branch) => {
+            if branch.link {
+                regs.set_lr(pc.wrapping_sub(4));
+            }
+            regs.set_pc(pc.wrapping_add(branch.offset));
             cycles += 1;
         }
         MicroOp::MemRead(a) => {
@@ -406,6 +690,48 @@ pub fn step_op(
         MicroOp::MemWrite(a) => {
             apply_write(regs, bus, a);
             cycles += 1;
+        }
+        MicroOp::BlockStart(is_load) => {
+            bus.begin_block_batch(is_load, 2);
+        }
+        MicroOp::BlockWord(w) => {
+            // Legacy-identical per-word order: continuation query, then
+            // the access. A DMA burst between words resets the address
+            // stream (next word N), same as post-DMA CPU accesses.
+            let continuation = !w.first && bus.data_continuation_sequential(w.addr);
+            bus.set_data_sequential(continuation);
+            if w.load {
+                let v = bus.read_aligned32(w.addr);
+                if w.pc_load {
+                    regs.set_pc(v);
+                } else {
+                    regs.set_r(w.reg, v);
+                }
+            } else {
+                let v = match w.store_value {
+                    Some(v) => v,
+                    None => {
+                        if w.reg == 14 {
+                            regs.lr()
+                        } else {
+                            regs.r(w.reg)
+                        }
+                    }
+                };
+                bus.write32(w.addr, v);
+            }
+            cycles += 1;
+        }
+        MicroOp::BlockEnd(e) => {
+            bus.set_data_sequential(false);
+            bus.end_block_batch();
+            if let Some(sp) = e.sp {
+                regs.set_sp(sp);
+            }
+            if let Some((reg, val)) = e.writeback {
+                regs.set_r(reg, val);
+            }
+            bus.charge_fetch_stream_break();
         }
     }
     if queue.is_empty() {
@@ -510,8 +836,15 @@ mod tests {
             shadow[1] = cpu.pipeline[1];
             (cpu, bus, shadow)
         }
-        let (mut a_cpu, mut a_bus, _) =
-            setup(code, thumb, waitcnt, code_base, cart.clone(), mem_init, reg_init);
+        let (mut a_cpu, mut a_bus, _) = setup(
+            code,
+            thumb,
+            waitcnt,
+            code_base,
+            cart.clone(),
+            mem_init,
+            reg_init,
+        );
         let (mut b_cpu, mut b_bus, mut b_pipe) =
             setup(code, thumb, waitcnt, code_base, cart, mem_init, reg_init);
         // Twin-bus check: both setups must agree before stepping.
@@ -528,8 +861,14 @@ mod tests {
             // at retire exactly like the legacy step.
             let mut acc = 0i64;
             loop {
-                acc += step_op(&mut b_cpu.regs, &mut b_bus, &mut b_pipe, &mut b_queue, thumb)
-                    .expect("corpus must be covered");
+                acc += step_op(
+                    &mut b_cpu.regs,
+                    &mut b_bus,
+                    &mut b_pipe,
+                    &mut b_queue,
+                    thumb,
+                )
+                .expect("corpus must be covered");
                 if b_queue.is_empty() {
                     break;
                 }
@@ -629,6 +968,81 @@ mod tests {
         }
     }
 
+    #[test]
+    fn conditional_branch_loops_match_legacy() {
+        let arm = [
+            0xE3A0_0000, // mov r0, #0
+            0xE280_0001, // add r0, r0, #1
+            0xE350_0003, // cmp r0, #3
+            0x1AFF_FFFC, // bne back to add
+            0xE3A0_1007, // mov r1, #7
+        ];
+        let thumb = [
+            0x2000, // mov r0, #0
+            0x3001, // add r0, #1
+            0x2803, // cmp r0, #3
+            0xD1FC, // bne back to add
+            0x2107, // mov r1, #7
+        ];
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs, follow) = differential(
+                &arm,
+                false,
+                waitcnt,
+                11,
+                0xE3A0_2009,
+                0x0300_0000,
+                None,
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "ARM waitcnt={waitcnt:#06x}");
+            assert!(regs && follow, "ARM waitcnt={waitcnt:#06x}");
+
+            let (ta, tb, regs, follow) = differential(
+                &thumb,
+                true,
+                waitcnt,
+                11,
+                0x2209,
+                0x0300_0000,
+                None,
+                &[],
+                &[],
+            );
+            assert_eq!((ta, tb), (ta, ta), "Thumb waitcnt={waitcnt:#06x}");
+            assert!(regs && follow, "Thumb waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn conditional_alu_and_memory_match_legacy() {
+        let code = [
+            0xE3A0_0000, // mov r0, #0
+            0xE350_0000, // cmp r0, #0 (Z=1)
+            0x0281_1001, // addeq r1, r1, #1
+            0x1282_2001, // addne r2, r2, #1 (skipped)
+            0x0583_1000, // streq r1, [r3]
+            0x1593_4000, // ldrne r4, [r3] (skipped)
+            0xE593_5000, // ldr r5, [r3]
+        ];
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs, follow) = differential(
+                &code,
+                false,
+                waitcnt,
+                code.len(),
+                0xE3A0_6009,
+                0x0300_0000,
+                None,
+                &[],
+                &[(1, 4), (2, 8), (3, 0x0200_0100)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "waitcnt={waitcnt:#06x}");
+            assert!(regs && follow, "waitcnt={waitcnt:#06x}");
+        }
+    }
+
     // Slice 2 corpus: single load/store (word + halfword, ARM + Thumb).
     // Pointers preset in Rust; r0 carries the store value.
     const ARM_LS_CORPUS: [u32; 8] = [
@@ -641,6 +1055,16 @@ mod tests {
         0xE591_5008, // ldr r5, [r1, #8]
         0xE3A0_0007, // mov r7, #7
     ];
+    const ARM_INDEXED_LS_CORPUS: [u32; 8] = [
+        0xE4C1_0001, // strb r0, [r1], #1
+        0xE551_2001, // ldrb r2, [r1, #-1]
+        0xE5E1_0002, // strb r0, [r1, #2]!
+        0xE411_3004, // ldr r3, [r1], #-4
+        0xE0C1_00B2, // strh r0, [r1], #2
+        0xE171_40B2, // ldrh r4, [r1, #-2]!
+        0xE591_5000, // ldr r5, [r1]
+        0xE3A0_6007, // mov r6, #7
+    ];
     const THUMB_LS_CORPUS: [u32; 7] = [
         0x6088, // str r0, [r1, #8]
         0x688B, // ldr r3, [r1, #8]
@@ -649,6 +1073,16 @@ mod tests {
         0x9010, // str r0, [sp, #0x40]
         0x9D10, // ldr r5, [sp, #0x40]
         0x2707, // mov r7, #7
+    ];
+    const THUMB_REG_LS_CORPUS: [u32; 8] = [
+        0x5088, // str r0, [r1, r2]
+        0x588B, // ldr r3, [r1, r2]
+        0x5488, // strb r0, [r1, r2]
+        0x5C8C, // ldrb r4, [r1, r2]
+        0x5288, // strh r0, [r1, r2]
+        0x5A8D, // ldrh r5, [r1, r2]
+        0x568E, // ldrsb r6, [r1, r2]
+        0x5E8F, // ldrsh r7, [r1, r2]
     ];
     // ROM-code corpus: same shapes from GamePak (prefetch/erase paths)
     // plus a ROM-data read. Code at 0x08000100, data word at 0x08000200.
@@ -665,8 +1099,7 @@ mod tests {
     ];
 
     fn rom_cart() -> Vec<u8> {
-        const SUITE: &[u8] =
-            include_bytes!("../../../../roms/gba/mgba-suite/suite.gba");
+        const SUITE: &[u8] = include_bytes!("../../../../roms/gba/mgba-suite/suite.gba");
         let mut rom = vec![0u8; 0x10000];
         rom[..0xC0].copy_from_slice(&SUITE[..0xC0]);
         rom[0x200..0x204].copy_from_slice(&0xCAFE_BABEu32.to_le_bytes());
@@ -691,6 +1124,20 @@ mod tests {
             assert!(regs, "arm waitcnt={waitcnt:#06x}");
             assert!(follow, "arm waitcnt={waitcnt:#06x}");
             let (ta, tb, regs, follow) = differential(
+                &ARM_INDEXED_LS_CORPUS,
+                false,
+                waitcnt,
+                ARM_INDEXED_LS_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &[(0, 0x1234_80FF), (1, 0x0300_0200)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "arm-indexed waitcnt={waitcnt:#06x}");
+            assert!(regs, "arm-indexed waitcnt={waitcnt:#06x}");
+            assert!(follow, "arm-indexed waitcnt={waitcnt:#06x}");
+            let (ta, tb, regs, follow) = differential(
                 &THUMB_LS_CORPUS,
                 true,
                 waitcnt,
@@ -704,7 +1151,361 @@ mod tests {
             assert_eq!((ta, tb), (ta, ta), "thumb waitcnt={waitcnt:#06x}");
             assert!(regs, "thumb waitcnt={waitcnt:#06x}");
             assert!(follow, "thumb waitcnt={waitcnt:#06x}");
+
+            let (ta, tb, regs, follow) = differential(
+                &THUMB_REG_LS_CORPUS,
+                true,
+                waitcnt,
+                THUMB_REG_LS_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &[(0, 0x0000_80FF), (1, 0x0300_0100), (2, 4)],
+            );
+            assert_eq!((ta, tb), (ta, ta), "thumb-reg waitcnt={waitcnt:#06x}");
+            assert!(regs, "thumb-reg waitcnt={waitcnt:#06x}");
+            assert!(follow, "thumb-reg waitcnt={waitcnt:#06x}");
         }
+    }
+
+    // Slice 3 corpus: Thumb PUSH/POP (non-empty; empty forms stay
+    // legacy). The harness presets SP=0x03007F00; pushes spill below
+    // and pops reload them (LIFO-balanced across the corpus).
+    const THUMB_PP_CORPUS: [u32; 5] = [
+        0xB40F, // push {r0-r3}
+        0xBCF0, // pop {r4-r7}
+        0xB550, // push {r4,r6,lr}
+        0xBC0B, // pop {r0,r1,r3}
+        0x2707, // mov r7, #7
+    ];
+
+    #[test]
+    fn micro_op_push_pop_matches_legacy() {
+        let regs = [
+            (0, 0x1111_1111),
+            (1, 0x2222_2222),
+            (2, 0x3333_3333),
+            (3, 0x4444_4444),
+            (4, 0x5555_5555),
+            (6, 0x6666_6666),
+            (14, 0xDEAD_BEEF),
+        ];
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_PP_CORPUS,
+                true,
+                waitcnt,
+                THUMB_PP_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &regs,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        // ROM-code variant: words still hit IWRAM, but the block batch
+        // erase path is the ROM-code one (whole-word total accounting).
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_PP_CORPUS,
+                true,
+                waitcnt,
+                THUMB_PP_CORPUS.len(),
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &regs,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn empty_push_pop_stays_legacy() {
+        fn regs_with_sp(sp: u32) -> CpuRegisters {
+            let mut regs = CpuRegisters::post_bios();
+            regs.set_sp(sp);
+            regs
+        }
+        let regs = regs_with_sp(0x0300_7F00);
+        assert!(expand_thumb(0xB400, &regs).is_none());
+        assert!(expand_thumb(0xBC00, &regs).is_none());
+        let ops = expand_thumb(0xB40F, &regs).expect("non-empty pushes expand");
+        // BlockStart + 4 words + BlockEnd + 1 trailing = 7.
+        assert_eq!(ops.len(), 7);
+    }
+
+    /// PUSH/POP memory effects under both engines from identical state:
+    /// stack words as well as registers and totals must agree.
+    #[test]
+    fn push_pop_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            let code = THUMB_PP_CORPUS;
+            for (i, w) in code.iter().enumerate() {
+                bus.write16(0x0300_0000 + (i as u32) * 2, (*w & 0xFFFF) as u16);
+            }
+            for (r, v) in [
+                (0, 0x1111_1111),
+                (1, 0x2222_2222),
+                (2, 0x3333_3333),
+                (3, 0x4444_4444),
+            ] {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_r(4, 0x5555_5555);
+            cpu.regs.set_r(6, 0x6666_6666);
+            cpu.regs.set_lr(0xDEAD_BEEF);
+            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, true)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..THUMB_PP_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, THUMB_PP_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        assert_eq!(a_cpu.regs.cpsr(), b_cpu.regs.cpsr());
+        for addr in (0x0300_7EE0..0x0300_7F00).step_by(4) {
+            assert_eq!(a_bus.read32(addr), b_bus.read32(addr), "stack {addr:#010X}");
+        }
+    }
+
+    /// POP {..,PC} through micro-ops: PC lands masked, SP advances past
+    /// both words, and the retire flushes the pipeline at the target.
+    #[test]
+    fn pop_pc_matches_legacy_and_flushes() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write16(0x0300_0000, 0xBD02); // pop {r1, pc}
+            bus.write32(0x0300_7EF8, 0xCAFE_BABE);
+            bus.write32(0x0300_7EFC, 0x0300_0041); // bit0 set: Thumb stays
+            bus.write16(0x0300_0040, 0x2707); // mov r7, #7 (target)
+            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            cpu.regs.set_pc(0x0300_0000);
+            cpu.regs.set_sp(0x0300_7EF8);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                true,
+            )
+            .expect("pop-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(a_cpu.regs.r(1), 0xCAFE_BABE);
+        assert_eq!(b_cpu.regs.r(1), 0xCAFE_BABE);
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0044); // target + Thumb pipeline lead
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+        assert_eq!(b_cpu.regs.sp(), 0x0300_7F00);
+        assert_eq!(b_cpu.regs.sp(), a_cpu.regs.sp());
+    }
+
+    #[test]
+    fn push_pop_tick_parity() {
+        let regs = [
+            (0, 0x1111_1111),
+            (1, 0x2222_2222),
+            (2, 0x3333_3333),
+            (3, 0x4444_4444),
+            (4, 0x5555_5555),
+            (6, 0x6666_6666),
+            (14, 0xDEAD_BEEF),
+        ];
+        let (at, bt, av, bv) = tick_parity(
+            &THUMB_PP_CORPUS,
+            true,
+            0x0000,
+            0x0300_0000,
+            &regs,
+            THUMB_PP_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 4 corpus: Thumb LDMIA/STMIA (non-empty; empty forms stay
+    // legacy). Bases preset in Rust; r1/r2 start at A, r3 at A+16.
+    // The corpus exercises the STM stored-base quirk (r1 in its own
+    // list) and the LDM base-in-list no-writeback rule (r3).
+    const THUMB_MULT_CORPUS: [u32; 5] = [
+        0xC10F, // stmia r1!, {r0-r3}
+        0xCBF0, // ldmia r2!, {r4-r7}
+        0xC205, // stmia r2!, {r2,r0} (stored-base quirk)
+        0xCB18, // ldmia r3, {r3,r4} (base in list: no writeback)
+        0x2707, // mov r7, #7
+    ];
+    const THUMB_MULT_REGS: [(usize, u32); 7] = [
+        (0, 0x1111_1111),
+        (1, 0x0300_0100),
+        (2, 0x0300_0100),
+        (3, 0x0300_0110),
+        (4, 0x4444_4444),
+        (5, 0x5555_5555),
+        (6, 0x6666_6666),
+    ];
+
+    #[test]
+    fn micro_op_ldm_stm_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_MULT_CORPUS,
+                true,
+                waitcnt,
+                THUMB_MULT_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &THUMB_MULT_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        // ROM-code variant: data still hits IWRAM, batch erase is the
+        // ROM-code whole-word path.
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_MULT_CORPUS,
+                true,
+                waitcnt,
+                THUMB_MULT_CORPUS.len(),
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &THUMB_MULT_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn empty_ldm_stm_stays_legacy() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(1, 0x0300_0100);
+        assert!(expand_thumb(0xC000, &regs).is_none());
+        assert!(expand_thumb(0xC800, &regs).is_none());
+        let ops = expand_thumb(0xC10F, &regs).expect("non-empty stmia expands");
+        // BlockStart + 4 words + BlockEnd + 1 trailing = 7.
+        assert_eq!(ops.len(), 7);
+    }
+
+    /// LDM/STM memory effects under both engines: block words as well
+    /// as registers and totals must agree.
+    #[test]
+    fn ldm_stm_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in THUMB_MULT_CORPUS.iter().enumerate() {
+                bus.write16(0x0300_0000 + (i as u32) * 2, (*w & 0xFFFF) as u16);
+            }
+            for (r, v) in THUMB_MULT_REGS {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, true)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..THUMB_MULT_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, THUMB_MULT_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        assert_eq!(a_cpu.regs.cpsr(), b_cpu.regs.cpsr());
+        for addr in (0x0300_0100..0x0300_0130).step_by(4) {
+            assert_eq!(a_bus.read32(addr), b_bus.read32(addr), "block {addr:#010X}");
+        }
+    }
+
+    #[test]
+    fn ldm_stm_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &THUMB_MULT_CORPUS,
+            true,
+            0x0000,
+            0x0300_0000,
+            &THUMB_MULT_REGS,
+            THUMB_MULT_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
     }
 
     #[test]
@@ -758,6 +1559,7 @@ mod tests {
         waitcnt: u16,
         code_base: u32,
         reg_init: &[(usize, u32)],
+        steps: usize,
     ) -> (u32, u32, u32, u32) {
         fn setup(
             code: &[u32],
@@ -796,7 +1598,7 @@ mod tests {
         // Legacy rhythm: whole step, then one tick per returned cycle.
         let (mut a_cpu, mut a_bus) = setup(code, thumb, waitcnt, code_base, reg_init);
         let mut a_ticks = 0u32;
-        for _ in 0..code.len() {
+        for _ in 0..steps {
             let c = a_cpu.step_legacy(&mut a_bus).max(1);
             for _ in 0..c {
                 a_bus.tick();
@@ -810,7 +1612,7 @@ mod tests {
         let mut b_queue = std::collections::VecDeque::new();
         let mut b_ticks = 0u32;
         let mut retired = 0usize;
-        while retired < code.len() {
+        while retired < steps {
             let mut acc = 0i64;
             loop {
                 let c = step_op(
@@ -849,7 +1651,41 @@ mod tests {
             0x9802u32, // ldr r0, [sp, #8] (sp data, covered)
             0x9003,    // str r0, [sp, #12]
         ];
-        let (at, bt, av, bv) = tick_parity(&code, true, 0x0000, 0x0300_0000, &[]);
+        let (at, bt, av, bv) = tick_parity(&code, true, 0x0000, 0x0300_0000, &[], code.len());
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    #[test]
+    fn conditional_branch_loop_tick_parity() {
+        let arm = [
+            0xE3A0_0000,
+            0xE280_0001,
+            0xE350_0003,
+            0x1AFF_FFFC,
+            0xE3A0_1007,
+        ];
+        let thumb = [0x2000, 0x3001, 0x2803, 0xD1FC, 0x2107];
+
+        let (at, bt, av, bv) = tick_parity(&arm, false, 0x4014, 0x0300_0000, &[], 11);
+        assert_eq!((at, bt), (at, at), "ARM ticks diverge");
+        assert_eq!((av, bv), (av, av), "ARM timer span diverges");
+
+        let (at, bt, av, bv) = tick_parity(&thumb, true, 0x4014, 0x0300_0000, &[], 11);
+        assert_eq!((at, bt), (at, at), "Thumb ticks diverge");
+        assert_eq!((av, bv), (av, av), "Thumb timer span diverges");
+    }
+
+    #[test]
+    fn register_offset_load_store_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &THUMB_REG_LS_CORPUS,
+            true,
+            0x4014,
+            0x0300_0000,
+            &[(0, 0x0000_80FF), (1, 0x0300_0100), (2, 4)],
+            THUMB_REG_LS_CORPUS.len(),
+        );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
