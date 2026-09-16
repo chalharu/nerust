@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use crate::cpu::arm::is_psr_transfer;
 use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
-use crate::cpu::arm_opcodes::helpers::condition_passed;
+use crate::cpu::arm_opcodes::helpers::{barrel_shift, condition_passed};
 use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
@@ -144,6 +144,10 @@ pub struct MemAccess {
     pub signed_load: bool,
     pub post_indexed: bool,
     pub writeback: bool,
+    /// Precomputed store word (ARM STR of R15: instruction+12).
+    /// Snapshot at expansion; registers are frozen across one
+    /// instruction, matching the legacy in-handler evaluation.
+    pub store_value: Option<u32>,
 }
 
 /// Register effect of an ALU-immediate instruction, fully decoded.
@@ -194,7 +198,7 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         return None;
     }
     let ops = expand_arm_alu_imm(instr)
-        .or_else(|| expand_arm_single(instr))
+        .or_else(|| expand_arm_single(instr, regs))
         .or_else(|| expand_arm_block(instr, regs))
         .or_else(|| expand_arm_dp_reg(instr, regs))
         .or_else(|| expand_arm_mul(instr, regs))?;
@@ -412,40 +416,66 @@ fn expand_arm_alu_imm(instr: u32) -> Option<Vec<MicroOp>> {
     })])
 }
 
-/// ARM LDR/STR word-immediate and LDRH/STRH unsigned-immediate
-/// (P=1, W=0, no R15). Load expands to [Read, I, I] (= 3) and store to
-/// [Write, I] (= 2), matching `single_transfer`/`halfword_transfer`.
-fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
+/// ARM LDR/STR word/byte (immediate and register offset) and
+/// LDRH/STRH unsigned-immediate, including R15 base/dest. Register
+/// offsets snapshot the barrel-shifted Rm at expansion (frozen
+/// registers); STR of R15 snapshots instruction+12. Loads expand to
+/// [Read, I, I] (= 3; +2 more for R15 loads) and stores to [Write, I]
+/// (= 2), matching `single_transfer`/`halfword_transfer`.
+fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let l = (instr >> 20) & 1 == 1;
     let pre_indexed = (instr >> 24) & 1 == 1;
     let writeback = !pre_indexed || (instr >> 21) & 1 == 1;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
-    if rn == 15 || rd == 15 {
-        return None;
-    }
     let subtract = (instr >> 23) & 1 == 0;
-    // Word/byte immediate class (bits27-26 == 01, I == 0).
-    if (instr >> 26) & 0x3 == 0b01 && (instr >> 25) & 1 == 0 {
+    // STR of R15 stores instruction+12 (legacy `single_transfer`).
+    let store_value = if !l && rd == 15 {
+        Some(regs.r(15).wrapping_add(4))
+    } else {
+        None
+    };
+    // Pad the legacy base: loads 3 (5 for R15), stores 2.
+    let ops = |acc: MemAccess| {
+        if l {
+            let mut ops = vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
+            if rd == 15 {
+                ops.extend([MicroOp::Internal, MicroOp::Internal]);
+            }
+            ops
+        } else {
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        }
+    };
+    // Word/byte class (bits27-26 == 01), immediate or register offset.
+    if (instr >> 26) & 0x3 == 0b01 {
+        let offset = if (instr >> 25) & 1 != 0 {
+            let rm_val = regs.r((instr & 0xF) as usize);
+            let (shifted, _) = barrel_shift(
+                rm_val,
+                ((instr >> 5) & 0b11) as u8,
+                (instr >> 7) & 0x1F,
+                regs.cpsr_c(),
+            );
+            shifted
+        } else {
+            instr & 0xFFF
+        };
         let acc = MemAccess {
             width: if instr & (1 << 22) != 0 { 1 } else { 4 },
             rd,
             rn,
-            offset: instr & 0xFFF,
+            offset,
             offset_register: None,
             subtract,
             is_sp: false,
             signed_load: false,
             post_indexed: !pre_indexed,
             writeback,
+            store_value,
         };
-        // Totals match legacy handler returns (load 3, store 2); Internals pad the base.
         // Same bus calls and order as legacy, so totals agree by construction.
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(ops(acc));
     }
     // Halfword-immediate class (bits27-25 == 000, imm bit22) with the
     // full 1SH1 tag (bits7-4 == 1011, S:H == 0:1 unsigned). The full tag
@@ -464,13 +494,9 @@ fn expand_arm_single(instr: u32) -> Option<Vec<MicroOp>> {
             signed_load: false,
             post_indexed: !pre_indexed,
             writeback,
+            store_value,
         };
-        // Totals match legacy handler returns (load 3, store 2).
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(ops(acc));
     }
     None
 }
@@ -776,6 +802,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             signed_load,
             post_indexed: false,
             writeback: false,
+            store_value: None,
         };
         return Some(if load {
             vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
@@ -798,6 +825,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             signed_load: false,
             post_indexed: false,
             writeback: false,
+            store_value: None,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -822,6 +850,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             signed_load: false,
             post_indexed: false,
             writeback: false,
+            store_value: None,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -846,6 +875,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             signed_load: false,
             post_indexed: false,
             writeback: false,
+            store_value: None,
         };
         // Totals match legacy handler returns (load 3, store 2).
         return Some(if l {
@@ -900,10 +930,11 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
 /// call site; the bus calls charge into `access_wait_cycles`.
 fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     let (addr, writeback) = resolve_addr(regs, a);
+    let value = a.store_value.unwrap_or_else(|| regs.r(a.rd));
     match a.width {
-        4 => bus.write32(addr, regs.r(a.rd)),
-        2 => bus.write16(addr, regs.r(a.rd) as u16),
-        1 => bus.write8(addr, regs.r(a.rd) as u8),
+        4 => bus.write32(addr, value),
+        2 => bus.write16(addr, value as u16),
+        1 => bus.write8(addr, value as u8),
         _ => unreachable!(),
     }
     if a.writeback {
@@ -2710,6 +2741,190 @@ mod tests {
     #[test]
     fn spadd_tick_parity() {
         let (at, bt, av, bv) = tick_parity(&THUMB_SPADD_CORPUS, true, 0x0000, 0x0300_0000, &[], 5);
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 12 corpus: ARM single-transfer remainder (register
+    // offsets incl. shift, R15 base/dest, halfword-imm R15). Cell A is
+    // EWRAM; the [pc] loads read code words as data (deterministic).
+    const ARM_SINGLEREST_CORPUS: [u32; 8] = [
+        0xE791_0002, // ldr r0, [r1, r2]
+        0xE7C1_3004, // strb r3, [r1, r4]
+        0xE790_2104, // ldr r2, [r0, r4, lsl #2]
+        0xE59F_5000, // ldr r5, [pc]
+        0xE581_F004, // str r15, [r1, #4]
+        0xE1DF_00B0, // ldrh r0, [pc]
+        0xE1C1_F0B0, // strh r15, [r1]
+        0xE3A0_7007, // mov r7, #7
+    ];
+    const ARM_SINGLEREST_MEM: [(u32, u8, u32); 3] = [
+        (0x0200_0000, 4, 0xDEAD_0001),
+        (0x0200_0004, 4, 0x0200_0020),
+        (0x0200_0020, 4, 0xCAFE_BABE),
+    ];
+    const ARM_SINGLEREST_REGS: [(usize, u32); 5] =
+        [(1, 0x0200_0000), (2, 4), (3, 0x1234_5678), (4, 0), (5, 0)];
+
+    #[test]
+    fn micro_op_arm_singlerest_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SINGLEREST_CORPUS,
+                false,
+                waitcnt,
+                ARM_SINGLEREST_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &ARM_SINGLEREST_MEM,
+                &ARM_SINGLEREST_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_SINGLEREST_CORPUS,
+                false,
+                waitcnt,
+                ARM_SINGLEREST_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &ARM_SINGLEREST_MEM,
+                &ARM_SINGLEREST_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_singlerest_shapes() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(1, 0x0200_0000);
+        regs.set_r(2, 4);
+        // Register offset: [Read, I, I].
+        let ops = expand_arm(0xE791_0002, &regs).expect("reg-offset expands");
+        assert_eq!(ops.len(), 3);
+        // R15 load: +2 refill. R15 store: plain [Write, I].
+        let ops = expand_arm(0xE59F_F000, &regs).expect("ldr-pc expands");
+        assert_eq!(ops.len(), 5);
+        let ops = expand_arm(0xE581_F004, &regs).expect("str-r15 expands");
+        assert_eq!(ops.len(), 2);
+        let ops = expand_arm(0xE1DF_00B0, &regs).expect("ldrh-pc expands");
+        assert_eq!(ops.len(), 3);
+    }
+
+    /// Single-transfer memory effects under both engines: stored words
+    /// (incl. STR R15 snapshots) as well as registers and totals agree.
+    #[test]
+    fn arm_singlerest_memory_matches_legacy() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            for (i, w) in ARM_SINGLEREST_CORPUS.iter().enumerate() {
+                bus.write32(0x0300_0000 + (i as u32) * 4, *w);
+            }
+            for (addr, width, val) in ARM_SINGLEREST_MEM {
+                match width {
+                    4 => bus.write32(addr, val),
+                    2 => bus.write16(addr, (val & 0xFFFF) as u16),
+                    _ => bus.write8(addr, (val & 0xFF) as u8),
+                }
+            }
+            for (r, v) in ARM_SINGLEREST_REGS {
+                cpu.regs.set_r(r, v);
+            }
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        fn drain_micro(cpu: &mut GbaCpu, bus: &mut GbaMemoryBus, steps: usize) -> u32 {
+            let mut total = 0u32;
+            let mut queue = std::collections::VecDeque::new();
+            for _ in 0..steps {
+                let mut acc = 0i64;
+                loop {
+                    acc += step_op(&mut cpu.regs, bus, &mut cpu.pipeline, &mut queue, false)
+                        .expect("corpus must be covered");
+                    if queue.is_empty() {
+                        break;
+                    }
+                }
+                total += acc.max(1) as u32;
+            }
+            total
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut ta = 0u32;
+        for _ in 0..ARM_SINGLEREST_CORPUS.len() {
+            ta += a_cpu.step_legacy(&mut a_bus);
+        }
+        let tb = drain_micro(&mut b_cpu, &mut b_bus, ARM_SINGLEREST_CORPUS.len());
+        assert_eq!((ta, tb), (ta, ta));
+        for r in 0..16 {
+            assert_eq!(a_cpu.regs.r(r), b_cpu.regs.r(r), "r{r}");
+        }
+        assert_eq!(a_cpu.regs.cpsr(), b_cpu.regs.cpsr());
+        for addr in (0x0200_0000..0x0200_0028).step_by(4) {
+            assert_eq!(a_bus.read32(addr), b_bus.read32(addr), "cell {addr:#010X}");
+        }
+    }
+
+    /// LDR pc, [pc]: R15 load diverts; retire flushes at target + lead.
+    #[test]
+    fn arm_ldr_pc_matches_legacy_and_flushes() {
+        fn setup() -> (GbaCpu, GbaMemoryBus) {
+            let mut cpu = GbaCpu::post_bios();
+            let mut bus = GbaMemoryBus::new();
+            bus.write32(0x0300_0000, 0xE59F_F000); // ldr pc, [pc]
+            bus.write32(0x0300_0008, 0x0300_0010);
+            bus.write32(0x0300_0010, 0xE3A0_7007); // mov r7, #7 (target)
+            cpu.regs.set_pc(0x0300_0000);
+            fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+            bus.take_access_wait_cycles();
+            (cpu, bus)
+        }
+        let (mut a_cpu, mut a_bus) = setup();
+        let ta = a_cpu.step_legacy(&mut a_bus);
+        let (mut b_cpu, mut b_bus) = setup();
+        let mut queue = std::collections::VecDeque::new();
+        let mut acc = 0i64;
+        loop {
+            acc += step_op(
+                &mut b_cpu.regs,
+                &mut b_bus,
+                &mut b_cpu.pipeline,
+                &mut queue,
+                false,
+            )
+            .expect("ldr-pc must be covered");
+            if queue.is_empty() {
+                break;
+            }
+        }
+        let tb = acc.max(1) as u32;
+        assert_eq!((ta, tb), (ta, ta));
+        assert_eq!(b_cpu.regs.pc(), 0x0300_0018); // target + ARM lead
+        assert_eq!(b_cpu.regs.pc(), a_cpu.regs.pc());
+    }
+
+    #[test]
+    fn arm_singlerest_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_SINGLEREST_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_SINGLEREST_REGS,
+            ARM_SINGLEREST_CORPUS.len(),
+        );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");
     }
