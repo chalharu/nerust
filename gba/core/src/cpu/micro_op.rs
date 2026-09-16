@@ -8,6 +8,10 @@ use crate::cpu::arm::is_psr_transfer;
 use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
 use crate::cpu::arm_opcodes::helpers::condition_passed;
+use crate::cpu::arm_opcodes::multiply::{
+    handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
+};
+use crate::cpu::thumb_opcodes::alu::handle as thumb_alu_handle;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -29,6 +33,11 @@ pub enum MicroOp {
     /// `Internal`s pad it). Costs +1 here; the legacy path performs no
     /// bus access, so only the cycle split is new.
     CommitDpReg(u32),
+    /// Multiply commit: raw word plus mode. ARM short/long delegate to
+    /// the legacy handler; Thumb MUL mirrors the decoder preamble
+    /// (fetch break + P-ON erase) plus the ALU handler. Costs +1; the
+    /// m internal ticks become trailing `Internal` event points.
+    CommitMul(MulEffect),
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
@@ -87,6 +96,13 @@ pub struct BlockWord {
     /// expansion; registers are frozen across the words of one
     /// instruction, so this matches the legacy in-loop evaluation.
     pub store_value: Option<u32>,
+}
+
+/// Multiply commit descriptor: raw word (`thumb` form in low 16 bits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MulEffect {
+    pub instr: u32,
+    pub thumb: bool,
 }
 
 /// Final execute-stage effect of a direct branch. The two preceding
@@ -164,7 +180,8 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let ops = expand_arm_alu_imm(instr)
         .or_else(|| expand_arm_single(instr))
         .or_else(|| expand_arm_block(instr, regs))
-        .or_else(|| expand_arm_dp_reg(instr, regs))?;
+        .or_else(|| expand_arm_dp_reg(instr, regs))
+        .or_else(|| expand_arm_mul(instr, regs))?;
     Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
@@ -222,6 +239,35 @@ fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     ops.extend(vec![MicroOp::Internal; trailing as usize]);
     Some(ops)
 }
+
+/// ARM multiply (short and long): the exact decoder masks, which route
+/// to `multiply::handle` before anything else. Expansion is
+/// [CommitMul, I..] padded to the legacy base (short MUL 1S+mI,
+/// MLA +1I; long 1S+mI+1I, accumulate +1I); the commit delegates to
+/// the legacy handler, so only the internal-tick split is new.
+fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+    if (instr & 0x0F8000F0) != 0x00800090 && (instr & 0x0FC000F0) != 0x00000090 {
+        return None;
+    }
+    let rs_val = regs.r(((instr >> 8) & 0xF) as usize);
+    let trailing = if (instr >> 23) & 1 != 0 {
+        // Long: m from the signed/unsigned top-bit rule, +1I, +1I accumulate.
+        let signed = (instr >> 22) & 1 != 0;
+        let accumulate = (instr >> 21) & 1 != 0;
+        multiplier_cycles_long(rs_val, signed) + 1 + u32::from(accumulate)
+    } else {
+        // Short: m +1I for MLA.
+        multiplier_cycles(rs_val) + ((instr >> 21) & 1)
+    };
+    let mut ops = vec![MicroOp::CommitMul(MulEffect {
+        instr,
+        thumb: false,
+    })];
+    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    Some(ops)
+}
+
+/// ARM LDM/STM, non-empty lists without the S bit (user-bank and
 /// CPSR-restoring forms stay on the legacy path). P/U address modes,
 /// writeback (skipped for the UNPREDICTABLE load-with-base-in-list),
 /// the STM stored-base quirk, and PC loads (retire flushes) are
@@ -463,6 +509,17 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             set_flags: true,
             thumb_mov: matches!(op, AluImmOp::Mov),
         })]);
+    }
+    // Thumb MUL (op 0xD in 0x4000..=0x43FF): m from the incoming Rd,
+    // mirroring the decoder preamble; other ALU ops stay legacy.
+    if (instr & 0xFFC0) == 0x4340 {
+        let m = multiplier_cycles(regs.r((instr & 0x7) as usize));
+        let mut ops = vec![MicroOp::CommitMul(MulEffect {
+            instr: u32::from(instr),
+            thumb: true,
+        })];
+        ops.extend(vec![MicroOp::Internal; m as usize]);
+        return Some(ops);
     }
     expand_thumb_push_pop(instr, regs)
         .or_else(|| expand_thumb_multiple(instr, regs))
@@ -869,6 +926,20 @@ pub fn step_op(
             // legacy handler (frozen oracle) and carry +1; trailing
             // Internals pad the legacy base.
             dp_handle(regs, bus, instr);
+            cycles += 1;
+        }
+        MicroOp::CommitMul(m) => {
+            if m.thumb {
+                // Mirrors the decoder preamble (fetch break + P-ON
+                // erase) plus the ALU handler; m comes from Rd.
+                let instr = m.instr as u16;
+                let ticks = multiplier_cycles(regs.r((instr & 0x7) as usize));
+                bus.charge_fetch_stream_break();
+                bus.erase_for_multiply(ticks, 2);
+                thumb_alu_handle(regs, instr);
+            } else {
+                mul_handle(regs, bus, m.instr);
+            }
             cycles += 1;
         }
         MicroOp::TakenBranch(branch) => {
@@ -2042,10 +2113,9 @@ mod tests {
     #[test]
     fn arm_dpreg_gates_stay_legacy() {
         let regs = CpuRegisters::post_bios();
-        // Multiply / SWP / MRS / BX / LDRSH-register share the DP class.
-        // (Immediate halfwords like 0xE1D200B0 stay single-covered.)
+        // SWP / MRS / BX / LDRSH-register share the DP class (MUL is
+        // covered by its own branch, asserted in arm_mul_padding).
         for instr in [
-            0xE002_0091, // mul r2, r0, r1
             0xE102_0091, // swp r0, r1, [r2]
             0xE10F_0000, // mrs r0, cpsr
             0xE12F_FF11, // bx r1
@@ -2070,6 +2140,157 @@ mod tests {
             0x0300_0000,
             &ARM_DPREG_REGS,
             ARM_DPREG_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Slice 8 corpus: ARM multiply (short MUL/MLA/S, long UMULL).
+    const ARM_MUL_CORPUS: [u32; 5] = [
+        0xE000_0291, // mul r0, r1, r2
+        0xE022_0391, // mla r2, r1, r3, r0
+        0xE001_0291, // muls r0, r1, r2
+        0xE083_2190, // umull r3, r2, r0, r1
+        0xE3A0_7007, // mov r7, #7
+    ];
+    const ARM_MUL_REGS: [(usize, u32); 4] = [(0, 3), (1, 4), (2, 7), (3, 5)];
+
+    #[test]
+    fn micro_op_arm_mul_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_MUL_CORPUS,
+                false,
+                waitcnt,
+                ARM_MUL_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0300_0000,
+                None,
+                &[],
+                &ARM_MUL_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &ARM_MUL_CORPUS,
+                false,
+                waitcnt,
+                ARM_MUL_CORPUS.len(),
+                0xE1DD_20B0,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &ARM_MUL_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn arm_mul_padding_matches_legacy_base() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(2, 7);
+        // MUL m=1: commit + 1I.
+        let ops = expand_arm(0xE000_0291, &regs).expect("mul expands");
+        assert_eq!(ops.len(), 2);
+        // MLA m=1: commit + 2I.
+        let ops = expand_arm(0xE022_0391, &regs).expect("mla expands");
+        assert_eq!(ops.len(), 3);
+        // UMULL ticks=1: commit + 2I.
+        let ops = expand_arm(0xE083_2190, &regs).expect("umull expands");
+        assert_eq!(ops.len(), 3);
+        // Full-width multiplier: m=4.
+        regs.set_r(2, 0x8000_0000);
+        let ops = expand_arm(0xE000_0291, &regs).expect("wide mul expands");
+        assert_eq!(ops.len(), 5);
+        // Plain DP beside the masks stays on its own path.
+        assert!(expand_arm_mul(0xE081_0002, &regs).is_none());
+    }
+
+    #[test]
+    fn arm_mul_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &ARM_MUL_CORPUS,
+            false,
+            0x4014,
+            0x0300_0000,
+            &ARM_MUL_REGS,
+            ARM_MUL_CORPUS.len(),
+        );
+        assert_eq!((at, bt), (at, at), "ticks diverge");
+        assert_eq!((av, bv), (av, av), "timer span diverges");
+    }
+
+    // Thumb MUL corpus (m from the incoming Rd).
+    const THUMB_MUL_CORPUS: [u32; 3] = [
+        0x4341, // mul r1, r0
+        0x434A, // mul r2, r1
+        0x2707, // mov r7, #7
+    ];
+    const THUMB_MUL_REGS: [(usize, u32); 3] = [(0, 3), (1, 4), (2, 5)];
+
+    #[test]
+    fn micro_op_thumb_mul_matches_legacy() {
+        for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_MUL_CORPUS,
+                true,
+                waitcnt,
+                THUMB_MUL_CORPUS.len(),
+                0x886A,
+                0x0300_0000,
+                None,
+                &[],
+                &THUMB_MUL_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+            assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+        }
+        for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+            let (ta, tb, regs_equal, follow) = differential(
+                &THUMB_MUL_CORPUS,
+                true,
+                waitcnt,
+                THUMB_MUL_CORPUS.len(),
+                0x886A,
+                0x0800_0100,
+                Some(rom_cart()),
+                &[],
+                &THUMB_MUL_REGS,
+            );
+            assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+            assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+            assert!(follow, "rom waitcnt={waitcnt:#06x}");
+        }
+    }
+
+    #[test]
+    fn thumb_mul_gate_and_padding() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_r(1, 4);
+        // AND beside the MUL encoding stays legacy.
+        assert!(expand_thumb(0x4008, &regs).is_none());
+        // MUL m=1 (Rd=4): commit + 1I.
+        let ops = expand_thumb(0x4341, &regs).expect("thumb mul expands");
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn thumb_mul_tick_parity() {
+        let (at, bt, av, bv) = tick_parity(
+            &THUMB_MUL_CORPUS,
+            true,
+            0x0000,
+            0x0300_0000,
+            &THUMB_MUL_REGS,
+            THUMB_MUL_CORPUS.len(),
         );
         assert_eq!((at, bt), (at, at), "ticks diverge");
         assert_eq!((av, bv), (av, av), "timer span diverges");

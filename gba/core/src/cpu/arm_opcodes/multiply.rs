@@ -146,7 +146,7 @@ pub(crate) fn multiplier_cycles(rs_val: u32) -> u32 {
 
 /// GBATEK ARM Multiply Long: m counts Rs top bits that are "all zero"
 /// (UMULL/UMLAL) or "all zero or all one" (SMULL/SMLAL).
-fn multiplier_cycles_long(rs_val: u32, signed: bool) -> u32 {
+pub(crate) fn multiplier_cycles_long(rs_val: u32, signed: bool) -> u32 {
     let top = |mask: u32, ones: u32| rs_val & mask == 0 || (signed && rs_val & mask == ones);
     if top(0xFFFFFF00, 0xFFFFFF00) {
         1
