@@ -155,6 +155,10 @@ pub struct GbaMemoryBus {
     pf_start: u32,
     pf_end: u32,
     pf_valid: bool,
+    /// A taken branch may consume already-buffered opcodes. Once they
+    /// drain, the first fetch outside the window is non-sequential; the
+    /// ordinary linear fetch stream resumes after that miss.
+    pf_branch_drain: bool,
     /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
     /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
     access_wait_cycles: i64,
@@ -338,6 +342,7 @@ impl GbaMemoryBus {
             pf_start: 0,
             pf_end: 0,
             pf_valid: false,
+            pf_branch_drain: false,
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
@@ -510,10 +515,12 @@ impl GbaMemoryBus {
             // the 16-bit-bus 32bit=2 split.
             0x07000000..=0x07FFFFFF => 1 + self.display_stall(addr),
             0x08000000..=0x0DFFFFFF => {
-                // Opcode fetches follow the prefetch buffer window (S on
-                // hit, N on miss); data accesses are nonsequential
-                // (continuation words use the sequential data path); the
-                // fetch-stream break is pre-paid per instruction.
+                // Linear opcode fetches follow the fetch stream at S cost.
+                // After a branch, already-buffered targets still cost S,
+                // but the first fetch beyond that window costs N. Data
+                // accesses are nonsequential (continuation words use the
+                // sequential data path); the fetch-stream break is pre-paid
+                // per instruction.
                 let sequential = if is_opcode {
                     // Fetches issued while a DMA burst is pending (trigger
                     // stored, bus handover imminent) cost N: the arbitrated
@@ -525,6 +532,7 @@ impl GbaMemoryBus {
                     !self.dma.has_pending()
                         && (if self.prefetch_enabled {
                             self.fetch_buffer_hit(addr)
+                                || (!self.pf_branch_drain && self.is_fetch_sequential(addr))
                         } else {
                             self.is_fetch_sequential(addr)
                         })
@@ -818,6 +826,7 @@ impl GbaMemoryBus {
             if crate::dma::is_rom(transfer.data_source) || crate::dma::is_rom(transfer.destination)
             {
                 self.pf_valid = false;
+                self.pf_branch_drain = false;
             }
             // Completion IRQs are raised via take_completion_interrupts
             // below (one tick after the final write).
@@ -1311,6 +1320,7 @@ impl GbaMemoryBus {
             self.pf_start = new_start;
             self.pf_end = new_start.wrapping_add(16).min(boundary);
             self.pf_valid = true;
+            self.pf_branch_drain = false;
         }
     }
 
@@ -1347,6 +1357,7 @@ impl GbaMemoryBus {
             self.pf_start = target;
             self.pf_end = target.wrapping_add(16).min(boundary);
             self.pf_valid = true;
+            self.pf_branch_drain = false;
         }
     }
 
@@ -1537,6 +1548,7 @@ impl GbaMemoryBus {
         self.fetch_addr = None;
         self.fetch_width = 0;
         self.pf_valid = false;
+        self.pf_branch_drain = false;
         self.last_prefetched_pc = 0;
         self.data_sequential_override = false;
     }
@@ -1550,6 +1562,7 @@ impl GbaMemoryBus {
         self.prev_width = 0;
         self.fetch_addr = None;
         self.fetch_width = 0;
+        self.pf_branch_drain = self.pf_valid;
         self.last_prefetched_pc = 0;
         self.data_sequential_override = false;
     }
@@ -2826,6 +2839,32 @@ mod tests {
         assert_eq!(bus.cycles_for(0x08000004, 4), 8);
         bus.write16(0x04000204, 0);
         assert!(!bus.prefetch_enabled);
+    }
+
+    #[test]
+    fn linear_prefetch_stream_stays_sequential_past_window() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14);
+        let _ = bus.fetch32(0x08000000);
+
+        for address in (0x08000004..0x08000040).step_by(4) {
+            assert_eq!(bus.opcode_cycles_for(address, 4), 6);
+            let _ = bus.fetch32(address);
+        }
+    }
+
+    #[test]
+    fn branch_consumes_buffer_before_nonsequential_refill() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 1 << 14);
+        let _ = bus.fetch32(0x08000000);
+        bus.invalidate_prefetch_for_branch();
+
+        for address in [0x08000004, 0x08000008, 0x0800000C, 0x08000010] {
+            assert_eq!(bus.opcode_cycles_for(address, 4), 6);
+            let _ = bus.fetch32(address);
+        }
+        assert_eq!(bus.opcode_cycles_for(0x08000014, 4), 8);
     }
 
     #[test]
