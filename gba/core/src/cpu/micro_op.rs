@@ -1347,6 +1347,14 @@ pub fn step_op(
             // issue-time sampling; see the design doc. The queue/drain
             // machinery stays as the verified-neutral execution model.)
             apply_read(regs, bus, a);
+            // Thumb single word-load retire (mirrors the legacy handler
+            // hook; the legacy path never runs for covered classes).
+            // regs.pc() is the fetch PC here exactly as in step_thumb,
+            // so execute-PC adjacency validates the same way.
+            if is_thumb && a.width == 4 && !a.signed_load {
+                let (addr, _) = resolve_addr(regs, a);
+                bus.note_thumb_single_load(regs.pc(), addr);
+            }
             cycles += 1;
         }
         MicroOp::MemWrite(a) => {
@@ -1357,6 +1365,10 @@ pub fn step_op(
             // Legacy-identical order: bus access, then fetch-stream-break.
             regs.set_r(r.rd, bus.read32(r.addr));
             bus.charge_fetch_stream_break();
+            // Thumb literal retire (loads the marker chain like a load).
+            if is_thumb {
+                bus.note_thumb_single_load(regs.pc(), r.addr);
+            }
             cycles += 1;
         }
         MicroOp::BlockStart(e) => {

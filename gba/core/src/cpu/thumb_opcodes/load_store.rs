@@ -6,6 +6,7 @@ pub fn handle_pc_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let imm = ((instr & 0xFF) as u32) << 2;
     let addr = (regs.pc() & !3).wrapping_add(imm);
     let val = bus.read32(addr);
+    bus.note_thumb_single_load(regs.pc(), addr);
     regs.set_r(rd, val);
     bus.charge_fetch_stream_break();
     3
@@ -26,6 +27,9 @@ pub fn handle_reg_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        if !b {
+            bus.note_thumb_single_load(regs.pc(), addr);
+        }
         bus.charge_fetch_stream_break();
         3
     } else {
@@ -101,6 +105,9 @@ pub fn handle_imm_offset(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr:
             bus.read32(addr)
         };
         regs.set_r(rd, val);
+        if !b {
+            bus.note_thumb_single_load(regs.pc(), addr);
+        }
         bus.charge_fetch_stream_break();
         3
     } else {
@@ -140,6 +147,7 @@ pub fn handle_sp_relative(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
     let addr = regs.sp().wrapping_add(imm);
     if l {
         regs.set_r(rd, bus.read32(addr));
+        bus.note_thumb_single_load(regs.pc(), addr);
         bus.charge_fetch_stream_break();
         3
     } else {
