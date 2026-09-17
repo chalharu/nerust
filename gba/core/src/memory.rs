@@ -133,10 +133,10 @@ pub struct GbaMemoryBus {
     /// True when a ROM word appeared inside the batch (OAM-overflow LDM
     /// into ROM): HW (mgba-suite Timing OAM cells) applies NO prefetch
     /// erase at all then, so `end_block_batch` undoes the tracked erases.
-    /// Pure non-ROM bursts keep word1 + marginals + floor.
-    /// Known residual (12 OAM-overflow cells, both modes): HW adds +1 iff
-    /// 1+ ROM S-words and (S-word count + S-speed) is odd; uniform batch
-    /// +1s churn the passing counterparts (verified). Do not refit.
+    /// Pure non-ROM bursts keep word1 + marginals + floor. The remaining
+    /// +1 on mixed bursts (S-words + S-speed parity) arrives via the fill
+    /// clock (`fill_collision`): open-bus words advance it, the first ROM
+    /// word collides on a finishing fill.
     block_batch_has_rom: bool,
     /// Raw bulk mode (HLE CpuSet/CpuFastSet loops): HW BIOS runs from
     /// BIOS ROM (flat waits, no GamePak-prefetch erase dynamics), so bulk
@@ -180,6 +180,18 @@ pub struct GbaMemoryBus {
     /// drain, the first fetch outside the window is non-sequential; the
     /// ordinary linear fetch stream resumes after that miss.
     pf_branch_drain: bool,
+    /// Prefetch fill phase (bus-wait clock): ticks since the last fill
+    /// redirect, modulo the fill duty below. A ROM data access issued
+    /// while a half-word fill finishes costs one arbitration cycle
+    /// (Mesen `GbaRomPrefetch::Reset` + NanoBoyAdvance `Bus::StopPrefetch`
+    /// agree on the mechanism; the countdown values are pinned by the
+    /// mgba-suite Timing cells). Sequential opcode fetches advance by
+    /// exactly one duty (no-op); fetch misses and ROM data accesses
+    /// redirect (reset). Only ROM-bus occupancy advances it: CPU internal
+    /// cycles, IO/RAM accesses and whole DMA bursts freeze it (the bus
+    /// grant blocks fills), except open-bus data reads which free a
+    /// single ROM-bus slot.
+    fill_countdown: u32,
     /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
     /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
     access_wait_cycles: i64,
@@ -366,6 +378,7 @@ impl GbaMemoryBus {
             pf_end: 0,
             pf_valid: false,
             pf_branch_drain: false,
+            fill_countdown: 4,
             access_wait_cycles: 0,
             halted: false,
             halt_irq_mask: 0,
@@ -1244,6 +1257,73 @@ impl GbaMemoryBus {
         }
     }
 
+    /// Fill duty (bus-wait clock): the sequential access cost of the
+    /// owning code region in its fetch width. A sequential fetch lasts
+    /// exactly one duty, so buffer hits are phase no-ops by construction.
+    fn fill_duty(&self) -> u32 {
+        let width = if self.prefetch_thumb { 2 } else { 4 };
+        match self.last_opcode_addr {
+            Some(pc @ 0x08000000..=0x0DFFFFFF) => {
+                u32::from(self.gamepak_rom_cycles(pc, width, true)).max(2)
+            }
+            _ => {
+                if self.prefetch_thumb {
+                    2
+                } else {
+                    4
+                }
+            }
+        }
+    }
+
+    /// Redirect the fill clock (fetch miss, ROM data access): the
+    /// prefetcher restarts its fill cadence.
+    fn fill_reset(&mut self) {
+        self.fill_countdown = self.fill_duty();
+    }
+
+    /// Advance the fill clock by a ROM-bus occupancy (open-bus data
+    /// reads free a single slot). Wraps into `[1, duty]`.
+    fn fill_advance(&mut self, duration: u32) {
+        let duty = self.fill_duty();
+        let current = self.fill_countdown.clamp(1, duty);
+        self.fill_countdown = (current + duty - 1 - (duration % duty)) % duty + 1;
+    }
+
+    /// ROM data collision check: a ROM access issued while a
+    /// half-word fill finishes (countdown 1, or the ARM half-duty
+    /// midpoint) costs one arbitration cycle, then redirects the clock.
+    /// Scoped to prefetch-on ROM code; HLE bulk loops see flat waits
+    /// with no prefetch dynamics. Returns the 0/1 penalty.
+    fn fill_collision(&mut self) -> i64 {
+        if !self.prefetch_enabled {
+            return 0;
+        }
+        if !matches!(self.last_opcode_addr, Some(0x08000000..=0x0DFFFFFF)) {
+            return 0;
+        }
+        if self.block_batch_raw {
+            return 0;
+        }
+        let duty = self.fill_duty();
+        let mut countdown = self.fill_countdown;
+        if countdown < 1 || countdown > duty {
+            countdown = duty;
+        }
+        let fire = countdown == 1 || (!self.prefetch_thumb && countdown == (duty >> 1) + 1);
+        self.fill_countdown = duty;
+        i64::from(fire)
+    }
+
+    /// True for open-bus data reads (OAM mirror/unmapped space): the ROM
+    /// bus idles for one slot while the access completes elsewhere.
+    /// OAM-proper, RAM, IO and BIOS reads hold the bus grant instead.
+    fn fill_open_read(addr: u32) -> bool {
+        (0x0700_0400..=0x07FF_FFFF).contains(&addr)
+            || (0x0000_4000..=0x01FF_FFFF).contains(&addr)
+            || addr >= 0x1000_0000
+    }
+
     /// HLE SWI entry residual: the inline HLE skips the HW exception entry,
     /// whose cost differs by a tiny code-region constant. IWRAM is
     /// deliberately unadjusted; no code context yields 0.
@@ -1343,6 +1423,10 @@ impl GbaMemoryBus {
             self.pf_end = new_start.wrapping_add(16).min(boundary);
             self.pf_valid = true;
             self.pf_branch_drain = false;
+            // A missed fetch redirects the prefetcher: restart the fill
+            // cadence (sequential hits last exactly one duty, so they
+            // need no phase update).
+            self.fill_reset();
         }
     }
 
@@ -1625,6 +1709,14 @@ impl GbaMemoryBus {
                 contrib += self.prefetch_erase_delta(addr, u32::from(wait), true);
             }
         }
+        // Fill-collision arbitration: a ROM-bus data access issued while
+        // a half-word fill finishes costs one cycle; open-bus reads free
+        // a single ROM-bus slot for the fill clock.
+        if !is_opcode && (0x08000000..=0x0DFFFFFF).contains(&addr) {
+            contrib += self.fill_collision() as i32;
+        } else if !is_opcode && Self::fill_open_read(addr) {
+            self.fill_advance(1);
+        }
         self.access_wait_cycles += i64::from(contrib);
         let raw = self.read_mapped(addr, width);
         // prev_* tracks the last bus access of ANY kind (GBATEK N/S bus
@@ -1823,6 +1915,10 @@ impl GbaMemoryBus {
             contrib += batch_delta;
         } else {
             contrib += self.prefetch_erase_delta(addr, u32::from(wait), false);
+        }
+        // ROM stores collide with in-flight fills like ROM loads do.
+        if (0x08000000..=0x0DFFFFFF).contains(&addr) {
+            contrib += self.fill_collision() as i32;
         }
         self.access_wait_cycles += i64::from(contrib);
         if !(0x08000000..=0x0DFFFFFF).contains(&addr) {
@@ -2494,12 +2590,15 @@ impl GbaMemoryBus {
                     self.dma.retime_pending(channel, 3);
                 }
                 // Known residual (32 P-ON ROM-DMA cells): HW needs +1 more,
-                // S-polarized (reads fast, writes slow) and length-
-                // independent; uniform pending/completion/burst +1s churn
-                // exact cells (verified). Mesen (GbaRomPrefetch::Reset) and
-                // NBA (Bus::StopPrefetch) agree ROM-data/DMA stops cost +1
-                // iff fill last-cycle, but phase is core-specific (their
-                // scores unverifiable here). Do not refit.
+                // S-polarized (ROM reads at S=1, ROM writes at S=2) and
+                // length-independent. Per-access traces prove the CPU takes
+                // (trigger, END) and the DMA waits (pending, N/S, 2I) match
+                // HW exactly from/to at the same WAITCNT, and the fill
+                // clock sits at fresh duty at every burst head (fetch-miss
+                // resets + frozen non-ROM ticks), so no phase gate can
+                // discriminate them; uniform pending/completion/burst +1s
+                // churn exact cells (verified). Needs HW evidence. Do not
+                // refit.
                 // DMA CNT_H commit writes no longer break the CPU fetch
                 // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
                 // the DMA unit's own first access (modeled via is_first),
