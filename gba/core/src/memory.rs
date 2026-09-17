@@ -134,6 +134,9 @@ pub struct GbaMemoryBus {
     /// into ROM): HW (mgba-suite Timing OAM cells) applies NO prefetch
     /// erase at all then, so `end_block_batch` undoes the tracked erases.
     /// Pure non-ROM bursts keep word1 + marginals + floor.
+    /// Known residual (12 OAM-overflow cells, both modes): HW adds +1 iff
+    /// 1+ ROM S-words and (S-word count + S-speed) is odd; uniform batch
+    /// +1s churn the passing counterparts (verified). Do not refit.
     block_batch_has_rom: bool,
     /// Raw bulk mode (HLE CpuSet/CpuFastSet loops): HW BIOS runs from
     /// BIOS ROM (flat waits, no GamePak-prefetch erase dynamics), so bulk
@@ -2470,7 +2473,7 @@ impl GbaMemoryBus {
                 {
                     eprintln!(
                         "T dmaen ch{} @{}",
-                        (aligned - 0xB0) / 12,
+                        (aligned - 0x040000B0) / 12,
                         self.current_tcycle
                     );
                 }
@@ -2490,6 +2493,10 @@ impl GbaMemoryBus {
                     let channel = ((aligned - 0x040000B0) / 12) as usize;
                     self.dma.retime_pending(channel, 3);
                 }
+                // Known residual (32 P-ON ROM-DMA cells): HW needs +1 more,
+                // S-polarized (reads fast, writes slow) and length-
+                // independent; uniform pending/completion/burst +1s churn
+                // exact cells (verified). Do not refit.
                 // DMA CNT_H commit writes no longer break the CPU fetch
                 // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
                 // the DMA unit's own first access (modeled via is_first),
