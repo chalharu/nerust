@@ -2496,7 +2496,10 @@ impl GbaMemoryBus {
                 // Known residual (32 P-ON ROM-DMA cells): HW needs +1 more,
                 // S-polarized (reads fast, writes slow) and length-
                 // independent; uniform pending/completion/burst +1s churn
-                // exact cells (verified). Do not refit.
+                // exact cells (verified). Mesen (GbaRomPrefetch::Reset) and
+                // NBA (Bus::StopPrefetch) agree ROM-data/DMA stops cost +1
+                // iff fill last-cycle, but phase is core-specific (their
+                // scores unverifiable here). Do not refit.
                 // DMA CNT_H commit writes no longer break the CPU fetch
                 // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
                 // the DMA unit's own first access (modeled via is_first),
