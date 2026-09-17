@@ -10,6 +10,17 @@ use crate::timer::GbaTimers;
 // GbaMemoryBus — GBA 32bitフラットアドレス空間のFacade
 // ---------------------------------------------------------------------------
 
+/// True for Thumb opcodes performing a data access (loads, stores,
+/// push/pop, block transfers). Everything else (ALU, nop, address
+/// math, branches) leaves the bus idle for a cycle.
+fn thumb_next_is_datamover(next: u16) -> bool {
+    match next >> 12 {
+        0b0101 | 0b0110 | 0b0111 | 0b1000 | 0b1001 | 0b1100 => true,
+        0b1011 => (0xB400..=0xB5FF).contains(&next) || (0xBC00..=0xBDFF).contains(&next),
+        _ => false,
+    }
+}
+
 const BIOS_SIZE: usize = 0x4000;
 const EWRAM_SIZE: usize = 0x40000;
 const IWRAM_SIZE: usize = 0x8000;
@@ -135,6 +146,13 @@ pub struct GbaMemoryBus {
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
     /// owning code region (PC-tagged, like the CPU pipeline it models).
     last_opcode_addr: Option<u32>,
+    /// Execute PC of the last retired Thumb single word load (stack or
+    /// ROM data, literals included), with its stack-data class tag.
+    /// Readers validate adjacency (+2) or a 3-instruction window
+    /// (pc-diff <= 6), so branches, mode switches, IRQ and DMA need no
+    /// explicit clear (any of them breaks the distance).
+    prev_load_pc: Option<u32>,
+    prev_load_is_stack: bool,
     /// End address of the current prefetch run, capping overlap fills in
     /// `prefetch_erase_delta`.
     last_prefetched_pc: u32,
@@ -332,6 +350,8 @@ impl GbaMemoryBus {
             block_batch_has_rom: false,
             block_batch_raw: false,
             last_opcode_addr: None,
+            prev_load_pc: None,
+            prev_load_is_stack: false,
             last_prefetched_pc: 0,
             bios_protect: true,
             current_pc: 0x08000000,
@@ -1106,6 +1126,8 @@ impl GbaMemoryBus {
             self.postflg = 0;
             self.haltcnt = 0;
             self.prefetch_enabled = false;
+            self.prev_load_pc = None;
+            self.prev_load_is_stack = false;
             self.last_prefetched_pc = 0;
             self.halted = false;
             self.halt_irq_mask = 0;
@@ -1630,6 +1652,57 @@ impl GbaMemoryBus {
             let s = self.gamepak_rom_cycles(pc, 4, true);
             self.access_wait_cycles += i64::from(n.saturating_sub(s));
         }
+    }
+
+    /// S-fast GamePak fetch-stream gate for the single-load charges
+    /// below: code in ROM with the prefetcher on and sequential 16-bit
+    /// fetches at minimum wait.
+    fn single_load_gate(&self) -> bool {
+        if !self.prefetch_enabled {
+            return false;
+        }
+        match self.last_opcode_addr {
+            Some(pc @ 0x08000000..=0x0DFFFFFF) => self.gamepak_rom_cycles(pc, 2, true) == 2,
+            _ => false,
+        }
+    }
+
+    /// Thumb single word-load retire (literals included): a stack-data
+    /// (non-ROM) load leaves the S-fast prefetch stream one fetch short
+    /// when a word load retired within the last three instructions and
+    /// the already fetched next opcode is bus-busy. A ROM-data load owes
+    /// one more only when directly following a stack-data load. Stale
+    /// markers self-invalidate via execute-PC distance.
+    pub(crate) fn note_thumb_single_load(&mut self, regs_pc: u32, data_addr: u32) {
+        let exec = regs_pc.wrapping_sub(4);
+        let load_adj = self
+            .prev_load_pc
+            .is_some_and(|pc| pc.wrapping_add(2) == exec);
+        let was_stack = load_adj && self.prev_load_is_stack;
+        let in_window = self
+            .prev_load_pc
+            .is_some_and(|pc| exec.wrapping_sub(pc) <= 6);
+        let stack = !(0x08000000..=0x0DFFFFFF).contains(&data_addr);
+        self.prev_load_pc = None;
+        self.prev_load_is_stack = false;
+        if !self.single_load_gate() {
+            return;
+        }
+        self.prev_load_pc = Some(exec);
+        self.prev_load_is_stack = stack;
+        if !stack {
+            if was_stack {
+                self.access_wait_cycles += 1;
+            }
+            return;
+        }
+        if !in_window {
+            return;
+        }
+        if !thumb_next_is_datamover((self.prefetch_win[0] & 0xFFFF) as u16) {
+            return;
+        }
+        self.access_wait_cycles += 1;
     }
 
     /// Mark block-transfer continuation words (LDM/STM/PUSH/POP after the
@@ -2664,6 +2737,63 @@ fn is_unreadable_io(address: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S-fast prefetch stream, ROM code, next opcodes bus-busy. Fields
+    /// are set directly (same module): fetches would work too, but the
+    /// no-cartridge open bus never yields data-mover patterns.
+    fn busy_stream_bus() -> GbaMemoryBus {
+        let mut bus = GbaMemoryBus::new();
+        bus.write16(0x04000204, 0x4010);
+        bus.last_opcode_addr = Some(0x08012002);
+        bus.prefetch_win = [0x9000, 0x9001];
+        bus.take_access_wait_cycles();
+        bus
+    }
+
+    #[test]
+    fn thumb_single_load_owe_needs_window_and_busy_next() {
+        let mut bus = busy_stream_bus();
+        // First stack load: no window yet, latches only.
+        bus.note_thumb_single_load(0x08012008, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+        // Adjacent stack load inside the window, busy next: owes one.
+        bus.note_thumb_single_load(0x0801200A, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 1);
+        // ROM-data load directly after a stack load: owes one more.
+        bus.note_thumb_single_load(0x0801200C, 0x08000000);
+        assert_eq!(bus.take_access_wait_cycles(), 1);
+        // ROM-data load without a stack predecessor: no owe.
+        bus.note_thumb_single_load(0x0801200E, 0x08000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+    }
+
+    #[test]
+    fn thumb_single_load_skips_on_idle_next_or_cold_window() {
+        let mut bus = busy_stream_bus();
+        bus.note_thumb_single_load(0x08012008, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+        // Idle next opcode absorbs the owe (bus-idle peek window).
+        bus.prefetch_win = [0x0000, 0x0001];
+        bus.take_access_wait_cycles();
+        bus.note_thumb_single_load(0x0801200A, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+        // Window closed (marker older than three instructions): no owe.
+        let mut bus = busy_stream_bus();
+        bus.note_thumb_single_load(0x08012008, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+        bus.note_thumb_single_load(0x08012010, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+    }
+
+    #[test]
+    fn thumb_single_load_gated_off_without_prefetch_stream() {
+        let mut bus = GbaMemoryBus::new();
+        bus.fetch16(0x08012000);
+        bus.fetch16(0x08012002);
+        bus.take_access_wait_cycles();
+        bus.note_thumb_single_load(0x08012008, 0x03000000);
+        assert_eq!(bus.take_access_wait_cycles(), 0);
+    }
 
     #[cfg(feature = "mgba-debug-log")]
     #[test]
