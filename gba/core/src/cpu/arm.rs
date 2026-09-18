@@ -43,7 +43,7 @@ fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32
     handle_data_processing(regs, bus, instr)
 }
 
-fn is_psr_transfer(instr: u32) -> bool {
+pub(crate) fn is_psr_transfer(instr: u32) -> bool {
     (instr & 0x0FBF0FFF) == 0x010F0000
         || (instr & 0x0FB0FFF0) == 0x0120F000
         || (instr & 0x0FB0F000) == 0x0320F000
@@ -64,8 +64,9 @@ fn decode_software_or_coprocessor(
 
 fn handle_und(regs: &mut CpuRegisters) -> u32 {
     let return_address = regs.pc().wrapping_sub(4);
-    regs.enter_exception(0x1B, 0x04, return_address, false);
-    3
+    regs.enter_exception(0x1B, 0x04, return_address, true);
+    // GBATEK ARM Undefined: Execution time 2S+1I+1N.
+    4
 }
 
 fn handle_coprocessor_und(regs: &mut CpuRegisters) -> u32 {
@@ -78,7 +79,7 @@ fn handle_data_processing(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr
 fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::halfword_transfer::handle(regs, bus, instr)
 }
-fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+pub(crate) fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let b = (instr >> 22) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let rd = ((instr >> 12) & 0xF) as usize;
@@ -95,7 +96,12 @@ fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     } else {
         bus.write32(addr, rm_val);
     }
-    regs.set_r(rd, mem_val);
+    // Rd == R15 is UNPREDICTABLE (ARM ARM): skip the write like MUL.
+    if rd != 15 {
+        regs.set_r(rd, mem_val);
+    }
+    // Load+store breaks the fetch stream (once per instruction).
+    bus.charge_fetch_stream_break();
     4
 }
 fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
