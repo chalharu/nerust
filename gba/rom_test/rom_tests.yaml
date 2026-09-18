@@ -52,8 +52,11 @@ expected_failures:
 # irq-delay 92/112/120 (entry sum), Timing 2020 (CPU takes). Grids
 # tried and reverted: word-latch +1 (timers -9, reload breaks),
 # no-load-erase (matrix breaks incl Timing), line/prologue split
-# (irq-delay 0/3), execute-first-on-tie (timers -18, irq-delay breaks),
-# slow line-delay +2 as nIRQ synchronizer (timers 283->219 with matrix
+# (irq-delay 0/3), execute-first-on-tie variants (assert-vacuous:
+# timers -18, irq-delay breaks; retire-gated R+1==A: timers 283->250
+# with 1xs -36 fixed but 16xs +18 accumulation overshoot and 5 lib
+# HW-fit pins red, proving ties symmetric and per-tie delays
+# accumulate in long runs), slow line-delay +2 as nIRQ synchronizer (timers 283->219 with matrix
 # 158/94/0 and pins intact, but prescaled +1 overshoot and value churn;
 # +1:+3/+4 landscape 265/316/358 proves it fitted, not HW). Tri-proof:
 # the race needs service +2 while D forbids +2, and no path component
