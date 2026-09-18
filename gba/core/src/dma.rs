@@ -17,6 +17,13 @@ pub struct DmaTransfer {
     pub destination: u32,
     pub width: u8,
     pub latched_value: u32,
+    /// GamePak-idle bus ticks issued before this transfer's read, this
+    /// burst (handover tick plus earlier non-cartridge accesses). Lets
+    /// the prefetch fill clock advance across the DMA window.
+    pub pre_read_idle: u32,
+    /// Same, including this transfer's own source ticks, for the write
+    /// side collision check.
+    pub pre_write_idle: u32,
     /// True when the burst head issued outside GamePak ROM; only such
     /// bursts apply the 16-bit ROM read-path shift.
     pub shift_primed: bool,
@@ -53,6 +60,9 @@ struct DmaChannel {
     /// Data-stream source: forced increment inside GamePak ROM while
     /// N/S timing follows the programmed counter.
     data_source: u32,
+    /// GamePak-idle ticks issued so far this burst (handover plus
+    /// non-cartridge accesses). Resets at every burst head.
+    burst_idle: u32,
     completing: bool,
     completion_interrupt: bool,
 }
@@ -266,6 +276,26 @@ impl GbaDma {
                 0
             };
         dma.delay = (total_wait + internal) as u8;
+        // GamePak-idle ticks before this transfer's accesses, this burst:
+        // the bus-handover tick plus earlier non-cartridge accesses. The
+        // handover hands the bus from the CPU to DMA with no access in
+        // flight, so the count starts at 1 at every burst head.
+        if dma.is_first {
+            dma.burst_idle = 1;
+        }
+        let src_idle = if on_cart_bus(source) {
+            0
+        } else {
+            u32::from(src_wait)
+        };
+        let dst_idle = if on_cart_bus(destination) {
+            0
+        } else {
+            u32::from(dst_wait)
+        };
+        let pre_read_idle = dma.burst_idle;
+        let pre_write_idle = dma.burst_idle + src_idle;
+        dma.burst_idle += src_idle + dst_idle;
         dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
         // Data stream: forced increment inside GamePak ROM, re-evaluated
         // per unit on region crossing; programmed mode elsewhere, where it
@@ -305,6 +335,8 @@ impl GbaDma {
             data_source,
             destination,
             width,
+            pre_read_idle,
+            pre_write_idle,
             shift_primed: dma.shift_primed,
             latched_value: dma.latch,
             // `remaining` already counts down past this unit, and
@@ -501,6 +533,13 @@ fn sound_dma(channel: usize, control: u16) -> bool {
 
 pub(crate) fn is_rom(address: u32) -> bool {
     (0x08000000..=0x0DFFFFFF).contains(&address)
+}
+
+/// True while the access occupies the cartridge bus (GamePak ROM,
+/// SRAM/Flash backup, GPIO/RTC): the prefetch fill clock freezes.
+/// Anything else leaves the GamePak bus free to keep filling.
+pub(crate) fn on_cart_bus(address: u32) -> bool {
+    (0x08000000..=0x0FFFFFFF).contains(&address)
 }
 
 fn source_mode(control: u16) -> u16 {

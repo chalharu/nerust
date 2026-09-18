@@ -40,9 +40,9 @@ expected_failures:
 # Velocity/Acceleration: interacted refs.
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
-# mgba_suite_timing: 84/1244 subchecks remain after separating linear,
-# branch-drain and mode-switch-prefilled GamePak streams.
-- mgba_suite_timing
+# mgba_suite_timing: GRADUATED 2026-09-18 (2020/2020 subchecks pass;
+# DMA GamePak fill-collision arbitration models the last P-ON ROM-DMA
+# residual; matrix 158/94/0, lib 357 green).
 # mgba_suite_timers: 283/468 subchecks fail. SRAM details show mixed
 # loop-sum and counter-phase residuals across HLE IRQ entry/exit; do not
 # retune the timer start delay to chase them.
