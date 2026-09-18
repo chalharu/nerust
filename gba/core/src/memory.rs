@@ -2745,7 +2745,24 @@ impl GbaMemoryBus {
                 } else {
                     (value & 0xFFFF) as u16
                 };
+                // GBATEK Interrupt Request Flags are write-1-clear: the
+                // clear lands on the register (and its BIOS RAM mirror)
+                // with the bus write. Only the CPU line still propagates
+                // delayed (nIRQ synchronizer plus the pending pipeline);
+                // a same-tick ack-then-raise dips the line on HW too,
+                // since the nIRQ level follows the IF register.
+                self.sif &= !bits;
                 self.pending_if &= !bits;
+                self.iwram[0x7FF8..0x7FFA].copy_from_slice(&self.sif.to_le_bytes());
+                let line_now = self.ime && (self.ie & self.sif != 0);
+                let line_cur = self
+                    .line_queue
+                    .last()
+                    .map(|(v, _)| *v)
+                    .unwrap_or(self.irq_line);
+                if line_now != line_cur {
+                    self.line_queue.push((line_now, self.current_tcycle + 2));
+                }
                 self.pending_at = Some(self.current_tcycle + 1);
                         return;
             }
