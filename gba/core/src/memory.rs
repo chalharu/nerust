@@ -2589,16 +2589,31 @@ impl GbaMemoryBus {
                     let channel = ((aligned - 0x040000B0) / 12) as usize;
                     self.dma.retime_pending(channel, 3);
                 }
-                // Known residual (32 P-ON ROM-DMA cells): HW needs +1 more,
-                // S-polarized (ROM reads at S=1, ROM writes at S=2) and
-                // length-independent. Per-access traces prove the CPU takes
-                // (trigger, END) and the DMA waits (pending, N/S, 2I) match
-                // HW exactly from/to at the same WAITCNT, and the fill
-                // clock sits at fresh duty at every burst head (fetch-miss
-                // resets + frozen non-ROM ticks), so no phase gate can
-                // discriminate them; uniform pending/completion/burst +1s
-                // churn exact cells (verified). Needs HW evidence. Do not
-                // refit.
+                // Known residual (32 P-ON ROM-DMA cells, all Got=HW-1):
+                // the +1 sits in the burst head. CPU-side takes are
+                // direction-independent (identical setup/trigger/END shape
+                // and shared calibration, so the non-DMA remainder C is
+                // one value per mode/wait, e.g. C=1 at ARM S-fast P-ON
+                // for trivial and short alike), and the DMA waits
+                // (pending, N/S, 2I) match HW at P-OFF, so only a
+                // prefetch-gated head cost can explain it. Gates: first
+                // access ROM-read +1 iff ARM code and S-fast (both-ROM
+                // follows the read rule); first access non-ROM with a
+                // later ROM write +1 iff S-slow (both modes). N-field
+                // and length independent (trivial and short share it).
+                // Grant-phase probes show identical fill phase for fail
+                // and pass cells at the same mode/wait, killing grant
+                // arbitration; the pending 3-vs-4 step is a cliff (race
+                // cells), not a slope. NBA (StopPrefetch on DMA ROM),
+                // Mesen (Reset() penalty) and ares (wait==1 reset step)
+                // agree DMA ROM accesses reset the fill clock with a
+                // last-cycle +1, but a single advancing clock cannot
+                // split /ROM vs /toROM at the same mode/wait (fixed
+                // grant-to-head advance hits 5 of 8 cells; the rest need
+                // parity-impossible gates, e.g. Thumb duty-2), so no
+                // reference mechanism is adoptable as-is. Uniform
+                // pending/completion/burst +1s churn exact cells
+                // (verified). Needs HW evidence. Do not refit.
                 // DMA CNT_H commit writes no longer break the CPU fetch
                 // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
                 // the DMA unit's own first access (modeled via is_first),
