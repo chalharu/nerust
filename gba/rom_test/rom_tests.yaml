@@ -43,9 +43,21 @@ expected_failures:
 # mgba_suite_timing: GRADUATED 2026-09-18 (2020/2020 subchecks pass;
 # DMA GamePak fill-collision arbitration models the last P-ON ROM-DMA
 # residual; matrix 158/94/0, lib 357 green).
-# mgba_suite_timers: 283/468 subchecks fail. SRAM details show mixed
-# loop-sum and counter-phase residuals across HLE IRQ entry/exit; do not
-# retune the timer start delay to chase them.
+# mgba_suite_timers: 283/936 subchecks fail (prescaler-0 dominated;
+# 1xs all -1, 16xs mostly -16, values small phase deltas). Traced
+# "0b, 0x0005" 1d1i tight: the 2nd poll sample races IRQ#1 entry by ~1
+# cycle (sample would-be +11 vs entry +10 from enable; S1 +3, loop 8,
+# overflow +7 all GBATEK/nba-exact). Global shifts are all pinned:
+# nba reload 7/7 (word-enable phase), start-stop 3/8 (start/stop),
+# irq-delay 92/112/120 (entry sum), Timing 2020 (CPU takes). Grids
+# tried and reverted: word-latch +1 (timers -9, reload breaks),
+# no-load-erase (matrix breaks incl Timing), line/prologue split
+# (irq-delay 0/3), execute-first-on-tie (timers -18, irq-delay breaks).
+# Hypothesis: our fetch/expand phase lags the HW 3-stage pipeline by
+# ~1-2T at the sample boundary, so our service-first order loses ties
+# HW wins by completing the in-flight instruction; fixing needs a
+# fetch-2-ahead remodel with started-aware entry (deferred). Do not
+# retune start/line/prologue/IO charge to chase these cells.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
