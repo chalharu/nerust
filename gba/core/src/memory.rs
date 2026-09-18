@@ -210,6 +210,12 @@ pub struct GbaMemoryBus {
     /// The HLE returns inline, so without this the woken thread outruns the
     /// staging IRQ line; consumed as CPU-stall cycles by the step loop.
     wake_latency: u32,
+    /// Pending DMA prefetch-collision arbitration stall. Set when a
+    /// DMA GamePak access collides with an in-flight prefetch fill
+    /// (fill_collision fired); burned as a CPU-stall tick at the next
+    /// step boundary so the arbitration cycle advances the bus clock.
+    /// Set (not counted): at most one stall per burst is observable.
+    dma_stall_pending: u32,
     bios_prefetch: u32,
     current_tcycle: u64,
     hle_bios: Option<HleBiosOperation>,
@@ -385,6 +391,7 @@ impl GbaMemoryBus {
             stopped: false,
             wake_clear_mask: 0,
             wake_latency: 0,
+            dma_stall_pending: 0,
             pending_ie: 0,
             pending_ime: false,
             pending_if: 0,
@@ -814,6 +821,22 @@ impl GbaMemoryBus {
                     src
                 };
                 let value = self.read_dma_source(read_addr, transfer.width);
+                // GamePak ROM reads collide with an in-flight prefetch
+                // fill exactly like CPU ROM data (Mesen/NBA/ares agree):
+                // advance the fill clock across the handover idle plus
+                // earlier non-cartridge ticks this burst, then charge the
+                // collision. One-shot per burst via the restart below.
+                // The penalty stalls the bus (a real tick, like Mesen's
+                // Step on Reset): acc charging would be discarded by the
+                // resume instruction's expansion take. Idempotent set:
+                // a both-ROM unit collides on read and write but stalls
+                // once.
+                if crate::dma::is_rom(read_addr) && self.pf_valid {
+                    self.fill_advance(transfer.pre_read_idle);
+                    if self.fill_collision() != 0 {
+                        self.dma_stall_pending = 1;
+                    }
+                }
                 self.dma
                     .update_latch(transfer.channel, transfer.width, value);
                 // DMA reads from accessible sources also drive the shared
@@ -842,6 +865,13 @@ impl GbaMemoryBus {
                 // EEPROM DMA write: each unit carries serial bit(s).
                 self.feed_eeprom_write(transfer.width, value);
             } else {
+                // GamePak ROM writes collide like reads (same one-shot).
+                if crate::dma::is_rom(transfer.destination) && self.pf_valid {
+                    self.fill_advance(transfer.pre_write_idle);
+                    if self.fill_collision() != 0 {
+                        self.dma_stall_pending = 1;
+                    }
+                }
                 self.write_dma_value(
                     transfer.channel,
                     transfer.destination,
@@ -1035,6 +1065,13 @@ impl GbaMemoryBus {
     /// Take a pending IntrWait wake-exit latency (see `wake_latency`).
     pub fn take_wake_latency(&mut self) -> u32 {
         std::mem::take(&mut self.wake_latency)
+    }
+
+    /// Take pending DMA fill-collision arbitration stalls (see
+    /// `dma_stall_pending`). Burned as CPU-stall ticks like wake
+    /// latency, so the bus arbitration cycle is measured.
+    pub fn take_dma_stall(&mut self) -> u32 {
+        std::mem::take(&mut self.dma_stall_pending)
     }
 
     pub fn request_interrupt(&mut self, mask: u16) {
@@ -2589,35 +2626,22 @@ impl GbaMemoryBus {
                     let channel = ((aligned - 0x040000B0) / 12) as usize;
                     self.dma.retime_pending(channel, 3);
                 }
-                // Known residual (32 P-ON ROM-DMA cells, all Got=HW-1):
-                // the +1 sits in the burst head. CPU-side takes are
-                // direction-independent (identical setup/trigger/END shape
-                // and shared calibration, so the non-DMA remainder C is
-                // one value per mode/wait, e.g. C=1 at ARM S-fast P-ON
-                // for trivial and short alike), and the DMA waits
-                // (pending, N/S, 2I) match HW at P-OFF, so only a
-                // prefetch-gated head cost can explain it. Gates: first
-                // access ROM-read +1 iff ARM code and S-fast (both-ROM
-                // follows the read rule); first access non-ROM with a
-                // later ROM write +1 iff S-slow (both modes). N-field
-                // and length independent (trivial and short share it).
-                // Grant-phase probes show identical fill phase for fail
-                // and pass cells at the same mode/wait, killing grant
-                // arbitration; the pending 3-vs-4 step is a cliff (race
-                // cells), not a slope. NBA (StopPrefetch on DMA ROM),
-                // Mesen (Reset() penalty) and ares (wait==1 reset step)
-                // agree DMA ROM accesses reset the fill clock with a
-                // last-cycle +1, but no single advancing clock fits: with
-                // fetch-width duties, ARM-reads-S-fast need an odd head
-                // advance (duty 4 reaches countdown 1) while
-                // Thumb-reads-S-fast need an even one (duty 2 avoids it).
-                // Exhaustive map: last-cycle fire fits with head advances
-                // (ARM/Thumb reads 3/0, writes 5/2), ours-rule fire with
-                // (1/0, 2/2); both demand a mode-split reset with no
-                // mechanism (Thumb reset ~3 ticks later contradicts STR
-                // takes), so every exact gate is a fit. Uniform
-                // pending/completion/burst +1s churn exact cells
-                // (verified). Needs HW evidence. Do not refit.
+                // DMA GamePak fill-collision arbitration: a DMA access
+                // that touches GamePak ROM collides with an in-flight
+                // prefetch fill exactly like CPU ROM data (Mesen Reset,
+                // NanoBoyAdvance StopPrefetch and ares wait==1 reset all
+                // agree on the check). The fill clock advances across
+                // the bus-handover idle tick plus earlier non-cartridge
+                // ticks this burst (GBATEK prefetch fills while the bus
+                // is free; the CPU-owned pending window freezes it), and
+                // the one-shot check fires at the first GamePak access
+                // (the per-unit restart below keeps later accesses from
+                // re-firing). The penalty stalls the bus a real tick
+                // (Mesen's Step on Reset), not an acc charge: acc would
+                // be discarded by the resume instruction's expansion
+                // take, and max-subsumption would hide it inside
+                // in-flight remainders (both effects HW-pinned by the
+                // mgba-suite Timing Thumb/ARM ROM-DMA cells).
                 // DMA CNT_H commit writes no longer break the CPU fetch
                 // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
                 // the DMA unit's own first access (modeled via is_first),
