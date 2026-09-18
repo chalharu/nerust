@@ -2607,11 +2607,15 @@ impl GbaMemoryBus {
                 // cells), not a slope. NBA (StopPrefetch on DMA ROM),
                 // Mesen (Reset() penalty) and ares (wait==1 reset step)
                 // agree DMA ROM accesses reset the fill clock with a
-                // last-cycle +1, but a single advancing clock cannot
-                // split /ROM vs /toROM at the same mode/wait (fixed
-                // grant-to-head advance hits 5 of 8 cells; the rest need
-                // parity-impossible gates, e.g. Thumb duty-2), so no
-                // reference mechanism is adoptable as-is. Uniform
+                // last-cycle +1, but no single advancing clock fits: with
+                // fetch-width duties, ARM-reads-S-fast need an odd head
+                // advance (duty 4 reaches countdown 1) while
+                // Thumb-reads-S-fast need an even one (duty 2 avoids it).
+                // Exhaustive map: last-cycle fire fits with head advances
+                // (ARM/Thumb reads 3/0, writes 5/2), ours-rule fire with
+                // (1/0, 2/2); both demand a mode-split reset with no
+                // mechanism (Thumb reset ~3 ticks later contradicts STR
+                // takes), so every exact gate is a fit. Uniform
                 // pending/completion/burst +1s churn exact cells
                 // (verified). Needs HW evidence. Do not refit.
                 // DMA CNT_H commit writes no longer break the CPU fetch
