@@ -315,9 +315,25 @@ expected_failures:
 # freezes (take#4 stays on BNE) but broke 8000 sums (were passing):
 # reverted. Per-cell proof 0800-take#3 and 8000-take#3 are identical in
 # every blind dimension (lat3, (3,2), full-pipe), so no uniform take-side
-# grid fix exists; 0800 sums stay lottery-phase. Mechanism open.
-# Standing: 922/936; residual 14 are phase-lottery beyond the uniform
-# model (needs run-gated grid terms).
+# grid fix exists; 0800 sums stay lottery-phase. T8c (same class at lat3
+# interrupting full-simple-pipe (both in-flight opcodes single-cycle
+# ALU) -> 25-lat): storm 922->925/936 (+3/-0, 8000-loose-16xv fixed
+# (ADD-interrupt take#4s get 22), 8000 sums held, all gates green).
+# Tight take#4s never match (an LDR or branch always breaks their pipe).
+# T8-PS-blind DIAG (drop the ps0 gate): zero movement (prescaled sums
+# are not take#4-entry-sensitive); reverted. Prescaled forensics
+# (per-cell takes+polls, all TEMP reverted): residual loose takes share
+# classes with passing twins (10b0012-1d1i take#1 lat7 (TST,BNE) vs
+# tight lat5 (ADD,LDR) at base-23 both would need a run-gate; 4i cells'
+# take#3s overlap passing-loose classes); prescaled takes are otherwise
+# ungated (all T-gates ps0-only) yet 100+ pass at base, so the 5 are
+# tap-phase lottery like the slow sums. 0080 forensics (8 polls, all 4
+# takes ovf-separated and clean (acks 0-3), take#4 stops normally):
+# freeze exact (stop pinned) with sums +1, so the grid is one poll ahead
+# while the take#4/stop is exact; loose-take#1 (lat6 (TST,BNE)) vs
+# tight-take#1 (lat5) at T4=20 both would need a run-gate. Mechanism
+# open. Standing: 925/936; residual 11 are phase-lottery beyond the
+# uniform model (needs run-gated grid terms).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream

@@ -1209,15 +1209,21 @@ impl GbaMemoryBus {
     /// T8 gate: late-sampled clean take#4s (fourth overflow answered
     /// fourth: every overflow answered, three acks on record) sampled 4+
     /// after the raise complete take+entry at raise+25 like T7: the entry
-    /// absorbs the sampling latency. A take#4 interrupting a branch joins
-    /// the class at latency 3: the vector fetch overlaps the branch
-    /// refill (both flush the pipe), so the same raise+25 holds. Storm
-    /// slow-row take#4 pins 21 on latency 4 and 22 on latency-3 branches;
-    /// earlier-sampled non-branch takes keep T5, missed takes keep T7,
-    /// and non-timer0 takes never match (timer0 IF required). Returns the
+    /// absorbs the sampling latency. A take#4 interrupting a branch or a
+    /// full pipe of single-cycle ALU joins the class at latency 3: the
+    /// vector fetch overlaps the branch refill or the undisturbed pipe
+    /// drains cleanly, so the same raise+25 holds. Storm slow-row take#4
+    /// pins 21 on latency 4 and 22 on latency-3 branches/pipes;
+    /// earlier-sampled other takes keep T5, missed takes keep T7, and
+    /// non-timer0 takes never match (timer0 IF required). Returns the
     /// prologue when the class matches. Mechanism open (see the timers
     /// box note).
-    pub fn late_timer0_entry(&self, entry_opcode: u32, thumb: bool) -> Option<u32> {
+    pub fn late_timer0_entry(
+        &self,
+        entry_opcode: u32,
+        entry_next: u32,
+        thumb: bool,
+    ) -> Option<u32> {
         if self.irq_flags() & (1 << 3) == 0
             || self.timers.overflows_since_enable(0) != 4
             || self.timers.timer0_acks_since_enable() != 3
@@ -1230,10 +1236,39 @@ impl GbaMemoryBus {
         if latency >= 4 {
             return Some(25u32.saturating_sub(latency.min(25) as u32));
         }
-        if latency == 3 && Self::is_branch_opcode(entry_opcode, thumb) {
+        if latency == 3
+            && (Self::is_branch_opcode(entry_opcode, thumb)
+                || (Self::is_simple_opcode(entry_opcode, thumb)
+                    && Self::is_simple_opcode(entry_next, thumb)))
+        {
             return Some(25u32.saturating_sub(latency.min(25) as u32));
         }
         None
+    }
+
+    /// Whether an in-flight opcode is single-cycle ALU (an undisturbed
+    /// pipe of these drains cleanly on a take). Reads opcode class only,
+    /// never addresses.
+    fn is_simple_opcode(opcode: u32, thumb: bool) -> bool {
+        if thumb {
+            let op = (opcode & 0xFFFF) as u16;
+            // Shift-imm, add/sub reg+imm, mov/cmp/add/sub imm, ALU ops,
+            // and Hi-reg mov/cmp/add (not BX).
+            (op & 0xE000 == 0x0000)
+                || (op & 0xF800 == 0x1800)
+                || (op & 0xE000 == 0x2000)
+                || (op & 0xFC00 == 0x4000)
+                || (op & 0xFF00 == 0x4400)
+                || (op & 0xFF00 == 0x4500)
+                || (op & 0xFF00 == 0x4600)
+        } else {
+            // Data processing except multiply and status moves.
+            (opcode & 0x0C000000 == 0x00000000)
+                && (opcode & 0x0FC000F0 != 0x00000090)
+                && (opcode & 0x0FBF0000 != 0x010F0000)
+                && (opcode & 0x0FBFFFF0 != 0x0129F000)
+                && (opcode & 0x0FBFFFF0 != 0x012BF000)
+        }
     }
 
     /// Whether an in-flight opcode is a branch (take-entry overlap: a
