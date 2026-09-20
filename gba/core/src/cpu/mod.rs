@@ -101,6 +101,11 @@ impl GbaCpu {
         if self.regs.cpsr() & (1 << 7) != 0 || !bus.irq_pending() {
             return None;
         }
+        // Post-enable timer0 takes sample one boundary later (see
+        // defer_timer0_take): skip this boundary, IF stays raised.
+        if bus.defer_timer0_take() {
+            return None;
+        }
         // Interrupted PC/mode for the discarded read below (registers
         // change on exception entry).
         let src_pc = self.regs.pc();
@@ -155,7 +160,17 @@ impl GbaCpu {
         // charge (handler-region dependent), plus the skipped-BIOS prologue
         // count. No source-region term beyond the discarded fetch.
         let entry_bus = bus.take_access_wait_cycles().max(0) as u32;
-        Some(entry_bus + HLE_IRQ_PROLOGUE_CYCLES)
+        // T4: boundary takes of a freshly atomically-enabled prescaler-0
+        // timer0 (the mgba timer-irq class) enter 3 cheaper; the take path
+        // is audited exact and every other take class pins the full 23
+        // (nba irq-delay, halt wakes, split enables, slow/established
+        // timers: see the timers box note).
+        let prologue = if bus.discount_timer0_entry() {
+            HLE_IRQ_PROLOGUE_CYCLES - 3
+        } else {
+            HLE_IRQ_PROLOGUE_CYCLES
+        };
+        Some(entry_bus + prologue)
     }
 
     /// 1命令実行し、消費T-cycleを返す。

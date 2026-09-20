@@ -66,6 +66,181 @@ expected_failures:
 # HW wins by completing the in-flight instruction; fixing needs a
 # fetch-2-ahead remodel with started-aware entry (deferred). Do not
 # retune start/line/prologue/IO charge to chase these cells.
+# 2026-09-18 session (baseline 283 re-confirmed deterministic over 3
+# runs; a stale binary briefly showed 250, discarded): early
+# timer-step (timers -27 true, but timer_irq -28: the write-shift
+# breaks start), counter-read peek (timers no-op, timer_irq -90:
+# HW samples reads pre-edge), slow line-delay +2 re-measured
+# (timers -64 true, but timer_irq -21 plus 6 lib observation-shift
+# red: entry +0 is HW-exact). All reverted. mgba timer_irq is the
+# entry gate: every start/line/entry shift is vetoed by ROM, and
+# retire-gated stays reverted (per-tie +1 accumulates: fitted).
+# fetch-2-ahead increment E (multi-cycle retire defers the take 2T):
+# timers 298 (+15: fixed 30, broken 45) with timer_irq -36, so takes
+# must stay immediate; deferral lengthens windows (+1 counts) the same
+# fitted way per-tie delays do. Reverted.
+# fetch-2-ahead increment F (loop-aware take-defer via retire-PC ring,
+# spin vs progressing-loop separated): timers TIMEOUT (no END:
+# forward-progress break), timer_irq -89, irq-delay -2/2. Every ROM
+# loops, so loop shape cannot separate takes; reverted.
+# H-series (restart-reload): H wake-ack (timers 627, timer_irq -36),
+# H2a any-restart-reload (timers churn net-0, nba_reload + timer_irq -36),
+# H2b changed-gate and H2c 32-bit-reload-only (both timers no-op,
+# timer_irq -36). Restart-keep is HW (timer_irq+nba prove it); a harness
+# reproduced our Got=2 timeline (stale take + setup-residue take), but
+# long cells demand full windows, contradicting every residue/stale
+# combination. 283 is Pareto-optimal: every single move breaks a ROM
+# table and combined moves cancel inside the entry total.
+# K (STM internal +1 both engines, GBATEK questioned): timers 265
+# (-18 net, values-churn) but timer_irq -36, irq-delay -1, Timing -60,
+# sio -4 (all ROM-embedded vetoes). GBATEK STM stands Timing+nba
+# validated; slower-master timers gain was fitting. Reverted.
+# L (HLE SWI 02/04/05 +8T SVC-exception): timers no-op (wait absorbs),
+# timer_irq -36 (HALT charge pinned). Post-swi grid moves are absorbed
+# or harmful (G wake-40: +122). Reverted.
+# M (enable stale-tick removal): timers no-op, timer_irq same 36,
+# tick-before-reload -1 (stale tap-gated overflow is HW, Alyosha/nba
+# pinned). Stands. Trace (timer_irq FFFF, IWRAM code, 1T nops): live
+# reads exact, freeze ours 82/83 vs HW 81; strh-0 clobber lands after
+# ovf#1 (double overflow) and uncoalesced 2nd IRQs stall versions
+# (~+115T stale-disables, transition 2 versions early).
+# N13 (32-bit enable start-delay 2->3, 2-phase bus): timers churn
+# (fixed 36, broken 27), timer_irq +51, nba_reload -1. Enable phase is
+# exact for both widths; width splits vetoed. Reverted.
+# N14 (restart on any enabled->enabled CNT_H write): timers 0/0
+# (length-preserving, both window ends shift), nba_reload -1 (32-bit
+# same-value overwrites pin stale-continue). Reverted.
+# N14b (restart only on value-changing rewrites): timers 0/0, all gates
+# green. No benefit; 2-emu consensus is stale-continue. Reverted.
+# N15 (control visibility +1T lag): timers 0/0, all green. Reverted.
+# N15c (visibility on 8T boundaries): counts worse (0x0001 Got 1 vs 2),
+# suite timeout (stuck halted-IntrWait with dead prime after 16.2M of
+# 100M), values scatter. Reads-side lag breaks suite invariants
+# (stale images cause first-sample exits and phase compression), so
+# control reads stay immediate. Fully reverted; 283/936 restored.
+# Trace campaign (0x0005 1d1i tight, IWRAM code): our window is
+# enable-458, first-sample-461, ovf-465, disable-write-557 (92T entry),
+# exit-sample-712 (155T exit path). Counts (r0, pre-counted) and values
+# (frozen) are both invisible to the 155T exit path. Freeze 82-vs-81 is
+# a STRH data-phase edge pinned by start-stop-8 on both sides.
+# N20/N21/N22 (data-phase landing variants) all reduce to veto-certain
+# or already-measured (N15) moves; skipped without runs. irq-delay-92
+# is reset-anchored (composite), so it does not pin the entry alone;
+# that separation is Phase-12 future work, not a current lever.
+# Storm model (both suites' testIrq stops the timer without acking IF,
+# so every boundary re-enters until the next prime-IntrWait clears IF;
+# counts alone reject the clean single-entry model, which predicts
+# ~12 samples where both sides show 2-3). r0 is the inter-entry gap
+# count, so per-entry fitted time is the lever. N26 (prologue 23->22
+# global): timer_irq 36->75 (+39) but timers 653->633 (-20), sio 0/4,
+# lib -12. Reverted as global; the split (nested entries want 22,
+# outer entries want 23) ships as N26b below.
+# N26b (nested takes observe 22, outer keeps 23): timer_irq 36->54
+# (+18), timers 653 unchanged, Timing 2020, sio 4/4, nba timers green,
+# lib 357 green, full matrix 6822/7288. Landed (cpu/mod.rs).
+# Storm trace (temp GBA_STORMTRACE, pair-9 tight): 39 sequential outer
+# takes (~113T each, all nested=false), 3-6 per tight window; the loop
+# makes no progress between return and re-take (IF never acked, every
+# boundary re-enters). r0 is pre-take#1 samples plus the post-storm
+# exit: take#1 at the first post-s1 boundary preempts s2 (Got 2).
+# N32 (timer0 take deferred within 12T of a fresh enable, IF stays):
+# timers 653->656, timer_irq 54->65 (+11 frontier pairs), all gates
+# green. The delay lets s2 sample before take#1 (0x0005 1xs x9 fixed).
+# N32b (defer only while channel-0 overflows <= 2): heals the 0x0001
+# period-1 regressions (established-rate takes stay immediate), keeps
+# all N32 gains: timers 665 (+12), timer_irq 65 (+11), Timing 2020,
+# sio 4/4, nba green, lib 357, matrix 6843/7288. Landed.
+# N32c (second-overflow takes observe window 20): no-op for the ii2
+# freeze target, moved ii4 cells the wrong way (freeze phase is a
+# per-version lottery, not a uniform knob). Reverted.
+# N33 (ovf-locked one-slot defer of first-test takes): fixed the C2
+# dd2 cells and many 0b loose cells but overshot the paired tight
+# cells (+1) and other phases (timers 665->651, timer_irq 65->69):
+# tight and loose want opposite take timings (structural trade, no
+# uniform gate exists). Reverted; N26b+N32b (timers 665, timer_irq
+# 65, all gates green) stands as the landed set. Remaining timers
+# residual (271) is phase-lottery/structure: C2 dd2 (enable half-slot
+# grid phase), 16xs (23T loose-slot steals), values (stop-timing mod
+# period), ii2-16xv freeze (per-version lottery).
+# N34 (defer window 12->14 for the uniform -2 freeze phase): fixed
+# the ii1 loose values but broke the ii4 loose values (take#1 moves
+# the whole storm, so ii4 follows: causal lock). Reverted.
+# N35 (stop-only enable-bit +1T read lag): zero flips anywhere. The
+# freeze is set at stop time (counter halts), so delaying the exit
+# observation cannot move it: misdesigned. Reverted.
+# N36 (timer-mask line +1T): timers suite dead (0/0, prime-IntrWait
+# halt-wake desync), unit IF-timing test red. The line pipeline is
+# halt-coupled and untouchable. Reverted; N32b restored (665/65).
+# N37 (ovf#2-locked defer): broad +1 churn (timers 665->618), ii2
+# target unhealed: the ovf-count gate fires everywhere except where
+# needed. Reverted.
+# N37b ([8,16) ovf#2 window): no-op (take#2 arrives past it or the
+# stop-take carries ovfs==1, not 2). Reverted.
+# N37c (ovfs==1 late-take past the enable window): no gain, broke
+# alyosha_halt_pc_4 (take deferral interacts with halt/wake). Fully
+# reverted including the last_ovf_cycle tracking.
+# N38 (IF-up return +8T): fixed ii2 values but broke ii4 values
+# (return shifts move all freezes: trade). Reverted.
+# N38b (ovfs-gated return extra): never fires (clean returns are
+# IF-down: stops hold, all takes are fresh-ovf clean, no storm).
+# Fully reverted. Standing model: clean takes per fresh overflow,
+# stops hold; r0 = pre-take samples + post-stop exit. Landed set
+# remains N26b+N32b (timers 665, timer_irq 65, all gates green).
+# Phase probe (temp): all C2 test-enables land at prescaler mod64=50
+# (version-invariant). The d1-only -1 is a grid steal (take absolute
+# fixed, loop grid +4T from the delay loop), not enable phase; no
+# take-time-visible gate splits d (unwinnable without phase fitting).
+# Documented; C2 stays.
+# T3 (take#1 defer relative to first overflow, ovfs<=2 gated): timers
+# 665->763 (+98), timer_irq 65->69 (+4), Timing 2020, sio 4/4, DMA 1244,
+# nba timers/irq/DMA green, lib 357 green, matrix 6946/7288 with no new
+# unexpected case (cancel_ime kept passing). Replaces the enable-window
+# defer (longer reloads overflow past it); established-rate and
+# pre-enable stale takes stay immediate. Atomic 32-bit enables sample
+# later (5T) than split CNT_L+CNT_H enables (3T). N26b nested split
+# reverted (no-op under T3: takes never nest here, scores identical).
+# Post-T3 audit (timers 763, timer_irq 69): native take timeline
+# (enable@E, ovf#1@E+1..3, read, dispatch, stop-write, freeze) shows
+# dispatch aligned with HW inside the live/frozen race window (K-curve:
+# K<=4 breaks live diagonal cells, K>=5 saturates), while the frozen
+# cells sit uniform +3 with storm-independent single takes. Vetoed with
+# ROM gates, all reverted: same-tick stop (nba start-stop 1/2),
+# device fast-line (HW-anchored edge units red), discarded-fetch removal
+# (no frozen move; irq-delay 1/2), entry 23->20 (timer_irq 90/90 but
+# storm 645 and irq-delay 1/2: the -3 sits on take-path length with
+# dispatch aligned, and no uniform (entry,K) serves storm grid and
+# single takes jointly). Superseded by T4 below (class-gated -3).
+# Take-path audit (temp probes, all reverted): FFFF take is OVF+5..7,
+# entry 23+0 (raw entry_bus exactly 0, no clamp effect), dispatch +
+# testIrq-to-stop 56, every instruction GBATEK-textbook (IWRAM
+# single-cycle leaves no bus wiggle). Dispatcher binary identical
+# across suite/nba ROMs (one word differs: table pointer); testIrq is
+# 8 Thumb instrs (TM0+TM1 stop + flag); nba handler is all-IWRAM (no
+# EWRAM cancellation). K4 gate search (fresh+ovfs<=2+atomic+ps0 entry
+# -3): timer_irq 90/90, storm +15 net, nba green; the halt_pc_4 veto
+# (same take class pins full entry 23) resolved by the wake exclusion
+# (5th condition, ablation-proven). Landed as T4 below.
+# Stop-latency moves conflict with the start-stop 2ND=8 pin. Next
+# lead: downstream take#2+ phase (unmasked by T4, see below).
+# T4 (boundary atomic-fresh-ps0 timer0 takes enter 3 cheaper):
+# timer_irq 69->90/90 GRADUATED (box removed), timers 763->778/936
+# (+87 fixed, -72 churn, net +15). The 87 fixed all missed by uniform
+# ~3/~2 (absolute-path error, now exact); the 72 broken are all 4i
+# cells missing by +-1..3 phase scatter. Gate (all five ablation-proven
+# load-bearing): timer0 IF up + ovfs<=2 + atomic 32-bit enable (fresh
+# reload) + prescaler 0 + non-wake take. Drops vetoed by ROM:
+# no-IF (unrelated takes), no-count (E1: storm 775, 4i worse),
+# no-fresh (nba irq-delay split enables break 1/2), no-ps0 (storm
+# ps1024 rows collapse to 654), no-wake-exclusion (alyosha_halt_pc_4
+# breaks: same take class pins full entry 23). E2 (ovfs<=1) undercovers
+# double-wrapped take#1s (timer_irq 84). E6 (epilogue 7->6) destroys
+# sio_timing 0/4. Fire-map: timer_irq 90 + timers 270 + ~23 benign
+# single fires in alyosha micro-tests (setup takes, score-neutral);
+# halt/nba/timing/sio never fire. Partition: fixed = 78x1i + 9x2i,
+# broken = 72x4i; baseline 1i failed 79 (now ~0), so take#1 -3 is
+# absolute-correct and the 4i churn is downstream take#2+ phase error
+# unmasked by the fix (2i now miss by +-1) - the lead for Phase 12.
+# Standing model: T3+T4+entry 23; mechanism open.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
@@ -1084,44 +1259,6 @@ suites:
         end: 'END:'
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
-    # 36 fail on start-latency phase (diagonal drift); boxed.
-    expected_checks:
-    - 'FFFF 2 nops'
-    - 'FFFF 3 nops'
-    - 'FFFF 4 nops'
-    - 'FFFF 5 nops'
-    - 'FFFF 6 nops'
-    - 'FFFF 7 nops'
-    - 'FFFF 8 nops'
-    - 'FFFF 9 nops'
-    - 'FFFE 3 nops'
-    - 'FFFE 4 nops'
-    - 'FFFE 5 nops'
-    - 'FFFE 6 nops'
-    - 'FFFE 7 nops'
-    - 'FFFE 8 nops'
-    - 'FFFE 9 nops'
-    - 'FFFD 4 nops'
-    - 'FFFD 5 nops'
-    - 'FFFD 6 nops'
-    - 'FFFD 7 nops'
-    - 'FFFD 8 nops'
-    - 'FFFD 9 nops'
-    - 'FFFC 5 nops'
-    - 'FFFC 6 nops'
-    - 'FFFC 7 nops'
-    - 'FFFC 8 nops'
-    - 'FFFC 9 nops'
-    - 'FFFB 6 nops'
-    - 'FFFB 7 nops'
-    - 'FFFB 8 nops'
-    - 'FFFB 9 nops'
-    - 'FFFA 7 nops'
-    - 'FFFA 8 nops'
-    - 'FFFA 9 nops'
-    - 'FFF9 8 nops'
-    - 'FFF9 9 nops'
-    - 'FFF8 9 nops'
   - id: mgba_suite_dma
     rom: suite.gba
     description: mgba suite - DMA tests
