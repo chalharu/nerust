@@ -172,9 +172,12 @@ impl GbaCpu {
         // T5: established re-takes (third overflow onward) enter 1 more
         // expensive (storm take#2+ phase: see the timers box note).
         // T7: missed-one takes complete take+entry at raise+25.
+        // T10: clean take#3s interrupting just before a transfer enter 24
+        // more expensive (storm broken-pipe grid shift: see timers box).
         // T8: late-sampled clean take#4s complete take+entry at raise+25.
-        let prologue = if let Some(pro) = bus.late_timer0_entry(entry_opcode, entry_next, src_thumb)
-        {
+        let prologue = if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
+            HLE_IRQ_PROLOGUE_CYCLES + 24
+        } else if let Some(pro) = bus.late_timer0_entry(entry_opcode, entry_next, src_thumb) {
             pro
         } else if let Some(pro) = bus.catchup_timer0_entry() {
             pro
