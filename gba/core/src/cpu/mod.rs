@@ -165,8 +165,12 @@ impl GbaCpu {
         // is audited exact and every other take class pins the full 23
         // (nba irq-delay, halt wakes, split enables, slow/established
         // timers: see the timers box note).
+        // T5: established re-takes (third overflow onward) enter 1 more
+        // expensive (storm take#2+ phase: see the timers box note).
         let prologue = if bus.discount_timer0_entry() {
             HLE_IRQ_PROLOGUE_CYCLES - 3
+        } else if bus.retook_timer0_entry() {
+            HLE_IRQ_PROLOGUE_CYCLES + 1
         } else {
             HLE_IRQ_PROLOGUE_CYCLES
         };

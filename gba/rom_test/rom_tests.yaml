@@ -241,6 +241,20 @@ expected_failures:
 # absolute-correct and the 4i churn is downstream take#2+ phase error
 # unmasked by the fix (2i now miss by +-1) - the lead for Phase 12.
 # Standing model: T3+T4+entry 23; mechanism open.
+# T4 ablation: dropping the IF gate discounts unrelated takes (E1
+# without count: storm 775, worse); dropping count (E1) or fresh
+# (nba 1/2) or ps0 (storm 654) or wake (halt_pc_4) each regresses.
+# E2 (ovfs<=1) undercovers double-wrapped take#1s (timer_irq 84).
+# E6 (epilogue 7->6) destroys sio 0/4; E8 (7->8) fixes storm +101 but
+# breaks sio the other way, so the shared return path is exact and
+# the residual lives in take#2+ handling, not the return.
+# T5 (established re-takes, ovfs>=3, enter +1): storm 778->901/936
+# (+123). 2i values ran systematic -1 with T4-only (take#2 a tick
+# early); first takes keep T4/full entry, non-timer0 takes never match
+# (timer0 IF required), sio/nba/halt/timing all green. Residual 35:
+# slower ps0 rows (0x0040+, take#2 at ovf#2 with count 2 stays T4-kept)
+# and 10b/8b/6b cascade-bit rows; mechanism open (re-take entry vs
+# re-raise pipeline undistinguished - both shift take#2 +1).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream

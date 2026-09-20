@@ -1159,6 +1159,19 @@ impl GbaMemoryBus {
         self.pending_if
     }
 
+    /// T5 gate: established timer0 re-takes (third overflow onward from
+    /// a fresh atomic prescaler-0 enable) enter 1 more expensive. Storm
+    /// take#2+ phase pins +1 on exactly this class (2i values ran
+    /// systematic -1 with the T4-only model); first takes keep T4/full
+    /// entry, and non-timer0 takes never match (timer0 IF required).
+    /// Mechanism open (see the timers box note).
+    pub fn retook_timer0_entry(&self) -> bool {
+        self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) >= 3
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) == 0
+    }
+
     /// T4 gate: boundary takes of a freshly atomically-enabled
     /// prescaler-0 timer0 enter 3 cheaper (mgba timer-irq frozen + storm
     /// 1i/2i pin -3 on exactly this class). Every condition is
