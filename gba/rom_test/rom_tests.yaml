@@ -261,8 +261,16 @@ expected_failures:
 # reaches exact, and +1 (T6b) merely moved -2->-1. count==2 (not >=2:
 # that broke 15 slow 4i cells) with the T4 class guards keeps nba
 # (count 1), halt (count 1), timer_irq doubles (IF still up) and fast
-# return-anchored takes (line up early) untouched. Residual 26: slow
-# 4i near-miss phase scatter, 0x0040 racy row, cascade-bit rows.
+# return-anchored takes (line up early) untouched.
+# T7 (missed-one takes complete take+entry at raise+25): storm
+# 910->916/936 (+6, 0 broken). Fast-row take#2 answers the 3rd
+# overflow second (2nd arrived masked, discarded; exactly one ack on
+# record) with grid-split latencies 5/3; entries 20/22 absorb the
+# sampling delay (take+entry const). Clean takes keep T4/T5, fast
+# rows (counts 10+) and slow take#3 (two acks) never match.
+# Residual 20: slow-4i loose takes (+2 grid phase, device-blind
+# width-split entries) and cascade-bit rows (+1iter detection-boundary
+# luck with value-blind stops); mechanism open.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
