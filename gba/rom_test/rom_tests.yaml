@@ -354,6 +354,28 @@ expected_failures:
 # hold (ADD,ADD)). Take#2 keeps T5 (2i freezes pin its disable).
 # Standing: 931/936; residual 5 (6b0013-4d4i, 8b0010/8b0012/10b0010
 # -2d4i, 10b0012-1d1i, all loose sums +1 iter, freeze-blind).
+# Prescaled-5 forensics (TEMP take/enable/stop/LDR probes, all
+# reverted; loose iter is 23c): all 5 fail with the disabling take at
+# loop-bottom (TST,BNE, 3c after the last LDR), so handler resume
+# re-takes the branch and runs a full extra iter (+0x10); passing
+# twins' disabling takes land mid-loop (partial final, same totals).
+# Mechanism: lengthening a middle-take handler by ~1 iter drops one
+# pre-take LDR at the grid-fixed final take (phase-preserved: take
+# keeps pipe/lat/off). Proven by TEMP T12 (prescaled take#3 +23,
+# tight-pipe-excluded, reverted): fixed 6b0013-4d4i and 8b0010-2d4i
+# (-0x10 exact), broke ~29 (ADD,ADD)/(TST,BNE)/(BNE,STR)-take#3 passes
+# with -0x10, zero tight breaks, timer_irq 90/90. This also explains
+# the T8-PS-blind zero movement (entry costs never move takes; only
+# take position matters). Non-scopeability is twin-proven: every
+# refinement breaks a passing twin ((ADD,ADD)+take1lat7 breaks
+# 10b0012-1d4i; (BNE,STR) breaks its twin; (ADD,LDR) breaks 6b0012-1d4i
+# and all 36 tight-4i), and no uniform fractional shift can thread
+# the bottom zone (passing take-offs cover 22/23 phases). 10b0012-1d1i
+# is unfixable in-model (single take at bottom: lat floor, and the
+# stop time is irrelevant since the resume path is fixed). Verdict:
+# history-phase lottery (take position = free-running grid phase vs
+# loop phase; ours lands bottom where HW lands mid). Do not refit;
+# needs cycle-exact history, not take gates.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
