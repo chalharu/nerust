@@ -179,7 +179,11 @@ impl GbaCpu {
         // T11: clean full-pipe take#3s after a latency-5 take#1 enter one
         // loose iteration more expensive (storm grid-phase shift).
         // T8: late-sampled clean take#4s complete take+entry at raise+25.
-        let prologue = if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
+        // T12: prescaled take#3s sampled at latency 3 outside tight
+        // pipes enter 2 more expensive (storm take#4 resampling).
+        let prologue = if bus.resampled_timer0_entry(entry_opcode, entry_next, src_thumb) {
+            HLE_IRQ_PROLOGUE_CYCLES + 2
+        } else if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
             HLE_IRQ_PROLOGUE_CYCLES + 24
         } else if bus.history_timer0_entry(entry_opcode, entry_next, src_thumb) {
             HLE_IRQ_PROLOGUE_CYCLES + 26
