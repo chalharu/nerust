@@ -1246,6 +1246,34 @@ impl GbaMemoryBus {
         None
     }
 
+    /// T12 gate: prescaled take#3s (third overflow answered third: two
+    /// acks on record) sampled at latency 3 outside tight pipes enter 2
+    /// more expensive: the slightly longer middle handler re-quantizes
+    /// the grid-fixed take#4 sampling out of the loop bottom (storm
+    /// prescaled-4i loose sums -1 iter each). Tight take#3s never match
+    /// (they are always (ADD,LDR)/(LDR,TST) at latencies 5/4 or with
+    /// take#1 latency 6: survey-proven structural). In-scope passing
+    /// twins re-quantize safely (their take#4s keep totals); +1 fixes
+    /// only the (BNE,STR) cell and +3 breaks 8b0011-4d4i, so +2 is the
+    /// sweet spot. Single-take runs never match (no take#3 to lengthen).
+    /// ARM only; non-timer0 takes never match (timer0 IF required).
+    /// Mechanism open (see the timers box note).
+    pub fn resampled_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
+        !thumb
+            && self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) == 3
+            && self.timers.timer0_acks_since_enable() == 2
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) != 0
+            && self.current_tcycle.saturating_sub(self.timer0_raise_tick) == 3
+            && ((!(entry_opcode & 0x0C000000 == 0x04000000)
+                && !(Self::is_simple_opcode(entry_opcode, false)
+                    && entry_next & 0x0C000000 == 0x04000000))
+                || (Self::is_simple_opcode(entry_opcode, false)
+                    && entry_next & 0x0C000000 == 0x04000000
+                    && self.timers.take1_latency() == Some(5)))
+    }
+
     /// T10 gate: clean take#3s (third overflow answered third: two acks
     /// on record) interrupting just before a data transfer (single-cycle
     /// ALU in flight, transfer next) enter 24 more expensive: the pending

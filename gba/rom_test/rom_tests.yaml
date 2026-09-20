@@ -392,6 +392,18 @@ expected_failures:
 # wrong magnitude for +1-iter fails; NBA-adopt predicts net -7).
 # Ceiling 931/936 barring HW-measured grid-rule edge data; do not
 # refit with gates or uniform shifts.
+# T12 (prescaled take#3 at lat 3 outside tight pipes -> +2: take#4
+# resampling): storm 931->935/936 (+4/-0, all four prescaled-4i loose
+# sums fixed, all gates green). The +2 middle lengthening re-quantizes
+# take#4 sampling non-rigidly (takes do not move rigidly with the loop:
+# lat re-quantizes per position, so in-scope passing twins hold while
+# bottom takes exit at the LDR). Scope: (ADD,ADD)/(BNE,STR)/(TST,BNE)/
+# (ADD,CMP) take#3s at lat 3, plus (ADD,LDR) at lat 3 with take#1-lat 5
+# (tight (ADD,LDR)s are lat 5/4 or take1lat 6: structural). Bracket:
+# +1 fixes only the (BNE,STR) cell (932), +3 breaks 8b0011-4d4i (934);
+# +2 is the sweet spot. 10b0012-1d1i has no take#3 (single take at
+# bottom: lat floor, stop-irrelevant, immovable). Standing: 935/936;
+# residual 1 (10b0012-1d1i loose sums +1 iter). Mechanism open.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
