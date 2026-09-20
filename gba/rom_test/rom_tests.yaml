@@ -255,6 +255,14 @@ expected_failures:
 # slower ps0 rows (0x0040+, take#2 at ovf#2 with count 2 stays T4-kept)
 # and 10b/8b/6b cascade-bit rows; mechanism open (re-take entry vs
 # re-raise pipeline undistinguished - both shift take#2 +1).
+# T6 (2nd-overflow raisings from a down IF apply 2 ticks later):
+# storm 901->910/936 (+9, 0 broken). Slow-row take#2 (ovf#2-anchored,
+# count==2, T4-kept) ran -2; entry moves in 3s so only a position +2
+# reaches exact, and +1 (T6b) merely moved -2->-1. count==2 (not >=2:
+# that broke 15 slow 4i cells) with the T4 class guards keeps nba
+# (count 1), halt (count 1), timer_irq doubles (IF still up) and fast
+# return-anchored takes (line up early) untouched. Residual 26: slow
+# 4i near-miss phase scatter, 0x0040 racy row, cascade-bit rows.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
