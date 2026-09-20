@@ -110,6 +110,9 @@ impl GbaCpu {
         // change on exception entry).
         let src_pc = self.regs.pc();
         let src_thumb = self.regs.cpsr_t();
+        // In-flight opcode at the interrupted boundary (class-gated take
+        // entry reads this, never addresses).
+        let entry_opcode = self.pipeline[0];
         let vector = bus.read32(0x03007FFC);
         // The real BIOS jumps to [03007FFCh] blindly; a handler can live in
         // any executable memory (IWRAM/EWRAM, any ROM mirror 08-0D, SRAM).
@@ -169,7 +172,7 @@ impl GbaCpu {
         // expensive (storm take#2+ phase: see the timers box note).
         // T7: missed-one takes complete take+entry at raise+25.
         // T8: late-sampled clean take#4s complete take+entry at raise+25.
-        let prologue = if let Some(pro) = bus.late_timer0_entry() {
+        let prologue = if let Some(pro) = bus.late_timer0_entry(entry_opcode, src_thumb) {
             pro
         } else if let Some(pro) = bus.catchup_timer0_entry() {
             pro
