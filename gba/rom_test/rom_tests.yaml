@@ -376,6 +376,22 @@ expected_failures:
 # history-phase lottery (take position = free-running grid phase vs
 # loop phase; ours lands bottom where HW lands mid). Do not refit;
 # needs cycle-exact history, not take gates.
+# Phase-lock (2026-09-20 forensics, TEMP probes reverted): prescaler
+# phase at test enables is globally locked to phi(d)={178,183,193}
+# (all 26 cells; 390/467 inter-enable gaps =0 mod 1024, rest +5/+10/-15
+# = delay steps; boot phase washed out). Takes are deterministic
+# F(cell,d,i), so this is not a history lottery: 5 deterministic
+# divergences at locked phases. Unfixability axes (every axis shared
+# with passes): phi (all three values), P/N/ii/reload (all shared),
+# take features (twin-proven pairs), run index (locked, no history),
+# loop code (uniform moves interlock: bottom cluster off3-4 plus mid
+# cluster off7-8 flank every fractional delta). Architecture recheck:
+# free-running divider tri-confirmed (NBA/ares/Mesen + GBATEK silent +
+# the lock itself refutes reset), start_delay 2 + stale-tick edge match
+# all three refs, NBA first-overflow matches within 2c (+P edges only,
+# wrong magnitude for +1-iter fails; NBA-adopt predicts net -7).
+# Ceiling 931/936 barring HW-measured grid-rule edge data; do not
+# refit with gates or uniform shifts.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
