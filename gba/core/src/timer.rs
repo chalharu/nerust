@@ -22,6 +22,16 @@ pub struct GbaTimers {
     prescaler: u16,
     current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
+    /// First-overflow tick since the channel's fresh enable, per channel.
+    /// The first take samples a boundary later than the line alone allows
+    /// (the take#1 delay is relative to the first overflow, not the
+    /// enable: longer reloads overflow past any enable window).
+    last_ovf1_cycle: [Option<u64>; 4],
+    /// Whether the channel's fresh enable carried a fresh reload (a CNT_L
+    /// write landed on the same tick: an atomic 32-bit enable. Split
+    /// CNT_L+CNT_H enables use a reload that was set earlier (it cannot
+    /// land while stopped, so it is still pending but aged).
+    last_enable_fresh_reload: [bool; 4],
     /// Overflows since the last fresh enable, per channel (saturates).
     /// The first overflow primes downstream sample pipelines (sound
     /// FIFO: arms without consuming); later overflows drain.
@@ -48,8 +58,26 @@ impl GbaTimers {
             // next overflow arms without consuming (alyosha fifo_4 pins
             // the skipped first pop).
             self.overflows_since_enable[channel] = 0;
+            self.last_ovf1_cycle[channel] = None;
+            // A 32-bit write always carries a fresh reload (set above).
+            self.last_enable_fresh_reload[channel] = true;
         }
         true
+    }
+
+    /// First-overflow tick since the channel's fresh enable, if any.
+    pub fn last_ovf1_cycle(&self, channel: usize) -> Option<u64> {
+        self.last_ovf1_cycle[channel]
+    }
+
+    /// Whether the channel's fresh enable carried a fresh reload.
+    pub fn last_enable_fresh_reload(&self, channel: usize) -> bool {
+        self.last_enable_fresh_reload[channel]
+    }
+
+    /// Prescaler selector bits of a channel (T4 gate: fast timers only).
+    pub fn prescaler_bits(&self, channel: usize) -> u16 {
+        self.channels[channel].control & 3
     }
 
     pub fn read(&self, address: u32) -> Option<u16> {
@@ -66,8 +94,14 @@ impl GbaTimers {
             return false;
         };
         if control {
+            // A CNT_H enable lands with a fresh reload only when the CNT_L
+            // write happened on this same tick (an atomic 32-bit enable
+            // sets both just above; an earlier split write is aged).
+            let fresh_reload = self.last_reload_cycle[channel] == Some(self.current_cycle);
             if write_control(&mut self.channels[channel], value & 0x00C7) {
                 self.overflows_since_enable[channel] = 0;
+                self.last_ovf1_cycle[channel] = None;
+                self.last_enable_fresh_reload[channel] = fresh_reload;
             }
         } else {
             // GBATEK Timers: writing CNT_L initializes the reload value only
@@ -101,6 +135,9 @@ impl GbaTimers {
             irq |= channel_irq;
             if next_cascade {
                 overflow |= 1 << index;
+                if self.overflows_since_enable[index] == 0 {
+                    self.last_ovf1_cycle[index] = Some(self.current_cycle);
+                }
                 self.overflows_since_enable[index] =
                     self.overflows_since_enable[index].saturating_add(1);
             }

@@ -210,6 +210,10 @@ pub struct GbaMemoryBus {
     /// The HLE returns inline, so without this the woken thread outruns the
     /// staging IRQ line; consumed as CPU-stall cycles by the step loop.
     wake_latency: u32,
+    /// Set when a halted CPU wakes for IRQ; consumed by the next take.
+    /// Wake takes keep the full entry (T4 gate): only the first take
+    /// after a wake is special, and the flag never leaks past it.
+    woke_from_halt: bool,
     /// Pending DMA prefetch-collision arbitration stall. Set when a
     /// DMA GamePak access collides with an in-flight prefetch fill
     /// (fill_collision fired); burned as a CPU-stall tick at the next
@@ -391,6 +395,7 @@ impl GbaMemoryBus {
             stopped: false,
             wake_clear_mask: 0,
             wake_latency: 0,
+            woke_from_halt: false,
             dma_stall_pending: 0,
             pending_ie: 0,
             pending_ime: false,
@@ -922,6 +927,35 @@ impl GbaMemoryBus {
         self.irq_line
     }
 
+    /// Post-enable timer0 take deferral (the first take samples a boundary
+    /// later than the line alone allows): while timer0's IF is up within a
+    /// few ticks of its first overflow since the fresh enable, the take
+    /// waits for a later boundary (IF stays raised, so nothing is lost).
+    /// Gated on the first couple of overflows: an established-rate timer
+    /// (many overflows already) takes immediately, as do stale takes from
+    /// before the enable (no overflow since it yet). The delay is relative
+    /// to the first overflow, not the enable: longer reloads overflow past
+    /// any enable window. Starts with a fresh reload (atomic 32-bit
+    /// enables, whose data phase lands the enable later) sample later
+    /// than starts from an earlier split reload (the mgba timer suites
+    /// pin 5, the cancel_ime race pins 3).
+    pub fn defer_timer0_take(&self) -> bool {
+        if self.irq_flags() & (1 << 3) == 0 {
+            return false;
+        }
+        if self.timers.overflows_since_enable(0) > 2 {
+            return false;
+        }
+        let window = if self.timers.last_enable_fresh_reload(0) {
+            5
+        } else {
+            3
+        };
+        self.timers
+            .last_ovf1_cycle(0)
+            .is_some_and(|at| self.current_tcycle.wrapping_sub(at) < window)
+    }
+
     /// Delayed interrupt pipeline: apply due pendings, then propagate
     /// availability (+1) and the CPU line (+2). Queued transitions are
     /// never cancelled, so transient edges stay observable.
@@ -1110,6 +1144,7 @@ impl GbaMemoryBus {
                 } else {
                     0
                 };
+                self.woke_from_halt = true;
             }
             self.halted = false;
             self.stopped = false;
@@ -1122,6 +1157,26 @@ impl GbaMemoryBus {
     /// raised just before the SWI (still in `pending_if`) must count.
     pub fn irq_flags(&self) -> u16 {
         self.pending_if
+    }
+
+    /// T4 gate: boundary takes of a freshly atomically-enabled
+    /// prescaler-0 timer0 enter 3 cheaper (mgba timer-irq frozen + storm
+    /// 1i/2i pin -3 on exactly this class). Every condition is
+    /// ablation-proven load-bearing: dropping the IF gate discounts
+    /// unrelated takes; dropping the overflow count or the atomic-enable
+    /// gate breaks nba irq-delay (split enables keep 23); dropping the
+    /// prescaler gate breaks slow-timer storm rows; wake takes (alyosha
+    /// halt_pc_4) keep the full 23. Consumes the wake flag on every take
+    /// so it never leaks past the first post-wake take. Mechanism open
+    /// (see the timers box note); never fit the entry to these cells
+    /// beyond this gate.
+    pub fn discount_timer0_entry(&mut self) -> bool {
+        let woke = std::mem::take(&mut self.woke_from_halt);
+        !woke
+            && self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) <= 2
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) == 0
     }
 
     /// Arm the IntrWait wake-clear mask (cleared on next halt wake).
