@@ -290,8 +290,14 @@ expected_failures:
 # D2 (T3 prescaler-0-only) broke prescaled 1i takes (T3 needed there);
 # D3 (timer0 class-gated return +1) churned fast-row pended-take stops
 # (794/936, -122). 6b-4d-4i runs 7 takes (3 post-exit stale-IF re-takes
-# at ROM PCs; sum sealed at loop-exit). Standing: 916/936; the 20 are
-# phase-lottery beyond the uniform model (needs run-gated terms).
+# at ROM PCs; sum sealed at loop-exit). Follow-up (take#4 25-lat deep
+# dive, probe logs only): 25-lat is exact for all 9 loose freezes
+# (0080 lat4->21, 0800/8000 lat3->22) but uniform use breaks all 9
+# tight freezes (same lat3 needs T5+1=24; net-zero churn, sums
+# untouched) - tight wants 25-lat+2 uniformly, so even values need a
+# run-gate; PC address is the only splitter (forbidden). Standing:
+# 916/936; the 20 are phase-lottery beyond the uniform model (needs
+# run-gated terms).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
