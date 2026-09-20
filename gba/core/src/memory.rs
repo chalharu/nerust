@@ -1206,6 +1206,30 @@ impl GbaMemoryBus {
         Some(25u32.saturating_sub(latency.min(25) as u32))
     }
 
+    /// T8 gate: late-sampled clean take#4s (fourth overflow answered
+    /// fourth: every overflow answered, three acks on record) sampled 4+
+    /// after the raise complete take+entry at raise+25 like T7: the entry
+    /// absorbs the sampling latency. Storm slow-row take#4 pins 21 on
+    /// latency 4; earlier-sampled (latency 3) takes keep T5, missed takes
+    /// keep T7, and non-timer0 takes never match (timer0 IF required).
+    /// Returns the prologue when the class matches. Mechanism open (see
+    /// the timers box note).
+    pub fn late_timer0_entry(&self) -> Option<u32> {
+        if self.irq_flags() & (1 << 3) == 0
+            || self.timers.overflows_since_enable(0) != 4
+            || self.timers.timer0_acks_since_enable() != 3
+            || !self.timers.last_enable_fresh_reload(0)
+            || self.timers.prescaler_bits(0) != 0
+        {
+            return None;
+        }
+        let latency = self.current_tcycle.saturating_sub(self.timer0_raise_tick);
+        if latency < 4 {
+            return None;
+        }
+        Some(25u32.saturating_sub(latency.min(25) as u32))
+    }
+
     /// T5 gate: established timer0 re-takes (third overflow onward from
     /// a fresh atomic prescaler-0 enable) enter 1 more expensive. Storm
     /// take#2+ phase pins +1 on exactly this class (2i values ran
