@@ -344,7 +344,16 @@ expected_failures:
 # slow take#3s)); reverted to ps0 scope. 0080/0800/prescaled twins all
 # proven (same take classes, different grid wants); 0800 sums and
 # prescaled 5 stay lottery-phase. Standing: 928/936; residual 8
-# (0800-16xs x3, prescaled-16xs x5).
+# (0800-16xs x3, prescaled-16xs x5). T11 (clean (3,2) full-pipe take#3
+# + take#1-lat==5 history -> T5+25: middle total one iter longer):
+# storm 928->931/936 (+3/-0, 0800-loose-16xs sums fixed (take#4
+# phase-preserved via T8), all gates green). +24 overshot the freeze
+# by 1 (one loose iter is 25c: take#4 fell to lat2/T5); HLE+26 holds
+# both. Gate matches only 0800-loose (survey-proven: 8000 take#1s at
+# 7, 0080 at 6, prescaled excluded by ps0 scope, tight loops cannot
+# hold (ADD,ADD)). Take#2 keeps T5 (2i freezes pin its disable).
+# Standing: 931/936; residual 5 (6b0013-4d4i, 8b0010/8b0012/10b0010
+# -2d4i, 10b0012-1d1i, all loose sums +1 iter, freeze-blind).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream

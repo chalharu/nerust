@@ -40,6 +40,10 @@ pub struct GbaTimers {
     /// take answering a third overflow has seen exactly one ack: the
     /// second overflow arrived masked and was discarded.
     timer0_acks_since_enable: u8,
+    /// Sample latency of the run's first timer0 take (take#1), in
+    /// T-cycles. Middle-take entries key on it (storm grid-phase proxy).
+    /// Reset on enable; the latest first-take wins (None = none yet).
+    take1_latency: Option<u64>,
 }
 
 impl GbaTimers {
@@ -67,6 +71,7 @@ impl GbaTimers {
             self.last_enable_fresh_reload[channel] = true;
             if channel == 0 {
                 self.timer0_acks_since_enable = 0;
+                self.take1_latency = None;
             }
         }
         true
@@ -80,6 +85,17 @@ impl GbaTimers {
     /// Timer0 IF acks since the last fresh enable.
     pub fn timer0_acks_since_enable(&self) -> u8 {
         self.timer0_acks_since_enable
+    }
+
+    /// Record the run's first timer0 take latency (latest first-take
+    /// wins: the sync take's latency is overwritten by the run's own).
+    pub fn record_take1_latency(&mut self, latency: u64) {
+        self.take1_latency = Some(latency);
+    }
+
+    /// Sample latency of the run's first timer0 take, if any.
+    pub fn take1_latency(&self) -> Option<u64> {
+        self.take1_latency
     }
 
     /// First-overflow tick since the channel's fresh enable, if any.
@@ -121,6 +137,7 @@ impl GbaTimers {
                 self.last_enable_fresh_reload[channel] = fresh_reload;
                 if channel == 0 {
                     self.timer0_acks_since_enable = 0;
+                    self.take1_latency = None;
                 }
             }
         } else {
