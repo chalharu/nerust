@@ -1270,6 +1270,40 @@ impl GbaMemoryBus {
             && (entry_next & 0x0C000000 == 0x04000000)
     }
 
+    /// T11 gate: clean take#3s (third overflow answered third: two acks
+    /// on record) interrupting a full pipe of single-cycle ALU enter one
+    /// loose iteration more expensive when the run's take#1 sampled at
+    /// latency 5: the middle-take total runs one iteration short there
+    /// (storm 0800-loose sums +1 iter at every delay; 8000 take#1s sample
+    /// at 7 and keep T5). Take#2 keeps T5 (2i freezes pin its disable),
+    /// so only take#3 lengthens; Thumb takes never match (single-ADD
+    /// tight loops cannot hold the pipe: structural). Mechanism open (see
+    /// the timers box note).
+    pub fn history_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
+        !thumb
+            && self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) == 3
+            && self.timers.timer0_acks_since_enable() == 2
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) == 0
+            && self.timers.take1_latency() == Some(5)
+            && Self::is_simple_opcode(entry_opcode, false)
+            && Self::is_simple_opcode(entry_next, false)
+    }
+
+    /// Record the run's first timer0 take latency (take#1 grid proxy for
+    /// the T11 gate). Call on every non-deferred timer0 take; the gate
+    /// reads only the latest first-take.
+    pub fn record_take1_latency(&mut self) {
+        if self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) == 1
+            && self.timers.timer0_acks_since_enable() == 0
+        {
+            let latency = self.current_tcycle.saturating_sub(self.timer0_raise_tick);
+            self.timers.record_take1_latency(latency);
+        }
+    }
+
     /// Whether an in-flight opcode is single-cycle ALU (an undisturbed
     /// pipe of these drains cleanly on a take). Reads opcode class only,
     /// never addresses.

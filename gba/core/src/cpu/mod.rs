@@ -114,6 +114,8 @@ impl GbaCpu {
         // entry reads these, never addresses).
         let entry_opcode = self.pipeline[0];
         let entry_next = self.pipeline[1];
+        // Take#1 grid proxy for the T11 gate (latest first-take wins).
+        bus.record_take1_latency();
         let vector = bus.read32(0x03007FFC);
         // The real BIOS jumps to [03007FFCh] blindly; a handler can live in
         // any executable memory (IWRAM/EWRAM, any ROM mirror 08-0D, SRAM).
@@ -174,9 +176,13 @@ impl GbaCpu {
         // T7: missed-one takes complete take+entry at raise+25.
         // T10: clean take#3s interrupting just before a transfer enter 24
         // more expensive (storm broken-pipe grid shift: see timers box).
+        // T11: clean full-pipe take#3s after a latency-5 take#1 enter one
+        // loose iteration more expensive (storm grid-phase shift).
         // T8: late-sampled clean take#4s complete take+entry at raise+25.
         let prologue = if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
             HLE_IRQ_PROLOGUE_CYCLES + 24
+        } else if bus.history_timer0_entry(entry_opcode, entry_next, src_thumb) {
+            HLE_IRQ_PROLOGUE_CYCLES + 26
         } else if let Some(pro) = bus.late_timer0_entry(entry_opcode, entry_next, src_thumb) {
             pro
         } else if let Some(pro) = bus.catchup_timer0_entry() {
