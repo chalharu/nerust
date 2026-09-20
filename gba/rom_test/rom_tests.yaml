@@ -295,9 +295,12 @@ expected_failures:
 # (0080 lat4->21, 0800/8000 lat3->22) but uniform use breaks all 9
 # tight freezes (same lat3 needs T5+1=24; net-zero churn, sums
 # untouched) - tight wants 25-lat+2 uniformly, so even values need a
-# run-gate; PC address is the only splitter (forbidden). Standing:
-# 916/936; the 20 are phase-lottery beyond the uniform model (needs
-# run-gated terms).
+# run-gate; PC address is the only splitter (forbidden). D4 (clean
+# take#4 (ovfs==4,acks==3) lat>=4 only -> 25-lat): 919/936 (+3/-0,
+# 0080-loose-16xv fixed, all gates green) but rejected: the lat3/lat4
+# cliff (-3 on 1 boundary tick, both loop-top ADD interrupts) is pure
+# lottery-phase fitting with no mechanism. Standing: 916/936; the 20
+# are phase-lottery beyond the uniform model (needs run-gated terms).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
