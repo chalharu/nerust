@@ -300,9 +300,24 @@ expected_failures:
 # storm 916->919/936 (+3/-0, 0080-loose-16xv fixed, all gates green).
 # The lat>=4 gate fires only there (0800/8000/tight take#4s sample at
 # lat3 and keep T5; fast rows miss (acks==1) and keep T5/T7; prescaled
-# and wake takes never match). Mechanism open. Standing: 919/936;
-# residual 17 are phase-lottery beyond the uniform model (needs
-# run-gated grid terms).
+# and wake takes never match). T8b (same class at lat3 interrupting a
+# branch (in-flight opcode class, never addresses) -> 25-lat): storm
+# 919->922/936 (+3/-0, 0800-loose-16xv fixed (BNE-interrupt take#4s get
+# 22), all gates green). Per-cell forensics (TEMP store/take/poll probes,
+# all reverted; runTest is IWRAM code so takes land at IWRAM loop PCs):
+# 0080-loose take#4 interrupts ADD#1 (lat4, T8), 0800-loose interrupts
+# BNE (lat3, T8b->22), 8000-loose interrupts ADD#12 (lat3, keeps T5=24);
+# tight take#4s never interrupt BNE (ADD/LDR/TST only). Poll trace proves
+# 0800-loose runs one extra pre-take#4 UP-poll (342 vs 339+exit): the
+# take#4 position is raise-anchored, so the +1 is grid phase. T9 DIAG
+# (clean take#3 (ovfs==3,acks==2) interrupting full-simple-pipe +24,
+# full-iter phase-preserving grid shift): fixed 0800 sums AND kept 0800
+# freezes (take#4 stays on BNE) but broke 8000 sums (were passing):
+# reverted. Per-cell proof 0800-take#3 and 8000-take#3 are identical in
+# every blind dimension (lat3, (3,2), full-pipe), so no uniform take-side
+# grid fix exists; 0800 sums stay lottery-phase. Mechanism open.
+# Standing: 922/936; residual 14 are phase-lottery beyond the uniform
+# model (needs run-gated grid terms).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream

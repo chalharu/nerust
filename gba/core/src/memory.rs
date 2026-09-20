@@ -1209,12 +1209,15 @@ impl GbaMemoryBus {
     /// T8 gate: late-sampled clean take#4s (fourth overflow answered
     /// fourth: every overflow answered, three acks on record) sampled 4+
     /// after the raise complete take+entry at raise+25 like T7: the entry
-    /// absorbs the sampling latency. Storm slow-row take#4 pins 21 on
-    /// latency 4; earlier-sampled (latency 3) takes keep T5, missed takes
-    /// keep T7, and non-timer0 takes never match (timer0 IF required).
-    /// Returns the prologue when the class matches. Mechanism open (see
-    /// the timers box note).
-    pub fn late_timer0_entry(&self) -> Option<u32> {
+    /// absorbs the sampling latency. A take#4 interrupting a branch joins
+    /// the class at latency 3: the vector fetch overlaps the branch
+    /// refill (both flush the pipe), so the same raise+25 holds. Storm
+    /// slow-row take#4 pins 21 on latency 4 and 22 on latency-3 branches;
+    /// earlier-sampled non-branch takes keep T5, missed takes keep T7,
+    /// and non-timer0 takes never match (timer0 IF required). Returns the
+    /// prologue when the class matches. Mechanism open (see the timers
+    /// box note).
+    pub fn late_timer0_entry(&self, entry_opcode: u32, thumb: bool) -> Option<u32> {
         if self.irq_flags() & (1 << 3) == 0
             || self.timers.overflows_since_enable(0) != 4
             || self.timers.timer0_acks_since_enable() != 3
@@ -1224,10 +1227,27 @@ impl GbaMemoryBus {
             return None;
         }
         let latency = self.current_tcycle.saturating_sub(self.timer0_raise_tick);
-        if latency < 4 {
-            return None;
+        if latency >= 4 {
+            return Some(25u32.saturating_sub(latency.min(25) as u32));
         }
-        Some(25u32.saturating_sub(latency.min(25) as u32))
+        if latency == 3 && Self::is_branch_opcode(entry_opcode, thumb) {
+            return Some(25u32.saturating_sub(latency.min(25) as u32));
+        }
+        None
+    }
+
+    /// Whether an in-flight opcode is a branch (take-entry overlap: a
+    /// take interrupting a branch shares the pipe flush with the vector
+    /// fetch). Reads opcode class only, never addresses.
+    fn is_branch_opcode(opcode: u32, thumb: bool) -> bool {
+        if thumb {
+            let op = (opcode & 0xFFFF) as u16;
+            // Conditional branch, unconditional branch, or BX.
+            (op & 0xF000 == 0xD000) || (op & 0xF800 == 0xE000) || (op & 0xFF87 == 0x4700)
+        } else {
+            // B/BL (any condition) or BX.
+            (opcode & 0x0E000000 == 0x0A000000) || (opcode & 0x0FFFFFF0 == 0x012FFF10)
+        }
     }
 
     /// T5 gate: established timer0 re-takes (third overflow onward from
