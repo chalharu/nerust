@@ -167,7 +167,10 @@ impl GbaCpu {
         // timers: see the timers box note).
         // T5: established re-takes (third overflow onward) enter 1 more
         // expensive (storm take#2+ phase: see the timers box note).
-        let prologue = if bus.discount_timer0_entry() {
+        // T7: missed-one takes complete take+entry at raise+25.
+        let prologue = if let Some(pro) = bus.catchup_timer0_entry() {
+            pro
+        } else if bus.discount_timer0_entry() {
             HLE_IRQ_PROLOGUE_CYCLES - 3
         } else if bus.retook_timer0_entry() {
             HLE_IRQ_PROLOGUE_CYCLES + 1

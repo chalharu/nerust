@@ -156,6 +156,9 @@ pub struct GbaMemoryBus {
     /// explicit clear (any of them breaks the distance).
     prev_load_pc: Option<u32>,
     prev_load_is_stack: bool,
+    /// Tick of the last timer0 down-edge IF raise (missed-take entry
+    /// compensation reads the take latency off it).
+    timer0_raise_tick: u64,
     /// End address of the current prefetch run, capping overlap fills in
     /// `prefetch_erase_delta`.
     last_prefetched_pc: u32,
@@ -377,6 +380,7 @@ impl GbaMemoryBus {
             last_opcode_addr: None,
             prev_load_pc: None,
             prev_load_is_stack: false,
+            timer0_raise_tick: 0,
             last_prefetched_pc: 0,
             bios_protect: true,
             current_pc: 0x08000000,
@@ -1113,6 +1117,11 @@ impl GbaMemoryBus {
         // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
         // is evaluated when availability propagates, not here.
         let mask = mask & 0x3FFF;
+        // Stamp down-edge timer0 raises: the missed-take entry rule
+        // reads the take latency off the answered raise.
+        if mask & (1 << 3) != 0 && self.pending_if & (1 << 3) == 0 {
+            self.timer0_raise_tick = self.current_tcycle;
+        }
         // T6: the 2nd timer0 overflow raising IF from down applies 2
         // ticks later (slow-row take#2 runs 2 early otherwise: ovf#2 at
         // count==2 with a fresh atomic ps0 enable pins +2 on exactly
@@ -1174,6 +1183,27 @@ impl GbaMemoryBus {
     /// raised just before the SWI (still in `pending_if`) must count.
     pub fn irq_flags(&self) -> u16 {
         self.pending_if
+    }
+
+    /// T7 gate: missed-one timer0 takes (third overflow answered second:
+    /// the second overflow arrived while masked and was discarded, so
+    /// exactly one ack is on record) complete take+entry at a constant
+    /// raise+25: the entry absorbs the sampling latency. Storm fast-row
+    /// take#2 pins 20/22 on latencies 5/3; clean takes keep T4/T5 and
+    /// non-timer0 takes never match (timer0 IF required). Returns the
+    /// prologue when the class matches. Mechanism open (see the timers
+    /// box note).
+    pub fn catchup_timer0_entry(&self) -> Option<u32> {
+        if self.irq_flags() & (1 << 3) == 0
+            || self.timers.overflows_since_enable(0) != 3
+            || self.timers.timer0_acks_since_enable() != 1
+            || !self.timers.last_enable_fresh_reload(0)
+            || self.timers.prescaler_bits(0) != 0
+        {
+            return None;
+        }
+        let latency = self.current_tcycle.saturating_sub(self.timer0_raise_tick);
+        Some(25u32.saturating_sub(latency.min(25) as u32))
     }
 
     /// T5 gate: established timer0 re-takes (third overflow onward from
@@ -2608,7 +2638,7 @@ impl GbaMemoryBus {
                 return;
         }
         if width == 4 && self.timers.write32(addr, value) {
-                return;
+            return;
         }
         if width > 1 && addr == 0x04000300 {
             // POSTFLG/HALTCNT are BIOS-gated (confirmed by hw-test ROM
@@ -2830,6 +2860,9 @@ impl GbaMemoryBus {
                 } else {
                     (value & 0xFFFF) as u16
                 };
+                if bits & (1 << 3) != 0 {
+                    self.timers.note_timer0_ack();
+                }
                 // GBATEK Interrupt Request Flags are write-1-clear: the
                 // clear lands on the register (and its BIOS RAM mirror)
                 // with the bus write. Only the CPU line still propagates

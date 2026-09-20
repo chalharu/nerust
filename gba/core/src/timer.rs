@@ -36,6 +36,10 @@ pub struct GbaTimers {
     /// The first overflow primes downstream sample pipelines (sound
     /// FIFO: arms without consuming); later overflows drain.
     overflows_since_enable: [u8; 4],
+    /// Timer0 IF acks since the last fresh enable (saturates). A second
+    /// take answering a third overflow has seen exactly one ack: the
+    /// second overflow arrived masked and was discarded.
+    timer0_acks_since_enable: u8,
 }
 
 impl GbaTimers {
@@ -61,8 +65,21 @@ impl GbaTimers {
             self.last_ovf1_cycle[channel] = None;
             // A 32-bit write always carries a fresh reload (set above).
             self.last_enable_fresh_reload[channel] = true;
+            if channel == 0 {
+                self.timer0_acks_since_enable = 0;
+            }
         }
         true
+    }
+
+    /// Count a timer0 IF ack (handler ends clear the serviced flag).
+    pub fn note_timer0_ack(&mut self) {
+        self.timer0_acks_since_enable = self.timer0_acks_since_enable.saturating_add(1);
+    }
+
+    /// Timer0 IF acks since the last fresh enable.
+    pub fn timer0_acks_since_enable(&self) -> u8 {
+        self.timer0_acks_since_enable
     }
 
     /// First-overflow tick since the channel's fresh enable, if any.
@@ -102,6 +119,9 @@ impl GbaTimers {
                 self.overflows_since_enable[channel] = 0;
                 self.last_ovf1_cycle[channel] = None;
                 self.last_enable_fresh_reload[channel] = fresh_reload;
+                if channel == 0 {
+                    self.timer0_acks_since_enable = 0;
+                }
             }
         } else {
             // GBATEK Timers: writing CNT_L initializes the reload value only
