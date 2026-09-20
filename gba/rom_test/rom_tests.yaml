@@ -420,6 +420,18 @@ expected_failures:
 # and poll together; entry costs are post-take), uniform O/line/
 # defer/anchor moves shift all ~100 brittle loose races, and per-cell
 # gates are forbidden. Needs HW edge data, not model refits.
+# E1 (prescaled-fresh defer window 5->1, TEMP reverted): storm
+# 935->919/936 (+1/-17, timer_irq 90/90). The +1 is 10b0012-1d1i
+# (take fires at ovf+3 on the LDR step now that defer closes: line
+# was never the blocker). The -17 (eleven tight-2d1i 1xs takes moved
+# -2, five loose take#1s out of window/T12-mismatch) proves the same
+# class needs window 5: no blind signal at the decision point splits
+# it (tight LDR-steps share entry/lat/ovf/acks/ps/fresh; narrowing to
+# lat/pipe/time slices is fitting). Window values 1-3 are identical
+# (line binds at ovf+3), 4+ never fires pre-writeback: 5 is the
+# unique optimum. Compensation is impossible (r0 seals at
+# take+resume; no post-hoc lever) and core-remodel sampling keeps
+# ARM7 completion (same takes). Residual stands 1, in-model exact.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
