@@ -404,6 +404,22 @@ expected_failures:
 # +2 is the sweet spot. 10b0012-1d1i has no take#3 (single take at
 # bottom: lat floor, stop-irrelevant, immovable). Standing: 935/936;
 # residual 1 (10b0012-1d1i loose sums +1 iter). Mechanism open.
+# 1d1i verdict (TEMP take/poll/stop/ack/ret probes + 216-take
+# prescaled survey, all TEMP reverted): the +0x10 is a post-resume
+# iter, not take cost. Last UP poll 3c before take#1 (TST,BNE, lat7,
+# base 23); handler ack+67/stop+89/ret+113 matches the passing tight
+# twin (take#1 lat5 (ADD,LDR), resume re-polls down), so resume
+# re-runs the stale branch for one extra iter. HW takes 1-4c earlier
+# with the final LDR in flight (resume re-polls down, no post ADDs).
+# Unreachable: takes fire only at instruction steps; the final-LDR
+# step (~ovf+1) is blocked (line down till ovf+3, defer open till
+# ovf+5) and the next step (TST, ovf+7) is past the writeback. The
+# fail is the unique single-take race-19 post-writeback take (same
+# spot take#1s in 1d2i/1d4i pass: last take wins; same-race tight
+# twins pass pre-LDR). Single-take races are rigid (grid moves take
+# and poll together; entry costs are post-take), uniform O/line/
+# defer/anchor moves shift all ~100 brittle loose races, and per-cell
+# gates are forbidden. Needs HW edge data, not model refits.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
