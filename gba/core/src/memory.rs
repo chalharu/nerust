@@ -1113,6 +1113,23 @@ impl GbaMemoryBus {
         // BIOS RAM mirror) 1 tick later by process_irq_pipeline. Halt wake
         // is evaluated when availability propagates, not here.
         let mask = mask & 0x3FFF;
+        // T6: the 2nd timer0 overflow raising IF from down applies 2
+        // ticks later (slow-row take#2 runs 2 early otherwise: ovf#2 at
+        // count==2 with a fresh atomic ps0 enable pins +2 on exactly
+        // this edge). First raisings keep the fast pipeline (T3 window
+        // and live cells pin it), 3rd+ raisings are return-anchored or
+        // absorbed (T5 covers their entry), and non-timer0 sources never
+        // match. Mechanism open (see the timers box note).
+        if mask & (1 << 3) != 0
+            && self.pending_if & (1 << 3) == 0
+            && self.timers.overflows_since_enable(0) == 2
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) == 0
+        {
+            self.pending_if |= mask;
+            self.pending_at = Some(self.current_tcycle + 3);
+            return;
+        }
         self.pending_if |= mask;
         self.pending_at = Some(self.current_tcycle + 1);
     }
