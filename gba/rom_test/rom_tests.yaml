@@ -333,7 +333,18 @@ expected_failures:
 # while the take#4/stop is exact; loose-take#1 (lat6 (TST,BNE)) vs
 # tight-take#1 (lat5) at T4=20 both would need a run-gate. Mechanism
 # open. Standing: 925/936; residual 11 are phase-lottery beyond the
-# uniform model (needs run-gated grid terms).
+# uniform model (needs run-gated grid terms). T10 (clean take#3
+# (ovfs==3,acks==2) interrupting just before a transfer (in-flight
+# simple ALU, transfer next), ARM ps0 fresh only -> +24 (full-iter
+# phase-preserving grid shift)): storm 925->928/936 (+3/-0, 0080-loose
+# sums fixed (take#3 (ADD,LDR) gets +24, take#4 stays on ADD#1/lat4 via
+# T8 so freezes hold), all gates green). Unscoped T10 broke 20 tight
+# prescaled 1xs (tight ADD-takes share the (ADD,LDR) pipe: the pattern
+# is not loose-specific, only twin-safe where tight avoids it (ps0
+# slow take#3s)); reverted to ps0 scope. 0080/0800/prescaled twins all
+# proven (same take classes, different grid wants); 0800 sums and
+# prescaled 5 stay lottery-phase. Standing: 928/936; residual 8
+# (0800-16xs x3, prescaled-16xs x5).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream

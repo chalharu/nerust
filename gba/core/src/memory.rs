@@ -1246,6 +1246,30 @@ impl GbaMemoryBus {
         None
     }
 
+    /// T10 gate: clean take#3s (third overflow answered third: two acks
+    /// on record) interrupting just before a data transfer (single-cycle
+    /// ALU in flight, transfer next) enter 24 more expensive: the pending
+    /// transfer serializes with the take, shifting the poll grid later by
+    /// a full loose iteration (phase-preserving, so a later take#4 keeps
+    /// its loop phase). Storm broken-pipe take#3 pins the grid shift
+    /// (sums -1 iter); full-pipe takes keep T5/T8. Slow tight take#3s
+    /// sample on LDR/TST (measured phases, never simple-then-transfer);
+    /// prescaled takes are excluded by the ps0 scope (their tight ADD
+    /// takes share the pipe: unscoped broke 20). Established/stale takes
+    /// keep T5/T7, and non-timer0 takes never match (timer0 IF required).
+    /// ARM only (Thumb never matches: structural). Mechanism open (see
+    /// the timers box note).
+    pub fn brokenpipe_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
+        !thumb
+            && self.irq_flags() & (1 << 3) != 0
+            && self.timers.overflows_since_enable(0) == 3
+            && self.timers.timer0_acks_since_enable() == 2
+            && self.timers.last_enable_fresh_reload(0)
+            && self.timers.prescaler_bits(0) == 0
+            && Self::is_simple_opcode(entry_opcode, false)
+            && (entry_next & 0x0C000000 == 0x04000000)
+    }
+
     /// Whether an in-flight opcode is single-cycle ALU (an undisturbed
     /// pipe of these drains cleanly on a take). Reads opcode class only,
     /// never addresses.
