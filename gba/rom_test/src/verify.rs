@@ -281,16 +281,8 @@ impl RegisterVerify {
 }
 
 /// Attach guest-provided failure details from a memory log (e.g. a
-/// suite's SRAM `savprintf` area) to failing log checks.
-///
-/// The memory text holds one detail line per failure, in the same
-/// emission order as the log's fail lines, scoped by per-test headers.
-/// Details are zipped positionally within each scope; a detail carrying
-/// an explicit preface key (text before `markers.detail_infix`) is only
-/// attached when the check name ends with that preface, otherwise the
-/// check keeps its plain actual. Headers are lines containing
-/// `markers.header_infix`, with the scope name after the infix; suites
-/// without headers share one global scope.
+/// suite's SRAM `savprintf` area) to failing log checks. Zip/scope rules:
+/// see the ROM test design note (Runner section).
 pub fn enrich_suite_log_checks(
     checks: &mut [CheckResult],
     sram_text: &str,
@@ -363,13 +355,7 @@ pub struct FramePixels<'a> {
 }
 
 /// Branch one ROM's guest-log lines into per-subtest [`CheckResult`]s.
-///
-/// Only lines between the first line containing `spec.begin` and the first
-/// later line containing `spec.end` are scored; lines starting with
-/// `spec.pass_prefix` pass a check named after the prefix, lines starting
-/// with `spec.fail_prefix` fail it. Missing markers produce failing scope
-/// checks (a ROM that never reaches `end` timed out or crashed) while
-/// still reporting whatever subtests were observed.
+/// Only the begin/end window is scored (see the ROM test design note).
 pub fn verify_suite_log(
     logs: &[nerust_gba_core::memory::MgbaDebugLog],
     spec: &SuiteLogVerify,

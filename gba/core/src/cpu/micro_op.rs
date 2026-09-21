@@ -20,14 +20,8 @@ use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
-/// One sub-instruction effect. `Internal` is a bus-free cycle (future
-/// prefetch-fill point); `CommitAlu`/`TakenBranch`/`MemRead`/`MemWrite`
-/// land register/pc/memory effects at their execute-stage points, with
-/// the legacy handler's exact bus-call order (access, then
-/// fetch-stream-break). `BlockStart`/`BlockWord`/`BlockEnd` slice one
-/// PUSH/POP across ops so timer/DMA/IRQ bus events can land between
-/// words; the batch open/close and the single fetch-stream break stay
-/// instruction-scoped exactly like the legacy loop.
+/// One sub-instruction effect; effects land at execute-stage points with
+/// the legacy bus-call order (see the CPU design note, decode section).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicroOp {
     Internal,
@@ -280,15 +274,9 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     })
 }
 
-/// ARM data-processing (register form, I==0). Claims exactly the
-/// subset `decode_arm` routes to `data_processing::handle`: the DP
-/// class minus multiply/SWP/PSR/BX/halfword (masks copied from the
-/// decoder; MRS/MSR/BX would otherwise be misclaimed). Failed
-/// conditions are handled by the caller. Expansion is
-/// [CommitDpReg, I..] padded to the legacy base (register shifts
-/// carry +1I, R15 writes +2 refill); the commit itself delegates to
-/// the legacy handler, so semantics match by construction and only
-/// the cycle split is new.
+/// ARM data-processing (register form, I==0): the DP class minus
+/// multiply/SWP/PSR/BX/halfword, padded to the legacy base; semantics
+/// match by construction (see the CPU design note, decode section).
 fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
         return None;

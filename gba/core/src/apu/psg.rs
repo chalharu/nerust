@@ -1,13 +1,5 @@
-/// GBA PSG channels (GBATEK sound chapters; sweep/envelope/length rules
-/// validated against HW test ROMs and cross-checked across emulators).
-///
-/// Clocks are CPU T-cycles (16.78MHz):
-/// - square timer period: 16 * (2048 - freq)
-/// - wave timer period: 8 * (2048 - rate)
-/// - noise timer: `(64 << shift)` scaled by ratio
-/// - frame sequencer: 32768 T-cycles per step (512Hz), 8 steps.
-///
-/// 4-step duty patterns (GBATEK: 12.5/25/50/75%).
+/// GBA PSG channels; clocks are CPU T-cycles (facts and pins: see the
+/// core model notes, sound section).
 const DUTY: [[i8; 8]; 4] = [
     [1, 0, 0, 0, 0, 0, 0, 1],
     [1, 1, 0, 0, 0, 0, 0, 1],

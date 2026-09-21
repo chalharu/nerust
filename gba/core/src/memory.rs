@@ -184,16 +184,8 @@ pub struct GbaMemoryBus {
     /// ordinary linear fetch stream resumes after that miss.
     pf_branch_drain: bool,
     /// Prefetch fill phase (bus-wait clock): ticks since the last fill
-    /// redirect, modulo the fill duty below. A ROM data access issued
-    /// while a half-word fill finishes costs one arbitration cycle
-    /// (Mesen `GbaRomPrefetch::Reset` + NanoBoyAdvance `Bus::StopPrefetch`
-    /// agree on the mechanism; the countdown values are pinned by the
-    /// mgba-suite Timing cells). Sequential opcode fetches advance by
-    /// exactly one duty (no-op); fetch misses and ROM data accesses
-    /// redirect (reset). Only ROM-bus occupancy advances it: CPU internal
-    /// cycles, IO/RAM accesses and whole DMA bursts freeze it (the bus
-    /// grant blocks fills), except open-bus data reads which free a
-    /// single ROM-bus slot.
+    /// redirect, modulo the fill duty below. Advance/freeze rules: see
+    /// the memory-bus design note (Wait/Prefetch section).
     fill_countdown: u32,
     /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
     /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
@@ -830,16 +822,9 @@ impl GbaMemoryBus {
                     src
                 };
                 let value = self.read_dma_source(read_addr, transfer.width);
-                // GamePak ROM reads collide with an in-flight prefetch
-                // fill exactly like CPU ROM data (Mesen/NBA/ares agree):
-                // advance the fill clock across the handover idle plus
-                // earlier non-cartridge ticks this burst, then charge the
-                // collision. One-shot per burst via the restart below.
-                // The penalty stalls the bus (a real tick, like Mesen's
-                // Step on Reset): acc charging would be discarded by the
-                // resume instruction's expansion take. Idempotent set:
-                // a both-ROM unit collides on read and write but stalls
-                // once.
+                // GamePak ROM reads collide with an in-flight prefetch fill
+                // (one-shot per burst; see the DMA section of the core
+                // model notes).
                 if crate::dma::is_rom(read_addr) && self.pf_valid {
                     self.fill_advance(transfer.pre_read_idle);
                     if self.fill_collision() != 0 {
@@ -931,18 +916,8 @@ impl GbaMemoryBus {
         self.irq_line
     }
 
-    /// Post-enable timer0 take deferral (the first take samples a boundary
-    /// later than the line alone allows): while timer0's IF is up within a
-    /// few ticks of its first overflow since the fresh enable, the take
-    /// waits for a later boundary (IF stays raised, so nothing is lost).
-    /// Gated on the first couple of overflows: an established-rate timer
-    /// (many overflows already) takes immediately, as do stale takes from
-    /// before the enable (no overflow since it yet). The delay is relative
-    /// to the first overflow, not the enable: longer reloads overflow past
-    /// any enable window. Starts with a fresh reload (atomic 32-bit
-    /// enables, whose data phase lands the enable later) sample later
-    /// than starts from an earlier split reload (the mgba timer suites
-    /// pin 5, the cancel_ime race pins 3).
+    /// Post-enable timer0 take deferral: the first take waits for a later
+    /// boundary (classes and pins: see the timers box note).
     pub fn defer_timer0_take(&self) -> bool {
         if self.irq_flags() & (1 << 3) == 0 {
             return false;
@@ -1185,14 +1160,8 @@ impl GbaMemoryBus {
         self.pending_if
     }
 
-    /// T7 gate: missed-one timer0 takes (third overflow answered second:
-    /// the second overflow arrived while masked and was discarded, so
-    /// exactly one ack is on record) complete take+entry at a constant
-    /// raise+25: the entry absorbs the sampling latency. Storm fast-row
-    /// take#2 pins 20/22 on latencies 5/3; clean takes keep T4/T5 and
-    /// non-timer0 takes never match (timer0 IF required). Returns the
-    /// prologue when the class matches. Mechanism open (see the timers
-    /// box note).
+    /// T7 gate: missed-one takes complete take+entry at raise+25
+    /// (classes and pins: see the timers box note).
     pub fn catchup_timer0_entry(&self) -> Option<u32> {
         if self.irq_flags() & (1 << 3) == 0
             || self.timers.overflows_since_enable(0) != 3
@@ -1206,18 +1175,8 @@ impl GbaMemoryBus {
         Some(25u32.saturating_sub(latency.min(25) as u32))
     }
 
-    /// T8 gate: late-sampled clean take#4s (fourth overflow answered
-    /// fourth: every overflow answered, three acks on record) sampled 4+
-    /// after the raise complete take+entry at raise+25 like T7: the entry
-    /// absorbs the sampling latency. A take#4 interrupting a branch or a
-    /// full pipe of single-cycle ALU joins the class at latency 3: the
-    /// vector fetch overlaps the branch refill or the undisturbed pipe
-    /// drains cleanly, so the same raise+25 holds. Storm slow-row take#4
-    /// pins 21 on latency 4 and 22 on latency-3 branches/pipes;
-    /// earlier-sampled other takes keep T5, missed takes keep T7, and
-    /// non-timer0 takes never match (timer0 IF required). Returns the
-    /// prologue when the class matches. Mechanism open (see the timers
-    /// box note).
+    /// T8 gate: late-sampled clean take#4s complete take+entry at raise+25
+    /// (classes and pins: see the timers box note).
     pub fn late_timer0_entry(
         &self,
         entry_opcode: u32,
@@ -1246,18 +1205,8 @@ impl GbaMemoryBus {
         None
     }
 
-    /// T12 gate: prescaled take#3s (third overflow answered third: two
-    /// acks on record) sampled at latency 3 outside tight pipes enter 2
-    /// more expensive: the slightly longer middle handler re-quantizes
-    /// the grid-fixed take#4 sampling out of the loop bottom (storm
-    /// prescaled-4i loose sums -1 iter each). Tight take#3s never match
-    /// (they are always (ADD,LDR)/(LDR,TST) at latencies 5/4 or with
-    /// take#1 latency 6: survey-proven structural). In-scope passing
-    /// twins re-quantize safely (their take#4s keep totals); +1 fixes
-    /// only the (BNE,STR) cell and +3 breaks 8b0011-4d4i, so +2 is the
-    /// sweet spot. Single-take runs never match (no take#3 to lengthen).
-    /// ARM only; non-timer0 takes never match (timer0 IF required).
-    /// Mechanism open (see the timers box note).
+    /// T12 gate: prescaled take#3s at latency 3 outside tight pipes enter 2
+    /// more expensive (classes and pins: see the timers box note).
     pub fn resampled_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1274,19 +1223,8 @@ impl GbaMemoryBus {
                     && self.timers.take1_latency() == Some(5)))
     }
 
-    /// T10 gate: clean take#3s (third overflow answered third: two acks
-    /// on record) interrupting just before a data transfer (single-cycle
-    /// ALU in flight, transfer next) enter 24 more expensive: the pending
-    /// transfer serializes with the take, shifting the poll grid later by
-    /// a full loose iteration (phase-preserving, so a later take#4 keeps
-    /// its loop phase). Storm broken-pipe take#3 pins the grid shift
-    /// (sums -1 iter); full-pipe takes keep T5/T8. Slow tight take#3s
-    /// sample on LDR/TST (measured phases, never simple-then-transfer);
-    /// prescaled takes are excluded by the ps0 scope (their tight ADD
-    /// takes share the pipe: unscoped broke 20). Established/stale takes
-    /// keep T5/T7, and non-timer0 takes never match (timer0 IF required).
-    /// ARM only (Thumb never matches: structural). Mechanism open (see
-    /// the timers box note).
+    /// T10 gate: clean take#3s before a transfer enter 24 more expensive
+    /// (classes and pins: see the timers box note).
     pub fn brokenpipe_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1298,15 +1236,8 @@ impl GbaMemoryBus {
             && (entry_next & 0x0C000000 == 0x04000000)
     }
 
-    /// T11 gate: clean take#3s (third overflow answered third: two acks
-    /// on record) interrupting a full pipe of single-cycle ALU enter one
-    /// loose iteration more expensive when the run's take#1 sampled at
-    /// latency 5: the middle-take total runs one iteration short there
-    /// (storm 0800-loose sums +1 iter at every delay; 8000 take#1s sample
-    /// at 7 and keep T5). Take#2 keeps T5 (2i freezes pin its disable),
-    /// so only take#3 lengthens; Thumb takes never match (single-ADD
-    /// tight loops cannot hold the pipe: structural). Mechanism open (see
-    /// the timers box note).
+    /// T11 gate: clean full-pipe take#3s after a latency-5 take#1 enter one
+    /// loose iteration more expensive (see the timers box note).
     pub fn history_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1384,17 +1315,8 @@ impl GbaMemoryBus {
             && self.timers.prescaler_bits(0) == 0
     }
 
-    /// T4 gate: boundary takes of a freshly atomically-enabled
-    /// prescaler-0 timer0 enter 3 cheaper (mgba timer-irq frozen + storm
-    /// 1i/2i pin -3 on exactly this class). Every condition is
-    /// ablation-proven load-bearing: dropping the IF gate discounts
-    /// unrelated takes; dropping the overflow count or the atomic-enable
-    /// gate breaks nba irq-delay (split enables keep 23); dropping the
-    /// prescaler gate breaks slow-timer storm rows; wake takes (alyosha
-    /// halt_pc_4) keep the full 23. Consumes the wake flag on every take
-    /// so it never leaks past the first post-wake take. Mechanism open
-    /// (see the timers box note); never fit the entry to these cells
-    /// beyond this gate.
+    /// T4 gate: fresh atomic-enable ps0 takes enter 3 cheaper; every
+    /// condition is load-bearing (classes and pins: see the timers box).
     pub fn discount_timer0_entry(&mut self) -> bool {
         let woke = std::mem::take(&mut self.woke_from_halt);
         !woke
@@ -2906,29 +2828,9 @@ impl GbaMemoryBus {
                     let channel = ((aligned - 0x040000B0) / 12) as usize;
                     self.dma.retime_pending(channel, 3);
                 }
-                // DMA GamePak fill-collision arbitration: a DMA access
-                // that touches GamePak ROM collides with an in-flight
-                // prefetch fill exactly like CPU ROM data (Mesen Reset,
-                // NanoBoyAdvance StopPrefetch and ares wait==1 reset all
-                // agree on the check). The fill clock advances across
-                // the bus-handover idle tick plus earlier non-cartridge
-                // ticks this burst (GBATEK prefetch fills while the bus
-                // is free; the CPU-owned pending window freezes it), and
-                // the one-shot check fires at the first GamePak access
-                // (the per-unit restart below keeps later accesses from
-                // re-firing). The penalty stalls the bus a real tick
-                // (Mesen's Step on Reset), not an acc charge: acc would
-                // be discarded by the resume instruction's expansion
-                // take, and max-subsumption would hide it inside
-                // in-flight remainders (both effects HW-pinned by the
-                // mgba-suite Timing Thumb/ARM ROM-DMA cells).
-                // DMA CNT_H commit writes no longer break the CPU fetch
-                // stream. GBATEK's "STR to DMA CNT forces NSEQ" describes
-                // the DMA unit's own first access (modeled via is_first),
-                // not CPU opcode fetches: breaking the stream here cost +2
-                // on DMA_Mode_Change (HW-pinned S-continuation, also passing
-                // on mgba) with no HW pin supporting the break. SAD/DAD/
-                // CNT_L setup writes never touched the stream either.
+                // DMA GamePak fill-collision arbitration: ROM-touching DMA
+                // accesses collide with the in-flight prefetch fill (see
+                // nerust-docs reference/gba/gba-core-model-notes.md, DMA).
             }
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {

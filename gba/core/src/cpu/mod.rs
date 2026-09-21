@@ -166,21 +166,9 @@ impl GbaCpu {
         // charge (handler-region dependent), plus the skipped-BIOS prologue
         // count. No source-region term beyond the discarded fetch.
         let entry_bus = bus.take_access_wait_cycles().max(0) as u32;
-        // T4: boundary takes of a freshly atomically-enabled prescaler-0
-        // timer0 (the mgba timer-irq class) enter 3 cheaper; the take path
-        // is audited exact and every other take class pins the full 23
-        // (nba irq-delay, halt wakes, split enables, slow/established
-        // timers: see the timers box note).
-        // T5: established re-takes (third overflow onward) enter 1 more
-        // expensive (storm take#2+ phase: see the timers box note).
-        // T7: missed-one takes complete take+entry at raise+25.
-        // T10: clean take#3s interrupting just before a transfer enter 24
-        // more expensive (storm broken-pipe grid shift: see timers box).
-        // T11: clean full-pipe take#3s after a latency-5 take#1 enter one
-        // loose iteration more expensive (storm grid-phase shift).
-        // T8: late-sampled clean take#4s complete take+entry at raise+25.
-        // T12: prescaled take#3s sampled at latency 3 outside tight
-        // pipes enter 2 more expensive (storm take#4 resampling).
+        // T4/T5/T7/T8/T10/T11/T12 timer0 entry gates (+-3/+1/raise+25/
+        // raise+25/+24/+1iter/+2): classes and pins in the timers box note
+        // (nerust-docs reference/gba/gba-rom-test-box-verdicts.md).
         let prologue = if bus.resampled_timer0_entry(entry_opcode, entry_next, src_thumb) {
             HLE_IRQ_PROLOGUE_CYCLES + 2
         } else if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
