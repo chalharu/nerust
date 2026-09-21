@@ -451,6 +451,13 @@ expected_failures:
 # (first-tick uncertainty band confirmed) but the fix needs -2 early
 # of all refs (O-2) or window<=3 (E1-blocked): no ref supports either
 # direction or magnitude. Avenue closed.
+# E3 (window-1 + timer-STR +2 stall combo, TEMP reverted): storm
+# 935->663/936, timer_irq 90->15/90. Ours fixed (take at shifted
+# LDR step pre-writeback) but grid moves break absolute-counter
+# values and re-quantize takes (tight sums die; loose sums hold on
+# plateaus). Lesson: grid is pinned absolutely (values + tights),
+# so the fix direction (take pre-writeback) is valid only without
+# moving the grid, which E1 already proved unscopable. Combo dead.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
