@@ -479,6 +479,14 @@ expected_failures:
 # tights/cliffs). No third option in 1-DOF relative offset.
 # VBlank-exit/frame deltas are uniform race shifts (same wall);
 # frame exactness proved by 1-fail pattern (drift would scatter).
+# mGBA comparison (0.10.5 binary headless + master source log):
+# mGBA scores 639/936 (we lead by 296); it fails our cell too
+# (both sums: its +7-event take without defer/gates is systematically
+# late, 114 tight fails). Our defer-5 is HW-true globally by
+# contrast. Upstream master has no take-timing fix (timer: rename +
+# cascade-disabled only; no IRQ-delay/pipeline change), so both
+# reference emus share the flaw: tables are HW-only, fix needs HW
+# edge data, not model refits.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
