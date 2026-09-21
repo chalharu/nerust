@@ -458,6 +458,13 @@ expected_failures:
 # plateaus). Lesson: grid is pinned absolutely (values + tights),
 # so the fix direction (take pre-writeback) is valid only without
 # moving the grid, which E1 already proved unscopable. Combo dead.
+# Close-out (no TEMP; derivation audit): sequential global fixes
+# commute to one net move (same dead landscape); multi-take healing
+# is automatic (grid +-23 flips take#2 exactly, no control lever);
+# LDR-lengthen drifts periods (fatal) or needs vetoed compensation;
+# 30-item audit (nesting/DMA/stale-IF/sync/prefetch/entry/prologue/
+# spurious-take/branch-decode/ALU) all clean or pinned. Hypothesis
+# space exhausted; ceiling 935/936 stands pending HW edge data.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
