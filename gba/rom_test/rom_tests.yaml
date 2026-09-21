@@ -468,6 +468,12 @@ expected_failures:
 # E4-equivalence (no build needed): scoped line-bypass is vacuous
 # (line already up at every firing check; E1 proved defer alone
 # binds), so no scoped-line experiment exists beyond E1. Done.
+# Functional completeness (audit, no TEMP): single-take r0 =
+# f(take, grid) only (resume/stop/handler all take-determined;
+# third inputs audited: none). Take/grid levers are 4 (line, defer,
+# O, grid) and every integer form is landscaped (line 0-4, window
+# 0-8, start 0-4, tap band, waits): only window<=3 fixes, always
+# -17. No unmapped freedom remains.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
