@@ -21,7 +21,7 @@ use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// One sub-instruction effect; effects land at execute-stage points with
-/// the legacy bus-call order (see the CPU design note, decode section).
+/// the legacy bus-call order (access, then fetch-stream-break).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicroOp {
     Internal,
@@ -276,7 +276,7 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 
 /// ARM data-processing (register form, I==0): the DP class minus
 /// multiply/SWP/PSR/BX/halfword, padded to the legacy base; semantics
-/// match by construction (see the CPU design note, decode section).
+/// match by construction (commit delegates to the legacy handler).
 fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
         return None;

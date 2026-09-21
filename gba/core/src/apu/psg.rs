@@ -1,5 +1,5 @@
-/// GBA PSG channels; clocks are CPU T-cycles (facts and pins: see the
-/// core model notes, sound section).
+/// GBA PSG channels; clocks are CPU T-cycles (16.78MHz square/wave/noise
+/// periods with a 512Hz frame sequencer, per GBATEK).
 const DUTY: [[i8; 8]; 4] = [
     [1, 0, 0, 0, 0, 0, 0, 1],
     [1, 1, 0, 0, 0, 0, 0, 1],

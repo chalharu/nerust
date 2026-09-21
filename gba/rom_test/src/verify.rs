@@ -281,8 +281,7 @@ impl RegisterVerify {
 }
 
 /// Attach guest-provided failure details from a memory log (e.g. a
-/// suite's SRAM `savprintf` area) to failing log checks. Zip/scope rules:
-/// see the ROM test design note (Runner section).
+/// suite's SRAM `savprintf` area) to failing log checks.
 pub fn enrich_suite_log_checks(
     checks: &mut [CheckResult],
     sram_text: &str,
@@ -355,7 +354,7 @@ pub struct FramePixels<'a> {
 }
 
 /// Branch one ROM's guest-log lines into per-subtest [`CheckResult`]s.
-/// Only the begin/end window is scored (see the ROM test design note).
+/// Only the begin/end window is scored.
 pub fn verify_suite_log(
     logs: &[nerust_gba_core::memory::MgbaDebugLog],
     spec: &SuiteLogVerify,

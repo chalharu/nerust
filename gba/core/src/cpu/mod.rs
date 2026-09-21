@@ -167,8 +167,7 @@ impl GbaCpu {
         // count. No source-region term beyond the discarded fetch.
         let entry_bus = bus.take_access_wait_cycles().max(0) as u32;
         // T4/T5/T7/T8/T10/T11/T12 timer0 entry gates (+-3/+1/raise+25/
-        // raise+25/+24/+1iter/+2): classes and pins in the timers box note
-        // (nerust-docs reference/gba/gba-rom-test-box-verdicts.md).
+        // raise+25/+24/+1iter/+2).
         let prologue = if bus.resampled_timer0_entry(entry_opcode, entry_next, src_thumb) {
             HLE_IRQ_PROLOGUE_CYCLES + 2
         } else if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
