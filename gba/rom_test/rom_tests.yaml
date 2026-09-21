@@ -487,6 +487,14 @@ expected_failures:
 # cascade-disabled only; no IRQ-delay/pipeline change), so both
 # reference emus share the flaw: tables are HW-only, fix needs HW
 # edge data, not model refits.
+# Take-timing spectrum (5 lineages, primary sources): ares fastest
+# (per-cycle [1]->[0] commit + shared ARM7TDMI core, no defer),
+# Mesen fast (immediate IF + per-instr take + pipeline model, no
+# defer: D2-analog, fails T3 cells), ours/HW at defer-5 (935/936),
+# mGBA slow (+7-event, 639/936). GBAHawk is a libmgba wrapper (no
+# independent signal; covered by mGBA run). Bracketed both sides:
+# faster fails (D2-measured), slower fails (639-measured). Optimum
+# confirmed; residual is its cliff.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
