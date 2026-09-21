@@ -273,7 +273,13 @@ impl GbaCpu {
                 }
                 // IRQ round-trip complete: the BIOS epilogue's last opcode
                 // (0xE55EC002) is latched for protected reads (jsmolka t004).
-                bus.set_bios_prefetch(0xE55EC002);
+                // After an IntrWait-family wake the BIOS exit path runs
+                // instead (0xE3A02004, mgba-suite "BIOS load").
+                if bus.take_bios_wait_exit() {
+                    bus.set_bios_prefetch(0xE3A02004);
+                } else {
+                    bus.set_bios_prefetch(0xE55EC002);
+                }
                 self.regs.set_pc(return_address);
                 irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
             }
@@ -314,7 +320,13 @@ impl GbaCpu {
                 for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
                     self.regs.set_r(register, value);
                 }
-                bus.set_bios_prefetch(0xE55EC002);
+                // Same epilogue charge as ARM (and same IntrWait-exit
+                // latch restore as above).
+                if bus.take_bios_wait_exit() {
+                    bus.set_bios_prefetch(0xE3A02004);
+                } else {
+                    bus.set_bios_prefetch(0xE55EC002);
+                }
                 self.regs.set_pc(return_address);
                 irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
             }

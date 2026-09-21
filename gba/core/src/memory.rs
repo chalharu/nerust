@@ -216,6 +216,11 @@ pub struct GbaMemoryBus {
     /// Set (not counted): at most one stall per burst is observable.
     dma_stall_pending: u32,
     bios_prefetch: u32,
+    /// Set when an IntrWait-family halt wakes: the real BIOS exit path
+    /// runs after the wake ISR, so its last opcode (0xE3A02004, pinned
+    /// by mgba-suite "BIOS load") replaces the HLE epilogue latch at
+    /// the next IRQ return. Consumed there; cleared on halt entry.
+    bios_wait_exit_armed: bool,
     current_tcycle: u64,
     hle_bios: Option<HleBiosOperation>,
     video_armed: bool,
@@ -403,6 +408,7 @@ impl GbaMemoryBus {
             irq_line: false,
             line_queue: Vec::new(),
             bios_prefetch: 0xE129F000,
+            bios_wait_exit_armed: false,
             current_tcycle: 0,
             hle_bios: None,
             video_armed: false,
@@ -1054,6 +1060,9 @@ impl GbaMemoryBus {
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
+        // A fresh wait starts with no exit restore pending (see
+        // `bios_wait_exit_armed`); the IntrWait wake below re-arms it.
+        self.bios_wait_exit_armed = false;
         // Halt entry samples the not-yet-applied level: pending IE/IF is
         // exactly what the 1-tick pipeline will apply, so a just-raised IF
         // prevents halting while a just-written ack is honored. Unconditional
@@ -1146,6 +1155,14 @@ impl GbaMemoryBus {
                     0
                 };
                 self.woke_from_halt = true;
+                // IntrWait-family wake: the real BIOS exit path runs after
+                // the wake ISR, leaving 0xE3A02004 latched (mgba-suite
+                // "BIOS load"). Latch it now (covers the no-ISR IME=0
+                // wake) and arm the IRQ-return restore below.
+                if clear != 0 {
+                    self.bios_prefetch = 0xE3A02004;
+                    self.bios_wait_exit_armed = true;
+                }
             }
             self.halted = false;
             self.stopped = false;
@@ -1860,17 +1877,27 @@ impl GbaMemoryBus {
         if self.bios_protect && !(0x00000000..=0x00003FFF).contains(&self.current_pc) {
             // A protected read returns the latched last BIOS-fetched opcode,
             // same value on repeats; refreshed when BIOS execution is left.
+            // Sub-word reads select their lane of the 32-bit latch
+            // (mgba-suite "BIOS load" pins byte@1 = 0x20 of 0xE3A02004;
+            // halfword readers apply their own ROR on the low half).
             let raw = self.bios_prefetch;
             let aligned = match width {
                 4 => raw,
                 2 => raw & 0xFFFF,
-                _ => raw & 0xFF,
+                _ => (raw >> ((addr & 3) * 8)) & 0xFF,
             };
             let _ = addr;
             aligned
         } else {
             self.read_bios(addr, width)
         }
+    }
+
+    /// Consume a pending IntrWait-exit latch restore (see
+    /// `bios_wait_exit_armed`): true when the next IRQ return must latch
+    /// the BIOS exit opcode instead of the HLE epilogue opcode.
+    pub fn take_bios_wait_exit(&mut self) -> bool {
+        std::mem::take(&mut self.bios_wait_exit_armed)
     }
 
     /// Latch a new BIOS prefetch value (HLE synthesis of the BIOS

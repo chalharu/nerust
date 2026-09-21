@@ -3339,10 +3339,10 @@ mod tests {
 
     /// ARM LDRSH at an odd BIOS address issues a guarded byte read,
     /// never the Thumb odd-address quirk (guarded halfword + merge).
-    /// The latch widths differ (0x78 vs 0x56 below), so this pins the
-    /// bus call itself, not just the sign math. The mgba-suite memory
-    /// cells pin the same property on hardware (regression: the quirk
-    /// broke ROM-OOB/SRAM-mirror/BIOS signed cells).
+    /// The byte is lane-selected from the 32-bit latch (0x56 of
+    /// 0x12345678 below), so this pins the bus call itself, not just
+    /// the sign math. The mgba-suite memory cells pin the same
+    /// property on hardware ("BIOS load S16 (unaligned)" = 0x20).
     #[test]
     fn arm_ldrsh_odd_guarded_byte_read() {
         fn setup() -> (GbaCpu, GbaMemoryBus) {
@@ -3358,8 +3358,8 @@ mod tests {
         }
         let (mut a_cpu, mut a_bus) = setup();
         let ta = a_cpu.step_legacy(&mut a_bus);
-        // Guarded byte read: low latch byte, sign-extended.
-        assert_eq!(a_cpu.regs.r(0), 0x78);
+        // Guarded byte read: address-lane latch byte, sign-extended.
+        assert_eq!(a_cpu.regs.r(0), 0x56);
         let (mut b_cpu, mut b_bus) = setup();
         let mut queue = std::collections::VecDeque::new();
         let mut acc = 0i64;
@@ -3378,7 +3378,7 @@ mod tests {
         }
         let tb = acc.max(1) as u32;
         assert_eq!((ta, tb), (ta, ta));
-        assert_eq!(b_cpu.regs.r(0), 0x78);
+        assert_eq!(b_cpu.regs.r(0), 0x56);
     }
 
     #[test]
