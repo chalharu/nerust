@@ -474,6 +474,11 @@ expected_failures:
 # O, grid) and every integer form is landscaped (line 0-4, window
 # 0-8, start 0-4, tap band, waits): only window<=3 fixes, always
 # -17. No unmapped freedom remains.
+# Dichotomy (audit): moves are rigid (take+poll together: r0
+# invariant, useless) or split (take-vs-poll: pigeonhole over dense
+# tights/cliffs). No third option in 1-DOF relative offset.
+# VBlank-exit/frame deltas are uniform race shifts (same wall);
+# frame exactness proved by 1-fail pattern (drift would scatter).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
