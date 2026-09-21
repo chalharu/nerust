@@ -91,6 +91,13 @@ fn main() {
     let cases = manifest.select(&cli.ids);
     if cases.is_empty() {
         eprintln!("no matching ROM test cases");
+        for id in &cli.ids {
+            let suggestions = manifest.suggest_ids(id);
+            if !suggestions.is_empty() {
+                let shown: Vec<&str> = suggestions.iter().take(10).map(String::as_str).collect();
+                eprintln!("no match for `{id}`; similar: {}", shown.join(", "));
+            }
+        }
         std::process::exit(2);
     }
 

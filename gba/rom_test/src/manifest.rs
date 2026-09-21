@@ -163,6 +163,7 @@ pub struct MemoryCompletion {
     pub width: u8,
 }
 
+#[derive(Clone, Copy)]
 pub struct SelectedCase<'a> {
     pub suite: &'a RomSuite,
     pub case: &'a RomCase,
@@ -334,13 +335,16 @@ impl RomManifest {
     }
 
     pub fn select(&self, ids: &[String]) -> Vec<SelectedCase<'_>> {
-        self.suites
+        // Exact IDs win (generated cargo tests rely on single-match).
+        // Otherwise fall back to case-insensitive substring so `memory`
+        // finds `mgba_suite_memory` (cargo-test style filtering).
+        let all: Vec<SelectedCase<'_>> = self
+            .suites
             .iter()
             .flat_map(|suite| {
                 suite
                     .cases
                     .iter()
-                    .filter(|case| ids.is_empty() || ids.iter().any(|id| id == &case.id))
                     .map(|case| SelectedCase {
                         suite,
                         case,
@@ -350,7 +354,48 @@ impl RomManifest {
                             .and_then(|name| self.completion_profiles.get(name)),
                     })
             })
+            .collect();
+        if ids.is_empty() {
+            return all;
+        }
+        let exact: Vec<SelectedCase<'_>> = all
+            .iter()
+            .filter(|selected| ids.iter().any(|id| id == &selected.case.id))
+            .copied()
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        all.iter()
+            .filter(|selected| {
+                ids.iter()
+                    .any(|id| Self::matches_substring(&selected.case.id, id))
+            })
+            .copied()
             .collect()
+    }
+
+    fn matches_substring(case_id: &str, filter: &str) -> bool {
+        if filter.is_empty() {
+            return false;
+        }
+        case_id
+            .to_lowercase()
+            .contains(filter.to_lowercase().as_str())
+    }
+
+    /// IDs containing `filter` (case-insensitive), for "no match" hints.
+    pub fn suggest_ids(&self, filter: &str) -> Vec<String> {
+        let needle = filter.to_lowercase();
+        let mut out: Vec<String> = self
+            .suites
+            .iter()
+            .flat_map(|suite| &suite.cases)
+            .map(|case| case.id.clone())
+            .filter(|id| id.to_lowercase().contains(needle.as_str()))
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -447,6 +492,28 @@ mod tests {
         assert_eq!(selected[0].case.rom, "case.gba");
         assert!(selected[0].completion.is_some());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn select_matches_substring_case_insensitively() {
+        let manifest: RomManifest = serde_saphyr::from_str(
+            "rom_root: roms\nsuites:\n  - name: mgba-suite\n    cases:\n      - { id: mgba_suite_memory, rom: suite.gba, cycles: 1 }\n      - { id: mgba_suite_timing, rom: suite.gba, cycles: 1 }\n      - { id: armwrestler_arm_alu, rom: a.gba, cycles: 1 }\n      - { id: armwrestler_arm_alu_part2, rom: b.gba, cycles: 1 }\n",
+        )
+        .unwrap();
+        let selected = manifest.select(&["memory".to_string()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].case.id, "mgba_suite_memory");
+        let selected = manifest.select(&["MGBA_SUITE".to_string()]);
+        assert_eq!(selected.len(), 2);
+        // Exact wins over substring: generated cargo tests need single-match.
+        let selected = manifest.select(&["armwrestler_arm_alu".to_string()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].case.id, "armwrestler_arm_alu");
+        assert!(manifest.suggest_ids("memry").is_empty());
+        assert_eq!(
+            manifest.suggest_ids("memory"),
+            vec!["mgba_suite_memory".to_string()]
+        );
     }
 
     #[test]
