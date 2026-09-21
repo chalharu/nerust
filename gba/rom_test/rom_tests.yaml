@@ -465,6 +465,9 @@ expected_failures:
 # 30-item audit (nesting/DMA/stale-IF/sync/prefetch/entry/prologue/
 # spurious-take/branch-decode/ALU) all clean or pinned. Hypothesis
 # space exhausted; ceiling 935/936 stands pending HW edge data.
+# E4-equivalence (no build needed): scoped line-bypass is vacuous
+# (line already up at every firing check; E1 proved defer alone
+# binds), so no scoped-line experiment exists beyond E1. Done.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
