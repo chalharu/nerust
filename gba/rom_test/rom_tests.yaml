@@ -43,8 +43,7 @@ expected_failures:
 - PeterLemon_Acceleration
 # mgba_suite_timing: GRADUATED 2026-09-18 (2020/2020).
 
-# mgba_suite_timers: 935/936 (residual 1, boxed in expected_checks;
-# forensics in docs box-verdicts "timersの残差1").
+# mgba_suite_timers: 935/936 (residual 1, boxed in expected_checks).
 
 # alyosha_gba-tests: settled R12 values; timing backlog, do not refit.
 # DMA_Mode_Change: GRADUATED 2026-09-16 (fetch stream across DMA CNT_H).
@@ -67,13 +66,13 @@ expected_failures:
 - alyosha_fifo_3
 - alyosha_fifo_4
 - alyosha_fifo_5
-# fifo_6: honest -5, no ref for +5; verdict in docs box-verdicts.
+# fifo_6: honest -5, no ref for +5; do not refit.
 - alyosha_fifo_6
 - alyosha_fifo_dma_disable_4
 - alyosha_halt_pc
 - alyosha_halt_pc_2
 - alyosha_halt_pc_3
-# halt_pc_2/3: opposite-sign residuals, no uniform fix; verdict in docs box-verdicts.
+# halt_pc_2/3: opposite-sign residuals, no uniform fix; do not refit.
 - alyosha_IE
 - alyosha_IF
 - alyosha_IF_Timer
@@ -101,7 +100,7 @@ expected_failures:
 - alyosha_prefetcher_full_thumb
 - alyosha_psr
 - alyosha_serial_time
-# serial_time +8: prefetch-overlap around EWRAM-busy windows; verdict in docs box-verdicts.
+# serial_time +8: prefetch-overlap around EWRAM-busy windows; SIO engine correct.
 - alyosha_serial_time_2
 - alyosha_serial_time_2M
 - alyosha_serial_time_2M_2

@@ -184,8 +184,8 @@ pub struct GbaMemoryBus {
     /// ordinary linear fetch stream resumes after that miss.
     pf_branch_drain: bool,
     /// Prefetch fill phase (bus-wait clock): ticks since the last fill
-    /// redirect, modulo the fill duty below. Advance/freeze rules: see
-    /// the memory-bus design note (Wait/Prefetch section).
+    /// redirect, modulo the fill duty below. Only ROM-bus occupancy
+    /// advances it; CPU-internal/IO/RAM/DMA activity freezes it.
     fill_countdown: u32,
     /// Signed prefetch-erase deltas; MUST stay signed until `take_*` at the
     /// instruction boundary (clamping at zero overshoots every Thumb P-cell).
@@ -822,9 +822,9 @@ impl GbaMemoryBus {
                     src
                 };
                 let value = self.read_dma_source(read_addr, transfer.width);
-                // GamePak ROM reads collide with an in-flight prefetch fill
-                // (one-shot per burst; see the DMA section of the core
-                // model notes).
+                // GamePak ROM reads collide with the in-flight prefetch
+                // fill: one real-tick stall on the first GamePak access
+                // per burst.
                 if crate::dma::is_rom(read_addr) && self.pf_valid {
                     self.fill_advance(transfer.pre_read_idle);
                     if self.fill_collision() != 0 {
@@ -917,7 +917,7 @@ impl GbaMemoryBus {
     }
 
     /// Post-enable timer0 take deferral: the first take waits for a later
-    /// boundary (classes and pins: see the timers box note).
+    /// boundary (IF stays raised, so nothing is lost).
     pub fn defer_timer0_take(&self) -> bool {
         if self.irq_flags() & (1 << 3) == 0 {
             return false;
@@ -1103,7 +1103,7 @@ impl GbaMemoryBus {
         // this edge). First raisings keep the fast pipeline (T3 window
         // and live cells pin it), 3rd+ raisings are return-anchored or
         // absorbed (T5 covers their entry), and non-timer0 sources never
-        // match. Mechanism open (see the timers box note).
+        // match.
         if mask & (1 << 3) != 0
             && self.pending_if & (1 << 3) == 0
             && self.timers.overflows_since_enable(0) == 2
@@ -1161,7 +1161,7 @@ impl GbaMemoryBus {
     }
 
     /// T7 gate: missed-one takes complete take+entry at raise+25
-    /// (classes and pins: see the timers box note).
+    /// (the entry absorbs the sampling latency).
     pub fn catchup_timer0_entry(&self) -> Option<u32> {
         if self.irq_flags() & (1 << 3) == 0
             || self.timers.overflows_since_enable(0) != 3
@@ -1176,7 +1176,7 @@ impl GbaMemoryBus {
     }
 
     /// T8 gate: late-sampled clean take#4s complete take+entry at raise+25
-    /// (classes and pins: see the timers box note).
+    /// (the entry absorbs the sampling latency).
     pub fn late_timer0_entry(
         &self,
         entry_opcode: u32,
@@ -1206,7 +1206,7 @@ impl GbaMemoryBus {
     }
 
     /// T12 gate: prescaled take#3s at latency 3 outside tight pipes enter 2
-    /// more expensive (classes and pins: see the timers box note).
+    /// more expensive (the longer middle handler re-quantizes take#4 sampling).
     pub fn resampled_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1224,7 +1224,7 @@ impl GbaMemoryBus {
     }
 
     /// T10 gate: clean take#3s before a transfer enter 24 more expensive
-    /// (classes and pins: see the timers box note).
+    /// (the pending transfer shifts the poll grid one loose iteration).
     pub fn brokenpipe_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1237,7 +1237,7 @@ impl GbaMemoryBus {
     }
 
     /// T11 gate: clean full-pipe take#3s after a latency-5 take#1 enter one
-    /// loose iteration more expensive (see the timers box note).
+    /// loose iteration more expensive (take#2 keeps T5; only take#3 lengthens).
     pub fn history_timer0_entry(&self, entry_opcode: u32, entry_next: u32, thumb: bool) -> bool {
         !thumb
             && self.irq_flags() & (1 << 3) != 0
@@ -1307,7 +1307,6 @@ impl GbaMemoryBus {
     /// take#2+ phase pins +1 on exactly this class (2i values ran
     /// systematic -1 with the T4-only model); first takes keep T4/full
     /// entry, and non-timer0 takes never match (timer0 IF required).
-    /// Mechanism open (see the timers box note).
     pub fn retook_timer0_entry(&self) -> bool {
         self.irq_flags() & (1 << 3) != 0
             && self.timers.overflows_since_enable(0) >= 3
@@ -1316,7 +1315,7 @@ impl GbaMemoryBus {
     }
 
     /// T4 gate: fresh atomic-enable ps0 takes enter 3 cheaper; every
-    /// condition is load-bearing (classes and pins: see the timers box).
+    /// condition is load-bearing (ablation-pinned).
     pub fn discount_timer0_entry(&mut self) -> bool {
         let woke = std::mem::take(&mut self.woke_from_halt);
         !woke
@@ -2829,8 +2828,8 @@ impl GbaMemoryBus {
                     self.dma.retime_pending(channel, 3);
                 }
                 // DMA GamePak fill-collision arbitration: ROM-touching DMA
-                // accesses collide with the in-flight prefetch fill (see
-                // nerust-docs reference/gba/gba-core-model-notes.md, DMA).
+                // accesses stall one real tick on the first GamePak access
+                // per burst (fill clock spans handover idle + bus ticks).
             }
             0x04000100..=0x0400010E => {
                 if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
