@@ -33,16 +33,7 @@ impl Cartridge {
     pub fn read_rom(&self, addr: u32, width: u8) -> u32 {
         let len = self.rom.len();
         if len == 0 {
-            // No cartridge: the bus returns the incrementing
-            // (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable Things";
-            // high half reads (addr+2)/2).
-            let base = addr & !3;
-            let half = (base >> 1) & 0xFFFF;
-            return if width == 4 {
-                half | (((base.wrapping_add(2) >> 1) & 0xFFFF) << 16)
-            } else {
-                half
-            };
+            return oob_pattern(addr, width);
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
@@ -53,6 +44,12 @@ impl Cartridge {
             2 => raw_off & !1,
             _ => raw_off,
         };
+        // Beyond the cartridge size the GamePak bus floats: open bus,
+        // not size mirroring (mgba-suite "ROM out-of-bounds load" pins
+        // the (address/2) pattern for CPU/DMA/CpuSet alike).
+        if aligned_off >= len {
+            return oob_pattern(addr, width);
+        }
         let off = if len.is_power_of_two() {
             aligned_off & (len - 1)
         } else {
@@ -106,6 +103,24 @@ impl Cartridge {
     }
 }
 
+/// GamePak open bus beyond the cartridge (and with no cartridge):
+/// the incrementing (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable
+/// Things"). 16-bit units are addressed by (addr&!1)>>1; bytes select
+/// their lane of that unit; words combine two consecutive units.
+fn oob_pattern(addr: u32, width: u8) -> u32 {
+    let half = |a: u32| (a >> 1) & 0xFFFF;
+    match width {
+        4 => {
+            let base = addr & !3;
+            half(base) | (half(base.wrapping_add(2)) << 16)
+        }
+        2 => half(addr & !1),
+        _ => {
+            let h = half(addr & !1);
+            (h >> ((addr & 1) * 8)) & 0xFF
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::header::finalize_test_gba_rom;
@@ -156,6 +171,25 @@ mod tests {
         let rom = make_rom_with_save(b"FLASH1M_V102");
         let cart = Cartridge::new(rom).unwrap();
         assert_eq!(cart.save_type(), SaveType::Flash128);
+    }
+
+    #[test]
+    fn rom_oob_returns_address_over_two_pattern() {
+        // mgba-suite "ROM out-of-bounds load" (suite.gba is 512KiB;
+        // 0x092468AC sits ~19MiB past the end).
+        let mut rom = vec![0u8; 0x80000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x100] = 0xA5;
+        let cart = Cartridge::new(rom).unwrap();
+        let base = 0x092468AC;
+        assert_eq!(cart.read_rom(base, 1), 0x56);
+        assert_eq!(cart.read_rom(base, 2), 0x3456);
+        assert_eq!(cart.read_rom(base, 4), 0x34573456);
+        // Odd byte selects the high lane of the same 16-bit unit.
+        assert_eq!(cart.read_rom(base + 1, 1), 0x34);
+        assert_eq!(cart.read_rom(base + 1, 2), 0x3456);
+        // In-range reads still return ROM contents.
+        assert_eq!(cart.read_rom(0x08000100, 1), 0xA5);
     }
 
     #[test]
