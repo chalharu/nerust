@@ -5,6 +5,7 @@ expected_failures:
 - nba_archive_irq_cancel_ie
 # irq_delay: GRADUATED 3/3 (write-asserted line, +1).
 # cancel_ime: GRADUATED 8/8.
+
 # Affine refs fail on reference state, not emulation.
 - PeterLemon_BGRotZoomMode2
 - nba_archive_ppu_exact_timing
@@ -40,15 +41,13 @@ expected_failures:
 # Velocity/Acceleration: interacted refs.
 - PeterLemon_Velocity
 - PeterLemon_Acceleration
-# mgba_suite_timing: GRADUATED 2026-09-18 (2020/2020 subchecks pass;
-# DMA GamePak fill-collision arbitration models the last P-ON ROM-DMA
-# residual; matrix 158/94/0, lib 357 green).
-# mgba_suite_timers: 935/936 (residual 1, boxed in expected_checks below).
-# Forensics consolidated in nerust-docs reference/gba/gba-rom-test-box-verdicts.md
-# ("timersの残差1" section); yaml keeps state only.
-# alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
-# (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
-# across DMA CNT_H commits; matrix 157/95/0, lib 277 green.)
+# mgba_suite_timing: GRADUATED 2026-09-18 (2020/2020).
+
+# mgba_suite_timers: 935/936 (residual 1, boxed in expected_checks;
+# forensics in docs box-verdicts "timersの残差1").
+
+# alyosha_gba-tests: settled R12 values; timing backlog, do not refit.
+# DMA_Mode_Change: GRADUATED 2026-09-16 (fetch stream across DMA CNT_H).
 - alyosha_BL_IRQ
 - alyosha_BL_IRQ_2
 - alyosha_BL_IRQ_3
@@ -68,19 +67,13 @@ expected_failures:
 - alyosha_fifo_3
 - alyosha_fifo_4
 - alyosha_fifo_5
-# fifo_6 (0x76 vs 0x7B): pre-15f291f1 "pass" was a false positive
-# (SOUNDCNT_H routing gate blocked every sound-DMA fire, IRQ never ran,
-# r7 stayed 0 so f001a reported r12=0). Gate removal unmasked the honest
-# -5 (EWRAM32 sound burst + DMA-completion IRQ reads TIM1 5 early).
-# No ref supports the +5 (Mesen/NBA unit costs match); do not refit.
+# fifo_6: honest -5, no ref for +5; verdict in docs box-verdicts.
 - alyosha_fifo_6
 - alyosha_fifo_dma_disable_4
 - alyosha_halt_pc
 - alyosha_halt_pc_2
 - alyosha_halt_pc_3
-# halt_pc_2/3 timer residuals (+1/-1) need opposite-sign fixes; no uniform
-# entry/wake change fits both (verified). halt_pc lr split (0xB8 vs 0x74)
-# across identical-layout binaries is not HW-explainable; do not refit.
+# halt_pc_2/3: opposite-sign residuals, no uniform fix; verdict in docs box-verdicts.
 - alyosha_IE
 - alyosha_IF
 - alyosha_IF_Timer
@@ -108,11 +101,7 @@ expected_failures:
 - alyosha_prefetcher_full_thumb
 - alyosha_psr
 - alyosha_serial_time
-# serial_time +8 (0xA0 vs 0x98): EWRAM-data prepay removal moves it to
-# 0x9B/0x95 but breaks cpy_data_bios and 128kb-boundary; full removal
-# undershoots to 0x93. Residual is in prefetch-overlap around EWRAM-busy
-# windows (comparison §4 area). mgba sio-timing (transfer + setup/exit)
-# passes, so the SIO engine itself is correct.
+# serial_time +8: prefetch-overlap around EWRAM-busy windows; verdict in docs box-verdicts.
 - alyosha_serial_time_2
 - alyosha_serial_time_2M
 - alyosha_serial_time_2M_2
