@@ -443,6 +443,14 @@ expected_failures:
 # >=4 jump breaks dense tight takes, grid moves break tights either
 # way, and the cliff cannot cross the fixed take (needs unphysical
 # LDR length).
+# Ref triangulation (primary sources, no TEMP needed): NBA first
+# tick is 2c later than ours (control +2 scheduler events,
+# StartChannel(offset-1)); Mesen matches EnableDelay 2 + stale edge
+# but taps at &mask==0 (1c later); ares taps at &mask==0 (1c later,
+# no enable delay); GBATEK silent on start latency. Refs span +-2
+# (first-tick uncertainty band confirmed) but the fix needs -2 early
+# of all refs (O-2) or window<=3 (E1-blocked): no ref supports either
+# direction or magnitude. Avenue closed.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
