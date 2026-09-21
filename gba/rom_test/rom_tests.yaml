@@ -495,6 +495,14 @@ expected_failures:
 # independent signal; covered by mGBA run). Bracketed both sides:
 # faster fails (D2-measured), slower fails (639-measured). Optimum
 # confirmed; residual is its cliff.
+# Cross-emu behavioral note: races are history-contingent (boot/HLE/
+# menu timings set phases), so per-cell outcomes don't transfer
+# across emus; only mechanisms do. GBAHawk shares mGBA core+timing
+# (TASEmulators fork, no take fix upstream: rename+cascade only).
+# Mesen/ares take at line without defer (early takes pass wide loose
+# windows by race, fail exact T3 cells: D2-analog). ares needs
+# official BIOS (unavailable here); Mesen has no headless/debug-log
+# path here. No transferable mechanism found in any lineage.
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
