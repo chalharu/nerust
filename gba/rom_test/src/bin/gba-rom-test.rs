@@ -56,7 +56,8 @@ fn failure_detail(case: &nerust_gba_rom_test::report::CaseResult) -> String {
     if let Some(ref error) = case.error {
         return error.clone();
     }
-    case.checks
+    let mut parts: Vec<String> = case
+        .checks
         .iter()
         .filter(|check| !check.passed)
         .map(|check| {
@@ -65,8 +66,14 @@ fn failure_detail(case: &nerust_gba_rom_test::report::CaseResult) -> String {
                 check.name, check.expected, check.actual
             )
         })
-        .collect::<Vec<_>>()
-        .join("; ")
+        .collect();
+    if !case.stale_expected_checks.is_empty() {
+        parts.push(format!(
+            "stale expected_checks: {}",
+            case.stale_expected_checks.join(", ")
+        ));
+    }
+    parts.join("; ")
 }
 
 fn main() {
