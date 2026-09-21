@@ -17,6 +17,9 @@ pub struct CaseResult {
     pub passed: bool,
     pub expected_failure: bool,
     pub checks: Vec<CheckResult>,
+    /// Boxed names that matched no failure (fixed or renamed subtests).
+    /// Non-empty always fails the case until the yaml drops them.
+    pub stale_expected_checks: Vec<String>,
     pub error: Option<String>,
     pub error_kind: Option<String>,
     pub screenshot: Option<String>,
@@ -253,6 +256,7 @@ mod tests {
             passed,
             expected_failure: false,
             checks: Vec::new(),
+            stale_expected_checks: Vec::new(),
             error: None,
             error_kind: None,
             screenshot: None,

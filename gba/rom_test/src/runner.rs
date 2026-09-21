@@ -54,7 +54,24 @@ pub fn run_case(
         .iter()
         .map(String::as_str)
         .collect();
+    // Boxed names must each match a real failure: a box that passes (or
+    // matches nothing) is stale and fails the case until the yaml drops
+    // it, so fixed subtests can never rot unnoticed in expected_checks.
+    let failed: std::collections::HashSet<&str> = checks
+        .iter()
+        .filter(|check| !check.passed)
+        .map(|check| check.name.as_str())
+        .collect();
+    let mut stale_expected_checks: Vec<String> = selected
+        .case
+        .expected_checks
+        .iter()
+        .filter(|name| !failed.contains(name.as_str()))
+        .cloned()
+        .collect();
+    stale_expected_checks.sort();
     let passed = error.is_none()
+        && stale_expected_checks.is_empty()
         && checks
             .iter()
             .all(|check| check.passed || allowed.contains(check.name.as_str()));
@@ -65,6 +82,7 @@ pub fn run_case(
         passed,
         expected_failure,
         checks,
+        stale_expected_checks,
         error,
         error_kind,
         screenshot: acc.screenshot,
@@ -578,6 +596,16 @@ mod tests {
     /// Write an assembled ROM to a scratch suite dir and run it as a
     /// case with memory verification. Returns the full result.
     fn run_assembled_rom(id: &str, rom: Vec<u8>, verify: VerifySpec) -> CaseResult {
+        run_assembled_rom_with_checks(id, rom, verify, Vec::new())
+    }
+
+    /// [`run_assembled_rom`] with boxed subtest names.
+    fn run_assembled_rom_with_checks(
+        id: &str,
+        rom: Vec<u8>,
+        verify: VerifySpec,
+        expected_checks: Vec<String>,
+    ) -> CaseResult {
         // Unique scratch dir per call: lib tests run in parallel threads
         // of one process (same pid), so the id alone is not enough.
         static NEXT_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -603,7 +631,7 @@ mod tests {
             reference: None,
             skip_screenshot: true,
             script: Vec::new(),
-            expected_checks: Vec::new(),
+            expected_checks,
         };
         let selected = SelectedCase {
             suite: &suite,
@@ -637,6 +665,27 @@ mod tests {
             ]),
         );
         assert!(result.passed, "{:?} {:?}", result.error, result.checks);
+    }
+
+    /// A boxed name that matches no failure (fixed or renamed subtest)
+    /// fails the case and is reported, so boxes cannot rot unnoticed.
+    #[test]
+    fn stale_expected_checks_fail_the_case() {
+        let mut asm = MiniAsm::new();
+        asm.ldr_lit(1, 0x0800_0200);
+        asm.ldr_lit(2, 0x0200_0000);
+        asm.ldrh(0, 1, 1);
+        asm.str_imm(0, 2, 0);
+        asm.spin();
+        let rom = asm.build(0x400, &[(0x200, &[0xEF, 0xBE, 0xAD, 0xDE])]);
+        let result = run_assembled_rom_with_checks(
+            "stale_box",
+            rom,
+            mem_checks(&[("0x02000000", "0xEF0000BE", 4)]),
+            vec!["memory@0x02000000".into()],
+        );
+        assert!(!result.passed);
+        assert_eq!(result.stale_expected_checks, vec!["memory@0x02000000"]);
     }
 
     /// GamePak-ROM DMA sources always increment, ignoring the programmed
