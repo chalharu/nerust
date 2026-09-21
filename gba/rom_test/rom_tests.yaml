@@ -503,6 +503,13 @@ expected_failures:
 # windows by race, fail exact T3 cells: D2-analog). ares needs
 # official BIOS (unavailable here); Mesen has no headless/debug-log
 # path here. No transferable mechanism found in any lineage.
+# Wiki-score caveat: public Pass values are stale-table artifacts
+# (2021 code change removed 2 preamble instrs, shifting all races;
+# columns misalign; self-reported). Current-table measured scores:
+# ours 935, mGBA 639. NBA Timer.cc has no take#1 gating (plain
+# scheduler offsets), so any NBA pass is race-history, untransferable
+# like all tunings (values are race-relative; structural splitters
+# for take#1 don't exist per survey).
 - mgba_suite_timers
 # alyosha_gba-tests: settled R12 first-failure values (30M-cycle probe matches 3M). Timing/HW-accuracy backlog; do not refit.
 # (DMA_Mode_Change graduated 2026-09-16 by keeping the CPU fetch stream
