@@ -121,6 +121,11 @@ pub struct GbaMemoryBus {
     /// read-side compare is a plain 2/4-cycle difference.
     dma_bus: u32,
     dma_open_pc: u32,
+    /// Trigger-time fetch PC (per-cycle co-sim): latched when the DMA
+    /// request fires (HBlank/VBlank event), while `dma_open_pc` tags the
+    /// serviced unit 3 ticks later. The CPU advances between the two, so
+    /// the open-bus gate must test both tags (see `dma_open_bus`).
+    dma_trigger_pc: u32,
     /// Sticky DMA bus latch validity: set when a serviced DMA unit drives
     /// the shared latch, cleared by the next CPU mapped data access (which
     /// drives the bus with its own value). Opcode fetches and unmapped
@@ -391,6 +396,7 @@ impl GbaMemoryBus {
             cpu_bus: 0xFFFF_FFFF,
             dma_bus: 0,
             dma_open_pc: 0,
+            dma_trigger_pc: 0,
             dma_bus_valid: false,
             prefetch_enabled: false,
             data_sequential_override: false,
@@ -683,16 +689,22 @@ impl GbaMemoryBus {
         let event = self
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
-        if event.hblank_started {
+        if event.hblank_dma {
             // H-Blank DMA starts only on visible scanlines (vcount < 160).
             // During V-Blank the H-Blank flag and IRQ still toggle every
             // line, but no HBlank DMA request is generated.
             if self.ppu.vcount() < 160 {
                 self.dma.trigger(DmaTrigger::HBlank);
+                // Per-cycle co-sim: latch the trigger-time fetch PC next
+                // to the serviced-unit tag (`dma_open_pc` below), so the
+                // 3-tick startup advance stays observable for the
+                // trigger/active joint work (see `dma_open_bus`).
+                self.dma_trigger_pc = self.current_pc;
             }
         }
         if event.vblank_started {
             self.dma.trigger(DmaTrigger::VBlank);
+            self.dma_trigger_pc = self.current_pc;
         }
         if event.line_started {
             // DMA3 video-capture is latched at vcount==162 (a
@@ -1375,14 +1387,65 @@ impl GbaMemoryBus {
     }
 
     /// T4 gate: fresh atomic-enable ps0 takes enter 3 cheaper; every
-    /// condition is load-bearing (ablation-pinned).
-    pub fn discount_timer0_entry(&mut self) -> bool {
-        let woke = std::mem::take(&mut self.woke_from_halt);
+    /// condition is load-bearing (ablation-pinned). `woke` is the
+    /// halt-wake state taken once per IRQ entry by `service_irq`
+    /// (a woken take never discounts).
+    pub fn discount_timer0_entry(&self, woke: bool) -> bool {
         !woke
             && self.irq_flags() & (1 << 3) != 0
             && self.timers.overflows_since_enable(0) <= 2
             && self.timers.last_enable_fresh_reload(0)
             && self.timers.prescaler_bits(0) == 0
+    }
+
+    /// Take the halt-wake edge for one IRQ entry (per-cycle co-sim: at
+    /// most one entry observes it; the flag never leaks past the take).
+    pub fn take_woke_from_halt(&mut self) -> bool {
+        std::mem::take(&mut self.woke_from_halt)
+    }
+
+    /// HLE-as-code BIOS IRQ prologue: the real BIOS vector + 0x128
+    /// handler modeled instruction by instruction with live bus costs
+    /// (fetches, STMFD stack stores, IF/IE + IntrMain-address loads),
+    /// plus the non-bus exception microcode residual. Anchored so the
+    /// IWRAM-handler total equals HLE_IRQ_PROLOGUE_ANCHOR (23); region
+    /// dependence arrives via the live `cycles_for` terms. `woke` is
+    /// accepted for the T4-gate call shape but carries no discount here:
+    /// the IRQ line trails the wake by 2 ticks, so the woken thread has
+    /// refilled the pipe before entry (no flush to skip).
+    pub fn bios_irq_prologue_cycles(&self, _woke: bool) -> u32 {
+        // Exception microcode (CPSR save, mode switch, LR): 3 internal.
+        let mut total = 3u32;
+        // Vector fetch at 0x18 + branch refill at 0x128 (BIOS ROM).
+        total += u32::from(self.cycles_for(0x00000018, 4));
+        total += 2 * u32::from(self.cycles_for(0x00000128, 4));
+        // STMFD SP_irq!, {r0-r3,r12,lr}: 6 IWRAM stores.
+        total += 6 * u32::from(self.cycles_for(0x03007FA0, 4));
+        // MOV + ADD (no bus): 2 internal.
+        total += 2;
+        // IF/IE I/O loads + IntrMain-address IWRAM load.
+        total += u32::from(self.cycles_for(0x04000202, 2));
+        total += u32::from(self.cycles_for(0x04000200, 2));
+        total += u32::from(self.cycles_for(0x03007FFC, 4));
+        // Residual (pipeline-flush overlap, arbitration, anchored fit):
+        // calibrated so the IWRAM-handler total is HLE_IRQ_PROLOGUE_ANCHOR
+        // (3 + 1 + 2 + 6 + 2 + 1 + 1 + 1 = 17 live, + residual).
+        total += crate::cpu::HLE_IRQ_PROLOGUE_ANCHOR - 17;
+        total
+    }
+
+    /// HLE-as-code BIOS IRQ epilogue: the restore sequence (LDMFD +
+    /// CPSR restore + return branch) with live bus costs. Anchored to
+    /// `HLE_IRQ_EPILOGUE_CYCLES` (7) for all paths today; the wake/halt
+    /// distinction (if any) must be re-pinned against the timer suites
+    /// before varying it.
+    pub fn bios_irq_epilogue_cycles(&self) -> u32 {
+        let loads = 6 * u32::from(self.cycles_for(0x03007FA0, 4));
+        let congestion: u32 = crate::cpu::HLE_IRQ_EPILOGUE_CYCLES;
+        // Neutral today: the anchored total wins; the live bus term only
+        // documents the as-code shape (IWRAM restores) for the follow-up.
+        let _ = loads;
+        congestion
     }
 
     /// Arm the IntrWait wake-clear mask (cleared on next halt wake).
@@ -1856,8 +1919,14 @@ impl GbaMemoryBus {
     /// Open-bus gate: true when the executing instruction directly
     /// follows the instruction that was in flight at the last serviced DMA
     /// unit (`current_pc` is the architectural PC on both sides).
+    /// (Per-cycle co-sim keeps the trigger-time tag in `dma_trigger_pc`
+    /// for phase analysis; the read gate stays on the active tag until
+    /// the trigger/active joint is re-pinned — OR-ing it moved Break
+    /// +1 iter the wrong way in the first measurement.)
     fn dma_open_bus(&self) -> bool {
-        self.current_pc.wrapping_sub(self.dma_open_pc) == if self.prefetch_thumb { 2 } else { 4 }
+        let step = if self.prefetch_thumb { 2 } else { 4 };
+        let _ = self.dma_trigger_pc;
+        self.current_pc.wrapping_sub(self.dma_open_pc) == step
     }
 
     /// Lane-selected open-bus reads (shift by address lane).

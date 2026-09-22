@@ -15,6 +15,18 @@ pub const HDRAW_CYCLES: u16 = 960;
 /// DMA phase; 1007 shifts every index by one. Edge constant is not
 /// portable across cores — only the joint (edge, DMA phase) is HW truth.
 pub const HBLANK_FLAG_CYCLES: u16 = 1006;
+/// HBlank DMA request edge, separated from the flag edge (per-cycle
+/// co-sim slice: flag/raise/DMA are distinct bus events). Joint scan on
+/// misc_edge Break (actual): request at 1006/-6/-12 -> 0x2AA4, +6 ->
+/// 0x2AA8 (later, wrong way vs expected 0x2A94). The request tick is not
+/// the lever (stable coincidence across a 12-cycle window), so neutral
+/// (== flag) stays until the trigger/active joint is re-pinned with
+/// dma_fit evidence; do not retune blindly.
+pub const HBLANK_DMA_CYCLES: u16 = HBLANK_FLAG_CYCLES;
+/// HBlank IRQ raise edge, separated from the flag edge. Neutral default
+/// equals the flag; the bus-side +1-tick defer (`pending_hblank_irq`)
+/// stays on top.
+pub const HBLANK_IRQ_CYCLES: u16 = HBLANK_FLAG_CYCLES;
 pub const LINES_PER_FRAME: u16 = 228;
 /// BG fetch clock (hw-test archive/ppu/mode3): the PPU fetches pixel x
 /// at 32+4x cycles into the scanline, one pixel every four cycles.
@@ -43,6 +55,9 @@ pub struct PpuEvent {
     pub frame_complete: bool,
     pub interrupt_mask: u16,
     pub hblank_started: bool,
+    /// HBlank DMA request edge (see `HBLANK_DMA_CYCLES`). Gated on
+    /// vcount < 160 by the bus, like the flag event below.
+    pub hblank_dma: bool,
     pub vblank_started: bool,
     pub line_started: bool,
 }
@@ -208,6 +223,12 @@ impl GbaPpu {
         if self.cycle == HBLANK_FLAG_CYCLES {
             self.handle_hblank_flag(&mut event);
         }
+        if self.cycle == HBLANK_IRQ_CYCLES {
+            self.handle_hblank_raise(&mut event);
+        }
+        if self.cycle == HBLANK_DMA_CYCLES {
+            event.hblank_dma = true;
+        }
         if self.cycle == CYCLES_PER_LINE {
             self.handle_line_end(&mut event);
         }
@@ -217,6 +238,12 @@ impl GbaPpu {
     fn handle_hblank_flag(&mut self, event: &mut PpuEvent) {
         event.hblank_started = true;
         self.registers.dispstat |= 1 << 1;
+    }
+
+    /// HBlank IRQ raise edge, separated from the flag write above so the
+    /// flag/raise/DMA joint is observable per event (the bus still defers
+    /// the IF raise by one tick via `pending_hblank_irq`).
+    fn handle_hblank_raise(&mut self, event: &mut PpuEvent) {
         if self.registers.dispstat & (1 << 4) != 0 {
             event.interrupt_mask |= 1 << 1;
         }
