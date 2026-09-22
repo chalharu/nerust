@@ -72,7 +72,7 @@ fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, 
     // GBATEK/ARM ARM: MUL=1S+mI, MLA=1S+mI+1I (the 1S is the execute cycle;
     // the opcode fetch is charged separately by the bus). The tick array
     // also breaks the fetch stream and fills prefetch P-ON.
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(0x03000000);
     bus.erase_for_multiply(cycles + u32::from(a), 4);
     if a { cycles + 2 } else { cycles + 1 }
 }
@@ -122,7 +122,7 @@ fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, i
     // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
     let ticks = multiplier_cycles_long(rs_value, signed);
     // Long-MUL post-body breaks the stream; tick erase (xMLAL 2+m, xMULL 1+m).
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(0x03000000);
     bus.erase_for_multiply(ticks + 1 + u32::from(accumulate), 4);
     ticks + 2 + u32::from(accumulate)
 }

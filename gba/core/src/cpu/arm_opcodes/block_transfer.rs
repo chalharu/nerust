@@ -72,7 +72,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
     }
 
     // The block breaks the fetch stream (once per instruction, not per word).
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(start);
     transfer_cycles(l, reg_list, transferred)
 }
 
@@ -201,7 +201,7 @@ fn handle_empty_list(
     let address = start_address(spec.base, 16, spec.pre, spec.up);
     if spec.load {
         let target = bus.read_aligned32(address);
-        bus.charge_fetch_stream_break();
+        bus.charge_fetch_stream_break(address);
         if spec.writeback {
             regs.set_r(
                 spec.base_register,
@@ -226,7 +226,7 @@ fn handle_empty_list(
         // Empty STM stores the PC value only (R15 is not banked, so the S
         // bit's user-bank selection has no visible effect here).
         bus.write32(address, regs.pc().wrapping_add(4));
-        bus.charge_fetch_stream_break();
+        bus.charge_fetch_stream_break(address);
         if spec.writeback {
             regs.set_r(
                 spec.base_register,

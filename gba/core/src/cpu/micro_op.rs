@@ -92,6 +92,9 @@ pub struct BlockEndEffect {
     pub sp: Option<u32>,
     pub writeback: Option<(usize, u32)>,
     pub ldm_conflict: bool,
+    /// First word address, for the instruction-scoped fetch-stream break
+    /// (open-bus blocks pre-pay nothing, mapped blocks break).
+    pub first_addr: u32,
 }
 
 /// Thumb LDR (literal): word-aligned pool address plus dest.
@@ -469,6 +472,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         sp: None,
         writeback,
         ldm_conflict: conflict,
+        first_addr: start,
     }));
     // Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
@@ -829,9 +833,20 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
         sp: None,
         writeback,
         ldm_conflict: false,
+        first_addr: base,
     }));
-    // Pad the legacy handler base (LDM 2+count, STM 1+count).
-    ops.extend(vec![MicroOp::Internal; if load { 2 } else { 1 }]);
+    // Pad the legacy handler base (LDM 2+count, STM 1+count), except
+    // single-register Thumb LDM (Break's ldmia r2!,{r3}): HW retires it
+    // like a single LDR (1I, not 2I). Multi-word blocks (Timing OAM
+    // 5-word cells pin 2I) keep 2.
+    ops.extend(vec![
+        MicroOp::Internal;
+        if load {
+            if count == 1 { 1 } else { 2 }
+        } else {
+            1
+        }
+    ]);
     Some(ops)
 }
 
@@ -917,6 +932,11 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
         }),
         writeback: None,
         ldm_conflict: false,
+        first_addr: if push {
+            sp.wrapping_sub(count * 4)
+        } else {
+            sp
+        },
     }));
     // Pad the legacy handler base: PUSH 1+count, POP 2+count,
     // POP+PC 4+count (words already carry +1 each).
@@ -1098,7 +1118,7 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     if a.writeback && a.rd != a.rn {
         regs.set_r(a.rn, writeback);
     }
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(addr);
 }
 
 /// Apply one data store with the legacy handler's exact bus-call order
@@ -1116,7 +1136,7 @@ fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     if a.writeback {
         regs.set_r(a.rn, writeback);
     }
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(addr);
 }
 
 fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
@@ -1288,7 +1308,7 @@ pub fn step_op(
                 // erase) plus the ALU handler; m comes from Rd.
                 let instr = m.instr as u16;
                 let ticks = multiplier_cycles(regs.r((instr & 0x7) as usize));
-                bus.charge_fetch_stream_break();
+                bus.charge_fetch_stream_break(0x03000000);
                 bus.erase_for_multiply(ticks, 2);
                 thumb_alu_handle(regs, instr);
             } else {
@@ -1352,7 +1372,7 @@ pub fn step_op(
         MicroOp::PcRelRead(r) => {
             // Legacy-identical order: bus access, then fetch-stream-break.
             regs.set_r(r.rd, bus.read32(r.addr));
-            bus.charge_fetch_stream_break();
+            bus.charge_fetch_stream_break(r.addr);
             // Thumb literal retire (loads the marker chain like a load).
             if is_thumb {
                 bus.note_thumb_single_load(regs.pc(), r.addr);
@@ -1409,7 +1429,7 @@ pub fn step_op(
             if e.ldm_conflict {
                 regs.arm_ldm_conflict();
             }
-            bus.charge_fetch_stream_break();
+            bus.charge_fetch_stream_break(e.first_addr);
         }
     }
     if queue.is_empty() {

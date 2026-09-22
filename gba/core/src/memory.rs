@@ -168,6 +168,12 @@ pub struct GbaMemoryBus {
     /// fetch-stream-break charge (`charge_fetch_stream_break`) to the
     /// owning code region (PC-tagged, like the CPU pipeline it models).
     last_opcode_addr: Option<u32>,
+    /// Last two CPU data addresses (non-opcode reads/writes), for
+    /// back-to-back fetch-break coalescing (an unmapped open-bus load
+    /// followed by an IWRAM store pre-pays once; Timing isolated accesses
+    /// keep their own break).
+    last_data_addr: Option<u32>,
+    prev_data_addr: Option<u32>,
     /// Execute PC of the last retired Thumb single word load (stack or
     /// ROM data, literals included), with its stack-data class tag.
     /// Readers validate adjacency (+2) or a 3-instruction window
@@ -397,6 +403,8 @@ impl GbaMemoryBus {
             block_batch_has_rom: false,
             block_batch_raw: false,
             last_opcode_addr: None,
+            last_data_addr: None,
+            prev_data_addr: None,
             prev_load_pc: None,
             prev_load_is_stack: false,
             timer0_raise_tick: 0,
@@ -916,6 +924,8 @@ impl GbaMemoryBus {
             // is non-sequential (GBATEK DMA owns the bus).
             self.prev_addr = None;
             self.prev_width = 0;
+            self.prev_data_addr = None;
+            self.last_data_addr = None;
             self.fetch_addr = None;
             self.fetch_width = 0;
             // The ROM prefetch buffer survives DMA that never touches
@@ -1433,6 +1443,8 @@ impl GbaMemoryBus {
             self.prev_load_pc = None;
             self.prev_load_is_stack = false;
             self.last_prefetched_pc = 0;
+            self.prev_data_addr = None;
+            self.last_data_addr = None;
             self.halted = false;
             self.halt_irq_mask = 0;
             self.wake_clear_mask = 0;
@@ -1972,6 +1984,8 @@ impl GbaMemoryBus {
     pub fn invalidate_prefetch_for_dma(&mut self, _dma_addr: u32) {
         self.prev_addr = None;
         self.prev_width = 0;
+        self.prev_data_addr = None;
+        self.last_data_addr = None;
         self.fetch_addr = None;
         self.fetch_width = 0;
         self.pf_valid = false;
@@ -1987,6 +2001,8 @@ impl GbaMemoryBus {
     pub fn invalidate_prefetch_for_branch(&mut self) {
         self.prev_addr = None;
         self.prev_width = 0;
+        self.prev_data_addr = None;
+        self.last_data_addr = None;
         self.fetch_addr = None;
         self.fetch_width = 0;
         self.pf_branch_drain = self.pf_valid;
@@ -2051,6 +2067,10 @@ impl GbaMemoryBus {
         // fetch path above.
         self.prev_addr = Some(addr);
         self.prev_width = width;
+        if !is_opcode {
+            self.prev_data_addr = self.last_data_addr;
+            self.last_data_addr = Some(addr);
+        }
         if is_opcode {
             self.fetch_addr = Some(addr);
             self.fetch_width = width;
@@ -2065,10 +2085,21 @@ impl GbaMemoryBus {
 
     /// Fetch-stream-break charge: a CPU data access breaks the fetch stream,
     /// so the next fetch costs N instead of S. Pre-paid once per load/store
-    /// instruction as N32-S32 of the owning code region.
-    pub(crate) fn charge_fetch_stream_break(&mut self) {
+    /// instruction as N32-S32 of the owning code region. High-unmapped
+    /// open-bus reads (>=0x10000000, misc_edge Break's 0x10000000 loop)
+    /// idle the bus for a fill slot and pre-pay nothing; OAM-mirror
+    /// open-bus blocks (Timing OAM cells pin their break) and all mapped
+    /// data (including IWRAM, pinned by Timing LDR cells) still break.
+    /// Callers pass the data address.
+    pub(crate) fn charge_fetch_stream_break(&mut self, data_addr: u32) {
         if let Some(pc) = self.last_opcode_addr
             && (0x08000000..=0x0DFFFFFF).contains(&pc)
+            && data_addr < 0x1000_0000
+            // Back-to-back unmapped-load + store (Break's ldmia
+            // 0x10000000 + str IWRAM) pre-pays once: the load already
+            // idled the bus, the store's break is absorbed. Isolated
+            // Timing accesses (prev mapped) keep their break.
+            && !matches!(self.prev_data_addr, Some(prev) if prev >= 0x1000_0000)
         {
             let n = self.gamepak_rom_cycles(pc, 4, false);
             let s = self.gamepak_rom_cycles(pc, 4, true);
@@ -2279,6 +2310,8 @@ impl GbaMemoryBus {
         }
         self.prev_addr = Some(addr);
         self.prev_width = width;
+        self.prev_data_addr = self.last_data_addr;
+        self.last_data_addr = Some(addr);
     }
 
     // -- Region readers --
