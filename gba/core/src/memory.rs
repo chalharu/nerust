@@ -112,6 +112,15 @@ pub struct GbaMemoryBus {
     /// IO-unmapped addresses and Thumb-mode DMA reads from unreadable
     /// sources (HW-pinned by the alyosha Bus suite).
     cpu_bus: u32,
+    /// DMA open-bus latch + PC tag: every serviced DMA unit latches its
+    /// data word into `dma_bus`; a CPU data read from unmapped space by
+    /// the instruction immediately following the serviced unit observes
+    /// the latch instead of the prefetch window. `dma_open_pc` tags the
+    /// in-flight instruction using the bus `current_pc` convention
+    /// (architectural PC, i.e. execute+4 Thumb / execute+8 ARM), so the
+    /// read-side compare is a plain 2/4-cycle difference.
+    dma_bus: u32,
+    dma_open_pc: u32,
     /// GamePak prefetch enable (WAITCNT bit 14). The enable gates only
     /// the prefetch erase (`prefetch_erase_delta`): opcode fetches always
     /// follow the fetch stream at S/N cost (the suite proves pure-fetch
@@ -364,6 +373,8 @@ impl GbaMemoryBus {
             prefetch_win: [0xE129F000, 0xE129F000],
             prefetch_thumb: false,
             cpu_bus: 0xFFFF_FFFF,
+            dma_bus: 0,
+            dma_open_pc: 0,
             prefetch_enabled: false,
             data_sequential_override: false,
             block_batching: false,
@@ -654,10 +665,12 @@ impl GbaMemoryBus {
             .ppu
             .step(&self.vram[..], &self.palette_ram[..], &self.oam[..]);
         if event.hblank_started {
-            // GBATEK DISPSTAT: H-Blank conditions are generated once per
-            // scanline, including the hidden scanlines during V-Blank — a
-            // repeat HBlank channel fires on lines 0..227, not just <160.
-            self.dma.trigger(DmaTrigger::HBlank);
+            // H-Blank DMA starts only on visible scanlines (vcount < 160).
+            // During V-Blank the H-Blank flag and IRQ still toggle every
+            // line, but no HBlank DMA request is generated.
+            if self.ppu.vcount() < 160 {
+                self.dma.trigger(DmaTrigger::HBlank);
+            }
         }
         if event.vblank_started {
             self.dma.trigger(DmaTrigger::VBlank);
@@ -796,6 +809,10 @@ impl GbaMemoryBus {
                 );
             }
             let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
+            // Open-bus PC tag: snapshot the in-flight instruction's bus PC
+            // (`current_pc` is already the architectural PC, so the
+            // read-side compare below is a plain 2/4 difference).
+            self.dma_open_pc = self.current_pc;
             // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
             // other channels/widths see the window as ROM/open bus.
             let use_eeprom = transfer.channel == 3
@@ -848,12 +865,14 @@ impl GbaMemoryBus {
                     || ((0x04000800..=0x04FFFFFF).contains(&read_addr)
                         && !is_mem_control(read_addr));
                 if !inaccessible {
-                    self.cpu_bus = if transfer.width == 4 {
+                    let latch = if transfer.width == 4 {
                         value
                     } else {
                         let half = value & 0xFFFF;
                         half | (half << 16)
                     };
+                    self.cpu_bus = latch;
+                    self.dma_bus = latch;
                 }
                 value
             } else if transfer.width == 2 && transfer.destination & 2 != 0 {
@@ -1808,6 +1827,13 @@ impl GbaMemoryBus {
         }
     }
 
+    /// Open-bus gate: true when the executing instruction directly
+    /// follows the instruction that was in flight at the last serviced DMA
+    /// unit (`current_pc` is the architectural PC on both sides).
+    fn dma_open_bus(&self) -> bool {
+        self.current_pc.wrapping_sub(self.dma_open_pc) == if self.prefetch_thumb { 2 } else { 4 }
+    }
+
     /// Lane-selected open-bus reads (shift by address lane).
     fn open_bus8(&self, addr: u32) -> u32 {
         (self.open_bus32() >> ((addr & 3) * 8)) & 0xFF
@@ -1864,12 +1890,26 @@ impl GbaMemoryBus {
                     self.open_bus8(addr)
                 }
             }
-            // Unmapped: prefetch-latch open bus, lane-selected by width.
-            _ => match width {
-                4 => self.open_bus32(),
-                2 => self.open_bus16(addr),
-                _ => self.open_bus8(addr),
-            },
+            // Unmapped: prefetch-latch open bus, lane-selected by width —
+            // except for the instruction immediately following a serviced
+            // DMA unit, which observes the DMA data latch instead (the PC
+            // tag matches the next instruction; sub-word reads shift by
+            // address lane exactly like the prefetch path).
+            _ => {
+                if self.dma_open_bus() {
+                    match width {
+                        4 => self.dma_bus,
+                        2 => (self.dma_bus >> ((addr & 2) * 8)) & 0xFFFF,
+                        _ => (self.dma_bus >> ((addr & 3) * 8)) & 0xFF,
+                    }
+                } else {
+                    match width {
+                        4 => self.open_bus32(),
+                        2 => self.open_bus16(addr),
+                        _ => self.open_bus8(addr),
+                    }
+                }
+            }
         }
     }
 
@@ -3740,10 +3780,11 @@ mod tests {
     }
 
     #[test]
-    fn hblank_dma_fires_on_all_lines_including_vblank() {
-        // GBATEK DISPSTAT: H-Blank conditions are generated once per
-        // scanline, including hidden V-Blank scanlines — one full frame of
-        // a repeat HBlank channel transfers 228 units, not 160.
+    fn hblank_dma_fires_on_vdraw_lines_only() {
+        // H-Blank DMA starts only on visible scanlines (vcount < 160):
+        // during V-Blank the H-Blank flag and IRQ still toggle, but no
+        // DMA request is generated — one full frame of a repeat HBlank
+        // channel transfers 160 units, not 228.
         let mut bus = GbaMemoryBus::new();
         for i in 0..256u16 {
             bus.write16(0x03000000 + u32::from(i) * 2, 0xABCD);
@@ -3764,7 +3805,7 @@ mod tests {
         let written = (0..256u16)
             .filter(|&i| bus.read16(0x03001000 + u32::from(i) * 2) != 0)
             .count();
-        assert_eq!(written, 228);
+        assert_eq!(written, 160);
     }
 
     #[test]
