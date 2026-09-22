@@ -15,14 +15,18 @@ const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
 /// HLE IRQ return skips the real-BIOS restore sequence; fitted epilogue cost.
 /// Recalibrate against the timers and timing suites if this changes.
-const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
+pub(crate) const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
 
 /// Skipped BIOS vector+prologue cycle count (region-independent): vector
 /// fetch pair, branch refill, push6, mov, adr, ldr-pc, exception entry
 /// internals, and the base cycles no HLE instruction absorbs. Anchored to
 /// the HW-pinned IWRAM-handler entry total; region dependence now comes
 /// from the real entry bus part, not a source-region term.
-const HLE_IRQ_PROLOGUE_CYCLES: u32 = 23;
+/// (HLE-as-code anchor: `bios_irq_prologue_cycles` recomputes this total
+/// instruction by instruction; keep the two in sync.)
+pub(crate) const HLE_IRQ_PROLOGUE_CYCLES: u32 = 23;
+/// Anchor alias for the as-code prologue residual (see above).
+pub(crate) const HLE_IRQ_PROLOGUE_ANCHOR: u32 = HLE_IRQ_PROLOGUE_CYCLES;
 
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
@@ -106,6 +110,13 @@ impl GbaCpu {
         if bus.defer_timer0_take() {
             return None;
         }
+        // Per-cycle co-sim: at most one entry observes the halt-wake
+        // edge (see `take_woke_from_halt`). The wake itself only parks
+        // the pipeline; the IRQ line follows 2 ticks later (line_queue),
+        // so the woken thread refills the pipe before entry and the
+        // discarded in-flight read below still applies. `woke` only feeds
+        // the T4 discount gate (a woken take never discounts).
+        let woke = bus.take_woke_from_halt();
         // Interrupted PC/mode for the discarded read below (registers
         // change on exception entry).
         let src_pc = self.regs.pc();
@@ -163,27 +174,31 @@ impl GbaCpu {
         bus.credit_entry_refill(target);
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         // Entry accounting: the vector+refill bus waits above are the real
-        // charge (handler-region dependent), plus the skipped-BIOS prologue
-        // count. No source-region term beyond the discarded fetch.
+        // charge (handler-region dependent), plus the HLE-as-code BIOS
+        // prologue (see `bios_irq_prologue_cycles`). No source-region term
+        // beyond the discarded fetch.
         let entry_bus = bus.take_access_wait_cycles().max(0) as u32;
+        // HLE-as-code base prologue (23 for the anchored IWRAM path).
+        // The timer0 gates below are deltas against it.
+        let base_prologue = bus.bios_irq_prologue_cycles(woke);
         // T4/T5/T7/T8/T10/T11/T12 timer0 entry gates (+-3/+1/raise+25/
         // raise+25/+24/+1iter/+2).
         let prologue = if bus.resampled_timer0_entry(entry_opcode, entry_next, src_thumb) {
-            HLE_IRQ_PROLOGUE_CYCLES + 2
+            base_prologue + 2
         } else if bus.brokenpipe_timer0_entry(entry_opcode, entry_next, src_thumb) {
-            HLE_IRQ_PROLOGUE_CYCLES + 24
+            base_prologue + 24
         } else if bus.history_timer0_entry(entry_opcode, entry_next, src_thumb) {
-            HLE_IRQ_PROLOGUE_CYCLES + 26
+            base_prologue + 26
         } else if let Some(pro) = bus.late_timer0_entry(entry_opcode, entry_next, src_thumb) {
             pro
         } else if let Some(pro) = bus.catchup_timer0_entry() {
             pro
-        } else if bus.discount_timer0_entry() {
-            HLE_IRQ_PROLOGUE_CYCLES - 3
+        } else if bus.discount_timer0_entry(woke) {
+            base_prologue - 3
         } else if bus.retook_timer0_entry() {
-            HLE_IRQ_PROLOGUE_CYCLES + 1
+            base_prologue + 1
         } else {
-            HLE_IRQ_PROLOGUE_CYCLES
+            base_prologue
         };
         Some(entry_bus + prologue)
     }
@@ -262,7 +277,8 @@ impl GbaCpu {
         let pc_written = self.regs.take_pc_written();
         if pc_written {
             // True when this pc-write returns from a user IRQ handler
-            // through the HLE trampoline (see HLE_IRQ_EPILOGUE_CYCLES).
+            // through the HLE trampoline (HLE-as-code epilogue, see
+            // `bios_irq_epilogue_cycles`).
             let mut irq_epilogue = 0;
             if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
                 && let Some((return_address, saved)) = self.irq_return_stack.pop()
@@ -281,7 +297,7 @@ impl GbaCpu {
                     bus.set_bios_prefetch(0xE55EC002);
                 }
                 self.regs.set_pc(return_address);
-                irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
+                irq_epilogue = bus.bios_irq_epilogue_cycles();
             }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
@@ -320,7 +336,7 @@ impl GbaCpu {
                 for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
                     self.regs.set_r(register, value);
                 }
-                // Same epilogue charge as ARM (and same IntrWait-exit
+                // Same as-code epilogue as ARM (and same IntrWait-exit
                 // latch restore as above).
                 if bus.take_bios_wait_exit() {
                     bus.set_bios_prefetch(0xE3A02004);
@@ -328,7 +344,7 @@ impl GbaCpu {
                     bus.set_bios_prefetch(0xE55EC002);
                 }
                 self.regs.set_pc(return_address);
-                irq_epilogue = HLE_IRQ_EPILOGUE_CYCLES;
+                irq_epilogue = bus.bios_irq_epilogue_cycles();
             }
             self.pipeline = [0; 2];
             bus.set_current_pc(self.regs.pc());
