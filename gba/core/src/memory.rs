@@ -1210,6 +1210,13 @@ impl GbaMemoryBus {
                     0
                 };
                 self.woke_from_halt = true;
+                // Wake resumes through the BIOS exit branch (halt loop
+                // exit / IntrWait tail return): like any taken branch, it
+                // restarts the fetch stream (next fetch N), while the
+                // prefetch buffer window itself survives for buffered
+                // targets. IWRAM-flat code observes nothing (N == S);
+                // ROM code pays one N-S on resume (Break T0 phase).
+                self.invalidate_prefetch_for_branch();
                 // IntrWait-family wake: the real BIOS exit path runs after
                 // the wake ISR, leaving 0xE3A02004 latched (mgba-suite
                 // "BIOS load"). Latch it now (covers the no-ISR IME=0
