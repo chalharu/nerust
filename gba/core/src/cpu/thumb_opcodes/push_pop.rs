@@ -28,10 +28,11 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
         bus.write32(address, regs.pc().wrapping_add(2));
         bus.set_data_sequential(false);
         bus.end_block_batch();
-        bus.charge_fetch_stream_break();
+        bus.charge_fetch_stream_break(address);
         return 2;
     }
     let mut address = regs.sp().wrapping_sub(count * 4);
+    let first_address = address;
     regs.set_sp(address);
     let mut first = true;
     bus.begin_block_batch(false, 2);
@@ -50,7 +51,7 @@ fn push(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, link: bool) 
     }
     bus.set_data_sequential(false);
     bus.end_block_batch();
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(first_address);
     // Thumb PUSH: (n-1)S+2N (GBATEK STM formula), i.e. 1+count.
     1 + count
 }
@@ -67,11 +68,12 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
         bus.end_block_batch();
         regs.set_pc(target);
         regs.set_sp(address.wrapping_add(0x40));
-        bus.charge_fetch_stream_break();
+        bus.charge_fetch_stream_break(address);
         // Thumb empty-POP (n=1 with PC): 2N+1S+1I.
         return 6;
     }
     let mut address = regs.sp();
+    let first_address = address;
     let mut first = true;
     bus.begin_block_batch(true, 2);
     for register in selected_registers(list) {
@@ -96,7 +98,7 @@ fn pop(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, list: u16, pc: bool) -> 
     regs.set_sp(address);
     bus.set_data_sequential(false);
     bus.end_block_batch();
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(first_address);
     // Thumb POP: nS+1N+1I (2+count); with PC: (n+1)S+2N+1I (4+count),
     // n including PC (GBATEK THUMB cycle times).
     let count = list.count_ones() + u32::from(pc);

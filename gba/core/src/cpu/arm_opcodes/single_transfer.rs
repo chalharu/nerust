@@ -41,7 +41,7 @@ pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u3
         store(bus, addr, value, b);
     }
     // The data access breaks the fetch stream (once per instruction).
-    bus.charge_fetch_stream_break();
+    bus.charge_fetch_stream_break(addr);
 
     if writeback && !(l && rd == rn) {
         // Avoid writeback when Rd == Rn for LDR (UNPREDICTABLE)

@@ -19,7 +19,7 @@ pub fn decode_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16)
                 let ticks = crate::cpu::arm_opcodes::multiply::multiplier_cycles(
                     regs.r((instr & 0x7) as usize),
                 );
-                bus.charge_fetch_stream_break();
+                bus.charge_fetch_stream_break(0x03000000);
                 bus.erase_for_multiply(ticks, 2);
             }
             thumb_opcodes::alu::handle(regs, instr)
