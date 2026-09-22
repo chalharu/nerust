@@ -121,6 +121,16 @@ pub struct GbaMemoryBus {
     /// read-side compare is a plain 2/4-cycle difference.
     dma_bus: u32,
     dma_open_pc: u32,
+    /// Sticky DMA bus latch validity: set when a serviced DMA unit drives
+    /// the shared latch, cleared by the next CPU mapped data access (which
+    /// drives the bus with its own value). Opcode fetches and unmapped
+    /// reads only sample the bus and never disturb it, so a DMA value
+    /// survives ALU/branch/fetch instructions until real bus traffic lands
+    /// (HW open-bus capacitance; mgba-suite DMA Prefetch pins the break).
+    /// Reads from unmapped space observe the latch while valid (lane
+    /// selected), the prefetch window otherwise. The adjacent-PC gate
+    /// below stays as the single-instruction fast path.
+    dma_bus_valid: bool,
     /// GamePak prefetch enable (WAITCNT bit 14). The enable gates only
     /// the prefetch erase (`prefetch_erase_delta`): opcode fetches always
     /// follow the fetch stream at S/N cost (the suite proves pure-fetch
@@ -375,6 +385,7 @@ impl GbaMemoryBus {
             cpu_bus: 0xFFFF_FFFF,
             dma_bus: 0,
             dma_open_pc: 0,
+            dma_bus_valid: false,
             prefetch_enabled: false,
             data_sequential_override: false,
             block_batching: false,
@@ -873,6 +884,9 @@ impl GbaMemoryBus {
                     };
                     self.cpu_bus = latch;
                     self.dma_bus = latch;
+                    // The serviced unit drives the shared bus: the sticky
+                    // latch goes valid until CPU mapped traffic re-drives it.
+                    self.dma_bus_valid = true;
                 }
                 value
             } else if transfer.width == 2 && transfer.destination & 2 != 0 {
@@ -1891,12 +1905,14 @@ impl GbaMemoryBus {
                 }
             }
             // Unmapped: prefetch-latch open bus, lane-selected by width —
-            // except for the instruction immediately following a serviced
-            // DMA unit, which observes the DMA data latch instead (the PC
-            // tag matches the next instruction; sub-word reads shift by
-            // address lane exactly like the prefetch path).
+            // except while the sticky DMA latch is valid (a serviced DMA
+            // unit drove the shared bus and no CPU mapped traffic has
+            // re-driven it since), or for the instruction immediately
+            // following a serviced DMA unit (the PC tag matches the next
+            // instruction; sub-word reads shift by address lane exactly
+            // like the prefetch path).
             _ => {
-                if self.dma_open_bus() {
+                if self.dma_open_bus() || self.dma_bus_valid {
                     match width {
                         4 => self.dma_bus,
                         2 => (self.dma_bus >> ((addr & 2) * 8)) & 0xFFFF,
@@ -2024,6 +2040,12 @@ impl GbaMemoryBus {
         }
         self.access_wait_cycles += i64::from(contrib);
         let raw = self.read_mapped(addr, width);
+        // A mapped CPU data access re-drives the shared bus: the sticky
+        // DMA latch stops being valid (fetches and unmapped reads only
+        // sample it).
+        if !is_opcode && self.cpu_data_drives_bus(addr) {
+            self.dma_bus_valid = false;
+        }
         // prev_* tracks the last bus access of ANY kind (GBATEK N/S bus
         // order); fetch_* tracks the opcode stream for the prefetch-ON
         // fetch path above.
@@ -2229,6 +2251,11 @@ impl GbaMemoryBus {
         if !(0x08000000..=0x0DFFFFFF).contains(&addr) {
             // Non-ROM stores free the ROM bus: background refill.
             self.fetch_buffer_idle(wait);
+        }
+        // Mapped CPU stores drive the bus (see `cpu_data_drives_bus`):
+        // unmapped-vanishing stores never publish.
+        if self.cpu_data_drives_bus(addr) {
+            self.dma_bus_valid = false;
         }
         match addr {
             0x02000000..=0x02FFFFFF => self.write_ewram(addr, width, value),
@@ -3090,6 +3117,36 @@ impl GbaMemoryBus {
             // Stores to unmapped memory vanish (the bus latch is
             // fetch-driven; stores never publish).
             _ => {}
+        }
+    }
+
+    /// True when a CPU data access to `addr` drives the external data bus
+    /// with its own value, re-driving the shared open-bus latch (so the
+    /// sticky DMA latch stops being valid): real RAM/ROM (cartridge
+    /// present), I/O registers and backup chips. Unmapped gaps, floating
+    /// windows (cartridge-less ROM/SRAM, the EEPROM SRAM window) and the
+    /// test debug sink only sample the bus and leave the latch alone.
+    /// Opcode fetches never consult this (the prefetch unit buffers them).
+    fn cpu_data_drives_bus(&self, addr: u32) -> bool {
+        match addr {
+            0x00000000..=0x00003FFF => true,
+            0x02000000..=0x02FFFFFF => true,
+            0x03000000..=0x03FFFFFF => true,
+            0x04000000..=0x040003FE => true,
+            a if is_mem_control(a) => true,
+            0x05000000..=0x05FFFFFF => true,
+            0x06000000..=0x06FFFFFF => true,
+            0x07000000..=0x07FFFFFF => true,
+            0x08000000..=0x0CFFFFFF => self.cartridge.is_some(),
+            0x0D000000..=0x0DFFFFFF => true,
+            0x0E000000..=0x0FFFFFFF => self.cartridge.as_ref().is_some_and(|c| {
+                !matches!(
+                    c.save_type(),
+                    crate::cartridge::save::SaveType::Eeprom512
+                        | crate::cartridge::save::SaveType::Eeprom8k
+                )
+            }),
+            _ => false,
         }
     }
 

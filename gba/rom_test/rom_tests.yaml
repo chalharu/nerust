@@ -935,10 +935,10 @@ suites:
         pass_prefix: 'PASS: '
         fail_prefix: 'FAIL: '
         sram: {fail_suffix: ': FAIL', header_infix: ' test: ', detail_infix: ': Got'}
-    # 6 fail on research-grade micro-behavior; boxed.
+    # 5 fail on research-grade micro-behavior; boxed. DMA Prefetch Read
+    # passes via the sticky DMA open-bus latch (unboxed).
     expected_checks:
     - 'DMA Prefetch Break'
-    - 'DMA Prefetch Read'
     - 'H-blank bit start Hblank'
     - 'H-blank bit start Flip 1'
     - 'H-blank bit start Flip 2'
