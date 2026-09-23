@@ -5,6 +5,8 @@ pub mod thumb;
 pub mod thumb_opcodes;
 
 #[cfg(test)]
+mod micro_op_tests;
+#[cfg(test)]
 mod sonar_coverage_tests;
 
 use crate::cpu_pipeline::fill_pipeline;
