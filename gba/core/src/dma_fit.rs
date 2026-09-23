@@ -608,6 +608,7 @@ fn wait_vcount(bus: &mut crate::memory::GbaMemoryBus, v: u16) {
 /// Native replication of nba ram-access-timing DISPCNT-latch probes:
 /// 128-halfword VRAM DMA0 bursts at lines 2,3,4,5 with enable/blank
 /// flips per the ROM scripts. The tuple pattern reads out fetch gating.
+#[allow(clippy::too_many_arguments)]
 fn latch_run(
     init_disp: u16,
     hofs7: bool,
