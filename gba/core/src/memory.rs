@@ -1,5 +1,6 @@
 use crate::apu::GbaApu;
-use crate::bios::HleBiosOperation;
+use crate::bios::hle_operation::{HleBiosBus, HleBiosOperation};
+use crate::bios::sound_driver::SoundDriverBus;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, repeat_byte, selected_write_byte, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
@@ -3297,6 +3298,57 @@ impl GbaMemoryBus {
 impl Default for GbaMemoryBus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `HleBiosBus`/`SoundDriverBus` live in `bios` and only name these traits,
+/// so the file dependency runs `memory -> bios::{hle_operation, sound_driver}`
+/// and never back (see those modules).
+impl HleBiosBus for GbaMemoryBus {
+    fn read8(&mut self, addr: u32) -> u8 {
+        GbaMemoryBus::read8(self, addr)
+    }
+
+    fn read16(&mut self, addr: u32) -> u16 {
+        GbaMemoryBus::read16(self, addr)
+    }
+
+    fn read32(&mut self, addr: u32) -> u32 {
+        GbaMemoryBus::read32(self, addr)
+    }
+
+    fn write_hle_bios16(&mut self, addr: u32, value: u16) {
+        GbaMemoryBus::write_hle_bios16(self, addr, value);
+    }
+
+    fn write_hle_bios32(&mut self, addr: u32, value: u32) {
+        GbaMemoryBus::write_hle_bios32(self, addr, value);
+    }
+}
+
+impl SoundDriverBus for GbaMemoryBus {
+    fn read8(&mut self, addr: u32) -> u8 {
+        GbaMemoryBus::read8(self, addr)
+    }
+
+    fn read16(&mut self, addr: u32) -> u16 {
+        GbaMemoryBus::read16(self, addr)
+    }
+
+    fn read32(&mut self, addr: u32) -> u32 {
+        GbaMemoryBus::read32(self, addr)
+    }
+
+    fn write_hle_bios8(&mut self, addr: u32, value: u8) {
+        GbaMemoryBus::write_hle_bios8(self, addr, value);
+    }
+
+    fn apu(&self) -> &GbaApu {
+        GbaMemoryBus::apu(self)
+    }
+
+    fn apu_mut(&mut self) -> &mut GbaApu {
+        GbaMemoryBus::apu_mut(self)
     }
 }
 

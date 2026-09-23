@@ -5,7 +5,20 @@
 /// Layout (GBATEK): SoundArea+20 holds 48-byte `SndCh` entries
 /// (sf,rv,lv,at,de,su,re,fr,wp,...); WaveData is u16 type/stat, u32
 /// freq/loop/size, then signed 8-bit samples (`4000h` = forward loop).
-use crate::memory::GbaMemoryBus;
+use crate::apu::GbaApu;
+
+/// Bus operations needed by the sound-driver HLE. Implemented for
+/// [`GbaMemoryBus`](crate::memory::GbaMemoryBus) in `memory.rs`; the driver
+/// only names this trait, so the dependency runs `memory -> sound_driver`
+/// and never back.
+pub trait SoundDriverBus {
+    fn read8(&mut self, addr: u32) -> u8;
+    fn read16(&mut self, addr: u32) -> u16;
+    fn read32(&mut self, addr: u32) -> u32;
+    fn write_hle_bios8(&mut self, addr: u32, value: u8);
+    fn apu(&self) -> &GbaApu;
+    fn apu_mut(&mut self) -> &mut GbaApu;
+}
 
 const SNDCH_BASE: u32 = 20;
 const SNDCH_STRIDE: u32 = 48;
@@ -17,12 +30,8 @@ const PLAYBACK_FREQ: [u32; 12] = [
 ];
 
 /// Runtime voice state (the register side lives in SoundArea RAM).
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DriverVoice {
-    pub started: bool,
-    pub pos: f64,
-    pub env: f32,
-}
+/// Re-exported from `apu`, where the owning `GbaApu::driver_voices` lives.
+pub use crate::apu::DriverVoice;
 
 /// Parse SoundDriverMode (GBATEK 1Bh) into (channels, master, play_freq).
 /// Zero fields fall back to the documented defaults (8ch, 15, 13379Hz).
@@ -44,7 +53,7 @@ pub fn parse_mode(mode: u32) -> (usize, u32, u32) {
 
 /// SWI 1Ch body: advance envelopes and latch start/key-off requests.
 /// Called by the game every 1/60s; envelopes move one step per call.
-pub fn sound_driver_main(bus: &mut GbaMemoryBus) {
+pub fn sound_driver_main(bus: &mut impl SoundDriverBus) {
     let area = bus.apu().sound_area;
     if area == 0 {
         return;
@@ -55,7 +64,7 @@ pub fn sound_driver_main(bus: &mut GbaMemoryBus) {
     }
 }
 
-fn tick_voice(bus: &mut GbaMemoryBus, area: u32, index: usize) {
+fn tick_voice(bus: &mut impl SoundDriverBus, area: u32, index: usize) {
     let base = area.wrapping_add(SNDCH_BASE + index as u32 * SNDCH_STRIDE);
     let sf = bus.read8(base);
     if sf == 0 {
@@ -101,7 +110,7 @@ fn tick_voice(bus: &mut GbaMemoryBus, area: u32, index: usize) {
 
 /// Mix one native-grid sample of driver voices into the APU buffer tail.
 /// Voice positions advance continuously at fr/playback_freq per grid tick.
-pub fn mix_driver_grid(bus: &mut GbaMemoryBus) {
+pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
     let area = bus.apu().sound_area;
     if area == 0 {
         return;

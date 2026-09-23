@@ -7,7 +7,16 @@ pub mod psg;
 use nerust_core_traits::audio::StereoSample;
 
 use self::psg::{Noise, Square, Wave};
-use crate::bios::sound_driver::DriverVoice;
+
+/// Runtime voice state of the BIOS sound driver (GBATEK `SoundArea.vchn[]`
+/// register side lives in SoundArea RAM). Defined here — next to its owner
+/// `GbaApu::driver_voices` — so `apu` never depends on `bios::sound_driver`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DriverVoice {
+    pub started: bool,
+    pub pos: f64,
+    pub env: f32,
+}
 
 /// Native DAC grid: 16.78MHz / 512.
 pub const MIX_RATE: u32 = 32_768;
