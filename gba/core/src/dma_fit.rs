@@ -435,12 +435,12 @@ fn build_dma_handler() -> Vec<u32> {
     // LDR at byte p (from DMAH_BASE) has PC = base+p+8; literal li sits
     // at base + code.len()*4 + li*4.
     let base = code.len() * 4;
-    for i in 0..code.len() {
-        if code[i] & 0xFFFF0000 == 0xE59F0000 {
-            let li = (code[i] & 0xFFF) as usize;
+    for (i, w) in code.iter_mut().enumerate() {
+        if *w & 0xFFFF0000 == 0xE59F0000 {
+            let li = (*w & 0xFFF) as usize;
             let off = (base + li * 4) as i32 - (i * 4 + 8) as i32;
             assert!((0..4096).contains(&off), "literal out of range");
-            code[i] = (code[i] & 0xFFFFF000) | off as u32;
+            *w = (*w & 0xFFFFF000) | off as u32;
         }
     }
     code.extend_from_slice(&lits);
