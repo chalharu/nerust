@@ -8,3 +8,4 @@ pub mod multiply;
 pub mod psr_transfer;
 pub mod single_transfer;
 pub mod swi;
+pub mod swp;

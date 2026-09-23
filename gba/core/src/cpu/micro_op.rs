@@ -4,7 +4,6 @@
 
 use std::collections::VecDeque;
 
-use crate::cpu::arm::{handle_swp as swp_handle, is_psr_transfer};
 use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
 use crate::cpu::arm_opcodes::helpers::{barrel_shift, condition_passed};
@@ -12,6 +11,8 @@ use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
 use crate::cpu::arm_opcodes::psr_transfer::handle as psr_handle;
+use crate::cpu::arm_opcodes::psr_transfer::is_psr_transfer;
+use crate::cpu::arm_opcodes::swp::handle as swp_handle;
 use crate::cpu::thumb_opcodes::alu::{
     handle as thumb_alu_handle, handle_load_address, handle_sp_offset,
 };
