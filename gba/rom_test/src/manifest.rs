@@ -342,17 +342,14 @@ impl RomManifest {
             .suites
             .iter()
             .flat_map(|suite| {
-                suite
-                    .cases
-                    .iter()
-                    .map(|case| SelectedCase {
-                        suite,
-                        case,
-                        completion: case
-                            .completion
-                            .as_ref()
-                            .and_then(|name| self.completion_profiles.get(name)),
-                    })
+                suite.cases.iter().map(|case| SelectedCase {
+                    suite,
+                    case,
+                    completion: case
+                        .completion
+                        .as_ref()
+                        .and_then(|name| self.completion_profiles.get(name)),
+                })
             })
             .collect();
         if ids.is_empty() {
