@@ -2891,6 +2891,7 @@ dependencies = [
  "clap",
  "log",
  "nerust_core_traits",
+ "nerust_gba_factory",
  "nerust_gbc_factory",
  "nerust_gtk",
  "nerust_gui_runtime",
@@ -2964,6 +2965,74 @@ dependencies = [
  "nerust_render_traits",
  "nerust_timer",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nerust_gba_core"
+version = "0.1.0-dev"
+dependencies = [
+ "crc",
+ "log",
+ "nerust_core_traits",
+ "nerust_gba_settings",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_serialize",
+ "nerust_sound_filter",
+ "rmp-serde",
+ "serde",
+ "thiserror 2.0.20",
+ "typetag",
+]
+
+[[package]]
+name = "nerust_gba_device"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_input_traits",
+]
+
+[[package]]
+name = "nerust_gba_factory"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "nerust_core_traits",
+ "nerust_gba_core",
+ "nerust_gba_device",
+ "nerust_gba_settings",
+ "nerust_input_traits",
+ "nerust_render_traits",
+ "nerust_settings_traits",
+]
+
+[[package]]
+name = "nerust_gba_rom_test"
+version = "0.1.0-dev"
+dependencies = [
+ "clap",
+ "glob",
+ "nerust_gba_core",
+ "nerust_render_traits",
+ "png",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nerust_gba_settings"
+version = "0.1.0-dev"
+dependencies = [
+ "dyn-clone",
+ "dyn-eq",
+ "nerust_core_traits",
+ "nerust_settings_traits",
+ "serde",
+ "serde-value",
+ "strum",
+ "typetag",
 ]
 
 [[package]]

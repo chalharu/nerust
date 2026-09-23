@@ -1,0 +1,10 @@
+[package]
+name = "nerust_gba_device"
+description = "GBA device definitions"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+nerust_input_traits.workspace = true
