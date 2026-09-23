@@ -1,6 +1,6 @@
 use crate::apu::GbaApu;
 use crate::bios::hle_operation::{HleBiosBus, HleBiosOperation};
-use crate::bios::sound_driver::SoundDriverBus;
+use crate::sound_driver::SoundDriverBus;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, repeat_byte, selected_write_byte, write_slice};
 use crate::dma::{DmaTrigger, GbaDma};
@@ -679,7 +679,7 @@ impl GbaMemoryBus {
         }
         self.dma.tick_pending();
         if self.apu.tick() {
-            crate::bios::sound_driver::mix_driver_grid(self);
+            crate::sound_driver::mix_driver_grid(self);
         }
         if self.video_countdown > 0 {
             self.video_countdown -= 1;
@@ -3316,9 +3316,10 @@ impl Default for GbaMemoryBus {
     }
 }
 
-/// `HleBiosBus`/`SoundDriverBus` live in `bios` and only name these traits,
-/// so the file dependency runs `memory -> bios::{hle_operation, sound_driver}`
-/// and never back (see those modules).
+/// `HleBiosBus` lives in `bios` and `SoundDriverBus` is a crate-top leaf:
+/// both only name these traits, so the file dependency runs
+/// `memory -> bios::hle_operation`, `memory -> sound_driver` and never back
+/// (see those modules).
 impl HleBiosBus for GbaMemoryBus {
     fn read8(&mut self, addr: u32) -> u8 {
         GbaMemoryBus::read8(self, addr)

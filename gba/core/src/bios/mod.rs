@@ -1,9 +1,9 @@
 pub mod decompress;
 pub mod hle_operation;
-pub mod sound_driver;
 
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
+use crate::sound_driver;
 use hle_operation::HleBiosOperation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

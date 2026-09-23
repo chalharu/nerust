@@ -10,7 +10,7 @@ use self::psg::{Noise, Square, Wave};
 
 /// Runtime voice state of the BIOS sound driver (GBATEK `SoundArea.vchn[]`
 /// register side lives in SoundArea RAM). Defined here — next to its owner
-/// `GbaApu::driver_voices` — so `apu` never depends on `bios::sound_driver`.
+/// `GbaApu::driver_voices` — so `apu` never depends on `crate::sound_driver`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DriverVoice {
     pub started: bool,
