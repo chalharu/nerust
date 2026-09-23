@@ -10,6 +10,8 @@ use crate::apu::GbaApu;
 /// Bus operations needed by the sound-driver HLE. Implemented for
 /// `GbaMemoryBus` in `memory.rs`; the driver only names this trait,
 /// so the dependency runs `memory -> sound_driver` and never back.
+/// Lives at the crate top (not under `bios`) so `bios -> memory ->
+/// sound_driver` stays acyclic.
 pub trait SoundDriverBus {
     fn read8(&mut self, addr: u32) -> u8;
     fn read16(&mut self, addr: u32) -> u16;

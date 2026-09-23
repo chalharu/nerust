@@ -15,5 +15,6 @@ pub mod memory;
 pub mod ppu;
 pub mod rom_identity;
 pub mod scheduler;
+pub mod sound_driver;
 pub mod system;
 pub mod timer;
