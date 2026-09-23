@@ -932,11 +932,7 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
         }),
         writeback: None,
         ldm_conflict: false,
-        first_addr: if push {
-            sp.wrapping_sub(count * 4)
-        } else {
-            sp
-        },
+        first_addr: if push { sp.wrapping_sub(count * 4) } else { sp },
     }));
     // Pad the legacy handler base: PUSH 1+count, POP 2+count,
     // POP+PC 4+count (words already carry +1 each).

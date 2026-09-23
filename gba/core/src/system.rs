@@ -98,7 +98,8 @@ impl GbaSystem {
     }
 
     /// CPUとバスを1 T-cycleだけ進行する。
-    pub fn step_tcycle(&mut self) -> bool {        if self.bus.dma_active() {
+    pub fn step_tcycle(&mut self) -> bool {
+        if self.bus.dma_active() {
             // HW behavior: the CPU is stalled for the whole burst;
             // only the bus advances, the in-flight op resumes afterwards.
         } else {
@@ -117,8 +118,7 @@ impl GbaSystem {
                         } else if let Some(acc) = self.drain_micro() {
                             self.cpu_cycles_remaining = acc.max(1) as u32;
                         } else {
-                            self.cpu_cycles_remaining =
-                                self.cpu.step_legacy(&mut self.bus).max(1);
+                            self.cpu_cycles_remaining = self.cpu.step_legacy(&mut self.bus).max(1);
                         }
                     } else if let Some(acc) = self.drain_micro() {
                         self.cpu_cycles_remaining = acc.max(1) as u32;

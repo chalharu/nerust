@@ -1071,11 +1071,7 @@ fn cpu_fast_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     // mgba-suite Timing CpuSet cells: flat +69 after raw-bulk) plus the
     // SWI region entry residual (shared with Div/Sqrt/ArcTan). Both skip
     // IWRAM callers (real IWRAM timer ROMs match without them).
-    let overhead = if bus.swi_caller_is_iwram() {
-        0
-    } else {
-        69
-    };
+    let overhead = if bus.swi_caller_is_iwram() { 0 } else { 69 };
     disp.saturating_sub(wait)
         .wrapping_add(overhead)
         .wrapping_add(src_adjust)

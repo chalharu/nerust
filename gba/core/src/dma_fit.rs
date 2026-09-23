@@ -439,7 +439,7 @@ fn build_dma_handler() -> Vec<u32> {
         if code[i] & 0xFFFF0000 == 0xE59F0000 {
             let li = (code[i] & 0xFFF) as usize;
             let off = (base + li * 4) as i32 - (i * 4 + 8) as i32;
-            assert!(off >= 0 && off < 4096, "literal out of range");
+            assert!((0..4096).contains(&off), "literal out of range");
             code[i] = (code[i] & 0xFFFFF000) | off as u32;
         }
     }
@@ -524,7 +524,7 @@ fn dma_handler_layout_selfcheck() {
     assert_eq!(blob[2], 0xE5801000);
     // Every LDR must target the exact literal the builder assigned
     // (registers, SAD/DAD/CNT addresses and values, spin CNT_Hs, DONE).
-    let mut want = vec![
+    let want = vec![
         0x04000200u32,
         0x04000100,
         0x040000B0,

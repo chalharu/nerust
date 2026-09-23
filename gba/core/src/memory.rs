@@ -2100,10 +2100,7 @@ impl GbaMemoryBus {
         // DMA completion and invalidate paths reset validity below).
         // With prefetch off there is no buffer (plain address stream).
         let wait = self.cycles_for_access(addr, width, is_opcode);
-        if is_opcode
-            && self.prefetch_enabled
-            && (0x08000000..=0x0DFFFFFF).contains(&addr)
-        {
+        if is_opcode && self.prefetch_enabled && (0x08000000..=0x0DFFFFFF).contains(&addr) {
             self.fetch_buffer_update(addr, width);
         } else if !is_opcode && !(0x08000000..=0x0DFFFFFF).contains(&addr) {
             // Non-ROM data accesses free the ROM bus: background refill.
@@ -2378,11 +2375,11 @@ impl GbaMemoryBus {
                 if let Some(cart) = self.cartridge.as_mut()
                     && cart.gpio.write(addr, width, value)
                 {
-                                self.prev_addr = Some(addr);
+                    self.prev_addr = Some(addr);
                     self.prev_width = width;
                     return;
                 }
-                    }
+            }
         }
         self.prev_addr = Some(addr);
         self.prev_width = width;
@@ -2749,7 +2746,7 @@ impl GbaMemoryBus {
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
         let Some(off) = self.vram_offset(addr, width) else {
-                return;
+            return;
         };
         if width == 1 {
             let bitmap_mode = self.ppu.dispcnt() & 7 >= 3;
@@ -2772,7 +2769,7 @@ impl GbaMemoryBus {
     fn write_sram(&mut self, addr: u32, width: u8, value: u32) {
         // No 0E window on EEPROM carts (see read_sram): stores go nowhere.
         if self.is_eeprom() {
-                return;
+            return;
         }
         if let Some(cart) = &mut self.cartridge {
             cart.write_sram(addr, width, value);
@@ -2924,7 +2921,7 @@ impl GbaMemoryBus {
             let shift = (addr & 3) * 8;
             let mask = (u32::MAX >> (8 * (4 - u32::from(width)))) << shift;
             self.mem_control = (self.mem_control & !mask) | ((value << shift) & mask & 0xFF00_002F);
-                return;
+            return;
         }
         if width == 4 && self.timers.write32(addr, value) {
             return;
@@ -2949,7 +2946,7 @@ impl GbaMemoryBus {
                     self.enter_stop();
                 }
             }
-                return;
+            return;
         }
         if width == 4 {
             self.write_io(addr, 2, value & 0xFFFF, bios);
@@ -2963,7 +2960,7 @@ impl GbaMemoryBus {
                     if gated {
                         self.postflg |= (value & 1) as u8;
                     }
-                                return;
+                    return;
                 }
                 0x04000301 => {
                     let gated = bios || self.current_pc <= 0x3FFF;
@@ -2976,7 +2973,7 @@ impl GbaMemoryBus {
                             self.enter_stop();
                         }
                     }
-                                return;
+                    return;
                 }
                 _ => {}
             }
@@ -3119,7 +3116,7 @@ impl GbaMemoryBus {
                 self.pending_ie = v16 & 0x3FFF;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.line_write_assert = true;
-                        return;
+                return;
             }
             0x04000202 => {
                 // IF acknowledge: only written 1-bits clear.
@@ -3151,7 +3148,7 @@ impl GbaMemoryBus {
                     self.line_queue.push((line_now, self.current_tcycle + 2));
                 }
                 self.pending_at = Some(self.current_tcycle + 1);
-                        return;
+                return;
             }
             0x04000204 => {
                 // Bit 15 (GamePak type) and bit 13 are read-only/unused.
@@ -3163,11 +3160,11 @@ impl GbaMemoryBus {
                 self.pending_ime = (v16 & 1) != 0;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.line_write_assert = true;
-                        return;
+                return;
             }
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
-                        return;
+                return;
             }
         }
         // 32bit書き込みで2レジスタ跨ぎの場合、上位側も反映されるが簡易実装では上記で十分
