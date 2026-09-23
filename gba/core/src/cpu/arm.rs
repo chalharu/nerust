@@ -31,7 +31,7 @@ fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32
     if (instr & 0x0FB00FF0) == 0x01000090 {
         return handle_swp(regs, bus, instr);
     }
-    if is_psr_transfer(instr) {
+    if crate::cpu::arm_opcodes::psr_transfer::is_psr_transfer(instr) {
         return handle_psr(regs, instr);
     }
     if (instr & 0x0FFFFFF0) == 0x012FFF10 {
@@ -41,12 +41,6 @@ fn decode_data_class(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32
         return handle_halfword(regs, bus, instr);
     }
     handle_data_processing(regs, bus, instr)
-}
-
-pub(crate) fn is_psr_transfer(instr: u32) -> bool {
-    (instr & 0x0FBF0FFF) == 0x010F0000
-        || (instr & 0x0FB0FFF0) == 0x0120F000
-        || (instr & 0x0FB0F000) == 0x0320F000
 }
 
 fn decode_software_or_coprocessor(
@@ -76,33 +70,11 @@ fn handle_coprocessor_und(regs: &mut CpuRegisters) -> u32 {
 fn handle_data_processing(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::data_processing::handle(regs, bus, instr)
 }
+fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
+    crate::cpu::arm_opcodes::swp::handle(regs, bus, instr)
+}
 fn handle_halfword(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::halfword_transfer::handle(regs, bus, instr)
-}
-pub(crate) fn handle_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
-    let b = (instr >> 22) & 1 != 0;
-    let rn = ((instr >> 16) & 0xF) as usize;
-    let rd = ((instr >> 12) & 0xF) as usize;
-    let rm = (instr & 0xF) as usize;
-    let addr = regs.r(rn);
-    let rm_val = regs.r(rm);
-    let mem_val = if b {
-        bus.read8(addr) as u32
-    } else {
-        bus.read32(addr)
-    };
-    if b {
-        bus.write8(addr, (rm_val & 0xFF) as u8);
-    } else {
-        bus.write32(addr, rm_val);
-    }
-    // Rd == R15 is UNPREDICTABLE (ARM ARM): skip the write like MUL.
-    if rd != 15 {
-        regs.set_r(rd, mem_val);
-    }
-    // Load+store breaks the fetch stream (once per instruction).
-    bus.charge_fetch_stream_break(addr);
-    4
 }
 fn handle_multiply(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     crate::cpu::arm_opcodes::multiply::handle(regs, bus, instr)

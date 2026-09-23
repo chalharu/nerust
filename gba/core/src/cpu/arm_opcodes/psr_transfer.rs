@@ -1,5 +1,12 @@
 use crate::cpu_registers::CpuRegisters;
 
+/// MRS/MSR class predicate shared by the ARM decoder and micro-op expansion.
+pub(crate) fn is_psr_transfer(instr: u32) -> bool {
+    (instr & 0x0FBF0FFF) == 0x010F0000
+        || (instr & 0x0FB0FFF0) == 0x0120F000
+        || (instr & 0x0FB0F000) == 0x0320F000
+}
+
 pub fn handle(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let psr = (instr >> 22) & 1 != 0; // 0=CPSR, 1=SPSR
     let is_mrs = (instr >> 21) & 1 == 0 && (instr & 0x0FBF0FFF) == 0x010F0000;

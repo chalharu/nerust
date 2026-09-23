@@ -8,7 +8,7 @@ pub(crate) const CPU_SET_SETUP_CYCLES: u32 = 61;
 pub(crate) const CPU_SET_RETURN_CYCLES: u32 = 46;
 
 /// Bus operations needed to step an HLE BIOS transfer. Implemented for
-/// [`GbaMemoryBus`](crate::memory::GbaMemoryBus) in `memory.rs`.
+/// `GbaMemoryBus` in `memory.rs`.
 pub(crate) trait HleBiosBus {
     fn read8(&mut self, addr: u32) -> u8;
     fn read16(&mut self, addr: u32) -> u16;

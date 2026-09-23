@@ -15,21 +15,6 @@ use crate::memory::GbaMemoryBus;
 
 const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
-/// HLE IRQ return skips the real-BIOS restore sequence; fitted epilogue cost.
-/// Recalibrate against the timers and timing suites if this changes.
-pub(crate) const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
-
-/// Skipped BIOS vector+prologue cycle count (region-independent): vector
-/// fetch pair, branch refill, push6, mov, adr, ldr-pc, exception entry
-/// internals, and the base cycles no HLE instruction absorbs. Anchored to
-/// the HW-pinned IWRAM-handler entry total; region dependence now comes
-/// from the real entry bus part, not a source-region term.
-/// (HLE-as-code anchor: `bios_irq_prologue_cycles` recomputes this total
-/// instruction by instruction; keep the two in sync.)
-pub(crate) const HLE_IRQ_PROLOGUE_CYCLES: u32 = 23;
-/// Anchor alias for the as-code prologue residual (see above).
-pub(crate) const HLE_IRQ_PROLOGUE_ANCHOR: u32 = HLE_IRQ_PROLOGUE_CYCLES;
-
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
     regs: CpuRegisters,

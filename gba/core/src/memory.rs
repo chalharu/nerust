@@ -1412,6 +1412,21 @@ impl GbaMemoryBus {
         std::mem::take(&mut self.woke_from_halt)
     }
 
+    /// HLE IRQ return skips the real-BIOS restore sequence; fitted epilogue cost.
+    /// Recalibrate against the timers and timing suites if this changes.
+    const HLE_IRQ_EPILOGUE_CYCLES: u32 = 7;
+
+    /// Skipped BIOS vector+prologue cycle count (region-independent): vector
+    /// fetch pair, branch refill, push6, mov, adr, ldr-pc, exception entry
+    /// internals, and the base cycles no HLE instruction absorbs. Anchored to
+    /// the HW-pinned IWRAM-handler entry total; region dependence now comes
+    /// from the real entry bus part, not a source-region term.
+    /// (`bios_irq_prologue_cycles` below recomputes this total instruction
+    /// by instruction; keep the two in sync.)
+    const HLE_IRQ_PROLOGUE_CYCLES: u32 = 23;
+    /// Anchor alias for the as-code prologue residual (see above).
+    const HLE_IRQ_PROLOGUE_ANCHOR: u32 = Self::HLE_IRQ_PROLOGUE_CYCLES;
+
     /// HLE-as-code BIOS IRQ prologue: the real BIOS vector + 0x128
     /// handler modeled instruction by instruction with live bus costs
     /// (fetches, STMFD stack stores, IF/IE + IntrMain-address loads),
@@ -1438,7 +1453,7 @@ impl GbaMemoryBus {
         // Residual (pipeline-flush overlap, arbitration, anchored fit):
         // calibrated so the IWRAM-handler total is HLE_IRQ_PROLOGUE_ANCHOR
         // (3 + 1 + 2 + 6 + 2 + 1 + 1 + 1 = 17 live, + residual).
-        total += crate::cpu::HLE_IRQ_PROLOGUE_ANCHOR - 17;
+        total += Self::HLE_IRQ_PROLOGUE_ANCHOR - 17;
         total
     }
 
@@ -1449,7 +1464,7 @@ impl GbaMemoryBus {
     /// before varying it.
     pub fn bios_irq_epilogue_cycles(&self) -> u32 {
         let loads = 6 * u32::from(self.cycles_for(0x03007FA0, 4));
-        let congestion: u32 = crate::cpu::HLE_IRQ_EPILOGUE_CYCLES;
+        let congestion: u32 = Self::HLE_IRQ_EPILOGUE_CYCLES;
         // Neutral today: the anchored total wins; the live bus term only
         // documents the as-code shape (IWRAM restores) for the follow-up.
         let _ = loads;
