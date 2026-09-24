@@ -987,6 +987,106 @@ fn micro_op_empty_matches_legacy() {
     }
 }
 
+// Unification corpus VII: SWI/UND traps (ARM Div HLE, ARM HardReset
+// to the SVC vector, Thumb Div HLE, Thumb SWI to SVC, Thumb UND).
+// Traps go last: exception entry redirects the PC, so nothing after
+// them would execute from the corpus.
+const ARM_TRAP_CORPUS: [u32; 2] = [
+    0xEF06_0000, // swi Div (r0 / r1)
+    0xEF26_0000, // swi HardReset (unsupported -> SVC vector)
+];
+const ARM_TRAP_REGS: [(usize, u32); 2] = [(0, 0x1000), (1, 0x10)];
+const THUMB_TRAP_CORPUS: [u32; 2] = [
+    0xDF06, // swi Div
+    0xDF26, // swi HardReset (unsupported -> SVC vector)
+];
+const THUMB_TRAP_REGS: [(usize, u32); 2] = [(0, 0x1000), (1, 0x10)];
+
+#[test]
+fn micro_op_traps_match_legacy() {
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &ARM_TRAP_CORPUS,
+            false,
+            waitcnt,
+            ARM_TRAP_CORPUS.len(),
+            0xE1DD_20B0,
+            0x0300_0000,
+            None,
+            &[],
+            &ARM_TRAP_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_TRAP_CORPUS,
+            true,
+            waitcnt,
+            THUMB_TRAP_CORPUS.len(),
+            0x886A,
+            0x0300_0000,
+            None,
+            &[],
+            &THUMB_TRAP_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+}
+
+#[test]
+fn micro_op_und_matches_legacy() {
+    // Single Thumb UND (exception entry redirects, so it runs alone).
+    let (ta, tb, regs_equal, follow) = differential(
+        &[0xDE00],
+        true,
+        0x0000,
+        1,
+        0x886A,
+        0x0300_0000,
+        None,
+        &[],
+        &[],
+    );
+    assert_eq!((ta, tb), (ta, ta));
+    assert!(regs_equal);
+    assert!(follow);
+    // Decoder gap UND.
+    let (ta, tb, regs_equal, follow) = differential(
+        &[0xB100],
+        true,
+        0x0000,
+        1,
+        0x886A,
+        0x0300_0000,
+        None,
+        &[],
+        &[],
+    );
+    assert_eq!((ta, tb), (ta, ta));
+    assert!(regs_equal);
+    assert!(follow);
+    // Single ARM coprocessor UND.
+    let (ta, tb, regs_equal, follow) = differential(
+        &[0xE600_0010],
+        false,
+        0x0000,
+        1,
+        0xE1DD_20B0,
+        0x0300_0000,
+        None,
+        &[],
+        &[],
+    );
+    assert_eq!((ta, tb), (ta, ta));
+    assert!(regs_equal);
+    assert!(follow);
+}
+
 #[test]
 fn empty_ldm_stm_expands() {
     let mut regs = CpuRegisters::post_bios();
@@ -1775,10 +1875,11 @@ fn thumb_alu_rest_shapes_and_gates() {
     assert_eq!(ops.len(), 2);
     let ops = expand_thumb(0x4487, &regs).expect("add-pc expands");
     assert_eq!(ops.len(), 3);
-    // MUL and BX keep their own branches; SWI stays legacy.
+    // MUL and BX keep their own branches; SWI now traps.
     assert!(expand_thumb_alu_rest(0x4341).is_none());
     assert!(expand_thumb_alu_rest(0x4708).is_none());
-    assert!(expand_thumb(0xDF00, &regs).is_none());
+    let ops = expand_thumb(0xDF00, &regs).expect("swi traps");
+    assert_eq!(ops.len(), 1);
 }
 
 #[test]
@@ -3092,30 +3193,22 @@ fn arm_dpimm_srot_grid() {
     assert_eq!(bad, 0);
 }
 
-/// Coverage manifest: every instruction class is either expanded
-/// or intentionally legacy. Intentional-legacy (None): SWI/UND
-/// (exceptions need a trap op), coprocessor (UND on GBA), NV
-/// condition (handled below). Everything else in both ISAs must
-/// expand; add new classes here when extending coverage.
+/// Coverage manifest: every instruction class in both ISAs expands.
+/// Former intentional-legacy encodings (SWI/UND traps, decoder gaps)
+/// now expand too; the legacy path survives only as the differential
+/// oracle until the deletion phase. Add new classes here when
+/// extending coverage.
 #[test]
 fn coverage_manifest() {
     let regs = CpuRegisters::post_bios();
-    // Intentionally legacy ARM: SWI, coprocessor UND.
+    // Formerly legacy ARM: SWI, coprocessor UND.
     for instr in [
         0xEF00_0000, // swi
+        0xE7FF_FFFF, // swi (cond E, bit24 set)
         0xEE00_0010, // coprocessor (UND)
         0xEC00_0000, // coprocessor (UND)
     ] {
-        assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
-    }
-    // Intentionally legacy Thumb: UND, SWI.
-    let mut tregs = CpuRegisters::post_bios();
-    tregs.set_cpsr(tregs.cpsr() | (1 << 5));
-    for instr in [
-        0xDE00, // undefined
-        0xDF00, // swi
-    ] {
-        assert!(expand_thumb(instr, &tregs).is_none(), "{instr:#06X}");
+        assert!(expand_arm(instr, &regs).is_some(), "{instr:#010X}");
     }
     // Covered ARM representatives (one per class/form).
     let mut aregs = CpuRegisters::post_bios();
@@ -3161,6 +3254,8 @@ fn coverage_manifest() {
         assert!(expand_arm(instr, &aregs).is_some(), "{instr:#010X}");
     }
     // Covered Thumb representatives (one per class/form).
+    let mut tregs = CpuRegisters::post_bios();
+    tregs.set_cpsr(tregs.cpsr() | (1 << 5));
     for instr in [
         0x0041, // lsl imm
         0x1881, // add reg
@@ -3183,6 +3278,9 @@ fn coverage_manifest() {
         0xB00A, // add sp
         0xB40F, // push
         0xB400, // empty push
+        0xB100, // decoder gap (UND)
+        0xB600, // decoder gap (UND)
+        0xBE00, // decoder gap (UND)
         0xBC00, // empty pop
         0xC000, // empty stmia
         0xC800, // empty ldmia
@@ -3191,6 +3289,8 @@ fn coverage_manifest() {
         0xC10F, // stmia
         0xCB18, // ldmia (base in list)
         0xD001, // cond branch
+        0xDE00, // undefined trap
+        0xDF00, // swi trap
         0xE001, // b
         0xF000, // bl high
         0xF806, // bl low
