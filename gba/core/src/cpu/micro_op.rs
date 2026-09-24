@@ -65,6 +65,10 @@ pub enum MicroOp {
     /// Zero-cost structural op.
     BlockStart(BlockStartEffect),
     BlockWord(BlockWord),
+    /// Empty-list transfer (ARM LDM/STM with Rlist=0, Thumb PUSH/POP
+    /// with no registers): the single PC word. Costs +1 like a block
+    /// word; trailing `Internal`s pad the legacy base.
+    BlockEmpty(BlockEmptyEffect),
     /// Close the batch, land end-commits, single fetch-stream break.
     /// Zero-cost structural op; trailing `Internal`s pad the base.
     BlockEnd(BlockEndEffect),
@@ -126,6 +130,31 @@ pub struct BlockWord {
     /// expansion; registers are frozen across the words of one
     /// instruction, so this matches the legacy in-loop evaluation.
     pub store_value: Option<u32>,
+}
+
+/// One empty-list block word (ARM LDM/STM Rlist=0, Thumb PUSH/POP with
+/// no registers): the single transferred PC word. Address and store
+/// value are snapshotted at expansion (frozen pre-instruction state,
+/// like `BlockWord`); the access runs at execution through the same
+/// bus calls as the legacy empty path, including its batch/no-batch
+/// shape (Thumb batches, ARM does not) and sequential-touch shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockEmptyEffect {
+    pub load: bool,
+    pub addr: u32,
+    /// ARM writeback (W=1): `(base_reg, base +/- 0x40)` via `set_r`.
+    /// None when W=0 (ARM) or for Thumb (SP goes through `BlockEnd.sp`,
+    /// which uses `set_sp` like the legacy empty path).
+    pub writeback_reg: Option<(usize, u32)>,
+    /// Store word for STM/PUSH (PC + 4 ARM / + 2 Thumb), snapshotted
+    /// at expansion.
+    pub store_value: u32,
+    /// ARM LDM^ loading PC: restore CPSR from SPSR. Evaluated at
+    /// execution like the `BlockWord` path.
+    pub restore_cpsr: bool,
+    /// Touch `data_sequential` before the access (Thumb empty paths
+    /// set it false; ARM empty paths leave it alone, like legacy).
+    pub reset_sequential: bool,
 }
 
 /// Multiply commit descriptor: raw word (`thumb` form in low 16 bits).
@@ -256,7 +285,9 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     let condition = (instr >> 28) as u8;
     if condition == 0xF {
-        return None;
+        // NV: never executes (ARM ARM); the legacy path retires it as
+        // a 1S NOP, so expansion is a single Internal.
+        return Some(vec![MicroOp::Internal]);
     }
     let ops = expand_arm_alu_imm(instr, regs)
         .or_else(|| expand_arm_single(instr, regs))
@@ -382,6 +413,46 @@ fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     ])
 }
 
+/// Empty-list parameters snapshotted at expansion.
+struct BlockEmptySpec {
+    base: u32,
+    rn: usize,
+    pre: bool,
+    up: bool,
+    s: bool,
+    writeback: bool,
+    load: bool,
+}
+
+/// ARM LDM/STM with an empty register list: the single PC word
+/// (GBATEK: Rb+=0x40 address arithmetic, S-bit CPSR restore on LDM^,
+/// PC+4 store on STM). No batch framing, mirroring the legacy empty
+/// path; the op carries +1 with trailing Internals to the base
+/// (LDM+PC 5, STM 2).
+fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<MicroOp> {
+    let addr = start_address(spec.base, 16, spec.pre, spec.up);
+    let writeback = spec.writeback.then(|| {
+        (
+            spec.rn,
+            if spec.up {
+                spec.base.wrapping_add(0x40)
+            } else {
+                spec.base.wrapping_sub(0x40)
+            },
+        )
+    });
+    let mut ops = vec![MicroOp::BlockEmpty(BlockEmptyEffect {
+        load: spec.load,
+        addr,
+        writeback_reg: writeback,
+        store_value: regs.pc().wrapping_add(4),
+        restore_cpsr: spec.s,
+        reset_sequential: false,
+    })];
+    ops.extend(vec![MicroOp::Internal; if spec.load { 4 } else { 1 }]);
+    ops
+}
+
 /// STM store-word snapshot at expansion (frozen registers and mode):
 /// user-bank reads, the stored-base quirk, and r15 as instruction+12
 /// (legacy `store_register`).
@@ -436,8 +507,8 @@ fn block_trailing(load: bool, list: u32) -> usize {
 /// ARM LDM/STM, non-empty lists including the S bit (user-bank
 /// transfers and CPSR-restoring exception returns). P/U address
 /// modes, writeback (skipped for the UNPREDICTABLE load-with-base-
-/// in-list), the STM stored-base quirk, and PC loads (retire
-/// flushes) are covered; the empty-list transfer stays legacy.
+/// in-list), the STM stored-base quirk, PC loads (retire flushes),
+/// and the empty-list single-PC-word transfer are covered.
 fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 25) & 0x7 != 0b100 {
         return None;
@@ -449,10 +520,21 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let load = (instr >> 20) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
     let list = instr & 0xFFFF;
-    if list == 0 {
-        return None;
-    }
     let base = regs.r(rn);
+    if list == 0 {
+        return Some(expand_arm_block_empty(
+            BlockEmptySpec {
+                base,
+                rn,
+                pre,
+                up,
+                s,
+                writeback: writeback_flag,
+                load,
+            },
+            regs,
+        ));
+    }
     let count = list.count_ones();
     let slots: Vec<usize> = (0..16).filter(|i| list & (1 << i) != 0).collect();
     let start = start_address(base, count, pre, up);
@@ -824,11 +906,12 @@ fn expand_thumb_pcrel(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     ])
 }
 
-/// Thumb LDMIA/STMIA, non-empty lists only (empty forms keep the
-/// legacy PC-transfer/+0x40 quirk path). Same block slicing as
-/// PUSH/POP: per-word continuation at execution, batch open/close and
-/// the single fetch-stream break instruction-scoped, base writeback
-/// (LDM skips it when the base is loaded) in the end commit.
+/// Thumb LDMIA/STMIA, including the empty forms (single PC word with
+/// +0x40 SP arithmetic on LDM, single R15+2 store on STM). Same block
+/// slicing as PUSH/POP: per-word continuation at execution, batch
+/// open/close and the single fetch-stream break instruction-scoped,
+/// base writeback (LDM skips it when the base is loaded) in the end
+/// commit.
 fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if instr >> 12 != 0xC {
         return None;
@@ -836,10 +919,23 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     let load = (instr >> 11) & 1 == 1;
     let rb = ((instr >> 8) & 0x7) as usize;
     let rlist = instr & 0xFF;
-    if rlist == 0 {
-        return None;
-    }
     let base = regs.r(rb);
+    if rlist == 0 {
+        // Empty LDMIA/STMIA: the single PC word at [Rb] with Rb
+        // advancing 0x40 (NOT the PUSH/POP shape: no batch framing,
+        // writeback through `set_r`, store R15+2). Mirrors
+        // `handle_empty_multiple` exactly (bases 5/2).
+        let mut ops = vec![MicroOp::BlockEmpty(BlockEmptyEffect {
+            load,
+            addr: base,
+            writeback_reg: Some((rb, base.wrapping_add(0x40))),
+            store_value: regs.pc().wrapping_add(2),
+            restore_cpsr: false,
+            reset_sequential: false,
+        })];
+        ops.extend(vec![MicroOp::Internal; if load { 4 } else { 1 }]);
+        return Some(ops);
+    }
     let count = rlist.count_ones();
     let slots: Vec<usize> = (0..8).filter(|i| rlist & (1 << i) != 0).collect();
     // STM stored-base quirk: a non-first occurrence of the base stores
@@ -927,8 +1023,8 @@ pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
     Some(ops)
 }
 
-/// Thumb PUSH/POP, non-empty lists only (empty forms keep the legacy
-/// quirk path: PC-store / PC-load with +0x40 SP arithmetic). Mirrors
+/// Thumb PUSH/POP, including the empty forms (single PC word with
+/// +0x40 SP arithmetic on POP, single R15+2 store on PUSH). Mirrors
 /// the decoder ranges exactly (subset of the legacy route, no extra
 /// validation: the handler itself does not validate either).
 fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
@@ -942,7 +1038,7 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     let list = instr & 0xFF;
     let count = list.count_ones() + u32::from(extra);
     if count == 0 {
-        return None;
+        return Some(expand_thumb_push_pop_empty(push, sp, regs));
     }
     let mut slots: Vec<(usize, bool)> = (0..8)
         .filter(|r| list & (1 << r) != 0)
@@ -993,6 +1089,42 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     };
     ops.extend(vec![MicroOp::Internal; trailing as usize]);
     Some(ops)
+}
+
+/// Thumb empty PUSH/POP: PUSH stores R15+2 with SP moving one word
+/// (base 2); POP loads PC with SP advancing 0x40 (base 6). Batched
+/// like the legacy empty path; the op carries +1 with trailing
+/// Internals to the base.
+fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<MicroOp> {
+    let addr = if push { sp.wrapping_sub(4) } else { sp };
+    let mut ops = vec![
+        MicroOp::BlockStart(BlockStartEffect {
+            is_load: !push,
+            fetch_width: 2,
+        }),
+        MicroOp::BlockEmpty(BlockEmptyEffect {
+            load: !push,
+            addr,
+            writeback_reg: None,
+            store_value: regs.pc().wrapping_add(2),
+            restore_cpsr: false,
+            reset_sequential: true,
+        }),
+        MicroOp::BlockEnd(BlockEndEffect {
+            sp: Some(if push {
+                sp.wrapping_sub(4)
+            } else {
+                sp.wrapping_add(0x40)
+            }),
+            writeback: None,
+            ldm_conflict: false,
+            first_addr: addr,
+        }),
+    ];
+    // Pad the legacy handler base: empty PUSH 2, empty POP 6
+    // (the op already carries +1).
+    ops.extend(vec![MicroOp::Internal; if push { 1 } else { 5 }]);
+    ops
 }
 
 /// Thumb word LDR/STR (immediate offset and SP-relative) and
@@ -1930,6 +2062,10 @@ fn apply_op(
             apply_block_word(regs, bus, w);
             cycles += 1;
         }
+        MicroOp::BlockEmpty(e) => {
+            apply_block_empty(regs, bus, e);
+            cycles += 1;
+        }
         MicroOp::BlockEnd(e) => {
             apply_block_end(regs, bus, e);
         }
@@ -2200,6 +2336,37 @@ fn apply_block_load(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, w: BlockWor
     // the mode read precedes any change below.
     if w.restore_cpsr && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
         regs.set_cpsr(regs.spsr());
+    }
+}
+
+/// Empty-list block word: the single PC transfer, mirroring the
+/// legacy empty path's exact bus-call sequence (access, then
+/// fetch-stream break; batch framing comes from the surrounding
+/// Start/End ops for Thumb, none for ARM).
+fn apply_block_empty(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEmptyEffect) {
+    if e.reset_sequential {
+        bus.set_data_sequential(false);
+    }
+    if e.load {
+        let target = bus.read_aligned32(e.addr);
+        bus.charge_fetch_stream_break(e.addr);
+        if let Some((reg, val)) = e.writeback_reg {
+            regs.set_r(reg, val);
+        }
+        regs.set_pc(target);
+        // LDM^ loading PC restores CPSR from SPSR. Unlike the
+        // `BlockWord` path (which skips USR/SYS, following the
+        // non-empty legacy handler), the empty legacy path restores
+        // unconditionally — mirrored here.
+        if e.restore_cpsr {
+            regs.set_cpsr(regs.spsr());
+        }
+    } else {
+        bus.write32(e.addr, e.store_value);
+        bus.charge_fetch_stream_break(e.addr);
+        if let Some((reg, val)) = e.writeback_reg {
+            regs.set_r(reg, val);
+        }
     }
 }
 
