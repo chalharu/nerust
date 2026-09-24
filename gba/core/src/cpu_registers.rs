@@ -1,5 +1,5 @@
 /// GBA CPU レジスタファイル。R0-R15 + CPSR + SPSRバンク + R13/R14バンク。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CpuRegisters {
     r: [u32; 16],
     cpsr: u32,
@@ -117,6 +117,11 @@ impl CpuRegisters {
     /// Age the conflict window by one T-cycle.
     pub fn tick_ldm_conflict(&mut self) {
         self.ldm_conflict = self.ldm_conflict.saturating_sub(1);
+    }
+
+    /// Remaining conflict-window T-cycles (Phase 10 validation).
+    pub(crate) fn ldm_conflict_window(&self) -> u8 {
+        self.ldm_conflict
     }
 
     /// Read the User/System register bank while remaining in the current privileged mode.
