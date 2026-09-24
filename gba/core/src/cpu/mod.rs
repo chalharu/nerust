@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn cpu_state_rejects_garbage() {
-        let mut cpu = GbaCpu::post_bios();
+        let cpu = GbaCpu::post_bios();
         let mut state = cpu.export_state();
         state.validate().unwrap();
         // Invalid mode bits.
