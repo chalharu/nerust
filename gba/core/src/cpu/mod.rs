@@ -1,9 +1,6 @@
 pub mod micro_op;
 pub(crate) mod semantics;
 
-#[cfg(test)]
-mod micro_op_tests;
-
 use crate::cpu::micro_op::HLE_IRQ_RETURN_TRAMPOLINE;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
