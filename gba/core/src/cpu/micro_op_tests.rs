@@ -474,8 +474,8 @@ fn micro_op_load_store_matches_legacy() {
     }
 }
 
-// Slice 3 corpus: Thumb PUSH/POP (non-empty; empty forms stay
-// legacy). The harness presets SP=0x03007F00; pushes spill below
+// Slice 3 corpus: Thumb PUSH/POP (non-empty; empty forms have their
+// own corpus below). The harness presets SP=0x03007F00; pushes spill below
 // and pops reload them (LIFO-balanced across the corpus).
 const THUMB_PP_CORPUS: [u32; 5] = [
     0xB40F, // push {r0-r3}
@@ -533,15 +533,19 @@ fn micro_op_push_pop_matches_legacy() {
 }
 
 #[test]
-fn empty_push_pop_stays_legacy() {
+fn empty_push_pop_expands() {
     fn regs_with_sp(sp: u32) -> CpuRegisters {
         let mut regs = CpuRegisters::post_bios();
         regs.set_sp(sp);
         regs
     }
     let regs = regs_with_sp(0x0300_7F00);
-    assert!(expand_thumb(0xB400, &regs).is_none());
-    assert!(expand_thumb(0xBC00, &regs).is_none());
+    // Empty PUSH: Start + Empty + End + 1 trailing = 4.
+    let ops = expand_thumb(0xB400, &regs).expect("empty pushes expand");
+    assert_eq!(ops.len(), 4);
+    // Empty POP: Start + Empty + End + 5 trailing = 8.
+    let ops = expand_thumb(0xBC00, &regs).expect("empty pops expand");
+    assert_eq!(ops.len(), 8);
     let ops = expand_thumb(0xB40F, &regs).expect("non-empty pushes expand");
     // BlockStart + 4 words + BlockEnd + 1 trailing = 7.
     assert_eq!(ops.len(), 7);
@@ -677,8 +681,9 @@ fn push_pop_tick_parity() {
     assert_eq!((av, bv), (av, av), "timer span diverges");
 }
 
-// Slice 4 corpus: Thumb LDMIA/STMIA (non-empty; empty forms stay
-// legacy). Bases preset in Rust; r1/r2 start at A, r3 at A+16.
+// Slice 4 corpus: Thumb LDMIA/STMIA (non-empty; empty forms have
+// their own corpus below). Bases preset in Rust; r1/r2 start at A,
+// r3 at A+16.
 // The corpus exercises the STM stored-base quirk (r1 in its own
 // list) and the LDM base-in-list no-writeback rule (r3).
 const THUMB_MULT_CORPUS: [u32; 5] = [
@@ -911,12 +916,87 @@ fn micro_op_psr_matches_legacy() {
 // native `apply_mul` (short + long) on the micro side against
 // `multiply::handle` on the oracle.
 
+// Unification corpus VI: empty-list transfers (ARM STMIA/LDMIA with
+// Rlist=0 incl. writeback, Thumb PUSH/POP with no registers) and the
+// ARM NV condition. The micro engine runs the native `BlockEmpty`
+// (or single Internal for NV); the legacy oracle runs the legacy
+// empty/quirk paths.
+const ARM_EMPTY_CORPUS: [u32; 3] = [
+    0xE8A0_0000, // stmia r0!, {} (empty store)
+    0xE8B1_0000, // ldmia r1!, {} (empty load, returns to movnv)
+    0xF3A0_0001, // movnv r0, #1 (never executes)
+];
+const THUMB_EMPTY_CORPUS: [u32; 2] = [
+    0xB400, // push {} (empty store)
+    0xBC00, // pop {} (empty load)
+];
+
 #[test]
-fn empty_ldm_stm_stays_legacy() {
+fn micro_op_empty_matches_legacy() {
+    // STM stores at [r0]; LDM uses a separate base (r1) so the cell
+    // still holds the planted return to movnv after the store.
+    let arm_regs = [(0, 0x0300_0200), (1, 0x0300_0200)];
+    let arm_mem = [(0x0300_0200, 4, 0x0300_0008)];
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &ARM_EMPTY_CORPUS,
+            false,
+            waitcnt,
+            ARM_EMPTY_CORPUS.len(),
+            0xE1DD_20B0,
+            0x0300_0000,
+            None,
+            &arm_mem,
+            &arm_regs,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+    for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &ARM_EMPTY_CORPUS,
+            false,
+            waitcnt,
+            ARM_EMPTY_CORPUS.len(),
+            0xE1DD_20B0,
+            0x0800_0100,
+            Some(rom_cart()),
+            &arm_mem,
+            &arm_regs,
+        );
+        assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+        assert!(follow, "rom waitcnt={waitcnt:#06x}");
+    }
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_EMPTY_CORPUS,
+            true,
+            waitcnt,
+            THUMB_EMPTY_CORPUS.len(),
+            0x886A,
+            0x0300_0000,
+            None,
+            &[],
+            &[],
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+}
+
+#[test]
+fn empty_ldm_stm_expands() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(1, 0x0300_0100);
-    assert!(expand_thumb(0xC000, &regs).is_none());
-    assert!(expand_thumb(0xC800, &regs).is_none());
+    // Empty LDMIA/STMIA: single Empty op + trailing (4 for LDM, 1
+    // for STM). Thumb LDMIA/STMIA use the 0xC000/0xC800 bases.
+    let ops = expand_thumb(0xC000, &regs).expect("empty stmia expands");
+    assert_eq!(ops.len(), 2);
+    let ops = expand_thumb(0xC800, &regs).expect("empty ldmia expands");
+    assert_eq!(ops.len(), 5);
     let ops = expand_thumb(0xC10F, &regs).expect("non-empty stmia expands");
     // BlockStart + 4 words + BlockEnd + 1 trailing = 7.
     assert_eq!(ops.len(), 7);
@@ -988,8 +1068,9 @@ fn ldm_stm_tick_parity() {
     assert_eq!((av, bv), (av, av), "timer span diverges");
 }
 
-// Slice 5a corpus: ARM LDM/STM (non-empty, S=0; empty forms stay
-// legacy; S-bit forms are covered by the slice-14 corpus below).
+// Slice 5a corpus: ARM LDM/STM (non-empty, S=0; empty forms have
+// their own corpus below; S-bit forms are covered by the slice-14
+// corpus below).
 // This corpus exercises IA/DB modes, the STM stored-base quirk
 // (r0 in its own list) and the LDM base-in-list no-writeback rule.
 const ARM_BLOCK_CORPUS: [u32; 6] = [
@@ -1050,14 +1131,17 @@ fn micro_op_arm_block_matches_legacy() {
 fn arm_block_gates_stay_legacy() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(0, 0x0200_0000);
-    // S bit now expands (user-bank forms, asserted below); only the
-    // empty list stays legacy.
+    // S bit now expands (user-bank forms, asserted below), as does
+    // the empty list (asserted in the empty-forms test).
     let ops = expand_arm(0xE8B5_0018 | (1 << 22), &regs).expect("ldmia^ expands");
     // BlockStart + 2 words + BlockEnd + 2 trailing = 6.
     assert_eq!(ops.len(), 6);
-    // Empty list (plain and S-bit).
-    assert!(expand_arm(0xE8A0_0000, &regs).is_none());
-    assert!(expand_arm(0xE8A0_0000 | (1 << 22), &regs).is_none());
+    // Empty list now expands (plain and S-bit): single Empty op +
+    // trailing (LDM 4, STM 1).
+    let ops = expand_arm(0xE8A0_0000, &regs).expect("empty stmia expands");
+    assert_eq!(ops.len(), 2);
+    let ops = expand_arm(0xE8A0_0000 | (1 << 22), &regs).expect("empty stmia^ expands");
+    assert_eq!(ops.len(), 2);
     let ops = expand_arm(0xE8A0_0006, &regs).expect("plain stmia expands");
     // BlockStart + 2 words + BlockEnd + 1 trailing = 5.
     assert_eq!(ops.len(), 5);
@@ -3009,31 +3093,25 @@ fn arm_dpimm_srot_grid() {
 }
 
 /// Coverage manifest: every instruction class is either expanded
-/// or intentionally legacy. Intentional-legacy (None): empty block
-/// lists (quirk paths), UND/SWI (exceptions), coprocessor (UND on
-/// GBA). Everything else in both ISAs must expand; add new classes
-/// here when extending coverage.
+/// or intentionally legacy. Intentional-legacy (None): SWI/UND
+/// (exceptions need a trap op), coprocessor (UND on GBA), NV
+/// condition (handled below). Everything else in both ISAs must
+/// expand; add new classes here when extending coverage.
 #[test]
 fn coverage_manifest() {
     let regs = CpuRegisters::post_bios();
-    // Intentionally legacy ARM: empty lists, SWI, coprocessor UND.
+    // Intentionally legacy ARM: SWI, coprocessor UND.
     for instr in [
-        0xE8A0_0000, // empty stmia
-        0xE8F0_0000, // empty ldmia^
         0xEF00_0000, // swi
         0xEE00_0010, // coprocessor (UND)
         0xEC00_0000, // coprocessor (UND)
     ] {
         assert!(expand_arm(instr, &regs).is_none(), "{instr:#010X}");
     }
-    // Intentionally legacy Thumb: empty lists, UND, SWI.
+    // Intentionally legacy Thumb: UND, SWI.
     let mut tregs = CpuRegisters::post_bios();
     tregs.set_cpsr(tregs.cpsr() | (1 << 5));
     for instr in [
-        0xB400, // empty push
-        0xBC00, // empty pop
-        0xC000, // empty stmia
-        0xC800, // empty ldmia
         0xDE00, // undefined
         0xDF00, // swi
     ] {
@@ -3071,11 +3149,14 @@ fn coverage_manifest() {
         0xE1D1_00F0, // ldrsh imm
         0xE191_00B2, // ldrh reg-offset
         0xE8A0_0006, // stmia
+        0xE8A0_0000, // empty stmia
+        0xE8B0_0000, // empty ldmia
         0xE8B5_0018, // ldmia
         0xE8F5_4018, // ldmia^ (S bit)
         0xE890_8000, // ldmia pc
         0xEA00_0001, // b
         0xEB00_0001, // bl (link)
+        0xF3A0_0001, // nv (never executes)
     ] {
         assert!(expand_arm(instr, &aregs).is_some(), "{instr:#010X}");
     }
@@ -3101,6 +3182,10 @@ fn coverage_manifest() {
         0xA004, // add pc
         0xB00A, // add sp
         0xB40F, // push
+        0xB400, // empty push
+        0xBC00, // empty pop
+        0xC000, // empty stmia
+        0xC800, // empty ldmia
         0xBCF0, // pop
         0xBD02, // pop pc
         0xC10F, // stmia
