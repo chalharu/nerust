@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct TimerChannel {
     reload: u16,
     counter: u16,
@@ -44,6 +44,55 @@ pub struct GbaTimers {
     /// T-cycles. Middle-take entries key on it (storm grid-phase proxy).
     /// Reset on enable; the latest first-take wins (None = none yet).
     take1_latency: Option<u64>,
+}
+
+/// Phase 10 wire state: all four channels plus the free-running prescaler
+/// and the take-latency bookkeeping sampled by IRQ entry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaTimersState {
+    channels: [TimerChannel; 4],
+    prescaler: u16,
+    current_cycle: u64,
+    last_reload_cycle: [Option<u64>; 4],
+    last_ovf1_cycle: [Option<u64>; 4],
+    last_enable_fresh_reload: [bool; 4],
+    overflows_since_enable: [u8; 4],
+    timer0_acks_since_enable: u8,
+    take1_latency: Option<u64>,
+}
+
+impl GbaTimersState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (index, channel) in self.channels.iter().enumerate() {
+            // Both write paths mask control with 0x00C7.
+            if channel.control & !0x00C7 != 0 {
+                return Err(format!(
+                    "timer{index}: control has reserved bits: {:#X}",
+                    channel.control
+                ));
+            }
+        }
+        for (index, reload) in self.last_reload_cycle.iter().enumerate() {
+            if let Some(cycle) = reload
+                && *cycle > self.current_cycle
+            {
+                return Err(format!("timer{index}: reload cycle in the future"));
+            }
+        }
+        for (index, ovf1) in self.last_ovf1_cycle.iter().enumerate() {
+            if let Some(cycle) = ovf1
+                && *cycle > self.current_cycle
+            {
+                return Err(format!("timer{index}: first-overflow cycle in the future"));
+            }
+        }
+        if let Some(latency) = self.take1_latency
+            && latency > self.current_cycle
+        {
+            return Err("timer: take1 latency in the future".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl GbaTimers {
@@ -391,6 +440,36 @@ fn decode(address: u32) -> Option<(usize, bool)> {
     Some((offset / 4, offset & 2 != 0))
 }
 
+impl GbaTimers {
+    pub(crate) fn export_state(&self) -> GbaTimersState {
+        GbaTimersState {
+            channels: self.channels,
+            prescaler: self.prescaler,
+            current_cycle: self.current_cycle,
+            last_reload_cycle: self.last_reload_cycle,
+            last_ovf1_cycle: self.last_ovf1_cycle,
+            last_enable_fresh_reload: self.last_enable_fresh_reload,
+            overflows_since_enable: self.overflows_since_enable,
+            timer0_acks_since_enable: self.timer0_acks_since_enable,
+            take1_latency: self.take1_latency,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaTimersState) -> Result<(), String> {
+        state.validate()?;
+        self.channels = state.channels;
+        self.prescaler = state.prescaler;
+        self.current_cycle = state.current_cycle;
+        self.last_reload_cycle = state.last_reload_cycle;
+        self.last_ovf1_cycle = state.last_ovf1_cycle;
+        self.last_enable_fresh_reload = state.last_enable_fresh_reload;
+        self.overflows_since_enable = state.overflows_since_enable;
+        self.timer0_acks_since_enable = state.timer0_acks_since_enable;
+        self.take1_latency = state.take1_latency;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +524,40 @@ mod tests {
         let counter = timers.read(0x04000100).unwrap();
         assert_eq!(timers.read8(0x04000100), Some((counter & 0xFF) as u8));
         assert_eq!(timers.read8(0x04000101), Some((counter >> 8) as u8));
+    }
+
+    #[test]
+    fn timers_state_round_trips_mid_cascade() {
+        let mut timers = GbaTimers::default();
+        // Timer0: fast prescaler, IRQ on overflow; timer1 cascades on it.
+        timers.write(0x04000100, 0xFFFE);
+        timers.write(0x04000102, 0x00C1);
+        timers.write(0x04000104, 0);
+        timers.write(0x04000106, 0x0084);
+        for _ in 0..10 {
+            timers.step();
+        }
+        // `current_cycle` advances from the bus tick clock, not `step()`.
+        timers.set_current_cycle(100);
+        timers.note_timer0_ack();
+        timers.record_take1_latency(7);
+
+        let state = timers.export_state();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaTimersState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaTimers::default();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+        assert_eq!(restored.current_cycle(), timers.current_cycle());
+
+        let mut bad = restored.export_state();
+        bad.channels[0].control = 0xFF;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state();
+        bad.take1_latency = Some(bad.current_cycle + 1);
+        assert!(bad.validate().is_err());
     }
 }
