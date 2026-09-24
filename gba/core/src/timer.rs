@@ -52,7 +52,7 @@ pub struct GbaTimers {
 pub(crate) struct GbaTimersState {
     channels: [TimerChannel; 4],
     prescaler: u16,
-    current_cycle: u64,
+    pub(crate) current_cycle: u64,
     last_reload_cycle: [Option<u64>; 4],
     last_ovf1_cycle: [Option<u64>; 4],
     last_enable_fresh_reload: [bool; 4],
