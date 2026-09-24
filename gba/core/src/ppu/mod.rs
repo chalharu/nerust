@@ -70,7 +70,7 @@ pub(crate) struct LayerPixel {
     semi_transparent: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PpuRegisters {
     pub dispcnt: u16,
     pub dispstat: u16,
@@ -176,6 +176,57 @@ impl LineLatch {
     }
 }
 
+/// Phase 10 wire state. The scanline frame buffer (38400 RGBA8888 words)
+/// travels as little-endian bytes; the per-line OAM latch likewise.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaPpuState {
+    registers: PpuRegisters,
+    internal_x: [i32; 2],
+    internal_y: [i32; 2],
+    cycle: u16,
+    vcount: u16,
+    frame: serde_bytes::ByteBuf,
+    written_x: [bool; 2],
+    written_y: [bool; 2],
+    bg_latch: u16,
+    dispcnt_latch: [u16; 3],
+    blank_sample: bool,
+    line_oam: serde_bytes::ByteBuf,
+    line_enable: u16,
+}
+
+impl GbaPpuState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.vcount >= LINES_PER_FRAME {
+            return Err(format!("ppu: vcount out of range: {}", self.vcount));
+        }
+        if self.cycle >= CYCLES_PER_LINE {
+            return Err(format!("ppu: cycle out of range: {}", self.cycle));
+        }
+        if self.frame.len() != WIDTH * HEIGHT * 4 {
+            return Err(format!("ppu: frame byte length wrong: {}", self.frame.len()));
+        }
+        if self.line_oam.len() != 1024 {
+            return Err(format!(
+                "ppu: line latch length wrong: {}",
+                self.line_oam.len()
+            ));
+        }
+        // Affine accumulators track 28-bit signed reference values.
+        for (index, value) in self
+            .internal_x
+            .iter()
+            .chain(self.internal_y.iter())
+            .enumerate()
+        {
+            if value.abs() > 0x0FFF_FFFF {
+                return Err(format!("ppu: internal accumulator {index} out of range"));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl GbaPpu {
     pub fn new() -> Self {
         Self {
@@ -192,6 +243,51 @@ impl GbaPpu {
             blank_sample: false,
             line: LineLatch::new(),
         }
+    }
+
+    pub(crate) fn export_state(&self) -> GbaPpuState {
+        let mut frame_bytes = Vec::with_capacity(WIDTH * HEIGHT * 4);
+        for word in self.frame.iter() {
+            frame_bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        GbaPpuState {
+            registers: self.registers,
+            internal_x: self.internal_x,
+            internal_y: self.internal_y,
+            cycle: self.cycle,
+            vcount: self.vcount,
+            frame: serde_bytes::ByteBuf::from(frame_bytes),
+            written_x: self.written_x,
+            written_y: self.written_y,
+            bg_latch: self.bg_latch,
+            dispcnt_latch: self.dispcnt_latch,
+            blank_sample: self.blank_sample,
+            line_oam: serde_bytes::ByteBuf::from(self.line.oam.to_vec()),
+            line_enable: self.line.enable,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaPpuState) -> Result<(), String> {
+        state.validate()?;
+        let words: Vec<u32> = state
+            .frame
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("frame is 4-aligned")))
+            .collect();
+        self.registers = state.registers;
+        self.internal_x = state.internal_x;
+        self.internal_y = state.internal_y;
+        self.cycle = state.cycle;
+        self.vcount = state.vcount;
+        self.frame = words.into_boxed_slice();
+        self.written_x = state.written_x;
+        self.written_y = state.written_y;
+        self.bg_latch = state.bg_latch;
+        self.dispcnt_latch = state.dispcnt_latch;
+        self.blank_sample = state.blank_sample;
+        self.line.oam.copy_from_slice(&state.line_oam);
+        self.line.enable = state.line_enable;
+        Ok(())
     }
 
     pub fn step(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) -> PpuEvent {
@@ -1107,5 +1203,42 @@ mod tests {
         assert_eq!(ppu.dispcnt() & (1 << 3), 0);
         ppu.write_register(0x04000000, 0xFFFF);
         assert_eq!(ppu.dispcnt() & (1 << 3), 0);
+    }
+
+    #[test]
+    fn ppu_state_round_trips_mid_scanline() {
+        let mut ppu = GbaPpu::new();
+        // Mode 1 with an affine background and windows enabled.
+        ppu.write_register(0x04000000, 0x2441);
+        ppu.write_register(0x04000028, 0x0100);
+        ppu.write_register(0x0400002C, 0x00F0);
+        let vram = vec![0u8; 96 * 1024];
+        let palette = vec![0u8; 1024];
+        let oam = vec![0u8; 1024];
+        // Advance into the visible scanlines with a nonzero cycle.
+        for _ in 0..(1232 * 40 + 500) {
+            ppu.step(&vram, &palette, &oam);
+        }
+        assert!(ppu.vcount() > 0);
+        assert!(ppu.cycle() > 0);
+
+        let state = ppu.export_state();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaPpuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaPpu::new();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+        assert_eq!(restored.vcount(), ppu.vcount());
+        assert_eq!(restored.cycle(), ppu.cycle());
+
+        let mut bad = restored.export_state();
+        bad.vcount = 228;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state();
+        bad.cycle = 1232;
+        assert!(bad.validate().is_err());
     }
 }
