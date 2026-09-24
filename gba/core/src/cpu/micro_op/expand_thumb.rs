@@ -364,6 +364,15 @@ fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<
     ops
 }
 
+/// Shared immediate-form load/store shape: [Read, I, I] / [Write, I].
+fn imm_access_ops(load: bool, acc: MemAccess) -> Vec<MicroOp> {
+    if load {
+        vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
+    } else {
+        vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+    }
+}
+
 /// Thumb word LDR/STR (immediate offset and SP-relative) and
 /// LDRH/STRH immediate. Same [Read, I, I] / [Write, I] shape as ARM.
 pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
@@ -403,11 +412,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             // Only the Thumb LDRSH carries the odd-address bus quirk.
             halfword_odd_quirk: load && width == 2 && signed_load,
         };
-        return Some(if load {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(imm_access_ops(load, acc));
     }
     // SP-relative (1001): addr = SP + imm8<<2.
     if instr >> 12 == 0b1001 {
@@ -428,11 +433,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(imm_access_ops(l, acc));
     }
     // Immediate-offset word (011, B == 0).
     if instr >> 13 == 0b011 && (instr >> 12) & 1 == 0 {
@@ -454,11 +455,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(imm_access_ops(l, acc));
     }
     // Immediate-offset byte (011, B == 1): offset is imm5 unshifted.
     if instr >> 13 == 0b011 && (instr >> 12) & 1 == 1 {
@@ -480,11 +477,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(imm_access_ops(l, acc));
     }
     // Halfword immediate (1000).
     if instr >> 12 == 0b1000 {
@@ -506,11 +499,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             halfword_odd_quirk: false,
         };
         // Totals match legacy handler returns (load 3, store 2).
-        return Some(if l {
-            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        });
+        return Some(imm_access_ops(l, acc));
     }
     None
 }
