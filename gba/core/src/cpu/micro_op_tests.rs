@@ -854,6 +854,63 @@ fn micro_op_thumb_alu_native_matches_legacy() {
     }
 }
 
+// Unification note: ARM SWP/SWPB already has a Slice-15 corpus
+// (`micro_op_arm_swp_matches_legacy`), which now exercises the native
+// `apply_swp` on the micro side against `swp::handle` on the oracle.
+
+// Unification corpus IV: ARM MRS/MSR (CPSR/SPSR reads, flag-field
+// writes incl. the rotated-immediate form). The micro engine runs the
+// native `apply_psr`; the legacy oracle still runs `psr::handle`.
+const ARM_PSR_CORPUS: [u32; 4] = [
+    0xE10F_2000, // mrs r2, cpsr
+    0xE128_F000, // msr cpsr_f, r0
+    0xE14F_3000, // mrs r3, spsr
+    0xE328_F080, // msr cpsr_f, #0x80000000
+];
+
+#[test]
+fn micro_op_psr_matches_legacy() {
+    let regs = [(0, 0x4000_0000)];
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &ARM_PSR_CORPUS,
+            false,
+            waitcnt,
+            ARM_PSR_CORPUS.len(),
+            0xE1DD_20B0,
+            0x0300_0000,
+            None,
+            &[],
+            &regs,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+    // ROM-code variant.
+    for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &ARM_PSR_CORPUS,
+            false,
+            waitcnt,
+            ARM_PSR_CORPUS.len(),
+            0xE1DD_20B0,
+            0x0800_0100,
+            Some(rom_cart()),
+            &[],
+            &regs,
+        );
+        assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+        assert!(follow, "rom waitcnt={waitcnt:#06x}");
+    }
+}
+
+// Unification note: ARM MUL/MLA/MULS/UMULL already has a Slice-8
+// corpus (`micro_op_arm_mul_matches_legacy`), which now exercises the
+// native `apply_mul` (short + long) on the micro side against
+// `multiply::handle` on the oracle.
+
 #[test]
 fn empty_ldm_stm_stays_legacy() {
     let mut regs = CpuRegisters::post_bios();
