@@ -210,7 +210,11 @@ impl ConsoleCore for GbaConsoleCore {
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         let Some(cart) = loaded.system.bus.cartridge_mut() else {
-            return Err(CoreError::Core(Box::new(GbaLoadError::RomMismatch)));
+            return Err(CoreError::Core(Box::new(
+                crate::persistence_error::GbaPersistenceError::Cartridge(
+                    "no cartridge loaded".to_string(),
+                ),
+            )));
         };
         import_mapper_save(cart, data, &loaded.identity).map_err(|e| CoreError::Core(Box::new(e)))
     }
