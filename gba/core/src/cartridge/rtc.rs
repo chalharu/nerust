@@ -4,7 +4,7 @@
 /// Pins: 0 = SCK, 1 = SIO, 2 = CS. CS low aborts; the command byte is
 /// clocked LSB-first on SCK rises (MSB-first senders are auto-detected
 /// by the `0110b` magic). Data bytes shift out on SCK falls.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Rtc {
     phase: Phase,
     cmd: u8,
@@ -26,7 +26,7 @@ pub struct Rtc {
 /// Argument byte counts per command (0,0,7,0,1,0,3,0 per GBATEK).
 const ARG_COUNT: [u8; 8] = [0, 0, 7, 0, 1, 0, 3, 0];
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Phase {
     #[default]
     Idle,
@@ -45,6 +45,23 @@ fn reverse_bits(mut v: u8) -> u8 {
 }
 
 impl Rtc {
+    /// Phase 10 import validation (bounds follow the protocol engine).
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self.bits > 8 {
+            return Err(format!("rtc: bit counter out of range: {}", self.bits));
+        }
+        if self.param_len > 8 {
+            return Err(format!("rtc: param length out of range: {}", self.param_len));
+        }
+        if self.out_len > 8 {
+            return Err(format!("rtc: output length out of range: {}", self.out_len));
+        }
+        if self.out_bit > 7 {
+            return Err(format!("rtc: output bit out of range: {}", self.out_bit));
+        }
+        Ok(())
+    }
+
     /// Feed current pin levels after a GPIO write. Returns nothing; the
     /// driven SIO level is visible in `sio_out`.
     pub fn pins(&mut self, sck: bool, sio: bool, cs: bool, prev_sck: bool, prev_cs: bool) {
