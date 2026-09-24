@@ -749,7 +749,6 @@ const THUMB_SHIFT_CORPUS: [u32; 6] = [
     0x0847, // lsr r7, r0, #1
 ];
 const THUMB_SHIFT_REGS: [(usize, u32); 2] = [(0, 0x8000_0001), (1, 0x4000_0000)];
-
 #[test]
 fn micro_op_move_shifted_matches_legacy() {
     for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
@@ -781,6 +780,73 @@ fn micro_op_move_shifted_matches_legacy() {
             Some(rom_cart()),
             &[],
             &THUMB_SHIFT_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+        assert!(follow, "rom waitcnt={waitcnt:#06x}");
+    }
+}
+
+// Unification corpus II: Thumb ALU remainder gaps not covered by the
+// Slice-10 corpus (EOR, reg shifts, ADC/SBC, TST, NEG, CMN, ORR, BIC,
+// MVN, ADD PC/SP, SP offset, hi-reg MOV). All run natively on the
+// micro engine.
+const THUMB_ALU_NATIVE_CORPUS: [u32; 16] = [
+    0x404B, // eor r3, r1
+    0x40CB, // lsr r3, r1
+    0x4104, // asr r4, r0
+    0x414D, // adc r5, r1
+    0x4186, // sbc r6, r0
+    0x4208, // tst r0, r1
+    0x4242, // neg r2, r0
+    0x42C4, // cmn r4, r0
+    0x430D, // orr r5, r1
+    0x4386, // bic r6, r0
+    0x43CF, // mvn r7, r1
+    0xA201, // add r2, pc, #4
+    0xAB02, // add r3, sp, #8
+    0xB001, // add sp, #4
+    0xB082, // sub sp, #8
+    0x4691, // mov r9, r2
+];
+const THUMB_ALU_NATIVE_REGS: [(usize, u32); 4] = [
+    (0, 0x8000_0001),
+    (1, 0x4000_0003),
+    (8, 0x2222_2222),
+    (9, 0x3333_3333),
+];
+
+#[test]
+fn micro_op_thumb_alu_native_matches_legacy() {
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_ALU_NATIVE_CORPUS,
+            true,
+            waitcnt,
+            THUMB_ALU_NATIVE_CORPUS.len(),
+            0x886A,
+            0x0300_0000,
+            None,
+            &[],
+            &THUMB_ALU_NATIVE_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+    // ROM-code variant: data still hits IWRAM, batch erase is the
+    // ROM-code whole-word path.
+    for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_ALU_NATIVE_CORPUS,
+            true,
+            waitcnt,
+            THUMB_ALU_NATIVE_CORPUS.len(),
+            0x886A,
+            0x0800_0100,
+            Some(rom_cart()),
+            &[],
+            &THUMB_ALU_NATIVE_REGS,
         );
         assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
         assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");

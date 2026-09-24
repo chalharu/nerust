@@ -6,17 +6,16 @@ use std::collections::VecDeque;
 
 use crate::cpu::arm_opcodes::block_transfer::start_address;
 use crate::cpu::arm_opcodes::data_processing::handle as dp_handle;
-use crate::cpu::arm_opcodes::helpers::{barrel_shift, condition_passed};
+use crate::cpu::arm_opcodes::helpers::{
+    barrel_shift, barrel_shift_register, condition_passed, update_nz,
+};
 use crate::cpu::arm_opcodes::multiply::{
     handle as mul_handle, multiplier_cycles, multiplier_cycles_long,
 };
 use crate::cpu::arm_opcodes::psr_transfer::handle as psr_handle;
 use crate::cpu::arm_opcodes::psr_transfer::is_psr_transfer;
 use crate::cpu::arm_opcodes::swp::handle as swp_handle;
-use crate::cpu::thumb_opcodes::alu::{
-    handle as thumb_alu_handle, handle_load_address, handle_sp_offset,
-};
-use crate::cpu::thumb_opcodes::{add_sub, hi_register};
+use crate::cpu::thumb_opcodes::alu::handle as thumb_alu_handle;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -1288,7 +1287,253 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
 /// the executing instruction is not covered (caller keeps legacy path).
 /// `pipeline`/`regs` layout matches `GbaCpu` (`pipeline[0]` executes).
 #[allow(dead_code)]
-/// Single micro-op step; runs one op per call so the driver can tick peripherals between ops.
+/// Thumb ADD/SUB (register and 3-bit immediate): native micro-op
+/// implementation mirroring `thumb_opcodes::add_sub::handle` exactly.
+fn apply_add_sub(regs: &mut CpuRegisters, instr: u16) -> u32 {
+    let i = (instr >> 10) & 1 != 0;
+    let op = (instr >> 9) & 1 != 0; // 0=ADD, 1=SUB
+    let rn_field = ((instr >> 6) & 0x7) as usize;
+    let rs = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+
+    let rn_val = if i {
+        (rn_field & 0x7) as u32
+    } else {
+        regs.r(rn_field)
+    };
+    let rs_val = regs.r(rs);
+    let result = if op {
+        let (r, _) = rs_val.overflowing_sub(rn_val);
+        update_nz(regs, r);
+        regs.set_cpsr_c(rs_val >= rn_val);
+        regs.set_cpsr_v(((rs_val ^ rn_val) & (rs_val ^ r) & 0x80000000) != 0);
+        r
+    } else {
+        let (r, c) = rs_val.overflowing_add(rn_val);
+        update_nz(regs, r);
+        regs.set_cpsr_c(c);
+        regs.set_cpsr_v(((rs_val ^ r) & (rn_val ^ r) & 0x80000000) != 0);
+        r
+    };
+    regs.set_r(rd, result);
+    1
+}
+
+/// Thumb register ALU (AND/EOR, shifts, ADC/SBC, ROR, TST,
+/// NEG/CMP/CMN, ORR/MUL, BIC/MVN): native micro-op implementation
+/// mirroring `thumb_opcodes::alu::handle` exactly. MUL keeps the
+/// 1S+mI timing with m from the incoming Rd value.
+fn apply_thumb_alu(regs: &mut CpuRegisters, instr: u16) -> u32 {
+    let op = ((instr >> 6) & 0xF) as u8;
+    let rs = ((instr >> 3) & 0x7) as usize;
+    let rd = (instr & 0x7) as usize;
+    let rs_val = regs.r(rs);
+    let rd_val = regs.r(rd);
+    match op {
+        0x0 | 0x1 | 0xC..=0xF => thumb_logical(regs, rd, op, rd_val, rs_val),
+        0x2..=0x4 | 0x7 => thumb_shift_reg(regs, rd, op, rd_val, rs_val),
+        0x5 | 0x6 => thumb_carry_arithmetic(regs, rd, op, rd_val, rs_val),
+        0x8 => thumb_test(regs, rd_val, rs_val),
+        0x9..=0xB => thumb_compare(regs, rd, op, rd_val, rs_val),
+        _ => 1,
+    }
+}
+
+fn thumb_logical(
+    regs: &mut CpuRegisters,
+    destination: usize,
+    op: u8,
+    left: u32,
+    right: u32,
+) -> u32 {
+    let result = match op {
+        0x0 => left & right,             // AND
+        0x1 => left ^ right,             // EOR
+        0xC => left | right,             // ORR
+        0xD => left.wrapping_mul(right), // MUL
+        0xE => left & !right,            // BIC
+        _ => !right,                     // MVN
+    };
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    // GBATEK/ARM ARM: Thumb MUL is 1S+mI like ARM, with m from the
+    // incoming Rd value (Rd = Rd*Rs uses Rd for timing); here
+    // `left` is the incoming Rd (Rd = Rd*Rs).
+    if op == 0xD {
+        1 + crate::cpu::arm_opcodes::multiply::multiplier_cycles(left)
+    } else {
+        1
+    }
+}
+
+fn thumb_shift_reg(
+    regs: &mut CpuRegisters,
+    destination: usize,
+    op: u8,
+    value: u32,
+    amount: u32,
+) -> u32 {
+    // Register shift amount zero preserves both the value and carry flag.
+    let shift_type = match op {
+        0x2 => 0, // LSL
+        0x3 => 1, // LSR
+        0x4 => 2, // ASR
+        _ => 3,   // ROR
+    };
+    let (result, carry) = barrel_shift_register(value, shift_type, amount, regs.cpsr_c());
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    // GBATEK THUMB cycle table: LSL/LSR/ASR/ROR Rd,Rs costs 1S+1I
+    // unconditionally (no zero-amount exception, unlike the ARM-ARM note).
+    2
+}
+
+fn thumb_carry_arithmetic(
+    regs: &mut CpuRegisters,
+    destination: usize,
+    op: u8,
+    left: u32,
+    right: u32,
+) -> u32 {
+    let carry_in = u32::from(regs.cpsr_c());
+    let (result, carry, overflow) = if op == 0x5 {
+        thumb_add_with_carry(left, right, carry_in)
+    } else {
+        thumb_subtract_with_carry(left, right, carry_in)
+    };
+    regs.set_r(destination, result);
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    regs.set_cpsr_v(overflow);
+    1
+}
+
+fn thumb_add_with_carry(left: u32, right: u32, carry_in: u32) -> (u32, bool, bool) {
+    let sum = u64::from(left) + u64::from(right) + u64::from(carry_in);
+    let result = sum as u32;
+    let overflow = ((left ^ result) & (right ^ result) & 0x80000000) != 0;
+    (result, sum > u64::from(u32::MAX), overflow)
+}
+
+fn thumb_subtract_with_carry(left: u32, right: u32, carry_in: u32) -> (u32, bool, bool) {
+    let borrow = 1 - carry_in;
+    let result = left.wrapping_sub(right).wrapping_sub(borrow);
+    let carry = u64::from(left) >= u64::from(right) + u64::from(borrow);
+    let overflow = ((left ^ right) & (left ^ result) & 0x80000000) != 0;
+    (result, carry, overflow)
+}
+
+fn thumb_test(regs: &mut CpuRegisters, left: u32, right: u32) -> u32 {
+    // TST has no shifter operand in Thumb, so C is preserved.
+    update_nz(regs, left & right);
+    1
+}
+
+fn thumb_compare(
+    regs: &mut CpuRegisters,
+    destination: usize,
+    op: u8,
+    left: u32,
+    right: u32,
+) -> u32 {
+    let (result, carry, overflow) = match op {
+        0x9 => (0u32.wrapping_sub(right), right == 0, right == 0x80000000),
+        0xA => {
+            let result = left.wrapping_sub(right);
+            (
+                result,
+                left >= right,
+                ((left ^ right) & (left ^ result) & 0x80000000) != 0,
+            )
+        }
+        _ => {
+            let (result, carry) = left.overflowing_add(right);
+            (
+                result,
+                carry,
+                ((left ^ result) & (right ^ result) & 0x80000000) != 0,
+            )
+        }
+    };
+    if op == 0x9 {
+        regs.set_r(destination, result);
+    }
+    update_nz(regs, result);
+    regs.set_cpsr_c(carry);
+    regs.set_cpsr_v(overflow);
+    1
+}
+
+/// Thumb ADD Rd, PC/SP, #imm: native micro-op implementation
+/// mirroring `thumb_opcodes::alu::handle_load_address` exactly.
+fn apply_load_address(regs: &mut CpuRegisters, instr: u16) -> u32 {
+    let sp = (instr >> 11) & 1 != 0;
+    let rd = ((instr >> 8) & 0x7) as usize;
+    let imm = ((instr & 0xFF) as u32) << 2;
+    let base = if sp { regs.sp() } else { regs.pc() & !3 };
+    regs.set_r(rd, base.wrapping_add(imm));
+    1
+}
+
+/// Thumb ADD/SUB SP, #imm: native micro-op implementation mirroring
+/// `thumb_opcodes::alu::handle_sp_offset` exactly.
+fn apply_sp_offset(regs: &mut CpuRegisters, instr: u16) -> u32 {
+    let s = (instr >> 7) & 1 != 0;
+    let imm = ((instr & 0x7F) as u32) << 2;
+    if s {
+        regs.set_sp(regs.sp().wrapping_sub(imm));
+    } else {
+        regs.set_sp(regs.sp().wrapping_add(imm));
+    }
+    1
+}
+
+/// Thumb hi-register ADD/CMP/MOV (BX never reaches here: the gate
+/// routes 0x4700 to `MicroOp::Bx`): native micro-op implementation
+/// mirroring `thumb_opcodes::hi_register::handle` exactly, including
+/// the unreachable BX arm.
+fn apply_hi_register(regs: &mut CpuRegisters, instr: u16) -> u32 {
+    let op = (instr >> 8) & 0b11;
+    let high_destination = (instr >> 7) & 1 != 0;
+    let high_source = (instr >> 6) & 1 != 0;
+    let rs = ((instr >> 3) & 0x7) as usize + if high_source { 8 } else { 0 };
+    let rd = (instr & 0x7) as usize + if high_destination { 8 } else { 0 };
+    match op {
+        0b00 => {
+            // ADD Rd, Rs (a write to PC is a branch: 2S+1N like BX)
+            let v = regs.r(rd).wrapping_add(regs.r(rs));
+            regs.set_r(rd, v);
+            if rd == 15 { 3 } else { 1 }
+        }
+        0b01 => {
+            // CMP Rd, Rs
+            let a = regs.r(rd);
+            let b = regs.r(rs);
+            let (r, _) = a.overflowing_sub(b);
+            update_nz(regs, r);
+            regs.set_cpsr_c(a >= b);
+            regs.set_cpsr_v(((a ^ b) & (a ^ r) & 0x80000000) != 0);
+            1
+        }
+        0b10 => {
+            // MOV Rd, Rs (a write to PC is a branch: 2S+1N like BX;
+            // Thumb MOV PC does not interwork, unlike BX)
+            let v = regs.r(rs);
+            regs.set_r(rd, v);
+            if rd == 15 { 3 } else { 1 }
+        }
+        0b11 => {
+            // BX Rs
+            let target = regs.r(rs);
+            let thumb = target & 1 != 0;
+            regs.set_cpsr((regs.cpsr() & !(1 << 5)) | ((thumb as u32) << 5));
+            regs.set_pc(target & !1);
+            3
+        }
+        _ => 1,
+    }
+}
 /// Returns the op's true cost with no floor (may be <= 0 from prefetch erases); driver floors once at retire.
 /// `None` = uncovered fill, queue untouched.
 pub fn step_op(
@@ -1361,7 +1606,7 @@ fn apply_op(
             cycles += 1;
         }
         MicroOp::CommitThumb(instr) => {
-            apply_commit_thumb(regs, bus, instr);
+            apply_commit_thumb(regs, instr);
             cycles += 1;
         }
         MicroOp::CommitDpReg(instr) => {
@@ -1456,15 +1701,15 @@ fn retire_step(
 /// Single-cycle ALU remainder (plus padded Internals for
 /// the multi-cycle forms): delegate to the matching legacy
 /// handler, which performs no bus access.
-fn apply_commit_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) {
+fn apply_commit_thumb(regs: &mut CpuRegisters, instr: u16) {
     match instr {
         0x0000..=0x17FF => apply_move_shifted(regs, instr),
-        0x1800..=0x1FFF => add_sub::handle(regs, instr),
-        0x4000..=0x43FF => thumb_alu_handle(regs, instr),
-        0xA000..=0xAFFF => handle_load_address(regs, instr),
-        0xB000..=0xB0FF => handle_sp_offset(regs, instr),
+        0x1800..=0x1FFF => apply_add_sub(regs, instr),
+        0x4000..=0x43FF => apply_thumb_alu(regs, instr),
+        0xA000..=0xAFFF => apply_load_address(regs, instr),
+        0xB000..=0xB0FF => apply_sp_offset(regs, instr),
         // Gate guarantees hi-reg non-BX here.
-        _ => hi_register::handle(regs, bus, instr),
+        _ => apply_hi_register(regs, instr),
     };
 }
 
