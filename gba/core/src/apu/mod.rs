@@ -205,7 +205,10 @@ pub(crate) struct GbaApuState {
 impl GbaApuState {
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.wave_ram.len() != 0x20 {
-            return Err(format!("apu: wave RAM length wrong: {}", self.wave_ram.len()));
+            return Err(format!(
+                "apu: wave RAM length wrong: {}",
+                self.wave_ram.len()
+            ));
         }
         if self.fifo_a.len() > 32 || self.fifo_b.len() > 32 {
             return Err(format!(
@@ -217,7 +220,7 @@ impl GbaApuState {
         if self.seq_step > 7 {
             return Err(format!("apu: seq_step out of range: {}", self.seq_step));
         }
-        if self.seq_timer > u64::from(T_CYCLES_PER_SEQ_STEP) {
+        if self.seq_timer > T_CYCLES_PER_SEQ_STEP {
             return Err(format!("apu: seq_timer out of range: {}", self.seq_timer));
         }
         if self.mix_timer > T_CYCLES_PER_MIX {

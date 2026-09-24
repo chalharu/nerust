@@ -51,7 +51,10 @@ impl Rtc {
             return Err(format!("rtc: bit counter out of range: {}", self.bits));
         }
         if self.param_len > 8 {
-            return Err(format!("rtc: param length out of range: {}", self.param_len));
+            return Err(format!(
+                "rtc: param length out of range: {}",
+                self.param_len
+            ));
         }
         if self.out_len > 8 {
             return Err(format!("rtc: output length out of range: {}", self.out_len));

@@ -95,7 +95,10 @@ impl GbaDmaState {
             }
             // Armed by trigger paths to 3 (4 on the burst head); counts down.
             if channel.pending > 8 {
-                return Err(format!("dma{index}: pending out of range: {}", channel.pending));
+                return Err(format!(
+                    "dma{index}: pending out of range: {}",
+                    channel.pending
+                ));
             }
         }
         Ok(())

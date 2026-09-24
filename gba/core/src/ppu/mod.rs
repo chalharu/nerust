@@ -204,7 +204,10 @@ impl GbaPpuState {
             return Err(format!("ppu: cycle out of range: {}", self.cycle));
         }
         if self.frame.len() != WIDTH * HEIGHT * 4 {
-            return Err(format!("ppu: frame byte length wrong: {}", self.frame.len()));
+            return Err(format!(
+                "ppu: frame byte length wrong: {}",
+                self.frame.len()
+            ));
         }
         if self.line_oam.len() != 1024 {
             return Err(format!(
@@ -271,8 +274,10 @@ impl GbaPpu {
         state.validate()?;
         let words: Vec<u32> = state
             .frame
-            .chunks_exact(4)
-            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("frame is 4-aligned")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| u32::from_le_bytes(*chunk))
             .collect();
         self.registers = state.registers;
         self.internal_x = state.internal_x;

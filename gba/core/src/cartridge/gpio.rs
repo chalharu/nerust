@@ -149,6 +149,11 @@ impl Gpio {
         self.solar.set_light_level(level);
     }
 
+    /// Current ambient light level (for tests).
+    pub fn solar_level(&self) -> u8 {
+        self.solar.light_level()
+    }
+
     /// Whether any GPIO register has been enabled (for tests).
     pub fn is_attached(&self) -> bool {
         self.attached
@@ -160,13 +165,19 @@ impl Gpio {
             return Err(format!("gpio: control out of range: {}", self.control));
         }
         if self.direction > 0xF {
-            return Err(format!("gpio: direction out of range: {:#X}", self.direction));
+            return Err(format!(
+                "gpio: direction out of range: {:#X}",
+                self.direction
+            ));
         }
         if self.data > 0xF {
             return Err(format!("gpio: data out of range: {:#X}", self.data));
         }
         if self.prev_line > 0xF {
-            return Err(format!("gpio: prev_line out of range: {:#X}", self.prev_line));
+            return Err(format!(
+                "gpio: prev_line out of range: {:#X}",
+                self.prev_line
+            ));
         }
         self.rtc.validate()
     }

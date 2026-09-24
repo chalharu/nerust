@@ -345,13 +345,22 @@ impl LengthEnvelope {
     /// Phase 10 import validation (bounds follow the trigger/write masks).
     pub(super) fn validate(&self) -> Result<(), String> {
         if self.length > 64 {
-            return Err(format!("apu: envelope length out of range: {}", self.length));
+            return Err(format!(
+                "apu: envelope length out of range: {}",
+                self.length
+            ));
         }
         if self.volume > 15 {
-            return Err(format!("apu: envelope volume out of range: {}", self.volume));
+            return Err(format!(
+                "apu: envelope volume out of range: {}",
+                self.volume
+            ));
         }
         if self.env_timer > 7 {
-            return Err(format!("apu: envelope timer out of range: {}", self.env_timer));
+            return Err(format!(
+                "apu: envelope timer out of range: {}",
+                self.env_timer
+            ));
         }
         Ok(())
     }
@@ -368,13 +377,19 @@ impl Square {
             return Err(format!("apu: square phase out of range: {}", self.phase));
         }
         if self.sweep_shift > 7 {
-            return Err(format!("apu: sweep shift out of range: {}", self.sweep_shift));
+            return Err(format!(
+                "apu: sweep shift out of range: {}",
+                self.sweep_shift
+            ));
         }
         if self.sweep_pace > 8 {
             return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
         }
         if self.sweep_timer > 8 {
-            return Err(format!("apu: sweep timer out of range: {}", self.sweep_timer));
+            return Err(format!(
+                "apu: sweep timer out of range: {}",
+                self.sweep_timer
+            ));
         }
         Ok(())
     }
