@@ -8,6 +8,7 @@ use self::gpio::Gpio;
 use self::header::GbaHeader;
 use self::save::helpers::read_slice;
 use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
+use crate::rom_identity::SaveTypeSer;
 
 #[derive(Debug)]
 pub struct Cartridge {
@@ -15,6 +16,28 @@ pub struct Cartridge {
     pub rom: Vec<u8>,
     pub save: Box<dyn SaveBackend>,
     pub gpio: Gpio,
+}
+
+/// Phase 10 wire state: the backend runtime blob plus GPIO/RTC/Solar
+/// runtime. ROM bytes and the parsed header rebuild from the retained ROM.
+/// Also reused as the reset-transfer state (`CartridgeResetState`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CartridgeState {
+    save_kind: SaveTypeSer,
+    save_blob: serde_bytes::ByteBuf,
+    gpio: Gpio,
+}
+
+impl CartridgeState {
+    pub(crate) fn validate_against(&self, save_type: SaveType) -> Result<(), String> {
+        if self.save_kind != SaveTypeSer::from(save_type) {
+            return Err(format!(
+                "cartridge: save kind mismatch: wire={:?} actual={save_type:?}",
+                self.save_kind
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Cartridge {
@@ -100,6 +123,24 @@ impl Cartridge {
 
     pub fn ram_restore(&mut self, data: &[u8]) {
         self.save.ram_restore(data);
+    }
+
+    pub(crate) fn export_state(&self) -> CartridgeState {
+        CartridgeState {
+            save_kind: SaveTypeSer::from(self.save.save_type()),
+            save_blob: serde_bytes::ByteBuf::from(self.save.serialize_state()),
+            gpio: self.gpio,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: &CartridgeState) -> Result<(), String> {
+        state.validate_against(self.save.save_type())?;
+        state.gpio.validate()?;
+        self.save
+            .deserialize_state(&state.save_blob)
+            .map_err(|e| format!("cartridge backend rejected state: {e}"))?;
+        self.gpio = state.gpio;
+        Ok(())
     }
 }
 
@@ -203,5 +244,57 @@ mod tests {
         // ID mode should be active
         let manuf = cart.read_sram(0x0E000000, 1);
         assert_eq!(manuf, 0x32);
+    }
+
+    #[test]
+    fn cartridge_state_round_trips_sram_and_gpio() {
+        let rom = make_rom_with_save(b"SRAM_V100");
+        let mut cart = Cartridge::new(rom).unwrap();
+        cart.write_sram(0x0E000123, 1, 0x5A);
+        // Attach GPIO with latched data/direction.
+        cart.gpio.write(0x080000C8, 2, 1);
+        cart.gpio.write(0x080000C6, 2, 0xF);
+        cart.gpio.write(0x080000C4, 2, 0xA);
+        assert!(cart.gpio.is_attached());
+
+        let state = cart.export_state();
+        state
+            .validate_against(cart.save.save_type())
+            .expect("kind matches");
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: CartridgeState = rmp_serde::from_slice(&bytes).unwrap();
+
+        let rom2 = make_rom_with_save(b"SRAM_V100");
+        let mut restored = Cartridge::new(rom2).unwrap();
+        restored.import_state(&decoded).unwrap();
+        assert_eq!(restored.read_sram(0x0E000123, 1), 0x5A);
+        assert!(restored.gpio.is_attached());
+        assert_eq!(restored.gpio.read(0x080000C4, 2), Some(0xA));
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+
+        // A kind mismatch refuses without touching the backend.
+        let mut wrong = decoded.clone();
+        wrong.save_kind = crate::rom_identity::SaveTypeSer::Flash64;
+        assert!(restored.import_state(&wrong).is_err());
+        assert_eq!(restored.read_sram(0x0E000123, 1), 0x5A);
+    }
+
+    #[test]
+    fn cartridge_state_round_trips_flash_command_state() {
+        let rom = make_rom_with_save(b"FLASH_V130");
+        let mut cart = Cartridge::new(rom).unwrap();
+        cart.write_sram(0x0E005555, 1, 0xAA);
+        cart.write_sram(0x0E002AAA, 1, 0x55);
+        // Mid-command (Unlock2): the state machine must survive.
+        let state = cart.export_state();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: CartridgeState = rmp_serde::from_slice(&bytes).unwrap();
+        let rom2 = make_rom_with_save(b"FLASH_V130");
+        let mut restored = Cartridge::new(rom2).unwrap();
+        restored.import_state(&decoded).unwrap();
+        // Completing the command after restore still enters ID mode.
+        restored.write_sram(0x0E005555, 1, 0x90);
+        assert_eq!(restored.read_sram(0x0E000000, 1), 0x32);
     }
 }
