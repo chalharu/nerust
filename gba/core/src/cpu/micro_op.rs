@@ -387,6 +387,57 @@ fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     ])
 }
 
+/// STM store-word snapshot at expansion (frozen registers and mode):
+/// user-bank reads, the stored-base quirk, and r15 as instruction+12
+/// (legacy `store_register`).
+fn block_store_value(
+    load: bool,
+    stored_base: Option<(usize, u32)>,
+    user_bank: bool,
+    regs: &CpuRegisters,
+    reg: usize,
+) -> Option<u32> {
+    if load {
+        return None;
+    }
+    let base_val = match stored_base {
+        Some((base_register, value)) if base_register == reg => value,
+        _ => {
+            if user_bank {
+                regs.user_r(reg)
+            } else {
+                regs.r(reg)
+            }
+        }
+    };
+    Some(base_val.wrapping_add(if reg == 15 { 4 } else { 0 }))
+}
+
+/// Writeback is not allowed if base in list and L==1 (UNPREDICTABLE).
+fn block_writeback(
+    writeback_flag: bool,
+    load: bool,
+    list: u32,
+    rn: usize,
+    final_addr: u32,
+) -> Option<(usize, u32)> {
+    if writeback_flag && !(load && (list >> rn) & 1 != 0) {
+        Some((rn, final_addr))
+    } else {
+        None
+    }
+}
+
+/// Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
+/// STM 1+n; words already carry +1 each).
+fn block_trailing(load: bool, list: u32) -> usize {
+    if load {
+        if list & (1 << 15) != 0 { 4 } else { 2 }
+    } else {
+        1
+    }
+}
+
 /// ARM LDM/STM, non-empty lists including the S bit (user-bank
 /// transfers and CPSR-restoring exception returns). P/U address
 /// modes, writeback (skipped for the UNPREDICTABLE load-with-base-
@@ -429,26 +480,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         fetch_width: 4,
     })];
     for (i, reg) in slots.iter().enumerate() {
-        // STM store words snapshot at expansion (frozen registers and
-        // mode): user-bank reads, the stored-base quirk, and r15 as
-        // instruction+12 (legacy `store_register`).
-        let store_value = if load {
-            None
-        } else {
-            let base_val = stored_base
-                .filter(|(base_register, _)| *base_register == *reg)
-                .map_or_else(
-                    || {
-                        if user_bank {
-                            regs.user_r(*reg)
-                        } else {
-                            regs.r(*reg)
-                        }
-                    },
-                    |(_, value)| value,
-                );
-            Some(base_val.wrapping_add(if *reg == 15 { 4 } else { 0 }))
-        };
+        let store_value = block_store_value(load, stored_base, user_bank, regs, *reg);
         ops.push(MicroOp::BlockWord(BlockWord {
             addr: start.wrapping_add(i as u32 * 4),
             reg: *reg,
@@ -461,11 +493,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         }));
     }
     // Writeback not allowed if base in list and L==1 (UNPREDICTABLE).
-    let writeback = if writeback_flag && !(load && (list >> rn) & 1 != 0) {
-        Some((rn, final_addr))
-    } else {
-        None
-    };
+    let writeback = block_writeback(writeback_flag, load, list, rn, final_addr);
     // Post-LDM^ conflict, armed exactly like the legacy tail (the PC
     // case never sets user_bank, so expansion-time mode is exact).
     let conflict = load && user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
@@ -477,12 +505,8 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }));
     // Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
-    let trailing = if load {
-        if list & (1 << 15) != 0 { 4 } else { 2 }
-    } else {
-        1
-    };
-    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    let trailing = block_trailing(load, list);
+    ops.extend(vec![MicroOp::Internal; trailing]);
     Some(ops)
 }
 
@@ -564,60 +588,19 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// [Read, I, I] (= 3; +2 more for R15 loads) and stores to [Write, I]
 /// (= 2), matching `single_transfer`/`halfword_transfer`.
 pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
-    let l = (instr >> 20) & 1 == 1;
-    let pre_indexed = (instr >> 24) & 1 == 1;
-    let writeback = !pre_indexed || (instr >> 21) & 1 == 1;
-    let rn = ((instr >> 16) & 0xF) as usize;
-    let rd = ((instr >> 12) & 0xF) as usize;
-    let subtract = (instr >> 23) & 1 == 0;
-    // STR of R15 stores instruction+12 (legacy `single_transfer`).
-    let store_value = if !l && rd == 15 {
-        Some(regs.r(15).wrapping_add(4))
-    } else {
-        None
-    };
-    // Pad the legacy base: loads 3 (5 for R15), stores 2.
-    let ops = |acc: MemAccess| {
-        if l {
-            let mut ops = vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
-            if rd == 15 {
-                ops.extend([MicroOp::Internal, MicroOp::Internal]);
-            }
-            ops
-        } else {
-            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
-        }
+    let dec = SingleDecoded {
+        l: (instr >> 20) & 1 == 1,
+        pre_indexed: (instr >> 24) & 1 == 1,
+        writeback: (instr >> 24) & 1 == 0 || (instr >> 21) & 1 == 1,
+        rn: ((instr >> 16) & 0xF) as usize,
+        rd: ((instr >> 12) & 0xF) as usize,
+        subtract: (instr >> 23) & 1 == 0,
+        // STR of R15 stores instruction+12 (legacy `single_transfer`).
+        store_value: single_store_value(instr, regs),
     };
     // Word/byte class (bits27-26 == 01), immediate or register offset.
     if (instr >> 26) & 0x3 == 0b01 {
-        let offset = if (instr >> 25) & 1 != 0 {
-            let rm_val = regs.r((instr & 0xF) as usize);
-            let (shifted, _) = barrel_shift(
-                rm_val,
-                ((instr >> 5) & 0b11) as u8,
-                (instr >> 7) & 0x1F,
-                regs.cpsr_c(),
-            );
-            shifted
-        } else {
-            instr & 0xFFF
-        };
-        let acc = MemAccess {
-            width: if instr & (1 << 22) != 0 { 1 } else { 4 },
-            rd,
-            rn,
-            offset,
-            offset_register: None,
-            subtract,
-            is_sp: false,
-            signed_load: false,
-            post_indexed: !pre_indexed,
-            writeback,
-            store_value,
-            halfword_odd_quirk: false,
-        };
-        // Same bus calls and order as legacy, so totals agree by construction.
-        return Some(ops(acc));
+        return single_word(instr, regs, &dec);
     }
     // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
     // register offsets, all S:H shapes (unsigned half, signed byte /
@@ -625,42 +608,111 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
     // Multiply/SWP/PSR/BX patterns carry the tag too, so the decoder
     // exclusions are mirrored (decode tests them first).
     if (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090 {
-        if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
-            return None; // Multiply.
-        }
-        if (instr & 0x0FB00FF0) == 0x01000090 {
-            return None; // SWP.
-        }
-        if is_psr_transfer(instr) {
-            return None;
-        }
-        if (instr & 0x0FFFFFF0) == 0x012FFF10 {
-            return None; // BX.
-        }
-        let signed = (instr >> 6) & 1 != 0;
-        let half = (instr >> 5) & 1 != 0;
-        let offset = if (instr >> 22) & 1 != 0 {
-            (((instr >> 8) & 0xF) << 4) | (instr & 0xF)
-        } else {
-            regs.r((instr & 0xF) as usize)
-        };
-        let acc = MemAccess {
-            width: if signed && !half { 1 } else { 2 },
-            rd,
-            rn,
-            offset,
-            offset_register: None,
-            subtract,
-            is_sp: false,
-            signed_load: signed,
-            post_indexed: !pre_indexed,
-            writeback,
-            store_value,
-            halfword_odd_quirk: false,
-        };
-        return Some(ops(acc));
+        return single_half(instr, regs, &dec);
     }
     None
+}
+
+/// Shared decode for both single-transfer classes.
+struct SingleDecoded {
+    l: bool,
+    pre_indexed: bool,
+    writeback: bool,
+    rn: usize,
+    rd: usize,
+    subtract: bool,
+    store_value: Option<u32>,
+}
+
+fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
+    let l = (instr >> 20) & 1 == 1;
+    let rd = ((instr >> 12) & 0xF) as usize;
+    if !l && rd == 15 {
+        Some(regs.r(15).wrapping_add(4))
+    } else {
+        None
+    }
+}
+
+/// Pad the legacy base: loads 3 (5 for R15), stores 2.
+fn single_ops(l: bool, rd: usize, acc: MemAccess) -> Vec<MicroOp> {
+    if l {
+        let mut ops = vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
+        if rd == 15 {
+            ops.extend([MicroOp::Internal, MicroOp::Internal]);
+        }
+        ops
+    } else {
+        vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+    }
+}
+
+fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<Vec<MicroOp>> {
+    let offset = if (instr >> 25) & 1 != 0 {
+        let rm_val = regs.r((instr & 0xF) as usize);
+        let (shifted, _) = barrel_shift(
+            rm_val,
+            ((instr >> 5) & 0b11) as u8,
+            (instr >> 7) & 0x1F,
+            regs.cpsr_c(),
+        );
+        shifted
+    } else {
+        instr & 0xFFF
+    };
+    let acc = MemAccess {
+        width: if instr & (1 << 22) != 0 { 1 } else { 4 },
+        rd: dec.rd,
+        rn: dec.rn,
+        offset,
+        offset_register: None,
+        subtract: dec.subtract,
+        is_sp: false,
+        signed_load: false,
+        post_indexed: !dec.pre_indexed,
+        writeback: dec.writeback,
+        store_value: dec.store_value,
+        halfword_odd_quirk: false,
+    };
+    // Same bus calls and order as legacy, so totals agree by construction.
+    Some(single_ops(dec.l, dec.rd, acc))
+}
+
+fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<Vec<MicroOp>> {
+    if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
+        return None; // Multiply.
+    }
+    if (instr & 0x0FB00FF0) == 0x01000090 {
+        return None; // SWP.
+    }
+    if is_psr_transfer(instr) {
+        return None;
+    }
+    if (instr & 0x0FFFFFF0) == 0x012FFF10 {
+        return None; // BX.
+    }
+    let signed = (instr >> 6) & 1 != 0;
+    let half = (instr >> 5) & 1 != 0;
+    let offset = if (instr >> 22) & 1 != 0 {
+        (((instr >> 8) & 0xF) << 4) | (instr & 0xF)
+    } else {
+        regs.r((instr & 0xF) as usize)
+    };
+    let acc = MemAccess {
+        width: if signed && !half { 1 } else { 2 },
+        rd: dec.rd,
+        rn: dec.rn,
+        offset,
+        offset_register: None,
+        subtract: dec.subtract,
+        is_sp: false,
+        signed_load: signed,
+        post_indexed: !dec.pre_indexed,
+        writeback: dec.writeback,
+        store_value: dec.store_value,
+        halfword_odd_quirk: false,
+    };
+    Some(single_ops(dec.l, dec.rd, acc))
 }
 
 /// Expand a Thumb instruction. `None` = not covered yet (legacy path).
@@ -1247,29 +1299,60 @@ pub fn step_op(
     is_thumb: bool,
 ) -> Option<i64> {
     if queue.is_empty() {
-        // Speculative pure decode FIRST (fallback history: touching
-        // bus/pipeline before coverage is known double-advances the
-        // pipeline on legacy fallback).
-        let ops = if is_thumb {
-            expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
-        } else {
-            expand_arm(pipeline[0], regs)?
-        };
-        bus.take_access_wait_cycles();
-        bus.set_current_pc(regs.pc());
-        let pc = regs.pc();
-        let fetched = if is_thumb {
-            bus.fetch16(pc) as u32
-        } else {
-            bus.fetch32(pc)
-        };
-        pipeline[0] = pipeline[1];
-        pipeline[1] = fetched;
-        regs.clear_pc_written();
-        queue.extend(ops);
+        refill_queue(regs, bus, pipeline, queue, is_thumb)?;
     }
     let pc = regs.pc();
     let op = queue.pop_front().expect("expansion never yields zero ops");
+    let cycles = apply_op(regs, bus, op, pc, is_thumb);
+    if queue.is_empty() {
+        retire_step(regs, bus, pipeline, pc, is_thumb);
+    }
+    // No floor here: the driver floors once per instruction at retire,
+    // exactly like the legacy step (per-op flooring would inflate
+    // prefetch-erased instructions).
+    Some(cycles + bus.take_access_wait_cycles())
+}
+
+/// Fill the queue from the executing instruction. `None` = uncovered
+/// fill, queue untouched.
+fn refill_queue(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    pipeline: &mut [u32; 2],
+    queue: &mut VecDeque<MicroOp>,
+    is_thumb: bool,
+) -> Option<()> {
+    // Speculative pure decode FIRST (fallback history: touching
+    // bus/pipeline before coverage is known double-advances the
+    // pipeline on legacy fallback).
+    let ops = if is_thumb {
+        expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
+    } else {
+        expand_arm(pipeline[0], regs)?
+    };
+    bus.take_access_wait_cycles();
+    bus.set_current_pc(regs.pc());
+    let pc = regs.pc();
+    let fetched = if is_thumb {
+        bus.fetch16(pc) as u32
+    } else {
+        bus.fetch32(pc)
+    };
+    pipeline[0] = pipeline[1];
+    pipeline[1] = fetched;
+    regs.clear_pc_written();
+    queue.extend(ops);
+    Some(())
+}
+
+/// Execute one queued op; returns its cycle cost.
+fn apply_op(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    op: MicroOp,
+    pc: u32,
+    is_thumb: bool,
+) -> i64 {
     let mut cycles: i64 = 0;
     match op {
         MicroOp::Internal => cycles += 1,
@@ -1278,18 +1361,7 @@ pub fn step_op(
             cycles += 1;
         }
         MicroOp::CommitThumb(instr) => {
-            // Single-cycle ALU remainder (plus padded Internals for
-            // the multi-cycle forms): delegate to the matching legacy
-            // handler, which performs no bus access.
-            match instr {
-                0x0000..=0x17FF => move_shifted::handle(regs, instr),
-                0x1800..=0x1FFF => add_sub::handle(regs, instr),
-                0x4000..=0x43FF => thumb_alu_handle(regs, instr),
-                0xA000..=0xAFFF => handle_load_address(regs, instr),
-                0xB000..=0xB0FF => handle_sp_offset(regs, instr),
-                // Gate guarantees hi-reg non-BX here.
-                _ => hi_register::handle(regs, bus, instr),
-            };
+            apply_commit_thumb(regs, bus, instr);
             cycles += 1;
         }
         MicroOp::CommitDpReg(instr) => {
@@ -1300,17 +1372,7 @@ pub fn step_op(
             cycles += 1;
         }
         MicroOp::CommitMul(m) => {
-            if m.thumb {
-                // Mirrors the decoder preamble (fetch break + P-ON
-                // erase) plus the ALU handler; m comes from Rd.
-                let instr = m.instr as u16;
-                let ticks = multiplier_cycles(regs.r((instr & 0x7) as usize));
-                bus.charge_fetch_stream_break(0x03000000);
-                bus.erase_for_multiply(ticks, 2);
-                thumb_alu_handle(regs, instr);
-            } else {
-                mul_handle(regs, bus, m.instr);
-            }
+            apply_commit_mul(regs, bus, m);
             cycles += 1;
         }
         MicroOp::CommitSwp(instr) => {
@@ -1346,20 +1408,7 @@ pub fn step_op(
             cycles += 1;
         }
         MicroOp::MemRead(a) => {
-            // Legacy-identical issue: bus access, writeback and break in
-            // the issue tick. (A deferred-commit timer re-sample was tried
-            // here and FALSIFIED — it breaks 12 hw-test DMA pins that pin
-            // issue-time sampling; see the design doc. The queue/drain
-            // machinery stays as the verified-neutral execution model.)
-            apply_read(regs, bus, a);
-            // Thumb single word-load retire (mirrors the legacy handler
-            // hook; the legacy path never runs for covered classes).
-            // regs.pc() is the fetch PC here exactly as in step_thumb,
-            // so execute-PC adjacency validates the same way.
-            if is_thumb && a.width == 4 && !a.signed_load {
-                let (addr, _) = resolve_addr(regs, a);
-                bus.note_thumb_single_load(regs.pc(), addr);
-            }
+            apply_mem_read(regs, bus, a, is_thumb);
             cycles += 1;
         }
         MicroOp::MemWrite(a) => {
@@ -1367,82 +1416,149 @@ pub fn step_op(
             cycles += 1;
         }
         MicroOp::PcRelRead(r) => {
-            // Legacy-identical order: bus access, then fetch-stream-break.
-            regs.set_r(r.rd, bus.read32(r.addr));
-            bus.charge_fetch_stream_break(r.addr);
-            // Thumb literal retire (loads the marker chain like a load).
-            if is_thumb {
-                bus.note_thumb_single_load(regs.pc(), r.addr);
-            }
+            apply_pcrel_read(regs, bus, r, is_thumb);
             cycles += 1;
         }
         MicroOp::BlockStart(e) => {
             bus.begin_block_batch(e.is_load, e.fetch_width);
         }
         MicroOp::BlockWord(w) => {
-            // Legacy-identical per-word order: continuation query, then
-            // the access. A DMA burst between words resets the address
-            // stream (next word N), same as post-DMA CPU accesses.
-            let continuation = !w.first && bus.data_continuation_sequential(w.addr);
-            bus.set_data_sequential(continuation);
-            if w.load {
-                let v = bus.read_aligned32(w.addr);
-                if w.pc_load {
-                    regs.set_pc(v);
-                } else if w.user_bank {
-                    regs.set_user_r(w.reg, v);
-                } else {
-                    regs.set_r(w.reg, v);
-                }
-                // LDM^ exception return (modes with an SPSR bank only);
-                // the mode read precedes any change below.
-                if w.restore_cpsr && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
-                    regs.set_cpsr(regs.spsr());
-                }
-            } else {
-                let v = match w.store_value {
-                    Some(v) => v,
-                    None => {
-                        if w.reg == 14 {
-                            regs.lr()
-                        } else {
-                            regs.r(w.reg)
-                        }
-                    }
-                };
-                bus.write32(w.addr, v);
-            }
+            apply_block_word(regs, bus, w);
             cycles += 1;
         }
         MicroOp::BlockEnd(e) => {
-            bus.set_data_sequential(false);
-            bus.end_block_batch();
-            if let Some(sp) = e.sp {
-                regs.set_sp(sp);
-            }
-            if let Some((reg, val)) = e.writeback {
-                regs.set_r(reg, val);
-            }
-            if e.ldm_conflict {
-                regs.arm_ldm_conflict();
-            }
-            bus.charge_fetch_stream_break(e.first_addr);
+            apply_block_end(regs, bus, e);
         }
     }
-    if queue.is_empty() {
-        if regs.take_pc_written() {
-            *pipeline = [0; 2];
-            bus.set_current_pc(regs.pc());
-            bus.invalidate_prefetch_for_branch();
-            fill_pipeline(regs, bus, pipeline);
-            // Legacy returns `cycles` here (plus an IRQ epilogue only on
-            // the trampoline path, out of scope).
-        } else {
-            regs.set_pc(pc.wrapping_add(if is_thumb { 2 } else { 4 }));
-        }
+    cycles
+}
+
+/// Retire: flush+refill on a PC write, else advance past the op.
+fn retire_step(
+    regs: &mut CpuRegisters,
+    bus: &mut GbaMemoryBus,
+    pipeline: &mut [u32; 2],
+    pc: u32,
+    is_thumb: bool,
+) {
+    if regs.take_pc_written() {
+        *pipeline = [0; 2];
+        bus.set_current_pc(regs.pc());
+        bus.invalidate_prefetch_for_branch();
+        fill_pipeline(regs, bus, pipeline);
+        // Legacy returns `cycles` here (plus an IRQ epilogue only on
+        // the trampoline path, out of scope).
+    } else {
+        regs.set_pc(pc.wrapping_add(if is_thumb { 2 } else { 4 }));
     }
-    // No floor here: the driver floors once per instruction at retire,
-    // exactly like the legacy step (per-op flooring would inflate
-    // prefetch-erased instructions).
-    Some(cycles + bus.take_access_wait_cycles())
+}
+
+/// Single-cycle ALU remainder (plus padded Internals for
+/// the multi-cycle forms): delegate to the matching legacy
+/// handler, which performs no bus access.
+fn apply_commit_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) {
+    match instr {
+        0x0000..=0x17FF => move_shifted::handle(regs, instr),
+        0x1800..=0x1FFF => add_sub::handle(regs, instr),
+        0x4000..=0x43FF => thumb_alu_handle(regs, instr),
+        0xA000..=0xAFFF => handle_load_address(regs, instr),
+        0xB000..=0xB0FF => handle_sp_offset(regs, instr),
+        // Gate guarantees hi-reg non-BX here.
+        _ => hi_register::handle(regs, bus, instr),
+    };
+}
+
+fn apply_commit_mul(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, m: MulEffect) {
+    if m.thumb {
+        // Mirrors the decoder preamble (fetch break + P-ON
+        // erase) plus the ALU handler; m comes from Rd.
+        let instr = m.instr as u16;
+        let ticks = multiplier_cycles(regs.r((instr & 0x7) as usize));
+        bus.charge_fetch_stream_break(0x03000000);
+        bus.erase_for_multiply(ticks, 2);
+        thumb_alu_handle(regs, instr);
+    } else {
+        mul_handle(regs, bus, m.instr);
+    }
+}
+
+fn apply_mem_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess, is_thumb: bool) {
+    // Legacy-identical issue: bus access, writeback and break in
+    // the issue tick. (A deferred-commit timer re-sample was tried
+    // here and FALSIFIED — it breaks 12 hw-test DMA pins that pin
+    // issue-time sampling; see the design doc. The queue/drain
+    // machinery stays as the verified-neutral execution model.)
+    apply_read(regs, bus, a);
+    // Thumb single word-load retire (mirrors the legacy handler
+    // hook; the legacy path never runs for covered classes).
+    // regs.pc() is the fetch PC here exactly as in step_thumb,
+    // so execute-PC adjacency validates the same way.
+    if is_thumb && a.width == 4 && !a.signed_load {
+        let (addr, _) = resolve_addr(regs, a);
+        bus.note_thumb_single_load(regs.pc(), addr);
+    }
+}
+
+fn apply_pcrel_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, r: PcRelRead, is_thumb: bool) {
+    // Legacy-identical order: bus access, then fetch-stream-break.
+    regs.set_r(r.rd, bus.read32(r.addr));
+    bus.charge_fetch_stream_break(r.addr);
+    // Thumb literal retire (loads the marker chain like a load).
+    if is_thumb {
+        bus.note_thumb_single_load(regs.pc(), r.addr);
+    }
+}
+
+fn apply_block_word(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, w: BlockWord) {
+    // Legacy-identical per-word order: continuation query, then
+    // the access. A DMA burst between words resets the address
+    // stream (next word N), same as post-DMA CPU accesses.
+    let continuation = !w.first && bus.data_continuation_sequential(w.addr);
+    bus.set_data_sequential(continuation);
+    if w.load {
+        apply_block_load(regs, bus, w);
+    } else {
+        let v = match w.store_value {
+            Some(v) => v,
+            None => {
+                if w.reg == 14 {
+                    regs.lr()
+                } else {
+                    regs.r(w.reg)
+                }
+            }
+        };
+        bus.write32(w.addr, v);
+    }
+}
+
+fn apply_block_load(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, w: BlockWord) {
+    let v = bus.read_aligned32(w.addr);
+    if w.pc_load {
+        regs.set_pc(v);
+    } else if w.user_bank {
+        regs.set_user_r(w.reg, v);
+    } else {
+        regs.set_r(w.reg, v);
+    }
+    // LDM^ exception return (modes with an SPSR bank only);
+    // the mode read precedes any change below.
+    if w.restore_cpsr && !matches!(regs.cpsr_mode(), 0x10 | 0x1F) {
+        regs.set_cpsr(regs.spsr());
+    }
+}
+
+fn apply_block_end(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEndEffect) {
+    bus.set_data_sequential(false);
+    bus.end_block_batch();
+    if let Some(sp) = e.sp {
+        regs.set_sp(sp);
+    }
+    if let Some((reg, val)) = e.writeback {
+        regs.set_r(reg, val);
+    }
+    if e.ldm_conflict {
+        regs.arm_ldm_conflict();
+    }
+    bus.charge_fetch_stream_break(e.first_addr);
 }

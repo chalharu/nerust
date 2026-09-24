@@ -192,11 +192,8 @@ impl GbaDma {
     pub fn step(&mut self, waitcnt: u16, stall: &dyn Fn(u32) -> u8) -> Option<DmaTransfer> {
         let channel = self.channels.iter().position(|dma| dma.active)?;
         let dma = &mut self.channels[channel];
-        if dma.delay != 0 {
-            dma.delay -= 1;
-            if dma.delay != 0 {
-                return None;
-            }
+        if !tick_delay(dma) {
+            return None;
         }
         if dma.completing {
             let interrupt = dma.completion_interrupt;
@@ -224,30 +221,7 @@ impl GbaDma {
         } else {
             source
         };
-        let is_seq_src = if dma.is_first {
-            false
-        } else {
-            let prev = dma.prev_src;
-            let cur = bus_src;
-            let same_block = (cur & !0x1FFFF) == (prev & !0x1FFFF);
-            let src_mode = source_mode(dma.control);
-            let seq = match src_mode {
-                1 => cur == prev.wrapping_sub(u32::from(width)),
-                0 => cur == prev.wrapping_add(u32::from(width)),
-                // GBATEK transfer rate ("Except for the first data unit,
-                // all units are transferred by sequential reads and writes").
-                _ => true,
-            };
-            if (0x08000000..=0x0DFFFFFF).contains(&bus_src) {
-                // 128K blocks force N (GBATEK GamePak Prefetch), except the
-                // final unit: N/S describes the gap to a successor access,
-                // and the last unit has none (nba 128kb-boundary late-cross
-                // measures S-cost while early/mid crosses measure N).
-                seq && (same_block || dma.remaining == 1)
-            } else {
-                seq
-            }
-        };
+        let is_seq_src = seq_src_active(dma, bus_src, width);
         // GBATEK transfer rate ("Except for the first data unit, all
         // units are transferred by sequential reads and writes"): every
         // destination mode, including fixed, is sequential after the
@@ -296,56 +270,18 @@ impl GbaDma {
         let pre_read_idle = dma.burst_idle;
         let pre_write_idle = dma.burst_idle + src_idle;
         dma.burst_idle += src_idle + dst_idle;
-        dma.current_source = advance(dma.current_source, source_mode(dma.control), width, false);
-        // Data stream: forced increment inside GamePak ROM, re-evaluated
-        // per unit on region crossing; programmed mode elsewhere, where it
-        // coincides with the counter above.
-        let data_source = dma.data_source & !(u32::from(width) - 1);
-        let data_mode = if is_rom(data_source) {
-            0
-        } else {
-            source_mode(dma.control)
-        };
-        dma.data_source = advance(dma.data_source, data_mode, width, false);
-        if sound_dma(channel, dma.control) {
-            // GBATEK DMA: sound FIFO transfers never increment the
-            // destination; the 4x32-bit burst always lands in the FIFO.
-        } else {
-            dma.current_destination = advance(
-                dma.current_destination,
-                destination_mode(dma.control),
-                width,
-                true,
-            );
-        }
-        dma.prev_src = bus_src;
-        dma.prev_dst = destination;
-        let was_first = dma.is_first;
-        dma.is_first = false;
-        dma.remaining -= 1;
-        let finished = dma.remaining == 0;
-        if finished {
-            dma.completing = true;
-            dma.completion_interrupt = dma.control & (1 << 14) != 0;
-            // No completion tail: the corrected CPU model needs none.
-        }
-        Some(DmaTransfer {
+        Some(finish_unit(
+            dma,
             channel,
-            source,
-            data_source,
-            destination,
-            width,
-            pre_read_idle,
-            pre_write_idle,
-            shift_primed: dma.shift_primed,
-            latched_value: dma.latch,
-            // `remaining` already counts down past this unit, and
-            // `was_first` marks the burst head: only a lone unit
-            // (remaining == 0 after decrement with was_first) skips the
-            // pre-increment; every unit of a multi-unit burst shifts,
-            // including the last (burst-into-tears TIME pin).
-            single_unit: dma.remaining == 0 && was_first,
-        })
+            UnitOut {
+                source,
+                destination,
+                width,
+                bus_src,
+                pre_read_idle,
+                pre_write_idle,
+            },
+        ))
     }
 
     pub fn take_completion_interrupts(&mut self) -> u16 {
@@ -529,6 +465,105 @@ fn timing_for(_channel: usize, control: u16) -> DmaTrigger {
 /// channels fall through to normal timing.
 fn sound_dma(channel: usize, control: u16) -> bool {
     (channel == 1 || channel == 2) && timing(control) == DmaTrigger::Special
+}
+
+/// Count one delay tick down; true once the unit may issue.
+fn tick_delay(dma: &mut DmaChannel) -> bool {
+    if dma.delay == 0 {
+        return true;
+    }
+    dma.delay -= 1;
+    dma.delay == 0
+}
+
+/// Source N/S for this unit (false on the burst head).
+fn seq_src_active(dma: &DmaChannel, bus_src: u32, width: u8) -> bool {
+    if dma.is_first {
+        return false;
+    }
+    let same_block = (bus_src & !0x1FFFF) == (dma.prev_src & !0x1FFFF);
+    let seq = match source_mode(dma.control) {
+        1 => bus_src == dma.prev_src.wrapping_sub(u32::from(width)),
+        0 => bus_src == dma.prev_src.wrapping_add(u32::from(width)),
+        // GBATEK transfer rate ("Except for the first data unit,
+        // all units are transferred by sequential reads and writes").
+        _ => true,
+    };
+    if !is_rom(bus_src) {
+        return seq;
+    }
+    // 128K blocks force N (GBATEK GamePak Prefetch), except the
+    // final unit: N/S describes the gap to a successor access,
+    // and the last unit has none (nba 128kb-boundary late-cross
+    // measures S-cost while early/mid crosses measure N).
+    seq && (same_block || dma.remaining == 1)
+}
+
+/// Unit fields consumed by the advance-and-emit tail.
+struct UnitOut {
+    source: u32,
+    destination: u32,
+    width: u8,
+    bus_src: u32,
+    pre_read_idle: u32,
+    pre_write_idle: u32,
+}
+
+/// Advance the address streams and emit the transfer descriptor.
+fn finish_unit(dma: &mut DmaChannel, channel: usize, unit: UnitOut) -> DmaTransfer {
+    dma.current_source = advance(
+        dma.current_source,
+        source_mode(dma.control),
+        unit.width,
+        false,
+    );
+    // Data stream: forced increment inside GamePak ROM, re-evaluated
+    // per unit on region crossing; programmed mode elsewhere, where it
+    // coincides with the counter above.
+    let data_source = dma.data_source & !(u32::from(unit.width) - 1);
+    let data_mode = if is_rom(data_source) {
+        0
+    } else {
+        source_mode(dma.control)
+    };
+    dma.data_source = advance(dma.data_source, data_mode, unit.width, false);
+    if !sound_dma(channel, dma.control) {
+        // GBATEK DMA: sound FIFO transfers never increment the
+        // destination; the 4x32-bit burst always lands in the FIFO.
+        dma.current_destination = advance(
+            dma.current_destination,
+            destination_mode(dma.control),
+            unit.width,
+            true,
+        );
+    }
+    dma.prev_src = unit.bus_src;
+    dma.prev_dst = unit.destination;
+    let was_first = dma.is_first;
+    dma.is_first = false;
+    dma.remaining -= 1;
+    if dma.remaining == 0 {
+        dma.completing = true;
+        dma.completion_interrupt = dma.control & (1 << 14) != 0;
+        // No completion tail: the corrected CPU model needs none.
+    }
+    DmaTransfer {
+        channel,
+        source: unit.source,
+        data_source,
+        destination: unit.destination,
+        width: unit.width,
+        pre_read_idle: unit.pre_read_idle,
+        pre_write_idle: unit.pre_write_idle,
+        shift_primed: dma.shift_primed,
+        latched_value: dma.latch,
+        // `remaining` already counts down past this unit, and
+        // `was_first` marks the burst head: only a lone unit
+        // (remaining == 0 after decrement with was_first) skips the
+        // pre-increment; every unit of a multi-unit burst shifts,
+        // including the last (burst-into-tears TIME pin).
+        single_unit: dma.remaining == 0 && was_first,
+    }
 }
 
 pub(crate) fn is_rom(address: u32) -> bool {
