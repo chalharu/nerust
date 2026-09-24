@@ -1,19 +1,13 @@
-pub mod arm;
-pub mod arm_opcodes;
 pub mod micro_op;
-pub mod thumb;
-pub mod thumb_opcodes;
+pub(crate) mod semantics;
 
 #[cfg(test)]
 mod micro_op_tests;
-#[cfg(test)]
-mod sonar_coverage_tests;
 
+use crate::cpu::micro_op::HLE_IRQ_RETURN_TRAMPOLINE;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
-
-const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
 /// GBA CPU (ARM7TDMI) — 3段パイプライン。
 pub struct GbaCpu {
@@ -190,41 +184,33 @@ impl GbaCpu {
         Some(entry_bus + prologue)
     }
 
-    /// 1命令実行し、消費T-cycleを返す。
+    /// 1命令実行し、消費T-cycleを返す。micro-op drainのみ
+    /// （全命令クラスがexpandするためfallbackなし）。
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        // Covered micro-ops drain here atomically (legacy totals kept); the rest stays on the legacy path.
-        // IRQ-handler steps also stay legacy.
-        if self.irq_return_stack.is_empty() {
-            let is_thumb = self.regs.cpsr_t();
-            let mut acc = 0i64;
-            let mut drained = false;
-            while let Some(c) = crate::cpu::micro_op::step_op(
-                &mut self.regs,
-                bus,
-                &mut self.pipeline,
-                &mut self.micro_queue,
-                is_thumb,
-            ) {
-                acc += c;
-                drained = true;
-                if !self.micro_pending() {
-                    break;
-                }
-            }
-            if drained {
-                return acc.max(1) as u32;
+        // Micro-ops drain here atomically, including IRQ-handler steps;
+        // trampoline returns land the HLE epilogue in retire.
+        let is_thumb = self.regs.cpsr_t();
+        let mut acc = 0i64;
+        while let Some(c) = crate::cpu::micro_op::step_op(
+            &mut self.regs,
+            bus,
+            &mut self.pipeline,
+            &mut self.micro_queue,
+            is_thumb,
+            &mut self.irq_return_stack,
+        ) {
+            acc += c;
+            if !self.micro_pending() {
+                break;
             }
         }
-        self.step_legacy(bus)
+        acc.max(1) as u32
     }
 
     /// Single micro-op step for the system driver (per-op ticks). Returns
     /// the op's true cost without any floor; `None` only on an uncovered
     /// fill (queue untouched, caller falls back).
     pub(crate) fn step_op(&mut self, bus: &mut GbaMemoryBus) -> Option<i64> {
-        if !self.irq_return_stack.is_empty() {
-            return None;
-        }
         let is_thumb = self.regs.cpsr_t();
         crate::cpu::micro_op::step_op(
             &mut self.regs,
@@ -232,121 +218,8 @@ impl GbaCpu {
             &mut self.pipeline,
             &mut self.micro_queue,
             is_thumb,
+            &mut self.irq_return_stack,
         )
-    }
-
-    /// Legacy instruction-atomic step (kept as the fallback for uncovered
-    /// classes and as the differential oracle in `micro_op` tests).
-    pub(crate) fn step_legacy(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        bus.take_access_wait_cycles();
-        bus.set_current_pc(self.regs.pc());
-        let is_thumb = self.regs.cpsr_t();
-        let cycles = if is_thumb {
-            self.step_thumb(bus)
-        } else {
-            self.step_arm(bus)
-        };
-        // Signed bus take: prefetch erases drive the accumulator negative
-        // mid-instruction; the per-instruction net plus the base stays
-        // positive (clamped at 1, covering the 1-cycle prefetch base).
-        (cycles as i64 + bus.take_access_wait_cycles()).max(1) as u32
-    }
-
-    fn step_arm(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        let pc = self.regs.pc();
-        // PCは実行中命令+8。pipeline[0]を実行し、pipeline[1]を次へ送る。
-        let fetched = bus.fetch32(pc);
-        let execute = self.pipeline[0];
-        self.pipeline[0] = self.pipeline[1];
-        self.pipeline[1] = fetched;
-        self.regs.clear_pc_written();
-        let cycles = arm::decode_arm(&mut self.regs, bus, execute);
-        let pc_written = self.regs.take_pc_written();
-        if pc_written {
-            // True when this pc-write returns from a user IRQ handler
-            // through the HLE trampoline (HLE-as-code epilogue, see
-            // `bios_irq_epilogue_cycles`).
-            let mut irq_epilogue = 0;
-            if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
-                && let Some((return_address, saved)) = self.irq_return_stack.pop()
-            {
-                self.regs.set_cpsr(self.regs.spsr());
-                for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
-                    self.regs.set_r(register, value);
-                }
-                // IRQ round-trip complete: the BIOS epilogue's last opcode
-                // (0xE55EC002) is latched for protected reads (jsmolka t004).
-                // After an IntrWait-family wake the BIOS exit path runs
-                // instead (0xE3A02004, mgba-suite "BIOS load").
-                if bus.take_bios_wait_exit() {
-                    bus.set_bios_prefetch(0xE3A02004);
-                } else {
-                    bus.set_bios_prefetch(0xE55EC002);
-                }
-                self.regs.set_pc(return_address);
-                irq_epilogue = bus.bios_irq_epilogue_cycles();
-            }
-            self.pipeline = [0; 2];
-            bus.set_current_pc(self.regs.pc());
-            bus.invalidate_prefetch_for_branch();
-            // ARM->Thumb gives the prefetcher time to fill at the final
-            // target. Apply this after ordinary branch invalidation so the
-            // prefilled stream is active rather than marked drain-only.
-            if self.regs.cpsr_t() {
-                bus.refill_prefetch_for_switch(self.regs.pc());
-            }
-            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
-            return cycles + irq_epilogue;
-        } else {
-            self.regs.set_pc(pc.wrapping_add(4));
-        }
-        cycles
-    }
-
-    fn step_thumb(&mut self, bus: &mut GbaMemoryBus) -> u32 {
-        let pc = self.regs.pc();
-        let fetched = bus.fetch16(pc) as u32;
-        let execute = (self.pipeline[0] & 0xFFFF) as u16;
-        self.pipeline[0] = self.pipeline[1];
-        self.pipeline[1] = fetched;
-        self.regs.clear_pc_written();
-        let cycles = thumb::decode_thumb(&mut self.regs, bus, execute);
-        if self.regs.take_pc_written() {
-            // Thumb user handlers return through the same trampoline (the
-            // ARM side has handled it all along; the Thumb side previously
-            // lacked the check). Same epilogue charge as ARM.
-            let mut irq_epilogue = 0;
-            if self.regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
-                && let Some((return_address, saved)) = self.irq_return_stack.pop()
-            {
-                self.regs.set_cpsr(self.regs.spsr());
-                for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
-                    self.regs.set_r(register, value);
-                }
-                // Same as-code epilogue as ARM (and same IntrWait-exit
-                // latch restore as above).
-                if bus.take_bios_wait_exit() {
-                    bus.set_bios_prefetch(0xE3A02004);
-                } else {
-                    bus.set_bios_prefetch(0xE55EC002);
-                }
-                self.regs.set_pc(return_address);
-                irq_epilogue = bus.bios_irq_epilogue_cycles();
-            }
-            self.pipeline = [0; 2];
-            bus.set_current_pc(self.regs.pc());
-            bus.invalidate_prefetch_for_branch();
-            // Thumb->ARM prefill starts a fresh active stream after the
-            // normal branch state has been invalidated.
-            if !self.regs.cpsr_t() {
-                bus.refill_prefetch_for_switch(self.regs.pc());
-            }
-            fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
-            return cycles + irq_epilogue;
-        } else {
-            self.regs.set_pc(pc.wrapping_add(2));
-        }
-        cycles
     }
 }
 

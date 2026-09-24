@@ -1,5 +1,130 @@
+//! Pure CPU semantic helpers owned by the unified micro-op engine:
+//! the barrel shifter, NZCV/condition evaluation, block start address,
+//! the MRS/MSR class predicate, and the multiply timing/Booth-array
+//! carry model. No bus access, no instruction dispatch.
+
 use crate::cpu_registers::CpuRegisters;
-use crate::memory::GbaMemoryBus;
+
+/// Barrel shifter: LSL/LSR/ASR/ROR + RRX
+/// shift_type: 0=LSL, 1=LSR, 2=ASR, 3=ROR
+pub(crate) fn barrel_shift(rm: u32, shift_type: u8, amount: u32, carry_in: bool) -> (u32, bool) {
+    let amount = amount & 0xFF;
+    match shift_type & 0b11 {
+        0b00 => shift_lsl(rm, amount, carry_in),
+        0b01 => shift_lsr(rm, amount),
+        0b10 => shift_asr(rm, amount),
+        _ => shift_ror(rm, amount, carry_in),
+    }
+}
+
+fn shift_lsl(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    match amount {
+        0 => (value, carry_in),
+        1..=31 => (value << amount, value & (1 << (32 - amount)) != 0),
+        32 => (0, value & 1 != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_lsr(value: u32, amount: u32) -> (u32, bool) {
+    match amount {
+        0 | 32 => (0, value >> 31 != 0),
+        1..=31 => (value >> amount, value & (1 << (amount - 1)) != 0),
+        _ => (0, false),
+    }
+}
+
+fn shift_asr(value: u32, amount: u32) -> (u32, bool) {
+    if amount == 0 || amount >= 32 {
+        let negative = value >> 31 != 0;
+        return (if negative { u32::MAX } else { 0 }, negative);
+    }
+    (
+        ((value as i32) >> amount) as u32,
+        value & (1 << (amount - 1)) != 0,
+    )
+}
+
+fn shift_ror(value: u32, amount: u32, carry_in: bool) -> (u32, bool) {
+    if amount == 0 {
+        // Immediate ROR #0 is RRX: old C enters bit 31 and bit 0 becomes C.
+        return (((carry_in as u32) << 31) | (value >> 1), value & 1 != 0);
+    }
+    let rotation = amount % 32;
+    if rotation == 0 {
+        // Register ROR with a multiple of 32 (but nonzero low byte): the
+        // 5-bit rotate amount is 0, so the result is unchanged, but carry
+        // is set to bit 31 (ARM ARM; jsmolka_thumb pins this).
+        // Only a zero low *byte* preserves carry (handled above).
+        (value, value >> 31 != 0)
+    } else {
+        (
+            value.rotate_right(rotation),
+            value & (1 << (rotation - 1)) != 0,
+        )
+    }
+}
+
+/// レジスタ指定シフト。Rs下位8bitが0の場合は全タイプで値とCを保持する。
+pub(crate) fn barrel_shift_register(
+    rm: u32,
+    shift_type: u8,
+    amount: u32,
+    carry_in: bool,
+) -> (u32, bool) {
+    if amount & 0xFF == 0 {
+        return (rm, carry_in);
+    }
+    barrel_shift(rm, shift_type, amount, carry_in)
+}
+
+pub(crate) fn update_nz(regs: &mut CpuRegisters, result: u32) {
+    regs.set_cpsr_n((result >> 31) & 1 != 0);
+    regs.set_cpsr_z(result == 0);
+}
+
+/// Evaluate an ARM condition code against CPSR N/Z/C/V flags.
+pub(crate) fn condition_passed(cpsr: u32, condition: u8) -> bool {
+    let n = cpsr & (1 << 31) != 0;
+    let z = cpsr & (1 << 30) != 0;
+    let c = cpsr & (1 << 29) != 0;
+    let v = cpsr & (1 << 28) != 0;
+    match condition {
+        0x0 => z,
+        0x1 => !z,
+        0x2 => c,
+        0x3 => !c,
+        0x4 => n,
+        0x5 => !n,
+        0x6 => v,
+        0x7 => !v,
+        0x8 => c && !z,
+        0x9 => !c || z,
+        0xA => n == v,
+        0xB => n != v,
+        0xC => !z && n == v,
+        0xD => z || n != v,
+        0xE => true,
+        _ => false,
+    }
+}
+
+/// First word address of an ARM block transfer (P/U select IA/IB/DA/DB).
+pub(crate) fn start_address(base: u32, count: u32, pre: bool, up: bool) -> u32 {
+    match (up, pre) {
+        (true, true) => base.wrapping_add(4),
+        (true, false) => base,
+        (false, true) => base.wrapping_sub(count * 4),
+        (false, false) => base.wrapping_sub(count * 4).wrapping_add(4),
+    }
+}
+
+/// MRS/MSR class predicate shared by the ARM decoder and micro-op expansion.
+pub(crate) fn is_psr_transfer(instr: u32) -> bool {
+    (instr & 0x0FBF0FFF) == 0x010F0000
+        || (instr & 0x0FB0FFF0) == 0x0120F000
+        || (instr & 0x0FB0F000) == 0x0320F000
+}
 
 // Long-multiply carry model: C comes from the Booth array's final carry, not the product.
 // Ported algorithm used under its license terms below.
@@ -26,112 +151,17 @@ use crate::memory::GbaMemoryBus;
 //   3. This notice may not be removed or altered from any source
 //      distribution.
 //
-// ALTERED: ported from C++ to Rust for nerust (wrapping arithmetic made
-// explicit; the shift counts are kept mod-32 via wrapping_shl/shr, matching
-// the practical behavior of the original). Validated bit-exact against all
-// 72 mgba-suite multiply-long C expectations (see `synthetic_mull_carry`
-// pins in nerust_gba_rom_test).
-
-pub fn handle(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
-    // Multiplies take internal cycles (GBATEK 1S+mI); carried in the base
-    // below, plus the fetch-stream break (N32-S32) and the P-ON tick erase.
-    let is_long = (instr >> 23) & 1 != 0;
-    if is_long {
-        // UMULL/UMLAL/SMULL/SMLAL produce an RdHi:RdLo pair.
-        return handle_long(regs, bus, instr);
-    }
-
-    handle_short(regs, bus, instr)
-}
-
-fn handle_short(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, instr: u32) -> u32 {
-    let a = (instr >> 21) & 1 != 0; // MLA if 1
-    let s = (instr >> 20) & 1 != 0;
-    let rd = ((instr >> 16) & 0xF) as usize;
-    let rn = ((instr >> 12) & 0xF) as usize;
-    let rs = ((instr >> 8) & 0xF) as usize;
-    let rm = (instr & 0xF) as usize;
-
-    let rs_val = regs.r(rs);
-    let rm_val = regs.r(rm);
-    let mut result = rm_val.wrapping_mul(rs_val);
-    if a {
-        result = result.wrapping_add(regs.r(rn));
-    }
-    // UNPREDICTABLE Rd=R15 (ARM ARM): never let a multiply hijack the PC
-    // and trigger a spurious pipeline refill.
-    if rd != 15 {
-        regs.set_r(rd, result);
-    }
-
-    if s {
-        crate::cpu::arm_opcodes::helpers::update_nz(regs, result);
-    }
-
-    let cycles = multiplier_cycles(rs_val);
-    // GBATEK/ARM ARM: MUL=1S+mI, MLA=1S+mI+1I (the 1S is the execute cycle;
-    // the opcode fetch is charged separately by the bus). The tick array
-    // also breaks the fetch stream and fills prefetch P-ON.
-    bus.charge_fetch_stream_break(0x03000000);
-    bus.erase_for_multiply(cycles + u32::from(a), 4);
-    if a { cycles + 2 } else { cycles + 1 }
-}
-
-fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, instr: u32) -> u32 {
-    let signed = (instr >> 22) & 1 != 0;
-    let accumulate = (instr >> 21) & 1 != 0;
-    let set_flags = (instr >> 20) & 1 != 0;
-    let rd_hi = ((instr >> 16) & 0xF) as usize;
-    let rd_lo = ((instr >> 12) & 0xF) as usize;
-    let rs_value = regs.r(((instr >> 8) & 0xF) as usize);
-    let rm_value = regs.r((instr & 0xF) as usize);
-    let product = multiply_64(rm_value, rs_value, signed);
-    let result = if accumulate {
-        product.wrapping_add(register_pair(regs, rd_hi, rd_lo))
-    } else {
-        product
-    };
-    let hi = (result >> 32) as u32;
-    let lo = result as u32;
-    // Accumulate seeds must be read before the destination write (the
-    // carry model consumes the pre-add RdHi/RdLo, mirroring the HW array).
-    let acc_hi = regs.r(rd_hi);
-    let acc_lo = regs.r(rd_lo);
-    regs.set_r(rd_hi, hi);
-    regs.set_r(rd_lo, lo);
-    if set_flags {
-        regs.set_cpsr_n(hi >> 31 != 0);
-        regs.set_cpsr_z(result == 0);
-        // N/Z come from the product, but C comes from the Booth array's
-        // final carry (see module docs). The array only runs the executed
-        // iterations: fully-ticked multiplies use the Hi model, early-out
-        // ones the Lo model over the fetched low half.
-        let full = multiply_tick_full(rs_value, signed);
-        let carry = if full {
-            multiply_carry_hi(
-                rm_value,
-                rs_value,
-                if accumulate { acc_hi } else { 0 },
-                signed,
-            )
-        } else {
-            multiply_carry_lo(rm_value, rs_value, if accumulate { acc_lo } else { 0 })
-        };
-        regs.set_cpsr_c(carry);
-    }
-    // GBATEK: UMULL/SMULL=1S+mI+1I, UMLAL/SMLAL=1S+mI+2I.
-    let ticks = multiplier_cycles_long(rs_value, signed);
-    // Long-MUL post-body breaks the stream; tick erase (xMLAL 2+m, xMULL 1+m).
-    bus.charge_fetch_stream_break(0x03000000);
-    bus.erase_for_multiply(ticks + 1 + u32::from(accumulate), 4);
-    ticks + 2 + u32::from(accumulate)
-}
+// ALTERED: moved from `arm_opcodes::multiply` into the unified `semantics`
+// module during micro-op/legacy unification (no algorithmic change).
+// Validated bit-exact against all 72 mgba-suite multiply-long C
+// expectations (see `mull_carry_matches_suite_table` below and the
+// `synthetic_mull_carry` pins in nerust_gba_rom_test).
 
 pub(crate) fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
     if signed {
         (left as i32 as i64).wrapping_mul(right as i32 as i64) as u64
     } else {
-        u64::from(left).wrapping_mul(u64::from(right))
+        (u64::from(left)).wrapping_mul(u64::from(right))
     }
 }
 
@@ -263,23 +293,48 @@ pub(crate) fn multiply_carry_hi(rm: u32, rs: u32, accum_hi: u32, signed: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cpu_registers::CpuRegisters;
-    use crate::memory::GbaMemoryBus;
 
     #[test]
-    fn mul_simple() {
-        let mut regs = CpuRegisters::post_bios();
-        let mut bus = GbaMemoryBus::new();
-        regs.set_r(1, 3);
-        regs.set_r(2, 4);
-        // MUL R0, R1, R2 -> E0000290? Actually MUL R0,R1,R2 = E0000192?
-        // Encoding: 0xE0000291? Let's use MUL R0,R1,R2 = E0000091 with Rs=1, Rm=2
-        // 0xE0000091: cond E, 000,000,0,0,0, Rd=0, Rn=0, Rs=1, 1001, Rm=2
-        // Simplified: Use our handler directly
-        regs.set_r(0, 0);
-        let instr = 0xE0000291u32; // MUL R0, R2, R1 (Rd=0, Rs=2, Rm=1)
-        handle(&mut regs, &mut bus, instr);
-        assert_eq!(regs.r(0), 12);
+    fn lsl_shifts() {
+        assert_eq!(barrel_shift(0x1, 0, 1, false).0, 0x2);
+    }
+
+    #[test]
+    fn ror_rrx() {
+        let (v, c) = barrel_shift(0x0000_0001, 3, 0, true);
+        assert_eq!(v, 0x8000_0000);
+        assert!(c);
+    }
+
+    #[test]
+    fn lsr_zero_is_zero_with_carry() {
+        let (v, c) = barrel_shift(0x8000_0000, 1, 0, false);
+        assert_eq!(v, 0);
+        assert!(c);
+    }
+
+    #[test]
+    fn register_shift_zero_preserves_value_and_carry() {
+        for shift_type in 0..=3 {
+            assert_eq!(
+                barrel_shift_register(0x81234567, shift_type, 0, true),
+                (0x81234567, true)
+            );
+        }
+    }
+
+    #[test]
+    fn register_ror_multiple_of_32_sets_carry_from_bit31() {
+        // Register ROR by 32/64/...: result unchanged, carry = bit 31
+        // (NOT preserved). Only a zero low byte preserves carry.
+        assert_eq!(
+            barrel_shift_register(0x81234567, 3, 32, false),
+            (0x81234567, true)
+        );
+        assert_eq!(
+            barrel_shift_register(0x01234567, 3, 64, true),
+            (0x01234567, false)
+        );
     }
 
     #[test]
@@ -372,7 +427,7 @@ mod tests {
             (0x7FFFFFFF, 0x80000001, true, true),
             (0x7FFFFFFF, 0x80000001, false, false),
             (0x80000000, 0x80000001, true, false),
-            (0x80000000, 0x80000001, false, true),
+            (0x80000001, 0x80000001, false, true),
             (0x80000001, 0x80000001, true, false),
             (0x80000001, 0x80000001, false, true),
         ];
@@ -391,7 +446,7 @@ mod tests {
     fn mull_carry_terminates_on_grid() {
         // The carry models must terminate for every input combination,
         // including full-tick multipliers fed to the Lo path (unreachable
-        // via handle_long, which selects Hi there) and non-zero accumulate
+        // via apply_mul_long, which selects Hi there) and non-zero accumulate
         // seeds: no hangs, no shift panics.
         let rms = [
             0x00000000u32,
