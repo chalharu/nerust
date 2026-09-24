@@ -5,6 +5,7 @@
 pub mod psg;
 
 use nerust_core_traits::audio::StereoSample;
+use nerust_sound_filter::{Filter, IirFilter};
 
 use self::psg::{Noise, Square, Wave};
 
@@ -23,6 +24,14 @@ pub const MIX_RATE: u32 = 32_768;
 const T_CYCLES_PER_MIX: u64 = 512;
 /// Frame sequencer: 512Hz steps (32768 T-cycles each).
 const T_CYCLES_PER_SEQ_STEP: u64 = 32_768;
+/// DC-blocking high-pass on the drained device-rate output (first-order,
+/// negligible in-band effect; provisional, revisit with measurements in
+/// Phase 12). `SimpleDownSampler` does not apply here: the native grid
+/// (32.768kHz) sits *below* the device rate (48kHz), i.e. the rate step is
+/// an upsample, so only the `IirFilter` half of `nerust_sound_filter` fits.
+const OUTPUT_HPF_CUTOFF_HZ: f32 = 20.0;
+/// Default device rate for the output HPF (matches `AudioBackend` default).
+const OUTPUT_HPF_DEFAULT_RATE: u32 = 48_000;
 
 #[derive(Debug)]
 pub struct GbaApu {
@@ -79,6 +88,11 @@ pub struct GbaApu {
     /// Device-rate resample cursor over the grid timeline.
     rs_pos: f64,
     rs_prev: (f32, f32),
+    /// Stereo DC-block state for the drained output (rebuilt when the
+    /// device rate changes; filter memory, excluded from save states).
+    output_hpf_l: IirFilter,
+    output_hpf_r: IirFilter,
+    output_hpf_rate: u32,
 }
 
 impl Default for GbaApu {
@@ -126,6 +140,15 @@ impl Default for GbaApu {
             duty2: 0,
             rs_pos: 0.0,
             rs_prev: (0.0, 0.0),
+            output_hpf_l: IirFilter::get_highpass_filter(
+                OUTPUT_HPF_DEFAULT_RATE as f32,
+                OUTPUT_HPF_CUTOFF_HZ,
+            ),
+            output_hpf_r: IirFilter::get_highpass_filter(
+                OUTPUT_HPF_DEFAULT_RATE as f32,
+                OUTPUT_HPF_CUTOFF_HZ,
+            ),
+            output_hpf_rate: OUTPUT_HPF_DEFAULT_RATE,
         }
     }
 }
@@ -182,6 +205,11 @@ impl GbaApu {
         self.duty2 = 0;
         self.rs_pos = 0.0;
         self.rs_prev = (0.0, 0.0);
+        // Fresh filter memory (host-side only); keep the device rate so a
+        // non-default backend does not fall back to 48kHz coefficients.
+        let rate = self.output_hpf_rate;
+        self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_r = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
     }
 
     /// Remaining bytes in a DirectSound FIFO.
@@ -530,9 +558,16 @@ impl GbaApu {
 
     /// Drain the grid buffer as device-rate samples (linear interpolation
     /// over the 32.768kHz timeline; cursor persists across frames).
+    /// Each drained sample passes the stereo DC-block HPF
+    /// (`nerust_sound_filter::IirFilter`, rebuilt on device-rate change).
     pub fn drain_resampled(&mut self, rate: u32) -> Vec<StereoSample> {
         if self.mix_buffer.is_empty() || rate == 0 {
             return Vec::new();
+        }
+        if self.output_hpf_rate != rate {
+            self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+            self.output_hpf_r = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
+            self.output_hpf_rate = rate;
         }
         let step = f64::from(MIX_RATE) / f64::from(rate);
         let mut out = Vec::new();
@@ -558,6 +593,10 @@ impl GbaApu {
         }
         self.rs_pos = pos - keep_from as f64;
         self.mix_buffer.drain(..keep_from);
+        for sample in &mut out {
+            sample.left = self.output_hpf_l.step(sample.left);
+            sample.right = self.output_hpf_r.step(sample.right);
+        }
         out
     }
     /// Mutable tail of the grid mix buffer (driver-voice fold-in).
@@ -669,5 +708,64 @@ impl GbaApu {
             _ => return false,
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dc_apu(frames: usize, level: f32) -> GbaApu {
+        let mut apu = GbaApu::new();
+        apu.mix_buffer = vec![(level, level); frames];
+        apu
+    }
+
+    #[test]
+    fn output_hpf_blocks_dc_but_passes_edges() {
+        let mut apu = dc_apu(4800, 0.5);
+        let out = apu.drain_resampled(48_000);
+        assert!(!out.is_empty());
+        // Fast edges pass near unity through the first-order HPF...
+        let peak = out.iter().take(10).map(|s| s.left).fold(0.0f32, f32::max);
+        assert!(peak > 0.4, "HPF should pass the leading edge, got {peak}");
+        // ...while sustained DC converges to silence (tau ~= 8ms at 20Hz).
+        let tail = out[out.len() - 1];
+        assert!(
+            tail.left.abs() < 0.01 && tail.right.abs() < 0.01,
+            "DC should converge to 0, got ({}, {})",
+            tail.left,
+            tail.right
+        );
+    }
+
+    #[test]
+    fn output_hpf_rebuilds_on_rate_change() {
+        let mut apu = dc_apu(1024, 0.25);
+        let first = apu.drain_resampled(48_000);
+        assert!(!first.is_empty());
+        assert_eq!(apu.output_hpf_rate, 48_000);
+        apu.mix_buffer = vec![(0.25, -0.25); 1024];
+        let second = apu.drain_resampled(44_100);
+        assert!(!second.is_empty());
+        assert_eq!(apu.output_hpf_rate, 44_100);
+        assert!(
+            second
+                .iter()
+                .all(|s| s.left.is_finite() && s.right.is_finite())
+        );
+    }
+
+    #[test]
+    fn output_hpf_state_clears_on_sound_reset() {
+        let mut apu = dc_apu(4800, 0.5);
+        let _ = apu.drain_resampled(48_000);
+        apu.reset_sound();
+        // Fresh filter memory: the next leading edge passes near unity again
+        // instead of continuing from the converged (silent) state.
+        apu.mix_buffer = vec![(0.5, 0.5); 64];
+        let out = apu.drain_resampled(48_000);
+        let peak = out.iter().map(|s| s.left).fold(0.0f32, f32::max);
+        assert!(peak > 0.4, "reset should clear HPF memory, got {peak}");
     }
 }
