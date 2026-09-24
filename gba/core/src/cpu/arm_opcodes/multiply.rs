@@ -127,7 +127,7 @@ fn handle_long(regs: &mut CpuRegisters, bus: &mut crate::memory::GbaMemoryBus, i
     ticks + 2 + u32::from(accumulate)
 }
 
-fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
+pub(crate) fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
     if signed {
         (left as i32 as i64).wrapping_mul(right as i32 as i64) as u64
     } else {
@@ -135,7 +135,7 @@ fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
     }
 }
 
-fn register_pair(regs: &CpuRegisters, hi: usize, lo: usize) -> u64 {
+pub(crate) fn register_pair(regs: &CpuRegisters, hi: usize, lo: usize) -> u64 {
     (u64::from(regs.r(hi)) << 32) | u64::from(regs.r(lo))
 }
 
@@ -163,7 +163,7 @@ pub(crate) fn multiplier_cycles_long(rs_val: u32, signed: bool) -> u32 {
 /// Pure predicate mirroring the tick loop: `true` selects the Hi carry
 /// model, `false` the Lo model. Timing is unchanged (cycle counts still
 /// come from `multiplier_cycles_long`).
-fn multiply_tick_full(rs_val: u32, signed: bool) -> bool {
+pub(crate) fn multiply_tick_full(rs_val: u32, signed: bool) -> bool {
     let mut mask = 0xFFFFFF00u32;
     loop {
         let m = rs_val & mask;
@@ -183,7 +183,7 @@ fn multiply_tick_full(rs_val: u32, signed: bool) -> bool {
 
 /// Booth-array carry for early-out (partial) multiplies, over the low
 /// half. `accum` is the pre-add RdLo (0 without accumulate).
-fn multiply_carry_lo(rm: u32, rs: u32, accum: u32) -> bool {
+pub(crate) fn multiply_carry_lo(rm: u32, rs: u32, accum: u32) -> bool {
     // Set low bit of multiplicand to cause negation to invert the upper
     // bits. This bit cannot propagate to the resulting carry bit.
     let multiplicand = rm | 1;
@@ -218,7 +218,7 @@ fn multiply_carry_lo(rm: u32, rs: u32, accum: u32) -> bool {
 
 /// Booth-array carry for fully-ticked multiplies, over the high half.
 /// `accum_hi` is the pre-add RdHi (0 without accumulate).
-fn multiply_carry_hi(rm: u32, rs: u32, accum_hi: u32, signed: bool) -> bool {
+pub(crate) fn multiply_carry_hi(rm: u32, rs: u32, accum_hi: u32, signed: bool) -> bool {
     // Only last 3 booth iterations are relevant to output carry.
     // Reduce scale of both inputs to get upper bits of 64-bit booth addends
     // in upper bits of 32-bit values, while handling sign extension.
