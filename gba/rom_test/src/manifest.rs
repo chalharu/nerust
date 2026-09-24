@@ -14,6 +14,8 @@ pub struct RomManifest {
     pub suites: Vec<RomSuite>,
     #[serde(default)]
     pub completion_profiles: BTreeMap<String, CompletionSpec>,
+    #[serde(default)]
+    pub expected_failures: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +40,81 @@ pub struct RomCase {
     pub description: String,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub inputs: Vec<InputEvent>,
+    /// Per-case reference image path (relative to suite dir). Overrides ROM-based resolution.
+    #[serde(default)]
+    pub reference: Option<String>,
+    #[serde(default)]
+    pub skip_screenshot: bool,
+    /// Headless input script for menu-driven multi-test ROMs
+    /// (mgba-emu/suite): when non-empty, the fixed-cycle loop is replaced
+    /// by scripted press-and-wait steps (see [`ScriptStep`]).
+    #[serde(default)]
+    pub script: Vec<ScriptStep>,
+    /// Subtest names (suite-log check names) allowed to fail without
+    /// failing the case. Case-level pass/fail stays in `expected_failures`.
+    #[serde(default)]
+    pub expected_checks: Vec<String>,
+}
+
+/// One headless-driver step: hold `press` buttons until a fresh debug-log
+/// line contains `until_log`, or for `wait_frames` video frames (exactly
+/// one of the two must be set). Buttons are released after the step plus
+/// a short settle so the guest observes key transitions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScriptStep {
+    #[serde(default)]
+    pub press: Vec<GbaButton>,
+    #[serde(default)]
+    pub until_log: Option<String>,
+    #[serde(default)]
+    pub wait_frames: Option<u64>,
+}
+
+/// キー入力イベント。GBC の inputs 仕様と同一。
+#[derive(Debug, Clone, Deserialize)]
+pub struct InputEvent {
+    /// 何 T-cycle 経過後に適用するか
+    pub cycle: usize,
+    /// 押下するボタンのリスト。空なら全ボタン離す。
+    #[serde(default)]
+    pub buttons: Vec<GbaButton>,
+}
+
+/// GBA ボタン列挙型。KEYINPUT レジスタの active-low ビットに対応。
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GbaButton {
+    A,
+    B,
+    Select,
+    Start,
+    Right,
+    Left,
+    Up,
+    Down,
+    L,
+    R,
+}
+
+impl GbaButton {
+    /// GBA KEYINPUT active-low mask (bit = 0 when pressed)
+    pub fn mask(self) -> u16 {
+        match self {
+            GbaButton::A => 1 << 0,
+            GbaButton::B => 1 << 1,
+            GbaButton::Select => 1 << 2,
+            GbaButton::Start => 1 << 3,
+            GbaButton::Right => 1 << 4,
+            GbaButton::Left => 1 << 5,
+            GbaButton::Up => 1 << 6,
+            GbaButton::Down => 1 << 7,
+            GbaButton::R => 1 << 8,
+            GbaButton::L => 1 << 9,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,6 +130,8 @@ pub struct RomCasePattern {
     pub completion: Option<String>,
     #[serde(default)]
     pub verify: VerifySpec,
+    #[serde(default)]
+    pub skip_screenshot: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +163,7 @@ pub struct MemoryCompletion {
     pub width: u8,
 }
 
+#[derive(Clone, Copy)]
 pub struct SelectedCase<'a> {
     pub suite: &'a RomSuite,
     pub case: &'a RomCase,
@@ -124,6 +204,11 @@ impl RomManifest {
                     completion: pattern.completion.clone(),
                     description: case.description,
                     verify: pattern.verify.clone(),
+                    inputs: Vec::new(),
+                    reference: None,
+                    skip_screenshot: pattern.skip_screenshot,
+                    script: Vec::new(),
+                    expected_checks: Vec::new(),
                 });
             }
             suite.cases.sort_by(|left, right| left.id.cmp(&right.id));
@@ -134,7 +219,30 @@ impl RomManifest {
     pub fn validate(&self) -> Result<(), RomTestError> {
         self.validate_structure()?;
         self.validate_completion_profiles()?;
-        self.validate_suites()
+        self.validate_suites()?;
+        self.validate_expected_failures()
+    }
+
+    fn validate_expected_failures(&self) -> Result<(), RomTestError> {
+        let ids: BTreeSet<String> = self
+            .suites
+            .iter()
+            .flat_map(|suite| &suite.cases)
+            .map(|case| case.id.clone())
+            .collect();
+        for expected in &self.expected_failures {
+            if !ids.contains(expected) {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "expected_failures entry `{}` does not match any case",
+                    expected
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_expected_failure(&self, id: &str) -> bool {
+        self.expected_failures.iter().any(|e| e == id)
     }
 
     fn validate_structure(&self) -> Result<(), RomTestError> {
@@ -186,13 +294,33 @@ impl RomManifest {
                 case.id
             )));
         }
-        if case.rom.is_empty() || case.cycles == 0 || case.verify.is_empty() {
+        if case.rom.is_empty() || case.cycles == 0 {
             return Err(RomTestError::InvalidManifest(format!(
-                "case `{}` needs rom, positive cycles, and verification",
+                "case `{}` needs rom and positive cycles",
                 case.id
             )));
         }
+        // empty verify is allowed for reference-image tests (expected.png/jpg)
         case.verify.validate()?;
+        for (index, step) in case.script.iter().enumerate() {
+            if step.until_log.is_some() == step.wait_frames.is_some() {
+                return Err(RomTestError::InvalidManifest(format!(
+                    "case `{}` script step {index} needs exactly one of until_log, wait_frames",
+                    case.id
+                )));
+            }
+        }
+        if case
+            .inputs
+            .windows(2)
+            .any(|events| events[0].cycle >= events[1].cycle)
+            || case.inputs.iter().any(|event| event.cycle >= case.cycles)
+        {
+            return Err(RomTestError::InvalidManifest(format!(
+                "case `{}` input events must be ordered within its cycle limit",
+                case.id
+            )));
+        }
         if case
             .completion
             .as_ref()
@@ -207,23 +335,64 @@ impl RomManifest {
     }
 
     pub fn select(&self, ids: &[String]) -> Vec<SelectedCase<'_>> {
-        self.suites
+        // Exact IDs win (generated cargo tests rely on single-match).
+        // Otherwise fall back to case-insensitive substring so `memory`
+        // finds `mgba_suite_memory` (cargo-test style filtering).
+        let all: Vec<SelectedCase<'_>> = self
+            .suites
             .iter()
             .flat_map(|suite| {
-                suite
-                    .cases
-                    .iter()
-                    .filter(|case| ids.is_empty() || ids.iter().any(|id| id == &case.id))
-                    .map(|case| SelectedCase {
-                        suite,
-                        case,
-                        completion: case
-                            .completion
-                            .as_ref()
-                            .and_then(|name| self.completion_profiles.get(name)),
-                    })
+                suite.cases.iter().map(|case| SelectedCase {
+                    suite,
+                    case,
+                    completion: case
+                        .completion
+                        .as_ref()
+                        .and_then(|name| self.completion_profiles.get(name)),
+                })
             })
+            .collect();
+        if ids.is_empty() {
+            return all;
+        }
+        let exact: Vec<SelectedCase<'_>> = all
+            .iter()
+            .filter(|selected| ids.iter().any(|id| id == &selected.case.id))
+            .copied()
+            .collect();
+        if !exact.is_empty() {
+            return exact;
+        }
+        all.iter()
+            .filter(|selected| {
+                ids.iter()
+                    .any(|id| Self::matches_substring(&selected.case.id, id))
+            })
+            .copied()
             .collect()
+    }
+
+    fn matches_substring(case_id: &str, filter: &str) -> bool {
+        if filter.is_empty() {
+            return false;
+        }
+        case_id
+            .to_lowercase()
+            .contains(filter.to_lowercase().as_str())
+    }
+
+    /// IDs containing `filter` (case-insensitive), for "no match" hints.
+    pub fn suggest_ids(&self, filter: &str) -> Vec<String> {
+        let needle = filter.to_lowercase();
+        let mut out: Vec<String> = self
+            .suites
+            .iter()
+            .flat_map(|suite| &suite.cases)
+            .map(|case| case.id.clone())
+            .filter(|id| id.to_lowercase().contains(needle.as_str()))
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -299,7 +468,7 @@ mod tests {
             "rom_root: roms\nsuites: [{ name: test, cases: [{ id: x, rom: x.gba, cycles: 1 }] }]",
         )
         .unwrap();
-        assert!(manifest.validate().is_err());
+        assert!(manifest.validate().is_ok());
     }
 
     #[test]
@@ -320,6 +489,28 @@ mod tests {
         assert_eq!(selected[0].case.rom, "case.gba");
         assert!(selected[0].completion.is_some());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn select_matches_substring_case_insensitively() {
+        let manifest: RomManifest = serde_saphyr::from_str(
+            "rom_root: roms\nsuites:\n  - name: mgba-suite\n    cases:\n      - { id: mgba_suite_memory, rom: suite.gba, cycles: 1 }\n      - { id: mgba_suite_timing, rom: suite.gba, cycles: 1 }\n      - { id: armwrestler_arm_alu, rom: a.gba, cycles: 1 }\n      - { id: armwrestler_arm_alu_part2, rom: b.gba, cycles: 1 }\n",
+        )
+        .unwrap();
+        let selected = manifest.select(&["memory".to_string()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].case.id, "mgba_suite_memory");
+        let selected = manifest.select(&["MGBA_SUITE".to_string()]);
+        assert_eq!(selected.len(), 2);
+        // Exact wins over substring: generated cargo tests need single-match.
+        let selected = manifest.select(&["armwrestler_arm_alu".to_string()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].case.id, "armwrestler_arm_alu");
+        assert!(manifest.suggest_ids("memry").is_empty());
+        assert_eq!(
+            manifest.suggest_ids("memory"),
+            vec!["mgba_suite_memory".to_string()]
+        );
     }
 
     #[test]

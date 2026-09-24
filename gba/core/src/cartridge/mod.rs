@@ -1,6 +1,10 @@
+pub mod gpio;
 pub mod header;
+pub mod rtc;
 pub mod save;
+pub mod solar;
 
+use self::gpio::Gpio;
 use self::header::GbaHeader;
 use self::save::helpers::read_slice;
 use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
@@ -10,6 +14,7 @@ pub struct Cartridge {
     pub header: GbaHeader,
     pub rom: Vec<u8>,
     pub save: Box<dyn SaveBackend>,
+    pub gpio: Gpio,
 }
 
 impl Cartridge {
@@ -17,20 +22,38 @@ impl Cartridge {
         let header = GbaHeader::parse(&rom)?;
         let save_type = detect_save_type(&rom);
         let save = create_save_backend(save_type);
-        Some(Self { header, rom, save })
+        Some(Self {
+            header,
+            rom,
+            save,
+            gpio: Gpio::new(),
+        })
     }
 
     pub fn read_rom(&self, addr: u32, width: u8) -> u32 {
         let len = self.rom.len();
         if len == 0 {
-            return 0xFFFFFFFF;
+            return oob_pattern(addr, width);
         }
         let base = 0x08000000;
         let raw_off = ((addr - base) & 0x01FF_FFFF) as usize;
+        // Unaligned loads read from the aligned address (halfword/word align down).
+        // Byte loads use the exact address.
+        let aligned_off = match width {
+            4 => raw_off & !3,
+            2 => raw_off & !1,
+            _ => raw_off,
+        };
+        // Beyond the cartridge size the GamePak bus floats: open bus,
+        // not size mirroring (mgba-suite "ROM out-of-bounds load" pins
+        // the (address/2) pattern for CPU/DMA/CpuSet alike).
+        if aligned_off >= len {
+            return oob_pattern(addr, width);
+        }
         let off = if len.is_power_of_two() {
-            raw_off & (len - 1)
+            aligned_off & (len - 1)
         } else {
-            raw_off % len
+            aligned_off % len
         };
         read_slice(&self.rom, off, width)
     }
@@ -47,6 +70,26 @@ impl Cartridge {
         self.save.save_type()
     }
 
+    /// Feed one EEPROM serial bit (DMA write burst to 0D000000h).
+    pub fn eeprom_write_bit(&mut self, bit: bool) {
+        self.save.eeprom_write_bit(bit);
+    }
+
+    /// Pop one EEPROM response bit (DMA read from 0D000000h).
+    pub fn eeprom_read_bit(&mut self) -> bool {
+        self.save.eeprom_read_bit()
+    }
+
+    /// Peek the EEPROM response level without consuming (CPU load).
+    pub fn eeprom_peek_bit(&self) -> bool {
+        self.save.eeprom_peek_bit()
+    }
+
+    /// End of a DMA burst touching the backup chip.
+    pub fn eeprom_end_burst(&mut self) {
+        self.save.eeprom_end_burst();
+    }
+
     pub fn has_battery(&self) -> bool {
         self.save.has_battery()
     }
@@ -60,6 +103,24 @@ impl Cartridge {
     }
 }
 
+/// GamePak open bus beyond the cartridge (and with no cartridge):
+/// the incrementing (Address/2 AND FFFFh) pattern (GBATEK "Unpredictable
+/// Things"). 16-bit units are addressed by (addr&!1)>>1; bytes select
+/// their lane of that unit; words combine two consecutive units.
+fn oob_pattern(addr: u32, width: u8) -> u32 {
+    let half = |a: u32| (a >> 1) & 0xFFFF;
+    match width {
+        4 => {
+            let base = addr & !3;
+            half(base) | (half(base.wrapping_add(2)) << 16)
+        }
+        2 => half(addr & !1),
+        _ => {
+            let h = half(addr & !1);
+            (h >> ((addr & 1) * 8)) & 0xFF
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::header::finalize_test_gba_rom;
@@ -110,6 +171,25 @@ mod tests {
         let rom = make_rom_with_save(b"FLASH1M_V102");
         let cart = Cartridge::new(rom).unwrap();
         assert_eq!(cart.save_type(), SaveType::Flash128);
+    }
+
+    #[test]
+    fn rom_oob_returns_address_over_two_pattern() {
+        // mgba-suite "ROM out-of-bounds load" (suite.gba is 512KiB;
+        // 0x092468AC sits ~19MiB past the end).
+        let mut rom = vec![0u8; 0x80000];
+        finalize_test_gba_rom(&mut rom);
+        rom[0x100] = 0xA5;
+        let cart = Cartridge::new(rom).unwrap();
+        let base = 0x092468AC;
+        assert_eq!(cart.read_rom(base, 1), 0x56);
+        assert_eq!(cart.read_rom(base, 2), 0x3456);
+        assert_eq!(cart.read_rom(base, 4), 0x34573456);
+        // Odd byte selects the high lane of the same 16-bit unit.
+        assert_eq!(cart.read_rom(base + 1, 1), 0x34);
+        assert_eq!(cart.read_rom(base + 1, 2), 0x3456);
+        // In-range reads still return ROM contents.
+        assert_eq!(cart.read_rom(0x08000100, 1), 0xA5);
     }
 
     #[test]

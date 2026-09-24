@@ -8,6 +8,10 @@ pub struct CpuRegisters {
     bank_r13: [u32; 6],         // USR/SYS 共用 + FIQ/SVC/ABT/IRQ/UND
     bank_r14: [u32; 6],
     pc_written: bool,
+    /// Post-LDM^ user-bank conflict window: T-cycles remaining in which
+    /// r8-r14 accesses hit both banks (HW bus conflict after a user-mode
+    /// LDM; ARM ARM covers banking, the 2-cycle window is HW-measured).
+    ldm_conflict: u8,
 }
 
 impl Default for CpuRegisters {
@@ -20,6 +24,7 @@ impl Default for CpuRegisters {
             bank_r13: [0; 6],
             bank_r14: [0; 6],
             pc_written: false,
+            ldm_conflict: 0,
         }
     }
 }
@@ -32,8 +37,17 @@ impl CpuRegisters {
     pub fn post_bios() -> Self {
         let mut r = Self::default();
         r.r[15] = 0x08000000;
-        r.r[13] = 0x03007F00;
         r.cpsr = 0x0000001F; // SYS, T=0, I/F=0
+        // System/User SP
+        r.r[13] = 0x03007F00;
+        r.bank_r13[0] = 0x03007F00;
+        // Banked stacks as set by real BIOS (GBATEK)
+        r.bank_r13[2] = 0x03007FA0; // IRQ
+        r.bank_r13[3] = 0x03007FE0; // SVC
+        r.bank_r13[4] = 0x03007F00; // ABT
+        r.bank_r13[5] = 0x03007F00; // UND
+        r.bank_r14[2] = 0;
+        r.bank_r14[3] = 0;
         r
     }
 
@@ -73,16 +87,36 @@ impl CpuRegisters {
     }
 
     pub fn r(&self, idx: usize) -> u32 {
-        self.r[idx & 0xF]
+        let idx = idx & 0xF;
+        // Post-LDM^ bus conflict: for two cycles after a user-mode LDM,
+        // r8-r14 read from both the current and the user bank.
+        if self.ldm_conflict > 0 && matches!(idx, 8..=14) {
+            return self.r[idx] | self.user_r(idx);
+        }
+        self.r[idx]
     }
 
     pub fn set_r(&mut self, idx: usize, v: u32) {
         let idx = idx & 0xF;
         if idx == 15 {
             self.set_pc(v);
-        } else {
-            self.r[idx] = v;
+            return;
         }
+        // During the conflict window stores also land in the user bank.
+        if self.ldm_conflict > 0 && matches!(idx, 8..=14) {
+            self.set_user_r(idx, v);
+        }
+        self.r[idx] = v;
+    }
+
+    /// Arm the post-LDM^ conflict window (cleared two T-cycles later).
+    pub fn arm_ldm_conflict(&mut self) {
+        self.ldm_conflict = 2;
+    }
+
+    /// Age the conflict window by one T-cycle.
+    pub fn tick_ldm_conflict(&mut self) {
+        self.ldm_conflict = self.ldm_conflict.saturating_sub(1);
     }
 
     /// Read the User/System register bank while remaining in the current privileged mode.
@@ -135,6 +169,14 @@ impl CpuRegisters {
     pub fn cpsr_t(&self) -> bool {
         self.cpsr & (1 << 5) != 0
     }
+
+    pub fn set_cpsr_t(&mut self, thumb: bool) {
+        if thumb {
+            self.cpsr |= 1 << 5;
+        } else {
+            self.cpsr &= !(1 << 5);
+        }
+    }
     pub fn cpsr_mode(&self) -> u8 {
         (self.cpsr & 0x1F) as u8
     }
@@ -171,8 +213,15 @@ impl CpuRegisters {
     // -- SPSR --
 
     pub fn spsr(&self) -> u32 {
+        // Modes without a banked SPSR (USR/SYS) read back CPSR instead
+        // of zero (ARM ARM: MRS SPSR there is UNPREDICTABLE; CPSR is the
+        // defined resolution).
         let idx = Self::spsr_index(self.cpsr_mode());
-        if let Some(i) = idx { self.spsr[i] } else { 0 }
+        if let Some(i) = idx {
+            self.spsr[i]
+        } else {
+            self.cpsr
+        }
     }
 
     pub fn set_spsr(&mut self, v: u32) {
@@ -192,6 +241,10 @@ impl CpuRegisters {
         let mut new_cpsr = (old_cpsr & !(0x1F | (1 << 5))) | u32::from(mode);
         if disable_irq {
             new_cpsr |= 1 << 7;
+        }
+        // GBATEK exception entry: F is set by Reset and FIQ only.
+        if mode == 0x11 {
+            new_cpsr |= 1 << 6;
         }
         self.set_cpsr(new_cpsr);
         self.set_spsr(old_cpsr);
@@ -299,5 +352,33 @@ mod tests {
         assert!(r.cpsr_z());
         r.set_cpsr_n(false);
         assert!(!r.cpsr_n());
+    }
+
+    #[test]
+    fn ldm_conflict_ors_banks_for_two_ticks() {
+        let mut r = CpuRegisters::default();
+        r.set_cpsr(0x13); // SVC: r13 banked, user bank separate.
+        r.set_r(13, 0xF0);
+        r.set_user_r(13, 0x0F);
+        r.arm_ldm_conflict();
+        // Reads see both banks; stores land in both banks.
+        assert_eq!(r.r(13), 0xFF);
+        r.set_r(13, 0xA0);
+        assert_eq!(r.user_r(13), 0xA0);
+        // r7 and r15 are outside the window.
+        assert_eq!(r.r(7), 0);
+        // Two ticks clear the window.
+        r.tick_ldm_conflict();
+        assert_eq!(r.r(13), 0xA0);
+        r.tick_ldm_conflict();
+        r.tick_ldm_conflict();
+        assert_eq!(r.r(13), 0xA0);
+    }
+
+    #[test]
+    fn usrsys_mrs_spsr_reads_cpsr() {
+        let r = CpuRegisters::default();
+        // No banked SPSR in SYS: reads see CPSR, not zero.
+        assert_eq!(r.spsr(), r.cpsr());
     }
 }

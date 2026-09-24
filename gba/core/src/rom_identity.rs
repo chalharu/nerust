@@ -23,6 +23,9 @@ pub struct GbaRomIdentity {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SaveTypeSer {
     None,
+    /// EEPROM with size unresolved: static ROM strings cannot tell 512B
+    /// from 8KB (latched from the first serial frame at runtime).
+    Eeprom,
     Eeprom512,
     Eeprom8k,
     Sram,
@@ -34,8 +37,7 @@ impl From<SaveType> for SaveTypeSer {
     fn from(v: SaveType) -> Self {
         match v {
             SaveType::None => Self::None,
-            SaveType::Eeprom512 => Self::Eeprom512,
-            SaveType::Eeprom8k => Self::Eeprom8k,
+            SaveType::Eeprom512 | SaveType::Eeprom8k => Self::Eeprom,
             SaveType::Sram => Self::Sram,
             SaveType::Flash64 => Self::Flash64,
             SaveType::Flash128 => Self::Flash128,
