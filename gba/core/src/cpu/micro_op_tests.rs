@@ -736,6 +736,58 @@ fn micro_op_ldm_stm_matches_legacy() {
     }
 }
 
+// Unification pilot corpus: Thumb LSL/LSR/ASR immediate, including the
+// offset-0 edges (LSL carry-preserve, LSR/ASR #32) and N/Z/C flag
+// effects. The micro engine runs the native `apply_move_shifted`;
+// the legacy oracle still runs `move_shifted::handle`.
+const THUMB_SHIFT_CORPUS: [u32; 6] = [
+    0x0042, // lsl r2, r0, #1
+    0x0803, // lsr r3, r0, #32
+    0x1044, // asr r4, r0, #1
+    0x000D, // lsl r5, r1, #0 (carry preserved)
+    0x100E, // asr r6, r1, #32
+    0x0847, // lsr r7, r0, #1
+];
+const THUMB_SHIFT_REGS: [(usize, u32); 2] = [(0, 0x8000_0001), (1, 0x4000_0000)];
+
+#[test]
+fn micro_op_move_shifted_matches_legacy() {
+    for waitcnt in [0x0000u16, 0x0010, 0x4000, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_SHIFT_CORPUS,
+            true,
+            waitcnt,
+            THUMB_SHIFT_CORPUS.len(),
+            0x886A,
+            0x0300_0000,
+            None,
+            &[],
+            &THUMB_SHIFT_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "iwram waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "iwram waitcnt={waitcnt:#06x}");
+        assert!(follow, "iwram waitcnt={waitcnt:#06x}");
+    }
+    // ROM-code variant: data still hits IWRAM, batch erase is the
+    // ROM-code whole-word path.
+    for waitcnt in [0x0000u16, 0x4010, 0x4014] {
+        let (ta, tb, regs_equal, follow) = differential(
+            &THUMB_SHIFT_CORPUS,
+            true,
+            waitcnt,
+            THUMB_SHIFT_CORPUS.len(),
+            0x886A,
+            0x0800_0100,
+            Some(rom_cart()),
+            &[],
+            &THUMB_SHIFT_REGS,
+        );
+        assert_eq!((ta, tb), (ta, ta), "rom waitcnt={waitcnt:#06x}");
+        assert!(regs_equal, "rom waitcnt={waitcnt:#06x}");
+        assert!(follow, "rom waitcnt={waitcnt:#06x}");
+    }
+}
+
 #[test]
 fn empty_ldm_stm_stays_legacy() {
     let mut regs = CpuRegisters::post_bios();
