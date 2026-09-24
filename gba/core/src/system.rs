@@ -118,7 +118,10 @@ impl GbaSystem {
                         } else if let Some(acc) = self.drain_micro() {
                             self.cpu_cycles_remaining = acc.max(1) as u32;
                         } else {
-                            self.cpu_cycles_remaining = self.cpu.step_legacy(&mut self.bus).max(1);
+                            // Unreachable: every instruction class expands,
+                            // so the first drain always yields an op.
+                            // Consume the tick safely.
+                            self.cpu_cycles_remaining = 1;
                         }
                     } else if let Some(acc) = self.drain_micro() {
                         self.cpu_cycles_remaining = acc.max(1) as u32;

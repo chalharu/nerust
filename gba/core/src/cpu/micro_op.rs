@@ -4,18 +4,21 @@
 
 use std::collections::VecDeque;
 
-use crate::cpu::arm_opcodes::block_transfer::start_address;
-use crate::cpu::arm_opcodes::helpers::{
-    barrel_shift, barrel_shift_register, condition_passed, update_nz,
+use crate::cpu::semantics::{
+    barrel_shift, barrel_shift_register, condition_passed, is_psr_transfer, multiplier_cycles,
+    multiplier_cycles_long, multiply_64, multiply_carry_hi, multiply_carry_lo, multiply_tick_full,
+    register_pair, start_address, update_nz,
 };
-use crate::cpu::arm_opcodes::multiply::{
-    multiplier_cycles, multiplier_cycles_long, multiply_64, multiply_carry_hi, multiply_carry_lo,
-    multiply_tick_full, register_pair,
-};
-use crate::cpu::arm_opcodes::psr_transfer::is_psr_transfer;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
+
+/// HLE IRQ-return trampoline address (the BIOS IRQ exit path parks
+/// LR here; a PC write to it runs the HLE-as-code epilogue at retire).
+pub(crate) const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
+
+/// HLE IRQ return slots, innermost last (mirrors the `GbaCpu` field).
+pub(crate) type IrqReturnStack = Vec<(u32, [u32; 5])>;
 
 /// One sub-instruction effect; effects land at execute-stage points with
 /// the legacy bus-call order (access, then fetch-stream-break).
@@ -162,6 +165,11 @@ pub struct BlockEmptyEffect {
     /// Touch `data_sequential` before the access (Thumb empty paths
     /// set it false; ARM empty paths leave it alone, like legacy).
     pub reset_sequential: bool,
+    /// Charge the fetch-stream break here. True for standalone
+    /// (ARM) empties; false when a `BlockEnd` follows (Thumb), which
+    /// carries the instruction's single break — a second break would
+    /// double-charge N-S.
+    pub break_stream: bool,
 }
 
 /// Multiply commit descriptor: raw word (`thumb` form in low 16 bits).
@@ -298,15 +306,25 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     // SWI: class 111 with bit 24 set (any condition; the trap
     // number is in bits 23-16 for HLE). Failed conditions retire as
-    // [Internal] via the wrapper below, like the legacy cond check.
+    // [Internal] here (the early return bypasses the wrapper below),
+    // like the legacy cond check.
     if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
-        return Some(vec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]);
+        return Some(if condition_passed(regs.cpsr(), condition) {
+            vec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]
+        } else {
+            vec![MicroOp::Internal]
+        });
     }
     // UND: coprocessor data class (110) and class 111 without the SWI
-    // bit. The GBA has no coprocessor, so all such encodings trap.
+    // bit. The GBA has no coprocessor, so all such encodings trap
+    // (failed conditions still retire as [Internal]).
     if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
     {
-        return Some(vec![MicroOp::TrapUnd]);
+        return Some(if condition_passed(regs.cpsr(), condition) {
+            vec![MicroOp::TrapUnd]
+        } else {
+            vec![MicroOp::Internal]
+        });
     }
     let ops = expand_arm_alu_imm(instr, regs)
         .or_else(|| expand_arm_single(instr, regs))
@@ -467,6 +485,8 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<Micr
         store_value: regs.pc().wrapping_add(4),
         restore_cpsr: spec.s,
         reset_sequential: false,
+        // Standalone (no BlockEnd follows): break here, like legacy.
+        break_stream: true,
     })];
     ops.extend(vec![MicroOp::Internal; if spec.load { 4 } else { 1 }]);
     ops
@@ -968,6 +988,8 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
             store_value: regs.pc().wrapping_add(2),
             restore_cpsr: false,
             reset_sequential: false,
+            // Standalone (no BlockEnd follows): break here, like legacy.
+            break_stream: true,
         })];
         ops.extend(vec![MicroOp::Internal; if load { 4 } else { 1 }]);
         return Some(ops);
@@ -1145,6 +1167,8 @@ fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<
             store_value: regs.pc().wrapping_add(2),
             restore_cpsr: false,
             reset_sequential: true,
+            // The trailing BlockEnd carries the single break.
+            break_stream: false,
         }),
         MicroOp::BlockEnd(BlockEndEffect {
             sp: Some(if push {
@@ -1243,6 +1267,32 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             rd,
             rn: rb,
             offset: (((instr >> 6) & 0x1F) as u32) << 2,
+            offset_register: None,
+            subtract: false,
+            is_sp: false,
+            signed_load: false,
+            post_indexed: false,
+            writeback: false,
+            store_value: None,
+            halfword_odd_quirk: false,
+        };
+        // Totals match legacy handler returns (load 3, store 2).
+        return Some(if l {
+            vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal]
+        } else {
+            vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        });
+    }
+    // Immediate-offset byte (011, B == 1): offset is imm5 unshifted.
+    if instr >> 13 == 0b011 && (instr >> 12) & 1 == 1 {
+        let l = (instr >> 11) & 1 == 1;
+        let rb = ((instr >> 3) & 0x7) as usize;
+        let rd = (instr & 0x7) as usize;
+        let acc = MemAccess {
+            width: 1,
+            rd,
+            rn: rb,
+            offset: ((instr >> 6) & 0x1F) as u32,
             offset_register: None,
             subtract: false,
             is_sp: false,
@@ -1524,7 +1574,7 @@ fn thumb_logical(
     // incoming Rd value (Rd = Rd*Rs uses Rd for timing); here
     // `left` is the incoming Rd (Rd = Rd*Rs).
     if op == 0xD {
-        1 + crate::cpu::arm_opcodes::multiply::multiplier_cycles(left)
+        1 + multiplier_cycles(left)
     } else {
         1
     }
@@ -1706,6 +1756,7 @@ pub fn step_op(
     pipeline: &mut [u32; 2],
     queue: &mut VecDeque<MicroOp>,
     is_thumb: bool,
+    irq_return_stack: &mut IrqReturnStack,
 ) -> Option<i64> {
     if queue.is_empty() {
         refill_queue(regs, bus, pipeline, queue, is_thumb)?;
@@ -1713,13 +1764,15 @@ pub fn step_op(
     let pc = regs.pc();
     let op = queue.pop_front().expect("expansion never yields zero ops");
     let cycles = apply_op(regs, bus, op, pc, is_thumb);
-    if queue.is_empty() {
-        retire_step(regs, bus, pipeline, pc, is_thumb);
-    }
+    let epilogue = if queue.is_empty() {
+        retire_step(regs, bus, pipeline, pc, is_thumb, irq_return_stack)
+    } else {
+        0
+    };
     // No floor here: the driver floors once per instruction at retire,
     // exactly like the legacy step (per-op flooring would inflate
     // prefetch-erased instructions).
-    Some(cycles + bus.take_access_wait_cycles())
+    Some(cycles + epilogue as i64 + bus.take_access_wait_cycles())
 }
 
 /// SWP/SWPB (GBATEK ARM Single Data Swap): native micro-op
@@ -2031,6 +2084,7 @@ fn refill_queue(
     } else {
         expand_arm(pipeline[0], regs)?
     };
+    regs.clear_pc_written();
     bus.take_access_wait_cycles();
     bus.set_current_pc(regs.pc());
     let pc = regs.pc();
@@ -2150,16 +2204,45 @@ fn retire_step(
     pipeline: &mut [u32; 2],
     pc: u32,
     is_thumb: bool,
-) {
+    irq_return_stack: &mut IrqReturnStack,
+) -> u32 {
     if regs.take_pc_written() {
+        // A pc-write returning from a user IRQ handler through the HLE
+        // trampoline runs the HLE-as-code epilogue (see
+        // `bios_irq_epilogue_cycles`); other pc-writes just refill.
+        let mut irq_epilogue = 0;
+        if regs.pc() == HLE_IRQ_RETURN_TRAMPOLINE
+            && let Some((return_address, saved)) = irq_return_stack.pop()
+        {
+            regs.set_cpsr(regs.spsr());
+            for (register, value) in [0, 1, 2, 3, 12].into_iter().zip(saved) {
+                regs.set_r(register, value);
+            }
+            // IRQ round-trip complete: the BIOS epilogue's last opcode
+            // (0xE55EC002) is latched for protected reads (jsmolka t004).
+            // After an IntrWait-family wake the BIOS exit path runs
+            // instead (0xE3A02004, mgba-suite "BIOS load").
+            if bus.take_bios_wait_exit() {
+                bus.set_bios_prefetch(0xE3A02004);
+            } else {
+                bus.set_bios_prefetch(0xE55EC002);
+            }
+            regs.set_pc(return_address);
+            irq_epilogue = bus.bios_irq_epilogue_cycles();
+        }
         *pipeline = [0; 2];
         bus.set_current_pc(regs.pc());
         bus.invalidate_prefetch_for_branch();
+        // NOTE: no `refill_prefetch_for_switch` here. The legacy path
+        // refilled on every mode-switching pc-write, but the unified
+        // engine provably matches HW without it (mgba-suite bx cells
+        // pin the un-prefilled cost); refilling over-fills the buffer
+        // and undercounts by 2-6 cycles there.
         fill_pipeline(regs, bus, pipeline);
-        // Legacy returns `cycles` here (plus an IRQ epilogue only on
-        // the trampoline path, out of scope).
+        irq_epilogue
     } else {
         regs.set_pc(pc.wrapping_add(if is_thumb { 2 } else { 4 }));
+        0
     }
 }
 
@@ -2419,7 +2502,9 @@ fn apply_block_empty(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEm
     }
     if e.load {
         let target = bus.read_aligned32(e.addr);
-        bus.charge_fetch_stream_break(e.addr);
+        if e.break_stream {
+            bus.charge_fetch_stream_break(e.addr);
+        }
         if let Some((reg, val)) = e.writeback_reg {
             regs.set_r(reg, val);
         }
@@ -2433,7 +2518,9 @@ fn apply_block_empty(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEm
         }
     } else {
         bus.write32(e.addr, e.store_value);
-        bus.charge_fetch_stream_break(e.addr);
+        if e.break_stream {
+            bus.charge_fetch_stream_break(e.addr);
+        }
         if let Some((reg, val)) = e.writeback_reg {
             regs.set_r(reg, val);
         }
@@ -2453,4 +2540,378 @@ fn apply_block_end(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEndE
         regs.arm_ldm_conflict();
     }
     bus.charge_fetch_stream_break(e.first_addr);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cpu_registers::CpuRegisters;
+    use crate::memory::GbaMemoryBus;
+    use std::collections::VecDeque;
+
+    /// Drive expanded ops without retire (no flush/pc-advance): pins
+    /// execute effects at absolute values.
+    fn run_ops(
+        regs: &mut CpuRegisters,
+        bus: &mut GbaMemoryBus,
+        ops: Vec<MicroOp>,
+        pc: u32,
+        is_thumb: bool,
+    ) {
+        let mut queue: VecDeque<MicroOp> = ops.into();
+        while let Some(op) = queue.pop_front() {
+            apply_op(regs, bus, op, pc, is_thumb);
+        }
+    }
+
+    fn run_arm(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) {
+        let pc = regs.pc();
+        let ops = expand_arm(instr, regs).expect("arm expands");
+        run_ops(regs, bus, ops, pc, false);
+    }
+
+    fn run_thumb(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u16) {
+        let pc = regs.pc();
+        let ops = expand_thumb(instr, regs).expect("thumb expands");
+        run_ops(regs, bus, ops, pc, true);
+    }
+
+    #[test]
+    fn trap_swi_enters_svc_with_banked_lr() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000008);
+        let old_cpsr = regs.cpsr();
+        let mut bus = GbaMemoryBus::new();
+        // SWI 0xFF is unhandled -> SVC vector.
+        assert_eq!(apply_trap_swi(&mut regs, &mut bus, 0xFF, false), 3);
+        assert_eq!(regs.cpsr_mode(), 0x13);
+        assert_eq!(regs.spsr(), old_cpsr);
+        assert_eq!(regs.lr(), 0x08000004);
+        assert_eq!(regs.pc(), 0x08);
+    }
+
+    #[test]
+    fn trap_swi_uses_hle_number() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000008);
+        let mut bus = GbaMemoryBus::new();
+        let expected = bus.bios_checksum();
+        apply_trap_swi(&mut regs, &mut bus, 0x0D, false);
+        assert_eq!(regs.r(0), expected);
+        assert_eq!(regs.cpsr_mode(), 0x1F);
+        assert_eq!(regs.pc(), 0x08000004);
+    }
+
+    #[test]
+    fn trap_swi_thumb_returns_after_swi() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_pc(0x08000006);
+        let mut bus = GbaMemoryBus::new();
+        apply_trap_swi(&mut regs, &mut bus, 0x0D, true);
+        assert_eq!(regs.pc(), 0x08000004);
+        assert!(regs.take_pc_written());
+    }
+
+    #[test]
+    fn trap_und_enters_undefined_exception() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000008);
+        let old_cpsr = regs.cpsr();
+        let mut bus = GbaMemoryBus::new();
+        assert_eq!(apply_trap_und(&mut regs, false), 4);
+        assert_eq!(regs.cpsr_mode(), 0x1B);
+        assert_eq!(regs.spsr(), old_cpsr);
+        assert_eq!(regs.lr(), 0x08000004);
+        assert_eq!(regs.pc(), 0x04);
+        // Thumb form uses the -2 return address.
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_pc(0x08000006);
+        assert_eq!(apply_trap_und(&mut regs, true), 4);
+        assert_eq!(regs.cpsr_mode(), 0x1B);
+        assert_eq!(regs.lr(), 0x08000004);
+        assert_eq!(regs.pc(), 0x04);
+        let _ = &mut bus;
+    }
+
+    #[test]
+    fn block_empty_thumb_transfers_pc_and_writes_back_0x40() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        regs.set_pc(0x08000104);
+        regs.set_r(0, 0x03000000);
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x03000000, 0x08000201);
+        // Empty LDMIA R0: loads PC, Rb += 0x40 (LSB ignored on
+        // ARMv4T like POP {PC}).
+        run_thumb(&mut regs, &mut bus, 0xC800);
+        assert_eq!(regs.pc(), 0x08000200);
+        assert_eq!(regs.r(0), 0x03000040);
+    }
+
+    #[test]
+    fn block_empty_arm_stores_pc_and_loads_back() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000000);
+        regs.set_r(0, 0x03000200);
+        regs.set_r(1, 0x03000200);
+        let mut bus = GbaMemoryBus::new();
+        // Empty STMIA R0!: stores PC+4, R0 += 0x40.
+        run_arm(&mut regs, &mut bus, 0xE8A0_0000);
+        assert_eq!(bus.read32(0x03000200), 0x08000004);
+        assert_eq!(regs.r(0), 0x03000240);
+        // Empty LDMIA R1!: loads PC, R1 += 0x40.
+        bus.write32(0x03000200, 0x03000100);
+        run_arm(&mut regs, &mut bus, 0xE8B1_0000);
+        assert_eq!(regs.pc(), 0x03000100);
+        assert_eq!(regs.r(1), 0x03000240);
+    }
+
+    #[test]
+    fn psr_updates_flags_field() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(0, 0xFF000000);
+        apply_psr(&mut regs, 0xE128F000); // MSR CPSR_f, R0
+        assert_eq!(regs.cpsr() & 0xF0000000, 0xF0000000);
+        assert_eq!(regs.cpsr() & 0x0F000000, 0);
+        assert_eq!(regs.cpsr_mode(), 0x1F);
+    }
+
+    #[test]
+    fn psr_user_msr_cannot_change_control_field() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(0x10);
+        regs.set_r(0, 0x13);
+        apply_psr(&mut regs, 0xE121F000); // MSR CPSR_c, R0
+        assert_eq!(regs.cpsr_mode(), 0x10);
+    }
+
+    #[test]
+    fn swp_exchanges_word_and_byte() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        bus.write32(0x03000000, 0x11223344);
+        regs.set_r(0, 0x03000000);
+        regs.set_r(1, 0xAABBCCDD);
+        apply_swp(&mut regs, &mut bus, 0xE1002091); // SWP R2, R1, [R0]
+        assert_eq!(regs.r(2), 0x11223344);
+        assert_eq!(bus.read32(0x03000000), 0xAABBCCDD);
+        bus.write8(0x03000000, 0x44);
+        regs.set_r(1, 0xDD);
+        apply_swp(&mut regs, &mut bus, 0xE1402091); // SWPB R2, R1, [R0]
+        assert_eq!(regs.r(2), 0x44);
+        assert_eq!(bus.read8(0x03000000), 0xDD);
+    }
+
+    #[test]
+    fn mul_simple() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 3);
+        regs.set_r(2, 4);
+        regs.set_r(0, 0);
+        apply_mul(&mut regs, &mut bus, 0xE0000291); // MUL R0, R2, R1
+        assert_eq!(regs.r(0), 12);
+    }
+
+    #[test]
+    fn dp_add_with_carry_wraps() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(0, 0xFFFFFFFF);
+        // ADDS R0, R0, #1 wraps to 0 with C=1.
+        apply_dp_reg(&mut regs, 0xE2900001);
+        assert_eq!(regs.r(0), 0);
+        assert!(regs.cpsr_c());
+    }
+
+    #[test]
+    fn dp_mov_immediate() {
+        let mut regs = CpuRegisters::post_bios();
+        apply_dp_reg(&mut regs, 0xE3A000FF); // MOV R0, #0xFF
+        assert_eq!(regs.r(0), 0xFF);
+    }
+
+    #[test]
+    fn dp_tst_preserves_overflow() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr_v(true);
+        regs.set_r(0, 1);
+        apply_dp_reg(&mut regs, 0xE3100001); // TST R0,#1
+        assert!(regs.cpsr_v());
+    }
+
+    #[test]
+    fn dp_add_sets_and_clears_overflow() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(0, 0x7FFFFFFF);
+        apply_dp_reg(&mut regs, 0xE2900001); // ADDS R0,R0,#1
+        assert!(regs.cpsr_v());
+        regs.set_r(0, 0);
+        apply_dp_reg(&mut regs, 0xE2900001);
+        assert!(!regs.cpsr_v());
+    }
+
+    #[test]
+    fn dp_rotated_immediates_build_full_word() {
+        let mut regs = CpuRegisters::post_bios();
+        for instruction in [0xE3A000FF, 0xE3800CFF, 0xE38008FF, 0xE380047F] {
+            apply_dp_reg(&mut regs, instruction);
+        }
+        assert_eq!(regs.r(0), 0x7FFFFFFF);
+    }
+
+    #[test]
+    fn dp_register_shift_reads_pc_plus_12() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_pc(0x08000108);
+        regs.set_r(0, 0);
+        apply_dp_reg(&mut regs, 0xE1A0001F); // MOV R0,PC,LSL R0
+        assert_eq!(regs.r(0), 0x0800010C);
+    }
+
+    #[test]
+    fn branch_forward() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_pc(0x08000000);
+        // Architectural PC is current instruction + 8.
+        run_arm(&mut regs, &mut bus, 0xEA000002);
+        assert_eq!(regs.pc(), 0x08000008);
+    }
+
+    #[test]
+    fn thumb_branch_ranges() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_cpsr(regs.cpsr() | (1 << 5));
+        let mut bus = GbaMemoryBus::new();
+        regs.set_pc(0x08003F08);
+        run_thumb(&mut regs, &mut bus, 0xE317);
+        assert_eq!(regs.pc(), 0x08004536);
+        regs.set_pc(0x08001000);
+        run_thumb(&mut regs, &mut bus, 0xE7FF);
+        assert_eq!(regs.pc(), 0x08000FFE);
+    }
+
+    #[test]
+    fn load_store_immediate_roundtrip() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 0x02000000);
+        regs.set_r(0, 0x12345678);
+        run_arm(&mut regs, &mut bus, 0xE5810004); // STR R0, [R1, #4]
+        run_arm(&mut regs, &mut bus, 0xE5912004); // LDR R2, [R1, #4]
+        assert_eq!(regs.r(2), 0x12345678);
+    }
+
+    #[test]
+    fn halfword_load_store_roundtrip() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 0x02000000);
+        regs.set_r(0, 0x1234);
+        run_arm(&mut regs, &mut bus, 0xE1C100B0); // STRH R0, [R1]
+        regs.set_r(0, 0);
+        run_arm(&mut regs, &mut bus, 0xE1D100B0); // LDRH R0, [R1]
+        assert_eq!(regs.r(0) & 0xFFFF, 0x1234);
+    }
+
+    #[test]
+    fn byte_imm_load_store_roundtrip() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 0x02000000);
+        regs.set_r(0, 0xAB);
+        run_thumb(&mut regs, &mut bus, 0x7008); // STRB R0, [R1]
+        regs.set_r(0, 0);
+        run_thumb(&mut regs, &mut bus, 0x7808); // LDRB R0, [R1]
+        assert_eq!(regs.r(0) & 0xFF, 0xAB);
+    }
+
+    #[test]
+    fn signed_loads_extend_sign() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(1, 0x03000000);
+        regs.set_r(2, 0);
+        bus.write16(0x03000000, 0x80FF);
+        run_thumb(&mut regs, &mut bus, 0x5688); // LDRSB R0,[R1,R2]
+        assert_eq!(regs.r(0), 0xFFFFFFFF);
+        run_thumb(&mut regs, &mut bus, 0x5E88); // LDRSH R0,[R1,R2]
+        assert_eq!(regs.r(0), 0xFFFF80FF);
+    }
+
+    #[test]
+    fn block_roundtrip() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(0, 0x02000000);
+        regs.set_r(1, 0x11111111);
+        regs.set_r(2, 0x22222222);
+        run_arm(&mut regs, &mut bus, 0xE8A00006); // STMIA R0!, {R1,R2}
+        regs.set_r(0, 0x02000000);
+        regs.set_r(3, 0);
+        regs.set_r(4, 0);
+        run_arm(&mut regs, &mut bus, 0xE8B00018); // LDMIA R0, {R3,R4}
+        assert_eq!(regs.r(3), 0x11111111);
+        assert_eq!(regs.r(4), 0x22222222);
+    }
+
+    #[test]
+    fn block_unaligned_base() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        let base = 0x02000100;
+        regs.set_r(0, 32);
+        regs.set_r(1, 64);
+        regs.set_r(2, base + 3);
+        regs.set_r(3, base - 5);
+        run_arm(&mut regs, &mut bus, 0xE9220003); // STMDB R2!,{R0,R1}
+        run_arm(&mut regs, &mut bus, 0xE8930030); // LDMIA R3,{R4,R5}
+        assert_eq!(regs.r(4), 32);
+        assert_eq!(regs.r(5), 64);
+        assert_eq!(regs.r(2), regs.r(3));
+    }
+
+    #[test]
+    fn alu_format_reaches_native() {
+        let mut regs = CpuRegisters::post_bios();
+        regs.set_r(0, 1);
+        regs.set_r(1, 2);
+        let mut bus = GbaMemoryBus::new();
+        run_thumb(&mut regs, &mut bus, 0x4308); // ORR R0,R1
+        assert_eq!(regs.r(0), 3);
+    }
+
+    #[test]
+    fn pop_and_ldmia_reachable() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_sp(0x03000000);
+        bus.write32(0x03000000, 0x12345678);
+        run_thumb(&mut regs, &mut bus, 0xBC01); // POP {R0}
+        assert_eq!(regs.r(0), 0x12345678);
+        regs.set_r(1, 0x03000004);
+        bus.write32(0x03000004, 0xCAFEBABE);
+        run_thumb(&mut regs, &mut bus, 0xC904); // LDMIA R1!, {R2}
+        assert_eq!(regs.r(2), 0xCAFEBABE);
+    }
+
+    #[test]
+    fn multiply_long_reaches_native() {
+        let mut regs = CpuRegisters::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        regs.set_r(0, 3);
+        regs.set_r(1, 4);
+        run_arm(&mut regs, &mut bus, 0xE0832190); // UMULL R2,R3,R0,R1
+        assert_eq!(regs.r(2), 12);
+        assert_eq!(regs.r(3), 0);
+    }
+
+    #[test]
+    fn cond_codes() {
+        assert!(condition_passed(1 << 30, 0x0));
+        assert!(!condition_passed(0, 0x0));
+        assert!(condition_passed(0, 0xE));
+    }
 }
