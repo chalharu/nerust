@@ -54,6 +54,13 @@ pub enum MicroOp {
     /// BX target snapshotted at expansion (mode bit included);
     /// switches T and branches (retire flushes).
     Bx(u32),
+    /// SWI trap: BIOS HLE number. The apply step runs the HLE
+    /// dispatcher and carries its full charge (SVC-vector entry on
+    /// Unsupported), mirroring the legacy SWI handlers exactly.
+    TrapSwi(u8),
+    /// Undefined-instruction trap: exception entry, mirroring the
+    /// legacy UND handlers exactly (2S+1I+1N = 4 in both states).
+    TrapUnd,
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
@@ -288,6 +295,18 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         // NV: never executes (ARM ARM); the legacy path retires it as
         // a 1S NOP, so expansion is a single Internal.
         return Some(vec![MicroOp::Internal]);
+    }
+    // SWI: class 111 with bit 24 set (any condition; the trap
+    // number is in bits 23-16 for HLE). Failed conditions retire as
+    // [Internal] via the wrapper below, like the legacy cond check.
+    if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
+        return Some(vec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]);
+    }
+    // UND: coprocessor data class (110) and class 111 without the SWI
+    // bit. The GBA has no coprocessor, so all such encodings trap.
+    if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
+    {
+        return Some(vec![MicroOp::TrapUnd]);
     }
     let ops = expand_arm_alu_imm(instr, regs)
         .or_else(|| expand_arm_single(instr, regs))
@@ -797,7 +816,8 @@ fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<V
 /// queue-fill (pre-instruction state; registers are frozen across the
 /// words of one instruction).
 pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
-    // Conditional B. SWI/UND encodings (cond >= 0xE) remain legacy.
+    // Conditional B (cond < 0xE); 0xDE00/0xDF00 fall through to the
+    // UND/SWI traps below.
     if instr >> 12 == 0xD && ((instr >> 8) & 0xF) < 0xE {
         let condition = ((instr >> 8) & 0xF) as u8;
         if !condition_passed(regs.cpsr(), condition) {
@@ -848,6 +868,22 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             MicroOp::Internal,
             MicroOp::Bx(regs.r(rs)),
         ]);
+    }
+    // SWI: trap to the BIOS HLE (or the SVC vector when unhandled).
+    if (instr & 0xFF00) == 0xDF00 {
+        return Some(vec![MicroOp::TrapSwi((instr & 0xFF) as u8)]);
+    }
+    // UND: the 0xDE00 range traps to the undefined vector.
+    if (instr & 0xFF00) == 0xDE00 {
+        return Some(vec![MicroOp::TrapUnd]);
+    }
+    // UND: decoder gaps (0xB100-0xB3FF, 0xB600-0xBBFF, 0xBE00-0xBFFF)
+    // fall into the legacy decoder's `_` arm (`handle_undefined`).
+    if (0xB100..=0xB3FF).contains(&instr)
+        || (0xB600..=0xBBFF).contains(&instr)
+        || (0xBE00..=0xBFFF).contains(&instr)
+    {
+        return Some(vec![MicroOp::TrapUnd]);
     }
     // MOV/CMP/ADD/SUB immediate.
     if instr >> 13 == 0b001 {
@@ -1950,6 +1986,34 @@ fn dp_sbc_with_flags(a: u32, b: u32, c_in: u32) -> (u32, bool, bool) {
     (r, c, v)
 }
 
+/// SWI trap: run the BIOS HLE dispatcher and carry its full charge
+/// (SVC-vector entry on Unsupported), mirroring the legacy SWI
+/// handlers (`arm_opcodes::swi`, `thumb_opcodes::branch`) exactly.
+fn apply_trap_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8, is_thumb: bool) -> u32 {
+    let back = if is_thumb { 2 } else { 4 };
+    match crate::bios::handle_swi(regs, bus, swi) {
+        crate::bios::SwiResult::Return(cycles) => {
+            regs.set_pc(regs.pc().wrapping_sub(back));
+            cycles
+        }
+        crate::bios::SwiResult::Branch(cycles) => cycles,
+        crate::bios::SwiResult::Unsupported => {
+            let return_address = regs.pc().wrapping_sub(back);
+            regs.enter_exception(0x13, 0x08, return_address, true);
+            3
+        }
+    }
+}
+
+/// Undefined-instruction trap: exception entry, mirroring the legacy
+/// UND handlers exactly.
+fn apply_trap_und(regs: &mut CpuRegisters, is_thumb: bool) -> u32 {
+    let return_address = regs.pc().wrapping_sub(if is_thumb { 2 } else { 4 });
+    regs.enter_exception(0x1B, 0x04, return_address, true);
+    // GBATEK: Undefined = 2S+1I+1N = 4 in both states.
+    4
+}
+
 /// Fill the queue from the executing instruction. `None` = uncovered
 /// fill, queue untouched.
 fn refill_queue(
@@ -2042,6 +2106,12 @@ fn apply_op(
             regs.set_cpsr((regs.cpsr() & !(1 << 5)) | ((target & 1) << 5));
             regs.set_pc(target & !1);
             cycles += 1;
+        }
+        MicroOp::TrapSwi(swi) => {
+            cycles += apply_trap_swi(regs, bus, swi, is_thumb) as i64;
+        }
+        MicroOp::TrapUnd => {
+            cycles += apply_trap_und(regs, is_thumb) as i64;
         }
         MicroOp::MemRead(a) => {
             apply_mem_read(regs, bus, a, is_thumb);
