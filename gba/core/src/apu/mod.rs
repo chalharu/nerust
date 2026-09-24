@@ -12,7 +12,7 @@ use self::psg::{Noise, Square, Wave};
 /// Runtime voice state of the BIOS sound driver (GBATEK `SoundArea.vchn[]`
 /// register side lives in SoundArea RAM). Defined here — next to its owner
 /// `GbaApu::driver_voices` — so `apu` never depends on `crate::sound_driver`.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct DriverVoice {
     pub started: bool,
     pub pos: f64,
@@ -150,6 +150,108 @@ impl Default for GbaApu {
             ),
             output_hpf_rate: OUTPUT_HPF_DEFAULT_RATE,
         }
+    }
+}
+
+/// Phase 10 wire state. `mix_buffer` (native-grid content) and the output
+/// HPF filter memory are excluded by design: export requires the buffer to
+/// hold at most the interpolation tail (see below) and import rebuilds the
+/// HPF at the default rate (it re-tracks on the next drain).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaApuState {
+    sound1cnt_lo: u16,
+    sound1cnt_hi: u16,
+    sound1cnt_x: u16,
+    sound2cnt_lo: u16,
+    sound2cnt_hi: u16,
+    sound3cnt_lo: u16,
+    sound3cnt_hi: u16,
+    sound3cnt_x: u16,
+    sound4cnt_lo: u16,
+    sound4cnt_hi: u16,
+    soundcnt_lo: u16,
+    soundcnt_hi: u16,
+    soundcnt_x: u16,
+    soundbias: u16,
+    wave_ram: serde_bytes::ByteBuf,
+    fifo_a: Vec<u8>,
+    fifo_b: Vec<u8>,
+    sound_area: u32,
+    sound_mode: u32,
+    sound_vsync_enabled: bool,
+    driver_voices: [DriverVoice; 12],
+    sq1: Square,
+    sq2: Square,
+    wave: Wave,
+    noise: Noise,
+    dac_a: i8,
+    dac_b: i8,
+    seq_step: u8,
+    seq_timer: u64,
+    mix_timer: u64,
+    freq1: u16,
+    freq2: u16,
+    freq3: u16,
+    len1: u8,
+    len2: u8,
+    len3: u16,
+    len4: u8,
+    duty1: u8,
+    duty2: u8,
+    rs_pos: f64,
+    rs_prev: (f32, f32),
+}
+
+impl GbaApuState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.wave_ram.len() != 0x20 {
+            return Err(format!("apu: wave RAM length wrong: {}", self.wave_ram.len()));
+        }
+        if self.fifo_a.len() > 32 || self.fifo_b.len() > 32 {
+            return Err(format!(
+                "apu: fifo overflow: {}/{}",
+                self.fifo_a.len(),
+                self.fifo_b.len()
+            ));
+        }
+        if self.seq_step > 7 {
+            return Err(format!("apu: seq_step out of range: {}", self.seq_step));
+        }
+        if self.seq_timer > u64::from(T_CYCLES_PER_SEQ_STEP) {
+            return Err(format!("apu: seq_timer out of range: {}", self.seq_timer));
+        }
+        if self.mix_timer > T_CYCLES_PER_MIX {
+            return Err(format!("apu: mix_timer out of range: {}", self.mix_timer));
+        }
+        // Latch bounds follow the register write masks.
+        if self.freq1 > 0x7FF || self.freq2 > 0x7FF || self.freq3 > 0x7FF {
+            return Err("apu: freq latch out of range".to_string());
+        }
+        if self.len1 > 64 || self.len2 > 64 || self.len4 > 64 || self.len3 > 256 {
+            return Err("apu: length latch out of range".to_string());
+        }
+        if self.duty1 > 3 || self.duty2 > 3 {
+            return Err("apu: duty latch out of range".to_string());
+        }
+        self.sq1.validate()?;
+        self.sq2.validate()?;
+        self.wave.validate()?;
+        self.noise.validate()?;
+        for (index, voice) in self.driver_voices.iter().enumerate() {
+            if !voice.pos.is_finite() || voice.pos < 0.0 {
+                return Err(format!("apu: driver voice {index} bad pos"));
+            }
+            if !voice.env.is_finite() || !(0.0..=255.0).contains(&voice.env) {
+                return Err(format!("apu: driver voice {index} bad env"));
+            }
+        }
+        if !self.rs_pos.is_finite() || self.rs_pos < 0.0 {
+            return Err("apu: bad resample cursor".to_string());
+        }
+        if !self.rs_prev.0.is_finite() || !self.rs_prev.1.is_finite() {
+            return Err("apu: bad resample predecessor".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -556,6 +658,118 @@ impl GbaApu {
         (to_f32(sum_l), to_f32(sum_r))
     }
 
+    /// Phase 10 export. `drain_resampled` always leaves the interpolation
+    /// tail (1-2 samples) behind; that residue is structural, so it is
+    /// truncated deterministically here (`rs_prev` keeps the last sample,
+    /// the cursor restarts at the buffer head). Anything larger is mid-frame
+    /// content and rejected.
+    pub(crate) fn export_state(&self) -> Result<GbaApuState, String> {
+        if self.mix_buffer.len() > 2 {
+            return Err(format!(
+                "apu: mix_buffer not drained: {}",
+                self.mix_buffer.len()
+            ));
+        }
+        let rs_prev = self.mix_buffer.last().copied().unwrap_or(self.rs_prev);
+        Ok(GbaApuState {
+            sound1cnt_lo: self.sound1cnt_lo,
+            sound1cnt_hi: self.sound1cnt_hi,
+            sound1cnt_x: self.sound1cnt_x,
+            sound2cnt_lo: self.sound2cnt_lo,
+            sound2cnt_hi: self.sound2cnt_hi,
+            sound3cnt_lo: self.sound3cnt_lo,
+            sound3cnt_hi: self.sound3cnt_hi,
+            sound3cnt_x: self.sound3cnt_x,
+            sound4cnt_lo: self.sound4cnt_lo,
+            sound4cnt_hi: self.sound4cnt_hi,
+            soundcnt_lo: self.soundcnt_lo,
+            soundcnt_hi: self.soundcnt_hi,
+            soundcnt_x: self.soundcnt_x,
+            soundbias: self.soundbias,
+            wave_ram: serde_bytes::ByteBuf::from(self.wave_ram.to_vec()),
+            fifo_a: self.fifo_a.iter().copied().collect(),
+            fifo_b: self.fifo_b.iter().copied().collect(),
+            sound_area: self.sound_area,
+            sound_mode: self.sound_mode,
+            sound_vsync_enabled: self.sound_vsync_enabled,
+            driver_voices: self.driver_voices,
+            sq1: self.sq1,
+            sq2: self.sq2,
+            wave: self.wave,
+            noise: self.noise,
+            dac_a: self.dac_a,
+            dac_b: self.dac_b,
+            seq_step: self.seq_step,
+            seq_timer: self.seq_timer,
+            mix_timer: self.mix_timer,
+            freq1: self.freq1,
+            freq2: self.freq2,
+            freq3: self.freq3,
+            len1: self.len1,
+            len2: self.len2,
+            len3: self.len3,
+            len4: self.len4,
+            duty1: self.duty1,
+            duty2: self.duty2,
+            rs_pos: 0.0,
+            rs_prev,
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaApuState) -> Result<(), String> {
+        state.validate()?;
+        self.sound1cnt_lo = state.sound1cnt_lo;
+        self.sound1cnt_hi = state.sound1cnt_hi;
+        self.sound1cnt_x = state.sound1cnt_x;
+        self.sound2cnt_lo = state.sound2cnt_lo;
+        self.sound2cnt_hi = state.sound2cnt_hi;
+        self.sound3cnt_lo = state.sound3cnt_lo;
+        self.sound3cnt_hi = state.sound3cnt_hi;
+        self.sound3cnt_x = state.sound3cnt_x;
+        self.sound4cnt_lo = state.sound4cnt_lo;
+        self.sound4cnt_hi = state.sound4cnt_hi;
+        self.soundcnt_lo = state.soundcnt_lo;
+        self.soundcnt_hi = state.soundcnt_hi;
+        self.soundcnt_x = state.soundcnt_x;
+        self.soundbias = state.soundbias;
+        self.wave_ram.copy_from_slice(&state.wave_ram);
+        self.fifo_a = state.fifo_a.into_iter().collect();
+        self.fifo_b = state.fifo_b.into_iter().collect();
+        self.sound_area = state.sound_area;
+        self.sound_mode = state.sound_mode;
+        self.sound_vsync_enabled = state.sound_vsync_enabled;
+        self.driver_voices = state.driver_voices;
+        self.sq1 = state.sq1;
+        self.sq2 = state.sq2;
+        self.wave = state.wave;
+        self.noise = state.noise;
+        self.dac_a = state.dac_a;
+        self.dac_b = state.dac_b;
+        self.seq_step = state.seq_step;
+        self.seq_timer = state.seq_timer;
+        self.mix_timer = state.mix_timer;
+        self.freq1 = state.freq1;
+        self.freq2 = state.freq2;
+        self.freq3 = state.freq3;
+        self.len1 = state.len1;
+        self.len2 = state.len2;
+        self.len3 = state.len3;
+        self.len4 = state.len4;
+        self.duty1 = state.duty1;
+        self.duty2 = state.duty2;
+        self.rs_pos = state.rs_pos;
+        self.rs_prev = state.rs_prev;
+        // HPF filter memory is excluded from the wire: rebuild at the
+        // default rate; the next drain re-tracks the device rate.
+        self.mix_buffer.clear();
+        self.output_hpf_l =
+            IirFilter::get_highpass_filter(OUTPUT_HPF_DEFAULT_RATE as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_r =
+            IirFilter::get_highpass_filter(OUTPUT_HPF_DEFAULT_RATE as f32, OUTPUT_HPF_CUTOFF_HZ);
+        self.output_hpf_rate = OUTPUT_HPF_DEFAULT_RATE;
+        Ok(())
+    }
+
     /// Drain the grid buffer as device-rate samples (linear interpolation
     /// over the 32.768kHz timeline; cursor persists across frames).
     /// Each drained sample passes the stereo DC-block HPF
@@ -767,5 +981,54 @@ mod tests {
         let out = apu.drain_resampled(48_000);
         let peak = out.iter().map(|s| s.left).fold(0.0f32, f32::max);
         assert!(peak > 0.4, "reset should clear HPF memory, got {peak}");
+    }
+
+    #[test]
+    fn apu_state_round_trips_mid_note() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // Ch1: sweep off, duty 2, envelope up, freq with trigger.
+        apu.write_sound1cnt_lo(0x0040);
+        apu.write_sound1cnt_hi(0x81F3);
+        apu.write_sound1cnt_x(0x8385);
+        // FIFO A gets two samples (non-empty FIFO path).
+        apu.fifo_a.extend([0x10, 0x20]);
+        apu.dac_a = 0x10;
+        // A driver voice is mid-note.
+        apu.driver_voices[0] = DriverVoice {
+            started: true,
+            pos: 12.5,
+            env: 200.0,
+        };
+        // Run long enough for the envelope and sequencer to advance and
+        // the grid buffer to fill.
+        for _ in 0..4000 {
+            apu.tick();
+        }
+        assert!(!apu.mix_buffer.is_empty());
+        // A full grid buffer is mid-frame content: export must refuse.
+        assert!(apu.export_state().is_err());
+        // Draining leaves only the interpolation tail: export succeeds.
+        let _ = apu.drain_resampled(48_000);
+        assert!(apu.mix_buffer.len() <= 2);
+
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state().unwrap()).unwrap();
+        assert_eq!(bytes, again);
+        assert!(restored.mix_buffer.is_empty());
+        assert_eq!(restored.output_hpf_rate, OUTPUT_HPF_DEFAULT_RATE);
+
+        let mut bad = restored.export_state().unwrap();
+        bad.seq_step = 8;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state().unwrap();
+        bad.fifo_a = vec![0; 33];
+        assert!(bad.validate().is_err());
     }
 }

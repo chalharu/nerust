@@ -3001,6 +3001,7 @@ dependencies = [
  "nerust_sound_filter",
  "rmp-serde",
  "serde",
+ "serde_bytes",
  "thiserror 2.0.20",
  "typetag",
 ]
