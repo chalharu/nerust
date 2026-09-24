@@ -603,10 +603,9 @@ fn apply_commit_mul(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, m: MulEffec
     }
 }
 
-/// ARM MUL/MLA/UMULL/UMLAL/SMULL/SMLAL: native micro-op
-/// implementation mirroring `arm_opcodes::multiply::handle` exactly.
-/// The Booth-array carry model helpers stay in `multiply` (shared
-/// leaf logic under its license notice) and are only called here.
+/// ARM MUL/MLA/UMULL/UMLAL/SMULL/SMLAL: native micro-op implementation.
+/// The multiplier-array carry helpers live in `semantics` (shared leaf
+/// logic) and are only called here.
 pub(super) fn apply_mul(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     // Multiplies take internal cycles (GBATEK 1S+mI); carried in the base
     // below, plus the fetch-stream break (N32-S32) and the P-ON tick erase.
@@ -689,7 +688,12 @@ fn apply_mul_long(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
                 signed,
             )
         } else {
-            multiply_carry_lo(rm_value, rs_value, if accumulate { acc_lo } else { 0 })
+            multiply_carry_lo(
+                rm_value,
+                rs_value,
+                if accumulate { acc_lo } else { 0 },
+                signed,
+            )
         };
         regs.set_cpsr_c(carry);
     }

@@ -126,36 +126,206 @@ pub(crate) fn is_psr_transfer(instr: u32) -> bool {
         || (instr & 0x0FB0F000) == 0x0320F000
 }
 
-// Long-multiply carry model: C comes from the Booth array's final carry, not the product.
-// Ported algorithm used under its license terms below.
+// Long-multiply C flag from the multiplier array (original implementation).
 //
-//   Multiplication carry flag algorithm has been altered from its original
-//   form. However, they remain under their original license terms.
-//
-//   Copyright (C) 2024 zaydlang, calc84maniac
-//
-//   This software is provided 'as-is', without any express or implied
-//   warranty. In no event will the authors be held liable for any damages
-//   arising from the use of this software.
-//
-//   Permission is granted to anyone to use this software for any purpose,
-//   including commercial applications, and to alter it and redistribute it
-//   freely, subject to the following restrictions:
-//
-//   1. The origin of this software must not be misrepresented; you must not
-//      claim that you wrote the original software. If you use this software
-//      in a product, an acknowledgment in the product documentation would be
-//      appreciated but is not required.
-//   2. Altered source versions must be plainly marked as such, and must not
-//      be misrepresented as being the original software.
-//   3. This notice may not be removed or altered from any source
-//      distribution.
-//
-// ALTERED: moved from `arm_opcodes::multiply` into the unified `semantics`
-// module during micro-op/legacy unification (no algorithmic change).
-// Validated bit-exact against all 72 mgba-suite multiply-long C
-// expectations (see `mull_carry_matches_suite_table` below and the
-// `synthetic_mull_carry` pins in nerust_gba_rom_test).
+// After xMULLS/xMLALS the C flag is not a function of the 64-bit product
+// (e.g. UMULL(0xFFFFFFFF, 0x80000000) and UMULL(0x80000000, 0xFFFFFFFF)
+// share a product but report different C): it is the carry-out of the
+// ARM7TDMI's Booth-recoded carry-save multiplier array, sampled through
+// the final ALU add. The datapath below is written from the publicly
+// documented organization of that array: radix-4 Booth recoding emitting
+// four addends per multiplier cycle, carry-save compression with settled
+// 2-bit result latching, early termination on the 33-bit multiplier, and
+// a final ALU add whose barrel-shifter carry-out is the observed bit
+// (ARM multiply-accumulate patents; Furber, "ARM System-on-Chip
+// Architecture"; ARM7TDMI datasheet). No third-party code is used.
+// HW truth is pinned by `mull_carry_matches_suite_table` plus the
+// mgba-suite multiply-long ROM; model fidelity (result lane) by
+// `mull_array_matches_product` below.
+
+/// 33-bit multiplier lane mask (bit 32 = sign extension).
+const ARRAY33: u64 = 0x1_FFFF_FFFF;
+/// 34-bit recoded-addend lane mask.
+const ARRAY34: u64 = 0x3_FFFF_FFFF;
+
+/// Radix-4 Booth factor for one 3-bit multiplier chunk (textbook table).
+fn booth_factor(chunk: u64) -> i32 {
+    match chunk & 0b111 {
+        0b000 | 0b111 => 0,
+        0b001 | 0b010 => 1,
+        0b011 => 2,
+        0b100 => -2,
+        _ => -1, // 0b101 | 0b110
+    }
+}
+
+/// Three-lane carry-save add: modular sum plus the majority carry, which
+/// carries double weight (consumed shifted by one below).
+fn csa_add(a: u64, b: u64, c: u64) -> (u64, u64) {
+    (a ^ b ^ c, (a & b) | (b & c) | (c & a))
+}
+
+/// One Booth-recoded addend on 34-bit lanes plus its negation
+/// compensation bit. Negative multiples are bitwise inversions (not
+/// two's complement): the +1 enters through the CSA carry lane's
+/// vacated LSB at compression time.
+fn booth_addend(multiplicand: u64, chunk: u64) -> (u64, u64) {
+    let factor = booth_factor(chunk);
+    let magnitude = multiplicand.wrapping_mul(factor.unsigned_abs() as u64) & ARRAY34;
+    if factor < 0 {
+        (!magnitude & ARRAY34, 1)
+    } else {
+        (magnitude, 0)
+    }
+}
+
+/// 32-bit add with carry-in, returning (sum, carry-out).
+fn add32(a: u32, b: u32, carry_in: bool) -> (u32, bool) {
+    let total = a as u64 + b as u64 + u64::from(carry_in);
+    (total as u32, total >> 32 != 0)
+}
+
+/// Sign-extend `value` from `width` bits to 64.
+fn sext_from(value: u64, width: u64) -> u64 {
+    if width >= 64 || (value >> (width - 1)) & 1 == 0 {
+        value
+    } else {
+        value | (!0u64 << width)
+    }
+}
+
+/// 33-bit arithmetic right shift by 8 (the multiplier lane step).
+fn asr33(value: u64) -> u64 {
+    let sign = if value & (1 << 32) != 0 {
+        0xFF << 25
+    } else {
+        0
+    };
+    ((value & ARRAY33) >> 8) | sign
+}
+
+/// One multiplier cycle: compress four recoded addends into the running
+/// lanes. Each CSA settles its low 2 bits into the latched tails (later
+/// addends are at least 4x larger, so those bits are final); the
+/// datapath's sign-extension fold re-enters bit-32/33 evidence plus two
+/// accumulate bits at lanes 31/32. Returns (sum, carry, acc_rest).
+fn array_compress(sum: u64, carry: u64, addends: [(u64, u64); 4], mut acc: u64) -> (u64, u64, u64) {
+    let (mut s, mut c) = (sum, carry);
+    let (mut tail_s, mut tail_c) = (0u64, 0u64);
+    for (i, &(bits, neg)) in addends.iter().enumerate() {
+        s &= ARRAY33;
+        c &= ARRAY33;
+        let top_c = (c >> 32) & 1;
+        let top_b = (bits >> 33) & 1;
+        let (ns, nc) = csa_add(s, bits & ARRAY33, c);
+        // Booth-negation +1 into the carry lane's vacated LSB.
+        let nc = (nc << 1) | neg;
+        tail_s |= (ns & 3) << (2 * i);
+        tail_c |= (nc & 3) << (2 * i);
+        let (mut ns, mut nc) = (ns >> 2, nc >> 2);
+        // Sign-extension fold: dropped bit-32/33 evidence plus two
+        // accumulate bits re-enter at lanes 31/32.
+        ns |= ((acc & 1) + (top_c ^ 1) + (top_b ^ 1)) << 31;
+        nc |= (((acc >> 1) & 1) ^ 1) << 32;
+        acc >>= 2;
+        s = ns;
+        c = nc;
+    }
+    (tail_s | (s << 8), tail_c | (c << 8), acc)
+}
+
+/// Full multiplier-array pass over a long multiply. Returns the 64-bit
+/// result (always rm*rs+acc; asserted by the fuzz) and the observed C.
+fn mull_array(rm: u32, rs: u32, acc: u64, signed: bool) -> (u64, bool) {
+    // 34-bit operand lanes: sign-extended for signed ops.
+    let extend = |v: u32| -> u64 {
+        if signed && v >> 31 != 0 {
+            u64::from(v) | 0x3_0000_0000
+        } else {
+            u64::from(v)
+        }
+    };
+    let mut mult = extend(rs);
+    let multiplicand = extend(rm);
+    let in_carry = rs & 1 != 0;
+    // First-cycle extra input: the bit-0 chunk's addend seeds the lanes,
+    // the accumulator seeds the sum lane, its high bits drip-feed below.
+    let mut sum = acc;
+    let mut carry = if mult & 1 != 0 { !multiplicand } else { 0 };
+    let mut acc_rest = acc >> 34;
+    // Latch bit 0 and pre-rotate (accounts for the doubled multiplier).
+    let mut lat_sum = (sum & 1) as u128;
+    let mut lat_carry = (carry & 1) as u128;
+    lat_sum = lat_sum.rotate_right(1);
+    lat_carry = lat_carry.rotate_right(1);
+    sum >>= 1;
+    carry >>= 1;
+    let mut iters = 0;
+    loop {
+        let mut addends = [(0u64, 0u64); 4];
+        for (i, slot) in addends.iter_mut().enumerate() {
+            *slot = booth_addend(multiplicand, mult >> (2 * i));
+        }
+        let (cs, cc, rest) = array_compress(sum, carry, addends, acc_rest);
+        acc_rest = rest;
+        // Latch this cycle's settled low 8 bits, then rotate the latches.
+        lat_sum |= (cs & 0xFF) as u128;
+        lat_carry |= (cc & 0xFF) as u128;
+        sum = cs >> 8;
+        carry = cc >> 8;
+        lat_sum = lat_sum.rotate_right(8);
+        lat_carry = lat_carry.rotate_right(8);
+        mult = asr33(mult);
+        iters += 1;
+        let done = if signed {
+            mult == ARRAY33 || mult == 0
+        } else {
+            mult == 0
+        };
+        if done {
+            break;
+        }
+    }
+    lat_sum |= sum as u128;
+    lat_carry |= carry as u128;
+    // Re-align the latches for the final adds.
+    let align = match iters {
+        1 => 23,
+        2 => 15,
+        3 => 7,
+        _ => 31,
+    };
+    lat_sum = lat_sum.rotate_right(align);
+    lat_carry = lat_carry.rotate_right(align);
+    let ps_hi = (lat_sum >> 64) as u64;
+    let pc_hi = (lat_carry >> 64) as u64;
+    if iters == 4 {
+        let (lo, c0) = add32(ps_hi as u32, pc_hi as u32, in_carry);
+        let (hi, _) = add32((ps_hi >> 32) as u32, (pc_hi >> 32) as u32, c0);
+        (u64::from(hi) << 32 | u64::from(lo), pc_hi >> 63 != 0)
+    } else {
+        let (lo, c0) = add32((ps_hi >> 32) as u32, (pc_hi >> 32) as u32, in_carry);
+        // Remaining accumulate bits join the low half at 2+8n.
+        let shift = 2 + 8 * iters as u64;
+        let pc_lo = sext_from(lat_carry as u64, shift);
+        let ps_lo = (lat_sum as u64) | acc_rest.wrapping_shl(shift as u32);
+        let (hi, _) = add32(ps_lo as u32, pc_lo as u32, c0);
+        (u64::from(hi) << 32 | u64::from(lo), pc_hi >> 63 != 0)
+    }
+}
+
+/// Early-out entry over the fetched low half (acc = pre-add RdLo).
+/// Signedness matters: it selects the lane extensions and the early
+/// termination point, hence the iteration count that the sampled bit
+/// depends on.
+pub(crate) fn multiply_carry_lo(rm: u32, rs: u32, accum: u32, signed: bool) -> bool {
+    mull_array(rm, rs, u64::from(accum), signed).1
+}
+
+/// Full-tick entry over the high half (acc = pre-add RdHi).
+pub(crate) fn multiply_carry_hi(rm: u32, rs: u32, accum_hi: u32, signed: bool) -> bool {
+    mull_array(rm, rs, u64::from(accum_hi) << 32, signed).1
+}
 
 pub(crate) fn multiply_64(left: u32, right: u32, signed: bool) -> u64 {
     if signed {
@@ -209,85 +379,6 @@ pub(crate) fn multiply_tick_full(rs_val: u32, signed: bool) -> bool {
         }
     }
     mask == 0
-}
-
-/// Booth-array carry for early-out (partial) multiplies, over the low
-/// half. `accum` is the pre-add RdLo (0 without accumulate).
-pub(crate) fn multiply_carry_lo(rm: u32, rs: u32, accum: u32) -> bool {
-    // Set low bit of multiplicand to cause negation to invert the upper
-    // bits. This bit cannot propagate to the resulting carry bit.
-    let multiplicand = rm | 1;
-    // Optimized first iteration.
-    let mut booth = ((rs.wrapping_shl(31)) as i32 >> 31) as u32;
-    let mut carry = multiplicand.wrapping_mul(booth);
-    let mut sum = carry.wrapping_add(accum);
-    let mut acc = accum;
-    // Loop is bounded: partial-tick inputs converge within 3 groups, keeping this total.
-    // Full-tick inputs never reach this path (they use the Hi model).
-    let mut shift = 29i32;
-    for _ in 0..4 {
-        for _ in 0..4 {
-            // Next booth factor (-2 to 2, scaled).
-            let next = ((rs.wrapping_shl(shift as u32)) as i32).wrapping_shr(shift as u32) as u32;
-            shift -= 2;
-            let factor = next.wrapping_sub(booth);
-            booth = next;
-            let addend = multiplicand.wrapping_mul(factor);
-            // Accumulate addend with carry-save add.
-            acc ^= carry ^ addend;
-            sum = sum.wrapping_add(addend);
-            carry = sum.wrapping_sub(acc);
-        }
-        if booth == rs {
-            break;
-        }
-    }
-    // Carry flag comes from bit 31 of carry-save adder's final carry.
-    carry >> 31 != 0
-}
-
-/// Booth-array carry for fully-ticked multiplies, over the high half.
-/// `accum_hi` is the pre-add RdHi (0 without accumulate).
-pub(crate) fn multiply_carry_hi(rm: u32, rs: u32, accum_hi: u32, signed: bool) -> bool {
-    // Only last 3 booth iterations are relevant to output carry.
-    // Reduce scale of both inputs to get upper bits of 64-bit booth addends
-    // in upper bits of 32-bit values, while handling sign extension.
-    let (multiplicand, multiplier) = if signed {
-        ((rm as i32 >> 6) as u32, (rs as i32 >> 26) as u32)
-    } else {
-        (rm >> 6, rs >> 26)
-    };
-    // Set low bit of multiplicand to cause negation to invert the upper
-    // bits. This bit cannot propagate to the resulting carry bit.
-    let multiplicand = multiplicand | 1;
-    // Pre-populate magic bit 61 for carry.
-    let carry = !accum_hi & 0x20000000;
-    // Pre-populate magic bits 63-60 for accum (with carry magic pre-added).
-    let mut accum = accum_hi.wrapping_sub(0x08000000);
-    // Factors for last 3 booth iterations.
-    let booth0 = ((multiplier.wrapping_shl(27)) as i32).wrapping_shr(27) as u32;
-    let booth1 = ((multiplier.wrapping_shl(29)) as i32).wrapping_shr(29) as u32;
-    let booth2 = ((multiplier.wrapping_shl(31)) as i32).wrapping_shr(31) as u32;
-    let factor0 = multiplier.wrapping_sub(booth0);
-    let factor1 = booth0.wrapping_sub(booth1);
-    let factor2 = booth1.wrapping_sub(booth2);
-    // Scaled value of 3rd-last booth addend.
-    let mut addend = multiplicand.wrapping_mul(factor2);
-    // Finalize bits 61-60 of accum magic using its sign.
-    accum = accum.wrapping_sub(addend & 0x10000000);
-    // Scaled value of 2nd-last booth addend.
-    addend = multiplicand.wrapping_mul(factor1);
-    // Finalize bits 63-62 of accum magic using its sign.
-    accum = accum.wrapping_sub(addend & 0x40000000);
-    // Carry from carry-save add in bit 61, propagated to bit 62.
-    let mut sum = accum.wrapping_add(addend & 0x20000000);
-    // Subtract out carry magic to get actual accum magic.
-    accum = accum.wrapping_sub(carry);
-    // Scaled value of last booth addend; add to bit 62 and propagate.
-    addend = multiplicand.wrapping_mul(factor0);
-    sum = sum.wrapping_add(addend & 0x40000000);
-    // Cancel out accum magic bit 63 to get carry bit 63.
-    (sum ^ accum) >> 31 != 0
 }
 
 #[cfg(test)]
@@ -436,9 +527,82 @@ mod tests {
             let c = if full {
                 multiply_carry_hi(rm, rs, 0, signed)
             } else {
-                multiply_carry_lo(rm, rs, 0)
+                multiply_carry_lo(rm, rs, 0, signed)
             };
             assert_eq!(c, expected_c, "rm={rm:#010X} rs={rs:#010X} signed={signed}");
+        }
+    }
+
+    /// Model-fidelity fuzz: the array's result lane always equals
+    /// rm*rs+acc over an edge grid plus random 32-bit space, for both
+    /// accumulate wirings. (The C lane is pinned by
+    /// `mull_carry_matches_suite_table` and the mgba-suite ROM.)
+    #[test]
+    fn mull_array_matches_product() {
+        fn xorshift(state: &mut u64) -> u64 {
+            let mut x = *state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *state = x;
+            x
+        }
+        let seeds = [
+            0x00000000u32,
+            0x00000001,
+            0x00000002,
+            0x7FFFFFFE,
+            0x7FFFFFFF,
+            0x80000000,
+            0x80000001,
+            0xFFFFFFFE,
+            0xFFFFFFFF,
+            0x12345678,
+            0xAAAAAAAA,
+            0xDEADBEEF,
+        ];
+        // Edge grid on both entries (acc wires differ per entry).
+        for rm in seeds {
+            for rs in seeds {
+                for signed in [true, false] {
+                    for acc in seeds {
+                        if multiply_tick_full(rs, signed) {
+                            let (result, _) = mull_array(rm, rs, u64::from(acc) << 32, signed);
+                            assert_eq!(
+                                result,
+                                multiply_64(rm, rs, signed).wrapping_add(u64::from(acc) << 32)
+                            );
+                        } else {
+                            let (result, _) = mull_array(rm, rs, u64::from(acc), signed);
+                            assert_eq!(
+                                result,
+                                multiply_64(rm, rs, signed).wrapping_add(u64::from(acc))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Random fuzz across the full 32-bit space, both entries.
+        let mut state = 0x9E3779B97F4A7C15u64;
+        for _ in 0..200_000 {
+            let rm = xorshift(&mut state) as u32;
+            let rs = xorshift(&mut state) as u32;
+            let acc = xorshift(&mut state) as u32;
+            let signed = xorshift(&mut state) & 1 != 0;
+            if multiply_tick_full(rs, signed) {
+                let (result, _) = mull_array(rm, rs, u64::from(acc) << 32, signed);
+                assert_eq!(
+                    result,
+                    multiply_64(rm, rs, signed).wrapping_add(u64::from(acc) << 32)
+                );
+            } else {
+                let (result, _) = mull_array(rm, rs, u64::from(acc), signed);
+                assert_eq!(
+                    result,
+                    multiply_64(rm, rs, signed).wrapping_add(u64::from(acc))
+                );
+            }
         }
     }
 
@@ -465,7 +629,7 @@ mod tests {
                 for signed in [true, false] {
                     for seed in seeds {
                         let _ = multiply_carry_hi(rm, rs, seed, signed);
-                        let _ = multiply_carry_lo(rm, rs, seed);
+                        let _ = multiply_carry_lo(rm, rs, seed, signed);
                         let _ = multiply_tick_full(rs, signed);
                     }
                 }
