@@ -443,7 +443,7 @@ fn arm_dpreg_gates() {
     let regs = CpuRegisters::post_bios();
     // The DP-register branch itself must not misclaim multiply,
     // SWP, MRS/MSR, BX or halfword shapes (they have their own
-    // branches or stay legacy); assert on the branch directly.
+    // branches); assert on the branch directly.
     for instr in [
         0xE002_0091, // mul
         0xE102_0091, // swp
@@ -463,7 +463,7 @@ fn arm_dpreg_gates() {
 }
 
 #[test]
-fn arm_mul_padding_matches_legacy_base() {
+fn arm_mul_padding_matches_pinned_base() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(2, 7);
     // MUL m=1: commit + 1I.
@@ -626,7 +626,7 @@ fn arm_psrbx_shapes_and_gates() {
 #[test]
 fn coverage_manifest() {
     let regs = CpuRegisters::post_bios();
-    // Formerly legacy ARM: SWI, coprocessor UND.
+    // Trap classes: SWI, coprocessor UND.
     for instr in [
         0xEF00_0000, // swi
         0xE7FF_FFFF, // swi (cond E, bit24 set)

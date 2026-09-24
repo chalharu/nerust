@@ -6,9 +6,8 @@ use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 /// SWP/SWPB (GBATEK ARM Single Data Swap): native micro-op
-/// implementation mirroring `arm_opcodes::swp::handle` exactly
-/// (atomic load-then-store with the HW bus lock: no DMA between the
-/// pair, so expansion keeps it a single commit).
+/// implementation (atomic load-then-store with the HW bus lock: no DMA
+/// between the pair, so expansion keeps it a single commit).
 pub(super) fn apply_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -> u32 {
     let b = (instr >> 22) & 1 != 0;
     let rn = ((instr >> 16) & 0xF) as usize;
@@ -35,8 +34,7 @@ pub(super) fn apply_swp(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: 
     4
 }
 
-/// MRS/MSR: native micro-op implementation mirroring
-/// `arm_opcodes::psr_transfer::handle` exactly.
+/// MRS/MSR: native micro-op implementation.
 pub(super) fn apply_psr(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let psr = (instr >> 22) & 1 != 0; // 0=CPSR, 1=SPSR
     let is_mrs = (instr >> 21) & 1 == 0 && (instr & 0x0FBF0FFF) == 0x010F0000;
@@ -106,8 +104,7 @@ fn psr_apply_fields(mut current: u32, operand: u32, mask: u32) -> u32 {
 }
 
 /// ARM data-processing (register form, I==0): native micro-op
-/// implementation mirroring `arm_opcodes::data_processing::handle`
-/// exactly, including the register-shift +1I and R15-write refill.
+/// implementation, including the register-shift +1I and R15-write refill.
 pub(super) fn apply_dp_reg(regs: &mut CpuRegisters, instr: u32) -> u32 {
     let i = (instr >> 25) & 1 != 0;
     let opcode = ((instr >> 21) & 0xF) as u8;
@@ -270,8 +267,7 @@ fn dp_sbc_with_flags(a: u32, b: u32, c_in: u32) -> (u32, bool, bool) {
 }
 
 /// SWI trap: run the BIOS HLE dispatcher and carry its full charge
-/// (SVC-vector entry on Unsupported), mirroring the legacy SWI
-/// handlers (`arm_opcodes::swi`, `thumb_opcodes::branch`) exactly.
+/// (SVC-vector entry on Unsupported).
 pub(super) fn apply_trap_swi(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
@@ -293,8 +289,7 @@ pub(super) fn apply_trap_swi(
     }
 }
 
-/// Undefined-instruction trap: exception entry, mirroring the legacy
-/// UND handlers exactly.
+/// Undefined-instruction trap: exception entry.
 pub(super) fn apply_trap_und(regs: &mut CpuRegisters, is_thumb: bool) -> u32 {
     let return_address = regs.pc().wrapping_sub(if is_thumb { 2 } else { 4 });
     regs.enter_exception(0x1B, 0x04, return_address, true);

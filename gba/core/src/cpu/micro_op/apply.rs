@@ -27,7 +27,7 @@ fn resolve_addr(regs: &CpuRegisters, a: MemAccess) -> (u32, u32) {
     (if a.post_indexed { base } else { adjusted }, adjusted)
 }
 
-/// Apply one data access with the legacy handler's exact bus-call order
+/// Apply one data access with the exact bus-call order
 /// (access, writeback, then fetch-stream-break). The issue clock (+1)
 /// lands at the call site; the bus calls charge into `access_wait_cycles`.
 fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
@@ -43,7 +43,7 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
                 ((half >> 8) as u8) as i8 as i32 as u32
             } else {
                 // ARM LDRSH at odd addresses is a plain sign-extended
-                // byte read (legacy `halfword_transfer`).
+                // byte read.
                 bus.read8(addr) as i8 as i32 as u32
             }
         }
@@ -59,7 +59,7 @@ fn apply_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
     bus.charge_fetch_stream_break(addr);
 }
 
-/// Apply one data store with the legacy handler's exact bus-call order
+/// Apply one data store with the exact bus-call order
 /// (access, then fetch-stream-break). The issue clock (+1) lands at the
 /// call site; the bus calls charge into `access_wait_cycles`.
 fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
@@ -80,7 +80,7 @@ fn apply_write(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess) {
 fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
     // Shifter carry-out: snapshot for S with a rotated immediate, else
     // the live CPSR carry. Arithmetic carry-INS always read the live
-    // CPSR carry (legacy `execute` takes both separately; conflating
+    // CPSR carry (the carry-ins stay separate; conflating
     // them breaks ADC/SBC/RSC with rotation).
     let cpsr_carry = regs.cpsr_c();
     let shift_carry = fx.carry.unwrap_or(cpsr_carry);
@@ -111,7 +111,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
             let c_in = u32::from(cpsr_carry);
             let (r1, c1) = rn_val.overflowing_add(fx.imm);
             let (r, c2) = r1.overflowing_add(c_in);
-            // Overflow via the exact signed total (legacy formula: a
+            // Overflow via the exact signed total (a
             // two-stage OR diverges on borrow chains).
             let signed = rn_val as i32 as i64 + fx.imm as i32 as i64 + i64::from(c_in);
             let v = signed > i64::from(i32::MAX) || signed < i64::from(i32::MIN);
@@ -154,7 +154,7 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
             }
         }
         if !(rd_pc_write && has_spsr) {
-            // N: Thumb MOV-imm forces 0 (legacy quirk); otherwise
+            // N: Thumb MOV-imm forces 0; otherwise
             // bit 31. V: logical class preserves it; arithmetic
             // replaces it. C: the shifter carry.
             regs.set_cpsr_n(if fx.thumb_mov {
@@ -171,14 +171,8 @@ fn apply_alu(regs: &mut CpuRegisters, fx: AluEffect) {
     }
 }
 
-/// Interpret one pipelined step using expansion. Mirrors
-/// `GbaCpu::step_arm/step_thumb` (fetch/rotate/flush/refill) exactly;
-/// only the execute phase goes through micro-ops. Returns `None` when
-/// the executing instruction is not covered (caller keeps legacy path).
-/// `pipeline`/`regs` layout matches `GbaCpu` (`pipeline[0]` executes).
-#[allow(dead_code)]
 /// Thumb ADD/SUB (register and 3-bit immediate): native micro-op
-/// implementation mirroring `thumb_opcodes::add_sub::handle` exactly.
+/// implementation; ADD (op=0) and SUB (op=1) with NZCV writeback.
 fn apply_add_sub(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let i = (instr >> 10) & 1 != 0;
     let op = (instr >> 9) & 1 != 0; // 0=ADD, 1=SUB
@@ -211,8 +205,7 @@ fn apply_add_sub(regs: &mut CpuRegisters, instr: u16) -> u32 {
 
 /// Thumb register ALU (AND/EOR, shifts, ADC/SBC, ROR, TST,
 /// NEG/CMP/CMN, ORR/MUL, BIC/MVN): native micro-op implementation
-/// mirroring `thumb_opcodes::alu::handle` exactly. MUL keeps the
-/// 1S+mI timing with m from the incoming Rd value.
+/// with the 1S+mI MUL timing (m from the incoming Rd value).
 fn apply_thumb_alu(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let op = ((instr >> 6) & 0xF) as u8;
     let rs = ((instr >> 3) & 0x7) as usize;
@@ -356,7 +349,7 @@ fn thumb_compare(
 }
 
 /// Thumb ADD Rd, PC/SP, #imm: native micro-op implementation
-/// mirroring `thumb_opcodes::alu::handle_load_address` exactly.
+/// with word-aligned PC/SP-relative addressing.
 fn apply_load_address(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let sp = (instr >> 11) & 1 != 0;
     let rd = ((instr >> 8) & 0x7) as usize;
@@ -366,8 +359,7 @@ fn apply_load_address(regs: &mut CpuRegisters, instr: u16) -> u32 {
     1
 }
 
-/// Thumb ADD/SUB SP, #imm: native micro-op implementation mirroring
-/// `thumb_opcodes::alu::handle_sp_offset` exactly.
+/// Thumb ADD/SUB SP, #imm: native micro-op implementation.
 fn apply_sp_offset(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let s = (instr >> 7) & 1 != 0;
     let imm = ((instr & 0x7F) as u32) << 2;
@@ -380,9 +372,8 @@ fn apply_sp_offset(regs: &mut CpuRegisters, instr: u16) -> u32 {
 }
 
 /// Thumb hi-register ADD/CMP/MOV (BX never reaches here: the gate
-/// routes 0x4700 to `MicroOp::Bx`): native micro-op implementation
-/// mirroring `thumb_opcodes::hi_register::handle` exactly, including
-/// the unreachable BX arm.
+/// routes 0x4700 to `MicroOp::Bx`): native micro-op implementation,
+/// including the unreachable BX arm.
 fn apply_hi_register(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let op = (instr >> 8) & 0b11;
     let high_destination = (instr >> 7) & 1 != 0;
@@ -537,10 +528,8 @@ fn apply_commit_thumb(regs: &mut CpuRegisters, instr: u16) {
 }
 
 /// Thumb LSL/LSR/ASR immediate: native micro-op implementation.
-/// Semantics mirror `thumb_opcodes::move_shifted::handle` exactly
-/// (bit-for-bit port of the shift/carry/flag behavior, including the
-/// 1-cycle base return); the commit op carries the +1 cycle
-/// separately, like the other arms here.
+/// Bit-for-bit shift/carry/flag behavior with a 1-cycle base return;
+/// the commit op carries the +1 cycle separately, like the other arms here.
 fn apply_move_shifted(regs: &mut CpuRegisters, instr: u16) -> u32 {
     let op = (instr >> 11) & 0b11;
     let offset = ((instr >> 6) & 0x1F) as u32;
@@ -706,14 +695,13 @@ fn apply_mul_long(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, instr: u32) -
 }
 
 fn apply_mem_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess, is_thumb: bool) {
-    // Legacy-identical issue: bus access, writeback and break in
+    // Issue-time sampling: bus access, writeback and break in
     // the issue tick. (A deferred-commit timer re-sample was tried
     // here and FALSIFIED — it breaks 12 hw-test DMA pins that pin
     // issue-time sampling; see the design doc. The queue/drain
     // machinery stays as the verified-neutral execution model.)
     apply_read(regs, bus, a);
-    // Thumb single word-load retire (mirrors the legacy handler
-    // hook; the legacy path never runs for covered classes).
+    // Thumb single word-load retire hook (feeds the DMA prefetch probe).
     // regs.pc() is the fetch PC here exactly as in step_thumb,
     // so execute-PC adjacency validates the same way.
     if is_thumb && a.width == 4 && !a.signed_load {
@@ -723,7 +711,7 @@ fn apply_mem_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, a: MemAccess,
 }
 
 fn apply_pcrel_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, r: PcRelRead, is_thumb: bool) {
-    // Legacy-identical order: bus access, then fetch-stream-break.
+    // Access order: bus access, then fetch-stream-break.
     regs.set_r(r.rd, bus.read32(r.addr));
     bus.charge_fetch_stream_break(r.addr);
     // Thumb literal retire (loads the marker chain like a load).
@@ -733,7 +721,7 @@ fn apply_pcrel_read(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, r: PcRelRea
 }
 
 fn apply_block_word(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, w: BlockWord) {
-    // Legacy-identical per-word order: continuation query, then
+    // Per-word order: continuation query, then
     // the access. A DMA burst between words resets the address
     // stream (next word N), same as post-DMA CPU accesses.
     let continuation = !w.first && bus.data_continuation_sequential(w.addr);
@@ -771,10 +759,9 @@ fn apply_block_load(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, w: BlockWor
     }
 }
 
-/// Empty-list block word: the single PC transfer, mirroring the
-/// legacy empty path's exact bus-call sequence (access, then
-/// fetch-stream break; batch framing comes from the surrounding
-/// Start/End ops for Thumb, none for ARM).
+/// Empty-list block word: the single PC transfer, with the exact
+/// bus-call sequence (access, then fetch-stream break; batch framing
+/// comes from the surrounding Start/End ops for Thumb, none for ARM).
 fn apply_block_empty(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEmptyEffect) {
     if e.reset_sequential {
         bus.set_data_sequential(false);
@@ -789,9 +776,8 @@ fn apply_block_empty(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, e: BlockEm
         }
         regs.set_pc(target);
         // LDM^ loading PC restores CPSR from SPSR. Unlike the
-        // `BlockWord` path (which skips USR/SYS, following the
-        // non-empty legacy handler), the empty legacy path restores
-        // unconditionally — mirrored here.
+        // `BlockWord` path (which skips USR/SYS), the empty path restores
+        // unconditionally.
         if e.restore_cpsr {
             regs.set_cpsr(regs.spsr());
         }
