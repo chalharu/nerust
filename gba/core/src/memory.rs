@@ -1,10 +1,10 @@
 use crate::apu::GbaApu;
 use crate::bios::hle_operation::{HleBiosBus, HleBiosOperation};
-use crate::sound_driver::SoundDriverBus;
 use crate::cartridge::Cartridge;
 use crate::cartridge::save::helpers::{read_slice, repeat_byte, selected_write_byte, write_slice};
-use crate::dma::{DmaTrigger, GbaDma};
-use crate::ppu::{GbaPpu, HDRAW_CYCLES};
+use crate::dma::{DmaTransfer, DmaTrigger, GbaDma};
+use crate::ppu::{GbaPpu, HDRAW_CYCLES, PpuEvent};
+use crate::sound_driver::SoundDriverBus;
 use crate::timer::GbaTimers;
 
 // ---------------------------------------------------------------------------
@@ -344,6 +344,13 @@ impl DisplayStallSnapshot {
     }
 }
 
+/// I/O read outcome for the region halves: lane-adjusted value, or a
+/// direct early return (open bus / prefetch fallback).
+enum IoRead {
+    Value(u16),
+    Direct(u32),
+}
+
 impl GbaMemoryBus {
     pub fn new() -> Self {
         let mut bios = Box::new([0u8; BIOS_SIZE]);
@@ -677,10 +684,52 @@ impl GbaMemoryBus {
             // (Wake-source subset and IF-not-set are not modeled.)
             return false;
         }
+        self.tick_sound_dma();
+        let event = self.tick_video();
+        let timer_irq = self.tick_timers();
+        let mut interrupt_mask = event.interrupt_mask | timer_irq;
+        // +1-tick HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
+        // edge stays immediate, but the IF raise waits a tick. Stash the
+        // HBlank bit for the next tick start instead of raising now.
+        if interrupt_mask & (1 << 1) != 0 {
+            interrupt_mask &= !(1 << 1);
+            self.pending_hblank_irq = true;
+        }
+        self.tick_sio();
+        let stall_snapshot = DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
+        };
+        self.tick_dma(&stall_snapshot);
+        interrupt_mask |= self.dma.take_completion_interrupts();
+        if interrupt_mask != 0 {
+            self.request_interrupt(interrupt_mask);
+        }
+        // Close an EEPROM serial burst once no DMA is in flight: the
+        // buffered frame is decoded (and 512B/8KB latched) at burst end.
+        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
+            self.eeprom_burst_open = false;
+            if let Some(cart) = self.cartridge.as_mut() {
+                cart.eeprom_end_burst();
+            }
+        }
+        event.frame_complete
+    }
+
+    /// Pending-DMA countdown plus the APU native-grid tick (BIOS sound
+    /// driver voices mix into the buffer tail).
+    fn tick_sound_dma(&mut self) {
         self.dma.tick_pending();
         if self.apu.tick() {
             crate::sound_driver::mix_driver_grid(self);
         }
+    }
+    /// Video phase: countdown, PPU step, and the HBlank/VBlank/line
+    /// event DMA triggers plus video-capture arming.
+    fn tick_video(&mut self) -> PpuEvent {
         if self.video_countdown > 0 {
             self.video_countdown -= 1;
             if self.video_countdown == 0 {
@@ -708,23 +757,33 @@ impl GbaMemoryBus {
             self.dma_trigger_pc = self.current_pc;
         }
         if event.line_started {
-            // DMA3 video-capture is latched at vcount==162 (a
-            // stale still-running transfer is stopped) and fires 3 cycles
-            // into each line of vcount in [2, 162).
-            let vcount = self.ppu.vcount();
-            if vcount == 162 {
-                if self.video_armed {
-                    self.dma.stop_video_transfer();
-                }
-                self.video_armed = self.dma.has_video_transfer();
-            }
-            if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
-                // Video DMA request lands 3 cycles into the line; the first
-                // unit's xI is absorbed pre-start, so the countdown alone
-                // sets the phase.
-                self.video_countdown = 3;
-            }
+            self.tick_video_line();
         }
+        event
+    }
+
+    /// Line-start phase: DMA3 video-capture latch/fire bookkeeping.
+    fn tick_video_line(&mut self) {
+        // DMA3 video-capture is latched at vcount==162 (a
+        // stale still-running transfer is stopped) and fires 3 cycles
+        // into each line of vcount in [2, 162).
+        let vcount = self.ppu.vcount();
+        if vcount == 162 {
+            if self.video_armed {
+                self.dma.stop_video_transfer();
+            }
+            self.video_armed = self.dma.has_video_transfer();
+        }
+        if self.video_armed && (2..162).contains(&vcount) && self.dma.has_video_transfer() {
+            // Video DMA request lands 3 cycles into the line; the first
+            // unit's xI is absorbed pre-start, so the countdown alone
+            // sets the phase.
+            self.video_countdown = 3;
+        }
+    }
+    /// Timer phase: step the timers and clock the sound FIFOs from
+    /// timer overflows. Returns the timer IRQ mask.
+    fn tick_timers(&mut self) -> u16 {
         let (timer_irq, timer_overflow) = {
             self.timers.set_current_cycle(self.current_tcycle);
             self.timers.step_full()
@@ -732,240 +791,244 @@ impl GbaMemoryBus {
         if timer_overflow != 0 {
             for i in 0..4 {
                 if timer_overflow & (1 << i) != 0 {
-                    // The overflowing timer clocks one sample byte out of each
-                    // selecting FIFO; a FIFO at 14 bytes or fewer requests
-                    // its Special DMA channel. Every overflow clocks the
-                    // sample stream, whether or not the timer IRQ is
-                    // enabled (the IRQ bit only raises IF).
-                    if self.apu.soundcnt_x & 0x80 != 0 && i <= 1 {
-                        // SOUNDCNT_H bits 8/9/12/13 are output routing, not
-                        // a DMA gate (GBATEK SOUNDCNT_H); only the
-                        // timer-select bits pick which overflow clocks
-                        // each FIFO.
-                        for (fifo_b, select_bit) in [(false, 10), (true, 14)] {
-                            let timer = (self.apu.soundcnt_hi >> select_bit) & 1;
-                            if timer as usize != i {
-                                continue;
-                            }
-                            // The first overflow after the selecting timer's
-                            // enable primes the sample pipeline without
-                            // consuming (alyosha fifo_4: a preloaded FIFO
-                            // must still hold 16 at the second overflow, so
-                            // the third — not the second — fires the DMA).
-                            // The level check still runs (an empty FIFO
-                            // fires its DMA here).
-                            if self.timers.overflows_since_enable(i) != 1 {
-                                self.apu.drain_fifo(fifo_b);
-                            }
-                            // Post-drain <=14 bytes requests DMA (alyosha fifo
-                            // t002b/fifo_3 pin fire-at-14: pre-pop <=12
-                            // never fires there).
-                            if self.apu.fifo_len(fifo_b) <= 14
-                                && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
-                            {
-                                self.dma.trigger_channel(ch, DmaTrigger::Special);
-                            }
-                        }
-                    }
+                    self.tick_fifo_overflow(i);
                 }
             }
         }
-        let mut interrupt_mask = event.interrupt_mask | timer_irq;
-        // +1-tick HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
-        // edge stays immediate, but the IF raise waits a tick. Stash the
-        // HBlank bit for the next tick start instead of raising now.
-        if interrupt_mask & (1 << 1) != 0 {
-            interrupt_mask &= !(1 << 1);
-            self.pending_hblank_irq = true;
+        timer_irq
+    }
+
+    /// One overflowing timer clocks one sample byte out of each
+    /// selecting FIFO; a FIFO at 14 bytes or fewer requests its
+    /// Special DMA channel. Every overflow clocks the sample stream,
+    /// whether or not the timer IRQ is enabled (the IRQ bit only
+    /// raises IF).
+    fn tick_fifo_overflow(&mut self, i: usize) {
+        if self.apu.soundcnt_x & 0x80 == 0 || i > 1 {
+            return;
         }
-        // SIO Normal-mode transfer completion (scheduled on the START
-        // edge): clears START, delivers pulled-high receive data (no link
-        // partner drives the lines low) and raises the serial IRQ when
-        // enabled. Pinned by mgba-suite sio-timing (measured = transfer
-        // cycles + a constant 121-cycle setup/exit path).
-        if self.sio_xfer_cycles > 0 {
-            self.sio_xfer_cycles -= 1;
-            if self.sio_xfer_cycles == 0 {
-                if self.sio_xfer_uart {
-                    // UART frame done: the sent byte leaves, an idle-high
-                    // byte arrives when receive is enabled (overrun sets
-                    // the error flag), then chained frames kick.
-                    self.sio_xfer_uart = false;
-                    self.uart_tx.pop_front();
-                    if self.siocnt & 0x0800 != 0 {
-                        if self.uart_rx.len() >= self.uart_fifo_cap() {
-                            self.uart_err = true;
-                        } else {
-                            self.uart_rx.push_back(0xFF);
-                        }
-                    }
-                    self.uart_eval_irq();
-                    self.kick_uart();
-                } else {
-                    self.siocnt &= !0x0080;
-                    if self.sio_xfer_32 {
-                        self.siodata32 = 0xFFFF_FFFF;
-                    } else {
-                        // No link partner: only the receive lane reads
-                        // pulled-high; the send high byte is preserved
-                        // (HW-pinned by serial_read_data).
-                        self.siodata8 = (self.siodata8 & 0xFF00) | 0x00FF;
-                    }
-                    if self.siocnt & 0x4000 != 0 {
-                        self.request_interrupt(1 << 7);
-                    }
-                }
+        // SOUNDCNT_H bits 8/9/12/13 are output routing, not
+        // a DMA gate (GBATEK SOUNDCNT_H); only the
+        // timer-select bits pick which overflow clocks
+        // each FIFO.
+        for (fifo_b, select_bit) in [(false, 10), (true, 14)] {
+            let timer = (self.apu.soundcnt_hi >> select_bit) & 1;
+            if timer as usize != i {
+                continue;
+            }
+            // The first overflow after the selecting timer's
+            // enable primes the sample pipeline without
+            // consuming (alyosha fifo_4: a preloaded FIFO
+            // must still hold 16 at the second overflow, so
+            // the third — not the second — fires the DMA).
+            // The level check still runs (an empty FIFO
+            // fires its DMA here).
+            if self.timers.overflows_since_enable(i) != 1 {
+                self.apu.drain_fifo(fifo_b);
+            }
+            // Post-drain <=14 bytes requests DMA (alyosha fifo
+            // t002b/fifo_3 pin fire-at-14: pre-pop <=12
+            // never fires there).
+            if self.apu.fifo_len(fifo_b) <= 14
+                && let Some(ch) = self.dma.sound_channel_for_fifo(fifo_b)
+            {
+                self.dma.trigger_channel(ch, DmaTrigger::Special);
             }
         }
-        let stall_snapshot = DisplayStallSnapshot {
-            forced_blank: self.ppu.forced_blank(),
-            vcount: self.ppu.vcount(),
-            cycle: self.ppu.cycle(),
-            dispcnt: self.ppu.dispcnt(),
-            bg_fetch_active: self.ppu.bg_fetch_active(),
-        };
-        if let Some(transfer) = self
+    }
+    /// SIO phase: Normal-mode transfer completion (scheduled on the
+    /// START edge) clears START, delivers pulled-high receive data
+    /// (no link partner drives the lines low) and raises the serial
+    /// IRQ when enabled. Pinned by mgba-suite sio-timing (measured =
+    /// transfer cycles + a constant 121-cycle setup/exit path).
+    fn tick_sio(&mut self) {
+        if self.sio_xfer_cycles == 0 {
+            return;
+        }
+        self.sio_xfer_cycles -= 1;
+        if self.sio_xfer_cycles != 0 {
+            return;
+        }
+        if self.sio_xfer_uart {
+            self.tick_uart_done();
+        } else {
+            self.siocnt &= !0x0080;
+            if self.sio_xfer_32 {
+                self.siodata32 = 0xFFFF_FFFF;
+            } else {
+                // No link partner: only the receive lane reads
+                // pulled-high; the send high byte is preserved
+                // (HW-pinned by serial_read_data).
+                self.siodata8 = (self.siodata8 & 0xFF00) | 0x00FF;
+            }
+            if self.siocnt & 0x4000 != 0 {
+                self.request_interrupt(1 << 7);
+            }
+        }
+    }
+
+    /// UART frame done: the sent byte leaves, an idle-high byte
+    /// arrives when receive is enabled (overrun sets the error
+    /// flag), then chained frames kick.
+    fn tick_uart_done(&mut self) {
+        self.sio_xfer_uart = false;
+        self.uart_tx.pop_front();
+        if self.siocnt & 0x0800 != 0 {
+            if self.uart_rx.len() >= self.uart_fifo_cap() {
+                self.uart_err = true;
+            } else {
+                self.uart_rx.push_back(0xFF);
+            }
+        }
+        self.uart_eval_irq();
+        self.kick_uart();
+    }
+    /// DMA phase: run one DMA step and service the transfer (EEPROM
+    /// serial bits, GamePak prefetch collisions, bus-latch driving,
+    /// destination write, bus-ownership reset).
+    fn tick_dma(&mut self, stall_snapshot: &DisplayStallSnapshot) {
+        let Some(transfer) = self
             .dma
             .step(self.wait_cnt, &|addr| stall_snapshot.stall(addr))
+        else {
+            return;
+        };
+        if std::env::var("GBA_DTRACE").is_ok() {
+            eprintln!(
+                "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
+                transfer.channel,
+                self.current_tcycle,
+                stall_snapshot.vcount,
+                stall_snapshot.cycle,
+                transfer.data_source,
+                transfer.destination,
+                transfer.width
+            );
+        }
+        // Open-bus PC tag: snapshot the in-flight instruction's bus PC
+        // (`current_pc` is already the architectural PC, so the
+        // read-side compare below is a plain 2/4 difference).
+        self.dma_open_pc = self.current_pc;
+        // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
+        // other channels/widths see the window as ROM/open bus.
+        let dst = transfer.destination;
+        let use_eeprom = transfer.channel == 3
+            && transfer.width == 2
+            && self.is_eeprom()
+            && (dma_in_eeprom_range(transfer.data_source) || dma_in_eeprom_range(dst));
+        let value = self.dma_transfer_value(&transfer, use_eeprom);
+        self.dma_transfer_write(&transfer, value, use_eeprom);
+        // DMA owns the bus between CPU accesses: the CPU's next access
+        // is non-sequential (GBATEK DMA owns the bus).
+        self.prev_addr = None;
+        self.prev_width = 0;
+        self.prev_data_addr = None;
+        self.last_data_addr = None;
+        self.fetch_addr = None;
+        self.fetch_width = 0;
+        // The ROM prefetch buffer survives DMA that never touches
+        // GamePak ROM (ROM contents can't change under DMA, so the
+        // buffered opcodes stay valid). Only ROM-touching DMA
+        // restarts the buffer.
+        if crate::dma::is_rom(transfer.data_source) || crate::dma::is_rom(dst) {
+            self.pf_valid = false;
+            self.pf_branch_drain = false;
+        }
+        // Completion IRQs are raised via take_completion_interrupts
+        // in `tick` (one tick after the final write).
+    }
+    /// Resolve this transfer's data value: EEPROM serial bits, a bus
+    /// read from an accessible source, or the latched value. GamePak
+    /// reads also advance the prefetch fill and drive the shared latch.
+    fn dma_transfer_value(&mut self, transfer: &DmaTransfer, use_eeprom: bool) -> u32 {
+        if use_eeprom && dma_in_eeprom_range(transfer.data_source) {
+            // EEPROM DMA read: one response bit per 16-bit unit.
+            let bit = self.next_eeprom_read_bit();
+            if transfer.width == 4 {
+                bit | bit << 16
+            } else {
+                bit
+            }
+        } else if transfer.data_source >= 0x02000000 {
+            self.dma_bus_read_value(transfer)
+        } else if transfer.width == 2 && transfer.destination & 2 != 0 {
+            transfer.latched_value >> 16
+        } else {
+            transfer.latched_value
+        }
+    }
+
+    /// Bus read for an accessible source, with GamePak prefetch
+    /// collision and shared-latch driving.
+    fn dma_bus_read_value(&mut self, transfer: &DmaTransfer) -> u32 {
+        // 16-bit GamePak reads pre-increment (dest[i] =
+        // mem16(src+2+2i)), firing only for primed bursts whose
+        // read lands in ROM; single-unit and non-ROM reads are
+        // unaffected. N/S timing follows the programmed counter.
+        let src = transfer.data_source;
+        let read_addr = if transfer.width == 2
+            && transfer.shift_primed
+            && !transfer.single_unit
+            && ((0x08000000..=0x0DFFFFFF).contains(&src)
+                || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))
         {
-            if std::env::var("GBA_DTRACE").is_ok() {
-                eprintln!(
-                    "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
-                    transfer.channel,
-                    self.current_tcycle,
-                    stall_snapshot.vcount,
-                    stall_snapshot.cycle,
-                    transfer.data_source,
-                    transfer.destination,
-                    transfer.width
-                );
+            src.wrapping_add(2)
+        } else {
+            src
+        };
+        let value = self.read_dma_source(read_addr, transfer.width);
+        // GamePak ROM reads collide with the in-flight prefetch
+        // fill: one real-tick stall on the first GamePak access
+        // per burst.
+        if crate::dma::is_rom(read_addr) && self.pf_valid {
+            self.fill_advance(transfer.pre_read_idle);
+            if self.fill_collision() != 0 {
+                self.dma_stall_pending = 1;
             }
-            let in_eeprom_range = |addr: u32| (0x0D000000..=0x0DFFFFFF).contains(&addr);
-            // Open-bus PC tag: snapshot the in-flight instruction's bus PC
-            // (`current_pc` is already the architectural PC, so the
-            // read-side compare below is a plain 2/4 difference).
-            self.dma_open_pc = self.current_pc;
-            // GBATEK Backup Media: only 16-bit DMA3 drives the EEPROM chip;
-            // other channels/widths see the window as ROM/open bus.
-            let use_eeprom = transfer.channel == 3
-                && transfer.width == 2
-                && self.is_eeprom()
-                && (in_eeprom_range(transfer.data_source) || in_eeprom_range(transfer.destination));
-            let readable_source = transfer.data_source >= 0x02000000;
-            let value = if use_eeprom && in_eeprom_range(transfer.data_source) {
-                // EEPROM DMA read: one response bit per 16-bit unit.
-                let bit = self.next_eeprom_read_bit();
-                if transfer.width == 4 {
-                    bit | bit << 16
-                } else {
-                    bit
-                }
-            } else if readable_source {
-                // 16-bit GamePak reads pre-increment (dest[i] =
-                // mem16(src+2+2i)), firing only for primed bursts whose
-                // read lands in ROM; single-unit and non-ROM reads are
-                // unaffected. N/S timing follows the programmed counter.
-                let src = transfer.data_source;
-                let read_addr = if transfer.width == 2
-                    && transfer.shift_primed
-                    && !transfer.single_unit
-                    && ((0x08000000..=0x0DFFFFFF).contains(&src)
-                        || (0x08000000..=0x0DFFFFFF).contains(&src.wrapping_add(2)))
-                {
-                    src.wrapping_add(2)
-                } else {
-                    src
-                };
-                let value = self.read_dma_source(read_addr, transfer.width);
-                // GamePak ROM reads collide with the in-flight prefetch
-                // fill: one real-tick stall on the first GamePak access
-                // per burst.
-                if crate::dma::is_rom(read_addr) && self.pf_valid {
-                    self.fill_advance(transfer.pre_read_idle);
-                    if self.fill_collision() != 0 {
-                        self.dma_stall_pending = 1;
-                    }
-                }
-                self.dma
-                    .update_latch(transfer.channel, transfer.width, value);
-                // DMA reads from accessible sources also drive the shared
-                // bus latch (HW-pinned by DMA_IWRAM_Bus: the ROM word read
-                // by the priming DMA is what the racing DMA samples).
-                // Inaccessible sources leave it alone (DMA_CPU_Bus needs
-                // the power-on 0xFF to survive the priming DMA).
-                let inaccessible = is_unreadable_io(read_addr)
-                    || ((0x04000800..=0x04FFFFFF).contains(&read_addr)
-                        && !is_mem_control(read_addr));
-                if !inaccessible {
-                    let latch = if transfer.width == 4 {
-                        value
-                    } else {
-                        let half = value & 0xFFFF;
-                        half | (half << 16)
-                    };
-                    self.cpu_bus = latch;
-                    self.dma_bus = latch;
-                    // The serviced unit drives the shared bus: the sticky
-                    // latch goes valid until CPU mapped traffic re-drives it.
-                    self.dma_bus_valid = true;
-                }
+        }
+        self.dma
+            .update_latch(transfer.channel, transfer.width, value);
+        // DMA reads from accessible sources also drive the shared
+        // bus latch (HW-pinned by DMA_IWRAM_Bus: the ROM word read
+        // by the priming DMA is what the racing DMA samples).
+        // Inaccessible sources leave it alone (DMA_CPU_Bus needs
+        // the power-on 0xFF to survive the priming DMA).
+        if dma_read_drives_latch(read_addr) {
+            let latch = if transfer.width == 4 {
                 value
-            } else if transfer.width == 2 && transfer.destination & 2 != 0 {
-                transfer.latched_value >> 16
             } else {
-                transfer.latched_value
+                let half = value & 0xFFFF;
+                half | (half << 16)
             };
-            if use_eeprom && in_eeprom_range(transfer.destination) {
-                // EEPROM DMA write: each unit carries serial bit(s).
-                self.feed_eeprom_write(transfer.width, value);
-            } else {
-                // GamePak ROM writes collide like reads (same one-shot).
-                if crate::dma::is_rom(transfer.destination) && self.pf_valid {
-                    self.fill_advance(transfer.pre_write_idle);
-                    if self.fill_collision() != 0 {
-                        self.dma_stall_pending = 1;
-                    }
-                }
-                self.write_dma_value(
-                    transfer.channel,
-                    transfer.destination,
-                    transfer.width,
-                    value,
-                );
-            }
-            // DMA owns the bus between CPU accesses: the CPU's next access
-            // is non-sequential (GBATEK DMA owns the bus).
-            self.prev_addr = None;
-            self.prev_width = 0;
-            self.prev_data_addr = None;
-            self.last_data_addr = None;
-            self.fetch_addr = None;
-            self.fetch_width = 0;
-            // The ROM prefetch buffer survives DMA that never touches
-            // GamePak ROM (ROM contents can't change under DMA, so the
-            // buffered opcodes stay valid). Only ROM-touching DMA
-            // restarts the buffer.
-            if crate::dma::is_rom(transfer.data_source) || crate::dma::is_rom(transfer.destination)
-            {
-                self.pf_valid = false;
-                self.pf_branch_drain = false;
-            }
-            // Completion IRQs are raised via take_completion_interrupts
-            // below (one tick after the final write).
+            self.cpu_bus = latch;
+            self.dma_bus = latch;
+            // The serviced unit drives the shared bus: the sticky
+            // latch goes valid until CPU mapped traffic re-drives it.
+            self.dma_bus_valid = true;
         }
-        interrupt_mask |= self.dma.take_completion_interrupts();
-        if interrupt_mask != 0 {
-            self.request_interrupt(interrupt_mask);
+        value
+    }
+    /// Write this transfer's value: EEPROM serial bits or the
+    /// destination, with GamePak prefetch collision like reads.
+    fn dma_transfer_write(&mut self, transfer: &DmaTransfer, value: u32, use_eeprom: bool) {
+        if use_eeprom && dma_in_eeprom_range(transfer.destination) {
+            // EEPROM DMA write: each unit carries serial bit(s).
+            self.feed_eeprom_write(transfer.width, value);
+            return;
         }
-        // Close an EEPROM serial burst once no DMA is in flight: the
-        // buffered frame is decoded (and 512B/8KB latched) at burst end.
-        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
-            self.eeprom_burst_open = false;
-            if let Some(cart) = self.cartridge.as_mut() {
-                cart.eeprom_end_burst();
+        // GamePak ROM writes collide like reads (same one-shot).
+        if crate::dma::is_rom(transfer.destination) && self.pf_valid {
+            self.fill_advance(transfer.pre_write_idle);
+            if self.fill_collision() != 0 {
+                self.dma_stall_pending = 1;
             }
         }
-        event.frame_complete
+        self.write_dma_value(
+            transfer.channel,
+            transfer.destination,
+            transfer.width,
+            value,
+        );
     }
 
     pub fn dma_active(&self) -> bool {
@@ -2615,33 +2678,34 @@ impl GbaMemoryBus {
             }
         }
         let aligned = addr & !1;
-        let val: u16 = match aligned {
+        // Region halves (Direct = unmapped/write-only open-bus return,
+        // skipping the lane adjust below like the legacy early return).
+        let out = if aligned < 0x04000100 {
+            self.read_io_low(aligned)
+        } else {
+            self.read_io_high(aligned)
+        };
+        let val: u16 = match out {
+            IoRead::Value(v) => v,
+            IoRead::Direct(d) => return d,
+        };
+        if width == 1 && (addr & 1) == 1 {
+            ((val >> 8) & 0xFF) as u32
+        } else {
+            val as u32
+        }
+    }
+    /// Video/APU half of I/O reads.
+    fn read_io_low(&mut self, aligned: u32) -> IoRead {
+        let val = match aligned {
             0x04000000..=0x04000006 | 0x04000008..=0x0400000E | 0x04000048..=0x04000052 => {
-                match self.ppu.read_register(aligned) {
+                match self.read_io_ppu(aligned) {
                     Some(v) => v,
-                    None => {
-                        // Write-only register (MOSAIC, BLDY, HOFS, affine, WINH/V, ...)
-                        return self.open_bus16(aligned);
-                    }
+                    // Write-only register (MOSAIC, BLDY, HOFS, affine, WINH/V, ...)
+                    None => return IoRead::Direct(self.open_bus16(aligned)),
                 }
             }
-            0x040000B0..=0x040000DE => {
-                // SAD/DAD are write-only (reads see open bus); CNT_L reads
-                // back 0, CNT_H reads the latched control.
-                if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
-                    self.dma.read(aligned).unwrap_or(0)
-                } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
-                    0
-                } else {
-                    self.open_bus16(aligned) as u16
-                }
-            }
-            0x04000100..=0x0400010E => {
-                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
-                    eprintln!("T tmread @{}", self.current_tcycle);
-                }
-                self.timers.read(aligned).unwrap_or(0)
-            }
+            0x040000B0..=0x040000DE => self.read_io_dma(aligned),
             0x04000060 => self.apu.sound1cnt_lo,
             0x04000062 => self.apu.sound1cnt_hi,
             0x04000064 => self.apu.sound1cnt_x,
@@ -2657,7 +2721,76 @@ impl GbaMemoryBus {
             0x04000084 => self.apu.soundcnt_x_read(),
             0x04000088 => self.apu.soundbias,
             0x04000090..=0x0400009E => self.apu.wave_read(aligned),
-            // FIFO_A/B (A0/A4) are write-only; reads return open bus.
+            // Unused APU holes read 0 (mgba-suite io-read table).
+            0x04000066 | 0x0400006A | 0x0400006E | 0x04000076 | 0x0400007A | 0x0400007E
+            | 0x04000086 | 0x0400008A => 0,
+            _ => return IoRead::Direct(self.last_prefetch & 0xFFFF),
+        };
+        IoRead::Value(val)
+    }
+
+    /// PPU display registers; None for write-only registers.
+    fn read_io_ppu(&mut self, aligned: u32) -> Option<u16> {
+        self.ppu.read_register(aligned)
+    }
+
+    /// DMA registers: SAD/DAD are write-only (reads see open bus);
+    /// CNT_L reads back 0, CNT_H reads the latched control.
+    fn read_io_dma(&self, aligned: u32) -> u16 {
+        if matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE) {
+            self.dma.read(aligned).unwrap_or(0)
+        } else if matches!(aligned, 0x040000B8 | 0x040000C4 | 0x040000D0 | 0x040000DC) {
+            0
+        } else {
+            self.open_bus16(aligned) as u16
+        }
+    }
+    /// Timer/SIO/key/joy/IRQ half of I/O reads.
+    fn read_io_high(&mut self, aligned: u32) -> IoRead {
+        let val = match aligned {
+            0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
+                    eprintln!("T tmread @{}", self.current_tcycle);
+                }
+                self.timers.read(aligned).unwrap_or(0)
+            }
+            0x04000120 | 0x04000122 | 0x04000128 | 0x0400012A => self.read_io_sio(aligned),
+            // SIOMULTI2/3 (and SIOMULTI0/1 outside Normal-32) are receive
+            // registers: 0 with no transfer (suite table; writes ignored).
+            0x04000124 | 0x04000126 => 0,
+            0x04000130 => self.keyinput,
+            0x04000132 => self.keycnt,
+            0x04000134 => self.read_rcnt(),
+            0x04000140 => self.joycnt,
+            // JOY_RECV/TRANS read 0 with no link transfer (suite table);
+            // JOYSTAT has no status source yet either (0x15A reads 0).
+            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 => 0,
+            // JOYSTAT (0x158) has no status source with no link transfer.
+            0x04000158 => 0,
+            0x04000200 => self.ie,
+            0x04000202 => self.sif,
+            0x04000204 => self.wait_cnt,
+            0x04000208 => self.ime as u16,
+            0x04000300 => (self.postflg as u16) | (self.open_bus32() & 0xFF00) as u16,
+            // Unused I/O reads return 0, NOT open bus (the mgba-suite
+            // io-read table is the HW capture: 0x20A reads 0 too, as
+            // the empty high half of the 1-bit IME register).
+            0x04000136 | 0x04000142 | 0x0400015A | 0x04000206 | 0x0400020A | 0x04000302 => 0,
+            _ => {
+                // Unimplemented/write-only registers return the recently
+                // prefetched opcode, not the last written value (GBATEK
+                // "Unpredictable Things": open bus tracks the prefetch,
+                // with a zero-mix rule for partially-readable ports that
+                // is not modeled here).
+                return IoRead::Direct(self.last_prefetch & 0xFFFF);
+            }
+        };
+        IoRead::Value(val)
+    }
+
+    /// SIO block reads (0x120-0x12A).
+    fn read_io_sio(&mut self, aligned: u32) -> u16 {
+        match aligned {
             // UART SIOCNT: bits 4-6 are live status (send-full,
             // receive-empty, error); the error latch clears on read.
             0x04000128 => {
@@ -2692,49 +2825,12 @@ impl GbaMemoryBus {
                     0
                 }
             }
-            0x04000122 => {
-                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
-                    ((self.siodata32 >> 16) & 0xFFFF) as u16
-                } else {
-                    0
-                }
+            0x04000122 if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 => {
+                ((self.siodata32 >> 16) & 0xFFFF) as u16
             }
-            // SIOMULTI2/3 (and SIOMULTI0/1 outside Normal-32) are receive
-            // registers: 0 with no transfer (suite table; writes ignored).
-            0x04000124 | 0x04000126 => 0,
-            0x04000130 => self.keyinput,
-            0x04000132 => self.keycnt,
-            0x04000134 => self.read_rcnt(),
-            0x04000140 => self.joycnt,
-            // JOY_RECV/TRANS read 0 with no link transfer (suite table);
-            // JOYSTAT has no status source yet either (0x15A reads 0).
-            0x04000150 | 0x04000152 | 0x04000154 | 0x04000156 => 0,
-            // JOYSTAT (0x158) has no status source with no link transfer.
-            0x04000158 => 0,
-            0x04000200 => self.ie,
-            0x04000202 => self.sif,
-            0x04000204 => self.wait_cnt,
-            0x04000208 => self.ime as u16,
-            0x04000300 => (self.postflg as u16) | (self.open_bus32() & 0xFF00) as u16,
-            // Unused I/O reads return 0, NOT open bus (the mgba-suite
-            // io-read table is the HW capture: 0x20A reads 0 too, as
-            // the empty high half of the 1-bit IME register).
-            0x04000066 | 0x0400006A | 0x0400006E | 0x04000076 | 0x0400007A | 0x0400007E
-            | 0x04000086 | 0x0400008A | 0x04000136 | 0x04000142 | 0x0400015A | 0x04000206
-            | 0x0400020A | 0x04000302 => 0,
-            _ => {
-                // Unimplemented/write-only registers return the recently
-                // prefetched opcode, not the last written value (GBATEK
-                // "Unpredictable Things": open bus tracks the prefetch,
-                // with a zero-mix rule for partially-readable ports that
-                // is not modeled here).
-                return self.last_prefetch & 0xFFFF;
-            }
-        };
-        if width == 1 && (addr & 1) == 1 {
-            ((val >> 8) & 0xFF) as u32
-        } else {
-            val as u32
+            // Only the four SIO registers above reach here (the
+            // dispatcher routes 0x124/0x126 to 0 directly).
+            _ => 0,
         }
     }
 
@@ -2942,26 +3038,7 @@ impl GbaMemoryBus {
         if width == 4 && self.timers.write32(addr, value) {
             return;
         }
-        if width > 1 && addr == 0x04000300 {
-            // POSTFLG/HALTCNT are BIOS-gated (confirmed by hw-test ROM
-            // haltcnt): CPU writes from outside the BIOS are ignored;
-            // HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT bit
-            // 7 = 0 halts, bit 7 = 1 stops (CPU parked until IRQ in both).
-            let gated = bios || self.current_pc <= 0x3FFF;
-            if gated {
-                self.postflg |= (value & 1) as u8;
-            }
-            self.haltcnt = (value >> 8) as u8;
-            if gated {
-                if value & 0x8000 == 0 {
-                    self.enter_halt(self.ie);
-                } else {
-                    // Direct Stop uses the same restricted wake mask as SWI
-                    // Stop (keypad/GamePak/serial only): timers, DMA and
-                    // video are paused in Stop mode and cannot wake it.
-                    self.enter_stop();
-                }
-            }
+        if self.write_syscnt(addr, width, value, bios) {
             return;
         }
         if width == 4 {
@@ -2969,89 +3046,109 @@ impl GbaMemoryBus {
             self.write_io(addr + 2, 2, value >> 16, bios);
             return;
         }
-        if width == 1 {
-            match addr {
-                0x04000300 => {
-                    let gated = bios || self.current_pc <= 0x3FFF;
-                    if gated {
-                        self.postflg |= (value & 1) as u8;
-                    }
-                    return;
-                }
-                0x04000301 => {
-                    let gated = bios || self.current_pc <= 0x3FFF;
-                    self.haltcnt = value as u8;
-                    if gated {
-                        if value & 0x80 == 0 {
-                            self.enter_halt(self.ie);
-                        } else {
-                            // Same restricted wake mask as SWI Stop (see above).
-                            self.enter_stop();
-                        }
-                    }
-                    return;
-                }
-                _ => {}
-            }
-        }
         let aligned = addr & !1;
         // The I/O bus is 16-bit: a sub-word store must preserve the
         // untouched lane instead of zeroing it.
-        let v16 = if width == 1 {
-            let shift = (addr & 1) * 8;
-            let lane = (value & 0xFF) << shift;
-            let cur = if (0x040000B0..=0x040000DE).contains(&aligned) {
-                u32::from(self.dma.read(aligned).unwrap_or(0))
+        let v16 = self.write_merge_lane(addr, aligned, width, value);
+        self.write_io_reg(addr, aligned, width, value, v16);
+        // 32bit書き込みで2レジスタ跨ぎの場合、上位側も反映されるが簡易実装では上記で十分
+        let _ = width;
+    }
+
+    /// POSTFLG/HALTCNT system-control writes. True when handled.
+    /// POSTFLG/HALTCNT are BIOS-gated (confirmed by hw-test ROM
+    /// haltcnt): CPU writes from outside the BIOS are ignored;
+    /// HLE BIOS and DMA writes act. POSTFLG is set-only; HALTCNT bit
+    /// 7 = 0 halts, bit 7 = 1 stops (CPU parked until IRQ in both).
+    fn write_syscnt(&mut self, addr: u32, width: u8, value: u32, bios: bool) -> bool {
+        if width > 1 && addr == 0x04000300 {
+            self.write_haltcnt_word(value, bios);
+            return true;
+        }
+        if width != 1 {
+            return false;
+        }
+        match addr {
+            0x04000300 => {
+                let gated = bios || self.current_pc <= 0x3FFF;
+                if gated {
+                    self.postflg |= (value & 1) as u8;
+                }
+                true
+            }
+            0x04000301 => {
+                self.write_haltcnt_byte(value, bios);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Word-size HALTCNT block (see `write_syscnt` for the gating).
+    fn write_haltcnt_word(&mut self, value: u32, bios: bool) {
+        let gated = bios || self.current_pc <= 0x3FFF;
+        if gated {
+            self.postflg |= (value & 1) as u8;
+        }
+        self.haltcnt = (value >> 8) as u8;
+        if gated {
+            if value & 0x8000 == 0 {
+                self.enter_halt(self.ie);
             } else {
-                self.read_io(aligned, 2)
-            };
-            ((cur & !(0xFF << shift)) | lane) as u16
+                // Direct Stop uses the same restricted wake mask as SWI
+                // Stop (keypad/GamePak/serial only): timers, DMA and
+                // video are paused in Stop mode and cannot wake it.
+                self.enter_stop();
+            }
+        }
+    }
+
+    /// Byte-size HALTCNT block (see `write_syscnt` for the gating).
+    fn write_haltcnt_byte(&mut self, value: u32, bios: bool) {
+        let gated = bios || self.current_pc <= 0x3FFF;
+        self.haltcnt = value as u8;
+        if gated {
+            if value & 0x80 == 0 {
+                self.enter_halt(self.ie);
+            } else {
+                // Same restricted wake mask as SWI Stop (see above).
+                self.enter_stop();
+            }
+        }
+    }
+
+    /// Merge a sub-word store lane over the current halfword.
+    fn write_merge_lane(&mut self, addr: u32, aligned: u32, width: u8, value: u32) -> u16 {
+        if width != 1 {
+            return value as u16;
+        }
+        let shift = (addr & 1) * 8;
+        let lane = (value & 0xFF) << shift;
+        let cur = if (0x040000B0..=0x040000DE).contains(&aligned) {
+            u32::from(self.dma.read(aligned).unwrap_or(0))
         } else {
-            value as u16
+            self.read_io(aligned, 2)
         };
+        ((cur & !(0xFF << shift)) | lane) as u16
+    }
+
+    /// Dispatch a merged halfword write to the region halves.
+    fn write_io_reg(&mut self, addr: u32, aligned: u32, width: u8, value: u32, v16: u16) {
+        if aligned < 0x040000B0 {
+            self.write_io_low(aligned, width, value, v16);
+        } else {
+            self.write_io_high(addr, aligned, width, value, v16);
+        }
+    }
+
+    /// Video/APU half of I/O writes.
+    fn write_io_low(&mut self, aligned: u32, width: u8, value: u32, v16: u16) {
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000006 => {
                 let irq = self.ppu.write_register(aligned, v16);
                 if irq != 0 {
                     self.request_interrupt(irq);
                 }
-            }
-            0x040000B0..=0x040000DE => {
-                if std::env::var("GBA_TTRACE").is_ok()
-                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
-                    && v16 & 0x8000 != 0
-                {
-                    eprintln!(
-                        "T dmaen ch{} @{}",
-                        (aligned - 0x040000B0) / 12,
-                        self.current_tcycle
-                    );
-                }
-                self.dma.write(aligned, v16);
-                // Immediate CNT_H arming with prefetch on starts one tick
-                // sooner (pending 4->3): prefetch overlaps the enabling
-                // bus cycle, so short P-ON triggers still park before the
-                // next CPU step (mgba-suite Timing Thumb P.. race: without
-                // the retime those cells read 3 instead of 7/11/37).
-                // P-OFF, event triggers, and hw-test pins keep pending=4
-                // (uniform 3 was tried: start-delay reads 19, not 20).
-                if self.prefetch_enabled
-                    && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
-                    && v16 & 0x8000 != 0
-                    && (v16 >> 12) & 3 == 0
-                {
-                    let channel = ((aligned - 0x040000B0) / 12) as usize;
-                    self.dma.retime_pending(channel, 3);
-                }
-                // DMA GamePak fill-collision arbitration: ROM-touching DMA
-                // accesses stall one real tick on the first GamePak access
-                // per burst (fill clock spans handover idle + bus ticks).
-            }
-            0x04000100..=0x0400010E => {
-                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
-                    eprintln!("T start @{}", self.current_tcycle);
-                }
-                self.timers.write(aligned, v16);
             }
             // 0x04000006 VCOUNT は RO
             // APU readable-bit masks are applied at write time (GBATEK
@@ -3078,34 +3175,25 @@ impl GbaMemoryBus {
             // two halfword pushes in LSB-first order, matching DMA bursts.
             0x040000A0 | 0x040000A2 => self.apu.push_fifo(false, value, width),
             0x040000A4 | 0x040000A6 => self.apu.push_fifo(true, value, width),
+            // Lower-half gaps (VCOUNT, unused holes) ignore writes.
+            _ => {}
+        }
+    }
+
+    /// DMA/timer/SIO/key/joy/IRQ half of I/O writes.
+    fn write_io_high(&mut self, addr: u32, aligned: u32, width: u8, value: u32, v16: u16) {
+        match aligned {
+            0x040000B0..=0x040000DE => self.write_io_dma(aligned, v16),
+            0x04000100..=0x0400010E => {
+                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
+                    eprintln!("T start @{}", self.current_tcycle);
+                }
+                self.timers.write(aligned, v16);
+            }
             0x04000128 => self.write_siocnt(v16),
             // 0x12A latches except in UART mode, where only the low byte
             // reaches the send FIFO (GBATEK: upper 8 bits unused).
-            0x0400012A => {
-                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
-                    if self.uart_tx.len() < self.uart_fifo_cap() {
-                        self.uart_tx.push_back((v16 & 0xFF) as u8);
-                    }
-                    self.uart_eval_irq();
-                    self.kick_uart();
-                } else {
-                    self.siodata8 = v16;
-                }
-            }
-            0x04000120 => {
-                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
-                    if width == 4 {
-                        self.siodata32 = value;
-                    } else {
-                        self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
-                    }
-                }
-            }
-            0x04000122 => {
-                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
-                    self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
-                }
-            }
+            0x0400012A | 0x04000120 | 0x04000122 => self.write_io_sio(aligned, width, value, v16),
             // Receive-register writes land nowhere readable.
             0x04000124 | 0x04000126 => {}
             // 0x04000130 KEYINPUT は RO
@@ -3132,40 +3220,8 @@ impl GbaMemoryBus {
                 self.pending_ie = v16 & 0x3FFF;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.line_write_assert = true;
-                return;
             }
-            0x04000202 => {
-                // IF acknowledge: only written 1-bits clear.
-                // A byte store acks its lane only, not the merged halfword.
-                let bits = if width == 1 {
-                    ((value & 0xFF) << ((addr & 1) * 8)) as u16
-                } else {
-                    (value & 0xFFFF) as u16
-                };
-                if bits & (1 << 3) != 0 {
-                    self.timers.note_timer0_ack();
-                }
-                // GBATEK Interrupt Request Flags are write-1-clear: the
-                // clear lands on the register (and its BIOS RAM mirror)
-                // with the bus write. Only the CPU line still propagates
-                // delayed (nIRQ synchronizer plus the pending pipeline);
-                // a same-tick ack-then-raise dips the line on HW too,
-                // since the nIRQ level follows the IF register.
-                self.sif &= !bits;
-                self.pending_if &= !bits;
-                self.iwram[0x7FF8..0x7FFA].copy_from_slice(&self.sif.to_le_bytes());
-                let line_now = self.ime && (self.ie & self.sif != 0);
-                let line_cur = self
-                    .line_queue
-                    .last()
-                    .map(|(v, _)| *v)
-                    .unwrap_or(self.irq_line);
-                if line_now != line_cur {
-                    self.line_queue.push((line_now, self.current_tcycle + 2));
-                }
-                self.pending_at = Some(self.current_tcycle + 1);
-                return;
-            }
+            0x04000202 => self.write_if_ack(addr, width, value),
             0x04000204 => {
                 // Bit 15 (GamePak type) and bit 13 are read-only/unused.
                 self.wait_cnt = v16 & !(0x8000 | 0x2000);
@@ -3176,15 +3232,110 @@ impl GbaMemoryBus {
                 self.pending_ime = (v16 & 1) != 0;
                 self.pending_at = Some(self.current_tcycle + 1);
                 self.line_write_assert = true;
-                return;
             }
             _ => {
                 // 未実装レジスタへの書き込みは open_bus のみ更新
-                return;
             }
         }
-        // 32bit書き込みで2レジスタ跨ぎの場合、上位側も反映されるが簡易実装では上記で十分
-        let _ = width;
+    }
+
+    /// DMA control writes plus Immediate CNT_H arming retime.
+    fn write_io_dma(&mut self, aligned: u32, v16: u16) {
+        if std::env::var("GBA_TTRACE").is_ok()
+            && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+            && v16 & 0x8000 != 0
+        {
+            eprintln!(
+                "T dmaen ch{} @{}",
+                (aligned - 0x040000B0) / 12,
+                self.current_tcycle
+            );
+        }
+        self.dma.write(aligned, v16);
+        // Immediate CNT_H arming with prefetch on starts one tick
+        // sooner (pending 4->3): prefetch overlaps the enabling
+        // bus cycle, so short P-ON triggers still park before the
+        // next CPU step (mgba-suite Timing Thumb P.. race: without
+        // the retime those cells read 3 instead of 7/11/37).
+        // P-OFF, event triggers, and hw-test pins keep pending=4
+        // (uniform 3 was tried: start-delay reads 19, not 20).
+        if self.prefetch_enabled
+            && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
+            && v16 & 0x8000 != 0
+            && (v16 >> 12) & 3 == 0
+        {
+            let channel = ((aligned - 0x040000B0) / 12) as usize;
+            self.dma.retime_pending(channel, 3);
+        }
+        // DMA GamePak fill-collision arbitration: ROM-touching DMA
+        // accesses stall one real tick on the first GamePak access
+        // per burst (fill clock spans handover idle + bus ticks).
+    }
+
+    /// SIO data writes (0x12A/0x120/0x122).
+    fn write_io_sio(&mut self, aligned: u32, width: u8, value: u32, v16: u16) {
+        match aligned {
+            // 0x12A latches except in UART mode, where only the low byte
+            // reaches the send FIFO (GBATEK: upper 8 bits unused).
+            0x0400012A => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 3 {
+                    if self.uart_tx.len() < self.uart_fifo_cap() {
+                        self.uart_tx.push_back((v16 & 0xFF) as u8);
+                    }
+                    self.uart_eval_irq();
+                    self.kick_uart();
+                } else {
+                    self.siodata8 = v16;
+                }
+            }
+            0x04000120 => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    if width == 4 {
+                        self.siodata32 = value;
+                    } else {
+                        self.siodata32 = (self.siodata32 & 0xFFFF0000) | (v16 as u32);
+                    }
+                }
+            }
+            // Only 0x122 remains (the dispatcher covers 12A/120/122).
+            _ => {
+                if self.sio_block_selected() && Self::sio_submode(self.siocnt) == 1 {
+                    self.siodata32 = (self.siodata32 & 0x0000FFFF) | ((v16 as u32) << 16);
+                }
+            }
+        }
+    }
+
+    /// IF acknowledge: only written 1-bits clear.
+    /// A byte store acks its lane only, not the merged halfword.
+    fn write_if_ack(&mut self, addr: u32, width: u8, value: u32) {
+        let bits = if width == 1 {
+            ((value & 0xFF) << ((addr & 1) * 8)) as u16
+        } else {
+            (value & 0xFFFF) as u16
+        };
+        if bits & (1 << 3) != 0 {
+            self.timers.note_timer0_ack();
+        }
+        // GBATEK Interrupt Request Flags are write-1-clear: the
+        // clear lands on the register (and its BIOS RAM mirror)
+        // with the bus write. Only the CPU line still propagates
+        // delayed (nIRQ synchronizer plus the pending pipeline);
+        // a same-tick ack-then-raise dips the line on HW too,
+        // since the nIRQ level follows the IF register.
+        self.sif &= !bits;
+        self.pending_if &= !bits;
+        self.iwram[0x7FF8..0x7FFA].copy_from_slice(&self.sif.to_le_bytes());
+        let line_now = self.ime && (self.ie & self.sif != 0);
+        let line_cur = self
+            .line_queue
+            .last()
+            .map(|(v, _)| *v)
+            .unwrap_or(self.irq_line);
+        if line_now != line_cur {
+            self.line_queue.push((line_now, self.current_tcycle + 2));
+        }
+        self.pending_at = Some(self.current_tcycle + 1);
     }
 
     #[inline]
@@ -3383,6 +3534,18 @@ fn is_unreadable_io(address: u32) -> bool {
             | 0x04000060..=0x040000FE
             | 0x04000110..=0x0400011E
     )
+}
+
+/// GBATEK Backup Media window for the EEPROM serial chip.
+fn dma_in_eeprom_range(addr: u32) -> bool {
+    (0x0D000000..=0x0DFFFFFF).contains(&addr)
+}
+
+/// A DMA read drives the shared bus latch unless its source is
+/// inaccessible (unreadable I/O, or non-mem-control high I/O).
+fn dma_read_drives_latch(read_addr: u32) -> bool {
+    !(is_unreadable_io(read_addr)
+        || ((0x04000800..=0x04FFFFFF).contains(&read_addr) && !is_mem_control(read_addr)))
 }
 
 #[cfg(test)]

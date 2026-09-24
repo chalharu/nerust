@@ -760,16 +760,30 @@ fn obj_affine_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) {
     }
 }
 
+/// GBATEK source guards shared by both widths: silently reject BIOS-area
+/// and unmapped sources (mgba-suite out-of-bounds SWI tests pin no copy
+/// from below EWRAM).
+fn cpu_set_source_ok(src: u32, len: u32, unit: u64) -> bool {
+    if len == 0 || src < 0x0000_4000 {
+        return false;
+    }
+    let end = src as u64 + len as u64 * unit;
+    if end - unit < 0x0000_4000 {
+        return false;
+    }
+    !(0x0000_4000..0x0200_0000).contains(&src)
+}
+
 fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     let src = regs.r(0);
     let dst = regs.r(1);
     let len_mode = regs.r(2);
     let len = len_mode & 0x1F_FFFF;
-    if len == 0 || src < 0x0000_4000 {
-        return 1;
-    }
     // DMA preemption test uses len=8, keep HLE for small transfers
     if len <= 16 {
+        if !cpu_set_source_ok(src, len, 1) {
+            return 1;
+        }
         if let Some(op) = HleBiosOperation::cpu_set(src, dst, len_mode) {
             bus.start_hle_bios(op);
         }
@@ -777,80 +791,82 @@ fn cpu_set(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus) -> u32 {
     }
     let fixed = len_mode & (1 << 24) != 0;
     let width_32 = len_mode & (1 << 26) != 0;
-    // GBATEK: silently reject when the source start or end reaches into
-    // the BIOS area (mirrors the FastSet end check below).
-    let unit = if width_32 { 4u64 } else { 2u64 };
-    let end = src as u64 + len as u64 * unit;
-    if end - unit < 0x0000_4000 {
-        return 1;
-    }
-    // Same unmapped no-copy guard as the HLE path: mgba-suite
-    // out-of-bounds SWI tests pin no copy from below EWRAM.
-    if (0x0000_4000..0x0200_0000).contains(&src) {
-        return 1;
-    }
     if width_32 {
-        let s0 = src & !3;
-        let d0 = dst & !3;
-        // GBATEK memfill: a fixed source is sampled once (single LDR) and
-        // the same unit is stored repeatedly; re-reading per unit would
-        // diverge on volatile/mapped sources.
-        let fill = bus.read32(s0);
-        let mut s = s0;
-        let mut d = d0;
-        // HW BIOS bulk loop sees flat waits (no GamePak-prefetch erase):
-        // accrue raw bus waits; the display formula below carries the
-        // fixed overhead.
-        bus.begin_raw_batch();
-        for _ in 0..len {
-            let v = if fixed { fill } else { bus.read32(s) };
-            bus.write32(d, v);
-            if !fixed {
-                s = s.wrapping_add(4);
-            }
-            d = d.wrapping_add(4);
-        }
-        bus.end_block_batch();
-        // 32BIT: base 0x400 words, waitはWRAMで size*0x1400/0x400 に比例
-        // 30ステップで4096byteが終わることはなく、size比例で数千cycleかかる
-        let base_disp = if fixed { 0x3060u32 } else { 0x3C5Fu32 };
-        let base_wait = 0x1400u32;
-        let base_len = 0x400u32;
-        let disp = base_disp * len / base_len;
-        let wait = base_wait * len / base_len;
-        disp.saturating_sub(wait)
+        cpu_set_32(bus, src, dst, len, fixed)
     } else {
-        let s0 = src & !1;
-        let d0 = dst & !1;
-        // Same single-sample rule for 16-bit fills (see above).
-        let fill = bus.read16(s0);
-        let mut s = s0;
-        let mut d = d0;
-        bus.begin_raw_batch();
-        for _ in 0..len {
-            let v = if fixed { fill } else { bus.read16(s) };
-            bus.write16(d, v);
-            if !fixed {
-                s = s.wrapping_add(2);
-            }
-            d = d.wrapping_add(2);
+        cpu_set_16(bus, src, dst, len, fixed)
+    }
+}
+
+fn cpu_set_32(bus: &mut GbaMemoryBus, src: u32, dst: u32, len: u32, fixed: bool) -> u32 {
+    if !cpu_set_source_ok(src, len, 4) {
+        return 1;
+    }
+    let s0 = src & !3;
+    let d0 = dst & !3;
+    // GBATEK memfill: a fixed source is sampled once (single LDR) and
+    // the same unit is stored repeatedly; re-reading per unit would
+    // diverge on volatile/mapped sources.
+    let fill = bus.read32(s0);
+    let mut s = s0;
+    let mut d = d0;
+    // HW BIOS bulk loop sees flat waits (no GamePak-prefetch erase):
+    // accrue raw bus waits; the display formula below carries the
+    // fixed overhead.
+    bus.begin_raw_batch();
+    for _ in 0..len {
+        let v = if fixed { fill } else { bus.read32(s) };
+        bus.write32(d, v);
+        if !fixed {
+            s = s.wrapping_add(4);
         }
-        bus.end_block_batch();
-        // 16BIT: base 0x800 halfwords, waitはWRAMで size*0x1000/0x800 に比例
-        // 30ステップで4096byteが終わることはなく、size比例で1万cycle以上かかる
-        let base_disp = if fixed { 0x5062u32 } else { 0x6861u32 };
-        let base_wait = 0x1000u32;
-        let base_len = 0x800u32;
-        let disp = base_disp * len / base_len;
-        let wait = base_wait * len / base_len;
-        let ret = disp.saturating_sub(wait);
-        // HW BIOS CpuSet from ROM costs ~93 cycles more than the WRAM-fit
-        // formula (HW-pinned by cpy_data_bios TIM1 0xA5).
-        if (0x08000000..=0x0DFFFFFF).contains(&src) {
-            ret.wrapping_add(93)
-        } else {
-            ret
+        d = d.wrapping_add(4);
+    }
+    bus.end_block_batch();
+    // 32BIT: base 0x400 words, waitはWRAMで size*0x1400/0x400 に比例
+    // 30ステップで4096byteが終わることはなく、size比例で数千cycleかかる
+    let base_disp = if fixed { 0x3060u32 } else { 0x3C5Fu32 };
+    let base_wait = 0x1400u32;
+    let base_len = 0x400u32;
+    let disp = base_disp * len / base_len;
+    let wait = base_wait * len / base_len;
+    disp.saturating_sub(wait)
+}
+
+fn cpu_set_16(bus: &mut GbaMemoryBus, src: u32, dst: u32, len: u32, fixed: bool) -> u32 {
+    if !cpu_set_source_ok(src, len, 2) {
+        return 1;
+    }
+    let s0 = src & !1;
+    let d0 = dst & !1;
+    // Same single-sample rule for 16-bit fills (see above).
+    let fill = bus.read16(s0);
+    let mut s = s0;
+    let mut d = d0;
+    bus.begin_raw_batch();
+    for _ in 0..len {
+        let v = if fixed { fill } else { bus.read16(s) };
+        bus.write16(d, v);
+        if !fixed {
+            s = s.wrapping_add(2);
         }
+        d = d.wrapping_add(2);
+    }
+    bus.end_block_batch();
+    // 16BIT: base 0x800 halfwords, waitはWRAMで size*0x1000/0x800 に比例
+    // 30ステップで4096byteが終了することはなく、size比例で1万cycle以上かかる
+    let base_disp = if fixed { 0x5062u32 } else { 0x6861u32 };
+    let base_wait = 0x1000u32;
+    let base_len = 0x800u32;
+    let disp = base_disp * len / base_len;
+    let wait = base_wait * len / base_len;
+    let ret = disp.saturating_sub(wait);
+    // HW BIOS CpuSet from ROM costs ~93 cycles more than the WRAM-fit
+    // formula (HW-pinned by cpy_data_bios TIM1 0xA5).
+    if (0x08000000..=0x0DFFFFFF).contains(&src) {
+        ret.wrapping_add(93)
+    } else {
+        ret
     }
 }
 

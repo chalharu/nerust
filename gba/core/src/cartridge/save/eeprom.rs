@@ -86,80 +86,61 @@ impl EepromSave {
             return;
         }
         let is_read = frame[1];
-        let try_width = |width: usize| -> Option<(usize, usize)> {
-            // Returns (addr, data_end) for a valid frame of this width.
-            let addr_bits = if width == 8 { 6 } else { 14 };
-            if frame.len() < width {
-                return None;
-            }
-            if is_read {
-                // GBATEK EEPROM read request: `11` + addr(6/14) + `0`
-                // (9/17 bits). Accept the trailing stop bit or its omission
-                // (both seen in the wild), but reject overlong frames.
-                let exact = 2 + addr_bits;
-                let with_stop = exact + 1;
-                if frame.len() != exact && frame.len() != with_stop {
-                    return None;
-                }
-                if frame.len() == with_stop && frame[exact] {
-                    return None;
-                }
-                let mut addr = 0usize;
-                for i in 0..addr_bits {
-                    addr = (addr << 1) | usize::from(frame[2 + i]);
-                }
-                Some((addr, width))
-            } else {
-                // GBATEK EEPROM write frame: `10` + addr(6/14) + 64 data
-                // bits + `0` stop (73/81 bits exactly). Enforce the exact
-                // length: trailing garbage is rejected, and short frames
-                // return None instead of panicking on frame[stop] below.
-                let stop = 2 + addr_bits + 64;
-                if frame.len() != stop + 1 || frame[stop] {
-                    return None;
-                }
-                let mut addr = 0usize;
-                for i in 0..addr_bits {
-                    addr = (addr << 1) | usize::from(frame[2 + i]);
-                }
-                Some((addr, stop + 1))
-            }
-        };
-        // With known size only that width is valid; otherwise an exact
-        // 73-bit write / 8-bit read request means 512B (short frames can
-        // never be 8KB), longer valid frames mean 8KB.
-        let order_512_first = match self.size_8k {
-            Some(false) => true,
-            Some(true) => false,
-            None => frame.len() < 77,
-        };
-        let widths: [usize; 2] = if order_512_first { [8, 16] } else { [16, 8] };
-        for width in widths {
-            if self.size_8k.is_some() && width != (if self.size_8k == Some(false) { 8 } else { 16 })
-            {
+        for width in self.probe_order(frame.len()) {
+            if self.width_ruled_out(width) {
                 continue;
             }
-            if let Some((addr, _)) = try_width(width) {
+            let addr_bits = if width == 8 { 6 } else { 14 };
+            let addr = if is_read {
+                decode_read_addr(&frame, addr_bits)
+            } else {
+                decode_write_addr(&frame, addr_bits)
+            };
+            if let Some(addr) = addr {
                 self.size_8k = Some(width == 16);
                 if is_read {
                     self.commit_read_request(addr);
                 } else {
-                    let addr_bits = if width == 8 { 6 } else { 14 };
-                    let mut data = [0u8; 8];
-                    for i in 0..64 {
-                        if frame[2 + addr_bits + i] {
-                            data[i / 8] |= 1 << (7 - (i % 8));
-                        }
-                    }
-                    // 10-bit alias for 8KB (see commit_read_request).
-                    let addr = if width == 16 { addr & 0x3FF } else { addr };
-                    let base = addr * 8;
-                    if base + 8 <= self.data.len() {
-                        self.data[base..base + 8].copy_from_slice(&data);
-                    }
+                    self.commit_write_data(&frame, width, addr_bits, addr);
                 }
                 return;
             }
+        }
+    }
+
+    /// Width probe order: with known size only that width is valid;
+    /// otherwise an exact 73-bit write / 8-bit read request means 512B
+    /// (short frames can never be 8KB), longer valid frames mean 8KB.
+    fn probe_order(&self, frame_len: usize) -> [usize; 2] {
+        let order_512_first = match self.size_8k {
+            Some(false) => true,
+            Some(true) => false,
+            None => frame_len < 77,
+        };
+        if order_512_first { [8, 16] } else { [16, 8] }
+    }
+
+    /// True when a latched size rules this probe width out.
+    fn width_ruled_out(&self, width: usize) -> bool {
+        match self.size_8k {
+            Some(large) => width != if large { 16 } else { 8 },
+            None => false,
+        }
+    }
+
+    /// Commit a decoded write frame's 64 data bits.
+    fn commit_write_data(&mut self, frame: &[bool], width: usize, addr_bits: usize, addr: usize) {
+        let mut data = [0u8; 8];
+        for i in 0..64 {
+            if frame[2 + addr_bits + i] {
+                data[i / 8] |= 1 << (7 - (i % 8));
+            }
+        }
+        // 10-bit alias for 8KB (see commit_read_request).
+        let addr = if width == 16 { addr & 0x3FF } else { addr };
+        let base = addr * 8;
+        if base + 8 <= self.data.len() {
+            self.data[base..base + 8].copy_from_slice(&data);
         }
     }
 
@@ -181,6 +162,41 @@ impl EepromSave {
     pub fn assumed_addr_bits(&self) -> u8 {
         self.addr_bits()
     }
+}
+
+/// GBATEK EEPROM read request: `11` + addr(6/14) + `0` (9/17 bits).
+/// Accept the trailing stop bit or its omission (both seen in the
+/// wild), but reject overlong frames.
+fn decode_read_addr(frame: &[bool], addr_bits: usize) -> Option<usize> {
+    let exact = 2 + addr_bits;
+    let with_stop = exact + 1;
+    if frame.len() != exact && frame.len() != with_stop {
+        return None;
+    }
+    if frame.len() == with_stop && frame[exact] {
+        return None;
+    }
+    Some(read_addr_bits(frame, addr_bits))
+}
+
+/// GBATEK EEPROM write frame: `10` + addr(6/14) + 64 data bits + `0`
+/// stop (73/81 bits exactly). Enforce the exact length: trailing
+/// garbage is rejected, and short frames return None instead of
+/// panicking on frame[stop].
+fn decode_write_addr(frame: &[bool], addr_bits: usize) -> Option<usize> {
+    let stop = 2 + addr_bits + 64;
+    if frame.len() != stop + 1 || frame[stop] {
+        return None;
+    }
+    Some(read_addr_bits(frame, addr_bits))
+}
+
+fn read_addr_bits(frame: &[bool], addr_bits: usize) -> usize {
+    let mut addr = 0usize;
+    for i in 0..addr_bits {
+        addr = (addr << 1) | usize::from(frame[2 + i]);
+    }
+    addr
 }
 
 impl SaveBackend for EepromSave {

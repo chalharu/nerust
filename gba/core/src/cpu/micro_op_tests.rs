@@ -3,7 +3,10 @@
 //! stays one-way: `cpu -> micro_op`, `cpu -> micro_op_tests`,
 //! `micro_op_tests -> {micro_op, cpu}`, with nothing pointing back at
 //! `micro_op_tests`.
-use super::micro_op::*;
+use super::micro_op::{
+    MicroOp, expand_arm, expand_arm_dp_reg, expand_arm_mul, expand_arm_single, expand_thumb,
+    expand_thumb_alu_rest, step_op,
+};
 use crate::cpu::GbaCpu;
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
@@ -26,69 +29,7 @@ fn differential(
     mem_init: &[(u32, u8, u32)],
     reg_init: &[(usize, u32)],
 ) -> (u32, u32, bool, bool) {
-    fn setup(
-        code: &[u32],
-        thumb: bool,
-        waitcnt: u16,
-        code_base: u32,
-        cart: Option<Vec<u8>>,
-        mem_init: &[(u32, u8, u32)],
-        reg_init: &[(usize, u32)],
-    ) -> (GbaCpu, GbaMemoryBus, [u32; 2]) {
-        let mut cpu = GbaCpu::post_bios();
-        let mut bus = GbaMemoryBus::new();
-        bus.write16(0x04000204, waitcnt);
-        let stride = if thumb { 2 } else { 4 };
-        if let Some(mut rom) = cart {
-            for (i, w) in code.iter().enumerate() {
-                let o = 0x100 + i * stride as usize;
-                if thumb {
-                    rom[o] = (w & 0xFF) as u8;
-                    rom[o + 1] = (w >> 8) as u8;
-                } else {
-                    rom[o..o + 4].copy_from_slice(&w.to_le_bytes());
-                }
-            }
-            bus.set_cartridge(crate::cartridge::Cartridge::new(rom).unwrap());
-        } else {
-            for (i, w) in code.iter().enumerate() {
-                let addr = code_base + (i as u32) * stride as u32;
-                if thumb {
-                    bus.write16(addr, (w & 0xFFFF) as u16);
-                } else {
-                    bus.write32(addr, *w);
-                }
-            }
-        }
-        for (addr, width, val) in mem_init {
-            match width {
-                4 => bus.write32(*addr, *val),
-                2 => bus.write16(*addr, (*val & 0xFFFF) as u16),
-                _ => bus.write8(*addr, (*val & 0xFF) as u8),
-            }
-        }
-        for (r, v) in reg_init {
-            cpu.regs.set_r(*r, *v);
-        }
-        // Stack for the follow-up load.
-        bus.write16(0x0300_7F00, 0x1234);
-        cpu.regs.set_r(13, 0x0300_7F00);
-        if thumb {
-            cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
-        }
-        cpu.regs.set_pc(code_base);
-        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
-        bus.take_access_wait_cycles();
-        // Shadow pipeline for the interpreter (same fetches).
-        let mut shadow = [0u32; 2];
-        // Reproduce the fill through the same bus calls: reset and
-        // refill identically by re-driving fill on a twin bus is
-        // overkill; instead mirror the two fetch values.
-        shadow[0] = cpu.pipeline[0];
-        shadow[1] = cpu.pipeline[1];
-        (cpu, bus, shadow)
-    }
-    let (mut a_cpu, mut a_bus, _) = setup(
+    let (mut a_cpu, mut a_bus, _) = setup_corpus(
         code,
         thumb,
         waitcnt,
@@ -98,50 +39,162 @@ fn differential(
         reg_init,
     );
     let (mut b_cpu, mut b_bus, mut b_pipe) =
-        setup(code, thumb, waitcnt, code_base, cart, mem_init, reg_init);
+        setup_corpus(code, thumb, waitcnt, code_base, cart, mem_init, reg_init);
     // Twin-bus check: both setups must agree before stepping.
     assert_eq!(a_cpu.pipeline, b_pipe);
     let (mut ta, mut tb) = (0u32, 0u32);
     let mut b_queue = std::collections::VecDeque::new();
     for _ in 0..steps {
-        // Legacy oracle: step_legacy bypasses the micro-op wiring so
-        // the harness stays a true differential even once covered
-        // classes route through step_op in production.
-        ta += a_cpu.step_legacy(&mut a_bus);
-        // Micro-op engine on the twin: drain one full instruction
-        // (the queue may span several step_op calls), flooring once
-        // at retire exactly like the legacy step.
-        let mut acc = 0i64;
-        loop {
-            acc += step_op(
-                &mut b_cpu.regs,
-                &mut b_bus,
-                &mut b_pipe,
-                &mut b_queue,
-                thumb,
-            )
-            .expect("corpus must be covered");
-            if b_queue.is_empty() {
-                break;
-            }
-        }
-        tb += acc.max(1) as u32;
+        let (da, db) = step_pair(
+            &mut a_cpu,
+            &mut a_bus,
+            &mut b_cpu,
+            &mut b_bus,
+            &mut b_pipe,
+            &mut b_queue,
+            thumb,
+        );
+        ta += da;
+        tb += db;
     }
     let regs_equal = (0..16).all(|r| a_cpu.regs.r(r) == b_cpu.regs.r(r))
         && a_cpu.regs.cpsr() == b_cpu.regs.cpsr();
-    // Follow-up load through the legacy engine on both buses: detects
-    // fetch-stream/erase-state divergence.
-    b_cpu.pipeline = b_pipe;
+    let same_followup = followup_check(
+        &mut a_cpu, &mut a_bus, &mut b_cpu, &mut b_bus, &b_pipe, followup, thumb,
+    );
+    (ta, tb, regs_equal, same_followup)
+}
+
+/// Build one twin (CPU + bus + shadow pipeline) for the differential.
+/// `code_base` locates the corpus (IWRAM for writable code, ROM with
+/// `cart` for GamePak-code paths); `mem_init`/`reg_init` preset memory
+/// (addr, width, value) and registers before the pipeline fill.
+#[allow(clippy::too_many_arguments)]
+fn setup_corpus(
+    code: &[u32],
+    thumb: bool,
+    waitcnt: u16,
+    code_base: u32,
+    cart: Option<Vec<u8>>,
+    mem_init: &[(u32, u8, u32)],
+    reg_init: &[(usize, u32)],
+) -> (GbaCpu, GbaMemoryBus, [u32; 2]) {
+    let mut cpu = GbaCpu::post_bios();
+    let mut bus = GbaMemoryBus::new();
+    bus.write16(0x04000204, waitcnt);
+    load_corpus(&mut bus, code, thumb, code_base, cart);
+    for (addr, width, val) in mem_init {
+        match width {
+            4 => bus.write32(*addr, *val),
+            2 => bus.write16(*addr, (*val & 0xFFFF) as u16),
+            _ => bus.write8(*addr, (*val & 0xFF) as u8),
+        }
+    }
+    for (r, v) in reg_init {
+        cpu.regs.set_r(*r, *v);
+    }
+    // Stack for the follow-up load.
+    bus.write16(0x0300_7F00, 0x1234);
+    cpu.regs.set_r(13, 0x0300_7F00);
+    if thumb {
+        cpu.regs.set_cpsr(cpu.regs.cpsr() | (1 << 5));
+    }
+    cpu.regs.set_pc(code_base);
+    fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+    bus.take_access_wait_cycles();
+    // Shadow pipeline for the interpreter (same fetches).
+    let mut shadow = [0u32; 2];
+    // Reproduce the fill through the same bus calls: reset and
+    // refill identically by re-driving fill on a twin bus is
+    // overkill; instead mirror the two fetch values.
+    shadow[0] = cpu.pipeline[0];
+    shadow[1] = cpu.pipeline[1];
+    (cpu, bus, shadow)
+}
+
+/// Lay the corpus down (IWRAM at `code_base`, or ROM image at +0x100).
+fn load_corpus(
+    bus: &mut GbaMemoryBus,
+    code: &[u32],
+    thumb: bool,
+    code_base: u32,
+    cart: Option<Vec<u8>>,
+) {
+    let stride = if thumb { 2 } else { 4 };
+    if let Some(mut rom) = cart {
+        for (i, w) in code.iter().enumerate() {
+            let o = 0x100 + i * stride as usize;
+            if thumb {
+                rom[o] = (w & 0xFF) as u8;
+                rom[o + 1] = (w >> 8) as u8;
+            } else {
+                rom[o..o + 4].copy_from_slice(&w.to_le_bytes());
+            }
+        }
+        bus.set_cartridge(crate::cartridge::Cartridge::new(rom).unwrap());
+    } else {
+        for (i, w) in code.iter().enumerate() {
+            let addr = code_base + (i as u32) * stride as u32;
+            if thumb {
+                bus.write16(addr, (w & 0xFFFF) as u16);
+            } else {
+                bus.write32(addr, *w);
+            }
+        }
+    }
+}
+
+/// One differential iteration: a legacy oracle step plus a full
+/// micro-op instruction drain on the twin. Returns (legacy, micro).
+fn step_pair(
+    a_cpu: &mut GbaCpu,
+    a_bus: &mut GbaMemoryBus,
+    b_cpu: &mut GbaCpu,
+    b_bus: &mut GbaMemoryBus,
+    b_pipe: &mut [u32; 2],
+    b_queue: &mut std::collections::VecDeque<MicroOp>,
+    thumb: bool,
+) -> (u32, u32) {
+    // Legacy oracle: step_legacy bypasses the micro-op wiring so
+    // the harness stays a true differential even once covered
+    // classes route through step_op in production.
+    let legacy = a_cpu.step_legacy(a_bus);
+    // Micro-op engine on the twin: drain one full instruction
+    // (the queue may span several step_op calls), flooring once
+    // at retire exactly like the legacy step.
+    let mut acc = 0i64;
+    loop {
+        acc += step_op(&mut b_cpu.regs, b_bus, b_pipe, b_queue, thumb)
+            .expect("corpus must be covered");
+        if b_queue.is_empty() {
+            break;
+        }
+    }
+    (legacy, acc.max(1) as u32)
+}
+
+/// Follow-up load through the legacy engine on both buses: detects
+/// fetch-stream/erase-state divergence.
+fn followup_check(
+    a_cpu: &mut GbaCpu,
+    a_bus: &mut GbaMemoryBus,
+    b_cpu: &mut GbaCpu,
+    b_bus: &mut GbaMemoryBus,
+    b_pipe: &[u32; 2],
+    followup: u32,
+    thumb: bool,
+) -> bool {
+    // Point both at the follow-up instruction.
+    b_cpu.pipeline = *b_pipe;
     a_cpu.regs.set_pc(0x0300_0000);
     b_cpu.regs.set_pc(0x0300_0000);
-    fill_pipeline(&mut a_cpu.regs, &mut a_bus, &mut a_cpu.pipeline);
-    fill_pipeline(&mut b_cpu.regs, &mut b_bus, &mut b_cpu.pipeline);
+    fill_pipeline(&mut a_cpu.regs, a_bus, &mut a_cpu.pipeline);
+    fill_pipeline(&mut b_cpu.regs, b_bus, &mut b_cpu.pipeline);
     a_bus.take_access_wait_cycles();
     b_bus.take_access_wait_cycles();
-    // Point both at the follow-up instruction.
-    let fa = run_one_legacy(&mut a_cpu, &mut a_bus, followup, thumb);
-    let fb = run_one_legacy(&mut b_cpu, &mut b_bus, followup, thumb);
-    (ta, tb, regs_equal, fa == fb)
+    let fa = run_one_legacy(a_cpu, a_bus, followup, thumb);
+    let fb = run_one_legacy(b_cpu, b_bus, followup, thumb);
+    fa == fb
 }
 
 /// Execute one arbitrary instruction via the legacy engine (bypasses
