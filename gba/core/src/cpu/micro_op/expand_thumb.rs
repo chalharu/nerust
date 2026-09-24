@@ -8,7 +8,8 @@ use super::{
 use crate::cpu::semantics::{condition_passed, multiplier_cycles};
 use crate::cpu_registers::CpuRegisters;
 
-/// Expand a Thumb instruction. `None` = not covered yet (legacy path).
+/// Expand a Thumb instruction. `None` = uncovered instruction (no
+/// fallback; every documented class expands).
 /// `regs` snapshots stack/base pointers and STM store words at
 /// queue-fill (pre-instruction state; registers are frozen across the
 /// words of one instruction).
@@ -75,7 +76,7 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         return Some(vec![MicroOp::TrapUnd]);
     }
     // UND: decoder gaps (0xB100-0xB3FF, 0xB600-0xBBFF, 0xBE00-0xBFFF)
-    // fall into the legacy decoder's `_` arm (`handle_undefined`).
+    // are undefined-instruction traps.
     if (0xB100..=0xB3FF).contains(&instr)
         || (0xB600..=0xBBFF).contains(&instr)
         || (0xBE00..=0xBFFF).contains(&instr)
@@ -102,8 +103,8 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
             carry: None,
         })]);
     }
-    // Thumb MUL (op 0xD in 0x4000..=0x43FF): m from the incoming Rd,
-    // mirroring the decoder preamble; other ALU ops stay legacy.
+    // Thumb MUL (op 0xD in 0x4000..=0x43FF): m from the incoming Rd;
+    // other ALU ops expand via `expand_thumb_alu_rest` below.
     if (instr & 0xFFC0) == 0x4340 {
         let m = multiplier_cycles(regs.r((instr & 0x7) as usize));
         let mut ops = vec![MicroOp::CommitMul(MulEffect {
@@ -156,8 +157,7 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     if rlist == 0 {
         // Empty LDMIA/STMIA: the single PC word at [Rb] with Rb
         // advancing 0x40 (NOT the PUSH/POP shape: no batch framing,
-        // writeback through `set_r`, store R15+2). Mirrors
-        // `handle_empty_multiple` exactly (bases 5/2).
+        // writeback through `set_r`, store R15+2; cycle bases 5/2).
         let mut ops = vec![MicroOp::BlockEmpty(BlockEmptyEffect {
             load,
             addr: base,
@@ -165,7 +165,7 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
             store_value: regs.pc().wrapping_add(2),
             restore_cpsr: false,
             reset_sequential: false,
-            // Standalone (no BlockEnd follows): break here, like legacy.
+            // Standalone (no BlockEnd follows): break here.
             break_stream: true,
         })];
         ops.extend(vec![MicroOp::Internal; if load { 4 } else { 1 }]);
@@ -174,7 +174,7 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
     let count = rlist.count_ones();
     let slots: Vec<usize> = (0..8).filter(|i| rlist & (1 << i) != 0).collect();
     // STM stored-base quirk: a non-first occurrence of the base stores
-    // the final address (legacy `stm_value`).
+    // the final address.
     let final_addr = base.wrapping_add(count * 4);
     let first = rlist.trailing_zeros() as usize;
     let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
@@ -214,7 +214,7 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
         ldm_conflict: false,
         first_addr: base,
     }));
-    // Pad the legacy handler base (LDM 2+count, STM 1+count), except
+    // Pad to the pinned cycle base (LDM 2+count, STM 1+count), except
     // single-register Thumb LDM (Break's ldmia r2!,{r3}): HW retires it
     // like a single LDR (1I, not 2I). Multi-word blocks (Timing OAM
     // 5-word cells pin 2I) keep 2.
@@ -234,8 +234,8 @@ fn expand_thumb_multiple(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
 /// except MUL: 1 cycle, 2 for register shifts), hi-reg
 /// (0x4400..=0x47FF except BX: 1 cycle, 3 for ADD/MOV to PC),
 /// ADD SP/PC (0xA000..=0xAFFF) and SP offset (0xB000..=0xB0FF).
-/// Expansion is [CommitThumb] padded to the legacy base; the commit
-/// delegates, so only the cycle split is new.
+/// Expansion is [CommitThumb] padded to the pinned base; the commit
+/// applies the semantics, the padding carries the cycle split.
 pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
     let trailing: usize = if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
         0
@@ -259,9 +259,8 @@ pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<Vec<MicroOp>> {
 }
 
 /// Thumb PUSH/POP, including the empty forms (single PC word with
-/// +0x40 SP arithmetic on POP, single R15+2 store on PUSH). Mirrors
-/// the decoder ranges exactly (subset of the legacy route, no extra
-/// validation: the handler itself does not validate either).
+/// +0x40 SP arithmetic on POP, single R15+2 store on PUSH). Decode
+/// covers the PUSH/POP ranges exactly (no extra validation here).
 fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let push = match instr {
         0xB400..=0xB5FF => true,
@@ -313,7 +312,7 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
         ldm_conflict: false,
         first_addr: if push { sp.wrapping_sub(count * 4) } else { sp },
     }));
-    // Pad the legacy handler base: PUSH 1+count, POP 2+count,
+    // Pad to the pinned base: PUSH 1+count, POP 2+count,
     // POP+PC 4+count (words already carry +1 each).
     let trailing = if push {
         1
@@ -328,8 +327,8 @@ fn expand_thumb_push_pop(instr: u16, regs: &CpuRegisters) -> Option<Vec<MicroOp>
 
 /// Thumb empty PUSH/POP: PUSH stores R15+2 with SP moving one word
 /// (base 2); POP loads PC with SP advancing 0x40 (base 6). Batched
-/// like the legacy empty path; the op carries +1 with trailing
-/// Internals to the base.
+/// with Start/Empty/End; the op carries +1 with trailing Internals
+/// to the base.
 fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<MicroOp> {
     let addr = if push { sp.wrapping_sub(4) } else { sp };
     let mut ops = vec![
@@ -358,7 +357,7 @@ fn expand_thumb_push_pop_empty(push: bool, sp: u32, regs: &CpuRegisters) -> Vec<
             first_addr: addr,
         }),
     ];
-    // Pad the legacy handler base: empty PUSH 2, empty POP 6
+    // Pad to the pinned base: empty PUSH 2, empty POP 6
     // (the op already carries +1).
     ops.extend(vec![MicroOp::Internal; if push { 1 } else { 5 }]);
     ops
@@ -432,7 +431,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             store_value: None,
             halfword_odd_quirk: false,
         };
-        // Totals match legacy handler returns (load 3, store 2).
+        // Cycle totals: load 3, store 2.
         return Some(imm_access_ops(l, acc));
     }
     // Immediate-offset word (011, B == 0).
@@ -454,7 +453,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             store_value: None,
             halfword_odd_quirk: false,
         };
-        // Totals match legacy handler returns (load 3, store 2).
+        // Cycle totals: load 3, store 2.
         return Some(imm_access_ops(l, acc));
     }
     // Immediate-offset byte (011, B == 1): offset is imm5 unshifted.
@@ -476,7 +475,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             store_value: None,
             halfword_odd_quirk: false,
         };
-        // Totals match legacy handler returns (load 3, store 2).
+        // Cycle totals: load 3, store 2.
         return Some(imm_access_ops(l, acc));
     }
     // Halfword immediate (1000).
@@ -498,7 +497,7 @@ pub fn expand_thumb_load_store(instr: u16) -> Option<Vec<MicroOp>> {
             store_value: None,
             halfword_odd_quirk: false,
         };
-        // Totals match legacy handler returns (load 3, store 2).
+        // Cycle totals: load 3, store 2.
         return Some(imm_access_ops(l, acc));
     }
     None

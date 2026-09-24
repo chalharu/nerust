@@ -11,7 +11,8 @@ use crate::cpu::semantics::{
 };
 use crate::cpu_registers::CpuRegisters;
 
-/// Expand an ARM instruction. `None` = not covered yet (legacy path).
+/// Expand an ARM instruction. `None` = uncovered instruction (no
+/// fallback; every documented class expands).
 /// `regs` snapshots base pointers and STM store words at queue-fill.
 pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // B/BL: failed conditions retire in one sequential cycle; taken
@@ -34,14 +35,13 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     let condition = (instr >> 28) as u8;
     if condition == 0xF {
-        // NV: never executes (ARM ARM); the legacy path retires it as
+        // NV: never executes (ARM ARM); it retires as
         // a 1S NOP, so expansion is a single Internal.
         return Some(vec![MicroOp::Internal]);
     }
     // SWI: class 111 with bit 24 set (any condition; the trap
     // number is in bits 23-16 for HLE). Failed conditions retire as
-    // [Internal] here (the early return bypasses the wrapper below),
-    // like the legacy cond check.
+    // [Internal] here (the early return bypasses the wrapper below).
     if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
         return Some(if condition_passed(regs.cpsr(), condition) {
             vec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]
@@ -76,8 +76,8 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 }
 
 /// ARM data-processing (register form, I==0): the DP class minus
-/// multiply/SWP/PSR/BX/halfword, padded to the legacy base; semantics
-/// match by construction (commit runs the native apply).
+/// multiply/SWP/PSR/BX/halfword, padded to the pinned base
+/// (register-shift +1I, R15-write refill); the commit runs the apply.
 pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
         return None;
@@ -105,7 +105,7 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
     // USR/SYS have no SPSR (ARM ARM): exception-return restores only
     // apply in modes with an SPSR bank (mode frozen mid-instruction).
     let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
-    // Legacy `handle` base, minus the +1 the commit op carries.
+    // Cycle base, minus the +1 the commit op carries.
     let trailing = if flag_only && rd == 15 && s {
         if has_spsr {
             2 + u32::from(register_shift)
@@ -120,9 +120,9 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
     Some(ops)
 }
 
-/// ARM multiply (short and long): the exact decoder masks, which route
-/// to `multiply::handle` before anything else. Expansion is
-/// [CommitMul, I..] padded to the legacy base (short MUL 1S+mI,
+/// ARM multiply (short and long): the exact decoder masks, routed
+/// before anything else. Expansion is
+/// [CommitMul, I..] padded to the pinned base (short MUL 1S+mI,
 /// MLA +1I; long 1S+mI+1I, accumulate +1I); the commit runs the native
 /// apply, so only the internal-tick split is new.
 pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
@@ -148,7 +148,7 @@ pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<Micr
 }
 
 /// ARM SWP/SWPB: the exact decoder mask. Expansion is [CommitSwp,
-/// I, I, I] padded to the legacy base (4); the read+write pair stays
+/// I, I, I] padded to the pinned base (4); the read+write pair stays
 /// atomic inside the commit, modeling the HW bus lock.
 fn expand_arm_swp(instr: u32) -> Option<Vec<MicroOp>> {
     if (instr & 0x0FB00FF0) != 0x01000090 {
@@ -197,9 +197,8 @@ struct BlockEmptySpec {
 
 /// ARM LDM/STM with an empty register list: the single PC word
 /// (GBATEK: Rb+=0x40 address arithmetic, S-bit CPSR restore on LDM^,
-/// PC+4 store on STM). No batch framing, mirroring the legacy empty
-/// path; the op carries +1 with trailing Internals to the base
-/// (LDM+PC 5, STM 2).
+/// PC+4 store on STM). No batch framing; the op carries +1 with
+/// trailing Internals to the base (LDM+PC 5, STM 2).
 fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<MicroOp> {
     let addr = start_address(spec.base, 16, spec.pre, spec.up);
     let writeback = spec.writeback.then(|| {
@@ -219,7 +218,7 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<Micr
         store_value: regs.pc().wrapping_add(4),
         restore_cpsr: spec.s,
         reset_sequential: false,
-        // Standalone (no BlockEnd follows): break here, like legacy.
+        // Standalone (no BlockEnd follows): break here.
         break_stream: true,
     })];
     ops.extend(vec![MicroOp::Internal; if spec.load { 4 } else { 1 }]);
@@ -227,8 +226,7 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<Micr
 }
 
 /// STM store-word snapshot at expansion (frozen registers and mode):
-/// user-bank reads, the stored-base quirk, and r15 as instruction+12
-/// (legacy `store_register`).
+/// user-bank reads, the stored-base quirk, and r15 as instruction+12.
 fn block_store_value(
     load: bool,
     stored_base: Option<(usize, u32)>,
@@ -267,7 +265,7 @@ fn block_writeback(
     }
 }
 
-/// Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
+/// Pad the pinned `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
 /// STM 1+n; words already carry +1 each).
 fn block_trailing(load: bool, list: u32) -> usize {
     if load {
@@ -312,7 +310,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let slots: Vec<usize> = (0..16).filter(|i| list & (1 << i) != 0).collect();
     let start = start_address(base, count, pre, up);
     // Without writeback the stored base uses the OLD value; only W=1
-    // stores the NEW value for non-first occurrences (legacy logic).
+    // stores the NEW value for non-first occurrences.
     let final_addr = if up {
         base.wrapping_add(count * 4)
     } else {
@@ -322,8 +320,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         (writeback_flag && !load && list & (1 << rn) != 0 && rn != list.trailing_zeros() as usize)
             .then_some((rn, final_addr));
     // User-bank selection (S without a PC load); snapshot at expansion
-    // like the legacy pre-loop computation (mode frozen until a PC
-    // load, which clears this flag).
+    // (mode frozen until a PC load, which clears this flag).
     let user_bank = s && !(load && list & (1 << 15) != 0);
     let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
         is_load: load,
@@ -344,7 +341,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     }
     // Writeback not allowed if base in list and L==1 (UNPREDICTABLE).
     let writeback = block_writeback(writeback_flag, load, list, rn, final_addr);
-    // Post-LDM^ conflict, armed exactly like the legacy tail (the PC
+    // Post-LDM^ conflict, armed at expansion (the PC
     // case never sets user_bank, so expansion-time mode is exact).
     let conflict = load && user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
     ops.push(MicroOp::BlockEnd(BlockEndEffect {
@@ -353,7 +350,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         ldm_conflict: conflict,
         first_addr: start,
     }));
-    // Pad the legacy `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
+    // Pad the pinned `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
     let trailing = block_trailing(load, list);
     ops.extend(vec![MicroOp::Internal; trailing]);
@@ -409,7 +406,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // S with Rd==15 is an exception return (or flags-only form);
     // USR/SYS have no SPSR (mode frozen mid-instruction).
     let has_spsr = !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
-    // Legacy base minus the commit's +1: flag-only Rd15 restores (3)
+    // Cycle base minus the commit's +1: flag-only Rd15 restores (3)
     // or updates flags (1); Rd15 writes refill (+2).
     let trailing = if op.is_flag_only() && rd == 15 && set_flags {
         if has_spsr { 2 } else { 0 }
@@ -436,7 +433,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// offsets snapshot the barrel-shifted Rm at expansion (frozen
 /// registers); STR of R15 snapshots instruction+12. Loads expand to
 /// [Read, I, I] (= 3; +2 more for R15 loads) and stores to [Write, I]
-/// (= 2), matching `single_transfer`/`halfword_transfer`.
+/// (= 2) per GBATEK.
 pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     let dec = SingleDecoded {
         l: (instr >> 20) & 1 == 1,
@@ -445,7 +442,7 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
         rn: ((instr >> 16) & 0xF) as usize,
         rd: ((instr >> 12) & 0xF) as usize,
         subtract: (instr >> 23) & 1 == 0,
-        // STR of R15 stores instruction+12 (legacy `single_transfer`).
+        // STR of R15 stores instruction+12.
         store_value: single_store_value(instr, regs),
     };
     // Word/byte class (bits27-26 == 01), immediate or register offset.
@@ -454,9 +451,9 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
     }
     // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
     // register offsets, all S:H shapes (unsigned half, signed byte /
-    // half; S:H == 00 behaves as halfword like the legacy handler).
-    // Multiply/SWP/PSR/BX patterns carry the tag too, so the decoder
-    // exclusions are mirrored (decode tests them first).
+    // half; S:H == 00 behaves as halfword).
+    // Multiply/SWP/PSR/BX patterns carry the tag too, so the same
+    // decoder exclusions apply (decode tests them first).
     if (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090 {
         return single_half(instr, regs, &dec);
     }
@@ -484,7 +481,7 @@ fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
     }
 }
 
-/// Pad the legacy base: loads 3 (5 for R15), stores 2.
+/// Pad the pinned base: loads 3 (5 for R15), stores 2.
 fn single_ops(l: bool, rd: usize, acc: MemAccess) -> Vec<MicroOp> {
     if l {
         let mut ops = vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
@@ -524,7 +521,7 @@ fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<V
         store_value: dec.store_value,
         halfword_odd_quirk: false,
     };
-    // Same bus calls and order as legacy, so totals agree by construction.
+    // Bus calls and order match the apply step, so totals agree by construction.
     Some(single_ops(dec.l, dec.rd, acc))
 }
 

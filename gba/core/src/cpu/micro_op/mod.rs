@@ -30,7 +30,7 @@ pub(crate) const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 pub(crate) type IrqReturnStack = Vec<(u32, [u32; 5])>;
 
 /// One sub-instruction effect; effects land at execute-stage points with
-/// the legacy bus-call order (access, then fetch-stream-break).
+/// the fixed bus-call order (access, then fetch-stream-break).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicroOp {
     Internal,
@@ -40,8 +40,8 @@ pub enum MicroOp {
     /// Costs +1 here; no bus access, so only the cycle split is new.
     CommitDpReg(u32),
     /// Multiply commit: raw word plus mode. ARM short/long run the
-    /// native apply; Thumb MUL mirrors the decoder preamble
-    /// (fetch break + P-ON erase) plus the native ALU. Costs +1; the
+    /// native apply; Thumb MUL carries the fetch break + P-ON erase
+    /// plus the native ALU. Costs +1; the
     /// m internal ticks become trailing `Internal` event points.
     CommitMul(MulEffect),
     /// SWP commit: raw word, applied atomically by the native apply
@@ -68,17 +68,16 @@ pub enum MicroOp {
     Bx(u32),
     /// SWI trap: BIOS HLE number. The apply step runs the HLE
     /// dispatcher and carries its full charge (SVC-vector entry on
-    /// Unsupported), mirroring the legacy SWI handlers exactly.
+    /// Unsupported).
     TrapSwi(u8),
-    /// Undefined-instruction trap: exception entry, mirroring the
-    /// legacy UND handlers exactly (2S+1I+1N = 4 in both states).
+    /// Undefined-instruction trap: exception entry
+    /// (2S+1I+1N = 4 in both states).
     TrapUnd,
     TakenBranch(BranchEffect),
     MemRead(MemAccess),
     MemWrite(MemAccess),
     /// Thumb LDR-literal: pool address snapshotted at expansion
-    /// (`(pc & !3) + imm`, pc frozen pre-instruction like the legacy
-    /// handler's execute-stage read).
+    /// (`(pc & !3) + imm`, pc frozen pre-instruction at execute stage).
     PcRelRead(PcRelRead),
     /// Open the block batch (`begin_block_batch(is_load, fetch_width)`).
     /// Zero-cost structural op.
@@ -86,7 +85,7 @@ pub enum MicroOp {
     BlockWord(BlockWord),
     /// Empty-list transfer (ARM LDM/STM with Rlist=0, Thumb PUSH/POP
     /// with no registers): the single PC word. Costs +1 like a block
-    /// word; trailing `Internal`s pad the legacy base.
+    /// word; trailing `Internal`s pad the pinned base.
     BlockEmpty(BlockEmptyEffect),
     /// Close the batch, land end-commits, single fetch-stream break.
     /// Zero-cost structural op; trailing `Internal`s pad the base.
@@ -101,9 +100,8 @@ pub struct BlockStartEffect {
     pub fetch_width: u8,
 }
 /// Instruction-end commit for a block transfer. `sp` goes through
-/// `set_sp` exactly like the legacy PUSH/POP path (NOT `set_r`, which
-/// also spills to the user bank inside the LDM^ conflict window);
-/// `writeback` is the LDM/STM base update via `set_r`; `ldm_conflict`
+/// `set_sp` (NOT `set_r`, which also spills to the user bank inside
+/// the LDM^ conflict window); `writeback` is the LDM/STM base update via `set_r`; `ldm_conflict`
 /// arms the post-LDM^ bank-conflict window (ARM S-bit loads to the
 /// user bank outside USR/SYS).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +123,7 @@ pub struct PcRelRead {
 
 /// One block word (PUSH/POP, LDM/STM). `addr` is snapshotted at expansion (queue-fill
 /// runs on pre-instruction state); values are read at execution, which
-/// matches the legacy loop because no CPU register changes between the
+/// is exact because no CPU register changes between the
 /// words of one instruction (bus ticks never touch registers).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockWord {
@@ -147,7 +145,7 @@ pub struct BlockWord {
     /// Precomputed store word (STM base-in-list quirk: non-first
     /// occurrences of the base store the final address). Snapshot at
     /// expansion; registers are frozen across the words of one
-    /// instruction, so this matches the legacy in-loop evaluation.
+    /// instruction, so this matches live in-loop evaluation.
     pub store_value: Option<u32>,
 }
 
@@ -155,15 +153,15 @@ pub struct BlockWord {
 /// no registers): the single transferred PC word. Address and store
 /// value are snapshotted at expansion (frozen pre-instruction state,
 /// like `BlockWord`); the access runs at execution through the same
-/// bus calls as the legacy empty path, including its batch/no-batch
-/// shape (Thumb batches, ARM does not) and sequential-touch shape.
+/// bus calls, including the batch/no-batch shape (Thumb batches, ARM
+/// does not) and sequential-touch shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockEmptyEffect {
     pub load: bool,
     pub addr: u32,
     /// ARM writeback (W=1): `(base_reg, base +/- 0x40)` via `set_r`.
     /// None when W=0 (ARM) or for Thumb (SP goes through `BlockEnd.sp`,
-    /// which uses `set_sp` like the legacy empty path).
+    /// which uses `set_sp`).
     pub writeback_reg: Option<(usize, u32)>,
     /// Store word for STM/PUSH (PC + 4 ARM / + 2 Thumb), snapshotted
     /// at expansion.
@@ -172,7 +170,7 @@ pub struct BlockEmptyEffect {
     /// execution like the `BlockWord` path.
     pub restore_cpsr: bool,
     /// Touch `data_sequential` before the access (Thumb empty paths
-    /// set it false; ARM empty paths leave it alone, like legacy).
+    /// set it false; ARM empty paths leave it alone).
     pub reset_sequential: bool,
     /// Charge the fetch-stream break here. True for standalone
     /// (ARM) empties; false when a `BlockEnd` follows (Thumb), which
@@ -213,11 +211,11 @@ pub struct MemAccess {
     pub writeback: bool,
     /// Thumb LDRSH odd-address bus quirk (halfword read + ROM merge +
     /// high-byte sign). ARM LDRSH at odd addresses is a plain
-    /// sign-extended byte read like the legacy halfword handler.
+    /// sign-extended byte read.
     pub halfword_odd_quirk: bool,
     /// Precomputed store word (ARM STR of R15: instruction+12).
     /// Snapshot at expansion; registers are frozen across one
-    /// instruction, matching the legacy in-handler evaluation.
+    /// instruction, matching live in-handler evaluation.
     pub store_value: Option<u32>,
 }
 
@@ -229,8 +227,8 @@ pub struct AluEffect {
     pub rn: usize,
     pub imm: u32,
     pub set_flags: bool,
-    /// Thumb MOV-imm forces N=0 (legacy `handle_imm` quirk); ARM MOVS
-    /// takes N from bit 31. V is preserved by MOV in both modes.
+    /// Thumb MOV-imm forces N=0; ARM MOVS takes N from bit 31.
+    /// V is preserved by MOV in both modes.
     pub thumb_mov: bool,
     /// Shifter carry-out for S with a rotated immediate
     /// (bit(rot-1) of the imm8). None selects the live CPSR carry
@@ -269,8 +267,7 @@ impl AluImmOp {
         )
     }
 
-    /// Logical operations preserve V; arithmetic operations replace it
-    /// (legacy `update_flags` rule).
+    /// Logical operations preserve V; arithmetic operations replace it.
     fn replaces_v(self) -> bool {
         matches!(
             self,
@@ -307,9 +304,8 @@ pub fn step_op(
     } else {
         0
     };
-    // No floor here: the driver floors once per instruction at retire,
-    // exactly like the legacy step (per-op flooring would inflate
-    // prefetch-erased instructions).
+    // No floor here: the driver floors once per instruction at retire
+    // (per-op flooring would inflate prefetch-erased instructions).
     Some(cycles + epilogue as i64 + bus.take_access_wait_cycles())
 }
 
@@ -322,9 +318,9 @@ fn refill_queue(
     queue: &mut VecDeque<MicroOp>,
     is_thumb: bool,
 ) -> Option<()> {
-    // Speculative pure decode FIRST (fallback history: touching
-    // bus/pipeline before coverage is known double-advances the
-    // pipeline on legacy fallback).
+    // Speculative pure decode FIRST (touching bus/pipeline before
+    // coverage is known would double-advance the pipeline on an
+    // uncovered fill).
     let ops = if is_thumb {
         expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
     } else {
@@ -382,9 +378,9 @@ fn retire_step(
         *pipeline = [0; 2];
         bus.set_current_pc(regs.pc());
         bus.invalidate_prefetch_for_branch();
-        // NOTE: no `refill_prefetch_for_switch` here. The legacy path
-        // refilled on every mode-switching pc-write, but the unified
-        // engine provably matches HW without it (mgba-suite bx cells
+        // NOTE: no `refill_prefetch_for_switch` here. Refilling on
+        // every mode-switching pc-write was tried and FALSIFIED: the
+        // unified engine matches HW without it (mgba-suite bx cells
         // pin the un-prefilled cost); refilling over-fills the buffer
         // and undercounts by 2-6 cycles there.
         fill_pipeline(regs, bus, pipeline);
