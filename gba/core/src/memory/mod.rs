@@ -2077,10 +2077,7 @@ impl GbaMemoryBus {
             ppu: self.ppu.export_state(),
             dma: self.dma.export_state(),
             timers: self.timers.export_state(),
-            apu: self
-                .apu
-                .export_state()
-                .map_err(|e| format!("bus: {e}"))?,
+            apu: self.apu.export_state().map_err(|e| format!("bus: {e}"))?,
             cartridge: self.cartridge.as_ref().map(|cart| cart.export_state()),
             hle_bios: self.hle_bios,
         })

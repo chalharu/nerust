@@ -198,7 +198,9 @@ mod tests {
 
     impl VecBus {
         fn new() -> Self {
-            Self { mem: vec![0; 0x100] }
+            Self {
+                mem: vec![0; 0x100],
+            }
         }
 
         fn base(addr: u32) -> usize {

@@ -534,8 +534,9 @@ mod tests {
         assert!(state.validate().is_err());
         // Bad access width.
         state = cpu.export_state();
-        state.micro_queue.push_back(MicroOp::MemRead(
-            crate::cpu::micro_op::MemAccess {
+        state
+            .micro_queue
+            .push_back(MicroOp::MemRead(crate::cpu::micro_op::MemAccess {
                 width: 3,
                 rd: 0,
                 rn: 0,
@@ -548,8 +549,7 @@ mod tests {
                 writeback: false,
                 halfword_odd_quirk: false,
                 store_value: None,
-            },
-        ));
+            }));
         assert!(state.validate().is_err());
     }
 }
