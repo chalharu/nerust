@@ -8,7 +8,7 @@ const DUTY: [[i8; 8]; 4] = [
 ];
 
 /// Shared length/envelope core for square/noise channels.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct LengthEnvelope {
     pub active: bool,
     pub length: u8,
@@ -73,7 +73,7 @@ impl LengthEnvelope {
 }
 
 /// Square channel (ch1 adds sweep).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Square {
     pub core: LengthEnvelope,
     pub freq_shadow: u16,
@@ -198,7 +198,7 @@ impl Square {
 }
 
 /// Wave channel (ch3).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Wave {
     pub active: bool,
     pub length: u16,
@@ -286,7 +286,7 @@ impl Wave {
 }
 
 /// Noise channel (ch4).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Noise {
     pub core: LengthEnvelope,
     timer: u32,
@@ -338,6 +338,81 @@ impl Noise {
         // GBATEK: carry-out drives HIGH.
         let vol = i16::from(self.core.volume);
         if self.lfsr & 1 == 0 { vol } else { -vol }
+    }
+}
+
+impl LengthEnvelope {
+    /// Phase 10 import validation (bounds follow the trigger/write masks).
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self.length > 64 {
+            return Err(format!("apu: envelope length out of range: {}", self.length));
+        }
+        if self.volume > 15 {
+            return Err(format!("apu: envelope volume out of range: {}", self.volume));
+        }
+        if self.env_timer > 7 {
+            return Err(format!("apu: envelope timer out of range: {}", self.env_timer));
+        }
+        Ok(())
+    }
+}
+
+impl Square {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        self.core.validate()?;
+        // `tick_timer`: 16 * (2048 - base), base 11-bit.
+        if self.timer > 0x8000 {
+            return Err(format!("apu: square timer out of range: {}", self.timer));
+        }
+        if self.phase > 7 {
+            return Err(format!("apu: square phase out of range: {}", self.phase));
+        }
+        if self.sweep_shift > 7 {
+            return Err(format!("apu: sweep shift out of range: {}", self.sweep_shift));
+        }
+        if self.sweep_pace > 8 {
+            return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
+        }
+        if self.sweep_timer > 8 {
+            return Err(format!("apu: sweep timer out of range: {}", self.sweep_timer));
+        }
+        Ok(())
+    }
+}
+
+impl Wave {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self.length > 256 {
+            return Err(format!("apu: wave length out of range: {}", self.length));
+        }
+        // `tick_timer`: 8 * (2048 - rate), rate 11-bit.
+        if self.timer > 0x4000 {
+            return Err(format!("apu: wave timer out of range: {}", self.timer));
+        }
+        if self.phase > 31 {
+            return Err(format!("apu: wave phase out of range: {}", self.phase));
+        }
+        if self.bank > 1 {
+            return Err(format!("apu: wave bank out of range: {}", self.bank));
+        }
+        if self.hold > 15 {
+            return Err(format!("apu: wave hold out of range: {}", self.hold));
+        }
+        Ok(())
+    }
+}
+
+impl Noise {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        self.core.validate()?;
+        // `tick_timer`: (64 << shift<=12) * ratio<=7.
+        if self.timer > 0x200_000 {
+            return Err(format!("apu: noise timer out of range: {}", self.timer));
+        }
+        if self.lfsr > 0x7FFF {
+            return Err(format!("apu: noise lfsr out of range: {:#X}", self.lfsr));
+        }
+        Ok(())
     }
 }
 
