@@ -5,7 +5,6 @@ use super::{
     AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockStartEffect, BlockWord,
     BranchEffect, MemAccess, MicroOp, MicroOpVec, MulEffect,
 };
-use smallvec::smallvec;
 use crate::cpu::semantics::{
     barrel_shift, condition_passed, is_psr_transfer, multiplier_cycles, multiplier_cycles_long,
     start_address,
@@ -15,71 +14,131 @@ use crate::cpu_registers::CpuRegisters;
 /// Expand an ARM instruction. `None` = uncovered instruction (no
 /// fallback; every documented class expands).
 /// `regs` snapshots base pointers and STM store words at queue-fill.
+/// Test-only wrapper (the hot path uses [`expand_arm_into`]); kept so
+/// the decoder unit tests keep their readable by-value form.
+#[cfg(test)]
 pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_arm_into(instr, regs, &mut ops).map(|()| ops)
+}
+
+/// Hot-path expansion: build directly into `out` with no whole-buffer
+/// moves (see [`super::expand_thumb::expand_thumb_into`] for why).
+/// Fallible leaves truncate `out` to the entry length on `None`.
+pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // B/BL: failed conditions retire in one sequential cycle; taken
     // branches expose both refill cycles independently to the bus.
     if (instr >> 25) & 0x7 == 0b101 {
         let condition = (instr >> 28) as u8;
         if !condition_passed(regs.cpsr(), condition) {
-            return Some(smallvec![MicroOp::Internal]);
+            out.push(MicroOp::Internal);
+            return Some(());
         }
         let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
         let offset = (offset << 6) >> 6;
-        return Some(smallvec![
-            MicroOp::Internal,
-            MicroOp::Internal,
-            MicroOp::TakenBranch(BranchEffect {
-                offset: offset as u32,
-                link: instr & (1 << 24) != 0,
-            }),
-        ]);
+        out.push(MicroOp::Internal);
+        out.push(MicroOp::Internal);
+        out.push(MicroOp::TakenBranch(BranchEffect {
+            offset: offset as u32,
+            link: instr & (1 << 24) != 0,
+        }));
+        return Some(());
     }
     let condition = (instr >> 28) as u8;
     if condition == 0xF {
         // NV: never executes (ARM ARM); it retires as
         // a 1S NOP, so expansion is a single Internal.
-        return Some(smallvec![MicroOp::Internal]);
+        out.push(MicroOp::Internal);
+        return Some(());
     }
     // SWI: class 111 with bit 24 set (any condition; the trap
     // number is in bits 23-16 for HLE). Failed conditions retire as
     // [Internal] here (the early return bypasses the wrapper below).
     if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
-        return Some(if condition_passed(regs.cpsr(), condition) {
-            smallvec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]
+        if condition_passed(regs.cpsr(), condition) {
+            out.push(MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8));
         } else {
-            smallvec![MicroOp::Internal]
-        });
+            out.push(MicroOp::Internal);
+        }
+        return Some(());
     }
     // UND: coprocessor data class (110) and class 111 without the SWI
     // bit. The GBA has no coprocessor, so all such encodings trap
     // (failed conditions still retire as [Internal]).
     if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
     {
-        return Some(if condition_passed(regs.cpsr(), condition) {
-            smallvec![MicroOp::TrapUnd]
+        if condition_passed(regs.cpsr(), condition) {
+            out.push(MicroOp::TrapUnd);
         } else {
-            smallvec![MicroOp::Internal]
-        });
+            out.push(MicroOp::Internal);
+        }
+        return Some(());
     }
-    let ops = expand_arm_alu_imm(instr, regs)
-        .or_else(|| expand_arm_single(instr, regs))
-        .or_else(|| expand_arm_block(instr, regs))
-        .or_else(|| expand_arm_dp_reg(instr, regs))
-        .or_else(|| expand_arm_mul(instr, regs))
-        .or_else(|| expand_arm_swp(instr))
-        .or_else(|| expand_arm_psr(instr))
-        .or_else(|| expand_arm_bx(instr, regs))?;
-    Some(if condition_passed(regs.cpsr(), condition) {
-        ops
-    } else {
-        smallvec![MicroOp::Internal]
-    })
+    let base = out.len();
+    if expand_arm_alu_imm_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_single_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_block_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_dp_reg_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_mul_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_swp_into(instr, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_psr_into(instr, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_bx_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Condition gate for chained ARM attempts: a passed condition keeps
+/// the leaf's ops; a failed one replaces them with the 1S NOP retire.
+fn finish_arm_condition(regs: &CpuRegisters, condition: u8, out: &mut MicroOpVec, base: usize) {
+    if !condition_passed(regs.cpsr(), condition) {
+        out.truncate(base);
+        out.push(MicroOp::Internal);
+    }
 }
 
 /// ARM data-processing (register form, I==0): the DP class minus
 /// multiply/SWP/PSR/BX/halfword, padded to the pinned base
 /// (register-shift +1I, R15-write refill); the commit runs the apply.
+/// Test-only wrapper (the hot path uses the `_into` half below).
+#[cfg(test)]
 pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_arm_dp_reg_into(instr, regs, &mut ops).map(|()| ops)
+}
+
+/// Hot-path half of [`expand_arm_dp_reg`].
+fn expand_arm_dp_reg_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
         return None;
     }
@@ -116,9 +175,9 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Micro
     } else {
         u32::from(register_shift) + if rd == 15 && !flag_only { 2 } else { 0 }
     };
-    let mut ops = smallvec![MicroOp::CommitDpReg(instr)];
-    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
-    Some(ops)
+    out.push(MicroOp::CommitDpReg(instr));
+    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
+    Some(())
 }
 
 /// ARM multiply (short and long): the exact decoder masks, routed
@@ -126,7 +185,15 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Micro
 /// [CommitMul, I..] padded to the pinned base (short MUL 1S+mI,
 /// MLA +1I; long 1S+mI+1I, accumulate +1I); the commit runs the native
 /// apply, so only the internal-tick split is new.
+/// Test-only wrapper (the hot path uses the `_into` half below).
+#[cfg(test)]
 pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_arm_mul_into(instr, regs, &mut ops).map(|()| ops)
+}
+
+/// Hot-path half of [`expand_arm_mul`].
+fn expand_arm_mul_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if (instr & 0x0F8000F0) != 0x00800090 && (instr & 0x0FC000F0) != 0x00000090 {
         return None;
     }
@@ -140,49 +207,48 @@ pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<MicroOpV
         // Short: m +1I for MLA.
         multiplier_cycles(rs_val) + ((instr >> 21) & 1)
     };
-    let mut ops = smallvec![MicroOp::CommitMul(MulEffect {
+    out.push(MicroOp::CommitMul(MulEffect {
         instr,
         thumb: false,
-    })];
-    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
-    Some(ops)
+    }));
+    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
+    Some(())
 }
 
 /// ARM SWP/SWPB: the exact decoder mask. Expansion is [CommitSwp,
 /// I, I, I] padded to the pinned base (4); the read+write pair stays
 /// atomic inside the commit, modeling the HW bus lock.
-fn expand_arm_swp(instr: u32) -> Option<MicroOpVec> {
+fn expand_arm_swp_into(instr: u32, out: &mut MicroOpVec) -> Option<()> {
     if (instr & 0x0FB00FF0) != 0x01000090 {
         return None;
     }
-    Some(smallvec![
-        MicroOp::CommitSwp(instr),
-        MicroOp::Internal,
-        MicroOp::Internal,
-        MicroOp::Internal,
-    ])
+    out.push(MicroOp::CommitSwp(instr));
+    out.push(MicroOp::Internal);
+    out.push(MicroOp::Internal);
+    out.push(MicroOp::Internal);
+    Some(())
 }
 
 /// ARM MRS/MSR: exactly the decoder predicate (all three masks).
 /// Single commit op; the handler is pure registers with base 1.
-fn expand_arm_psr(instr: u32) -> Option<MicroOpVec> {
+fn expand_arm_psr_into(instr: u32, out: &mut MicroOpVec) -> Option<()> {
     if !is_psr_transfer(instr) {
         return None;
     }
-    Some(smallvec![MicroOp::CommitPsr(instr)])
+    out.push(MicroOp::CommitPsr(instr));
+    Some(())
 }
 
 /// ARM BX: the exact decoder mask. Reuses the interworking branch
 /// op ([I, I, Bx]); retire flushes with the switched width.
-fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+fn expand_arm_bx_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if (instr & 0x0FFFFFF0) != 0x012FFF10 {
         return None;
     }
-    Some(smallvec![
-        MicroOp::Internal,
-        MicroOp::Internal,
-        MicroOp::Bx(regs.r((instr & 0xF) as usize)),
-    ])
+    out.push(MicroOp::Internal);
+    out.push(MicroOp::Internal);
+    out.push(MicroOp::Bx(regs.r((instr & 0xF) as usize)));
+    Some(())
 }
 
 /// Empty-list parameters snapshotted at expansion.
@@ -200,7 +266,7 @@ struct BlockEmptySpec {
 /// (GBATEK: Rb+=0x40 address arithmetic, S-bit CPSR restore on LDM^,
 /// PC+4 store on STM). No batch framing; the op carries +1 with
 /// trailing Internals to the base (LDM+PC 5, STM 2).
-fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> MicroOpVec {
+fn expand_arm_block_empty_into(spec: BlockEmptySpec, regs: &CpuRegisters, out: &mut MicroOpVec) {
     let addr = start_address(spec.base, 16, spec.pre, spec.up);
     let writeback = spec.writeback.then(|| {
         (
@@ -212,7 +278,7 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> MicroOpV
             },
         )
     });
-    let mut ops = smallvec![MicroOp::BlockEmpty(BlockEmptyEffect {
+    out.push(MicroOp::BlockEmpty(BlockEmptyEffect {
         load: spec.load,
         addr,
         writeback_reg: writeback,
@@ -221,9 +287,11 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> MicroOpV
         reset_sequential: false,
         // Standalone (no BlockEnd follows): break here.
         break_stream: true,
-    })];
-    ops.extend(core::iter::repeat_n(MicroOp::Internal, if spec.load { 4 } else { 1 }));
-    ops
+    }));
+    out.extend(core::iter::repeat_n(
+        MicroOp::Internal,
+        if spec.load { 4 } else { 1 },
+    ));
 }
 
 /// STM store-word snapshot at expansion (frozen registers and mode):
@@ -281,7 +349,7 @@ fn block_trailing(load: bool, list: u32) -> usize {
 /// modes, writeback (skipped for the UNPREDICTABLE load-with-base-
 /// in-list), the STM stored-base quirk, PC loads (retire flushes),
 /// and the empty-list single-PC-word transfer are covered.
-fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+fn expand_arm_block_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if (instr >> 25) & 0x7 != 0b100 {
         return None;
     }
@@ -294,7 +362,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     let list = instr & 0xFFFF;
     let base = regs.r(rn);
     if list == 0 {
-        return Some(expand_arm_block_empty(
+        expand_arm_block_empty_into(
             BlockEmptySpec {
                 base,
                 rn,
@@ -305,7 +373,9 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
                 load,
             },
             regs,
-        ));
+            out,
+        );
+        return Some(());
     }
     let count = list.count_ones();
     let start = start_address(base, count, pre, up);
@@ -322,13 +392,16 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     // User-bank selection (S without a PC load); snapshot at expansion
     // (mode frozen until a PC load, which clears this flag).
     let user_bank = s && !(load && list & (1 << 15) != 0);
-    let mut ops = smallvec![MicroOp::BlockStart(BlockStartEffect {
+    out.push(MicroOp::BlockStart(BlockStartEffect {
         is_load: load,
         fetch_width: 4,
-    })];
-    for (i, reg) in (0..16usize).filter(|reg| list & (1 << reg) != 0).enumerate() {
+    }));
+    for (i, reg) in (0..16usize)
+        .filter(|reg| list & (1 << reg) != 0)
+        .enumerate()
+    {
         let store_value = block_store_value(load, stored_base, user_bank, regs, reg);
-        ops.push(MicroOp::BlockWord(BlockWord {
+        out.push(MicroOp::BlockWord(BlockWord {
             addr: start.wrapping_add(i as u32 * 4),
             reg,
             load,
@@ -344,7 +417,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     // Post-LDM^ conflict, armed at expansion (the PC
     // case never sets user_bank, so expansion-time mode is exact).
     let conflict = load && user_bank && !matches!(regs.cpsr_mode(), 0x10 | 0x1F);
-    ops.push(MicroOp::BlockEnd(BlockEndEffect {
+    out.push(MicroOp::BlockEnd(BlockEndEffect {
         sp: None,
         writeback,
         ldm_conflict: conflict,
@@ -353,15 +426,15 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     // Pad the pinned `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
     let trailing = block_trailing(load, list);
-    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing));
-    Some(ops)
+    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing));
+    Some(())
 }
 
 /// ARM data-processing immediate, no R15 dest, no S+rotate (see gate
 /// above). Rn==15 (PC) reads are covered: the effect resolves Rn live
 /// at execution, matching the handler's execute-stage read (PC still
 /// leads by 8; advance lands at retire).
-fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+fn expand_arm_alu_imm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // Data-processing class (bits27-26 == 00), immediate form (I==1).
     // With I==1 the decoder can only route to DP or PSR-immediate
     // (multiply/SWP/BX/halfword all require I==0); the MSR-immediate
@@ -415,7 +488,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     } else {
         0
     };
-    let mut ops = smallvec![MicroOp::CommitAlu(AluEffect {
+    out.push(MicroOp::CommitAlu(AluEffect {
         op,
         rd,
         rn,
@@ -423,9 +496,9 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
         set_flags,
         thumb_mov: false,
         carry,
-    })];
-    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
-    Some(ops)
+    }));
+    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
+    Some(())
 }
 
 /// ARM LDR/STR word/byte (immediate and register offset) and
@@ -434,7 +507,15 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
 /// registers); STR of R15 snapshots instruction+12. Loads expand to
 /// [Read, I, I] (= 3; +2 more for R15 loads) and stores to [Write, I]
 /// (= 2) per GBATEK.
+/// Test-only wrapper (the hot path uses the `_into` half below).
+#[cfg(test)]
 pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
+    let mut ops = MicroOpVec::new();
+    expand_arm_single_into(instr, regs, &mut ops).map(|()| ops)
+}
+
+/// Hot-path half of [`expand_arm_single`].
+fn expand_arm_single_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     let dec = SingleDecoded {
         l: (instr >> 20) & 1 == 1,
         pre_indexed: (instr >> 24) & 1 == 1,
@@ -447,7 +528,8 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Micro
     };
     // Word/byte class (bits27-26 == 01), immediate or register offset.
     if (instr >> 26) & 0x3 == 0b01 {
-        return single_word(instr, regs, &dec);
+        single_word_into(instr, regs, &dec, out);
+        return Some(());
     }
     // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
     // register offsets, all S:H shapes (unsigned half, signed byte /
@@ -455,7 +537,7 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Micro
     // Multiply/SWP/PSR/BX patterns carry the tag too, so the same
     // decoder exclusions apply (decode tests them first).
     if (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090 {
-        return single_half(instr, regs, &dec);
+        return single_half_into(instr, regs, &dec, out);
     }
     None
 }
@@ -482,19 +564,22 @@ fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
 }
 
 /// Pad the pinned base: loads 3 (5 for R15), stores 2.
-fn single_ops(l: bool, rd: usize, acc: MemAccess) -> MicroOpVec {
+fn single_ops_into(l: bool, rd: usize, acc: MemAccess, out: &mut MicroOpVec) {
     if l {
-        let mut ops = smallvec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
+        out.push(MicroOp::MemRead(acc));
+        out.push(MicroOp::Internal);
+        out.push(MicroOp::Internal);
         if rd == 15 {
-            ops.extend([MicroOp::Internal, MicroOp::Internal]);
+            out.push(MicroOp::Internal);
+            out.push(MicroOp::Internal);
         }
-        ops
     } else {
-        smallvec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        out.push(MicroOp::MemWrite(acc));
+        out.push(MicroOp::Internal);
     }
 }
 
-fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<MicroOpVec> {
+fn single_word_into(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded, out: &mut MicroOpVec) {
     let offset = if (instr >> 25) & 1 != 0 {
         let rm_val = regs.r((instr & 0xF) as usize);
         let (shifted, _) = barrel_shift(
@@ -522,10 +607,15 @@ fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<M
         halfword_odd_quirk: false,
     };
     // Bus calls and order match the apply step, so totals agree by construction.
-    Some(single_ops(dec.l, dec.rd, acc))
+    single_ops_into(dec.l, dec.rd, acc, out);
 }
 
-fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<MicroOpVec> {
+fn single_half_into(
+    instr: u32,
+    regs: &CpuRegisters,
+    dec: &SingleDecoded,
+    out: &mut MicroOpVec,
+) -> Option<()> {
     if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
         return None; // Multiply.
     }
@@ -559,5 +649,6 @@ fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<M
         store_value: dec.store_value,
         halfword_odd_quirk: false,
     };
-    Some(single_ops(dec.l, dec.rd, acc))
+    single_ops_into(dec.l, dec.rd, acc, out);
+    Some(())
 }

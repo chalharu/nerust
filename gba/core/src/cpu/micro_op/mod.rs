@@ -21,8 +21,8 @@ use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
 
 use apply::apply_op;
-use expand_arm::expand_arm;
-use expand_thumb::expand_thumb;
+use expand_arm::expand_arm_into;
+use expand_thumb::expand_thumb_into;
 
 pub(crate) const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 
@@ -326,12 +326,15 @@ fn refill_queue(
 ) -> Option<()> {
     // Speculative pure decode FIRST (touching bus/pipeline before
     // coverage is known would double-advance the pipeline on an
-    // uncovered fill).
-    let ops = if is_thumb {
-        expand_thumb((pipeline[0] & 0xFFFF) as u16, regs)?
+    // uncovered fill). Decodes straight into a stack scratch: no
+    // whole-buffer moves (return-by-value `SmallVec`s codegen as
+    // per-instruction `memcpy` calls).
+    let mut ops = MicroOpVec::new();
+    if is_thumb {
+        expand_thumb_into((pipeline[0] & 0xFFFF) as u16, regs, &mut ops)?;
     } else {
-        expand_arm(pipeline[0], regs)?
-    };
+        expand_arm_into(pipeline[0], regs, &mut ops)?;
+    }
     regs.clear_pc_written();
     bus.take_access_wait_cycles();
     bus.set_current_pc(regs.pc());
@@ -344,7 +347,11 @@ fn refill_queue(
     pipeline[0] = pipeline[1];
     pipeline[1] = fetched;
     regs.clear_pc_written();
-    queue.extend(ops);
+    // Element-wise drain (not `queue.extend(ops)`): the bulk transfer
+    // form is the same whole-buffer-move idiom codegen outlines.
+    for op in ops {
+        queue.push_back(op);
+    }
     Some(())
 }
 
