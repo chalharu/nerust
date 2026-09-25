@@ -521,6 +521,74 @@ mod tests {
     }
 
     #[test]
+    fn continued_emulation_matches_uninterrupted_run() {
+        // End-to-end fidelity: load-then-run must equal never-having-saved.
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        let saved = core.save_state().unwrap();
+        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        let reference = core.save_state().unwrap();
+        core.load_state(&saved).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        assert_eq!(core.save_state().unwrap(), reference);
+    }
+
+    #[test]
+    fn load_state_rejects_options_mismatch() {
+        use crate::core_options::GbaCoreOptions;
+
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(&rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        let saved = core.save_state().unwrap();
+        // Reload the same ROM under a different solar level: the payload
+        // pins the old options, so import must refuse atomically.
+        let options = GbaCoreOptions {
+            solar_light_level: 0x10,
+        };
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: Some(Box::new(options)),
+        };
+        core.load(&rom(), &config).unwrap();
+        assert!(core.load_state(&saved).is_err());
+        // The refused import changed nothing: a fresh export validates
+        // against the current (new-options) system.
+        let fresh = core.save_state().unwrap();
+        core.load_state(&fresh).unwrap();
+    }
+
+    #[test]
     fn rejects_machine_state_from_another_rom() {
         let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
         a.load(

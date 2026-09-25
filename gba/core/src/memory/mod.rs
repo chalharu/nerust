@@ -426,19 +426,11 @@ impl GbaMemoryBusState {
         if self.timer0_raise_tick > self.current_tcycle {
             return Err("bus: timer0 raise tick in the future".to_string());
         }
-        // Open-bus PC tags are fresh while the DMA latch is valid (a CPU
-        // mapped access clears it), so they must sit near the current PC.
-        // Stale tags with a cleared latch carry no constraint.
-        if self.dma_bus_valid {
-            for (name, tag) in [
-                ("dma_open_pc", self.dma_open_pc),
-                ("dma_trigger_pc", self.dma_trigger_pc),
-            ] {
-                if tag.abs_diff(self.current_pc) > 64 {
-                    return Err(format!("bus: {name} too far from current pc"));
-                }
-            }
-        }
+        // Open-bus PC tags carry no import-time invariant: the sticky DMA
+        // latch stays valid across arbitrary ALU/branch runs (only a mapped
+        // CPU data access clears it), so the tags may sit any distance from
+        // the current PC. The read-side gate compares them against the live
+        // PC at access time, which the restored values preserve exactly.
         if let Some(op) = &self.hle_bios {
             op.validate().map_err(|e| format!("bus: {e}"))?;
         }
