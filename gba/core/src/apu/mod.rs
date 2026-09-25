@@ -220,10 +220,13 @@ impl GbaApuState {
         if self.seq_step > 7 {
             return Err(format!("apu: seq_step out of range: {}", self.seq_step));
         }
-        if self.seq_timer > T_CYCLES_PER_SEQ_STEP {
+        // Both countdowns reset the same tick they hit zero, so zero is
+        // never observable at rest; a restored zero would underflow the
+        // unconditional decrement in `tick`.
+        if self.seq_timer == 0 || self.seq_timer > T_CYCLES_PER_SEQ_STEP {
             return Err(format!("apu: seq_timer out of range: {}", self.seq_timer));
         }
-        if self.mix_timer > T_CYCLES_PER_MIX {
+        if self.mix_timer == 0 || self.mix_timer > T_CYCLES_PER_MIX {
             return Err(format!("apu: mix_timer out of range: {}", self.mix_timer));
         }
         // Latch bounds follow the register write masks.
@@ -1032,6 +1035,13 @@ mod tests {
         assert!(bad.validate().is_err());
         let mut bad = restored.export_state().unwrap();
         bad.fifo_a = vec![0; 33];
+        assert!(bad.validate().is_err());
+        // Zero countdowns never rest at zero (unconditional decrement).
+        let mut bad = restored.export_state().unwrap();
+        bad.seq_timer = 0;
+        assert!(bad.validate().is_err());
+        let mut bad = restored.export_state().unwrap();
+        bad.mix_timer = 0;
         assert!(bad.validate().is_err());
     }
 }

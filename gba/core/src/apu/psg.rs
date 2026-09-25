@@ -385,6 +385,12 @@ impl Square {
         if self.sweep_pace > 8 {
             return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
         }
+        // A sounding channel with pace 0 would underflow `sweep_timer` in
+        // `tick_sweep` (the timer reloads pace, then decrements). Pace 0
+        // only exists pre-trigger (inactive), never on a live voice.
+        if self.core.active && self.sweep_pace == 0 {
+            return Err("apu: sounding channel with zero sweep pace".to_string());
+        }
         if self.sweep_timer > 8 {
             return Err(format!(
                 "apu: sweep timer out of range: {}",
@@ -510,5 +516,22 @@ mod tests {
         assert_eq!(w.nibble(&ram), 0xA);
         w.phase = 1;
         assert_eq!(w.nibble(&ram), 0xB);
+    }
+
+    #[test]
+    fn validate_rejects_live_voice_with_zero_sweep_pace() {
+        // Pace 0 exists pre-trigger (inactive) but would underflow the
+        // sweep timer once sounding.
+        let idle = Square::default();
+        idle.validate().unwrap();
+        let live = Square {
+            core: LengthEnvelope {
+                active: true,
+                ..Default::default()
+            },
+            sweep_pace: 0,
+            ..Default::default()
+        };
+        assert!(live.validate().is_err());
     }
 }
