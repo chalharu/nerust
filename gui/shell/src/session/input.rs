@@ -15,6 +15,22 @@ use crate::{
 
 pub use nerust_settings_core::input::{build_topology, clear_multi_port_conflicts, device_kind};
 
+fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
+    match key {
+        AbstractKey::DpadUp => Some(TouchControlRole::DpadUp),
+        AbstractKey::DpadDown => Some(TouchControlRole::DpadDown),
+        AbstractKey::DpadLeft => Some(TouchControlRole::DpadLeft),
+        AbstractKey::DpadRight => Some(TouchControlRole::DpadRight),
+        AbstractKey::Button1 => Some(TouchControlRole::FaceButton1),
+        AbstractKey::Button2 => Some(TouchControlRole::FaceButton2),
+        AbstractKey::Button5 => Some(TouchControlRole::LeftShoulder),
+        AbstractKey::Button6 => Some(TouchControlRole::RightShoulder),
+        AbstractKey::Start => Some(TouchControlRole::Start),
+        AbstractKey::Select => Some(TouchControlRole::Select),
+        _ => None,
+    }
+}
+
 /// Abstraction over a binding type (keyboard, gamepad, etc.) for building
 /// a source-key → field-index map from an InputAssignments field_map.
 trait InputBinding {
@@ -63,16 +79,8 @@ impl SessionHandle {
                 continue;
             };
             for info in *group {
-                let role = match info.abstract_key {
-                    Some(AbstractKey::DpadUp) => TouchControlRole::DpadUp,
-                    Some(AbstractKey::DpadDown) => TouchControlRole::DpadDown,
-                    Some(AbstractKey::DpadLeft) => TouchControlRole::DpadLeft,
-                    Some(AbstractKey::DpadRight) => TouchControlRole::DpadRight,
-                    Some(AbstractKey::Button1) => TouchControlRole::FaceButton1,
-                    Some(AbstractKey::Button2) => TouchControlRole::FaceButton2,
-                    Some(AbstractKey::Start) => TouchControlRole::Start,
-                    Some(AbstractKey::Select) => TouchControlRole::Select,
-                    _ => continue,
+                let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
+                    continue;
                 };
                 controls.push(TouchControl {
                     attachment_id: *attachment_id,
@@ -370,6 +378,23 @@ mod tests {
         assert_eq!(overlay.controls[0].control_id.as_str(), "test.topology.a");
         assert_eq!(overlay.controls[0].role, TouchControlRole::FaceButton1);
         assert_eq!(overlay.controls[0].label, "A");
+    }
+
+    #[test]
+    fn touch_role_maps_shoulder_buttons() {
+        assert_eq!(
+            touch_role_for_abstract_key(AbstractKey::Button5),
+            Some(TouchControlRole::LeftShoulder)
+        );
+        assert_eq!(
+            touch_role_for_abstract_key(AbstractKey::Button6),
+            Some(TouchControlRole::RightShoulder)
+        );
+        assert_eq!(
+            touch_role_for_abstract_key(AbstractKey::Button1),
+            Some(TouchControlRole::FaceButton1)
+        );
+        assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
     }
 
     #[test]
