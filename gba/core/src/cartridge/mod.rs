@@ -7,8 +7,7 @@ pub mod solar;
 use self::gpio::Gpio;
 use self::header::GbaHeader;
 use self::save::helpers::read_slice;
-use self::save::{SaveBackend, SaveType, create_save_backend, detect_save_type};
-use crate::rom_identity::SaveTypeSer;
+use self::save::{SaveBackend, SaveType, SaveTypeSer, create_save_backend, detect_save_type};
 
 #[derive(Debug)]
 pub struct Cartridge {
@@ -275,7 +274,7 @@ mod tests {
 
         // A kind mismatch refuses without touching the backend.
         let mut wrong = decoded.clone();
-        wrong.save_kind = crate::rom_identity::SaveTypeSer::Flash64;
+        wrong.save_kind = crate::cartridge::save::SaveTypeSer::Flash64;
         assert!(restored.import_state(&wrong).is_err());
         assert_eq!(restored.read_sram(0x0E000123, 1), 0x5A);
     }

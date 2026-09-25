@@ -195,7 +195,12 @@ impl HleBiosOperation {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Absolute path (not `super::`): `cargo coupling` mis-resolves `super`
+    // inside inline test modules to the file's parent module and reports a
+    // phantom `hle_operation -> bios` edge.
+    use crate::bios::hle_operation::{
+        CPU_SET_SETUP_CYCLES, HleBiosBus, HleBiosOperation, TransferPhase,
+    };
 
     struct VecBus {
         mem: Vec<u8>,

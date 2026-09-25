@@ -3,9 +3,10 @@
 //! sequences version/identity/options checks and the candidate swap.
 
 use crate::cartridge::Cartridge;
+use crate::cartridge::save::SaveTypeSer;
 use crate::core_options::GbaCoreOptions;
 use crate::persistence_error::GbaPersistenceError;
-use crate::rom_identity::{GbaRomIdentity, SaveTypeSer};
+use crate::rom_identity::GbaRomIdentity;
 use crate::system::{GbaSystem, GbaSystemState};
 
 const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
