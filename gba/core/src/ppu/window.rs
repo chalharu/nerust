@@ -3,13 +3,13 @@ use crate::ppu::obj;
 
 pub fn window_mask(
     registers: &PpuRegisters,
-    x: usize,
-    y: usize,
-    vram: &[u8],
-    palette: &[u8],
-    oam: &[u8],
+    memory: (&[u8], &[u8], &[u8]),
+    pos: (usize, usize),
     mosaic: u16,
+    cache: &obj::ObjLineCache,
 ) -> u8 {
+    let (vram, palette, oam) = memory;
+    let (x, y) = pos;
     let enabled = (registers.dispcnt >> 13) & 7;
     if enabled == 0 {
         return 0x3F;
@@ -22,7 +22,7 @@ pub fn window_mask(
     }
     if enabled & 4 != 0
         && registers.dispcnt & (1 << 12) != 0
-        && obj::pixel(registers, vram, palette, oam, (x, y), true, mosaic).is_some()
+        && obj::pixel(registers, (vram, palette, oam), (x, y), true, mosaic, cache).is_some()
     {
         // GBATEK Window Feature: both DISPCNT bits 12 (OBJ master) and 15
         // (OBJ Window) must be set for OBJ Window region(s).

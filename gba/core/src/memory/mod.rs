@@ -760,11 +760,15 @@ impl GbaMemoryBus {
         (step.cycles as i64 + self.take_access_wait_cycles()).max(0) as u32
     }
 
+    /// Hot fetch wrappers (single-digit instructions around
+    /// `read_internal`): forced-inline into the refill/pipeline paths.
+    #[inline]
     pub fn fetch16(&mut self, addr: u32) -> u16 {
         let (data, _wait) = self.read_internal(addr, 2, true);
         self.align_read(addr, 2, data) as u16
     }
 
+    #[inline]
     pub fn fetch32(&mut self, addr: u32) -> u32 {
         let (data, _wait) = self.read_internal(addr, 4, true);
         self.align_read(addr, 4, data)
@@ -3359,13 +3363,8 @@ impl GbaMemoryBus {
         // Deferred-scanline segment trigger (see `GbaPpu::note_ppu_write`):
         // render the pending prefix with pre-write state first.
         {
-            let (ppu, vram, palette, oam) = (
-                &mut self.ppu,
-                &self.vram[..],
-                &self.palette_ram[..],
-                &self.oam[..],
-            );
-            ppu.note_ppu_write(vram, palette, oam);
+            let (ppu, vram, palette) = (&mut self.ppu, &self.vram[..], &self.palette_ram[..]);
+            ppu.note_ppu_write(vram, palette);
         }
         let off = Self::aligned_off(addr, width, 0x3FF);
         if width == 1 {
@@ -3379,13 +3378,8 @@ impl GbaMemoryBus {
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
         // Deferred-scanline segment trigger (see `GbaPpu::note_ppu_write`).
         {
-            let (ppu, vram, palette, oam) = (
-                &mut self.ppu,
-                &self.vram[..],
-                &self.palette_ram[..],
-                &self.oam[..],
-            );
-            ppu.note_ppu_write(vram, palette, oam);
+            let (ppu, vram, palette) = (&mut self.ppu, &self.vram[..], &self.palette_ram[..]);
+            ppu.note_ppu_write(vram, palette);
         }
         let Some(off) = self.vram_offset(addr, width) else {
             return;
@@ -3675,13 +3669,9 @@ impl GbaMemoryBus {
     fn write_io_low(&mut self, aligned: u32, width: u8, value: u32, v16: u16) {
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000006 => {
-                let irq = self.ppu.write_register(
-                    aligned,
-                    v16,
-                    &self.vram[..],
-                    &self.palette_ram[..],
-                    &self.oam[..],
-                );
+                let irq =
+                    self.ppu
+                        .write_register(aligned, v16, &self.vram[..], &self.palette_ram[..]);
                 if irq != 0 {
                     self.request_interrupt(irq);
                 }

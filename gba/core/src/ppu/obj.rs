@@ -9,21 +9,21 @@ const DIMENSIONS: [[(usize, usize); 4]; 3] = [
 
 pub(crate) fn pixel(
     registers: &PpuRegisters,
-    vram: &[u8],
-    palette: &[u8],
-    oam: &[u8],
+    memory: (&[u8], &[u8], &[u8]),
     pos: (usize, usize),
     window_only: bool,
     mosaic: u16,
+    cache: &ObjLineCache,
 ) -> Option<LayerPixel> {
+    let (vram, palette, oam) = memory;
     let (x, y) = pos;
-    let dropped = cycle_drop_mask(registers, oam, y);
     let mut best: Option<(LayerPixel, usize)> = None;
-    for index in (0..128).rev() {
-        if dropped[index] {
-            continue;
-        }
-        let Some(object) = decode_object(oam, index, window_only) else {
+    // Index-order visit with the same strict-`<` comparison: the result
+    // is identical to scanning all 128 (lower index wins ties
+    // regardless of visit order; lower priority always wins).
+    for &(raw_index, attr0, attr1, attr2) in cache.cover[..cache.cover_len as usize].iter() {
+        let index = usize::from(raw_index);
+        let Some(object) = decode_attrs(attr0, attr1, attr2, window_only) else {
             continue;
         };
         let Some((local_x, local_y)) = object.coordinates(oam, x, y, mosaic) else {
@@ -51,6 +51,87 @@ pub(crate) fn pixel(
     best.map(|(pixel, _)| pixel)
 }
 
+/// Per-scanline OBJ working set, computed once per render span: the
+/// cycle-drop mask fused with the y-overlap prefilter. Only OBJs that
+/// can possibly cover the scanline are visited per pixel (typically a
+/// handful of the 128). Stateless across spans: each span builds it
+/// from contemporary state, so no invalidation is needed (prefix spans
+/// build pre-write, remainder spans post-write, exactly like the
+/// per-pixel computation it replaces).
+#[derive(Clone, Copy)]
+pub(crate) struct ObjLineCache {
+    /// (index, attr0, attr1, attr2) in index order.
+    pub(crate) cover: [(u8, u16, u16, u16); 128],
+    pub(crate) cover_len: u8,
+}
+
+impl ObjLineCache {
+    pub(crate) const fn empty() -> Self {
+        Self {
+            cover: [(0, 0, 0, 0); 128],
+            cover_len: 0,
+        }
+    }
+
+    pub(crate) fn from_cover(cover: [(u8, u16, u16, u16); 128], cover_len: u8) -> Self {
+        Self { cover, cover_len }
+    }
+
+    pub(crate) fn into_cover(self) -> ([(u8, u16, u16, u16); 128], u8) {
+        (self.cover, self.cover_len)
+    }
+}
+
+pub(crate) fn line_cache(registers: &PpuRegisters, oam: &[u8], y: usize) -> ObjLineCache {
+    let dropped = cycle_drop_mask(registers, oam, y);
+    let mut cover = [(0u8, 0u16, 0u16, 0u16); 128];
+    let mut len = 0u8;
+    for (index, &is_dropped) in dropped.iter().enumerate() {
+        if is_dropped {
+            continue;
+        }
+        let base = index * 8;
+        if base + 5 >= oam.len() {
+            continue;
+        }
+        let attr0 = read16(oam, base);
+        let attr1 = read16(oam, base + 2);
+        let attr2 = read16(oam, base + 4);
+        // Decode guards (mirrors decode_object minus the mode-2 /
+        // window_only distinction, which stays per-path at render):
+        // an undecodable OBJ covers nothing.
+        let shape = usize::from((attr0 >> 14) & 3);
+        let mode = (attr0 >> 10) & 3;
+        let affine = attr0 & (1 << 8) != 0;
+        if shape == 3 || mode == 3 || (!affine && attr0 & (1 << 9) != 0) {
+            continue;
+        }
+        // Y-overlap (mirrors coordinates() up to the field-bounds
+        // check, a necessary condition for any pixel of this OBJ to
+        // render on this scanline regardless of mosaic/affine/flip).
+        let height = DIMENSIONS[shape][usize::from((attr1 >> 14) & 3)].1;
+        let double_size = affine && attr0 & (1 << 9) != 0;
+        let field_height = if double_size { height * 2 } else { height };
+        let y_raw = u32::from(attr0 & 0xFF);
+        let y_max = (y_raw + field_height as u32) & 0xFF;
+        let origin_y = if y_max < y_raw {
+            y_raw as i32 - 256
+        } else {
+            y_raw as i32
+        };
+        let local_y = y as i32 - origin_y;
+        if local_y < 0 || local_y >= field_height as i32 {
+            continue;
+        }
+        cover[len as usize] = (index as u8, attr0, attr1, attr2);
+        len += 1;
+    }
+    ObjLineCache {
+        cover,
+        cover_len: len,
+    }
+}
+
 struct Object {
     attr0: u16,
     attr1: u16,
@@ -63,11 +144,21 @@ struct Object {
     field_height: usize,
 }
 
+/// Test-only OAM decoder (production decodes from the line-cache
+/// attrs via [`decode_attrs`]); kept so decoder unit tests keep their
+/// direct form.
+#[cfg(test)]
 fn decode_object(oam: &[u8], index: usize, window_only: bool) -> Option<Object> {
     let base = index * 8;
-    let attr0 = read16(oam, base);
-    let attr1 = read16(oam, base + 2);
-    let attr2 = read16(oam, base + 4);
+    decode_attrs(
+        read16(oam, base),
+        read16(oam, base + 2),
+        read16(oam, base + 4),
+        window_only,
+    )
+}
+
+fn decode_attrs(attr0: u16, attr1: u16, attr2: u16, window_only: bool) -> Option<Object> {
     let affine = attr0 & (1 << 8) != 0;
     let mode = (attr0 >> 10) & 3;
     let shape = usize::from((attr0 >> 14) & 3);
@@ -235,7 +326,10 @@ fn signed_origin(value: u16, threshold: i32, modulus: i32) -> i32 {
 
 /// Per-line OBJ cycle budget (1210 cycles, 954 with H-Blank Interval Free).
 /// Over budget, this OBJ and all lower-priority ones are dropped for the line.
-fn cycle_drop_mask(registers: &PpuRegisters, oam: &[u8], y: usize) -> [bool; 128] {
+/// Depends only on the scanline, line OAM and DISPCNT bit 5, so callers
+/// cache it per scanline segment (computing it per pixel costs 128
+/// line-cost evaluations per pixel).
+pub(crate) fn cycle_drop_mask(registers: &PpuRegisters, oam: &[u8], y: usize) -> [bool; 128] {
     let mut dropped = [false; 128];
     let budget: u32 = if registers.dispcnt & (1 << 5) != 0 {
         954
@@ -243,15 +337,19 @@ fn cycle_drop_mask(registers: &PpuRegisters, oam: &[u8], y: usize) -> [bool; 128
         1210
     };
     let mut used: u32 = 0;
-    for index in 0..128 {
+    let mut over = None;
+    for (index, _) in dropped.iter().enumerate() {
         let cost = line_cost(oam, index, y);
         if used + cost > budget {
-            for item in dropped.iter_mut().skip(index) {
-                *item = true;
-            }
+            over = Some(index);
             break;
         }
         used += cost;
+    }
+    if let Some(at) = over {
+        for item in dropped.iter_mut().skip(at) {
+            *item = true;
+        }
     }
     dropped
 }
@@ -358,11 +456,33 @@ mod tests {
         let mut oam = vec![0u8; 0x400];
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0, 0]); // 8x8 at (0,0), tile 0
         // Tile 0 in mode 3 must be ignored.
-        assert!(pixel(&regs, &vram, &palette, &oam, (0, 0), false, regs.mosaic).is_none());
+        let cache = line_cache(&regs, &oam, 0);
+        assert!(
+            pixel(
+                &regs,
+                (&vram[..], &palette[..], &oam[..]),
+                (0, 0),
+                false,
+                regs.mosaic,
+                &cache
+            )
+            .is_none()
+        );
         // Tile 512 must be displayed.
         oam[4..6].copy_from_slice(&512u16.to_le_bytes());
         vram[0x10000 + 512 * 32] = 1;
-        assert!(pixel(&regs, &vram, &palette, &oam, (0, 0), false, regs.mosaic).is_some());
+        let cache = line_cache(&regs, &oam, 0);
+        assert!(
+            pixel(
+                &regs,
+                (&vram[..], &palette[..], &oam[..]),
+                (0, 0),
+                false,
+                regs.mosaic,
+                &cache
+            )
+            .is_some()
+        );
     }
 
     #[test]
@@ -381,7 +501,16 @@ mod tests {
         oam[0..2].copy_from_slice(&0x1000u16.to_le_bytes()); // Y=0, mosaic
         oam[2..4].copy_from_slice(&1u16.to_le_bytes()); // X=1, 8x8
         oam[4..6].copy_from_slice(&0u16.to_le_bytes()); // tile 0
-        let pixel = pixel(&regs, &vram, &palette, &oam, (2, 0), false, regs.mosaic).expect("pixel");
+        let cache = line_cache(&regs, &oam, 0);
+        let pixel = pixel(
+            &regs,
+            (&vram[..], &palette[..], &oam[..]),
+            (2, 0),
+            false,
+            regs.mosaic,
+            &cache,
+        )
+        .expect("pixel");
         assert_eq!(pixel.color, 0x7C00);
     }
 
