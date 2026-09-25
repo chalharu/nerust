@@ -148,11 +148,13 @@ impl ConsoleCore for GbaConsoleCore {
         let Ok(mut fresh) = Self::create_loaded(&current.rom, current.options) else {
             return;
         };
-        if let (Some(state), Some(cart)) = (reset_state, fresh.system.bus.cartridge_mut())
-            && cart.import_state(&state).is_err()
-        {
-            // Never swap a reset that drops the battery: keep running.
-            return;
+        if let (Some(state), Some(cart)) = (reset_state, fresh.system.bus.cartridge_mut()) {
+            if cart.import_state(&state).is_err() {
+                // Never swap a reset that drops the battery: keep running.
+                return;
+            }
+            // The solar level follows options, not the transplanted runtime.
+            cart.gpio.set_solar_level(current.options.solar_light_level);
         }
         self.loaded = Some(fresh);
     }
@@ -441,7 +443,9 @@ mod tests {
             region: None,
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
-            core_options: None,
+            core_options: Some(Box::new(GbaCoreOptions {
+                solar_light_level: 0x20,
+            })),
         };
         let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
         core.load(&sram_rom(), &config).unwrap();
@@ -452,6 +456,8 @@ mod tests {
         );
         core.render_frame(&mut frame).unwrap();
         // Battery RAM, GPIO attachment and solar level are set pre-reset.
+        // The solar level comes from options (the only production source);
+        // reset must not clobber the options-applied level.
         core.loaded
             .as_mut()
             .unwrap()
@@ -467,7 +473,6 @@ mod tests {
             .cartridge_mut()
             .unwrap();
         cart.gpio.write(0x080000C8, 2, 1);
-        cart.gpio.set_solar_level(0x20);
         core.reset();
         let loaded = core.loaded.as_mut().unwrap();
         // Runtime restarts from boot (pipeline filled: execute+8).
@@ -586,6 +591,71 @@ mod tests {
         // against the current (new-options) system.
         let fresh = core.save_state().unwrap();
         core.load_state(&fresh).unwrap();
+    }
+
+    #[test]
+    fn machine_state_round_trips_battery_backed_cartridge() {
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(&sram_rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        // Battery RAM plus an attached GPIO device travel in the envelope.
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x5A);
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .cartridge_mut()
+            .unwrap()
+            .gpio
+            .write(0x080000C8, 2, 1);
+        let saved = core.save_state().unwrap();
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x00);
+        core.render_frame(&mut frame).unwrap();
+        core.load_state(&saved).unwrap();
+        // NOTE: no bus reads before the re-export below. `bus.read8` is
+        // not side-effect-free: it accumulates wait cycles and advances
+        // the N/S trackers, so any read would legitimately perturb the
+        // exported bytes.
+        assert_eq!(core.save_state().unwrap(), saved);
+        let loaded = core.loaded.as_mut().unwrap();
+        assert_eq!(loaded.system.bus.read8(0x0E000123), 0x5A);
+        assert!(
+            loaded
+                .system
+                .bus
+                .cartridge_mut()
+                .unwrap()
+                .gpio
+                .is_attached()
+        );
     }
 
     #[test]

@@ -101,6 +101,13 @@ impl GbaDmaState {
                 ));
             }
         }
+        // Latched only as 1 << (8 + channel) for channels 0-3.
+        if self.completion_interrupts & !0x0F00 != 0 {
+            return Err(format!(
+                "dma: completion interrupts out of range: {:#X}",
+                self.completion_interrupts
+            ));
+        }
         Ok(())
     }
 }
