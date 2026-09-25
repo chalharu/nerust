@@ -426,6 +426,24 @@ impl GbaMemoryBusState {
         if self.timer0_raise_tick > self.current_tcycle {
             return Err("bus: timer0 raise tick in the future".to_string());
         }
+        // Accumulator magnitudes at rest (all drain per instruction or per
+        // burst, so single-step accumulation bounds them): unbounded
+        // restored values would overflow the plain `+=`/`-` sites.
+        if self.access_wait_cycles.abs() > (1 << 40) {
+            return Err("bus: access wait accumulator out of range".to_string());
+        }
+        if self.block_batch_erase_sum.abs() > (1 << 20) {
+            return Err("bus: block erase sum out of range".to_string());
+        }
+        // Batches open and close within one block instruction (<= 16 words).
+        if self.block_batch_words > 0xFFFF {
+            return Err("bus: block word count out of range".to_string());
+        }
+        // At most one arbitration stall is ever set; the step path adds it
+        // to the CPU remainder without saturation.
+        if self.dma_stall_pending > 1 {
+            return Err("bus: dma stall out of range".to_string());
+        }
         // Open-bus PC tags carry no import-time invariant: the sticky DMA
         // latch stays valid across arbitrary ALU/branch runs (only a mapped
         // CPU data access clears it), so the tags may sit any distance from

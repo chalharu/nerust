@@ -71,6 +71,14 @@ impl GbaTimersState {
                     channel.control
                 ));
             }
+            // `handle_start_delay` arms 0-4; anything above falls through
+            // to undelayed ticking, which no enable path produces.
+            if channel.start_delay > 5 {
+                return Err(format!(
+                    "timer{index}: start delay out of range: {}",
+                    channel.start_delay
+                ));
+            }
         }
         for (index, reload) in self.last_reload_cycle.iter().enumerate() {
             if let Some(cycle) = reload
@@ -558,6 +566,10 @@ mod tests {
         assert!(bad.validate().is_err());
         let mut bad = restored.export_state();
         bad.take1_latency = Some(bad.current_cycle + 1);
+        assert!(bad.validate().is_err());
+        // No enable path arms a delay past the handled arms.
+        let mut bad = restored.export_state();
+        bad.channels[0].start_delay = 6;
         assert!(bad.validate().is_err());
     }
 }

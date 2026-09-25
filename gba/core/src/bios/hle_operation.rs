@@ -166,10 +166,15 @@ impl HleBiosOperation {
     }
 
     /// Phase 10 import validation: width is 2 or 4, phase countdowns stay
-    /// within their construction ceilings.
+    /// within their construction ceilings, and phases that decrement hold
+    /// a nonzero remainder (`Setup`/`Write` underflow on zero; `Complete`
+    /// saturates and may rest at zero).
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.width != 2 && self.width != 4 {
             return Err(format!("hle: bad width {}", self.width));
+        }
+        if self.remaining == 0 && !matches!(self.phase, TransferPhase::Complete(_)) {
+            return Err("hle: no units left outside completion".to_string());
         }
         match self.phase {
             TransferPhase::Setup(remaining) => {
@@ -253,5 +258,12 @@ mod tests {
         let mut bad = decoded;
         bad.width = 3;
         assert!(bad.validate().is_err());
+        // Setup/Write always hold a remainder (plain decrement); only the
+        // saturating completion tail may rest at zero.
+        let mut bad = decoded;
+        bad.remaining = 0;
+        assert!(bad.validate().is_err());
+        bad.phase = TransferPhase::Complete(0);
+        assert!(bad.validate().is_ok());
     }
 }

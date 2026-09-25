@@ -100,6 +100,17 @@ impl GbaDmaState {
                     channel.pending
                 ));
             }
+            // `finish_unit` decrements unconditionally on the unit path, so
+            // an active non-completing channel must hold at least one unit.
+            // (active + remaining 0 + completing is the transient tail.)
+            if channel.active && channel.remaining == 0 && !channel.completing {
+                return Err(format!("dma{index}: active channel with no units left"));
+            }
+            // Per-burst idle ticks (a 64K-unit burst accrues at most ~33M);
+            // the step path adds to it without saturation.
+            if channel.burst_idle > 0x1000_0000 {
+                return Err(format!("dma{index}: burst idle out of range"));
+            }
         }
         // Latched only as 1 << (8 + channel) for channels 0-3.
         if self.completion_interrupts & !0x0F00 != 0 {
@@ -833,6 +844,19 @@ mod tests {
         assert!(bad.validate().is_err());
         bad = restored.export_state();
         bad.channels[0].pending = 9;
+        assert!(bad.validate().is_err());
+        // An active non-completing channel always holds a unit (the unit
+        // path decrements unconditionally).
+        bad = restored.export_state();
+        bad.channels[0].remaining = 0;
+        bad.channels[0].active = true;
+        bad.channels[0].completing = false;
+        assert!(bad.validate().is_err());
+        // The transient completion tail is legitimate.
+        bad.channels[0].completing = true;
+        assert!(bad.validate().is_ok());
+        bad = restored.export_state();
+        bad.channels[0].burst_idle = 0x1000_0001;
         assert!(bad.validate().is_err());
     }
 }
