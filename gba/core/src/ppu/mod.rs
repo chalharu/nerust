@@ -157,6 +157,22 @@ pub struct GbaPpu {
     /// render at segment boundaries (mid-fetch PPU writes) or line end.
     /// Reset at every line end; serialized for exact save/load.
     rendered_up_to_x: u8,
+    /// Span-level OBJ working-set cache. Consecutive segments of a line
+    /// (e.g. per-word DMA streaming into VRAM) share line OAM and
+    /// usually DISPCNT, so rebuilding the 128-OBJ working set per
+    /// segment wastes milliseconds; the key (scanline, full DISPCNT,
+    /// capture epoch) pins the exact inputs. Derivable scratch: not
+    /// serialized, invalidated on import.
+    obj_cover: [(u8, u16, u16, u16); 128],
+    obj_cover_len: u8,
+    obj_cover_y: u16,
+    obj_cover_dispcnt: u16,
+    obj_cover_epoch: u32,
+    obj_cover_valid: bool,
+    /// Bumped at every line-OAM capture (and import/reset): line OAM
+    /// is otherwise immutable within a line, so the epoch identifies
+    /// the cached working set's OAM without comparing 1KB per span.
+    obj_epoch: u32,
 }
 
 #[derive(Debug)]
@@ -258,6 +274,13 @@ impl GbaPpu {
             blank_sample: false,
             line: LineLatch::new(),
             rendered_up_to_x: 0,
+            obj_cover: [(0, 0, 0, 0); 128],
+            obj_cover_len: 0,
+            obj_cover_y: 0,
+            obj_cover_dispcnt: 0,
+            obj_cover_epoch: 0,
+            obj_cover_valid: false,
+            obj_epoch: 0,
         }
     }
 
@@ -307,6 +330,9 @@ impl GbaPpu {
         self.line.oam.copy_from_slice(&state.line_oam);
         self.line.enable = state.line_enable;
         self.rendered_up_to_x = state.rendered_up_to_x;
+        // Derivable scratch: the epoch bump retires the cached set.
+        self.obj_epoch = self.obj_epoch.wrapping_add(1);
+        self.obj_cover_valid = false;
         Ok(())
     }
 
@@ -348,6 +374,10 @@ impl GbaPpu {
         // Horizon guarantees c + n <= CYCLES_PER_LINE: no wrap, no line end.
         self.cycle += n as u16;
     }
+    /// Hot per-T-cycle driver (single call site in `tick_video`):
+    /// forced-inline so the dot-counter/edge checks fold into the bus
+    /// tick without call overhead (280k calls/frame).
+    #[inline]
     pub fn step(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) -> PpuEvent {
         let mut event = PpuEvent::default();
         self.cycle += 1;
@@ -356,7 +386,15 @@ impl GbaPpu {
         // segments at mid-fetch writes (`render_prefix_up_to`) or at line
         // end, each exactly once with contemporary state.
         if self.vcount < HEIGHT as u16 && self.cycle == FETCH_START_CYCLES {
-            self.render_pixel(0, self.vcount as usize, vram, palette, oam);
+            // Latch OAM at the first fetch of the line; later mid-draw
+            // writes defer to the next line. MOSAIC stays live.
+            self.line.capture(oam, self.dispcnt_latch[0]);
+            // New line OAM: retire the cached OBJ working set.
+            self.obj_epoch = self.obj_epoch.wrapping_add(1);
+            self.obj_cover_valid = false;
+            let y = self.vcount as usize;
+            let cache = self.obj_span_cache(y);
+            self.render_pixel(0, y, vram, palette, &cache);
             self.rendered_up_to_x = 1;
         }
         if self.cycle == DISPCNT_LATCH_CYCLES {
@@ -375,7 +413,7 @@ impl GbaPpu {
             event.hblank_dma = true;
         }
         if self.cycle == CYCLES_PER_LINE {
-            self.render_remainder(vram, palette, oam);
+            self.render_remainder(vram, palette);
             self.handle_line_end(&mut event);
             self.rendered_up_to_x = 0;
         }
@@ -388,7 +426,7 @@ impl GbaPpu {
     /// write applies. Visibility is indexed by the PPU dot clock: pixel x
     /// fetches at dot 4x+32 and fetches at dots <= the current dot already
     /// ran. Over-triggering only renders earlier, never wrongly.
-    pub(crate) fn note_ppu_write(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) {
+    pub(crate) fn note_ppu_write(&mut self, vram: &[u8], palette: &[u8]) {
         if self.vcount >= HEIGHT as u16 {
             return;
         }
@@ -397,7 +435,7 @@ impl GbaPpu {
             return;
         }
         let xw = (((dot - 32) / 4 + 1).min(240)) as usize;
-        self.render_prefix_up_to(xw, vram, palette, oam);
+        self.render_prefix_up_to(xw, vram, palette);
     }
 
     /// Render pending pixels `[rendered_up_to_x, x_end)` of the current
@@ -405,13 +443,7 @@ impl GbaPpu {
     /// Every pixel renders exactly once: segments partition [1, 240)
     /// (pixel 0 runs at its boundary tick). No-op off visible lines or
     /// when nothing is pending.
-    pub(crate) fn render_prefix_up_to(
-        &mut self,
-        x_end: usize,
-        vram: &[u8],
-        palette: &[u8],
-        oam: &[u8],
-    ) {
+    pub(crate) fn render_prefix_up_to(&mut self, x_end: usize, vram: &[u8], palette: &[u8]) {
         let start = usize::from(self.rendered_up_to_x);
         if self.vcount >= HEIGHT as u16 || x_end <= start {
             return;
@@ -422,11 +454,18 @@ impl GbaPpu {
         );
         let end = x_end.min(WIDTH);
         let y = self.vcount as usize;
-        if self.lean_span_applies() {
-            self.render_span_lean(start, end, y, vram, palette);
+        if self.span_applies() {
+            if self.registers.dispcnt & (1 << 12) != 0 {
+                let cache = self.obj_span_cache(y);
+                self.render_span(start, end, y, vram, palette, &cache);
+            } else {
+                // No OBJ reach: skip the working-set build entirely.
+                self.render_span(start, end, y, vram, palette, &obj::ObjLineCache::empty());
+            }
         } else {
+            let cache = self.obj_span_cache(y);
             for x in start..end {
-                self.render_pixel(x, y, vram, palette, oam);
+                self.render_pixel(x, y, vram, palette, &cache);
             }
         }
         self.rendered_up_to_x = end as u8;
@@ -434,53 +473,87 @@ impl GbaPpu {
 
     /// Render the line tail at line end, before `handle_line_end` advances
     /// counters and latches (the tail observes pre-advance line state).
-    fn render_remainder(&mut self, vram: &[u8], palette: &[u8], oam: &[u8]) {
+    fn render_remainder(&mut self, vram: &[u8], palette: &[u8]) {
         let start = usize::from(self.rendered_up_to_x);
         if self.vcount >= HEIGHT as u16 || start >= WIDTH {
             return;
         }
         let y = self.vcount as usize;
-        if self.lean_span_applies() {
-            self.render_span_lean(start, WIDTH, y, vram, palette);
+        if self.span_applies() {
+            if self.registers.dispcnt & (1 << 12) != 0 {
+                let cache = self.obj_span_cache(y);
+                self.render_span(start, WIDTH, y, vram, palette, &cache);
+            } else {
+                self.render_span(start, WIDTH, y, vram, palette, &obj::ObjLineCache::empty());
+            }
         } else {
+            let cache = self.obj_span_cache(y);
             for x in start..WIDTH {
-                self.render_pixel(x, y, vram, palette, oam);
+                self.render_pixel(x, y, vram, palette, &cache);
             }
         }
     }
 
-    /// Lean-span gate: no forced blank, no windows (mask is constantly
-    /// 0x3F), no OBJ layer, `bldcnt == 0` (effects identity: mode 0 with
-    /// empty masks returns the top pixel for every non-transparent
-    /// source, and BG/backdrop pixels are never semi-transparent), no
-    /// greenswap. Registers are constant across the span (prefix spans
-    /// render before the triggering write; remainder spans at line end),
-    /// so one gate check covers every pixel in it.
-    fn lean_span_applies(&self) -> bool {
+    /// OBJ working set for the span starting on scanline `y`, shared by
+    /// every pixel in it. Hits (same line, DISPCNT and capture epoch)
+    /// copy ~1KB; only the first span per line state rebuilds the
+    /// 128-OBJ set. Callers with no OBJ reach (lean spans, disabled
+    /// layer with windows off) never call this.
+    fn obj_span_cache(&mut self, y: usize) -> obj::ObjLineCache {
+        if self.obj_cover_valid
+            && self.obj_cover_y == y as u16
+            && self.obj_cover_dispcnt == self.registers.dispcnt
+            && self.obj_cover_epoch == self.obj_epoch
+        {
+            return obj::ObjLineCache::from_cover(self.obj_cover, self.obj_cover_len);
+        }
+        let fresh = obj::line_cache(&self.registers, &self.line.oam[..], y);
+        let (cover, cover_len) = fresh.into_cover();
+        self.obj_cover = cover;
+        self.obj_cover_len = cover_len;
+        self.obj_cover_y = y as u16;
+        self.obj_cover_dispcnt = self.registers.dispcnt;
+        self.obj_cover_epoch = self.obj_epoch;
+        self.obj_cover_valid = true;
+        fresh
+    }
+
+    /// Span gate: no forced blank, no windows (mask is constantly
+    /// 0x3F), `bldcnt == 0` (effects identity: mode 0 with empty masks
+    /// returns the top pixel — the blend arm needs a second-mask bit
+    /// even for semi-transparent OBJs, and brighten/darken need mode
+    /// 2/3), no greenswap. OBJ layers are fine (they join the top
+    /// selection through the same cover list). Registers are constant
+    /// across the span (prefix spans render before the triggering
+    /// write; remainder spans at line end), so one gate check covers
+    /// every pixel in it.
+    fn span_applies(&self) -> bool {
         !self.forced_blank()
             && (self.registers.dispcnt >> 13) & 7 == 0
-            && self.registers.dispcnt & (1 << 12) == 0
             && self.registers.bldcnt == 0
             && self.registers.greenswap & 1 == 0
     }
 
-    /// Lean span render: pixel-identical to `render_pixel` under
-    /// [`lean_span_applies`](Self::lean_span_applies), minus per-pixel
-    /// window/effects/OBJ machinery. BG fetches (including the shared
+    /// Span render: pixel-identical to `render_pixel` under
+    /// [`span_applies`](Self::span_applies), minus per-pixel
+    /// window/effects machinery. BG fetches (including the shared
     /// VRAM latch) run through the identical `bg::pixel` path in x
     /// order, so latch evolution matches exactly; priority ties keep
     /// insertion order via strict `<`, exactly like the top-two
-    /// selection (backdrop first, then BG0-3).
-    fn render_span_lean(
+    /// selection (backdrop, BG0-3, OBJ).
+    fn render_span(
         &mut self,
         start: usize,
         end: usize,
         y: usize,
         vram: &[u8],
         palette: &[u8],
+        cache: &obj::ObjLineCache,
     ) {
         // Layer enables gate on latched AND live (same as render_pixel).
+        // OBJ fetch keys off the live enable (same exception).
         let enables = self.line.enable & self.registers.dispcnt;
+        let obj_on = self.registers.dispcnt & (1 << 12) != 0;
         let backdrop = color::read_color(palette, 0);
         for x in start..end {
             // Backdrop: priority 4, layer 5 (rank 6).
@@ -503,6 +576,21 @@ impl GbaPpu {
                         top_key = key;
                         top_color = pixel.color;
                     }
+                }
+            }
+            if obj_on
+                && let Some(pixel) = obj::pixel(
+                    &self.registers,
+                    (vram, palette, &self.line.oam[..]),
+                    (x, y),
+                    false,
+                    self.registers.mosaic,
+                    cache,
+                )
+            {
+                let key = (pixel.priority, layer_rank(pixel.layer));
+                if key < top_key {
+                    top_color = pixel.color;
                 }
             }
             self.frame[y * WIDTH + x] = color::rgba8888(top_color);
@@ -649,24 +737,22 @@ impl GbaPpu {
         }
     }
 
-    pub fn write_register(
-        &mut self,
-        address: u32,
-        value: u16,
-        vram: &[u8],
-        palette: &[u8],
-        oam: &[u8],
-    ) -> u16 {
+    pub fn write_register(&mut self, address: u32, value: u16, vram: &[u8], palette: &[u8]) -> u16 {
         // Deferred-scanline segment trigger (see `note_ppu_write`).
         // Covers CPU, DMA and HLE stores uniformly; unit tests pass
         // their local buffers.
-        self.note_ppu_write(vram, palette, oam);
+        self.note_ppu_write(vram, palette);
         match address {
             0x04000000 => {
                 // GBATEK DISPCNT Bit 3 (CGB Mode): can be set only by BIOS opcodes.
                 // CPU writes must not change it, so preserve the old bit.
                 let old = self.registers.dispcnt;
                 self.registers.dispcnt = (value & !(1 << 3)) | (old & (1 << 3));
+                // The OBJ working-set key includes DISPCNT (cycle budget):
+                // retire the cached set when it changes.
+                if self.registers.dispcnt != old {
+                    self.obj_cover_valid = false;
+                }
                 0
             }
             0x04000002 => {
@@ -806,12 +892,16 @@ impl GbaPpu {
         }
     }
 
-    fn render_pixel(&mut self, x: usize, y: usize, vram: &[u8], palette: &[u8], oam: &[u8]) {
-        if x == 0 {
-            // Latch OAM at the first fetch of the line; later mid-draw
-            // writes defer to the next line. MOSAIC stays live.
-            self.line.capture(oam, self.dispcnt_latch[0]);
-        }
+    fn render_pixel(
+        &mut self,
+        x: usize,
+        y: usize,
+        vram: &[u8],
+        palette: &[u8],
+        cache: &obj::ObjLineCache,
+    ) {
+        // OAM was latched at the pixel-0 boundary tick (see `step`);
+        // spans start at x >= 1 with the line's capture in place.
         // Forced blank: sampled (line-start) OR live. Render and stall
         // paths share forced_blank(), so both follow blank within a line.
         if self.forced_blank() {
@@ -822,7 +912,7 @@ impl GbaPpu {
         // its fetch keys off the LIVE enable only, so it reacts to HBlank
         // toggling immediately while BGs lag 3 lines.
         let enables = self.line.enable & self.registers.dispcnt;
-        let mask = self.window_mask(x, y, vram, palette);
+        let mask = self.window_mask(x, y, vram, palette, cache);
         // Fixed-size stack buffer instead of a per-pixel heap Vec
         // (38k allocations per frame): at most backdrop + 4 BG + OBJ.
         let mut layers = [LayerPixel::default(); 6];
@@ -854,12 +944,11 @@ impl GbaPpu {
             && mask & (1 << 4) != 0
             && let Some(pixel) = obj::pixel(
                 &self.registers,
-                vram,
-                palette,
-                &self.line.oam[..],
+                (vram, palette, &self.line.oam[..]),
                 (x, y),
                 false,
                 self.registers.mosaic,
+                cache,
             )
         {
             layers[layer_count] = pixel;
@@ -939,15 +1028,20 @@ impl GbaPpu {
         top.color
     }
 
-    fn window_mask(&self, x: usize, y: usize, vram: &[u8], palette: &[u8]) -> u8 {
+    fn window_mask(
+        &self,
+        x: usize,
+        y: usize,
+        vram: &[u8],
+        palette: &[u8],
+        cache: &obj::ObjLineCache,
+    ) -> u8 {
         window::window_mask(
             &self.registers,
-            x,
-            y,
-            vram,
-            palette,
-            &self.line.oam[..],
+            (vram, palette, &self.line.oam[..]),
+            (x, y),
             self.registers.mosaic,
+            cache,
         )
     }
 }
@@ -973,8 +1067,8 @@ mod tests {
     /// Write DISPCNT with the enable latch pre-propagated (steady state).
     /// Render tests use this to skip the 3-line hardware enable pipeline;
     /// latch propagation itself is covered by `dispcnt_enable_latch_delays`.
-    fn steady_dispcnt(ppu: &mut GbaPpu, value: u16, vram: &[u8], palette: &[u8], oam: &[u8]) {
-        ppu.write_register(0x04000000, value, vram, palette, oam);
+    fn steady_dispcnt(ppu: &mut GbaPpu, value: u16, vram: &[u8], palette: &[u8]) {
+        ppu.write_register(0x04000000, value, vram, palette);
         ppu.dispcnt_latch = [value; 3];
     }
 
@@ -1019,7 +1113,7 @@ mod tests {
         assert_ne!(ppu.dispstat() & 2, 0);
         // HBlank interrupt
         let mut ppu2 = GbaPpu::new();
-        ppu2.write_register(0x04000004, 1 << 4, &vram, &palette, &oam);
+        ppu2.write_register(0x04000004, 1 << 4, &vram, &palette);
         for _ in 0..HBLANK_FLAG_CYCLES - 1 {
             assert_eq!(ppu2.step(&vram, &palette, &oam).interrupt_mask, 0);
         }
@@ -1038,7 +1132,7 @@ mod tests {
         let palette = vec![0; 0x400];
         let oam = vec![0; 0x400];
         vram[..2].copy_from_slice(&0x001Fu16.to_le_bytes());
-        steady_dispcnt(&mut ppu, 3 | 1 << 10, &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, 3 | 1 << 10, &vram, &palette);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1053,7 +1147,7 @@ mod tests {
         let oam = vec![0; 0x400];
         vram[0] = 1;
         palette[2..4].copy_from_slice(&0x03E0u16.to_le_bytes());
-        steady_dispcnt(&mut ppu, 4 | 1 << 10, &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, 4 | 1 << 10, &vram, &palette);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1062,7 +1156,7 @@ mod tests {
         let mut ppu = GbaPpu::new();
         vram[(127 * 160 + 159) * 2..(127 * 160 + 159) * 2 + 2]
             .copy_from_slice(&0x7C00u16.to_le_bytes());
-        steady_dispcnt(&mut ppu, 5 | 1 << 10, &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, 5 | 1 << 10, &vram, &palette);
         // Deferred rendering completes the line at line end: step past
         // HDRAW so the asserted pixels are actually drawn (values are
         // identical to per-cycle rendering; only the observation point
@@ -1097,7 +1191,7 @@ mod tests {
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
         // BG2 priority 0, OBJ0 (tile 512, priority 1).
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x06]);
-        steady_dispcnt(&mut ppu, 4 | (1 << 10) | (1 << 12), &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, 4 | (1 << 10) | (1 << 12), &vram, &palette);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1118,8 +1212,8 @@ mod tests {
         }
         vram[0..2].copy_from_slice(&513u16.to_le_bytes()); // map: tile 513
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes()); // red
-        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000008, 3 << 2, &vram, &palette, &oam); // CBB=3, SBB=0, 4bpp, 32x32
+        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette);
+        ppu.write_register(0x04000008, 3 << 2, &vram, &palette); // CBB=3, SBB=0, 4bpp, 32x32
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1139,10 +1233,10 @@ mod tests {
         for b in vram.iter_mut().skip(0x20).take(0x20) {
             *b = 0x11; // tile 1: palette index 1
         }
-        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000008, (31 << 8) | (3 << 14), &vram, &palette, &oam); // SBB=31, 64x64
-        ppu.write_register(0x04000010, 256, &vram, &palette, &oam); // hofs
-        ppu.write_register(0x04000012, 256, &vram, &palette, &oam); // vofs
+        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette);
+        ppu.write_register(0x04000008, (31 << 8) | (3 << 14), &vram, &palette); // SBB=31, 64x64
+        ppu.write_register(0x04000010, 256, &vram, &palette); // hofs
+        ppu.write_register(0x04000012, 256, &vram, &palette); // vofs
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1159,8 +1253,8 @@ mod tests {
         vram[0xF802..0xF804].copy_from_slice(&0xF000u16.to_le_bytes());
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
         palette[0x1E2..0x1E4].copy_from_slice(&0x7FFFu16.to_le_bytes());
-        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000008, 31 << 8, &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1171,7 +1265,7 @@ mod tests {
         vram[0x10000] = 1;
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes());
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0, 0]);
-        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6), &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6), &vram, &palette);
         for _ in 0..HDRAW_CYCLES {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1186,12 +1280,12 @@ mod tests {
         let oam = vec![0; 0x400];
         vram[0] = 1;
         palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
-        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 13), &vram, &palette, &oam);
-        ppu.write_register(0x04000008, 31 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000040, 0x0014, &vram, &palette, &oam); // WIN0H: 0..20 (x1=0,x2=20)
-        ppu.write_register(0x04000044, 0x0014, &vram, &palette, &oam); // WIN0V: 0..20
-        ppu.write_register(0x04000048, 1 << 0, &vram, &palette, &oam);
-        ppu.write_register(0x0400004A, 0, &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 13), &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
+        ppu.write_register(0x04000040, 0x0014, &vram, &palette); // WIN0H: 0..20 (x1=0,x2=20)
+        ppu.write_register(0x04000044, 0x0014, &vram, &palette); // WIN0V: 0..20
+        ppu.write_register(0x04000048, 1 << 0, &vram, &palette);
+        ppu.write_register(0x0400004A, 0, &vram, &palette);
         for _ in 0..HDRAW_CYCLES as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1217,8 +1311,8 @@ mod tests {
         vram[0] = 1;
         // BG0 on written mid-frame: still gated off until the latch shifts
         // through (renders backdrop), then appears.
-        ppu.write_register(0x04000000, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000008, 31 << 8, &vram, &palette, &oam);
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette);
+        ppu.write_register(0x04000008, 31 << 8, &vram, &palette);
         for _ in 0..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1231,7 +1325,7 @@ mod tests {
         assert_ne!(ppu.line.enable & (1 << 8), 0);
         // Forced blank applies immediately (OR semantics, no latency):
         // the line drawn after the write is white.
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette, &oam);
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette);
         for _ in 0..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1249,8 +1343,8 @@ mod tests {
         let oam = vec![0; 0x400];
         // Set up 2 tiles: tile 0 all 0, tile 1 all 1 (red)
         // Simplified: just test that mosaic registers affect bg_mosaic
-        ppu.write_register(0x0400004C, 0x11, &vram, &palette, &oam); // BG mosaic 1x1
-        ppu.write_register(0x04000008, (1 << 6) | (31 << 8), &vram, &palette, &oam); // BG0 mosaic enable
+        ppu.write_register(0x0400004C, 0x11, &vram, &palette); // BG mosaic 1x1
+        ppu.write_register(0x04000008, (1 << 6) | (31 << 8), &vram, &palette); // BG0 mosaic enable
         vram[0] = 2; // tile map entry for mosaic test
         palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
         for _ in 0..HDRAW_CYCLES {
@@ -1259,8 +1353,8 @@ mod tests {
         // With mosaic 1, no expansion, should still render (basic check that mosaic doesn't crash)
         assert_eq!(ppu.frame_buffer().len(), WIDTH * HEIGHT);
         // Test mosaic 2x2
-        ppu.write_register(0x0400004C, 0x11 | 0x1100, &vram, &palette, &oam); // BG 1x1, OBJ 1x1
-        ppu.write_register(0x04000008, (1 << 6) | (31 << 8), &vram, &palette, &oam);
+        ppu.write_register(0x0400004C, 0x11 | 0x1100, &vram, &palette); // BG 1x1, OBJ 1x1
+        ppu.write_register(0x04000008, (1 << 6) | (31 << 8), &vram, &palette);
         for _ in 0..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1282,7 +1376,7 @@ mod tests {
         vram[0x10000 + 512 * 32..0x10000 + 512 * 32 + 8].fill(0x11);
         palette[0x202..0x204].copy_from_slice(&0x7C00u16.to_le_bytes()); // blue
         oam[0..6].copy_from_slice(&[0, 0, 0, 0, 0x00, 0x02]);
-        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6), &vram, &palette, &oam);
+        steady_dispcnt(&mut ppu, (1 << 12) | (1 << 6), &vram, &palette);
         // Write after the first fetch (cycle 32): line 0 keeps the sprite.
         for _ in 0..64 {
             ppu.step(&vram, &palette, &oam);
@@ -1316,14 +1410,14 @@ mod tests {
         palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
         palette[6..8].copy_from_slice(&0x7C00u16.to_le_bytes());
         palette[8..10].copy_from_slice(&0x7FFFu16.to_le_bytes());
-        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000008, (31 << 8) | (1 << 6), &vram, &palette, &oam); // SBB=31, mosaic
-        ppu.write_register(0x0400004C, 0x01, &vram, &palette, &oam); // BG mosaic h=2, v=1
+        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette);
+        ppu.write_register(0x04000008, (31 << 8) | (1 << 6), &vram, &palette); // SBB=31, mosaic
+        ppu.write_register(0x0400004C, 0x01, &vram, &palette); // BG mosaic h=2, v=1
         // Clear after the first fetch (cycle 32): line 0 keeps mosaic.
         for _ in 0..64 {
             ppu.step(&vram, &palette, &oam);
         }
-        ppu.write_register(0x0400004C, 0x00, &vram, &palette, &oam); // clear mid-draw
+        ppu.write_register(0x0400004C, 0x00, &vram, &palette); // clear mid-draw
         for _ in 64..CYCLES_PER_LINE as usize {
             ppu.step(&vram, &palette, &oam);
         }
@@ -1376,18 +1470,17 @@ mod tests {
         // deferred-render hook never fires).
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
-        let oam = vec![0; 0x400];
         // VCOUNT=0, write LYC=0 with enable -> immediate IRQ.
-        let irq = ppu.write_register(0x04000004, 1 << 5, &vram, &palette, &oam);
+        let irq = ppu.write_register(0x04000004, 1 << 5, &vram, &palette);
         assert_eq!(irq, 1 << 2);
         assert_ne!(ppu.dispstat() & (1 << 2), 0);
         // Same write again (already matching, already enabled) -> no repeat IRQ.
-        let irq2 = ppu.write_register(0x04000004, 1 << 5, &vram, &palette, &oam);
+        let irq2 = ppu.write_register(0x04000004, 1 << 5, &vram, &palette);
         assert_eq!(irq2, 0);
         // Enable rising while already matching -> IRQ.
-        ppu.write_register(0x04000004, 0 << 8, &vram, &palette, &oam); // disable, LYC=0 still match, no IRQ
+        ppu.write_register(0x04000004, 0 << 8, &vram, &palette); // disable, LYC=0 still match, no IRQ
         assert_eq!(ppu.dispstat() & (1 << 2), 4);
-        let irq3 = ppu.write_register(0x04000004, 1 << 5, &vram, &palette, &oam);
+        let irq3 = ppu.write_register(0x04000004, 1 << 5, &vram, &palette);
         assert_eq!(irq3, 1 << 2);
     }
 
@@ -1398,16 +1491,15 @@ mod tests {
         // deferred-render hook never fires).
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
-        let oam = vec![0; 0x400];
-        ppu.write_register(0x04000008, 0x1234, &vram, &palette, &oam);
+        ppu.write_register(0x04000008, 0x1234, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000008), Some(0x1234));
-        ppu.write_register(0x04000048, 0x00FF, &vram, &palette, &oam);
+        ppu.write_register(0x04000048, 0x00FF, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000048), Some(0x003F));
-        ppu.write_register(0x0400004A, 0x0F0F, &vram, &palette, &oam);
+        ppu.write_register(0x0400004A, 0x0F0F, &vram, &palette);
         assert_eq!(ppu.read_register(0x0400004A), Some(0x0F0F));
-        ppu.write_register(0x04000050, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x04000050, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000050), Some(0x3FFF));
-        ppu.write_register(0x04000052, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x04000052, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000052), Some(0x1F1F));
         // W registers stay unreadable.
         assert_eq!(ppu.read_register(0x0400004C), None);
@@ -1421,16 +1513,15 @@ mod tests {
         // deferred-render hook never fires).
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
-        let oam = vec![0; 0x400];
         // BG0/BG1 have no bit-13 overflow flag.
-        ppu.write_register(0x04000008, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x04000008, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000008), Some(0xDFFF));
-        ppu.write_register(0x0400000C, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x0400000C, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x0400000C), Some(0xFFFF));
         // WININ/WINOUT store 6 bits per byte.
-        ppu.write_register(0x04000048, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x04000048, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x04000048), Some(0x3F3F));
-        ppu.write_register(0x0400004A, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x0400004A, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.read_register(0x0400004A), Some(0x3F3F));
     }
 
@@ -1441,9 +1532,8 @@ mod tests {
         // deferred-render hook never fires).
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
-        let oam = vec![0; 0x400];
         assert_eq!(ppu.dispcnt() & (1 << 3), 0);
-        ppu.write_register(0x04000000, 0xFFFF, &vram, &palette, &oam);
+        ppu.write_register(0x04000000, 0xFFFF, &vram, &palette);
         assert_eq!(ppu.dispcnt() & (1 << 3), 0);
     }
 
@@ -1454,9 +1544,9 @@ mod tests {
         let palette = vec![0u8; 1024];
         let oam = vec![0u8; 1024];
         // Mode 1 with an affine background and windows enabled.
-        ppu.write_register(0x04000000, 0x2441, &vram, &palette, &oam);
-        ppu.write_register(0x04000028, 0x0100, &vram, &palette, &oam);
-        ppu.write_register(0x0400002C, 0x00F0, &vram, &palette, &oam);
+        ppu.write_register(0x04000000, 0x2441, &vram, &palette);
+        ppu.write_register(0x04000028, 0x0100, &vram, &palette);
+        ppu.write_register(0x0400002C, 0x00F0, &vram, &palette);
         // Advance into the visible scanlines with a nonzero cycle.
         for _ in 0..(1232 * 40 + 500) {
             ppu.step(&vram, &palette, &oam);
@@ -1484,20 +1574,84 @@ mod tests {
         assert!(bad.validate().is_err());
     }
 
-    /// Lean-span differential: `render_span_lean` must be pixel- and
+    /// OBJ line-cache differential: `line_cache` must cover exactly the
+    /// non-dropped, y-overlapping OBJs in index order, and a tighter
+    /// cycle budget must strictly shrink the cover (this pins both the
+    /// drop fusion and the y-overlap mirror against coordinates()).
+    #[test]
+    fn obj_line_cache_covers_visible_non_dropped_only() {
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        let mut oam = vec![0; 0x400];
+        // 32 overlapping 64x64 sprites on line 0: 32*64 = 2048 cycles,
+        // over both the 1210 and the 954 (H-blank free) budgets.
+        for i in 0..32 {
+            let x = (i * 4) as u16;
+            oam[8 * i..8 * i + 2].copy_from_slice(&0u16.to_le_bytes()); // Y=0
+            oam[8 * i + 2..8 * i + 4].copy_from_slice(&(x | (3 << 14)).to_le_bytes()); // 64x64
+            oam[8 * i + 4..8 * i + 6].copy_from_slice(&0u16.to_le_bytes()); // tile 0
+        }
+        let mut ppu = GbaPpu::new();
+        // OBJ layer on, no H-blank free: 1210-cycle budget.
+        steady_dispcnt(&mut ppu, 1 << 12, &vram, &palette);
+        ppu.line.capture(&oam, 1 << 12);
+        let full = obj::line_cache(&ppu.registers, &ppu.line.oam[..], 0);
+        assert!(
+            full.cover_len > 0 && full.cover_len < 128,
+            "{}",
+            full.cover_len
+        );
+        // Cover respects drops and index order, and carries the live attrs.
+        let dropped = obj::cycle_drop_mask(&ppu.registers, &ppu.line.oam[..], 0);
+        let mut prev = 0u8;
+        for (n, entry) in full.cover[..full.cover_len as usize].iter().enumerate() {
+            assert!(!dropped[usize::from(entry.0)], "covered {n} is dropped");
+            if n > 0 {
+                assert!(entry.0 > prev, "cover out of order at {n}");
+            }
+            prev = entry.0;
+            assert_eq!(
+                &oam[8 * usize::from(entry.0)..8 * usize::from(entry.0) + 6],
+                &[
+                    entry.1.to_le_bytes(),
+                    entry.2.to_le_bytes(),
+                    entry.3.to_le_bytes()
+                ]
+                .concat(),
+                "stale attrs at {n}"
+            );
+        }
+        // Tighten the budget: the cover must strictly shrink (drop order
+        // is priority order, so every previously covered-then-dropped
+        // sprite stays dropped).
+        ppu.write_register(0x04000000, (1 << 12) | (1 << 5), &vram, &palette);
+        let tight = obj::line_cache(&ppu.registers, &ppu.line.oam[..], 0);
+        assert!(
+            tight.cover_len < full.cover_len,
+            "{} >= {}",
+            tight.cover_len,
+            full.cover_len
+        );
+        let tight_dropped = obj::cycle_drop_mask(&ppu.registers, &ppu.line.oam[..], 0);
+        for entry in tight.cover[..tight.cover_len as usize].iter() {
+            assert!(!tight_dropped[usize::from(entry.0)]);
+        }
+    }
+
+    /// Span differential: `render_span` must be pixel- and
     /// latch-identical to the per-pixel `render_pixel` loop wherever
     /// the gate applies (goldens only cover shipped scenes; this pins
-    /// the gate logic across modes, priorities, flips and mosaic).
-    /// Distinct colors per index catch priority/selection drift;
-    /// transparent tile pixels catch backdrop handling; the latch
-    /// comparison catches fetch-sequence drift (latch feeds later
-    /// above-boundary fetches).
+    /// the gate logic across modes, priorities, flips, mosaic and OBJ
+    /// layers). Distinct colors per index catch priority/selection
+    /// drift; transparent tile pixels catch backdrop handling; the
+    /// latch comparison catches fetch-sequence drift (latch feeds
+    /// later above-boundary fetches).
     #[test]
-    fn lean_span_matches_pixel_loop_where_gate_applies() {
-        fn pattern_memories() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    fn span_matches_pixel_loop_where_gate_applies() {
+        fn pattern_memories(obj: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
             let mut vram = vec![0; 0x18000];
             let mut palette = vec![0; 0x400];
-            let oam = vec![0; 0x400];
+            let mut oam = vec![0; 0x400];
             // Palette: backdrop blue, then red/green/white.
             palette[0..2].copy_from_slice(&0x7C00u16.to_le_bytes());
             palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
@@ -1526,37 +1680,53 @@ mod tests {
                 let tile = if i < 16 { 2u16 } else { 0u16 };
                 vram[0x800 + 2 * i..0x800 + 2 * i + 2].copy_from_slice(&tile.to_le_bytes());
             }
+            if obj {
+                // OBJ tile 0 (at 0x10000): opaque red.
+                for b in vram.iter_mut().skip(0x10000).take(32) {
+                    *b = 0x11;
+                }
+                // Sprite 0: 8x8 at (10,0), tile 0; sprite 1: 16x16 at
+                // (30,0), tile 0.
+                oam[0..2].copy_from_slice(&0u16.to_le_bytes());
+                oam[2..4].copy_from_slice(&10u16.to_le_bytes());
+                oam[4..6].copy_from_slice(&0u16.to_le_bytes());
+                oam[8..10].copy_from_slice(&0u16.to_le_bytes());
+                oam[10..12].copy_from_slice(&(30u16 | (1 << 14)).to_le_bytes());
+                oam[12..14].copy_from_slice(&0u16.to_le_bytes());
+            }
             (vram, palette, oam)
         }
 
-        // (dispcnt, bg0cnt, bg1cnt-or-0xFFFF, hofs0, vofs0, mosaic)
-        let cases: [(u16, u16, u16, u16, u16, u16); 5] = [
+        // (dispcnt, bg0cnt, bg1cnt-or-0xFFFF, hofs0, vofs0, mosaic, obj)
+        let cases: [(u16, u16, u16, u16, u16, u16, bool); 6] = [
             // Single BG, scrolled.
-            (1 << 8, 1, 0xFFFF, 7, 5, 0),
+            (1 << 8, 1, 0xFFFF, 7, 5, 0, false),
             // Two BGs, BG1 priority 0 over BG0 priority 1.
-            ((1 << 8) | (1 << 9), 1, 1 << 8, 0, 0, 0),
+            ((1 << 8) | (1 << 9), 1, 1 << 8, 0, 0, 0, false),
             // 256-color BG0 (bit 7) with flips in the map.
-            (1 << 8, 1 | (1 << 7), 0xFFFF, 3, 9, 0),
+            (1 << 8, 1 | (1 << 7), 0xFFFF, 3, 9, 0, false),
             // Mosaic on (gate allows: correctness via identical bg::pixel).
-            (1 << 8, 1, 0xFFFF, 0, 0, 0x0033),
+            (1 << 8, 1, 0xFFFF, 0, 0, 0x0033, false),
             // Mode 3 bitmap BG2.
-            (3 | (1 << 10), 0, 0xFFFF, 0, 0, 0),
+            (3 | (1 << 10), 0, 0xFFFF, 0, 0, 0, false),
+            // Sprites over BG0 (priority exercise + transparent overlap).
+            ((1 << 8) | (1 << 12), 1, 0xFFFF, 0, 0, 0, true),
         ];
-        for (dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic) in cases {
+        for (dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic, obj) in cases {
             let build = || {
-                let (vram, palette, oam) = pattern_memories();
+                let (vram, palette, oam) = pattern_memories(obj);
                 let mut ppu = GbaPpu::new();
-                steady_dispcnt(&mut ppu, dispcnt, &vram, &palette, &oam);
+                steady_dispcnt(&mut ppu, dispcnt, &vram, &palette);
                 if bg0cnt != 0 || dispcnt & 7 == 0 {
-                    ppu.write_register(0x04000008, bg0cnt, &vram, &palette, &oam);
+                    ppu.write_register(0x04000008, bg0cnt, &vram, &palette);
                 }
                 if bg1cnt != 0xFFFF {
-                    ppu.write_register(0x0400000A, bg1cnt, &vram, &palette, &oam);
+                    ppu.write_register(0x0400000A, bg1cnt, &vram, &palette);
                 }
-                ppu.write_register(0x04000010, hofs, &vram, &palette, &oam);
-                ppu.write_register(0x04000012, vofs, &vram, &palette, &oam);
+                ppu.write_register(0x04000010, hofs, &vram, &palette);
+                ppu.write_register(0x04000012, vofs, &vram, &palette);
                 if mosaic != 0 {
-                    ppu.write_register(0x0400004C, mosaic, &vram, &palette, &oam);
+                    ppu.write_register(0x0400004C, mosaic, &vram, &palette);
                 }
                 // Pixel 0 at its boundary tick (both paths start at x=1).
                 for _ in 0..FETCH_START_CYCLES {
@@ -1564,12 +1734,19 @@ mod tests {
                 }
                 (ppu, vram, palette, oam)
             };
-            let (mut a, vram, palette, oam) = build();
+            let (mut a, vram, palette, _) = build();
             let (mut b, _, _, _) = build();
-            assert!(a.lean_span_applies(), "gate must apply: {dispcnt:#X}");
-            a.render_span_lean(1, WIDTH, 0, &vram, &palette);
+            assert!(a.span_applies(), "gate must apply: {dispcnt:#X}");
+            // Mirror production: real working set iff OBJ can appear.
+            if obj {
+                let cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
+                a.render_span(1, WIDTH, 0, &vram, &palette, &cache);
+            } else {
+                a.render_span(1, WIDTH, 0, &vram, &palette, &obj::ObjLineCache::empty());
+            }
+            let obj_cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
             for x in 1..WIDTH {
-                b.render_pixel(x, 0, &vram, &palette, &oam);
+                b.render_pixel(x, 0, &vram, &palette, &obj_cache);
             }
             assert_eq!(
                 a.frame_buffer(),
@@ -1579,22 +1756,21 @@ mod tests {
             assert_eq!(a.bg_latch, b.bg_latch, "latch diverged: {dispcnt:#X}");
         }
 
-        // Gate rejects every disqualifier.
-        let (vram, palette, oam) = pattern_memories();
+        // Gate rejects every disqualifier (OBJ is allowed).
+        let (vram, palette, _) = pattern_memories(false);
         let mut ppu = GbaPpu::new();
-        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
-        assert!(ppu.lean_span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette, &oam); // forced blank
-        assert!(!ppu.lean_span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 13), &vram, &palette, &oam); // WIN0
-        assert!(!ppu.lean_span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 12), &vram, &palette, &oam); // OBJ
-        assert!(!ppu.lean_span_applies());
-        ppu.write_register(0x04000000, 1 << 8, &vram, &palette, &oam);
-        ppu.write_register(0x04000050, 1, &vram, &palette, &oam); // bldcnt != 0
-        assert!(!ppu.lean_span_applies());
-        ppu.write_register(0x04000050, 0, &vram, &palette, &oam);
-        ppu.write_register(0x04000002, 1, &vram, &palette, &oam); // greenswap
-        assert!(!ppu.lean_span_applies());
+        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 12), &vram, &palette);
+        assert!(ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette); // forced blank
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 13), &vram, &palette); // WIN0
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 12), &vram, &palette);
+        assert!(ppu.span_applies()); // OBJ allowed
+        ppu.write_register(0x04000050, 1, &vram, &palette); // bldcnt != 0
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000050, 0, &vram, &palette);
+        ppu.write_register(0x04000002, 1, &vram, &palette); // greenswap
+        assert!(!ppu.span_applies());
     }
 }

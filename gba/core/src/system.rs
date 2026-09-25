@@ -197,6 +197,8 @@ impl GbaSystem {
     /// raw tick budget (possibly zero/negative; the caller floors once
     /// per instruction at retire, exactly like the legacy step), or None
     /// on an uncovered fill (queue empty there by construction).
+    /// Single caller (`step_tcycle`): forced-inline.
+    #[inline]
     fn drain_micro(&mut self) -> Option<i64> {
         let mut acc = 0i64;
         loop {
