@@ -341,6 +341,8 @@ class MainActivity :
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BUTTON_A -> "button1"
                 KeyEvent.KEYCODE_BUTTON_B -> "button2"
+                KeyEvent.KEYCODE_BUTTON_L1 -> "button5"
+                KeyEvent.KEYCODE_BUTTON_R1 -> "button6"
                 KeyEvent.KEYCODE_BUTTON_START -> "start"
                 KeyEvent.KEYCODE_BUTTON_SELECT -> "select"
                 KeyEvent.KEYCODE_DPAD_UP -> "up"
@@ -2145,6 +2147,12 @@ internal fun controlsLayout(
     val centerStartX = (width - centerRowWidth) * 0.5f
     val centerTop =
         (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
+    // Shoulder strip above the D-Pad activation area and the center row.
+    // Mirrors ProfileTouchOverlay in android.rs; keep the fractions in sync.
+    val shoulderWidth = base * 0.20f * scale
+    val shoulderHeight = base * 0.08f * scale
+    val shoulderMarginX = width * 0.02f
+    val shoulderTop = controlTop + base * 0.015f + verticalOffset
 
     return listOf(
         OverlayZoneSpec(
@@ -2160,6 +2168,20 @@ internal fun controlsLayout(
             width = actionSize,
             height = actionSize,
             label = "A",
+        ),
+        OverlayZoneSpec(
+            x = shoulderMarginX,
+            y = shoulderTop,
+            width = shoulderWidth,
+            height = shoulderHeight,
+            label = "L",
+        ),
+        OverlayZoneSpec(
+            x = width - shoulderMarginX - shoulderWidth,
+            y = shoulderTop,
+            width = shoulderWidth,
+            height = shoulderHeight,
+            label = "R",
         ),
         OverlayZoneSpec(
             x = centerStartX,

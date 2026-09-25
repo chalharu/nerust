@@ -338,6 +338,16 @@ impl ProfileTouchOverlay {
         let action_top = dpad_center_y - action_size * 0.50;
         let center_width = base * 0.10 * scale;
         let center_height = base * 0.068 * scale;
+        // Shoulder strip above the D-Pad activation area and the center row.
+        // Must stay clear of both: dpad_activation starts at
+        // activation_top + dpad_radius, and the select/start row sits at
+        // center_top. Keep in sync with controlsLayout() in MainActivity.kt.
+        let shoulder_width = base * 0.20 * scale;
+        let shoulder_height = base * 0.08 * scale;
+        let shoulder_margin_x = width * 0.02;
+        let shoulder_top = control_top + base * 0.015 + vertical_offset;
+        let shoulder_left_x = shoulder_margin_x;
+        let shoulder_right_x = width - shoulder_margin_x - shoulder_width;
         let center_gap = base * 0.03;
         let center_row_width = center_width * 2.0 + center_gap;
         let center_left = (width - center_row_width) * 0.5;
@@ -365,6 +375,18 @@ impl ProfileTouchOverlay {
                 y: center_top,
                 width: center_width,
                 height: center_height,
+            },
+            TouchControlRole::LeftShoulder => TouchRect {
+                x: shoulder_left_x,
+                y: shoulder_top,
+                width: shoulder_width,
+                height: shoulder_height,
+            },
+            TouchControlRole::RightShoulder => TouchRect {
+                x: shoulder_right_x,
+                y: shoulder_top,
+                width: shoulder_width,
+                height: shoulder_height,
             },
             TouchControlRole::Start => TouchRect {
                 x: center_left + center_width + center_gap,
@@ -1014,6 +1036,8 @@ impl AndroidFrontend {
         let role = match key {
             AbstractKey::Button1 => TouchControlRole::FaceButton1,
             AbstractKey::Button2 => TouchControlRole::FaceButton2,
+            AbstractKey::Button5 => TouchControlRole::LeftShoulder,
+            AbstractKey::Button6 => TouchControlRole::RightShoulder,
             AbstractKey::Start => TouchControlRole::Start,
             AbstractKey::Select => TouchControlRole::Select,
             AbstractKey::DpadUp => TouchControlRole::DpadUp,

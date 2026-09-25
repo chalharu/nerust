@@ -28,6 +28,8 @@ fn decode_action(raw: &str) -> Option<MenuAction> {
         let key = match key {
             "button1" => AbstractKey::Button1,
             "button2" => AbstractKey::Button2,
+            "button5" => AbstractKey::Button5,
+            "button6" => AbstractKey::Button6,
             "start" => AbstractKey::Start,
             "select" => AbstractKey::Select,
             "up" => AbstractKey::DpadUp,
