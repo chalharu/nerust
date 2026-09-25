@@ -119,7 +119,7 @@ glob = { version = "=0.3.4" }
 gdk = { package = "gdk4", version = "=0.11.4" }
 gdk-macos = { package = "gdk4-macos", version = "=0.11.5" }
 gdk-win32 = { package = "gdk4-win32", version = "=0.11.5" }
-gdk4-wayland-sys = { version = "=0.11.0" }
+gdk4-wayland-sys = { version = "=0.11.5" }
 gdk4-x11-sys = { version = "=0.11.5" }
 gio = { version = "=0.22.9" }
 gl = { default-features = false, version = "=0.14.0" }
