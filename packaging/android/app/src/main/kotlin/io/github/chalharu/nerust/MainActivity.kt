@@ -1895,6 +1895,7 @@ private fun settingsSectionLabel(id: String): String =
         "storage" -> "Storage"
         "system.nes" -> "Nintendo Entertainment System"
         "system.gbc" -> "Game Boy Color"
+        "system.gba" -> "Game Boy Advance"
         "general" -> "General"
         else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
     }

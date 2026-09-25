@@ -1,5 +1,5 @@
 [workspace]
-default-members = [".", "nes/core", "gbc/core"]
+default-members = [".", "nes/core", "gbc/core", "gba/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
@@ -78,8 +78,11 @@ nerust_sound_cubeb = { optional = true, workspace = true }
 nerust_tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
+[dev-dependencies]
+nerust_gba_core.workspace = true
+
 [features]
-default = ["nes", "gbc", "wgpu"]
+default = ["nes", "gbc", "gba", "wgpu"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
 gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
