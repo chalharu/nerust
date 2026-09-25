@@ -302,7 +302,7 @@ impl GbaTimers {
             // period - 1. Overflow needs (0x10000 - counter) fires.
             let fires_needed = 0x1_0000u64 - u64::from(timer.counter);
             let r = (u64::from(self.prescaler) + 1) & mask;
-            let first_fire = (mask - r) & mask + 1;
+            let first_fire = ((mask - r) & mask) + 1;
             let overflow_tick = first_fire + (fires_needed - 1) * period;
             horizon = horizon.min(overflow_tick - 1);
         }
@@ -320,8 +320,12 @@ impl GbaTimers {
         if n == 0 {
             return;
         }
+        // NOTE: `current_cycle` is deliberately untouched: it is
+        // call-scoped scratch refreshed by `set_current_cycle` before
+        // every read path (bus `tick_timers`, `read_io`, `write_io`;
+        // direct steppers set it per tick). Mid-span staleness is
+        // unobservable by construction.
         self.prescaler = self.prescaler.wrapping_add(n as u16);
-        self.current_cycle = self.current_cycle.wrapping_add(n);
         let start_prescaler = self.prescaler.wrapping_sub(n as u16);
         for index in 0..4 {
             let timer = &mut self.channels[index];
@@ -340,7 +344,7 @@ impl GbaTimers {
             let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
             let mask = (1u64 << shift) - 1;
             let r = (u64::from(start_prescaler) + 1) & mask;
-            let first_fire = (mask - r) & mask + 1;
+            let first_fire = ((mask - r) & mask) + 1;
             let fires = if n >= first_fire {
                 1 + ((n - first_fire) >> shift)
             } else {
@@ -678,5 +682,82 @@ mod tests {
         let mut bad = restored.export_state();
         bad.channels[0].start_delay = 6;
         assert!(bad.validate().is_err());
+    }
+
+    /// Batching equivalence: `quiet_cycles` + `advance_idle` + boundary
+    /// `step_full` must reproduce per-cycle stepping bit-exactly,
+    /// including overflow cycles, IRQ masks and all bookkeeping, across
+    /// enables, prescalers, cascades, reloads and mid-run writes.
+    /// Deterministic xorshift (fixed seed): not flaky.
+    #[test]
+    fn batch_matches_per_cycle_on_seeded_programs() {
+        let mut rng = 0x9E3779B97F4A7C15u64;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for _ in 0..40 {
+            let mut a = GbaTimers::default();
+            let mut b = GbaTimers::default();
+            for _ in 0..8 {
+                let addr = 0x04000100 + 2 * (next() % 8) as u32;
+                let value = (next() & 0xFFFF) as u16;
+                a.write(addr, value);
+                b.write(addr, value);
+            }
+            let total = 200 + next() % 800;
+            let mut cycle = 0u64;
+            while cycle < total {
+                if next() % 7 == 0 {
+                    // Mirror production: writes observe a freshly synced
+                    // clock (`write_io` sets it at entry), so sync both
+                    // sides before the write pair.
+                    a.set_current_cycle(cycle);
+                    b.set_current_cycle(cycle);
+                    let addr = 0x04000100 + 2 * (next() % 8) as u32;
+                    let value = (next() & 0xFFFF) as u16;
+                    a.write(addr, value);
+                    b.write(addr, value);
+                }
+                b.set_current_cycle(cycle);
+                let horizon = b.quiet_cycles().min(total - cycle);
+                if horizon == 0 {
+                    a.set_current_cycle(cycle);
+                    let expected = a.step_full();
+                    b.set_current_cycle(cycle);
+                    let actual = b.step_full();
+                    assert_eq!(actual, expected, "divergence at cycle {cycle}");
+                    cycle += 1;
+                } else {
+                    // Reference: advance one cycle at a time; the span
+                    // must be event-free by the horizon contract.
+                    for _ in 0..horizon {
+                        a.set_current_cycle(cycle);
+                        assert_eq!(
+                            a.step_full(),
+                            (0, 0),
+                            "event inside batched span at cycle {cycle}"
+                        );
+                        cycle += 1;
+                    }
+                    b.advance_idle(horizon);
+                    // `advance_idle` folds counters only; re-sync the
+                    // scratch clock to the span end (production refreshes
+                    // it before the next read path).
+                    b.set_current_cycle(cycle);
+                }
+            }
+            // `current_cycle` is call-scoped scratch (stamps taken at
+            // boundaries/writes are identical; only the trailing value
+            // differs: the reference sets it per tick, the batch side
+            // once per span). Normalize before comparing.
+            a.set_current_cycle(total);
+            b.set_current_cycle(total);
+            let bytes_a = rmp_serde::to_vec_named(&a.export_state()).unwrap();
+            let bytes_b = rmp_serde::to_vec_named(&b.export_state()).unwrap();
+            assert_eq!(bytes_a, bytes_b, "final state diverged");
+        }
     }
 }

@@ -869,3 +869,130 @@ fn bus_state_rejects_accumulator_overflow_magnitudes() {
         assert!(state.validate().is_err());
     }
 }
+
+/// Batching equivalence at bus level: `quiet_cycles` + `advance_idle` +
+/// boundary `tick` must reproduce per-cycle `tick` bit-exactly across
+/// timer/DMA/video/sound/SIO/IRQ traffic and mid-line PPU writes
+/// (scanline segments), including halt/stop spans. Deterministic
+/// xorshift (fixed seed): not flaky.
+#[test]
+fn batch_matches_per_cycle_on_seeded_io_programs() {
+    // (address, width) pool: timers, DMA control, sound incl. wave RAM
+    // and FIFOs, PPU regs, palette/VRAM/OAM windows, system/IRQ/SIO.
+    const WRITES: [(u32, u8); 31] = [
+        (0x04000100, 2),
+        (0x04000102, 2),
+        (0x04000104, 2),
+        (0x04000106, 2),
+        (0x040000BA, 2),
+        (0x040000C6, 2),
+        (0x04000060, 2),
+        (0x04000064, 2),
+        (0x04000070, 2),
+        (0x04000080, 2),
+        (0x04000084, 2),
+        (0x04000088, 2),
+        (0x04000090, 4),
+        (0x04000098, 4),
+        (0x040000A0, 4),
+        (0x04000000, 2),
+        (0x04000004, 2),
+        (0x04000008, 2),
+        (0x04000010, 2),
+        (0x04000028, 4),
+        (0x04000040, 2),
+        (0x04000044, 2),
+        (0x04000048, 2),
+        (0x0400004C, 2),
+        (0x04000050, 2),
+        (0x05000100, 2),
+        (0x06001000, 4),
+        (0x07000100, 4),
+        (0x04000200, 2),
+        (0x04000208, 2),
+        (0x04000128, 2),
+    ];
+    let mut rng = 0x2545F4914F6CDD1Du64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for _ in 0..24 {
+        let mut a = GbaMemoryBus::new();
+        let mut b = GbaMemoryBus::new();
+        for _ in 0..6 {
+            let (addr, width) = WRITES[(next() % WRITES.len() as u64) as usize];
+            let value = (next() & 0xFFFF_FFFF) as u32;
+            match width {
+                1 => {
+                    a.write8(addr, value as u8);
+                    b.write8(addr, value as u8);
+                }
+                4 => {
+                    a.write32(addr & !3, value);
+                    b.write32(addr & !3, value);
+                }
+                _ => {
+                    a.write16(addr & !1, value as u16);
+                    b.write16(addr & !1, value as u16);
+                }
+            }
+        }
+        let total = 300 + next() % 900;
+        let mut cycle = 0u64;
+        while cycle < total {
+            if next() % 5 == 0 {
+                let (addr, width) = WRITES[(next() % WRITES.len() as u64) as usize];
+                let value = (next() & 0xFFFF_FFFF) as u32;
+                match width {
+                    1 => {
+                        a.write8(addr, value as u8);
+                        b.write8(addr, value as u8);
+                    }
+                    4 => {
+                        a.write32(addr & !3, value);
+                        b.write32(addr & !3, value);
+                    }
+                    _ => {
+                        a.write16(addr & !1, value as u16);
+                        b.write16(addr & !1, value as u16);
+                    }
+                }
+            }
+            if next() % 53 == 0 {
+                // Timer counter + SIO status reads must match too
+                // (receive-pop and flag behavior included).
+                assert_eq!(a.read16(0x04000100), b.read16(0x04000100));
+                assert_eq!(a.read16(0x04000128), b.read16(0x04000128));
+            }
+            let horizon = b.quiet_cycles().min(total - cycle);
+            if horizon == 0 {
+                assert_eq!(b.tick(), a.tick(), "divergence at cycle {cycle}");
+                cycle += 1;
+            } else {
+                // Reference: the span must be event-free.
+                for _ in 0..horizon {
+                    assert!(!a.tick(), "event inside batched span at cycle {cycle}");
+                    cycle += 1;
+                }
+                b.advance_idle(horizon);
+            }
+        }
+        let bytes_a = rmp_serde::to_vec_named(&a.export_state().unwrap()).unwrap();
+        let bytes_b = rmp_serde::to_vec_named(&b.export_state().unwrap()).unwrap();
+        if bytes_a != bytes_b {
+            // `timers.current_cycle` is call-scoped scratch: every read
+            // path (`tick_timers`, `read_io`, `write_io`) refreshes it
+            // first, so trailing staleness from different set points is
+            // unobservable (saves happen at frame ends, post-boundary).
+            // Normalize before comparing.
+            a.timers.set_current_cycle(total);
+            b.timers.set_current_cycle(total);
+            let bytes_a = rmp_serde::to_vec_named(&a.export_state().unwrap()).unwrap();
+            let bytes_b = rmp_serde::to_vec_named(&b.export_state().unwrap()).unwrap();
+            assert_eq!(bytes_a, bytes_b, "final state diverged");
+        }
+    }
+}
