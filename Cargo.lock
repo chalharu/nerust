@@ -1501,9 +1501,9 @@ dependencies = [
 
 [[package]]
 name = "gdk4-macos"
-version = "0.11.0"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42afa6569445e74c7a580eda5c1d0e9adbc9760ef5f05d9ceff46c77469c5c00"
+checksum = "d520135d2bb61bea8006c2cb8217fe569e6eae53ac70c32a67793797eef049b9"
 dependencies = [
  "gdk4",
  "gdk4-macos-sys",
