@@ -12,6 +12,8 @@ mod dma_fit;
 pub mod input_types;
 pub mod math;
 pub mod memory;
+pub mod persistence;
+pub mod persistence_error;
 pub mod ppu;
 pub mod rom_identity;
 pub mod scheduler;

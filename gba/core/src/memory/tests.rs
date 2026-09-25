@@ -849,3 +849,23 @@ fn multiplayer_start_never_completes_solo() {
     }
     assert_ne!(bus.read16(0x04000128) & 0x0080, 0);
 }
+
+#[test]
+fn bus_state_rejects_accumulator_overflow_magnitudes() {
+    let bus = GbaMemoryBus::new();
+    // A fresh bus exports a valid state.
+    bus.export_state().unwrap().validate().unwrap();
+    // Rest accumulators drain per instruction/burst; unbounded restored
+    // values would overflow the plain arithmetic on the step path.
+    for mutate in [
+        |s: &mut GbaMemoryBusState| s.access_wait_cycles = 1 << 41,
+        |s: &mut GbaMemoryBusState| s.access_wait_cycles = -(1 << 41),
+        |s: &mut GbaMemoryBusState| s.block_batch_erase_sum = 1 << 21,
+        |s: &mut GbaMemoryBusState| s.block_batch_words = 0x1_0000,
+        |s: &mut GbaMemoryBusState| s.dma_stall_pending = 2,
+    ] {
+        let mut state = bus.export_state().unwrap();
+        mutate(&mut state);
+        assert!(state.validate().is_err());
+    }
+}

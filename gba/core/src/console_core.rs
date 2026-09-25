@@ -8,24 +8,21 @@ use nerust_input_traits::EmuInput;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
-    core_options::GbaCoreOptions, input_types::GbaInputBuffer, rom_identity::GbaRomIdentity,
+    core_options::GbaCoreOptions,
+    input_types::GbaInputBuffer,
+    persistence::{
+        export_machine_state, export_mapper_save, import_machine_state, import_mapper_save,
+    },
+    persistence_error::GbaLoadError,
+    rom_identity::GbaRomIdentity,
     system::GbaSystem,
 };
-
-#[derive(Debug, thiserror::Error)]
-enum GbaCoreError {
-    #[error("invalid or unsupported GBA ROM")]
-    InvalidRom,
-    #[error("GBA input buffer has the wrong concrete type")]
-    InvalidInputBuffer,
-    #[error("save state ROM mismatch")]
-    RomMismatch,
-}
 
 struct LoadedGba {
     system: GbaSystem,
     rom: Arc<[u8]>,
     identity: GbaRomIdentity,
+    options: GbaCoreOptions,
 }
 
 pub struct GbaConsoleCore {
@@ -49,16 +46,20 @@ impl GbaConsoleCore {
         Self::new(audio, emu_input)
     }
 
-    fn create_loaded(rom: &[u8]) -> Result<LoadedGba, CoreError> {
+    fn create_loaded(rom: &[u8], options: GbaCoreOptions) -> Result<LoadedGba, CoreError> {
         let identity = GbaRomIdentity::from_rom(rom)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaCoreError::InvalidRom)))?;
-        let system = GbaSystem::from_test_rom(rom.to_vec())
+            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+        let mut system = GbaSystem::from_test_rom(rom.to_vec())
             .or_else(|| GbaSystem::from_rom(rom.to_vec()))
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaCoreError::InvalidRom)))?;
+            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+        if let Some(cart) = system.bus.cartridge_mut() {
+            cart.gpio.set_solar_level(options.solar_light_level);
+        }
         Ok(LoadedGba {
             system,
             rom: Arc::from(rom),
             identity,
+            options,
         })
     }
 
@@ -81,7 +82,7 @@ impl ConsoleCore for GbaConsoleCore {
             .emu_input
             .read_buf
             .downcast_ref::<GbaInputBuffer>()
-            .ok_or_else(|| CoreError::Core(Box::new(GbaCoreError::InvalidInputBuffer)))?
+            .ok_or_else(|| CoreError::Core(Box::new(GbaLoadError::InvalidInputBuffer)))?
             .0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system.bus.set_keyinput(input);
@@ -123,11 +124,7 @@ impl ConsoleCore for GbaConsoleCore {
         } else {
             GbaCoreOptions::default()
         };
-        let mut loaded = Self::create_loaded(rom)?;
-        if let Some(cart) = loaded.system.bus.cartridge_mut() {
-            cart.gpio.set_solar_level(options.solar_light_level);
-        }
-        self.loaded = Some(loaded);
+        self.loaded = Some(Self::create_loaded(rom, options)?);
         self.paused = false;
         Ok(())
     }
@@ -141,9 +138,25 @@ impl ConsoleCore for GbaConsoleCore {
         let Some(current) = self.loaded.as_ref() else {
             return;
         };
-        if let Ok(reset) = Self::create_loaded(&current.rom) {
-            self.loaded = Some(reset);
+        // Battery-backed RAM and the GPIO RTC keep running across a reset
+        // (like the hardware reset button); everything else rebuilds.
+        let reset_state = current
+            .system
+            .bus
+            .cartridge()
+            .map(|cart| cart.export_state());
+        let Ok(mut fresh) = Self::create_loaded(&current.rom, current.options) else {
+            return;
+        };
+        if let (Some(state), Some(cart)) = (reset_state, fresh.system.bus.cartridge_mut()) {
+            if cart.import_state(&state).is_err() {
+                // Never swap a reset that drops the battery: keep running.
+                return;
+            }
+            // The solar level follows options, not the transplanted runtime.
+            cart.gpio.set_solar_level(current.options.solar_light_level);
         }
+        self.loaded = Some(fresh);
     }
 
     fn paused(&self) -> bool {
@@ -156,30 +169,31 @@ impl ConsoleCore for GbaConsoleCore {
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let loaded = self.loaded_ref()?;
-        // Minimal state: ROM bytes + identity hash. Full bus serialization is Phase 10.
-        // Include rom len and first 16 bytes as identity check.
-        let mut out = Vec::with_capacity(loaded.rom.len() + 32);
-        out.extend_from_slice(&(loaded.rom.len() as u32).to_le_bytes());
-        out.extend_from_slice(&loaded.rom);
-        Ok(out)
+        export_machine_state(
+            &loaded.system,
+            loaded.identity.clone(),
+            loaded.options,
+            self.audio.sample_rate(),
+        )
+        .map_err(|e| CoreError::Core(Box::new(e)))
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded_ref()?;
-        if data.len() < 4 {
-            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
+        let mut candidate = import_machine_state(
+            data,
+            &loaded.rom,
+            &loaded.identity,
+            loaded.options,
+            self.audio.sample_rate(),
+        )
+        .map_err(|e| CoreError::Core(Box::new(e)))?;
+        // Solar level lives in options; re-apply it onto the restored GPIO.
+        if let Some(cart) = candidate.bus.cartridge_mut() {
+            cart.gpio.set_solar_level(loaded.options.solar_light_level);
         }
-        let len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if data.len() < 4 + len || len != loaded.rom.len() {
-            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
-        }
-        if data[4..4 + len] != *loaded.rom {
-            return Err(CoreError::Core(Box::new(GbaCoreError::RomMismatch)));
-        }
-        // For minimal implementation, reload from ROM (full bus state not yet serialized)
-        let rom = loaded.rom.clone();
-        let new_loaded = Self::create_loaded(&rom).map_err(|e| CoreError::Core(Box::new(e)))?;
-        self.loaded = Some(new_loaded);
+        let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
+        loaded.system = candidate;
         Ok(())
     }
 
@@ -189,22 +203,22 @@ impl ConsoleCore for GbaConsoleCore {
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
         let loaded = self.loaded_ref()?;
-        // Battery-backed backup media (SRAM/Flash/EEPROM) persists via the
-        // generic .sav sidecar; NoneSave reports no data (Ok(None)).
-        Ok(loaded
-            .system
-            .bus
-            .cartridge()
-            .and_then(|cart| cart.save.ram_data())
-            .map(<[u8]>::to_vec))
+        let Some(cart) = loaded.system.bus.cartridge() else {
+            return Ok(None);
+        };
+        export_mapper_save(cart, loaded.identity.clone()).map_err(|e| CoreError::Core(Box::new(e)))
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
-        if let Some(cart) = loaded.system.bus.cartridge_mut() {
-            cart.save.ram_restore(data);
-        }
-        Ok(())
+        let Some(cart) = loaded.system.bus.cartridge_mut() else {
+            return Err(CoreError::Core(Box::new(
+                crate::persistence_error::GbaPersistenceError::Cartridge(
+                    "no cartridge loaded".to_string(),
+                ),
+            )));
+        };
+        import_mapper_save(cart, data, &loaded.identity).map_err(|e| CoreError::Core(Box::new(e)))
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
@@ -339,7 +353,309 @@ mod tests {
         core.render_frame(&mut frame).unwrap();
         assert_eq!((frame.width(), frame.height()), (240, 160));
         let state = core.save_state().unwrap();
+        // Advance a frame, then restore: the re-export must match exactly.
+        core.render_frame(&mut frame).unwrap();
         core.load_state(&state).unwrap();
+        let again = core.save_state().unwrap();
+        assert_eq!(state, again);
+    }
+
+    #[test]
+    fn failed_import_leaves_system_untouched() {
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        let before = core.save_state().unwrap();
+        // Garbage and truncated payloads must not panic or mutate state.
+        assert!(core.load_state(&[0xDE, 0xAD, 0xBE, 0xEF]).is_err());
+        assert!(core.load_state(&before[..before.len() / 2]).is_err());
+        let mut wrong_version = before.clone();
+        // Corrupt the schema version field deep inside the payload is
+        // fragile; flipping the first byte breaks the map header instead,
+        // which must still decode as an error, not a panic.
+        wrong_version[0] ^= 0xFF;
+        assert!(core.load_state(&wrong_version).is_err());
+        assert_eq!(core.save_state().unwrap(), before);
+    }
+
+    #[test]
+    fn mapper_save_envelope_rejects_foreign_payloads() {
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let rom_data = sram_rom();
+        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        a.load(&rom_data, &config).unwrap();
+        let payload = a.mapper_save().unwrap().expect("SRAM save payload");
+        // A foreign ROM (different CRC) must refuse the envelope.
+        let mut other = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut rom2 = rom_data.clone();
+        rom2[0x200] ^= 1;
+        crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
+        other.load(&rom2, &config).unwrap();
+        assert!(other.import_mapper_save(&payload).is_err());
+        // Garbage must not panic or wipe RAM.
+        a.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x5A);
+        assert!(a.import_mapper_save(&[1, 2, 3]).is_err());
+        assert_eq!(
+            a.loaded.as_mut().unwrap().system.bus.read8(0x0E000123),
+            0x5A
+        );
+    }
+
+    #[test]
+    fn reset_preserves_battery_and_gpio_rtc() {
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: Some(Box::new(GbaCoreOptions {
+                solar_light_level: 0x20,
+            })),
+        };
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(&sram_rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        // Battery RAM, GPIO attachment and solar level are set pre-reset.
+        // The solar level comes from options (the only production source);
+        // reset must not clobber the options-applied level.
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0xA5);
+        let cart = core
+            .loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .cartridge_mut()
+            .unwrap();
+        cart.gpio.write(0x080000C8, 2, 1);
+        core.reset();
+        let loaded = core.loaded.as_mut().unwrap();
+        // Runtime restarts from boot (pipeline filled: execute+8).
+        assert_eq!(loaded.system.cpu.registers().pc(), 0x08000008);
+        // ...while battery RAM, GPIO attachment and solar level survive.
+        assert_eq!(loaded.system.bus.read8(0x0E000123), 0xA5);
+        let cart = loaded.system.bus.cartridge_mut().unwrap();
+        assert!(cart.gpio.is_attached());
+        assert_eq!(cart.gpio.solar_level(), 0x20);
+    }
+
+    #[test]
+    fn save_state_payload_size_is_rewind_input() {
+        fn sized_rom(tag: Option<&[u8]>) -> Vec<u8> {
+            let mut rom = rom();
+            if let Some(tag) = tag {
+                rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            }
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        for (name, tag) in [
+            ("plain", None),
+            ("sram", Some(b"SRAM_V00".as_slice())),
+            ("flash", Some(b"FLASH_V130".as_slice())),
+            ("eeprom", Some(b"EEPROM_V124".as_slice())),
+        ] {
+            let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+            core.load(&sized_rom(tag), &config).unwrap();
+            let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+                240,
+                160,
+                nerust_render_traits::PixelFormat::Rgba,
+            );
+            core.render_frame(&mut frame).unwrap();
+            let state = core.save_state().unwrap();
+            // Recorded for the Phase 12 rewind fixed-MAX decision. The
+            // assert is a sanity ceiling only (RAM images ≈ 420KB).
+            eprintln!("payload {name}: {} bytes", state.len());
+            assert!(
+                state.len() < 2 * 1024 * 1024,
+                "payload {name} too large: {}",
+                state.len()
+            );
+        }
+    }
+
+    #[test]
+    fn continued_emulation_matches_uninterrupted_run() {
+        // End-to-end fidelity: load-then-run must equal never-having-saved.
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        let saved = core.save_state().unwrap();
+        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        let reference = core.save_state().unwrap();
+        core.load_state(&saved).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame).unwrap();
+        assert_eq!(core.save_state().unwrap(), reference);
+    }
+
+    #[test]
+    fn load_state_rejects_options_mismatch() {
+        use crate::core_options::GbaCoreOptions;
+
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(&rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        let saved = core.save_state().unwrap();
+        // Reload the same ROM under a different solar level: the payload
+        // pins the old options, so import must refuse atomically.
+        let options = GbaCoreOptions {
+            solar_light_level: 0x10,
+        };
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: Some(Box::new(options)),
+        };
+        core.load(&rom(), &config).unwrap();
+        assert!(core.load_state(&saved).is_err());
+        // The refused import changed nothing: a fresh export validates
+        // against the current (new-options) system.
+        let fresh = core.save_state().unwrap();
+        core.load_state(&fresh).unwrap();
+    }
+
+    #[test]
+    fn machine_state_round_trips_battery_backed_cartridge() {
+        fn sram_rom() -> Vec<u8> {
+            let mut rom = rom();
+            let tag = b"SRAM_V00";
+            rom[0x1000..0x1000 + tag.len()].copy_from_slice(tag);
+            rom
+        }
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        core.load(&sram_rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
+        );
+        core.render_frame(&mut frame).unwrap();
+        // Battery RAM plus an attached GPIO device travel in the envelope.
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x5A);
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .cartridge_mut()
+            .unwrap()
+            .gpio
+            .write(0x080000C8, 2, 1);
+        let saved = core.save_state().unwrap();
+        core.loaded
+            .as_mut()
+            .unwrap()
+            .system
+            .bus
+            .write8(0x0E000123, 0x00);
+        core.render_frame(&mut frame).unwrap();
+        core.load_state(&saved).unwrap();
+        // NOTE: no bus reads before the re-export below. `bus.read8` is
+        // not side-effect-free: it accumulates wait cycles and advances
+        // the N/S trackers, so any read would legitimately perturb the
+        // exported bytes.
+        assert_eq!(core.save_state().unwrap(), saved);
+        let loaded = core.loaded.as_mut().unwrap();
+        assert_eq!(loaded.system.bus.read8(0x0E000123), 0x5A);
+        assert!(
+            loaded
+                .system
+                .bus
+                .cartridge_mut()
+                .unwrap()
+                .gpio
+                .is_attached()
+        );
     }
 
     #[test]

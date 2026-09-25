@@ -4,7 +4,7 @@
 /// Pins: 0 = SCK, 1 = SIO, 2 = CS. CS low aborts; the command byte is
 /// clocked LSB-first on SCK rises (MSB-first senders are auto-detected
 /// by the `0110b` magic). Data bytes shift out on SCK falls.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Rtc {
     phase: Phase,
     cmd: u8,
@@ -26,7 +26,7 @@ pub struct Rtc {
 /// Argument byte counts per command (0,0,7,0,1,0,3,0 per GBATEK).
 const ARG_COUNT: [u8; 8] = [0, 0, 7, 0, 1, 0, 3, 0];
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Phase {
     #[default]
     Idle,
@@ -45,6 +45,39 @@ fn reverse_bits(mut v: u8) -> u8 {
 }
 
 impl Rtc {
+    /// Phase 10 import validation (bounds follow the protocol engine).
+    pub(super) fn validate(&self) -> Result<(), String> {
+        // `bits` counts incoming edges: up to 8 in a command, up to 56
+        // while receiving (ARG_COUNT max 7, and the `param[bits / 8]`
+        // index needs `bits / 8 < 8`), and a CS-low abort can strand a
+        // mid-receive count in Idle. `out_bit` shifts the response out:
+        // below `out_len * 8` while sending.
+        if self.param_len > 8 {
+            return Err(format!(
+                "rtc: param length out of range: {}",
+                self.param_len
+            ));
+        }
+        if self.out_len > 8 {
+            return Err(format!("rtc: output length out of range: {}", self.out_len));
+        }
+        let bits_max = match self.phase {
+            Phase::Receiving | Phase::Idle => 56,
+            Phase::Command | Phase::Sending => 8,
+        };
+        if usize::from(self.bits) > bits_max {
+            return Err(format!("rtc: bit counter out of range: {}", self.bits));
+        }
+        if self.out_bit as usize > 64 {
+            return Err(format!("rtc: output bit out of range: {}", self.out_bit));
+        }
+        if self.phase == Phase::Sending && (self.out_bit as usize) >= usize::from(self.out_len) * 8
+        {
+            return Err("rtc: output bit past response end while sending".to_string());
+        }
+        Ok(())
+    }
+
     /// Feed current pin levels after a GPIO write. Returns nothing; the
     /// driven SIO level is visible in `sio_out`.
     pub fn pins(&mut self, sck: bool, sio: bool, cs: bool, prev_sck: bool, prev_cs: bool) {
@@ -321,5 +354,62 @@ mod tests {
         }
         assert_eq!(got[0], 0x24);
         assert_eq!(got[5], 0x30);
+    }
+
+    #[test]
+    fn validate_accepts_mid_transaction_states() {
+        let mut rtc = Rtc::default();
+        rtc.validate().unwrap();
+        rtc.pins(false, false, true, false, false);
+        // Datetime write (cmd 2, 7 param bytes): stop after 3 bytes,
+        // leaving bits = 24 mid-Receiving.
+        send_byte(&mut rtc, 0x26);
+        for b in [0x24u8, 0x01, 0x02] {
+            send_byte(&mut rtc, b);
+        }
+        assert_eq!(rtc.phase, Phase::Receiving);
+        assert_eq!(rtc.bits, 24);
+        rtc.validate().unwrap();
+        // A CS-low abort strands the count in Idle: still valid.
+        rtc.pins(false, false, false, false, true);
+        assert_eq!(rtc.phase, Phase::Idle);
+        rtc.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_index_unsafe_states() {
+        let bad = Rtc {
+            phase: Phase::Receiving,
+            bits: 57,
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        // param[bits/8] would panic at bits = 64.
+        let bad = Rtc {
+            phase: Phase::Receiving,
+            bits: 64,
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        let bad = Rtc {
+            phase: Phase::Sending,
+            out_len: 1,
+            out_bit: 8,
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        // out[out_bit/8] would panic at out_bit = 64.
+        let bad = Rtc {
+            phase: Phase::Sending,
+            out_len: 8,
+            out_bit: 64,
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
+        let bad = Rtc {
+            param_len: 9,
+            ..Default::default()
+        };
+        assert!(bad.validate().is_err());
     }
 }
