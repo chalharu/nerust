@@ -780,6 +780,7 @@ impl GbaMemoryBus {
         self.cycles_for_access(addr, width, true)
     }
 
+    #[inline]
     fn cycles_for_access(&self, addr: u32, width: u8, is_opcode: bool) -> u8 {
         match addr {
             0x00000000..=0x00003FFF => 1,
@@ -898,14 +899,20 @@ impl GbaMemoryBus {
             self.pending_hblank_irq = true;
         }
         self.tick_sio();
-        let stall_snapshot = DisplayStallSnapshot {
-            forced_blank: self.ppu.forced_blank(),
-            vcount: self.ppu.vcount(),
-            cycle: self.ppu.cycle(),
-            dispcnt: self.ppu.dispcnt(),
-            bg_fetch_active: self.ppu.bg_fetch_active(),
-        };
-        self.tick_dma(&stall_snapshot);
+        // Display-stall snapshot + DMA step only while a transfer can be
+        // in flight. `dma.step` early-returns on no active channel, so
+        // skipping the snapshot build and the call is exact (pending
+        // countdowns run separately in `tick_sound_dma`).
+        if self.dma.is_active() {
+            let stall_snapshot = DisplayStallSnapshot {
+                forced_blank: self.ppu.forced_blank(),
+                vcount: self.ppu.vcount(),
+                cycle: self.ppu.cycle(),
+                dispcnt: self.ppu.dispcnt(),
+                bg_fetch_active: self.ppu.bg_fetch_active(),
+            };
+            self.tick_dma(&stall_snapshot);
+        }
         interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
             self.request_interrupt(interrupt_mask);
@@ -921,8 +928,78 @@ impl GbaMemoryBus {
         event.frame_complete
     }
 
+    /// Batching horizon: quiet prefix length (in T-cycles) before the next
+    /// cycle that needs full per-cycle processing. After `advance_idle(h)`
+    /// plus one normal `tick`, state is bit-identical to h+1 per-cycle
+    /// ticks. While `stopped`, devices are frozen and only the IRQ
+    /// pipeline can act.
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        // Timestamp-driven IRQ pipeline: application fires when `at <= now`
+        // at tick start, so a deadline at `at` leaves `at - now - 1` quiet
+        // ticks (0 when already due).
+        let pipeline_quiet = || {
+            let now = self.current_tcycle;
+            let mut horizon = INF;
+            if let Some(at) = self.pending_at {
+                horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
+            }
+            for queue in [&self.avail_queue, &self.line_queue] {
+                if let Some((_, at)) = queue.first() {
+                    horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
+                }
+            }
+            horizon
+        };
+        if self.stopped {
+            return pipeline_quiet();
+        }
+        let mut horizon = INF;
+        horizon = horizon.min(self.ppu.quiet_cycles());
+        horizon = horizon.min(self.timers.quiet_cycles());
+        horizon = horizon.min(self.apu.quiet_cycles());
+        horizon = horizon.min(self.dma.quiet_cycles());
+        if self.video_countdown > 0 {
+            horizon = horizon.min(u64::from(self.video_countdown) - 1);
+        }
+        if self.sio_xfer_cycles > 0 {
+            horizon = horizon.min(u64::from(self.sio_xfer_cycles) - 1);
+        }
+        if self.pending_hblank_irq {
+            return 0;
+        }
+        horizon.min(pipeline_quiet())
+    }
+
+    /// Advance clocks and free-running counters by `n` cycles with no event
+    /// processing. Valid only for `n <= quiet_cycles()` at the same state:
+    /// no CPU bus access, register write, DMA activation or event may occur
+    /// inside the span (verified by the horizon contract).
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.current_tcycle = self.current_tcycle.wrapping_add(n);
+        if self.stopped {
+            return;
+        }
+        self.timers.set_current_cycle(self.current_tcycle);
+        self.timers.advance_idle(n);
+        self.ppu.advance_idle(n);
+        self.apu.advance_idle(n);
+        self.dma.advance_idle(n);
+        if self.video_countdown > 0 {
+            self.video_countdown -= n as u8;
+        }
+        if self.sio_xfer_cycles > 0 {
+            self.sio_xfer_cycles -= n as u32;
+        }
+    }
+
     /// Pending-DMA countdown plus the APU native-grid tick (BIOS sound
     /// driver voices mix into the buffer tail).
+    #[inline]
     fn tick_sound_dma(&mut self) {
         self.dma.tick_pending();
         if self.apu.tick() {
@@ -931,6 +1008,7 @@ impl GbaMemoryBus {
     }
     /// Video phase: countdown, PPU step, and the HBlank/VBlank/line
     /// event DMA triggers plus video-capture arming.
+    #[inline]
     fn tick_video(&mut self) -> PpuEvent {
         if self.video_countdown > 0 {
             self.video_countdown -= 1;
@@ -965,6 +1043,7 @@ impl GbaMemoryBus {
     }
 
     /// Line-start phase: DMA3 video-capture latch/fire bookkeeping.
+    #[inline]
     fn tick_video_line(&mut self) {
         // DMA3 video-capture is latched at vcount==162 (a
         // stale still-running transfer is stopped) and fires 3 cycles
@@ -985,7 +1064,17 @@ impl GbaMemoryBus {
     }
     /// Timer phase: step the timers and clock the sound FIFOs from
     /// timer overflows. Returns the timer IRQ mask.
+    #[inline]
     fn tick_timers(&mut self) -> u16 {
+        // Fast path: fully idle timers (no enabled channel, no transient
+        // startup/landing bookkeeping) only advance the free-running
+        // prescaler. Overflow, FIFO and IRQ handling below are unreachable
+        // in this state (verified by `is_fully_idle`).
+        if self.timers.is_fully_idle() {
+            self.timers.set_current_cycle(self.current_tcycle);
+            self.timers.bump_prescaler();
+            return 0;
+        }
         let (timer_irq, timer_overflow) = {
             self.timers.set_current_cycle(self.current_tcycle);
             self.timers.step_full()
@@ -1005,6 +1094,7 @@ impl GbaMemoryBus {
     /// Special DMA channel. Every overflow clocks the sample stream,
     /// whether or not the timer IRQ is enabled (the IRQ bit only
     /// raises IF).
+    #[inline]
     fn tick_fifo_overflow(&mut self, i: usize) {
         if self.apu.soundcnt_x & 0x80 == 0 || i > 1 {
             return;
@@ -1043,6 +1133,7 @@ impl GbaMemoryBus {
     /// (no link partner drives the lines low) and raises the serial
     /// IRQ when enabled. Pinned by mgba-suite sio-timing (measured =
     /// transfer cycles + a constant 121-cycle setup/exit path).
+    #[inline]
     fn tick_sio(&mut self) {
         if self.sio_xfer_cycles == 0 {
             return;
@@ -1088,6 +1179,7 @@ impl GbaMemoryBus {
     /// DMA phase: run one DMA step and service the transfer (EEPROM
     /// serial bits, GamePak prefetch collisions, bus-latch driving,
     /// destination write, bus-ownership reset).
+    #[inline]
     fn tick_dma(&mut self, stall_snapshot: &DisplayStallSnapshot) {
         let Some(transfer) = self
             .dma
@@ -1233,6 +1325,7 @@ impl GbaMemoryBus {
         );
     }
 
+    #[inline]
     pub fn dma_active(&self) -> bool {
         self.dma.is_active()
     }
@@ -1265,6 +1358,7 @@ impl GbaMemoryBus {
     /// Delayed interrupt pipeline: apply due pendings, then propagate
     /// availability (+1) and the CPU line (+2). Queued transitions are
     /// never cancelled, so transient edges stay observable.
+    #[inline]
     fn process_irq_pipeline(&mut self) {
         let now = self.current_tcycle;
         if self.pending_at.is_some_and(|at| at <= now) {
@@ -1401,11 +1495,13 @@ impl GbaMemoryBus {
         self.enter_halt(self.ie & 0x3080);
     }
 
+    #[inline]
     pub fn is_halted(&self) -> bool {
         self.halted
     }
 
     /// Take a pending IntrWait wake-exit latency (see `wake_latency`).
+    #[inline]
     pub fn take_wake_latency(&mut self) -> u32 {
         std::mem::take(&mut self.wake_latency)
     }
@@ -1413,6 +1509,7 @@ impl GbaMemoryBus {
     /// Take pending DMA fill-collision arbitration stalls (see
     /// `dma_stall_pending`). Burned as CPU-stall ticks like wake
     /// latency, so the bus arbitration cycle is measured.
+    #[inline]
     pub fn take_dma_stall(&mut self) -> u32 {
         std::mem::take(&mut self.dma_stall_pending)
     }
@@ -2339,6 +2436,7 @@ impl GbaMemoryBus {
         }
     }
 
+    #[inline]
     fn gamepak_rom_cycles(&self, addr: u32, width: u8, sequential: bool) -> u8 {
         const FIRST: [u8; 4] = [4, 3, 2, 8];
         let (first_shift, second_shift, second_slow) = match addr {
@@ -2426,6 +2524,7 @@ impl GbaMemoryBus {
         (self.open_bus32() >> ((addr & 2) * 8)) & 0xFFFF
     }
 
+    #[inline]
     fn read_mapped(&mut self, addr: u32, width: u8) -> u32 {
         // GBATEK Backup Media / EEPROM: on EEPROM cartridges the 0D window
         // is the serial chip, not ROM (CPU loads see the chip state);
@@ -2567,6 +2666,7 @@ impl GbaMemoryBus {
         self.data_sequential_override = false;
     }
 
+    #[inline]
     fn read_internal(&mut self, addr: u32, width: u8, is_opcode: bool) -> (u32, u8) {
         // Test-ROM log sink (only with the `mgba-debug-log` feature; see
         // field docs). Without the feature these addresses fall through
@@ -2992,6 +3092,7 @@ impl GbaMemoryBus {
         read_slice(&*self.oam, off, width)
     }
 
+    #[inline]
     fn read_rom(&self, addr: u32, width: u8) -> u32 {
         if let Some(cart) = &self.cartridge {
             // Attached GPIO registers overlay ROM (GBATEK cartridge GPIO).
@@ -3249,6 +3350,17 @@ impl GbaMemoryBus {
     }
 
     fn write_palette(&mut self, addr: u32, width: u8, value: u32) {
+        // Deferred-scanline segment trigger (see `GbaPpu::note_ppu_write`):
+        // render the pending prefix with pre-write state first.
+        {
+            let (ppu, vram, palette, oam) = (
+                &mut self.ppu,
+                &self.vram[..],
+                &self.palette_ram[..],
+                &self.oam[..],
+            );
+            ppu.note_ppu_write(vram, palette, oam);
+        }
         let off = Self::aligned_off(addr, width, 0x3FF);
         if width == 1 {
             let aligned = off & !1;
@@ -3259,6 +3371,16 @@ impl GbaMemoryBus {
     }
 
     fn write_vram(&mut self, addr: u32, width: u8, value: u32) {
+        // Deferred-scanline segment trigger (see `GbaPpu::note_ppu_write`).
+        {
+            let (ppu, vram, palette, oam) = (
+                &mut self.ppu,
+                &self.vram[..],
+                &self.palette_ram[..],
+                &self.oam[..],
+            );
+            ppu.note_ppu_write(vram, palette, oam);
+        }
         let Some(off) = self.vram_offset(addr, width) else {
             return;
         };
@@ -3547,7 +3669,13 @@ impl GbaMemoryBus {
     fn write_io_low(&mut self, aligned: u32, width: u8, value: u32, v16: u16) {
         match aligned {
             0x04000000..=0x04000054 if aligned != 0x04000006 => {
-                let irq = self.ppu.write_register(aligned, v16);
+                let irq = self.ppu.write_register(
+                    aligned,
+                    v16,
+                    &self.vram[..],
+                    &self.palette_ram[..],
+                    &self.oam[..],
+                );
                 if irq != 0 {
                     self.request_interrupt(irq);
                 }
@@ -3766,6 +3894,9 @@ impl GbaMemoryBus {
         }
     }
 
+    /// PPU-visible store ranges for the deferred-scanline hook: VRAM,
+    /// palette RAM and the LCD control registers. OAM is deliberately
+    /// excluded (first-fetch capture + next-line deferral make mid-line
     fn write_dma_value(&mut self, channel: usize, address: u32, width: u8, value: u32) {
         match address {
             0x02000000..=0x02FFFFFF => self.write_ewram(address, width, value),

@@ -542,14 +542,69 @@ impl GbaApu {
     /// Advance channel timers, the 512Hz frame sequencer and the native
     /// mix grid by one CPU T-cycle. Returns true when a grid sample was
     /// pushed (driver voices fold into the tail on the bus side).
+    /// Batching horizon: quiet prefix length before the next cycle that
+    /// needs full per-cycle processing (sequencer step, mix point, or
+    /// channel phase hit). Interior cycles only decrement countdowns;
+    /// phases, banks, the LFSR, envelopes and the mix buffer are untouched
+    /// (their changes happen exactly at capped boundary cycles).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let mut horizon = INF;
+        horizon = horizon.min(self.seq_timer.saturating_sub(1));
+        horizon = horizon.min(self.mix_timer.saturating_sub(1));
+        if self.soundcnt_x & 0x80 != 0 {
+            for voice in [
+                self.sq1.timer_horizon(),
+                self.sq2.timer_horizon(),
+                self.wave.timer_horizon(),
+                self.noise.timer_horizon(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                horizon = horizon.min(u64::from(voice));
+            }
+        }
+        horizon
+    }
+
+    /// Advance countdowns by `n` cycles. Valid only for
+    /// `n <= quiet_cycles()` at the same state.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.seq_timer -= n;
+        self.mix_timer -= n;
+        if self.soundcnt_x & 0x80 != 0 {
+            let m = n as u32;
+            self.sq1.advance_timer(m);
+            self.sq2.advance_timer(m);
+            self.wave.advance_timer(m);
+            self.noise.advance_timer(m);
+        }
+    }
+
+    #[inline]
     pub fn tick(&mut self) -> bool {
         if self.soundcnt_x & 0x80 != 0 {
-            self.sq1.tick_timer(self.freq1, true);
-            self.sq2.tick_timer(self.freq2, false);
-            self.wave.tick_timer(self.freq3);
-            let r = (self.sound4cnt_hi & 7) as u8;
-            let s = ((self.sound4cnt_hi >> 4) & 7) as u8;
-            self.noise.tick_timer(r, s);
+            // Fast path: no active voice means the timers below are all
+            // frozen; only the sequencer/mixer countdowns advance. Checked
+            // once here instead of per-voice early returns.
+            let any_voice = self.sq1.core.active
+                || self.sq2.core.active
+                || self.wave.active
+                || self.noise.core.active;
+            if any_voice {
+                self.sq1.tick_timer(self.freq1, true);
+                self.sq2.tick_timer(self.freq2, false);
+                self.wave.tick_timer(self.freq3);
+                let r = (self.sound4cnt_hi & 7) as u8;
+                let s = ((self.sound4cnt_hi >> 4) & 7) as u8;
+                self.noise.tick_timer(r, s);
+            }
         }
         self.seq_timer -= 1;
         if self.seq_timer == 0 {
@@ -790,10 +845,13 @@ impl GbaApu {
             self.output_hpf_rate = rate;
         }
         let step = f64::from(MIX_RATE) / f64::from(rate);
-        let mut out = Vec::new();
         // Position relative to the current buffer head.
         let mut pos = self.rs_pos;
         let buf = &self.mix_buffer;
+        // Pre-size the output (one realloc-free push per sample): the
+        // resampler emits roughly one output per `step` grid samples.
+        let estimate = ((buf.len() as f64 - pos) / step) as usize + 1;
+        let mut out = Vec::with_capacity(estimate);
         while (pos as usize) + 1 < buf.len() {
             let i = pos as usize;
             let frac = (pos - i as f64) as f32;

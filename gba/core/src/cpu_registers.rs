@@ -119,6 +119,12 @@ impl CpuRegisters {
         self.ldm_conflict = self.ldm_conflict.saturating_sub(1);
     }
 
+    /// Age the conflict window by `n` T-cycles. Exactly equivalent to
+    /// `n` per-cycle ticks (saturating floors at zero either way).
+    pub(crate) fn tick_ldm_conflict_n(&mut self, n: u8) {
+        self.ldm_conflict = self.ldm_conflict.saturating_sub(n);
+    }
+
     /// Remaining conflict-window T-cycles (Phase 10 validation).
     pub(crate) fn ldm_conflict_window(&self) -> u8 {
         self.ldm_conflict

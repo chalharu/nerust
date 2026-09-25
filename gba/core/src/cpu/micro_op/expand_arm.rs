@@ -3,8 +3,9 @@
 //! from the parent module, so this file depends downward on nothing.
 use super::{
     AluEffect, AluImmOp, BlockEmptyEffect, BlockEndEffect, BlockStartEffect, BlockWord,
-    BranchEffect, MemAccess, MicroOp, MulEffect,
+    BranchEffect, MemAccess, MicroOp, MicroOpVec, MulEffect,
 };
+use smallvec::smallvec;
 use crate::cpu::semantics::{
     barrel_shift, condition_passed, is_psr_transfer, multiplier_cycles, multiplier_cycles_long,
     start_address,
@@ -14,17 +15,17 @@ use crate::cpu_registers::CpuRegisters;
 /// Expand an ARM instruction. `None` = uncovered instruction (no
 /// fallback; every documented class expands).
 /// `regs` snapshots base pointers and STM store words at queue-fill.
-pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     // B/BL: failed conditions retire in one sequential cycle; taken
     // branches expose both refill cycles independently to the bus.
     if (instr >> 25) & 0x7 == 0b101 {
         let condition = (instr >> 28) as u8;
         if !condition_passed(regs.cpsr(), condition) {
-            return Some(vec![MicroOp::Internal]);
+            return Some(smallvec![MicroOp::Internal]);
         }
         let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
         let offset = (offset << 6) >> 6;
-        return Some(vec![
+        return Some(smallvec![
             MicroOp::Internal,
             MicroOp::Internal,
             MicroOp::TakenBranch(BranchEffect {
@@ -37,16 +38,16 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if condition == 0xF {
         // NV: never executes (ARM ARM); it retires as
         // a 1S NOP, so expansion is a single Internal.
-        return Some(vec![MicroOp::Internal]);
+        return Some(smallvec![MicroOp::Internal]);
     }
     // SWI: class 111 with bit 24 set (any condition; the trap
     // number is in bits 23-16 for HLE). Failed conditions retire as
     // [Internal] here (the early return bypasses the wrapper below).
     if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
         return Some(if condition_passed(regs.cpsr(), condition) {
-            vec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]
+            smallvec![MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8)]
         } else {
-            vec![MicroOp::Internal]
+            smallvec![MicroOp::Internal]
         });
     }
     // UND: coprocessor data class (110) and class 111 without the SWI
@@ -55,9 +56,9 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
     {
         return Some(if condition_passed(regs.cpsr(), condition) {
-            vec![MicroOp::TrapUnd]
+            smallvec![MicroOp::TrapUnd]
         } else {
-            vec![MicroOp::Internal]
+            smallvec![MicroOp::Internal]
         });
     }
     let ops = expand_arm_alu_imm(instr, regs)
@@ -71,14 +72,14 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     Some(if condition_passed(regs.cpsr(), condition) {
         ops
     } else {
-        vec![MicroOp::Internal]
+        smallvec![MicroOp::Internal]
     })
 }
 
 /// ARM data-processing (register form, I==0): the DP class minus
 /// multiply/SWP/PSR/BX/halfword, padded to the pinned base
 /// (register-shift +1I, R15-write refill); the commit runs the apply.
-pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     if (instr >> 26) & 0x3 != 0 || (instr >> 25) & 1 != 0 {
         return None;
     }
@@ -115,8 +116,8 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
     } else {
         u32::from(register_shift) + if rd == 15 && !flag_only { 2 } else { 0 }
     };
-    let mut ops = vec![MicroOp::CommitDpReg(instr)];
-    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    let mut ops = smallvec![MicroOp::CommitDpReg(instr)];
+    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
     Some(ops)
 }
 
@@ -125,7 +126,7 @@ pub(crate) fn expand_arm_dp_reg(instr: u32, regs: &CpuRegisters) -> Option<Vec<M
 /// [CommitMul, I..] padded to the pinned base (short MUL 1S+mI,
 /// MLA +1I; long 1S+mI+1I, accumulate +1I); the commit runs the native
 /// apply, so only the internal-tick split is new.
-pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     if (instr & 0x0F8000F0) != 0x00800090 && (instr & 0x0FC000F0) != 0x00000090 {
         return None;
     }
@@ -139,22 +140,22 @@ pub(crate) fn expand_arm_mul(instr: u32, regs: &CpuRegisters) -> Option<Vec<Micr
         // Short: m +1I for MLA.
         multiplier_cycles(rs_val) + ((instr >> 21) & 1)
     };
-    let mut ops = vec![MicroOp::CommitMul(MulEffect {
+    let mut ops = smallvec![MicroOp::CommitMul(MulEffect {
         instr,
         thumb: false,
     })];
-    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
     Some(ops)
 }
 
 /// ARM SWP/SWPB: the exact decoder mask. Expansion is [CommitSwp,
 /// I, I, I] padded to the pinned base (4); the read+write pair stays
 /// atomic inside the commit, modeling the HW bus lock.
-fn expand_arm_swp(instr: u32) -> Option<Vec<MicroOp>> {
+fn expand_arm_swp(instr: u32) -> Option<MicroOpVec> {
     if (instr & 0x0FB00FF0) != 0x01000090 {
         return None;
     }
-    Some(vec![
+    Some(smallvec![
         MicroOp::CommitSwp(instr),
         MicroOp::Internal,
         MicroOp::Internal,
@@ -164,20 +165,20 @@ fn expand_arm_swp(instr: u32) -> Option<Vec<MicroOp>> {
 
 /// ARM MRS/MSR: exactly the decoder predicate (all three masks).
 /// Single commit op; the handler is pure registers with base 1.
-fn expand_arm_psr(instr: u32) -> Option<Vec<MicroOp>> {
+fn expand_arm_psr(instr: u32) -> Option<MicroOpVec> {
     if !is_psr_transfer(instr) {
         return None;
     }
-    Some(vec![MicroOp::CommitPsr(instr)])
+    Some(smallvec![MicroOp::CommitPsr(instr)])
 }
 
 /// ARM BX: the exact decoder mask. Reuses the interworking branch
 /// op ([I, I, Bx]); retire flushes with the switched width.
-fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_arm_bx(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     if (instr & 0x0FFFFFF0) != 0x012FFF10 {
         return None;
     }
-    Some(vec![
+    Some(smallvec![
         MicroOp::Internal,
         MicroOp::Internal,
         MicroOp::Bx(regs.r((instr & 0xF) as usize)),
@@ -199,7 +200,7 @@ struct BlockEmptySpec {
 /// (GBATEK: Rb+=0x40 address arithmetic, S-bit CPSR restore on LDM^,
 /// PC+4 store on STM). No batch framing; the op carries +1 with
 /// trailing Internals to the base (LDM+PC 5, STM 2).
-fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<MicroOp> {
+fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> MicroOpVec {
     let addr = start_address(spec.base, 16, spec.pre, spec.up);
     let writeback = spec.writeback.then(|| {
         (
@@ -211,7 +212,7 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<Micr
             },
         )
     });
-    let mut ops = vec![MicroOp::BlockEmpty(BlockEmptyEffect {
+    let mut ops = smallvec![MicroOp::BlockEmpty(BlockEmptyEffect {
         load: spec.load,
         addr,
         writeback_reg: writeback,
@@ -221,7 +222,7 @@ fn expand_arm_block_empty(spec: BlockEmptySpec, regs: &CpuRegisters) -> Vec<Micr
         // Standalone (no BlockEnd follows): break here.
         break_stream: true,
     })];
-    ops.extend(vec![MicroOp::Internal; if spec.load { 4 } else { 1 }]);
+    ops.extend(core::iter::repeat_n(MicroOp::Internal, if spec.load { 4 } else { 1 }));
     ops
 }
 
@@ -280,7 +281,7 @@ fn block_trailing(load: bool, list: u32) -> usize {
 /// modes, writeback (skipped for the UNPREDICTABLE load-with-base-
 /// in-list), the STM stored-base quirk, PC loads (retire flushes),
 /// and the empty-list single-PC-word transfer are covered.
-fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     if (instr >> 25) & 0x7 != 0b100 {
         return None;
     }
@@ -307,7 +308,6 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         ));
     }
     let count = list.count_ones();
-    let slots: Vec<usize> = (0..16).filter(|i| list & (1 << i) != 0).collect();
     let start = start_address(base, count, pre, up);
     // Without writeback the stored base uses the OLD value; only W=1
     // stores the NEW value for non-first occurrences.
@@ -322,20 +322,20 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // User-bank selection (S without a PC load); snapshot at expansion
     // (mode frozen until a PC load, which clears this flag).
     let user_bank = s && !(load && list & (1 << 15) != 0);
-    let mut ops = vec![MicroOp::BlockStart(BlockStartEffect {
+    let mut ops = smallvec![MicroOp::BlockStart(BlockStartEffect {
         is_load: load,
         fetch_width: 4,
     })];
-    for (i, reg) in slots.iter().enumerate() {
-        let store_value = block_store_value(load, stored_base, user_bank, regs, *reg);
+    for (i, reg) in (0..16usize).filter(|reg| list & (1 << reg) != 0).enumerate() {
+        let store_value = block_store_value(load, stored_base, user_bank, regs, reg);
         ops.push(MicroOp::BlockWord(BlockWord {
             addr: start.wrapping_add(i as u32 * 4),
-            reg: *reg,
+            reg,
             load,
             first: i == 0,
-            pc_load: load && *reg == 15,
+            pc_load: load && reg == 15,
             user_bank: load && user_bank,
-            restore_cpsr: load && s && *reg == 15,
+            restore_cpsr: load && s && reg == 15,
             store_value,
         }));
     }
@@ -353,7 +353,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     // Pad the pinned `transfer_cycles` base (LDM 2+n, LDM+PC 4+n,
     // STM 1+n; words already carry +1 each).
     let trailing = block_trailing(load, list);
-    ops.extend(vec![MicroOp::Internal; trailing]);
+    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing));
     Some(ops)
 }
 
@@ -361,7 +361,7 @@ fn expand_arm_block(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// above). Rn==15 (PC) reads are covered: the effect resolves Rn live
 /// at execution, matching the handler's execute-stage read (PC still
 /// leads by 8; advance lands at retire).
-fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     // Data-processing class (bits27-26 == 00), immediate form (I==1).
     // With I==1 the decoder can only route to DP or PSR-immediate
     // (multiply/SWP/BX/halfword all require I==0); the MSR-immediate
@@ -415,7 +415,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
     } else {
         0
     };
-    let mut ops = vec![MicroOp::CommitAlu(AluEffect {
+    let mut ops = smallvec![MicroOp::CommitAlu(AluEffect {
         op,
         rd,
         rn,
@@ -424,7 +424,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
         thumb_mov: false,
         carry,
     })];
-    ops.extend(vec![MicroOp::Internal; trailing as usize]);
+    ops.extend(core::iter::repeat_n(MicroOp::Internal, trailing as usize));
     Some(ops)
 }
 
@@ -434,7 +434,7 @@ fn expand_arm_alu_imm(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
 /// registers); STR of R15 snapshots instruction+12. Loads expand to
 /// [Read, I, I] (= 3; +2 more for R15 loads) and stores to [Write, I]
 /// (= 2) per GBATEK.
-pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Vec<MicroOp>> {
+pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     let dec = SingleDecoded {
         l: (instr >> 20) & 1 == 1,
         pre_indexed: (instr >> 24) & 1 == 1,
@@ -482,19 +482,19 @@ fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
 }
 
 /// Pad the pinned base: loads 3 (5 for R15), stores 2.
-fn single_ops(l: bool, rd: usize, acc: MemAccess) -> Vec<MicroOp> {
+fn single_ops(l: bool, rd: usize, acc: MemAccess) -> MicroOpVec {
     if l {
-        let mut ops = vec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
+        let mut ops = smallvec![MicroOp::MemRead(acc), MicroOp::Internal, MicroOp::Internal];
         if rd == 15 {
             ops.extend([MicroOp::Internal, MicroOp::Internal]);
         }
         ops
     } else {
-        vec![MicroOp::MemWrite(acc), MicroOp::Internal]
+        smallvec![MicroOp::MemWrite(acc), MicroOp::Internal]
     }
 }
 
-fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<Vec<MicroOp>> {
+fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<MicroOpVec> {
     let offset = if (instr >> 25) & 1 != 0 {
         let rm_val = regs.r((instr & 0xF) as usize);
         let (shifted, _) = barrel_shift(
@@ -525,7 +525,7 @@ fn single_word(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<V
     Some(single_ops(dec.l, dec.rd, acc))
 }
 
-fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<Vec<MicroOp>> {
+fn single_half(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded) -> Option<MicroOpVec> {
     if (instr & 0x0F8000F0) == 0x00800090 || (instr & 0x0FC000F0) == 0x00000090 {
         return None; // Multiply.
     }

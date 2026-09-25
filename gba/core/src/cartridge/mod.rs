@@ -52,6 +52,7 @@ impl Cartridge {
         })
     }
 
+    #[inline]
     pub fn read_rom(&self, addr: u32, width: u8) -> u32 {
         let len = self.rom.len();
         if len == 0 {

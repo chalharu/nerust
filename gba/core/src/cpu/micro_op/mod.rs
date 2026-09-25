@@ -29,6 +29,12 @@ pub(crate) const HLE_IRQ_RETURN_TRAMPOLINE: u32 = 0x00000014;
 /// HLE IRQ return slots, innermost last (mirrors the `GbaCpu` field).
 pub(crate) type IrqReturnStack = Vec<(u32, [u32; 5])>;
 
+/// Instruction decode buffer: stack-inline up to 8 ops (covers every
+/// instruction but large block transfers, which spill once like `Vec`).
+/// Replaces per-instruction heap allocation on the hot path; unlike
+/// longer inline buffers, return-by-value copies stay small.
+pub(crate) type MicroOpVec = smallvec::SmallVec<[MicroOp; 8]>;
+
 /// One sub-instruction effect; effects land at execute-stage points with
 /// the fixed bus-call order (access, then fetch-stream-break).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
