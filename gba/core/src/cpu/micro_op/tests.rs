@@ -16,11 +16,11 @@ use std::collections::VecDeque;
 fn run_ops(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
-    ops: Vec<MicroOp>,
+    ops: super::MicroOpVec,
     pc: u32,
     is_thumb: bool,
 ) {
-    let mut queue: VecDeque<MicroOp> = ops.into();
+    let mut queue: VecDeque<MicroOp> = ops.into_iter().collect();
     while let Some(op) = queue.pop_front() {
         apply_op(regs, bus, op, pc, is_thumb);
     }

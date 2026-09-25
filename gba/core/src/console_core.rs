@@ -86,12 +86,9 @@ impl ConsoleCore for GbaConsoleCore {
             .0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system.bus.set_keyinput(input);
-        // Run one LCD frame (228 lines * 1232 cycles)
-        for _ in 0..280_896 {
-            if loaded.system.step_tcycle() {
-                break;
-            }
-        }
+        // Run one LCD frame (228 lines * 1232 cycles), batched to the
+        // frame end. Bit-identical to per-cycle stepping.
+        loaded.system.step_batch(280_896);
         // Drain native-grid audio at the device rate.
         let rate = self.audio.sample_rate();
         for sample in loaded.system.bus.apu_mut().drain_resampled(rate) {

@@ -209,6 +209,7 @@ impl GbaDma {
         }
     }
 
+    #[inline]
     pub fn tick_pending(&mut self) {
         for dma in &mut self.channels {
             if dma.pending > 0 {
@@ -223,6 +224,37 @@ impl GbaDma {
 
     pub fn has_pending(&self) -> bool {
         self.channels.iter().any(|dma| dma.pending > 0)
+    }
+
+    /// Batching horizon: quiet prefix before the next startup-latency
+    /// expiry. An active channel forces per-cycle stepping (word side
+    /// effects stay on the exact path for now).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        if self.is_active() {
+            return 0;
+        }
+        let mut horizon = u64::MAX;
+        for dma in &self.channels {
+            if dma.pending > 0 {
+                horizon = horizon.min(u64::from(dma.pending) - 1);
+            }
+        }
+        horizon
+    }
+
+    /// Decrement startup latencies. Valid only with no activation inside
+    /// the span (verified by the horizon) and no active channel.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        for dma in &mut self.channels {
+            if dma.pending > 0 {
+                dma.pending -= n as u8;
+            }
+        }
     }
 
     /// Shorten a pending Immediate startup to 3 (prefetch overlaps one
@@ -348,6 +380,7 @@ impl GbaDma {
         ))
     }
 
+    #[inline]
     pub fn take_completion_interrupts(&mut self) -> u16 {
         std::mem::take(&mut self.completion_interrupts)
     }

@@ -16,6 +16,7 @@ nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_serialize.workspace = true
 nerust_sound_filter.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 typetag.workspace = true
 serde.workspace = true

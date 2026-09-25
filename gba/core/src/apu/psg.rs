@@ -87,8 +87,26 @@ pub struct Square {
 }
 
 impl Square {
-    pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {
-        self.freq_shadow = freq;
+    /// Batching support: first zero-hit is `timer + 1` ticks out (hit fires
+    /// when the timer reads 0 at tick start), so `timer` upcoming ticks are
+    /// hit-free. Interior advance only decrements; phase/bank stay put.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Decrement the phase timer. Valid only when no zero-hit occurs
+    /// inside the span (verified by the horizon): plain `-=` matches the
+    /// per-cycle behavior exactly, including dev-profile underflow panic.
+    /// Inactive voices are untouched, mirroring the `tick_timer` early
+    /// return.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
+    pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {        self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
         self.timer = 0;
         self.phase = 0;
@@ -210,6 +228,19 @@ pub struct Wave {
 }
 
 impl Wave {
+    /// Batching support: see `Square::timer_horizon`.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(&mut self, init_len: u16, dimension_64: bool, seq_odd: bool) {
         if self.length == 0 {
             self.length = init_len;
@@ -295,6 +326,20 @@ pub struct Noise {
 }
 
 impl Noise {
+    /// Batching support: see `Square::timer_horizon`. The LFSR only shifts
+    /// on zero-hits, so capping at the first hit keeps it exact.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(
         &mut self,
         init_len: u8,

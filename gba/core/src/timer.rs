@@ -213,10 +213,29 @@ impl GbaTimers {
         self.step_full().0
     }
 
+    /// True when no timer can change observable state this tick: every
+    /// channel disabled with no transient startup/landing bookkeeping.
+    /// The prescaler still advances (phase for future enables) and the
+    /// cycle clock is still stamped; nothing else can happen.
+    pub(crate) fn is_fully_idle(&self) -> bool {
+        self.channels.iter().all(|timer| {
+            timer.control & 0x80 == 0
+                && timer.start_delay == 0
+                && timer.pending_control.is_none()
+                && timer.reload_pending.is_none()
+        })
+    }
+
+    /// Advance only the free-running prescaler (fully-idle fast path).
+    pub(crate) fn bump_prescaler(&mut self) {
+        self.prescaler = self.prescaler.wrapping_add(1);
+    }
+
     /// Advance one T-cycle, returning Timer IRQ bits 3..6 plus raw
     /// overflow bits 0..3. Overflows clock downstream hardware (sound
     /// FIFO sample drains, count-up timers) whether or not the timer's
     /// IRQ is enabled; only the IRQ bits may raise IF.
+    #[inline]
     pub fn step_full(&mut self) -> (u16, u16) {
         self.prescaler = self.prescaler.wrapping_add(1);
         let prescaler = self.prescaler;
@@ -244,6 +263,94 @@ impl GbaTimers {
         self.overflows_since_enable[channel]
     }
 
+    /// Batching horizon: quiet prefix length before the next cycle that
+    /// needs full per-cycle processing. After `advance_idle(h)` plus one
+    /// normal tick, state is bit-identical to h+1 per-cycle ticks.
+    ///
+    /// Interior cycles change only free-running counters (prescaler taps
+    /// and counter increments); overflows, reload landings, control takes
+    /// and start-delay expiry all cap the horizon and run through the
+    /// existing per-cycle path at the boundary.
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let mut horizon = INF;
+        for index in 0..4 {
+            let timer = &self.channels[index];
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            // Transient enable/startup bookkeeping: drain per-cycle.
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                return 0;
+            }
+            // Count-up channels tick only on the lower channel's overflow,
+            // which caps the horizon itself; their own overflow can only
+            // follow one in the same or a later tick.
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            // All prescaler periods are powers of two: tap phase with AND,
+            // fire spacing with shifts (no division in the hot path).
+            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
+            let period = 1u64 << shift;
+            let mask = period - 1;
+            // Tap fires at upcoming tick j iff (prescaler + j) % period ==
+            // period - 1. Overflow needs (0x10000 - counter) fires.
+            let fires_needed = 0x1_0000u64 - u64::from(timer.counter);
+            let r = (u64::from(self.prescaler) + 1) & mask;
+            let first_fire = (mask - r) & mask + 1;
+            let overflow_tick = first_fire + (fires_needed - 1) * period;
+            horizon = horizon.min(overflow_tick - 1);
+        }
+        horizon
+    }
+
+    /// Advance free-running counters by `n` cycles. Valid only for
+    /// `n <= quiet_cycles()` measured at the same state: no overflows,
+    /// landings, takes or delay expiries occur inside the span (verified
+    /// by the horizon), so only prescaler taps and counter increments
+    /// need folding. Cascade channels are untouched (no lower overflow
+    /// interior); transient states are absent by the horizon contract.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.prescaler = self.prescaler.wrapping_add(n as u16);
+        self.current_cycle = self.current_cycle.wrapping_add(n);
+        let start_prescaler = self.prescaler.wrapping_sub(n as u16);
+        for index in 0..4 {
+            let timer = &mut self.channels[index];
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                continue;
+            }
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
+            let mask = (1u64 << shift) - 1;
+            let r = (u64::from(start_prescaler) + 1) & mask;
+            let first_fire = (mask - r) & mask + 1;
+            let fires = if n >= first_fire {
+                1 + ((n - first_fire) >> shift)
+            } else {
+                0
+            };
+            timer.counter = timer.counter.wrapping_add(fires as u16);
+        }
+    }
+
+    #[inline]
     fn step_channel(
         &mut self,
         index: usize,

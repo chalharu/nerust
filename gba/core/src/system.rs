@@ -132,6 +132,66 @@ impl GbaSystem {
         self.frame_buffer()
     }
 
+    /// Advance up to `max` T-cycles with horizon batching, returning
+    /// `(advanced, frame_complete)`. Cycles that need full per-cycle
+    /// processing (CPU bus access, device events, pipeline deadlines) run
+    /// through the untouched `step_tcycle` body; quiet spans advance
+    /// clocks and free-running counters arithmetically. Bit-identical to
+    /// the equivalent number of `step_tcycle` calls.
+    pub fn step_batch(&mut self, max: u64) -> (u64, bool) {
+        let mut advanced = 0u64;
+        while advanced < max {
+            let horizon = self.batch_horizon();
+            if horizon == 0 {
+                if self.step_tcycle() {
+                    return (advanced + 1, true);
+                }
+                advanced += 1;
+            } else {
+                // Bound single jumps (hung states would otherwise advance
+                // astronomically; the loop still never terminates there,
+                // exactly like the per-cycle version).
+                let take = (max - advanced).min(horizon).min(u64::from(u32::MAX));
+                self.advance_idle(take, !self.bus.dma_active());
+                advanced += take;
+            }
+        }
+        (advanced, false)
+    }
+
+    /// Quiet prefix length before the next cycle needing full processing:
+    /// CPU bus access (0 when the CPU acts this cycle), device events and
+    /// IRQ pipeline deadlines.
+    fn batch_horizon(&self) -> u64 {
+        if !self.bus.dma_active() && !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+            return 0;
+        }
+        let mut horizon = self.bus.quiet_cycles();
+        if !self.bus.is_halted() && !self.bus.dma_active() {
+            horizon = horizon.min(u64::from(self.cpu_cycles_remaining));
+        }
+        horizon
+    }
+
+    /// Advance clocks and free-running counters by `n` cycles with no event
+    /// processing. Valid only for `n <= batch_horizon()` at the same state.
+    /// `fold_remaining` mirrors `step_tcycle`, which skips the remainder
+    /// decrement while DMA owns the bus (unreachable here by the horizon,
+    /// kept for exactness).
+    fn advance_idle(&mut self, n: u64, fold_remaining: bool) {
+        debug_assert!(n > 0);
+        self.tick += n;
+        if fold_remaining {
+            self.cpu_cycles_remaining = self
+                .cpu_cycles_remaining
+                .saturating_sub(n.min(u64::from(u32::MAX)) as u32);
+        }
+        self.cpu
+            .registers_mut()
+            .tick_ldm_conflict_n(n.min(u64::from(u8::MAX)) as u8);
+        self.bus.advance_idle(n);
+    }
+
     /// Drain micro-ops within one tick: run ops while they cost nothing
     /// yet; stop at the first tick-consuming op (or retire). Returns the
     /// raw tick budget (possibly zero/negative; the caller floors once

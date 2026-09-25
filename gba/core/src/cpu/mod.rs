@@ -32,7 +32,7 @@ impl GbaCpu {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
             irq_return_stack: Vec::new(),
-            micro_queue: std::collections::VecDeque::new(),
+            micro_queue: std::collections::VecDeque::with_capacity(32),
         }
     }
 
