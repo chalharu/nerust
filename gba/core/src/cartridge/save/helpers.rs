@@ -2,10 +2,10 @@ pub(crate) fn read_slice(slice: &[u8], off: usize, width: u8) -> u32 {
     // Fast path: one bounds check, then plain loads. Out-of-range bytes
     // still read as 0xFF via the slow path (behavior identical).
     match width {
-        4 if off + 4 <= slice.len() => u32::from_le_bytes([slice[off], slice[off + 1], slice[off + 2], slice[off + 3]]),
-        2 if off + 2 <= slice.len() => {
-            u16::from_le_bytes([slice[off], slice[off + 1]]) as u32
+        4 if off + 4 <= slice.len() => {
+            u32::from_le_bytes([slice[off], slice[off + 1], slice[off + 2], slice[off + 3]])
         }
+        2 if off + 2 <= slice.len() => u16::from_le_bytes([slice[off], slice[off + 1]]) as u32,
         1 if off < slice.len() => slice[off] as u32,
         4 => {
             let b0 = *slice.get(off).unwrap_or(&0xFF) as u32;

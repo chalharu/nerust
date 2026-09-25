@@ -106,7 +106,8 @@ impl Square {
         self.timer -= n;
     }
 
-    pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {        self.freq_shadow = freq;
+    pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {
+        self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
         self.timer = 0;
         self.phase = 0;

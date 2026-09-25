@@ -982,9 +982,15 @@ impl GbaMemoryBus {
         }
         self.current_tcycle = self.current_tcycle.wrapping_add(n);
         if self.stopped {
+            // Frozen clocks: per-cycle `tick` returns before `tick_timers`
+            // while stopped, so device clocks stay put.
             return;
         }
-        self.timers.set_current_cycle(self.current_tcycle);
+        // NOTE: timers.current_cycle is deliberately untouched: it is
+        // call-scoped scratch refreshed by `set_current_cycle` before
+        // every read path (`tick_timers`, `read_io`, `write_io`), so
+        // mid-span staleness is unobservable (same as per-cycle ticks,
+        // which only set it at boundaries and accesses).
         self.timers.advance_idle(n);
         self.ppu.advance_idle(n);
         self.apu.advance_idle(n);
