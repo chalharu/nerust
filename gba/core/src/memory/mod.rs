@@ -22,6 +22,20 @@ fn thumb_next_is_datamover(next: u16) -> bool {
     }
 }
 
+/// Trace flags, read once from the environment and cached process-wide.
+/// `std::env::var` costs a lock + allocation per call (~100ns), which is
+/// prohibitive inside per-cycle hot paths (DMA steps, timer register
+/// accesses) that fire tens of thousands of times per frame.
+fn dtrace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("GBA_DTRACE").is_ok())
+}
+
+fn ttrace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("GBA_TTRACE").is_ok())
+}
+
 const BIOS_SIZE: usize = 0x4000;
 const EWRAM_SIZE: usize = 0x40000;
 const IWRAM_SIZE: usize = 0x8000;
@@ -1081,7 +1095,7 @@ impl GbaMemoryBus {
         else {
             return;
         };
-        if std::env::var("GBA_DTRACE").is_ok() {
+        if dtrace_enabled() {
             eprintln!(
                 "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
                 transfer.channel,
@@ -3137,7 +3151,7 @@ impl GbaMemoryBus {
     fn read_io_high(&mut self, aligned: u32) -> IoRead {
         let val = match aligned {
             0x04000100..=0x0400010E => {
-                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000100 {
+                if ttrace_enabled() && aligned == 0x04000100 {
                     eprintln!("T tmread @{}", self.current_tcycle);
                 }
                 self.timers.read(aligned).unwrap_or(0)
@@ -3573,7 +3587,7 @@ impl GbaMemoryBus {
         match aligned {
             0x040000B0..=0x040000DE => self.write_io_dma(aligned, v16),
             0x04000100..=0x0400010E => {
-                if std::env::var("GBA_TTRACE").is_ok() && aligned == 0x04000102 && v16 & 0x80 != 0 {
+                if ttrace_enabled() && aligned == 0x04000102 && v16 & 0x80 != 0 {
                     eprintln!("T start @{}", self.current_tcycle);
                 }
                 self.timers.write(aligned, v16);
@@ -3629,7 +3643,7 @@ impl GbaMemoryBus {
 
     /// DMA control writes plus Immediate CNT_H arming retime.
     fn write_io_dma(&mut self, aligned: u32, v16: u16) {
-        if std::env::var("GBA_TTRACE").is_ok()
+        if ttrace_enabled()
             && matches!(aligned, 0x040000BA | 0x040000C6 | 0x040000D2 | 0x040000DE)
             && v16 & 0x8000 != 0
         {
