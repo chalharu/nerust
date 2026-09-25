@@ -272,6 +272,194 @@ pub struct GbaMemoryBus {
     mgba_debug_logs: Vec<MgbaDebugLog>,
 }
 
+/// Phase 10 wire state: all RAM (as bytes), the interrupt pipeline, SIO/
+/// UART registers, open-bus latches, prefetch/fill clocks, block-batch and
+/// stream trackers, halt/stop/wake flags, tick-driven counters and every
+/// device state. Excluded by design: `fallback_sram` (Phase 3 test shim),
+/// the write-only `haltcnt` latch, and the `mgba-debug-log` feature state.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaMemoryBusState {
+    bios: serde_bytes::ByteBuf,
+    ewram: serde_bytes::ByteBuf,
+    iwram: serde_bytes::ByteBuf,
+    palette_ram: serde_bytes::ByteBuf,
+    vram: serde_bytes::ByteBuf,
+    oam: serde_bytes::ByteBuf,
+    wait_cnt: u16,
+    ie: u16,
+    sif: u16,
+    ime: bool,
+    pending_ie: u16,
+    pending_ime: bool,
+    pending_if: u16,
+    pending_at: Option<u64>,
+    line_write_assert: bool,
+    irq_available: bool,
+    avail_queue: Vec<(bool, u64)>,
+    irq_line: bool,
+    line_queue: Vec<(bool, u64)>,
+    postflg: u8,
+    mem_control: u32,
+    keyinput: u16,
+    keycnt: u16,
+    siocnt: u16,
+    siodata8: u16,
+    siodata32: u32,
+    rcnt: u16,
+    joycnt: u16,
+    sio_xfer_cycles: u32,
+    sio_xfer_32: bool,
+    sio_xfer_uart: bool,
+    uart_tx: Vec<u8>,
+    uart_rx: Vec<u8>,
+    uart_err: bool,
+    uart_prev_irqsrc: u8,
+    last_prefetch: u32,
+    prefetch_win: [u32; 2],
+    prefetch_thumb: bool,
+    cpu_bus: u32,
+    dma_bus: u32,
+    dma_bus_valid: bool,
+    dma_open_pc: u32,
+    dma_trigger_pc: u32,
+    prefetch_enabled: bool,
+    pf_start: u32,
+    pf_end: u32,
+    pf_valid: bool,
+    pf_branch_drain: bool,
+    fill_countdown: u32,
+    last_prefetched_pc: u32,
+    bios_prefetch: u32,
+    data_sequential_override: bool,
+    block_batching: bool,
+    block_batch_any: bool,
+    block_batch_words: u32,
+    block_batch_erase_sum: i32,
+    block_batch_is_load: bool,
+    block_batch_fetch_width: u8,
+    block_batch_has_rom: bool,
+    block_batch_raw: bool,
+    access_wait_cycles: i64,
+    last_opcode_addr: Option<u32>,
+    last_data_addr: Option<u32>,
+    prev_data_addr: Option<u32>,
+    prev_load_pc: Option<u32>,
+    prev_load_is_stack: bool,
+    current_pc: u32,
+    prev_addr: Option<u32>,
+    prev_width: u8,
+    fetch_addr: Option<u32>,
+    fetch_width: u8,
+    halted: bool,
+    halt_irq_mask: u16,
+    stopped: bool,
+    wake_clear_mask: u16,
+    wake_latency: u32,
+    woke_from_halt: bool,
+    dma_stall_pending: u32,
+    bios_wait_exit_armed: bool,
+    pub(crate) current_tcycle: u64,
+    timer0_raise_tick: u64,
+    bios_protect: bool,
+    video_armed: bool,
+    video_countdown: u8,
+    pending_hblank_irq: bool,
+    eeprom_burst_open: bool,
+    ppu: crate::ppu::GbaPpuState,
+    dma: crate::dma::GbaDmaState,
+    pub(crate) timers: crate::timer::GbaTimersState,
+    apu: crate::apu::GbaApuState,
+    cartridge: Option<crate::cartridge::CartridgeState>,
+    hle_bios: Option<crate::bios::hle_operation::HleBiosOperation>,
+}
+
+impl GbaMemoryBusState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (name, bytes, len) in [
+            ("bios", &self.bios, BIOS_SIZE),
+            ("ewram", &self.ewram, EWRAM_SIZE),
+            ("iwram", &self.iwram, IWRAM_SIZE),
+            ("palette", &self.palette_ram, PALETTE_SIZE),
+            ("vram", &self.vram, VRAM_SIZE),
+            ("oam", &self.oam, OAM_SIZE),
+        ] {
+            if bytes.len() != len {
+                return Err(format!("bus: {name} length wrong: {}", bytes.len()));
+            }
+        }
+        // Both write paths mask WAITCNT with !(0x8000 | 0x2000).
+        if self.wait_cnt & (0x8000 | 0x2000) != 0 {
+            return Err(format!("bus: wait_cnt reserved bits: {:#X}", self.wait_cnt));
+        }
+        // KEYCNT writes mask with 0xC3FF.
+        if self.keycnt & !0xC3FF != 0 {
+            return Err(format!("bus: keycnt reserved bits: {:#X}", self.keycnt));
+        }
+        // UART FIFOs hold at most the 4-deep cap.
+        if self.uart_tx.len() > 4 || self.uart_rx.len() > 4 {
+            return Err(format!(
+                "bus: uart fifo overflow: {}/{}",
+                self.uart_tx.len(),
+                self.uart_rx.len()
+            ));
+        }
+        if self.sio_xfer_cycles > 0x10_0000 {
+            return Err(format!(
+                "bus: sio transfer too long: {}",
+                self.sio_xfer_cycles
+            ));
+        }
+        // Scheduled interrupt-pipeline events land within a few ticks.
+        if self.avail_queue.len() > 32 || self.line_queue.len() > 32 {
+            return Err("bus: irq queue too long".to_string());
+        }
+        if let Some(at) = self.pending_at
+            && at > self.current_tcycle.saturating_add(16)
+        {
+            return Err("bus: pending interrupt apply too far ahead".to_string());
+        }
+        for (_, at) in self.avail_queue.iter().chain(self.line_queue.iter()) {
+            if *at > self.current_tcycle.saturating_add(16) {
+                return Err("bus: queued irq event too far ahead".to_string());
+            }
+        }
+        if self.timer0_raise_tick > self.current_tcycle {
+            return Err("bus: timer0 raise tick in the future".to_string());
+        }
+        // Accumulator magnitudes at rest (all drain per instruction or per
+        // burst, so single-step accumulation bounds them): unbounded
+        // restored values would overflow the plain `+=`/`-` sites.
+        if self.access_wait_cycles.abs() > (1 << 40) {
+            return Err("bus: access wait accumulator out of range".to_string());
+        }
+        if self.block_batch_erase_sum.abs() > (1 << 20) {
+            return Err("bus: block erase sum out of range".to_string());
+        }
+        // Batches open and close within one block instruction (<= 16 words).
+        if self.block_batch_words > 0xFFFF {
+            return Err("bus: block word count out of range".to_string());
+        }
+        // At most one arbitration stall is ever set; the step path adds it
+        // to the CPU remainder without saturation.
+        if self.dma_stall_pending > 1 {
+            return Err("bus: dma stall out of range".to_string());
+        }
+        // Open-bus PC tags carry no import-time invariant: the sticky DMA
+        // latch stays valid across arbitrary ALU/branch runs (only a mapped
+        // CPU data access clears it), so the tags may sit any distance from
+        // the current PC. The read-side gate compares them against the live
+        // PC at access time, which the restored values preserve exactly.
+        if let Some(op) = &self.hle_bios {
+            op.validate().map_err(|e| format!("bus: {e}"))?;
+        }
+        self.ppu.validate().map_err(|e| format!("bus: {e}"))?;
+        self.dma.validate().map_err(|e| format!("bus: {e}"))?;
+        self.timers.validate().map_err(|e| format!("bus: {e}"))?;
+        self.apu.validate().map_err(|e| format!("bus: {e}"))?;
+        Ok(())
+    }
+}
+
 /// One committed suite debug-log line (the suite sources call it
 /// `mgba_printf`).
 /// Only exists with the `mgba-debug-log` cargo feature (test harness).
@@ -1806,6 +1994,206 @@ impl GbaMemoryBus {
 
     pub fn set_cartridge(&mut self, cart: Cartridge) {
         self.cartridge = Some(cart);
+    }
+
+    pub(crate) fn export_state(&self) -> Result<GbaMemoryBusState, String> {
+        Ok(GbaMemoryBusState {
+            bios: serde_bytes::ByteBuf::from(self.bios.to_vec()),
+            ewram: serde_bytes::ByteBuf::from(self.ewram.to_vec()),
+            iwram: serde_bytes::ByteBuf::from(self.iwram.to_vec()),
+            palette_ram: serde_bytes::ByteBuf::from(self.palette_ram.to_vec()),
+            vram: serde_bytes::ByteBuf::from(self.vram.to_vec()),
+            oam: serde_bytes::ByteBuf::from(self.oam.to_vec()),
+            wait_cnt: self.wait_cnt,
+            ie: self.ie,
+            sif: self.sif,
+            ime: self.ime,
+            pending_ie: self.pending_ie,
+            pending_ime: self.pending_ime,
+            pending_if: self.pending_if,
+            pending_at: self.pending_at,
+            line_write_assert: self.line_write_assert,
+            irq_available: self.irq_available,
+            avail_queue: self.avail_queue.clone(),
+            irq_line: self.irq_line,
+            line_queue: self.line_queue.clone(),
+            postflg: self.postflg,
+            mem_control: self.mem_control,
+            keyinput: self.keyinput,
+            keycnt: self.keycnt,
+            siocnt: self.siocnt,
+            siodata8: self.siodata8,
+            siodata32: self.siodata32,
+            rcnt: self.rcnt,
+            joycnt: self.joycnt,
+            sio_xfer_cycles: self.sio_xfer_cycles,
+            sio_xfer_32: self.sio_xfer_32,
+            sio_xfer_uart: self.sio_xfer_uart,
+            uart_tx: self.uart_tx.iter().copied().collect(),
+            uart_rx: self.uart_rx.iter().copied().collect(),
+            uart_err: self.uart_err,
+            uart_prev_irqsrc: self.uart_prev_irqsrc,
+            last_prefetch: self.last_prefetch,
+            prefetch_win: self.prefetch_win,
+            prefetch_thumb: self.prefetch_thumb,
+            cpu_bus: self.cpu_bus,
+            dma_bus: self.dma_bus,
+            dma_bus_valid: self.dma_bus_valid,
+            dma_open_pc: self.dma_open_pc,
+            dma_trigger_pc: self.dma_trigger_pc,
+            prefetch_enabled: self.prefetch_enabled,
+            pf_start: self.pf_start,
+            pf_end: self.pf_end,
+            pf_valid: self.pf_valid,
+            pf_branch_drain: self.pf_branch_drain,
+            fill_countdown: self.fill_countdown,
+            last_prefetched_pc: self.last_prefetched_pc,
+            bios_prefetch: self.bios_prefetch,
+            data_sequential_override: self.data_sequential_override,
+            block_batching: self.block_batching,
+            block_batch_any: self.block_batch_any,
+            block_batch_words: self.block_batch_words,
+            block_batch_erase_sum: self.block_batch_erase_sum,
+            block_batch_is_load: self.block_batch_is_load,
+            block_batch_fetch_width: self.block_batch_fetch_width,
+            block_batch_has_rom: self.block_batch_has_rom,
+            block_batch_raw: self.block_batch_raw,
+            access_wait_cycles: self.access_wait_cycles,
+            last_opcode_addr: self.last_opcode_addr,
+            last_data_addr: self.last_data_addr,
+            prev_data_addr: self.prev_data_addr,
+            prev_load_pc: self.prev_load_pc,
+            prev_load_is_stack: self.prev_load_is_stack,
+            current_pc: self.current_pc,
+            prev_addr: self.prev_addr,
+            prev_width: self.prev_width,
+            fetch_addr: self.fetch_addr,
+            fetch_width: self.fetch_width,
+            halted: self.halted,
+            halt_irq_mask: self.halt_irq_mask,
+            stopped: self.stopped,
+            wake_clear_mask: self.wake_clear_mask,
+            wake_latency: self.wake_latency,
+            woke_from_halt: self.woke_from_halt,
+            dma_stall_pending: self.dma_stall_pending,
+            bios_wait_exit_armed: self.bios_wait_exit_armed,
+            current_tcycle: self.current_tcycle,
+            timer0_raise_tick: self.timer0_raise_tick,
+            bios_protect: self.bios_protect,
+            video_armed: self.video_armed,
+            video_countdown: self.video_countdown,
+            pending_hblank_irq: self.pending_hblank_irq,
+            eeprom_burst_open: self.eeprom_burst_open,
+            ppu: self.ppu.export_state(),
+            dma: self.dma.export_state(),
+            timers: self.timers.export_state(),
+            apu: self.apu.export_state().map_err(|e| format!("bus: {e}"))?,
+            cartridge: self.cartridge.as_ref().map(|cart| cart.export_state()),
+            hle_bios: self.hle_bios,
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaMemoryBusState) -> Result<(), String> {
+        state.validate()?;
+        self.bios.copy_from_slice(&state.bios);
+        self.ewram.copy_from_slice(&state.ewram);
+        self.iwram.copy_from_slice(&state.iwram);
+        self.palette_ram.copy_from_slice(&state.palette_ram);
+        self.vram.copy_from_slice(&state.vram);
+        self.oam.copy_from_slice(&state.oam);
+        self.wait_cnt = state.wait_cnt;
+        self.ie = state.ie;
+        self.sif = state.sif;
+        self.ime = state.ime;
+        self.pending_ie = state.pending_ie;
+        self.pending_ime = state.pending_ime;
+        self.pending_if = state.pending_if;
+        self.pending_at = state.pending_at;
+        self.line_write_assert = state.line_write_assert;
+        self.irq_available = state.irq_available;
+        self.avail_queue = state.avail_queue;
+        self.irq_line = state.irq_line;
+        self.line_queue = state.line_queue;
+        self.postflg = state.postflg;
+        self.mem_control = state.mem_control;
+        self.keyinput = state.keyinput;
+        self.keycnt = state.keycnt;
+        self.siocnt = state.siocnt;
+        self.siodata8 = state.siodata8;
+        self.siodata32 = state.siodata32;
+        self.rcnt = state.rcnt;
+        self.joycnt = state.joycnt;
+        self.sio_xfer_cycles = state.sio_xfer_cycles;
+        self.sio_xfer_32 = state.sio_xfer_32;
+        self.sio_xfer_uart = state.sio_xfer_uart;
+        self.uart_tx = state.uart_tx.into_iter().collect();
+        self.uart_rx = state.uart_rx.into_iter().collect();
+        self.uart_err = state.uart_err;
+        self.uart_prev_irqsrc = state.uart_prev_irqsrc;
+        self.last_prefetch = state.last_prefetch;
+        self.prefetch_win = state.prefetch_win;
+        self.prefetch_thumb = state.prefetch_thumb;
+        self.cpu_bus = state.cpu_bus;
+        self.dma_bus = state.dma_bus;
+        self.dma_bus_valid = state.dma_bus_valid;
+        self.dma_open_pc = state.dma_open_pc;
+        self.dma_trigger_pc = state.dma_trigger_pc;
+        self.prefetch_enabled = state.prefetch_enabled;
+        self.pf_start = state.pf_start;
+        self.pf_end = state.pf_end;
+        self.pf_valid = state.pf_valid;
+        self.pf_branch_drain = state.pf_branch_drain;
+        self.fill_countdown = state.fill_countdown;
+        self.last_prefetched_pc = state.last_prefetched_pc;
+        self.bios_prefetch = state.bios_prefetch;
+        self.data_sequential_override = state.data_sequential_override;
+        self.block_batching = state.block_batching;
+        self.block_batch_any = state.block_batch_any;
+        self.block_batch_words = state.block_batch_words;
+        self.block_batch_erase_sum = state.block_batch_erase_sum;
+        self.block_batch_is_load = state.block_batch_is_load;
+        self.block_batch_fetch_width = state.block_batch_fetch_width;
+        self.block_batch_has_rom = state.block_batch_has_rom;
+        self.block_batch_raw = state.block_batch_raw;
+        self.access_wait_cycles = state.access_wait_cycles;
+        self.last_opcode_addr = state.last_opcode_addr;
+        self.last_data_addr = state.last_data_addr;
+        self.prev_data_addr = state.prev_data_addr;
+        self.prev_load_pc = state.prev_load_pc;
+        self.prev_load_is_stack = state.prev_load_is_stack;
+        self.current_pc = state.current_pc;
+        self.prev_addr = state.prev_addr;
+        self.prev_width = state.prev_width;
+        self.fetch_addr = state.fetch_addr;
+        self.fetch_width = state.fetch_width;
+        self.halted = state.halted;
+        self.halt_irq_mask = state.halt_irq_mask;
+        self.stopped = state.stopped;
+        self.wake_clear_mask = state.wake_clear_mask;
+        self.wake_latency = state.wake_latency;
+        self.woke_from_halt = state.woke_from_halt;
+        self.dma_stall_pending = state.dma_stall_pending;
+        self.bios_wait_exit_armed = state.bios_wait_exit_armed;
+        self.current_tcycle = state.current_tcycle;
+        self.timer0_raise_tick = state.timer0_raise_tick;
+        self.bios_protect = state.bios_protect;
+        self.video_armed = state.video_armed;
+        self.video_countdown = state.video_countdown;
+        self.pending_hblank_irq = state.pending_hblank_irq;
+        self.eeprom_burst_open = state.eeprom_burst_open;
+        self.ppu.import_state(state.ppu)?;
+        self.dma.import_state(state.dma)?;
+        self.timers.import_state(state.timers)?;
+        self.apu
+            .import_state(state.apu)
+            .map_err(|e| format!("bus: {e}"))?;
+        match (state.cartridge, self.cartridge.as_mut()) {
+            (Some(cart_state), Some(cart)) => cart.import_state(&cart_state)?,
+            (None, None) => {}
+            _ => return Err("bus: cartridge presence mismatch".to_string()),
+        }
+        self.hle_bios = state.hle_bios;
+        Ok(())
     }
 
     pub fn cartridge(&self) -> Option<&Cartridge> {

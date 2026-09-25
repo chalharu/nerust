@@ -4,7 +4,7 @@
 /// CLK falling edge (with RST and CS low) increments it; FLG reads high
 /// once the counter reaches the light level. Games count clocks to FLG
 /// (`00h` = blinding .. `E8h` = dark per GBATEK).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Solar {
     counter: u8,
     level: u8,

@@ -19,6 +19,7 @@ nerust_sound_filter.workspace = true
 thiserror.workspace = true
 typetag.workspace = true
 serde.workspace = true
+serde_bytes.workspace = true
 
 [features]
 # Test-ROM log sink speaking the mGBA debug-log protocol (0x4FFF600

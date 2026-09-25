@@ -31,7 +31,7 @@ pub(crate) type IrqReturnStack = Vec<(u32, [u32; 5])>;
 
 /// One sub-instruction effect; effects land at execute-stage points with
 /// the fixed bus-call order (access, then fetch-stream-break).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MicroOp {
     Internal,
     CommitAlu(AluEffect),
@@ -94,7 +94,7 @@ pub enum MicroOp {
 
 /// Block-batch opener: `is_load` selects the GBALoad/GBAStore word
 /// convention, `fetch_width` (4 ARM, 2 Thumb) the erase-floor N.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockStartEffect {
     pub is_load: bool,
     pub fetch_width: u8,
@@ -104,7 +104,7 @@ pub struct BlockStartEffect {
 /// the LDM^ conflict window); `writeback` is the LDM/STM base update via `set_r`; `ldm_conflict`
 /// arms the post-LDM^ bank-conflict window (ARM S-bit loads to the
 /// user bank outside USR/SYS).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockEndEffect {
     pub sp: Option<u32>,
     pub writeback: Option<(usize, u32)>,
@@ -115,7 +115,7 @@ pub struct BlockEndEffect {
 }
 
 /// Thumb LDR (literal): word-aligned pool address plus dest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PcRelRead {
     pub addr: u32,
     pub rd: usize,
@@ -125,7 +125,7 @@ pub struct PcRelRead {
 /// runs on pre-instruction state); values are read at execution, which
 /// is exact because no CPU register changes between the
 /// words of one instruction (bus ticks never touch registers).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockWord {
     pub addr: u32,
     /// Source/dest low register, or 14 for the PUSH LR slot.
@@ -155,7 +155,7 @@ pub struct BlockWord {
 /// like `BlockWord`); the access runs at execution through the same
 /// bus calls, including the batch/no-batch shape (Thumb batches, ARM
 /// does not) and sequential-touch shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockEmptyEffect {
     pub load: bool,
     pub addr: u32,
@@ -180,7 +180,7 @@ pub struct BlockEmptyEffect {
 }
 
 /// Multiply commit descriptor: raw word (`thumb` form in low 16 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MulEffect {
     pub instr: u32,
     pub thumb: bool,
@@ -189,7 +189,7 @@ pub struct MulEffect {
 /// Final execute-stage effect of a direct branch. The two preceding
 /// `Internal` ops model pipeline refill cycles; BL writes LR only when
 /// this final op executes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BranchEffect {
     pub offset: u32,
     pub link: bool,
@@ -197,7 +197,7 @@ pub struct BranchEffect {
 
 /// One data access. `addr = base +/- offset` is resolved at interpret
 /// time from live registers (matches handler evaluation order).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemAccess {
     pub width: u8,
     pub rd: usize,
@@ -220,7 +220,7 @@ pub struct MemAccess {
 }
 
 /// Register effect of an ALU-immediate instruction, fully decoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AluEffect {
     pub op: AluImmOp,
     pub rd: usize,
@@ -238,7 +238,7 @@ pub struct AluEffect {
 
 /// Covered ALU-immediate operations (full ARM DP-imm set; Thumb uses
 /// Mov/Cmp/Add/Sub).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AluImmOp {
     Mov,
     Add,

@@ -17,6 +17,7 @@ pub(crate) trait HleBiosBus {
     fn write_hle_bios32(&mut self, addr: u32, value: u32);
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) struct HleBiosOperation {
     source: u32,
     destination: u32,
@@ -35,7 +36,7 @@ pub(crate) struct HleBiosOperation {
     dst_odd_sram_drop: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 enum TransferPhase {
     Setup(u32),
     Read,
@@ -162,5 +163,112 @@ impl HleBiosOperation {
                 }
             }
         }
+    }
+
+    /// Phase 10 import validation: width is 2 or 4, phase countdowns stay
+    /// within their construction ceilings, and phases that decrement hold
+    /// a nonzero remainder (`Setup`/`Write` underflow on zero; `Complete`
+    /// saturates and may rest at zero).
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.width != 2 && self.width != 4 {
+            return Err(format!("hle: bad width {}", self.width));
+        }
+        if self.remaining == 0 && !matches!(self.phase, TransferPhase::Complete(_)) {
+            return Err("hle: no units left outside completion".to_string());
+        }
+        match self.phase {
+            TransferPhase::Setup(remaining) => {
+                if remaining > CPU_SET_SETUP_CYCLES {
+                    return Err(format!("hle: setup countdown too large: {remaining}"));
+                }
+            }
+            TransferPhase::Complete(remaining) => {
+                if remaining > CPU_SET_RETURN_CYCLES {
+                    return Err(format!("hle: complete countdown too large: {remaining}"));
+                }
+            }
+            TransferPhase::Read | TransferPhase::Write => {}
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Absolute path (not `super::`): `cargo coupling` mis-resolves `super`
+    // inside inline test modules to the file's parent module and reports a
+    // phantom `hle_operation -> bios` edge.
+    use crate::bios::hle_operation::{
+        CPU_SET_SETUP_CYCLES, HleBiosBus, HleBiosOperation, TransferPhase,
+    };
+
+    struct VecBus {
+        mem: Vec<u8>,
+    }
+
+    impl VecBus {
+        fn new() -> Self {
+            Self {
+                mem: vec![0; 0x100],
+            }
+        }
+
+        fn base(addr: u32) -> usize {
+            (addr - 0x0200_0000) as usize
+        }
+    }
+
+    impl HleBiosBus for VecBus {
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.mem[Self::base(addr)]
+        }
+        fn read16(&mut self, addr: u32) -> u16 {
+            let base = Self::base(addr);
+            u16::from_le_bytes([self.mem[base], self.mem[base + 1]])
+        }
+        fn read32(&mut self, addr: u32) -> u32 {
+            let base = Self::base(addr);
+            u32::from_le_bytes(self.mem[base..base + 4].try_into().unwrap())
+        }
+        fn write_hle_bios16(&mut self, addr: u32, value: u16) {
+            let base = Self::base(addr);
+            self.mem[base..base + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        fn write_hle_bios32(&mut self, addr: u32, value: u32) {
+            let base = Self::base(addr);
+            self.mem[base..base + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    #[test]
+    fn hle_operation_round_trips_mid_transfer() {
+        let mut op = HleBiosOperation::cpu_set(0x0200_0000, 0x0200_0040, 4).unwrap();
+        let mut bus = VecBus::new();
+        bus.mem[0] = 0x11;
+        bus.mem[1] = 0x22;
+        // Step into the transfer: setup drains, first read lands.
+        for _ in 0..CPU_SET_SETUP_CYCLES {
+            assert!(!op.step(&mut bus).complete);
+        }
+        assert!(!op.step(&mut bus).complete);
+        assert!(matches!(op.phase, TransferPhase::Write));
+
+        op.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&op).unwrap();
+        let decoded: HleBiosOperation = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let again = rmp_serde::to_vec_named(&decoded).unwrap();
+        assert_eq!(bytes, again);
+
+        let mut bad = decoded;
+        bad.width = 3;
+        assert!(bad.validate().is_err());
+        // Setup/Write always hold a remainder (plain decrement); only the
+        // saturating completion tail may rest at zero.
+        let mut bad = decoded;
+        bad.remaining = 0;
+        assert!(bad.validate().is_err());
+        bad.phase = TransferPhase::Complete(0);
+        assert!(bad.validate().is_ok());
     }
 }

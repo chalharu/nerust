@@ -2,7 +2,7 @@ use crc::{CRC_64_XZ, Crc};
 use serde::{Deserialize, Serialize};
 
 use crate::cartridge::header::GbaHeader;
-use crate::cartridge::save::SaveType;
+use crate::cartridge::save::SaveTypeSer;
 
 nerust_core_traits::declare_system_id!(pub GbaSystemId, "gba");
 
@@ -17,32 +17,6 @@ pub struct GbaRomIdentity {
     pub save_type: SaveTypeSer,
     pub rom_len: usize,
     pub rom_crc64: u64,
-}
-
-/// Serializable wrapper for SaveType
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SaveTypeSer {
-    None,
-    /// EEPROM with size unresolved: static ROM strings cannot tell 512B
-    /// from 8KB (latched from the first serial frame at runtime).
-    Eeprom,
-    Eeprom512,
-    Eeprom8k,
-    Sram,
-    Flash64,
-    Flash128,
-}
-
-impl From<SaveType> for SaveTypeSer {
-    fn from(v: SaveType) -> Self {
-        match v {
-            SaveType::None => Self::None,
-            SaveType::Eeprom512 | SaveType::Eeprom8k => Self::Eeprom,
-            SaveType::Sram => Self::Sram,
-            SaveType::Flash64 => Self::Flash64,
-            SaveType::Flash128 => Self::Flash128,
-        }
-    }
 }
 
 impl GbaRomIdentity {

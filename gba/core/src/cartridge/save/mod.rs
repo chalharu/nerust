@@ -19,6 +19,34 @@ pub enum SaveType {
     Flash128,
 }
 
+/// Serializable wrapper for SaveType, shared by the ROM identity and the
+/// persistence envelopes. Lives next to `SaveType` (leaf) so neither
+/// `rom_identity` nor `cartridge` gains a back edge: both depend on `save`.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum SaveTypeSer {
+    None,
+    /// EEPROM with size unresolved: static ROM strings cannot tell 512B
+    /// from 8KB (latched from the first serial frame at runtime).
+    Eeprom,
+    Eeprom512,
+    Eeprom8k,
+    Sram,
+    Flash64,
+    Flash128,
+}
+
+impl From<SaveType> for SaveTypeSer {
+    fn from(v: SaveType) -> Self {
+        match v {
+            SaveType::None => Self::None,
+            SaveType::Eeprom512 | SaveType::Eeprom8k => Self::Eeprom,
+            SaveType::Sram => Self::Sram,
+            SaveType::Flash64 => Self::Flash64,
+            SaveType::Flash128 => Self::Flash128,
+        }
+    }
+}
+
 pub trait SaveBackend: std::fmt::Debug + Send {
     fn save_type(&self) -> SaveType;
     fn read(&self, addr: u32, width: u8) -> u32;

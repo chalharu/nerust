@@ -35,7 +35,7 @@ pub struct DmaTransfer {
     pub single_unit: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
 struct DmaChannel {
     source: u32,
     destination: u32,
@@ -71,6 +71,56 @@ struct DmaChannel {
 pub struct GbaDma {
     channels: [DmaChannel; 4],
     completion_interrupts: u16,
+}
+
+/// Phase 10 wire state: all four channels plus latched completion IRQs.
+/// `DmaTransfer` is a transient per-unit descriptor and never enters the DTO.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaDmaState {
+    channels: [DmaChannel; 4],
+    completion_interrupts: u16,
+}
+
+impl GbaDmaState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (index, channel) in self.channels.iter().enumerate() {
+            // `remaining` is NOT bounded by `count`: sound-FIFO DMA
+            // re-latches `remaining = 4` with a zero count register.
+            // The hard ceiling is the DMA3 16-bit count.
+            if channel.remaining > 0x1_0000 {
+                return Err(format!(
+                    "dma{index}: remaining out of range: {}",
+                    channel.remaining
+                ));
+            }
+            // Armed by trigger paths to 3 (4 on the burst head); counts down.
+            if channel.pending > 8 {
+                return Err(format!(
+                    "dma{index}: pending out of range: {}",
+                    channel.pending
+                ));
+            }
+            // `finish_unit` decrements unconditionally on the unit path, so
+            // an active non-completing channel must hold at least one unit.
+            // (active + remaining 0 + completing is the transient tail.)
+            if channel.active && channel.remaining == 0 && !channel.completing {
+                return Err(format!("dma{index}: active channel with no units left"));
+            }
+            // Per-burst idle ticks (a 64K-unit burst accrues at most ~33M);
+            // the step path adds to it without saturation.
+            if channel.burst_idle > 0x1000_0000 {
+                return Err(format!("dma{index}: burst idle out of range"));
+            }
+        }
+        // Latched only as 1 << (8 + channel) for channels 0-3.
+        if self.completion_interrupts & !0x0F00 != 0 {
+            return Err(format!(
+                "dma: completion interrupts out of range: {:#X}",
+                self.completion_interrupts
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl GbaDma {
@@ -184,6 +234,20 @@ impl GbaDma {
                 dma.pending = pending;
             }
         }
+    }
+
+    pub(crate) fn export_state(&self) -> GbaDmaState {
+        GbaDmaState {
+            channels: self.channels,
+            completion_interrupts: self.completion_interrupts,
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaDmaState) -> Result<(), String> {
+        state.validate()?;
+        self.channels = state.channels;
+        self.completion_interrupts = state.completion_interrupts;
+        Ok(())
     }
 
     /// Produce at most one bus transfer. Lower-numbered active channels have priority.
@@ -740,5 +804,59 @@ mod tests {
         }
         // Sources advance by 4 despite the 16-bit control bit.
         assert_eq!(units[1].0 - units[0].0, 4);
+    }
+
+    #[test]
+    fn dma_state_round_trips_mid_burst() {
+        let mut dma = GbaDma::default();
+        dma.write(0x040000D4, 0x1000);
+        dma.write(0x040000D6, 0x0200);
+        dma.write(0x040000D8, 0x2000);
+        dma.write(0x040000DA, 0x0300);
+        dma.write(0x040000DC, 4);
+        dma.write(0x040000DE, 0xC400);
+        dma.trigger_channel(3, DmaTrigger::Immediate);
+        // Advance into the burst: pending drains, first unit issues.
+        let mut issued = 0;
+        for _ in 0..30 {
+            dma.tick_pending();
+            if dma.step(0, &|_| 0).is_some() {
+                issued += 1;
+                break;
+            }
+        }
+        assert_eq!(issued, 1);
+        assert!(dma.is_active());
+
+        let state = dma.export_state();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaDmaState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaDma::default();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+        // The restored channel resumes the same burst.
+        assert!(restored.is_active());
+        let mut bad = restored.export_state();
+        bad.channels[0].remaining = 0x1_0001;
+        assert!(bad.validate().is_err());
+        bad = restored.export_state();
+        bad.channels[0].pending = 9;
+        assert!(bad.validate().is_err());
+        // An active non-completing channel always holds a unit (the unit
+        // path decrements unconditionally).
+        bad = restored.export_state();
+        bad.channels[0].remaining = 0;
+        bad.channels[0].active = true;
+        bad.channels[0].completing = false;
+        assert!(bad.validate().is_err());
+        // The transient completion tail is legitimate.
+        bad.channels[0].completing = true;
+        assert!(bad.validate().is_ok());
+        bad = restored.export_state();
+        bad.channels[0].burst_idle = 0x1000_0001;
+        assert!(bad.validate().is_err());
     }
 }

@@ -2,6 +2,9 @@ pub mod micro_op;
 pub(crate) mod semantics;
 
 use crate::cpu::micro_op::HLE_IRQ_RETURN_TRAMPOLINE;
+use crate::cpu::micro_op::{
+    AluEffect, BlockEmptyEffect, BlockEndEffect, BlockWord, MemAccess, MicroOp, PcRelRead,
+};
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -226,6 +229,138 @@ impl Default for GbaCpu {
     }
 }
 
+/// Phase 10 wire state: registers, fetch pipeline, in-flight micro-ops and
+/// the HLE IRQ return stack. `#[cfg(test)]` helpers never enter the DTO.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaCpuState {
+    regs: CpuRegisters,
+    pipeline: [u32; 2],
+    irq_return_stack: Vec<(u32, [u32; 5])>,
+    micro_queue: std::collections::VecDeque<MicroOp>,
+}
+
+impl GbaCpuState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        let mode = self.regs.cpsr() & 0x1F;
+        if !matches!(mode, 0x10 | 0x11 | 0x12 | 0x13 | 0x17 | 0x1B | 0x1F) {
+            return Err(format!("cpu: invalid mode bits {mode:#X}"));
+        }
+        // `set_pc` masks r15 (Thumb: !1, ARM: !3), so bit 0 is always clear
+        // and bit 1 is clear outside Thumb.
+        let pc = self.regs.r(15);
+        if pc & 1 != 0 {
+            return Err(format!("cpu: misaligned pc {pc:#X}"));
+        }
+        if !self.regs.cpsr_t() && pc & 2 != 0 {
+            return Err(format!("cpu: misaligned ARM pc {pc:#X}"));
+        }
+        // Armed by `arm_ldm_conflict` to 2, aged one T-cycle at a time.
+        if self.regs.ldm_conflict_window() > 2 {
+            return Err(format!(
+                "cpu: ldm_conflict out of window: {}",
+                self.regs.ldm_conflict_window()
+            ));
+        }
+        if self.irq_return_stack.len() > 32 {
+            return Err(format!(
+                "cpu: irq_return_stack too deep: {}",
+                self.irq_return_stack.len()
+            ));
+        }
+        if self.micro_queue.len() > 256 {
+            return Err(format!(
+                "cpu: micro_queue too long: {}",
+                self.micro_queue.len()
+            ));
+        }
+        for op in &self.micro_queue {
+            validate_micro_op(op)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_reg_idx(name: &str, idx: usize) -> Result<(), String> {
+    if idx > 15 {
+        return Err(format!("cpu: {name} register out of range: {idx}"));
+    }
+    Ok(())
+}
+
+fn validate_mem_access(access: &MemAccess) -> Result<(), String> {
+    if !matches!(access.width, 1 | 2 | 4) {
+        return Err(format!("cpu: bad access width {}", access.width));
+    }
+    validate_reg_idx("mem rd", access.rd)?;
+    validate_reg_idx("mem rn", access.rn)?;
+    if let Some(reg) = access.offset_register {
+        validate_reg_idx("mem offset", reg)?;
+    }
+    Ok(())
+}
+
+fn validate_micro_op(op: &MicroOp) -> Result<(), String> {
+    match op {
+        MicroOp::MemRead(access) | MicroOp::MemWrite(access) => validate_mem_access(access),
+        MicroOp::PcRelRead(PcRelRead { rd, .. }) => validate_reg_idx("pcrel rd", *rd),
+        MicroOp::BlockWord(BlockWord { reg, .. }) => {
+            if *reg > 15 {
+                return Err(format!("cpu: block word register out of range: {reg}"));
+            }
+            Ok(())
+        }
+        MicroOp::BlockEnd(BlockEndEffect { writeback, .. }) => {
+            if let Some((reg, _)) = writeback {
+                validate_reg_idx("block writeback", *reg)?;
+            }
+            Ok(())
+        }
+        MicroOp::BlockEmpty(BlockEmptyEffect { writeback_reg, .. }) => {
+            if let Some((reg, _)) = writeback_reg {
+                validate_reg_idx("block empty writeback", *reg)?;
+            }
+            Ok(())
+        }
+        MicroOp::CommitAlu(AluEffect { rd, rn, .. }) => {
+            validate_reg_idx("alu rd", *rd)?;
+            validate_reg_idx("alu rn", *rn)
+        }
+        MicroOp::Internal
+        | MicroOp::CommitDpReg(_)
+        | MicroOp::CommitMul(_)
+        | MicroOp::CommitSwp(_)
+        | MicroOp::CommitPsr(_)
+        | MicroOp::CommitThumb(_)
+        | MicroOp::BlHigh(_)
+        | MicroOp::BlLow(_)
+        | MicroOp::Bx(_)
+        | MicroOp::TrapSwi(_)
+        | MicroOp::TrapUnd
+        | MicroOp::TakenBranch(_)
+        | MicroOp::BlockStart(_) => Ok(()),
+    }
+}
+
+impl GbaCpu {
+    pub(crate) fn export_state(&self) -> GbaCpuState {
+        GbaCpuState {
+            regs: self.regs.clone(),
+            pipeline: self.pipeline,
+            irq_return_stack: self.irq_return_stack.clone(),
+            micro_queue: self.micro_queue.clone(),
+        }
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaCpuState) -> Result<(), String> {
+        state.validate()?;
+        self.regs = state.regs;
+        self.pipeline = state.pipeline;
+        self.irq_return_stack = state.irq_return_stack;
+        self.micro_queue = state.micro_queue;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +482,74 @@ mod tests {
         assert_eq!(cpu.regs.r(0), 0);
         cpu.step(&mut bus);
         assert_eq!(cpu.regs.r(0), 1);
+    }
+
+    #[test]
+    fn cpu_state_round_trips_mid_instruction() {
+        let mut cpu = GbaCpu::post_bios();
+        let mut bus = GbaMemoryBus::new();
+        let start = 0x02000000;
+        bus.write32(start, 0xE8900007); // LDMIA R0,{R0-R2}: multi-op block
+        bus.write32(start + 4, 0xE3A03009); // MOV R3,#9
+        cpu.regs.set_pc(start);
+        fill_pipeline(&mut cpu.regs, &mut bus, &mut cpu.pipeline);
+        bus.take_access_wait_cycles();
+        // Drain a single micro-op: the block transfer stays in flight.
+        assert!(cpu.step_op(&mut bus).is_some());
+        assert!(!cpu.micro_queue.is_empty());
+        // A nested IRQ return slot is live as well.
+        cpu.irq_return_stack.push((start + 8, [1, 2, 3, 4, 5]));
+
+        let state = cpu.export_state();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaCpuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaCpu::post_bios();
+        restored.import_state(decoded).unwrap();
+        let again = rmp_serde::to_vec_named(&restored.export_state()).unwrap();
+        assert_eq!(bytes, again);
+        assert!(
+            restored
+                .micro_queue
+                .iter()
+                .any(|op| matches!(op, MicroOp::BlockWord(_)))
+        );
+        assert_eq!(restored.irq_return_stack.len(), 1);
+    }
+
+    #[test]
+    fn cpu_state_rejects_garbage() {
+        let cpu = GbaCpu::post_bios();
+        let mut state = cpu.export_state();
+        state.validate().unwrap();
+        // Invalid mode bits.
+        state.regs.set_cpsr(0x1C);
+        assert!(state.validate().is_err());
+        // Oversized queue.
+        state = cpu.export_state();
+        state
+            .micro_queue
+            .resize(300, crate::cpu::micro_op::MicroOp::Internal);
+        assert!(state.validate().is_err());
+        // Bad access width.
+        state = cpu.export_state();
+        state
+            .micro_queue
+            .push_back(MicroOp::MemRead(crate::cpu::micro_op::MemAccess {
+                width: 3,
+                rd: 0,
+                rn: 0,
+                offset: 0,
+                offset_register: None,
+                subtract: false,
+                is_sp: false,
+                signed_load: false,
+                post_indexed: false,
+                writeback: false,
+                halfword_odd_quirk: false,
+                store_value: None,
+            }));
+        assert!(state.validate().is_err());
     }
 }

@@ -1,12 +1,48 @@
 use crate::cartridge::Cartridge;
-use crate::cpu::GbaCpu;
-use crate::memory::GbaMemoryBus;
+use crate::cpu::{GbaCpu, GbaCpuState};
+use crate::memory::{GbaMemoryBus, GbaMemoryBusState};
 
 pub struct GbaSystem {
     pub cpu: GbaCpu,
     pub bus: GbaMemoryBus,
     tick: u64,
     cpu_cycles_remaining: u32,
+}
+
+/// Phase 10 wire state: the T-cycle clock, the in-flight instruction
+/// remainder, CPU and full bus state.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GbaSystemState {
+    tick: u64,
+    cpu_cycles_remaining: u32,
+    cpu: GbaCpuState,
+    bus: GbaMemoryBusState,
+}
+
+impl GbaSystemState {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        // The largest single charges are IRQ entries and HLE steps;
+        // anything above a frame of T-cycles cannot be legitimate.
+        if self.cpu_cycles_remaining > 280_896 {
+            return Err(format!(
+                "system: cpu_cycles_remaining out of range: {}",
+                self.cpu_cycles_remaining
+            ));
+        }
+        self.cpu.validate().map_err(|e| format!("system: {e}"))?;
+        self.bus.validate().map_err(|e| format!("system: {e}"))?;
+        // Absolute-time fields across devices share the T-cycle clock.
+        if self.bus.current_tcycle > self.tick.saturating_add(1024) {
+            return Err("system: bus clock ahead of system tick".to_string());
+        }
+        if self.tick > self.bus.current_tcycle.saturating_add(1024) {
+            return Err("system: system tick ahead of bus clock".to_string());
+        }
+        if self.bus.timers.current_cycle > self.tick.saturating_add(1024) {
+            return Err("system: timer clock ahead of system tick".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl GbaSystem {
@@ -67,6 +103,24 @@ impl GbaSystem {
 
     pub fn cpu_mut(&mut self) -> &mut GbaCpu {
         &mut self.cpu
+    }
+
+    pub(crate) fn export_state(&self) -> Result<GbaSystemState, String> {
+        Ok(GbaSystemState {
+            tick: self.tick,
+            cpu_cycles_remaining: self.cpu_cycles_remaining,
+            cpu: self.cpu.export_state(),
+            bus: self.bus.export_state()?,
+        })
+    }
+
+    pub(crate) fn import_state(&mut self, state: GbaSystemState) -> Result<(), String> {
+        state.validate()?;
+        self.tick = state.tick;
+        self.cpu_cycles_remaining = state.cpu_cycles_remaining;
+        self.cpu.import_state(state.cpu)?;
+        self.bus.import_state(state.bus)?;
+        Ok(())
     }
 
     pub fn frame_buffer(&self) -> &[u32] {
