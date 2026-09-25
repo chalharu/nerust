@@ -37,17 +37,63 @@ jobs:
         run: |
           cargo clippy --locked --all-targets --quiet \
             -p nerust_nes_core -p nerust_persistence \
-            -p nerust_gba_core -p nerust_gba_rom_test
+            -p nerust_gba_core -p nerust_gba_rom_test \
+            -p nerust_gba_factory -p nerust_gba_device -p nerust_gba_settings
       - name: Unit tests (default members)
         run: |
           cargo test --locked --quiet \
             -p nerust_nes_core -p nerust_persistence \
-            -p nerust_gba_core -p nerust_gba_rom_test
+            -p nerust_gba_core -p nerust_gba_rom_test \
+            -p nerust_gba_factory -p nerust_gba_device -p nerust_gba_settings
       - name: Support crate tests
         run: |
           cargo test --locked -p nerust_render_traits --lib --quiet
           cargo test --locked -p nerust_render_filters --lib --quiet
           cargo test --locked -p nerust_timer --lib --quiet
+      - name: Save Cargo registry cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+  test-root:
+    name: Test root package (Tao)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libasound2-dev \
+            libcubeb-dev
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: 1.98.0
+      - name: Restore Cargo registry cache
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-test-root-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-root-
+      - name: Unit tests (root package)
+        run: cargo test --locked -p nerust --lib --features tao,wgpu --quiet
+        env:
+          LIBCUBEB_SYS_USE_PKG_CONFIG: 1
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
