@@ -5,11 +5,31 @@ pub(crate) fn read_color(palette: &[u8], index: usize) -> u16 {
 
 /// Expand BGR555 to RGBA8888 with bit-repeat (`v<<3|v>>2`), close to `v*255/31`.
 pub(crate) fn rgba8888(color: u16) -> u32 {
-    let r = ((((color) & 0x1F) << 3) | (((color) & 0x1F) >> 2)) as u8;
-    let g = ((((color >> 5) & 0x1F) << 3) | (((color >> 5) & 0x1F) >> 2)) as u8;
-    let b = ((((color >> 10) & 0x1F) << 3) | (((color >> 10) & 0x1F) >> 2)) as u8;
-    u32::from_le_bytes([r, g, b, 0xFF])
+    RGBA_LUT[usize::from(color & 0x7FFF)]
 }
+
+const fn expand_channel(value: u16) -> u8 {
+    (((value & 0x1F) << 3) | ((value & 0x1F) >> 2)) as u8
+}
+
+const fn build_rgba_lut() -> [u32; 32768] {
+    let mut table = [0u32; 32768];
+    let mut color = 0usize;
+    while color < 32768 {
+        let c = color as u16;
+        let r = expand_channel(c);
+        let g = expand_channel(c >> 5);
+        let b = expand_channel(c >> 10);
+        table[color] = u32::from_le_bytes([r, g, b, 0xFF]);
+        color += 1;
+    }
+    table
+}
+
+/// Bit-repeat expansion is a pure function of 15 bits: a compile-time
+/// table replaces ~15 ALU ops per pixel with one load (bit-exact: the
+/// same formula, evaluated at compile time).
+static RGBA_LUT: [u32; 32768] = build_rgba_lut();
 
 pub(crate) fn alpha_blend(first: u16, second: u16, eva: u8, evb: u8) -> u16 {
     // Blend rounds to nearest (not truncation). The hardware

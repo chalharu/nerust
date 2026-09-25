@@ -356,13 +356,7 @@ impl GbaPpu {
         // segments at mid-fetch writes (`render_prefix_up_to`) or at line
         // end, each exactly once with contemporary state.
         if self.vcount < HEIGHT as u16 && self.cycle == FETCH_START_CYCLES {
-            self.render_pixel(
-                0,
-                self.vcount as usize,
-                vram,
-                palette,
-                oam,
-            );
+            self.render_pixel(0, self.vcount as usize, vram, palette, oam);
             self.rendered_up_to_x = 1;
         }
         if self.cycle == DISPCNT_LATCH_CYCLES {
@@ -428,8 +422,12 @@ impl GbaPpu {
         );
         let end = x_end.min(WIDTH);
         let y = self.vcount as usize;
-        for x in start..end {
-            self.render_pixel(x, y, vram, palette, oam);
+        if self.lean_span_applies() {
+            self.render_span_lean(start, end, y, vram, palette);
+        } else {
+            for x in start..end {
+                self.render_pixel(x, y, vram, palette, oam);
+            }
         }
         self.rendered_up_to_x = end as u8;
     }
@@ -442,8 +440,72 @@ impl GbaPpu {
             return;
         }
         let y = self.vcount as usize;
-        for x in start..WIDTH {
-            self.render_pixel(x, y, vram, palette, oam);
+        if self.lean_span_applies() {
+            self.render_span_lean(start, WIDTH, y, vram, palette);
+        } else {
+            for x in start..WIDTH {
+                self.render_pixel(x, y, vram, palette, oam);
+            }
+        }
+    }
+
+    /// Lean-span gate: no forced blank, no windows (mask is constantly
+    /// 0x3F), no OBJ layer, `bldcnt == 0` (effects identity: mode 0 with
+    /// empty masks returns the top pixel for every non-transparent
+    /// source, and BG/backdrop pixels are never semi-transparent), no
+    /// greenswap. Registers are constant across the span (prefix spans
+    /// render before the triggering write; remainder spans at line end),
+    /// so one gate check covers every pixel in it.
+    fn lean_span_applies(&self) -> bool {
+        !self.forced_blank()
+            && (self.registers.dispcnt >> 13) & 7 == 0
+            && self.registers.dispcnt & (1 << 12) == 0
+            && self.registers.bldcnt == 0
+            && self.registers.greenswap & 1 == 0
+    }
+
+    /// Lean span render: pixel-identical to `render_pixel` under
+    /// [`lean_span_applies`](Self::lean_span_applies), minus per-pixel
+    /// window/effects/OBJ machinery. BG fetches (including the shared
+    /// VRAM latch) run through the identical `bg::pixel` path in x
+    /// order, so latch evolution matches exactly; priority ties keep
+    /// insertion order via strict `<`, exactly like the top-two
+    /// selection (backdrop first, then BG0-3).
+    fn render_span_lean(
+        &mut self,
+        start: usize,
+        end: usize,
+        y: usize,
+        vram: &[u8],
+        palette: &[u8],
+    ) {
+        // Layer enables gate on latched AND live (same as render_pixel).
+        let enables = self.line.enable & self.registers.dispcnt;
+        let backdrop = color::read_color(palette, 0);
+        for x in start..end {
+            // Backdrop: priority 4, layer 5 (rank 6).
+            let mut top_color = backdrop;
+            let mut top_key = (4u8, 6u8);
+            for bg_index in 0..4 {
+                if enables & (1 << (8 + bg_index)) != 0
+                    && let Some(pixel) = bg::pixel(
+                        &self.registers,
+                        (self.internal_x, self.internal_y),
+                        (vram, palette),
+                        bg_index,
+                        (x, y),
+                        &mut self.bg_latch,
+                        self.registers.mosaic,
+                    )
+                {
+                    let key = (pixel.priority, layer_rank(pixel.layer));
+                    if key < top_key {
+                        top_key = key;
+                        top_color = pixel.color;
+                    }
+                }
+            }
+            self.frame[y * WIDTH + x] = color::rgba8888(top_color);
         }
     }
 
@@ -1420,5 +1482,119 @@ mod tests {
         let mut bad = restored.export_state();
         bad.cycle = 1232;
         assert!(bad.validate().is_err());
+    }
+
+    /// Lean-span differential: `render_span_lean` must be pixel- and
+    /// latch-identical to the per-pixel `render_pixel` loop wherever
+    /// the gate applies (goldens only cover shipped scenes; this pins
+    /// the gate logic across modes, priorities, flips and mosaic).
+    /// Distinct colors per index catch priority/selection drift;
+    /// transparent tile pixels catch backdrop handling; the latch
+    /// comparison catches fetch-sequence drift (latch feeds later
+    /// above-boundary fetches).
+    #[test]
+    fn lean_span_matches_pixel_loop_where_gate_applies() {
+        fn pattern_memories() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+            let mut vram = vec![0; 0x18000];
+            let mut palette = vec![0; 0x400];
+            let oam = vec![0; 0x400];
+            // Palette: backdrop blue, then red/green/white.
+            palette[0..2].copy_from_slice(&0x7C00u16.to_le_bytes());
+            palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+            palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
+            palette[6..8].copy_from_slice(&0x7FFFu16.to_le_bytes());
+            // Tiles (4bpp, CBB 0): tile 0 opaque red, tile 1 mixed
+            // transparent/red, tile 2 opaque green.
+            for b in vram.iter_mut().take(32) {
+                *b = 0x11;
+            }
+            for (i, b) in vram.iter_mut().skip(32).take(32).enumerate() {
+                *b = if i % 2 == 0 { 0x10 } else { 0x01 };
+            }
+            for b in vram.iter_mut().skip(64).take(32) {
+                *b = 0x22;
+            }
+            // BG0 map (SBB 0): tile 0, flipped tile 1, tile 2.
+            vram[0..2].copy_from_slice(&0u16.to_le_bytes());
+            vram[2..4].copy_from_slice(&((1 | (1 << 10) | (1 << 11)) as u16).to_le_bytes());
+            vram[4..6].copy_from_slice(&2u16.to_le_bytes());
+            for i in 3..32 {
+                vram[2 * i..2 * i + 2].copy_from_slice(&((i % 3) as u16).to_le_bytes());
+            }
+            // BG1 map (SBB 1): tile 2 over the left half, tile 0 right.
+            for i in 0..32 {
+                let tile = if i < 16 { 2u16 } else { 0u16 };
+                vram[0x800 + 2 * i..0x800 + 2 * i + 2].copy_from_slice(&tile.to_le_bytes());
+            }
+            (vram, palette, oam)
+        }
+
+        // (dispcnt, bg0cnt, bg1cnt-or-0xFFFF, hofs0, vofs0, mosaic)
+        let cases: [(u16, u16, u16, u16, u16, u16); 5] = [
+            // Single BG, scrolled.
+            (1 << 8, 1, 0xFFFF, 7, 5, 0),
+            // Two BGs, BG1 priority 0 over BG0 priority 1.
+            ((1 << 8) | (1 << 9), 1, 1 << 8, 0, 0, 0),
+            // 256-color BG0 (bit 7) with flips in the map.
+            (1 << 8, 1 | (1 << 7), 0xFFFF, 3, 9, 0),
+            // Mosaic on (gate allows: correctness via identical bg::pixel).
+            (1 << 8, 1, 0xFFFF, 0, 0, 0x0033),
+            // Mode 3 bitmap BG2.
+            (3 | (1 << 10), 0, 0xFFFF, 0, 0, 0),
+        ];
+        for (dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic) in cases {
+            let build = || {
+                let (vram, palette, oam) = pattern_memories();
+                let mut ppu = GbaPpu::new();
+                steady_dispcnt(&mut ppu, dispcnt, &vram, &palette, &oam);
+                if bg0cnt != 0 || dispcnt & 7 == 0 {
+                    ppu.write_register(0x04000008, bg0cnt, &vram, &palette, &oam);
+                }
+                if bg1cnt != 0xFFFF {
+                    ppu.write_register(0x0400000A, bg1cnt, &vram, &palette, &oam);
+                }
+                ppu.write_register(0x04000010, hofs, &vram, &palette, &oam);
+                ppu.write_register(0x04000012, vofs, &vram, &palette, &oam);
+                if mosaic != 0 {
+                    ppu.write_register(0x0400004C, mosaic, &vram, &palette, &oam);
+                }
+                // Pixel 0 at its boundary tick (both paths start at x=1).
+                for _ in 0..FETCH_START_CYCLES {
+                    ppu.step(&vram, &palette, &oam);
+                }
+                (ppu, vram, palette, oam)
+            };
+            let (mut a, vram, palette, oam) = build();
+            let (mut b, _, _, _) = build();
+            assert!(a.lean_span_applies(), "gate must apply: {dispcnt:#X}");
+            a.render_span_lean(1, WIDTH, 0, &vram, &palette);
+            for x in 1..WIDTH {
+                b.render_pixel(x, 0, &vram, &palette, &oam);
+            }
+            assert_eq!(
+                a.frame_buffer(),
+                b.frame_buffer(),
+                "frame diverged: dispcnt={dispcnt:#X}"
+            );
+            assert_eq!(a.bg_latch, b.bg_latch, "latch diverged: {dispcnt:#X}");
+        }
+
+        // Gate rejects every disqualifier.
+        let (vram, palette, oam) = pattern_memories();
+        let mut ppu = GbaPpu::new();
+        steady_dispcnt(&mut ppu, 1 << 8, &vram, &palette, &oam);
+        assert!(ppu.lean_span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette, &oam); // forced blank
+        assert!(!ppu.lean_span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 13), &vram, &palette, &oam); // WIN0
+        assert!(!ppu.lean_span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 12), &vram, &palette, &oam); // OBJ
+        assert!(!ppu.lean_span_applies());
+        ppu.write_register(0x04000000, 1 << 8, &vram, &palette, &oam);
+        ppu.write_register(0x04000050, 1, &vram, &palette, &oam); // bldcnt != 0
+        assert!(!ppu.lean_span_applies());
+        ppu.write_register(0x04000050, 0, &vram, &palette, &oam);
+        ppu.write_register(0x04000002, 1, &vram, &palette, &oam); // greenswap
+        assert!(!ppu.lean_span_applies());
     }
 }
