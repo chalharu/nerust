@@ -836,8 +836,18 @@ impl GbaApu {
     /// Each drained sample passes the stereo DC-block HPF
     /// (`nerust_sound_filter::IirFilter`, rebuilt on device-rate change).
     pub fn drain_resampled(&mut self, rate: u32) -> Vec<StereoSample> {
+        let mut out = Vec::new();
+        self.drain_resampled_into(rate, &mut out);
+        out
+    }
+
+    /// Hot-path half of [`drain_resampled`](Self::drain_resampled):
+    /// fills the caller-owned buffer (cleared first, capacity reused)
+    /// instead of allocating per frame. Bit-identical output.
+    pub fn drain_resampled_into(&mut self, rate: u32, out: &mut Vec<StereoSample>) {
+        out.clear();
         if self.mix_buffer.is_empty() || rate == 0 {
-            return Vec::new();
+            return;
         }
         if self.output_hpf_rate != rate {
             self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
@@ -850,8 +860,9 @@ impl GbaApu {
         let buf = &self.mix_buffer;
         // Pre-size the output (one realloc-free push per sample): the
         // resampler emits roughly one output per `step` grid samples.
+        // Capacity persists across frames via the caller-owned buffer.
         let estimate = ((buf.len() as f64 - pos) / step) as usize + 1;
-        let mut out = Vec::with_capacity(estimate);
+        out.reserve(estimate);
         while (pos as usize) + 1 < buf.len() {
             let i = pos as usize;
             let frac = (pos - i as f64) as f32;
@@ -871,11 +882,10 @@ impl GbaApu {
         }
         self.rs_pos = pos - keep_from as f64;
         self.mix_buffer.drain(..keep_from);
-        for sample in &mut out {
+        for sample in out.iter_mut() {
             sample.left = self.output_hpf_l.step(sample.left);
             sample.right = self.output_hpf_r.step(sample.right);
         }
-        out
     }
     /// Mutable tail of the grid mix buffer (driver-voice fold-in).
     pub fn mix_tail_mut(&mut self) -> Option<&mut (f32, f32)> {
