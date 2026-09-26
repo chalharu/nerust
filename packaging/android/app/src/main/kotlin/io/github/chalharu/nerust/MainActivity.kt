@@ -239,6 +239,7 @@ class MainActivity :
     private var controlsScalePercent = 100
     private var controlsVerticalOffsetPercent = 0
     private var controlsHaptics = true
+    private var controlsShouldersVisible = true
     private lateinit var sensorManager: SensorManager
     private var accelerometer: Sensor? = null
     private var activityResumed = false
@@ -503,12 +504,14 @@ class MainActivity :
         scalePercent: Int,
         verticalOffsetPercent: Int,
         haptics: Boolean,
+        shouldersVisible: Boolean,
     ) {
         controlsVisibility = visibility
         controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
         controlsScalePercent = scalePercent.coerceIn(50, 150)
         controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
         controlsHaptics = haptics
+        controlsShouldersVisible = shouldersVisible
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
@@ -1270,6 +1273,7 @@ class MainActivity :
             controlsOpacityPercent,
             controlsScalePercent,
             controlsVerticalOffsetPercent,
+            controlsShouldersVisible,
         ).apply {
             tag = CONTROLS_OVERLAY_TAG
             layoutParams =
@@ -2056,6 +2060,7 @@ private class ControlsOverlayView(
     opacityPercent: Int,
     private val scalePercent: Int,
     private val verticalOffsetPercent: Int,
+    private val shouldersVisible: Boolean,
 ) : View(context) {
     private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
@@ -2120,7 +2125,7 @@ private class ControlsOverlayView(
 
         val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
         drawFloatingJoystick(canvas, joystick)
-        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent).forEach { zone ->
+        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
@@ -2218,6 +2223,7 @@ internal fun controlsLayout(
     height: Float,
     scalePercent: Int = 100,
     verticalOffsetPercent: Int = 0,
+    shouldersVisible: Boolean = true,
 ): List<OverlayZoneSpec> {
     val portrait = height >= width
     val base = min(width, height)
@@ -2244,50 +2250,64 @@ internal fun controlsLayout(
     val shoulderMarginX = width * 0.02f
     val shoulderTop = controlTop + base * 0.015f + verticalOffset
 
-    return listOf(
-        OverlayZoneSpec(
-            x = actionLeft,
-            y = actionTop,
-            width = actionSize,
-            height = actionSize,
-            label = "B",
-        ),
-        OverlayZoneSpec(
-            x = actionLeft + actionSize + actionGap,
-            y = actionTop,
-            width = actionSize,
-            height = actionSize,
-            label = "A",
-        ),
-        OverlayZoneSpec(
-            x = shoulderMarginX,
-            y = shoulderTop,
-            width = shoulderWidth,
-            height = shoulderHeight,
-            label = "L",
-        ),
-        OverlayZoneSpec(
-            x = width - shoulderMarginX - shoulderWidth,
-            y = shoulderTop,
-            width = shoulderWidth,
-            height = shoulderHeight,
-            label = "R",
-        ),
-        OverlayZoneSpec(
-            x = centerStartX,
-            y = centerTop,
-            width = centerButtonWidth,
-            height = centerButtonHeight,
-            label = "SELECT",
-        ),
-        OverlayZoneSpec(
-            x = centerStartX + centerButtonWidth + centerGap,
-            y = centerTop,
-            width = centerButtonWidth,
-            height = centerButtonHeight,
-            label = "START",
-        ),
-    )
+    return buildList {
+        add(
+            OverlayZoneSpec(
+                x = actionLeft,
+                y = actionTop,
+                width = actionSize,
+                height = actionSize,
+                label = "B",
+            ),
+        )
+        add(
+            OverlayZoneSpec(
+                x = actionLeft + actionSize + actionGap,
+                y = actionTop,
+                width = actionSize,
+                height = actionSize,
+                label = "A",
+            ),
+        )
+        if (shouldersVisible) {
+            add(
+                OverlayZoneSpec(
+                    x = shoulderMarginX,
+                    y = shoulderTop,
+                    width = shoulderWidth,
+                    height = shoulderHeight,
+                    label = "L",
+                ),
+            )
+            add(
+                OverlayZoneSpec(
+                    x = width - shoulderMarginX - shoulderWidth,
+                    y = shoulderTop,
+                    width = shoulderWidth,
+                    height = shoulderHeight,
+                    label = "R",
+                ),
+            )
+        }
+        add(
+            OverlayZoneSpec(
+                x = centerStartX,
+                y = centerTop,
+                width = centerButtonWidth,
+                height = centerButtonHeight,
+                label = "SELECT",
+            ),
+        )
+        add(
+            OverlayZoneSpec(
+                x = centerStartX + centerButtonWidth + centerGap,
+                y = centerTop,
+                width = centerButtonWidth,
+                height = centerButtonHeight,
+                label = "START",
+            ),
+        )
+    }
 }
 
 internal fun floatingJoystickLayout(
