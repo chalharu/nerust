@@ -57,7 +57,7 @@ pub(crate) fn create_core_and_adapter(
 
 pub(crate) fn create_core_and_adapter_with_inputs(
     _view: &FactorySettingsView,
-    speaker: Box<dyn AudioBackend>,
+    mut speaker: Box<dyn AudioBackend>,
     gui_input: GuiInput,
     emu_input: EmuInput,
     field_map: std::collections::HashMap<
@@ -73,6 +73,10 @@ pub(crate) fn create_core_and_adapter_with_inputs(
         width: 240,
         height: 160,
     };
+    // The audio backend only emits pushed samples after `start`
+    // (CPAL/cubeb hold the stream silent until then); NES/GBC start it
+    // here, so GBA must too or playback stays silent forever.
+    speaker.start();
     let core = GbaConsoleCore::new(speaker, emu_input);
     Ok(CoreParts {
         core: Box::new(core),
@@ -123,5 +127,46 @@ mod tests {
             slots: vec![(GBA_ATTACHMENT, None)],
         };
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
+    }
+
+    #[test]
+    fn starts_speaker_on_build() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        use nerust_core_traits::audio::StereoSample;
+
+        /// Records whether the backend was started: backends hold the
+        /// stream silent until `start`, so a missing call means no audio.
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+
+        impl nerust_core_traits::audio::AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, Ordering::SeqCst);
+            }
+
+            fn pause(&mut self) {}
+
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+
+        let view = FactorySettingsView {
+            language: Language::SystemDefault,
+            system_config: Some(Box::new(GbaSettings::default())),
+        };
+        let assignments = crate::GbaFactory.default_assignments();
+        let started = Arc::new(AtomicBool::new(false));
+        let speaker = Box::new(StartProbe {
+            started: Arc::clone(&started),
+        });
+        create_core_and_adapter(&view, speaker, &assignments).unwrap();
+        assert!(
+            started.load(Ordering::SeqCst),
+            "factory must start the speaker or playback stays silent"
+        );
     }
 }
