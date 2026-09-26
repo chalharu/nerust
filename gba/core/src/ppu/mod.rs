@@ -173,6 +173,10 @@ pub struct GbaPpu {
     /// is otherwise immutable within a line, so the epoch identifies
     /// the cached working set's OAM without comparing 1KB per span.
     obj_epoch: u32,
+    /// Cached blend/brightness tables, keyed by their factors
+    /// (self-maintaining across import/reset: a stale table never
+    /// matches a new key, and equal keys imply equal tables).
+    blend_cache: color::BlendCache,
 }
 
 #[derive(Debug)]
@@ -281,6 +285,7 @@ impl GbaPpu {
             obj_cover_epoch: 0,
             obj_cover_valid: false,
             obj_epoch: 0,
+            blend_cache: color::BlendCache::new(),
         }
     }
 
@@ -1115,7 +1120,7 @@ impl GbaPpu {
         }
     }
 
-    fn apply_effect(&self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
+    fn apply_effect(&mut self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
         // Tonc gfx §13.2.2: with windows in use, blending needs the region's
         // color-effect bit (WININ/WINOUT bit 5/13) — including for
         // semi-transparent OBJs. GBATEK's semi-transparency paragraph only
@@ -1134,15 +1139,17 @@ impl GbaPpu {
         {
             let eva = (self.registers.bldalpha & 0x1F).min(16) as u8;
             let evb = ((self.registers.bldalpha >> 8) & 0x1F).min(16) as u8;
-            return color::alpha_blend(top.color, second.color, eva, evb);
+            return self
+                .blend_cache
+                .alpha_blend(top.color, second.color, eva, evb);
         }
         let amount = (self.registers.bldy & 0x1F).min(16) as u8;
         if first_mask & top_bit != 0 {
             if mode == 2 {
-                return color::brighten(top.color, amount);
+                return self.blend_cache.brighten(top.color, amount);
             }
             if mode == 3 {
-                return color::darken(top.color, amount);
+                return self.blend_cache.darken(top.color, amount);
             }
         }
         top.color
