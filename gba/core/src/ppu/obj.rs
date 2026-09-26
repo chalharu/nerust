@@ -55,7 +55,7 @@ pub(crate) fn pixel(
 /// [`pixel`]: index-order visit, strict-`<` on `(priority, index)`).
 /// The blend-span path decodes the cover once per span instead of once
 /// per pixel; the per-pixel work below is identical to `pixel`'s walk
-/// body. `decoded` carries `(raw OAM index, decoded attrs)`.
+/// body. `prepared` carries `(raw OAM index, scanline-prepared coords)`.
 /// Forced-inline into the blend-span pixel loop.
 #[inline]
 pub(crate) fn pixel_predecoded(
@@ -63,14 +63,15 @@ pub(crate) fn pixel_predecoded(
     memory: (&[u8], &[u8], &[u8]),
     pos: (usize, usize),
     mosaic: u16,
-    decoded: &[(u8, Object)],
+    prepared: &[(u8, PreparedObj)],
 ) -> Option<LayerPixel> {
-    let (vram, palette, oam) = memory;
-    let (x, y) = pos;
+    let (vram, palette, _) = memory;
+    let (x, _) = pos;
     let mut best: Option<(LayerPixel, usize)> = None;
-    for &(raw_index, ref object) in decoded.iter() {
+    for &(raw_index, ref prepared) in prepared.iter() {
         let index = usize::from(raw_index);
-        let Some((local_x, local_y)) = object.coordinates(oam, x, y, mosaic) else {
+        let object = &prepared.obj;
+        let Some((local_x, local_y)) = prepared.coordinates(x, mosaic) else {
             continue;
         };
         let Some(palette_index) = object.palette_index(registers, vram, local_x, local_y) else {
@@ -225,6 +226,106 @@ pub(crate) fn decode_attrs(
         field_width: if double_size { width * 2 } else { width },
         field_height: if double_size { height * 2 } else { height },
     })
+}
+
+/// Per-scanline prepared OBJ coordinates (see `Object::prepare`):
+/// scanline-constant origin, y-side and affine terms resolved once
+/// per span; only the x-side work remains per pixel.
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedObj {
+    obj: Object,
+    origin_x: i32,
+    local_y: i32,
+    affine_pa: i32,
+    affine_c1: i32,
+    affine_pc: i32,
+    affine_c2: i32,
+}
+
+impl Object {
+    /// Per-scanline prepared coordinates: everything in [`coordinates`]
+    /// that is constant across the scanline (origins, y-side bounds and
+    /// mosaic, affine matrix rows) is resolved once per span; the
+    /// per-pixel [`coordinates_prepared`] then only folds in `x`.
+    /// Returns `None` when the scanline misses the field (same
+    /// y-reject `line_cache` applies, so this is rare defensive).
+    pub(crate) fn prepare(&self, oam: &[u8], y: usize, mosaic: u16) -> Option<PreparedObj> {
+        let origin_x = signed_origin(self.attr1 & 0x1FF, 256, 512);
+        // Same hardware-style Y wrap as `coordinates`.
+        let y_raw = u32::from(self.attr0 & 0xFF);
+        let y_max = (y_raw + self.field_height as u32) & 0xFF;
+        let origin_y = if y_max < y_raw {
+            y_raw as i32 - 256
+        } else {
+            y_raw as i32
+        };
+        let mut local_y = y as i32 - origin_y;
+        if local_y < 0 || local_y >= self.field_height as i32 {
+            return None;
+        }
+        // Y-side mosaic holds on the scanline-constant held row.
+        if self.attr0 & (1 << 12) != 0 {
+            let v = usize::from((mosaic >> 12) & 0xF) + 1;
+            let held_y = if v == 1 { y as i32 } else { (y - y % v) as i32 };
+            local_y = (held_y - origin_y).clamp(0, self.field_height as i32 - 1);
+        }
+        // Affine rows are scanline-constant: fold the constant
+        // `pb * dy` / `pd * dy` terms in (`pa`/`pc` stay per-pixel with
+        // the varying `dx`). Same arithmetic as `affine_coordinates`,
+        // reassociated: ((pa*dx + c1) >> 8) + w/2 with c1 = pb*dy.
+        let (pa, c1, pc, c2) = if self.affine {
+            let parameter = usize::from((self.attr1 >> 9) & 0x1F) * 32;
+            let pa = i32::from(read16_signed(oam, parameter + 6));
+            let pb = i32::from(read16_signed(oam, parameter + 14));
+            let pc = i32::from(read16_signed(oam, parameter + 22));
+            let pd = i32::from(read16_signed(oam, parameter + 30));
+            let dy = local_y - self.field_height as i32 / 2;
+            (pa, pb * dy, pc, pd * dy)
+        } else {
+            (0, 0, 0, 0)
+        };
+        Some(PreparedObj {
+            obj: *self,
+            origin_x,
+            local_y,
+            affine_pa: pa,
+            affine_c1: c1,
+            affine_pc: pc,
+            affine_c2: c2,
+        })
+    }
+}
+
+impl PreparedObj {
+    /// Per-pixel coordinates from a scanline-[`Object::prepare`]d object:
+    /// identical results to [`Object::coordinates`] for the prepared
+    /// `(y, mosaic)` at any `x`.
+    pub(crate) fn coordinates(&self, x: usize, mosaic: u16) -> Option<(usize, usize)> {
+        let obj = &self.obj;
+        let mut local_x = x as i32 - self.origin_x;
+        if local_x < 0 || local_x >= obj.field_width as i32 {
+            return None;
+        }
+        let mut local_y = self.local_y;
+        // X-side mosaic holds on the pixel's held column (the y side is
+        // already folded into `local_y`).
+        if obj.attr0 & (1 << 12) != 0 {
+            let h = usize::from((mosaic >> 8) & 0xF) + 1;
+            let held_x = if h == 1 { x as i32 } else { (x - x % h) as i32 };
+            local_x = (held_x - self.origin_x).clamp(0, obj.field_width as i32 - 1);
+        }
+        if obj.affine {
+            // `dx` varies per pixel; the rest is prepared (same values
+            // as `affine_coordinates`).
+            let dx = local_x - obj.field_width as i32 / 2;
+            local_x = ((self.affine_pa * dx + self.affine_c1) >> 8) + obj.width as i32 / 2;
+            local_y = ((self.affine_pc * dx + self.affine_c2) >> 8) + obj.height as i32 / 2;
+        } else {
+            (local_x, local_y) = obj.flipped_coordinates(local_x, local_y);
+        }
+        in_bounds(local_x, local_y, obj.width, obj.height)
+            .then_some((local_x as usize, local_y as usize))
+    }
 }
 
 impl Object {
@@ -471,6 +572,86 @@ mod tests {
 
     fn regs_2d() -> PpuRegisters {
         PpuRegisters::default() // DISPCNT bit6=0 -> 2D
+    }
+
+    #[test]
+    fn prepared_matches_reference_coordinates() {
+        // Differential: prepared (span-hoisted) coordinates must equal
+        // the per-pixel reference for every x of the scanline, across
+        // shapes/sizes/affine/double/flip/mosaic/Y-wrap combinations.
+        let mut oam = vec![0u8; 0x400];
+        // Affine param block 0: identity-ish (pa=256, pd=256).
+        oam[6..8].copy_from_slice(&256i16.to_le_bytes());
+        oam[30..32].copy_from_slice(&256i16.to_le_bytes());
+        // Affine param block 1: rotate-ish (pb=-256, pc=256).
+        oam[32 + 14..32 + 16].copy_from_slice(&(-256i16).to_le_bytes());
+        oam[32 + 22..32 + 24].copy_from_slice(&256i16.to_le_bytes());
+        let mut seed = 0x12345678u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            seed
+        };
+        for _ in 0..300 {
+            let shape = next() % 3;
+            let size = next() % 4;
+            let affine = next() % 2 == 0;
+            let double_size = affine && next() % 2 == 0;
+            let mosaic_flag = next() % 2 == 0;
+            let flip_x = !affine && next() % 2 == 0;
+            let flip_y = !affine && next() % 2 == 0;
+            let x_raw = next() % 512;
+            let y_raw = next() % 256;
+            let mut attr0 = y_raw as u16 | ((shape as u16) << 14);
+            if affine {
+                attr0 |= 1 << 8;
+            }
+            if double_size {
+                attr0 |= 1 << 9;
+            }
+            if mosaic_flag {
+                attr0 |= 1 << 12;
+            }
+            let mut attr1 = (x_raw as u16 & 0x1FF) | ((size as u16) << 14);
+            if affine {
+                attr1 |= ((next() % 2) as u16) << 9;
+            } else {
+                if flip_x {
+                    attr1 |= 1 << 12;
+                }
+                if flip_y {
+                    attr1 |= 1 << 13;
+                }
+            }
+            oam[0..2].copy_from_slice(&attr0.to_le_bytes());
+            oam[2..4].copy_from_slice(&attr1.to_le_bytes());
+            oam[4..6].copy_from_slice(&0u16.to_le_bytes());
+            let Some(obj) = decode_attrs(attr0, attr1, 0, false) else {
+                continue;
+            };
+            let y = (next() % 160) as usize;
+            let mosaic = (next() & 0xFFFF) as u16;
+            let prepared = obj.prepare(&oam, y, mosaic);
+            for x in (0..240).step_by(7) {
+                let reference = obj.coordinates(&oam, x, y, mosaic);
+                let actual = prepared.as_ref().and_then(|p| p.coordinates(x, mosaic));
+                assert_eq!(
+                    actual, reference,
+                    "attr0={attr0:#x} attr1={attr1:#x} x={x} y={y} mosaic={mosaic:#x}"
+                );
+            }
+            // Full sweep on a subsample (odd x covered above by step 7
+            // over 240 with co-prime stride... assert dense for one).
+            if shape == 0 && size == 0 {
+                for x in 0..240 {
+                    let reference = obj.coordinates(&oam, x, y, mosaic);
+                    let actual = prepared.as_ref().and_then(|p| p.coordinates(x, mosaic));
+                    assert_eq!(
+                        actual, reference,
+                        "dense attr0={attr0:#x} attr1={attr1:#x} x={x} y={y}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

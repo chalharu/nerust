@@ -649,13 +649,21 @@ impl GbaPpu {
         };
         // Decode the span's OBJ working set once (attrs are constant
         // for the whole span). Undecodable entries stay out exactly
-        // like the per-pixel path's `continue`.
-        let mut decoded: smallvec::SmallVec<[(u8, obj::Object); 32]> = smallvec::SmallVec::new();
+        // like the per-pixel path's `continue`. Coordinates prepare
+        // per span too (origins, y-side and affine rows are constant
+        // across the scanline; OAM/mosaic are frozen within a span by
+        // the prefix-split on writes, same guarantee the decode
+        // relies on).
+        let mut decoded: smallvec::SmallVec<[(u8, obj::PreparedObj); 32]> =
+            smallvec::SmallVec::new();
         if obj_on {
             for &(raw_index, attr0, attr1, attr2) in cache.cover[..cache.cover_len as usize].iter()
             {
-                if let Some(object) = obj::decode_attrs(attr0, attr1, attr2, false) {
-                    decoded.push((raw_index, object));
+                if let Some(object) = obj::decode_attrs(attr0, attr1, attr2, false)
+                    && let Some(prepared) =
+                        object.prepare(&self.line.oam[..], y, self.registers.mosaic)
+                {
+                    decoded.push((raw_index, prepared));
                 }
             }
         }
