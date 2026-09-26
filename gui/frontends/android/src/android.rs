@@ -286,6 +286,35 @@ fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
     }));
 }
 
+/// Push the current emulation FPS to the small Android overlay label.
+///
+/// Called at the 2Hz title-refresh cadence; `visible` is false when no ROM
+/// is loaded so Kotlin can hide the label instead of showing stale numbers.
+fn update_fps_overlay(app: &AndroidApp, fps: f32, visible: bool) {
+    let app = app.clone();
+    let callback_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+            env.call_method(
+                &activity,
+                jni_str!("updateFpsOverlay"),
+                jni_sig!("(FZ)V"),
+                &[
+                    jni::objects::JValue::Float(fps),
+                    jni::objects::JValue::Bool(visible),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            log::warn!("failed to update Android FPS overlay: {error:?}");
+        }
+    }));
+}
+
 #[derive(Debug)]
 struct TouchZone {
     control: TouchControl,
@@ -487,6 +516,7 @@ struct AndroidFrontend {
     pending_legacy_digest: Option<[u8; 32]>,
     last_peripheral_config: Option<(bool, bool, u8, RumbleTarget)>,
     last_rumble_intensity: Option<u8>,
+    last_fps_sent: Option<(bool, i32)>,
 }
 
 impl AndroidFrontend {
@@ -567,6 +597,7 @@ impl AndroidFrontend {
             pending_legacy_digest: None,
             last_peripheral_config: None,
             last_rumble_intensity: None,
+            last_fps_sent: None,
         };
         if frontend.lifecycle_restore_pending {
             log::info!(
@@ -1434,10 +1465,25 @@ impl AndroidFrontend {
     }
 
     fn maybe_refresh_title(&mut self, now: Instant) {
-        if self.shell.should_refresh_title(now)
-            && let Some(window) = self.window.as_ref()
-        {
-            window.set_title(&self.session.window_title());
+        if self.shell.should_refresh_title(now) {
+            if let Some(window) = self.window.as_ref() {
+                window.set_title(&self.session.window_title());
+            }
+            self.sync_fps_overlay();
+        }
+    }
+
+    /// Forward the emulation FPS to the Android overlay label at 2Hz.
+    ///
+    /// Sends only on visibility change or >= 0.1 FPS drift so the Java main
+    /// thread is not spammed with identical runnables.
+    fn sync_fps_overlay(&mut self) {
+        let metrics = self.session.metrics();
+        let visible = metrics.loaded && !metrics.paused;
+        let fps_tenth = (metrics.emulation_fps * 10.0).round() as i32;
+        if self.last_fps_sent != Some((visible, fps_tenth)) {
+            update_fps_overlay(&self.app, fps_tenth as f32 / 10.0, visible);
+            self.last_fps_sent = Some((visible, fps_tenth));
         }
     }
 
