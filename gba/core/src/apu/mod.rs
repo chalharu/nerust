@@ -239,8 +239,8 @@ impl GbaApuState {
         if self.duty1 > 3 || self.duty2 > 3 {
             return Err("apu: duty latch out of range".to_string());
         }
-        self.sq1.validate()?;
-        self.sq2.validate()?;
+        self.sq1.validate(true)?;
+        self.sq2.validate(false)?;
         self.wave.validate()?;
         self.noise.validate()?;
         for (index, voice) in self.driver_voices.iter().enumerate() {
@@ -1111,5 +1111,33 @@ mod tests {
         let mut bad = restored.export_state().unwrap();
         bad.mix_timer = 0;
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn apu_state_round_trips_sounding_ch2() {
+        // ch2 has no sweep unit: a sounding ch2 keeps the never-written
+        // sweep pace 0. Saves from such moments must import (this scored
+        // "Save state is corrupt" on device for music-heavy games).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR22: envelope up. NR24: freq + trigger. (ch2 has no NR10:
+        // sweep pace stays at the never-written zero while sounding.)
+        apu.write_sound2cnt_lo(0x81F3);
+        apu.write_sound2cnt_hi(0x8385);
+        assert!(apu.sq2.core.active);
+        assert_eq!(apu.sq2.sweep_pace_for_test(), 0);
+        for _ in 0..4000 {
+            apu.tick();
+        }
+        assert!(apu.sq2.core.active);
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored.import_state(decoded).unwrap();
+        assert!(restored.sq2.core.active);
     }
 }

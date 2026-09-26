@@ -123,6 +123,11 @@ impl Square {
         self.sweep_pace != 8 || self.sweep_shift != 0
     }
 
+    #[cfg(test)]
+    pub(crate) fn sweep_pace_for_test(&self) -> u8 {
+        self.sweep_pace
+    }
+
     /// NR10 write (GBATEK sweep, incl. direction-flip zombie rule).
     pub fn write_sweep(&mut self, value: u8) {
         let shift = value & 7;
@@ -156,9 +161,14 @@ impl Square {
     }
 
     /// Frame-sequencer sweep steps (2, 6). Returns false when the sweep
-    /// overflows and kills the channel.
+    /// overflows and kills the channel. Pace 0 (NR10 never written) and    /// the pace-8 off-code both disable the unit: no timer movement, no
+    /// calculation. (Without this, pace 0 would underflow `sweep_timer`
+    /// on the reload-then-decrement below.)
     pub fn tick_sweep(&mut self) -> bool {
         if !self.core.active {
+            return true;
+        }
+        if self.sweep_pace == 0 || self.sweep_pace == 8 {
             return true;
         }
         if self.sweep_timer == 0 {
@@ -413,7 +423,11 @@ impl LengthEnvelope {
 }
 
 impl Square {
-    pub(super) fn validate(&self) -> Result<(), String> {
+    /// Phase 10 import validation (bounds follow the trigger/write masks).
+    /// `has_sweep` is ch1-only: ch2 shares this struct but has no sweep
+    /// unit, so its sweep fields stay at the never-written zero and must
+    /// not be policed (an active ch2 with pace 0 is everyday state).
+    pub(super) fn validate(&self, has_sweep: bool) -> Result<(), String> {
         self.core.validate()?;
         // `tick_timer`: 16 * (2048 - base), base 11-bit.
         if self.timer > 0x8000 {
@@ -421,6 +435,9 @@ impl Square {
         }
         if self.phase > 7 {
             return Err(format!("apu: square phase out of range: {}", self.phase));
+        }
+        if !has_sweep {
+            return Ok(());
         }
         if self.sweep_shift > 7 {
             return Err(format!(
@@ -431,10 +448,11 @@ impl Square {
         if self.sweep_pace > 8 {
             return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
         }
-        // A sounding channel with pace 0 would underflow `sweep_timer` in
-        // `tick_sweep` (the timer reloads pace, then decrements). Pace 0
-        // only exists pre-trigger (inactive), never on a live voice.
-        if self.core.active && self.sweep_pace == 0 {
+        // Pace 0 with no shift is the never-written shape (NR10 untouched:
+        // sweep off); `tick_sweep` treats it as disabled, so a live voice
+        // in that shape is legitimate. With a shift it is non-producible
+        // and would arm the sweep path, so keep rejecting that.
+        if self.core.active && self.sweep_pace == 0 && self.sweep_shift != 0 {
             return Err("apu: sounding channel with zero sweep pace".to_string());
         }
         if self.sweep_timer > 8 {
@@ -565,12 +583,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_live_voice_with_zero_sweep_pace() {
-        // Pace 0 exists pre-trigger (inactive) but would underflow the
-        // sweep timer once sounding.
-        let idle = Square::default();
-        idle.validate().unwrap();
-        let live = Square {
+    fn validate_accepts_live_ch2_with_zero_sweep_pace() {
+        // ch2 has no sweep unit: pace stays at the never-written zero
+        // while sounding. This everyday state must import cleanly.
+        let live_ch2 = Square {
             core: LengthEnvelope {
                 active: true,
                 ..Default::default()
@@ -578,6 +594,41 @@ mod tests {
             sweep_pace: 0,
             ..Default::default()
         };
-        assert!(live.validate().is_err());
+        live_ch2.validate(false).unwrap();
+        // ch1 (sweep unit present) still rejects a live pace-0 voice
+        // once a shift arms the sweep path...
+        let armed = Square {
+            sweep_shift: 3,
+            ..live_ch2
+        };
+        assert!(armed.validate(true).is_err());
+        // ...but accepts the never-written shape (pace 0, no shift).
+        live_ch2.validate(true).unwrap();
+        // ...and the untouched default either way.
+        Square::default().validate(true).unwrap();
+        Square::default().validate(false).unwrap();
+    }
+
+    #[test]
+    fn tick_sweep_treats_pace_zero_and_off_code_as_disabled() {
+        for pace in [0u8, 8] {
+            let mut sq = Square {
+                core: LengthEnvelope {
+                    active: true,
+                    ..Default::default()
+                },
+                freq_shadow: 0x7F0,
+                sweep_shift: 1,
+                sweep_pace: pace,
+                sweep_timer: 0,
+                ..Default::default()
+            };
+            // No underflow panic, no overflow kill, no timer movement.
+            for _ in 0..300 {
+                assert!(sq.tick_sweep());
+            }
+            assert!(sq.core.active);
+            assert_eq!(sq.sweep_timer, 0);
+        }
     }
 }
