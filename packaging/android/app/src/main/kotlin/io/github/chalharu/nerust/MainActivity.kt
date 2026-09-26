@@ -260,6 +260,9 @@ class MainActivity :
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
     private var fpsOverlayView: TextView? = null
+    private var fpsOverlayPopup: PopupWindow? = null
+    private var fpsValue: Float = 0f
+    private var fpsVisible: Boolean = false
     private var composeDialog: Dialog? = null
     private var composeDialogRootView: View? = null
     private var composeDialogComposeView: View? = null
@@ -667,36 +670,68 @@ class MainActivity :
      * Called from Rust at ~2Hz while emulating. `visible` is false when no
      * ROM is loaded or emulation is paused, hiding the label instead of
      * showing stale numbers. Runs on the Java main thread.
+     *
+     * Rendered in a dedicated non-touchable popup (like the other chrome):
+     * a plain decorView child is not reliably composited above the native
+     * game surface.
      */
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
-        var label = fpsOverlayView
-        if (label == null) {
-            label =
-                TextView(this).apply {
-                    tag = FPS_OVERLAY_TAG
-                    textSize = 11f
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.argb(128, 0, 0, 0))
-                    val padding = dp(4)
-                    setPadding(padding, dp(2), padding, dp(2))
-                    isClickable = false
-                    isFocusable = false
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    layoutParams =
-                        FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            Gravity.BOTTOM or Gravity.END,
-                        ).apply {
-                            val margin = dp(8)
-                            setMargins(margin, margin, margin, margin)
-                        }
-                }
-            (window.decorView as? ViewGroup)?.addView(label)
-            fpsOverlayView = label
+        Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
+        fpsValue = fps
+        fpsVisible = visible
+        if (!visible) {
+            fpsOverlayPopup?.dismiss()
+            fpsOverlayPopup = null
+            return
         }
-        label.text = "%.1f fps".format(fps)
-        label.visibility = if (visible) View.VISIBLE else View.GONE
+        popupAnchor()?.let { ensureFpsOverlayPopup(it) } ?: scheduleChromeAttach()
+    }
+
+    private fun createFpsOverlayView(): TextView =
+        TextView(this).apply {
+            tag = FPS_OVERLAY_TAG
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(128, 0, 0, 0))
+            val padding = dp(4)
+            setPadding(padding, dp(2), padding, dp(2))
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+    private fun refreshFpsOverlayText() {
+        fpsOverlayView?.text = "%.1f fps".format(fpsValue)
+    }
+
+    private fun ensureFpsOverlayPopup(anchor: View): Boolean {
+        val existing = fpsOverlayPopup
+        if (existing?.isShowing == true && fpsOverlayView != null) {
+            refreshFpsOverlayText()
+            return true
+        }
+        fpsOverlayPopup?.dismiss()
+        val view = fpsOverlayView ?: createFpsOverlayView().also { fpsOverlayView = it }
+        refreshFpsOverlayText()
+        val popup =
+            PopupWindow(
+                view,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                false,
+            ).apply {
+                isTouchable = false
+                isFocusable = false
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
+        fpsOverlayPopup = popup
+        if (showPopupAtLocation("fps-overlay", popup, anchor, Gravity.BOTTOM or Gravity.END, dp(8), dp(8))) {
+            return true
+        }
+        fpsOverlayPopup = null
+        return false
     }
 
     fun readSafFile(
@@ -834,6 +869,11 @@ class MainActivity :
                     drawerOverlayView.isShownInWindowForTest()
             }
 
+            FPS_OVERLAY_TAG -> {
+                fpsOverlayPopup?.isShowing == true &&
+                    fpsOverlayView.isShownInWindowForTest()
+            }
+
             SETTINGS_DIALOG_TAG,
             -> {
                 composeDialogTag == tag &&
@@ -864,6 +904,10 @@ class MainActivity :
                 drawerOverlayView
             }
 
+            FPS_OVERLAY_TAG -> {
+                fpsOverlayView
+            }
+
             SETTINGS_DIALOG_TAG,
             -> {
                 composeDialogRootView.takeIf { composeDialogTag == tag }
@@ -884,7 +928,8 @@ class MainActivity :
             "drawerCompose=${drawerComposeView.debugViewState()}, dialogTag=$composeDialogTag, " +
             "dialog=${composeDialog.debugDialogState()}, dialogRoot=${composeDialogRootView.debugViewState()}, " +
             "dialogCompose=${composeDialogComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest, " +
-            "lastDialog=$lastDialogStateForTest"
+            "lastDialog=$lastDialogStateForTest, fpsVisible=$fpsVisible, fpsValue=$fpsValue, " +
+            "fpsPopup=${fpsOverlayPopup.debugPopupState()}, fpsView=${fpsOverlayView.debugViewState()}"
 
     fun dispatchMenuActionForTest(action: String) {
         dispatchMenuAction(action)
@@ -1098,12 +1143,13 @@ class MainActivity :
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
+        val fpsAttached = if (fpsVisible) ensureFpsOverlayPopup(anchor) else true
         Log.i(
             TAG,
             "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
-                "anchor=${anchor.debugViewState()}",
+                "fpsAttached=$fpsAttached anchor=${anchor.debugViewState()}",
         )
-        if (!controlsAttached || !drawerAttached) {
+        if (!controlsAttached || !drawerAttached || !fpsAttached) {
             retryChromeAttach()
         }
     }
@@ -1510,6 +1556,9 @@ class MainActivity :
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        fpsOverlayPopup?.dismiss()
+        fpsOverlayPopup = null
+        fpsOverlayView = null
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
