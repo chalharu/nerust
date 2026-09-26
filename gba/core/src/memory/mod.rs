@@ -293,6 +293,12 @@ pub struct GbaMemoryBus {
     /// HLE-active ticks). Pure perf hint, excluded from wire state by
     /// design (0 is always valid; it self-heals on the next full tick).
     bus_quiet: u64,
+    /// Cached device-horizon remainder for DMA-active ticks (see
+    /// `device_quiet_cycles`): consumed one per fast-DMA tick,
+    /// recomputed fresh at 0. Reset at the same sites as `bus_quiet`
+    /// (plus the full-tick exit, which covers every in-tick mutation).
+    /// Same contract: 0 is always valid, never stale-long.
+    dma_device_quiet: u64,
     /// Test-ROM log sink behind the `mgba-debug-log` cargo feature. No
     /// hardware counterpart exists: zero waits, no prefetch/N-S side effects.
     #[cfg(feature = "mgba-debug-log")]
@@ -679,6 +685,7 @@ impl GbaMemoryBus {
             pending_hblank_irq: false,
             eeprom_burst_open: false,
             bus_quiet: 0,
+            dma_device_quiet: 0,
             #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
             #[cfg(feature = "mgba-debug-log")]
@@ -941,6 +948,7 @@ impl GbaMemoryBus {
                 // above are already advanced exactly once, like the full
                 // path's device phases before its DMA phase).
                 self.bus_quiet = 0;
+                self.dma_device_quiet = 0;
                 let stall_snapshot = DisplayStallSnapshot {
                     forced_blank: self.ppu.forced_blank(),
                     vcount: self.ppu.vcount(),
@@ -953,6 +961,54 @@ impl GbaMemoryBus {
                 if completion != 0 {
                     self.request_interrupt(completion);
                 }
+            }
+            return false;
+        } else if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_ready() {
+            // DMA-active fast path: no PPU/timer/APU/SIO/pipeline event
+            // can fire this tick (all capped by `device_quiet_cycles`),
+            // so devices advance arithmetically exactly like the quiet
+            // branch above; only the DMA word phase still runs per tick
+            // (transfer side effects land at exact ticks). Ordering
+            // matches the full path (device phases before the DMA phase).
+            self.dma.tick_pending();
+            self.apu.advance_idle(1);
+            self.timers.advance_idle(1);
+            self.ppu.advance_idle(1);
+            // Capped the same way as the quiet branch: a countdown of 1
+            // forces horizon 0, so neither completes inside this tick.
+            if self.video_countdown > 0 {
+                self.video_countdown -= 1;
+            }
+            if self.sio_xfer_cycles > 0 {
+                self.sio_xfer_cycles -= 1;
+            }
+            let stall_snapshot = DisplayStallSnapshot {
+                forced_blank: self.ppu.forced_blank(),
+                vcount: self.ppu.vcount(),
+                cycle: self.ppu.cycle(),
+                dispcnt: self.ppu.dispcnt(),
+                bg_fetch_active: self.ppu.bg_fetch_active(),
+            };
+            self.tick_dma(&stall_snapshot);
+            let completion = self.dma.take_completion_interrupts();
+            if completion != 0 {
+                self.request_interrupt(completion);
+            }
+            // EEPROM bursts only close once no DMA is in flight (same
+            // rule as the full-path exit below).
+            if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
+                self.eeprom_burst_open = false;
+                if let Some(cart) = self.cartridge.as_mut() {
+                    cart.eeprom_end_burst();
+                }
+            }
+            if !self.dma.is_active() {
+                // Burst(s) completed this tick: rebuild the skip budget
+                // and the timer fold mask like the full-path exit.
+                // (While DMA stays active the budget stays 0, as today.)
+                self.bus_quiet = self.quiet_cycles();
+                self.timers.refresh_fold_mask();
+                self.dma_device_quiet = 0;
             }
             return false;
         }
@@ -1009,8 +1065,11 @@ impl GbaMemoryBus {
         };
         // The full path may resolve timer startup transients (start-delay
         // expiry, reload landings, control takes inside `step_channel`),
-        // so refresh the idle-fold mask alongside the skip budget.
+        // so refresh the idle-fold mask alongside the skip budget. The
+        // DMA-device cache restarts too (every in-tick mutation is
+        // covered: triggers, completions, resolutions all run above).
         self.timers.refresh_fold_mask();
+        self.dma_device_quiet = 0;
         event.frame_complete
     }
 
@@ -1030,24 +1089,8 @@ impl GbaMemoryBus {
     #[inline]
     pub(crate) fn quiet_cycles(&self) -> u64 {
         const INF: u64 = u64::MAX;
-        // Timestamp-driven IRQ pipeline: application fires when `at <= now`
-        // at tick start, so a deadline at `at` leaves `at - now - 1` quiet
-        // ticks (0 when already due).
-        let pipeline_quiet = || {
-            let now = self.current_tcycle;
-            let mut horizon = INF;
-            if let Some(at) = self.pending_at {
-                horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
-            }
-            for queue in [&self.avail_queue, &self.line_queue] {
-                if let Some((_, at)) = queue.first() {
-                    horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
-                }
-            }
-            horizon
-        };
         if self.stopped {
-            return pipeline_quiet();
+            return self.pipeline_quiet();
         }
         let mut horizon = INF;
         horizon = horizon.min(self.ppu.quiet_cycles());
@@ -1063,7 +1106,74 @@ impl GbaMemoryBus {
         if self.pending_hblank_irq {
             return 0;
         }
-        horizon.min(pipeline_quiet())
+        horizon.min(self.pipeline_quiet())
+    }
+
+    /// Timestamp-driven IRQ pipeline horizon (shared by both horizon
+    /// computations): application fires when `at <= now` at tick start,
+    /// so a deadline at `at` leaves `at - now - 1` quiet ticks (0 when
+    /// already due).
+    #[inline]
+    fn pipeline_quiet(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let now = self.current_tcycle;
+        let mut horizon = INF;
+        if let Some(at) = self.pending_at {
+            horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
+        }
+        for queue in [&self.avail_queue, &self.line_queue] {
+            if let Some((_, at)) = queue.first() {
+                horizon = horizon.min(at.saturating_sub(now.saturating_add(1)));
+            }
+        }
+        horizon
+    }
+
+    /// Device-only horizon for DMA-active ticks: same caps as
+    /// `quiet_cycles` except an active channel is tolerated (word side
+    /// effects stay per-tick in the DMA phase; only a pending-latency
+    /// expiry still caps, since activation changes the phase mid-tick).
+    /// A nonzero value means no PPU/timer/APU/SIO/pipeline event can
+    /// fire this tick, so devices may advance arithmetically.
+    #[inline]
+    fn device_quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        if self.stopped {
+            return self.pipeline_quiet();
+        }
+        if self.hle_bios_active() || self.pending_hblank_irq || self.eeprom_burst_open {
+            return 0;
+        }
+        let mut horizon = INF;
+        horizon = horizon.min(self.ppu.quiet_cycles());
+        horizon = horizon.min(self.timers.quiet_cycles());
+        horizon = horizon.min(self.apu.quiet_cycles());
+        horizon = horizon.min(self.dma.pending_quiet_cycles());
+        if self.video_countdown > 0 {
+            horizon = horizon.min(u64::from(self.video_countdown) - 1);
+        }
+        if self.sio_xfer_cycles > 0 {
+            horizon = horizon.min(u64::from(self.sio_xfer_cycles) - 1);
+        }
+        horizon.min(self.pipeline_quiet())
+    }
+
+    /// Fast-DMA gate: true when this DMA-active tick may advance devices
+    /// arithmetically. Consumes the cached device remainder one tick at
+    /// a time; recomputes it fresh at 0 (a 0 recompute means a device
+    /// event is due and the full path must run).
+    #[inline]
+    fn dma_fast_ready(&mut self) -> bool {
+        if self.dma_device_quiet > 0 {
+            self.dma_device_quiet -= 1;
+            return true;
+        }
+        let horizon = self.device_quiet_cycles();
+        if horizon == 0 {
+            return false;
+        }
+        self.dma_device_quiet = horizon - 1;
+        true
     }
 
     /// Advance clocks and free-running counters by `n` cycles with no event
@@ -1547,6 +1657,7 @@ impl GbaMemoryBus {
         // `check_keycnt` may raise (see `request_interrupt`, which already
         // resets), but the keypad level itself is observable; be explicit.
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
     }
 
     /// GBATEK KEYCNT: with bit 14 set, a keypad condition (bit 15:
@@ -1582,6 +1693,7 @@ impl GbaMemoryBus {
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
         // A fresh wait starts with no exit restore pending (see
         // `bios_wait_exit_armed`); the IntrWait wake below re-arms it.
         self.bios_wait_exit_armed = false;
@@ -1598,6 +1710,7 @@ impl GbaMemoryBus {
     pub fn enter_stop(&mut self) {
         self.stopped = true;
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
         // GBATEK HALTCNT Stop: only keypad, GamePak and serial interrupts
         // wake the machine (timers/DMA/video cannot).
         self.enter_halt(self.ie & 0x3080);
@@ -1655,6 +1768,7 @@ impl GbaMemoryBus {
         // (device edge, register write, keypad) voids the skip budget.
         // No-op on the full path (recomputed right after the tick).
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
     }
 
     /// Wake a halted/stopped CPU once delayed availability arrives.
@@ -2407,6 +2521,7 @@ impl GbaMemoryBus {
         // Transient skip budget, excluded from wire state: always restart
         // at 0 (recomputes on the next full tick).
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
         self.ppu.import_state(state.ppu)?;
         self.dma.import_state(state.dma)?;
         self.timers.import_state(state.timers)?;
@@ -3659,6 +3774,7 @@ impl GbaMemoryBus {
         // control, PPU/DISPSTAT latches, IRQ levels, WAITCNT timing), so
         // the skip budget restarts (recomputes after the next full tick).
         self.bus_quiet = 0;
+        self.dma_device_quiet = 0;
         // 4000800h Internal Memory Control, mirrored each 64K. Only the
         // documented bits are stored (0-3, 5, 24-31); sub-word writes merge
         // lanes. Remap/wait effects are not modeled.
