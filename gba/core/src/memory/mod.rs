@@ -1007,6 +1007,10 @@ impl GbaMemoryBus {
         } else {
             self.quiet_cycles()
         };
+        // The full path may resolve timer startup transients (start-delay
+        // expiry, reload landings, control takes inside `step_channel`),
+        // so refresh the idle-fold mask alongside the skip budget.
+        self.timers.refresh_fold_mask();
         event.frame_complete
     }
 
