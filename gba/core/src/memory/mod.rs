@@ -994,10 +994,17 @@ impl GbaMemoryBus {
     /// (`k` is capped by the allowance, which caps `pending - 1`),
     /// countdowns stay clear of completion the same way, and no frame
     /// edge is crossed (PPU-capped).
+    ///
+    /// The `k` ticks include the current tick: [`tick`] already advanced
+    /// `current_tcycle` once on entry, so only `k - 1` remain here.
+    /// (`k >= 1`: the caller gates on a nonzero allowance and
+    /// `burn_remaining() > 1`.) Every other consumer (device phases,
+    /// delay counts, horizon remainder, returned advance) counts the
+    /// full `k`.
     fn tick_dma_burn_fold(&mut self, allowance: u64, burn: u8) -> (bool, u64) {
         let k = allowance.min(u64::from(burn) - 1);
         self.dma_device_quiet -= k;
-        self.current_tcycle = self.current_tcycle.wrapping_add(k);
+        self.current_tcycle = self.current_tcycle.wrapping_add(k - 1);
         self.dma.advance_idle(k);
         self.advance_idle_devices(k);
         self.dma.burn_delay(k as u8);
