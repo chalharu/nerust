@@ -1443,9 +1443,9 @@ impl AndroidFrontend {
                     self.lifecycle_auto_paused = false;
                     log::info!("try_resume_foreground: resumed session after lifecycle pause");
                 }
-                // The OS may have wedged the audio stream while
-                // backgrounded regardless of pause state; re-assert the
-                // backend start (idempotent, silent when already playing).
+                // The OS may have killed the audio stream while
+                // backgrounded regardless of pause state; re-acquire it
+                // (idempotent, silent when already playing).
                 self.session.restart_audio();
                 log::info!("try_resume_foreground: attempt {attempt} succeeded");
                 self.request_redraw();

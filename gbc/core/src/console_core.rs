@@ -198,7 +198,7 @@ impl ConsoleCore for GbcConsoleCore {
     }
 
     fn restart_audio(&mut self) {
-        self.audio.start();
+        self.audio.reconnect();
     }
 
     fn paused(&self) -> bool {
@@ -558,29 +558,30 @@ mod tests {
     }
 
     #[test]
-    fn restart_audio_starts_backend() {
+    fn restart_audio_reconnects_backend() {
         use std::sync::atomic::Ordering::SeqCst;
 
         use nerust_core_traits::audio::AudioBackend;
 
-        struct StartProbe {
-            started: Arc<AtomicBool>,
+        struct ReconnectProbe {
+            reconnected: Arc<AtomicBool>,
         }
-        impl AudioBackend for StartProbe {
-            fn start(&mut self) {
-                self.started.store(true, SeqCst);
-            }
+        impl AudioBackend for ReconnectProbe {
+            fn start(&mut self) {}
             fn pause(&mut self) {}
             fn push(&mut self, _sample: StereoSample) {}
+            fn reconnect(&mut self) {
+                self.reconnected.store(true, SeqCst);
+            }
         }
-        let started = Arc::new(AtomicBool::new(false));
+        let reconnected = Arc::new(AtomicBool::new(false));
         let mut core = GbcConsoleCore::new_empty(
-            Box::new(StartProbe {
-                started: started.clone(),
+            Box::new(ReconnectProbe {
+                reconnected: reconnected.clone(),
             }),
             input(),
         );
         core.restart_audio();
-        assert!(started.load(SeqCst));
+        assert!(reconnected.load(SeqCst));
     }
 }

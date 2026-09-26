@@ -42,6 +42,7 @@ pub struct CpalAudio {
     playing: Arc<AtomicBool>,
     needs_clear: Arc<AtomicBool>,
     sample_rate: u32,
+    latency_ms: u16,
 }
 
 impl CpalAudio {
@@ -123,6 +124,7 @@ impl CpalAudio {
             playing,
             needs_clear,
             sample_rate,
+            latency_ms,
         })
     }
 }
@@ -149,6 +151,18 @@ impl AudioBackend for CpalAudio {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {
                 log::warn!("cpal audio: channel send failed (receiver dropped)");
+            }
+        }
+    }
+
+    fn reconnect(&mut self) {
+        match Self::new(self.sample_rate, self.latency_ms) {
+            Ok(fresh) => {
+                *self = fresh;
+                self.start();
+            }
+            Err(error) => {
+                log::error!("cpal audio reconnect failed (keeping old stream): {error}");
             }
         }
     }
