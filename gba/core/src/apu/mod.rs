@@ -1172,7 +1172,7 @@ mod tests {
         let mut apu = GbaApu::new();
         apu.write_soundcnt_x(0x80);
         // ch1: sweep pace 7 / dec / shift 7, duty 3, env vol 15 up pace 3,
-        // len on, freq low (sweep will overflow and kill it mid-run).
+        // len on, freq low (sweep runs without overflow-kill at this pitch).
         apu.write_sound1cnt_lo(0x0077);
         apu.write_sound1cnt_hi(0xFFF3);
         apu.write_sound1cnt_x(0xC100);
