@@ -912,13 +912,13 @@ impl GbaMemoryBus {
             self.pending_hblank_irq = false;
             self.request_interrupt(1 << 1);
         }
-        // Delayed interrupt pipeline first: yesterday's IE/IME/IF writes
-        // and IRQ raises become effective before devices run this tick.
-        self.process_irq_pipeline();
         if self.stopped {
             // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
             // are frozen; only an interrupt request wakes the machine.
             // (Wake-source subset and IF-not-set are not modeled.)
+            // The IRQ pipeline still acts while stopped (see
+            // `quiet_cycles`), so it runs here.
+            self.process_irq_pipeline();
             return (false, 1);
         }
         // HLE BIOS steps write through paths the horizon audit cannot see
@@ -926,7 +926,15 @@ impl GbaMemoryBus {
         // transfer always takes the full path below.
         if self.hle_bios_active() {
             self.bus_quiet = 0;
+            // Delayed interrupt pipeline: yesterday's IE/IME/IF writes
+            // and IRQ raises become effective before devices run this tick.
+            self.process_irq_pipeline();
         } else if tick_skip_enabled() && self.bus_quiet > 0 {
+            // The pipeline is a proven no-op on this branch: a nonzero
+            // budget means no entry is due (every deadline caps the
+            // horizon it was recomputed from, and only due entries mutate
+            // pipeline state), so running it would only re-peek empty or
+            // future queues. Skipped.
             self.bus_quiet -= 1;
             // Quiet-span advance: arithmetically identical to the per-cycle
             // path (same folds `advance_idle(1)` applies, verified by the
@@ -966,7 +974,11 @@ impl GbaMemoryBus {
             // can fire inside the allowance (all capped by
             // `device_quiet_cycles`), so devices advance arithmetically
             // exactly like the quiet branch above. Ordering matches the
-            // full path (device phases before the DMA phase).
+            // full path (device phases before the DMA phase). The IRQ
+            // pipeline is skipped for the same reason as the quiet
+            // branch (a live device remainder proves nothing is due; a
+            // fresh 0 recompute falls through to the full path, which
+            // runs it below).
             let allowance = self.dma_device_quiet;
             debug_assert!(allowance > 0);
             let burn = self.dma.burn_remaining();
@@ -1045,6 +1057,9 @@ impl GbaMemoryBus {
             }
             return (false, 1);
         }
+        // Full path: run the delayed interrupt pipeline before devices
+        // (all fast paths above prove it a no-op and skip it).
+        self.process_irq_pipeline();
         self.tick_sound_dma();
         let event = self.tick_video();
         let timer_irq = self.tick_timers();
