@@ -112,6 +112,10 @@ pub enum EmuCommand {
     Load(Box<LoadCommand>),
     Unload,
     SetVolume(f32),
+    /// Re-assert the audio backend start (idempotent). Mobile OS
+    /// lifecycle transitions can wedge audio streams; frontends send
+    /// this on foreground resume.
+    RestartAudio,
     SaveState {
         reply: Sender<Result<Vec<u8>, CoreError>>,
     },
@@ -141,6 +145,11 @@ pub trait ConsoleCore: Send {
 
     // -- audio --
     fn set_volume(&mut self, _volume: f32) {}
+
+    /// Re-assert the audio backend start. Called after OS lifecycle
+    /// transitions that can wedge mobile audio streams; backends must
+    /// treat `start` as idempotent. Default is a no-op.
+    fn restart_audio(&mut self) {}
 
     // -- pause --
     fn paused(&self) -> bool;

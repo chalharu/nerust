@@ -113,6 +113,7 @@ impl EmuThread {
                         EmuCommand::Resume => core.set_paused(false),
                         EmuCommand::Reset => core.reset(),
                         EmuCommand::SetVolume(vol) => core.set_volume(vol),
+                        EmuCommand::RestartAudio => core.restart_audio(),
                         EmuCommand::SaveState { reply } => {
                             let result = core.save_state();
                             // reply send failure: receiver dropped (timeout/abort) — expected

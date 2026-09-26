@@ -197,6 +197,10 @@ impl ConsoleCore for GbcConsoleCore {
         self.audio.set_volume(volume);
     }
 
+    fn restart_audio(&mut self) {
+        self.audio.start();
+    }
+
     fn paused(&self) -> bool {
         self.paused
     }
@@ -551,5 +555,32 @@ mod tests {
         assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
         core.unload();
         assert_eq!(rumble_handle.snapshot().state, RumbleState::OFF);
+    }
+
+    #[test]
+    fn restart_audio_starts_backend() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use nerust_core_traits::audio::AudioBackend;
+
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+        impl AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, SeqCst);
+            }
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let mut core = GbcConsoleCore::new_empty(
+            Box::new(StartProbe {
+                started: started.clone(),
+            }),
+            input(),
+        );
+        core.restart_audio();
+        assert!(started.load(SeqCst));
     }
 }
