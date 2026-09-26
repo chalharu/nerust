@@ -1146,7 +1146,7 @@ class MainActivity :
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
-        val fpsAttached = if (fpsVisible) ensureFpsOverlayPopup(anchor) else true
+        val fpsAttached = !fpsVisible || ensureFpsOverlayPopup(anchor)
         Log.i(
             TAG,
             "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
