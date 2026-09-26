@@ -516,6 +516,20 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Micro
 
 /// Hot-path half of [`expand_arm_single`].
 fn expand_arm_single_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
+    // Class predicates first: the snapshot below costs a register
+    // read, so failed attempts (the common case in the chain) must
+    // not pay for it.
+    // Word/byte class (bits27-26 == 01), immediate or register offset.
+    let is_word = (instr >> 26) & 0x3 == 0b01;
+    // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
+    // register offsets, all S:H shapes (unsigned half, signed byte /
+    // half; S:H == 00 behaves as halfword).
+    // Multiply/SWP/PSR/BX patterns carry the tag too, so the same
+    // decoder exclusions apply (decode tests them first).
+    let is_half = !is_word && (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090;
+    if !is_word && !is_half {
+        return None;
+    }
     let dec = SingleDecoded {
         l: (instr >> 20) & 1 == 1,
         pre_indexed: (instr >> 24) & 1 == 1,
@@ -526,20 +540,11 @@ fn expand_arm_single_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec)
         // STR of R15 stores instruction+12.
         store_value: single_store_value(instr, regs),
     };
-    // Word/byte class (bits27-26 == 01), immediate or register offset.
-    if (instr >> 26) & 0x3 == 0b01 {
+    if is_word {
         single_word_into(instr, regs, &dec, out);
         return Some(());
     }
-    // Halfword class (bits27-25 == 000, bit7+bit4 set): immediate and
-    // register offsets, all S:H shapes (unsigned half, signed byte /
-    // half; S:H == 00 behaves as halfword).
-    // Multiply/SWP/PSR/BX patterns carry the tag too, so the same
-    // decoder exclusions apply (decode tests them first).
-    if (instr >> 25) & 0x7 == 0 && (instr & 0x00000090) == 0x00000090 {
-        return single_half_into(instr, regs, &dec, out);
-    }
-    None
+    single_half_into(instr, regs, &dec, out)
 }
 
 /// Shared decode for both single-transfer classes.
@@ -553,6 +558,7 @@ struct SingleDecoded {
     store_value: Option<u32>,
 }
 
+#[inline]
 fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
     let l = (instr >> 20) & 1 == 1;
     let rd = ((instr >> 12) & 0xF) as usize;
@@ -564,6 +570,9 @@ fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
 }
 
 /// Pad the pinned base: loads 3 (5 for R15), stores 2.
+/// Tiny (single call chain depth matters: 46% of ARM instructions);
+/// forced-inline into both callers.
+#[inline]
 fn single_ops_into(l: bool, rd: usize, acc: MemAccess, out: &mut MicroOpVec) {
     if l {
         out.push(MicroOp::MemRead(acc));
