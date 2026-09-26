@@ -87,6 +87,17 @@ impl SessionHandle {
         self.metrics().paused
     }
 
+    /// Re-assert the audio backend start (mobile OS lifecycle
+    /// transitions can wedge audio streams; the restart is idempotent).
+    /// No-op without a loaded core.
+    pub fn restart_audio(&mut self) {
+        if let Some(ref core) = self.emu_core
+            && let Err(error) = core.restart_audio()
+        {
+            log::warn!("restart_audio failed: {error}");
+        }
+    }
+
     pub fn can_pause(&self) -> bool {
         let metrics = self.metrics();
         metrics.loaded && !metrics.paused

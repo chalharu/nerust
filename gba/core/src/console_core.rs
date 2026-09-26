@@ -209,6 +209,10 @@ impl ConsoleCore for GbaConsoleCore {
         self.audio.set_volume(volume);
     }
 
+    fn restart_audio(&mut self) {
+        self.audio.start();
+    }
+
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
         let loaded = self.loaded_ref()?;
         let Some(cart) = loaded.system.bus.cartridge() else {
@@ -695,5 +699,32 @@ mod tests {
         )
         .unwrap();
         assert!(b.load_state(&state).is_err());
+    }
+
+    #[test]
+    fn restart_audio_starts_backend() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use nerust_core_traits::audio::{AudioBackend, StereoSample};
+
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+        impl AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, SeqCst);
+            }
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let mut core = GbaConsoleCore::new(
+            Box::new(StartProbe {
+                started: started.clone(),
+            }),
+            test_emu_input(),
+        );
+        core.restart_audio();
+        assert!(started.load(SeqCst));
     }
 }

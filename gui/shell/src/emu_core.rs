@@ -199,6 +199,13 @@ impl EmuCore {
             .map_err(|_| OperationError::WorkerUnavailable)
     }
 
+    /// Re-assert the audio backend start on the emu thread (idempotent).
+    pub fn restart_audio(&self) -> Result<(), OperationError> {
+        self.emu
+            .send(EmuCommand::RestartAudio)
+            .map_err(|_| OperationError::WorkerUnavailable)
+    }
+
     pub fn resume(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::Resume)
