@@ -370,8 +370,9 @@ impl Noise {
             return;
         }
         if self.timer == 0 {
-            // Interval form: (64 << shift), ratio 0 halves.
-            let mut interval = 64u32 << shift.min(12);
+            // Interval form: (64 << shift), ratio 0 halves. Shift is a
+            // full 4 bits (0-15); all positions are defined dividers.
+            let mut interval = 64u32 << shift.min(15);
             if ratio == 0 {
                 interval /= 2;
             } else {
@@ -490,8 +491,8 @@ impl Wave {
 impl Noise {
     pub(super) fn validate(&self) -> Result<(), String> {
         self.core.validate()?;
-        // `tick_timer`: (64 << shift<=12) * ratio<=7.
-        if self.timer > 0x200_000 {
+        // `tick_timer`: (64 << shift<=15) * ratio<=7, max (64<<15)*7.
+        if self.timer > 0xE00_000 {
             return Err(format!("apu: noise timer out of range: {}", self.timer));
         }
         if self.lfsr > 0x7FFF {

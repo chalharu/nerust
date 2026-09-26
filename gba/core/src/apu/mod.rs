@@ -602,7 +602,8 @@ impl GbaApu {
                 self.sq2.tick_timer(self.freq2, false);
                 self.wave.tick_timer(self.freq3);
                 let r = (self.sound4cnt_hi & 7) as u8;
-                let s = ((self.sound4cnt_hi >> 4) & 7) as u8;
+                // NR43 shift is 4 bits (0-15); masking 3 dropped shift 8-15.
+                let s = ((self.sound4cnt_hi >> 4) & 15) as u8;
                 self.noise.tick_timer(r, s);
             }
         }
@@ -1139,6 +1140,31 @@ mod tests {
         let mut restored = GbaApu::new();
         restored.import_state(decoded).unwrap();
         assert!(restored.sq2.core.active);
+    }
+
+    #[test]
+    fn noise_shift_uses_all_four_bits() {
+        // NR43 shift is 4 bits; masking 3 misread shift 8-15 as 0-7
+        // (wrong noise pitch for games using slow LFSR clocks).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR42: vol 15, envelope off. NR43: ratio 7, 15-bit, shift 15.
+        // NR44: trigger, length off.
+        apu.write_sound4cnt_lo(0xF000);
+        apu.write_sound4cnt_hi(0x80F7);
+        assert!(apu.noise.core.active);
+        apu.tick();
+        // Interval (64<<15)*7, minus the tick just consumed. The old
+        // 3-bit mask gave (64<<7)*7 - 1 = 57343.
+        assert_eq!(apu.noise.timer_horizon(), Some((64 << 15) * 7 - 1));
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored
+            .import_state(rmp_serde::from_slice(&rmp_serde::to_vec_named(&state).unwrap()).unwrap())
+            .unwrap();
+        assert!(restored.noise.core.active);
     }
 
     #[test]
