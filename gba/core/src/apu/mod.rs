@@ -1140,4 +1140,50 @@ mod tests {
         restored.import_state(decoded).unwrap();
         assert!(restored.sq2.core.active);
     }
+
+    #[test]
+    fn apu_state_round_trips_all_channels_at_extremes() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // ch1: sweep pace 7 / dec / shift 7, duty 3, env vol 15 up pace 3,
+        // len on, freq low (sweep will overflow and kill it mid-run).
+        apu.write_sound1cnt_lo(0x0077);
+        apu.write_sound1cnt_hi(0xFFF3);
+        apu.write_sound1cnt_x(0xC100);
+        // ch2: duty 3, env vol 15 down pace 7, freq max, len on.
+        apu.write_sound2cnt_lo(0xF7F3);
+        apu.write_sound2cnt_hi(0xFFFF);
+        // ch3: DAC on, dim64, bank 1, len max (256), rate max (rapid
+        // phase/bank cycling), len on, trigger.
+        apu.write_sound3cnt_lo(0x00E0);
+        apu.write_sound3cnt_hi(0x0000);
+        apu.write_sound3cnt_x(0x87FF);
+        // ch4: env vol 8 up pace 7, len max; ratio 7, 7-bit, shift 7,
+        // len on, trigger.
+        apu.write_sound4cnt_lo(0x8F00);
+        apu.write_sound4cnt_hi(0xC07F);
+        // FIFO A packed full (32) through the MMIO path.
+        for i in 0..8 {
+            apu.push_fifo(false, 0x11111111u32.wrapping_add(i), 4);
+        }
+        for i in 0..60000 {
+            apu.tick();
+            if i % 37 == 0 {
+                let _ = apu.drain_resampled(48_000);
+                let state = apu
+                    .export_state()
+                    .unwrap_or_else(|e| panic!("export failed at tick {i}: {e}"));
+                state
+                    .validate()
+                    .unwrap_or_else(|e| panic!("invalid at tick {i}: {e}"));
+                let bytes = rmp_serde::to_vec_named(&state).unwrap();
+                let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+                decoded.validate().unwrap();
+                let mut restored = GbaApu::new();
+                restored
+                    .import_state(decoded)
+                    .unwrap_or_else(|e| panic!("import failed at tick {i}: {e}"));
+            }
+        }
+    }
 }
