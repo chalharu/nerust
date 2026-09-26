@@ -806,6 +806,39 @@ fn immediate_dma_transfers_memory_and_clears_enable() {
 }
 
 #[test]
+fn dma_delay_burn_fold_reports_exact_bus_advance() {
+    // Save states were unloadable on DMA-heavy games (Myst): the burn
+    // fold advanced `current_tcycle` once at tick entry plus `k` more
+    // while reporting only `k`, so the bus clock ran ahead of the
+    // system tick and state validation rejected the snapshot.
+    // Reported advances must equal clock movement.
+    let mut bus = GbaMemoryBus::new();
+    // 256-word immediate DMA from ROM: wait-state idle gaps force
+    // multi-tick delay burns between units.
+    bus.write32(0x040000D4, 0x08000000);
+    bus.write32(0x040000D8, 0x02000000);
+    bus.write32(0x040000DC, 0x84000100);
+    let start = bus.current_tcycle;
+    let mut credited = 0u64;
+    let mut folds = 0u32;
+    for _ in 0..1_000_000 {
+        let (_, n) = bus.tick();
+        credited += n;
+        folds += u32::from(n > 1);
+        if bus.read16(0x040000DE) & 0x8000 == 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        bus.read16(0x040000DE) & 0x8000,
+        0,
+        "DMA transfer must complete"
+    );
+    assert!(folds > 0, "test needs burn folds to guard the accounting");
+    assert_eq!(bus.current_tcycle - start, credited);
+}
+
+#[test]
 fn timer_overflow_sets_if_and_cascades() {
     let mut bus = GbaMemoryBus::new();
     bus.write32(0x04000104, 0x00840000);
