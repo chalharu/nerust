@@ -36,6 +36,14 @@ fn ttrace_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("GBA_TTRACE").is_ok())
 }
 
+/// Tick-skip escape hatch (perf A/B and exactness bisection): set
+/// `GBA_NO_SKIP` to force every tick through the full per-cycle path.
+/// Checked once per tick through a cached flag; negligible when unset.
+fn tick_skip_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("GBA_NO_SKIP").is_err())
+}
+
 const BIOS_SIZE: usize = 0x4000;
 const EWRAM_SIZE: usize = 0x40000;
 const IWRAM_SIZE: usize = 0x8000;
@@ -276,6 +284,15 @@ pub struct GbaMemoryBus {
     /// A DMA burst is currently feeding the EEPROM serial chip; closed when
     /// no DMA channel is active or pending (frame decoded at burst end).
     eeprom_burst_open: bool,
+    /// Remaining quiet ticks before the next cycle needing full per-cycle
+    /// processing (`quiet_cycles` measured after the last full tick).
+    /// Interior ticks advance every device arithmetically (exactly what
+    /// `advance_idle(1)` folds) with no event evaluation; any bus/CPU
+    /// state change that can move a device horizon resets this to 0
+    /// (`write_io`, `request_interrupt`, halt/stop entry, key input,
+    /// HLE-active ticks). Pure perf hint, excluded from wire state by
+    /// design (0 is always valid; it self-heals on the next full tick).
+    bus_quiet: u64,
     /// Test-ROM log sink behind the `mgba-debug-log` cargo feature. No
     /// hardware counterpart exists: zero waits, no prefetch/N-S side effects.
     #[cfg(feature = "mgba-debug-log")]
@@ -661,6 +678,7 @@ impl GbaMemoryBus {
             video_countdown: 0,
             pending_hblank_irq: false,
             eeprom_burst_open: false,
+            bus_quiet: 0,
             #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
             #[cfg(feature = "mgba-debug-log")]
@@ -891,6 +909,53 @@ impl GbaMemoryBus {
             // (Wake-source subset and IF-not-set are not modeled.)
             return false;
         }
+        // HLE BIOS steps write through paths the horizon audit cannot see
+        // statically (direct operation-scratch stores), so an active HLE
+        // transfer always takes the full path below.
+        if self.hle_bios_active() {
+            self.bus_quiet = 0;
+        } else if tick_skip_enabled() && self.bus_quiet > 0 {
+            self.bus_quiet -= 1;
+            // Quiet-span advance: arithmetically identical to the per-cycle
+            // path (same folds `advance_idle(1)` applies, verified by the
+            // horizon contract), with no event evaluation. No IRQ, DMA
+            // trigger/completion, line/frame edge, FIFO request, SIO or
+            // video-capture completion can fire inside the span: every one
+            // is capped by `quiet_cycles` at recompute time.
+            self.dma.tick_pending();
+            self.apu.advance_idle(1);
+            self.timers.advance_idle(1);
+            self.ppu.advance_idle(1);
+            // Countdown completions are capped the same way (a countdown
+            // of 1 forces horizon 0), so these never land inside a span.
+            if self.video_countdown > 0 {
+                self.video_countdown -= 1;
+            }
+            if self.sio_xfer_cycles > 0 {
+                self.sio_xfer_cycles -= 1;
+            }
+            if self.dma.is_active() {
+                // A startup latency expired on this tick: the per-cycle
+                // path runs the first DMA word on the activation tick
+                // itself, so finish this tick on the DMA phase (devices
+                // above are already advanced exactly once, like the full
+                // path's device phases before its DMA phase).
+                self.bus_quiet = 0;
+                let stall_snapshot = DisplayStallSnapshot {
+                    forced_blank: self.ppu.forced_blank(),
+                    vcount: self.ppu.vcount(),
+                    cycle: self.ppu.cycle(),
+                    dispcnt: self.ppu.dispcnt(),
+                    bg_fetch_active: self.ppu.bg_fetch_active(),
+                };
+                self.tick_dma(&stall_snapshot);
+                let completion = self.dma.take_completion_interrupts();
+                if completion != 0 {
+                    self.request_interrupt(completion);
+                }
+            }
+            return false;
+        }
         self.tick_sound_dma();
         let event = self.tick_video();
         let timer_irq = self.tick_timers();
@@ -929,6 +994,19 @@ impl GbaMemoryBus {
                 cart.eeprom_end_burst();
             }
         }
+        // Refresh the skip budget from post-tick state. Cheap-zero
+        // shortcut: an active HLE transfer, DMA in flight, a deferred
+        // HBlank raise, or an open EEPROM burst all force the full path
+        // next tick without paying for the horizon computation.
+        self.bus_quiet = if self.hle_bios_active()
+            || self.dma.is_active()
+            || self.pending_hblank_irq
+            || self.eeprom_burst_open
+        {
+            0
+        } else {
+            self.quiet_cycles()
+        };
         event.frame_complete
     }
 
@@ -984,6 +1062,9 @@ impl GbaMemoryBus {
         if n == 0 {
             return;
         }
+        // The batch jump consumes `n` ticks of every device horizon, so
+        // the leftover skip budget shrinks with it (0 stays 0).
+        self.bus_quiet = self.bus_quiet.saturating_sub(n);
         self.current_tcycle = self.current_tcycle.wrapping_add(n);
         if self.stopped {
             // Frozen clocks: per-cycle `tick` returns before `tick_timers`
@@ -1451,6 +1532,9 @@ impl GbaMemoryBus {
     pub fn set_keyinput(&mut self, value: u16) {
         self.keyinput = value | 0xFC00;
         self.check_keycnt();
+        // `check_keycnt` may raise (see `request_interrupt`, which already
+        // resets), but the keypad level itself is observable; be explicit.
+        self.bus_quiet = 0;
     }
 
     /// GBATEK KEYCNT: with bit 14 set, a keypad condition (bit 15:
@@ -1485,6 +1569,7 @@ impl GbaMemoryBus {
 
     pub fn enter_halt(&mut self, irq_mask: u16) {
         self.halt_irq_mask = irq_mask;
+        self.bus_quiet = 0;
         // A fresh wait starts with no exit restore pending (see
         // `bios_wait_exit_armed`); the IntrWait wake below re-arms it.
         self.bios_wait_exit_armed = false;
@@ -1500,6 +1585,7 @@ impl GbaMemoryBus {
     /// SWI Stop / HALTCNT-stop: park the CPU with clocks down.
     pub fn enter_stop(&mut self) {
         self.stopped = true;
+        self.bus_quiet = 0;
         // GBATEK HALTCNT Stop: only keypad, GamePak and serial interrupts
         // wake the machine (timers/DMA/video cannot).
         self.enter_halt(self.ie & 0x3080);
@@ -1553,6 +1639,10 @@ impl GbaMemoryBus {
         }
         self.pending_if |= mask;
         self.pending_at = Some(self.current_tcycle + 1);
+        // The pending level feeds the IRQ-pipeline horizon: any raise
+        // (device edge, register write, keypad) voids the skip budget.
+        // No-op on the full path (recomputed right after the tick).
+        self.bus_quiet = 0;
     }
 
     /// Wake a halted/stopped CPU once delayed availability arrives.
@@ -2302,6 +2392,9 @@ impl GbaMemoryBus {
         self.video_countdown = state.video_countdown;
         self.pending_hblank_irq = state.pending_hblank_irq;
         self.eeprom_burst_open = state.eeprom_burst_open;
+        // Transient skip budget, excluded from wire state: always restart
+        // at 0 (recomputes on the next full tick).
+        self.bus_quiet = 0;
         self.ppu.import_state(state.ppu)?;
         self.dma.import_state(state.dma)?;
         self.timers.import_state(state.timers)?;
@@ -3550,6 +3643,10 @@ impl GbaMemoryBus {
 
     fn write_io(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
         self.timers.set_current_cycle(self.current_tcycle);
+        // Every I/O write can move a device horizon (timer/sound/DMA/SIO
+        // control, PPU/DISPSTAT latches, IRQ levels, WAITCNT timing), so
+        // the skip budget restarts (recomputes after the next full tick).
+        self.bus_quiet = 0;
         // 4000800h Internal Memory Control, mirrored each 64K. Only the
         // documented bits are stored (0-3, 5, 24-31); sub-word writes merge
         // lanes. Remap/wait effects are not modeled.
