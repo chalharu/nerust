@@ -159,27 +159,36 @@ pub(crate) fn run(
 }
 
 fn show_toast(app: &AndroidApp, message: &str) {
-    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as _) };
-    let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
-        let activity_raw = app.activity_as_ptr() as jni::sys::jobject;
-        let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
+    // Toast must be created/shown on the Java main thread; this function
+    // is called from the winit event-loop thread where it would otherwise
+    // fail silently (no Looper) and hide save/load failures from the user.
+    let callback_app = app.clone();
+    let message = message.to_string();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(callback_app.vm_as_ptr() as _) };
+        let _: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+            let activity_raw = callback_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = unsafe { jni::objects::JObject::from_raw(env, activity_raw) };
 
-        let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
-        let text = env.new_string(message)?;
-        let toast = env.call_static_method(
-            &toast_class,
-            jni_str!("makeText"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"),
-            &[
-                jni::objects::JValue::Object(&activity),
-                jni::objects::JValue::Object(text.as_ref()),
-                jni::objects::JValue::Int(0),
-            ],
-        )?;
-        let toast_obj = toast.l()?;
-        let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
-        Ok(())
-    });
+            let toast_class = env.find_class(jni_str!("android/widget/Toast"))?;
+            let text = env.new_string(&message)?;
+            let toast = env.call_static_method(
+                &toast_class,
+                jni_str!("makeText"),
+                jni_sig!(
+                    "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;"
+                ),
+                &[
+                    jni::objects::JValue::Object(&activity),
+                    jni::objects::JValue::Object(text.as_ref()),
+                    jni::objects::JValue::Int(0),
+                ],
+            )?;
+            let toast_obj = toast.l()?;
+            let _ = env.call_method(&toast_obj, jni_str!("show"), jni_sig!("()V"), &[]);
+            Ok(())
+        });
+    }));
 }
 
 fn configure_controls_overlay(
@@ -1041,14 +1050,32 @@ impl AndroidFrontend {
                 self.request_redraw();
             }
             MenuAction::LoadState => {
-                if !self.load_active_slot() {
+                if self.load_active_slot() {
+                    match self.session.active_slot_id() {
+                        Some(slot_id) => {
+                            show_toast(&self.app, &format!("State loaded from slot {slot_id}"))
+                        }
+                        None => show_toast(&self.app, "State loaded"),
+                    }
+                } else {
                     show_toast(&self.app, "No save state to load");
                 }
             }
             MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
             MenuAction::Reset => self.reset(),
-            MenuAction::SaveState => self.save_active_slot(),
+            MenuAction::SaveState => {
+                if self.save_active_slot() {
+                    match self.session.active_slot_id() {
+                        Some(slot_id) => {
+                            show_toast(&self.app, &format!("State saved to slot {slot_id}"));
+                        }
+                        None => show_toast(&self.app, "State saved"),
+                    }
+                } else {
+                    show_toast(&self.app, "Save state failed");
+                }
+            }
             MenuAction::TogglePause => self.toggle_pause(),
         }
     }
@@ -1743,8 +1770,10 @@ impl FrontendSession for AndroidFrontend {
         self.exec(SessionCommand::TogglePause);
     }
 
-    fn save_active_slot(&mut self) {
-        self.exec(SessionCommand::SaveActiveSlotOrNew);
+    fn save_active_slot(&mut self) -> bool {
+        self.exec(SessionCommand::SaveActiveSlotOrNew)
+            .unwrap_or_default()
+            .executed
     }
 
     fn load_active_slot(&mut self) -> bool {

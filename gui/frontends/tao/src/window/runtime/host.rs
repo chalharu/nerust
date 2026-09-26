@@ -406,7 +406,9 @@ impl HostState {
         match shortcut {
             KeyboardShortcut::Session(action) => match action {
                 ShortcutAction::TogglePause => self.toggle_pause(),
-                ShortcutAction::SaveActiveSlot => self.save_active_slot(),
+                ShortcutAction::SaveActiveSlot => {
+                    let _ = self.save_active_slot();
+                }
                 ShortcutAction::SelectNextSlot => self.select_next_slot(),
                 ShortcutAction::SelectPreviousSlot => self.select_previous_slot(),
                 ShortcutAction::LoadActiveSlot => {
@@ -583,10 +585,11 @@ impl FrontendSession for HostState {
     fn toggle_pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::TogglePause);
     }
-    fn save_active_slot(&mut self) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::SaveActiveSlotOrNew);
+    fn save_active_slot(&mut self) -> bool {
+        self.session
+            .run_command(SessionCommand::SaveActiveSlotOrNew)
+            .unwrap_or_default()
+            .executed
     }
     fn load_active_slot(&mut self) -> bool {
         self.session

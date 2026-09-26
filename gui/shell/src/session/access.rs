@@ -26,7 +26,7 @@ pub trait FrontendSession {
     fn pause(&mut self);
     fn resume(&mut self);
     fn toggle_pause(&mut self);
-    fn save_active_slot(&mut self);
+    fn save_active_slot(&mut self) -> bool;
     fn load_active_slot(&mut self) -> bool;
     fn select_next_slot(&mut self);
     fn select_previous_slot(&mut self);

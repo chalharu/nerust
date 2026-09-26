@@ -302,14 +302,19 @@ impl PersistenceManager {
         self.mapper_save_path.as_ref()
     }
 
-    pub fn save_slot(&mut self, slot_id: u64, emu: &impl CorePersistence, make_active: bool) {
+    pub fn save_slot(
+        &mut self,
+        slot_id: u64,
+        emu: &impl CorePersistence,
+        make_active: bool,
+    ) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
-            return;
+            return false;
         };
         let Some(identity) = emu.canonical_media_identity() else {
             log::warn!("save_slot: no persistence identity available; cannot save slot {slot_id}");
-            return;
+            return false;
         };
         log::info!(
             "save_slot: writing slot {slot_id} (make_active={make_active}) to {}",
@@ -336,18 +341,25 @@ impl PersistenceManager {
                         }
                         self.refresh_slots_inner(Some(&identity));
                         log::info!("save_slot: saved slot {slot_id}");
+                        true
                     }
-                    Err(error) => log::warn!("saving state slot failed: {error}"),
+                    Err(error) => {
+                        log::warn!("saving state slot failed: {error}");
+                        false
+                    }
                 }
             }
-            Err(error) => log::warn!("state export failed: {error}"),
+            Err(error) => {
+                log::warn!("state export failed: {error}");
+                false
+            }
         }
     }
 
-    pub fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) {
+    pub fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
-            return;
+            return false;
         };
         let slot_id = self.active_slot_id.or_else(|| {
             self.slot_backend
@@ -361,22 +373,26 @@ impl PersistenceManager {
         match slot_id {
             Some(slot_id) => {
                 log::info!("save_active_slot_or_new: saving to slot {slot_id}");
-                self.save_slot(slot_id, emu, true);
+                self.save_slot(slot_id, emu, true)
             }
             None => {
                 log::warn!("save_active_slot_or_new: failed to allocate slot id");
+                false
             }
         }
     }
 
-    pub fn create_slot(&mut self, emu: &impl CorePersistence) {
+    pub fn create_slot(&mut self, emu: &impl CorePersistence) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("create_slot: no states_dir configured; cannot create slot");
-            return;
+            return false;
         };
         match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, true),
-            Err(error) => log::warn!("allocating state slot failed: {error}"),
+            Err(error) => {
+                log::warn!("allocating state slot failed: {error}");
+                false
+            }
         }
     }
 
