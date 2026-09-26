@@ -234,6 +234,14 @@ impl GbaDma {
         if self.is_active() {
             return 0;
         }
+        self.pending_quiet_cycles()
+    }
+
+    /// Pending-latency caps only, tolerating an active channel (for the
+    /// DMA-active fast path: word side effects stay per-tick in the DMA
+    /// phase, but a latency expiry still changes the phase mid-tick).
+    #[inline]
+    pub(crate) fn pending_quiet_cycles(&self) -> u64 {
         let mut horizon = u64::MAX;
         for dma in &self.channels {
             if dma.pending > 0 {
