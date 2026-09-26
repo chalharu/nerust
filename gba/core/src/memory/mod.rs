@@ -949,14 +949,7 @@ impl GbaMemoryBus {
                 // path's device phases before its DMA phase).
                 self.bus_quiet = 0;
                 self.dma_device_quiet = 0;
-                let stall_snapshot = DisplayStallSnapshot {
-                    forced_blank: self.ppu.forced_blank(),
-                    vcount: self.ppu.vcount(),
-                    cycle: self.ppu.cycle(),
-                    dispcnt: self.ppu.dispcnt(),
-                    bg_fetch_active: self.ppu.bg_fetch_active(),
-                };
-                self.tick_dma(&stall_snapshot);
+                self.tick_dma();
                 let completion = self.dma.take_completion_interrupts();
                 if completion != 0 {
                     self.request_interrupt(completion);
@@ -982,14 +975,7 @@ impl GbaMemoryBus {
             if self.sio_xfer_cycles > 0 {
                 self.sio_xfer_cycles -= 1;
             }
-            let stall_snapshot = DisplayStallSnapshot {
-                forced_blank: self.ppu.forced_blank(),
-                vcount: self.ppu.vcount(),
-                cycle: self.ppu.cycle(),
-                dispcnt: self.ppu.dispcnt(),
-                bg_fetch_active: self.ppu.bg_fetch_active(),
-            };
-            self.tick_dma(&stall_snapshot);
+            self.tick_dma();
             let completion = self.dma.take_completion_interrupts();
             if completion != 0 {
                 self.request_interrupt(completion);
@@ -1024,19 +1010,13 @@ impl GbaMemoryBus {
             self.pending_hblank_irq = true;
         }
         self.tick_sio();
-        // Display-stall snapshot + DMA step only while a transfer can be
-        // in flight. `dma.step` early-returns on no active channel, so
-        // skipping the snapshot build and the call is exact (pending
-        // countdowns run separately in `tick_sound_dma`).
+        // DMA step only while a transfer can be in flight. `dma.step`
+        // early-returns on no active channel, so skipping the call is
+        // exact (pending countdowns run separately in `tick_sound_dma`).
+        // The display-stall snapshot is built lazily inside `tick_dma`
+        // (only transfer ticks evaluate stalls; delay burns never do).
         if self.dma.is_active() {
-            let stall_snapshot = DisplayStallSnapshot {
-                forced_blank: self.ppu.forced_blank(),
-                vcount: self.ppu.vcount(),
-                cycle: self.ppu.cycle(),
-                dispcnt: self.ppu.dispcnt(),
-                bg_fetch_active: self.ppu.bg_fetch_active(),
-            };
-            self.tick_dma(&stall_snapshot);
+            self.tick_dma();
         }
         interrupt_mask |= self.dma.take_completion_interrupts();
         if interrupt_mask != 0 {
@@ -1393,20 +1373,31 @@ impl GbaMemoryBus {
     /// serial bits, GamePak prefetch collisions, bus-latch driving,
     /// destination write, bus-ownership reset).
     #[inline]
-    fn tick_dma(&mut self, stall_snapshot: &DisplayStallSnapshot) {
-        let Some(transfer) = self
-            .dma
-            .step(self.wait_cnt, &|addr| stall_snapshot.stall(addr))
-        else {
+    fn tick_dma(&mut self) {
+        // The display-stall snapshot builds lazily on the first stall
+        // evaluation: delay-burn and completion ticks never touch it,
+        // so only transfer ticks pay for it. Values match an eager
+        // build exactly (`dma.step` never mutates PPU state).
+        let build = || DisplayStallSnapshot {
+            forced_blank: self.ppu.forced_blank(),
+            vcount: self.ppu.vcount(),
+            cycle: self.ppu.cycle(),
+            dispcnt: self.ppu.dispcnt(),
+            bg_fetch_active: self.ppu.bg_fetch_active(),
+        };
+        let mut snapshot: Option<DisplayStallSnapshot> = None;
+        let mut stall = |addr: u32| -> u8 { snapshot.get_or_insert_with(&build).stall(addr) };
+        let Some(transfer) = self.dma.step(self.wait_cnt, &mut stall) else {
             return;
         };
         if dtrace_enabled() {
+            let snap = snapshot.get_or_insert_with(build);
             eprintln!(
                 "DMA{} t={} vc={} cyc={} src={:#010X} dst={:#010X} w={}",
                 transfer.channel,
                 self.current_tcycle,
-                stall_snapshot.vcount,
-                stall_snapshot.cycle,
+                snap.vcount,
+                snap.cycle,
                 transfer.data_source,
                 transfer.destination,
                 transfer.width
