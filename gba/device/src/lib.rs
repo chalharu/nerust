@@ -12,7 +12,8 @@ pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
 /// GBA joypad bit assignments for the 2-byte input buffer.
 ///
 /// Field indices 0-9 correspond to the bit positions used by
-/// `GbaInputBuffer::set()` to map each button to a KEYINPUT bit.
+/// `GbaInputBuffer::set()` to map each button to a KEYINPUT bit
+/// (GBATEK 4000130h: bit 8 = R, bit 9 = L).
 const FIELD_A: usize = 0;
 const FIELD_B: usize = 1;
 const FIELD_SELECT: usize = 2;
@@ -21,8 +22,8 @@ const FIELD_RIGHT: usize = 4;
 const FIELD_LEFT: usize = 5;
 const FIELD_UP: usize = 6;
 const FIELD_DOWN: usize = 7;
-const FIELD_L: usize = 8;
-const FIELD_R: usize = 9;
+const FIELD_R: usize = 8;
+const FIELD_L: usize = 9;
 
 /// Game Boy Advance controller: 10 buttons, read via KEYINPUT 0x04000130.
 #[derive(Debug, Clone)]
@@ -235,6 +236,21 @@ mod tests {
         for i in sorted {
             assert!(i < 10, "field index {i} exceeds buffer");
         }
+    }
+
+    #[test]
+    fn field_map_matches_keyinput_bits() {
+        // GBATEK KEYINPUT 4000130h: bit 8 = R, bit 9 = L.
+        let pad = StandardPad::default();
+        let map = pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"));
+        let bit = |id: &str| {
+            map.iter()
+                .find(|(_, control, _)| control.as_str() == id)
+                .map(|(_, _, idx)| *idx)
+                .expect("control must be mapped")
+        };
+        assert_eq!(bit("gba.control.r"), 8);
+        assert_eq!(bit("gba.control.l"), 9);
     }
 
     #[test]

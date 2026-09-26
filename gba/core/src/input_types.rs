@@ -1,7 +1,8 @@
 use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
 /// Active-low state for the ten GBA buttons.
-/// Bits 0-9 are A, B, Select, Start, Right, Left, Up, Down, L, R.
+/// Bits 0-9 are A, B, Select, Start, Right, Left, Up, Down, R, L
+/// (GBATEK KEYINPUT 4000130h).
 /// Upper 6 bits are unused and always 1 (mirrors KEYINPUT 0x03FF).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GbaInputBuffer(pub u16);
