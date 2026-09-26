@@ -37,7 +37,7 @@ use nerust_gui_shell::{
     session::{
         SessionError, SessionHandle,
         access::{FrontendSession, SettingsResult},
-        commands::{SessionCommand, SessionCommandOutcome},
+        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
     },
 };
 use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, DigitalInputEvent};
@@ -189,6 +189,31 @@ fn show_toast(app: &AndroidApp, message: &str) {
             Ok(())
         });
     }));
+}
+
+/// User-facing text for a failed LoadState menu action. `None` (command
+/// itself errored) and genuinely-missing states share the familiar
+/// message; real failures name the cause (detail stays in logcat).
+fn load_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
+    match failure {
+        None | Some(SlotOpFailure::Empty) | Some(SlotOpFailure::Missing) => "No save state to load",
+        Some(SlotOpFailure::Incompatible) => "Save state is incompatible",
+        Some(SlotOpFailure::Corrupt) => "Save state is corrupt",
+        Some(SlotOpFailure::Storage) => "Load failed: storage error",
+        Some(SlotOpFailure::Unavailable) => "Load failed",
+    }
+}
+
+/// User-facing text for a failed SaveState menu action.
+fn save_failure_text(failure: Option<SlotOpFailure>) -> &'static str {
+    match failure {
+        None | Some(SlotOpFailure::Unavailable) => "Save state failed",
+        Some(SlotOpFailure::Storage) => "Save failed: storage error",
+        Some(SlotOpFailure::Empty)
+        | Some(SlotOpFailure::Missing)
+        | Some(SlotOpFailure::Corrupt)
+        | Some(SlotOpFailure::Incompatible) => "Save state failed",
+    }
 }
 
 fn configure_controls_overlay(
@@ -1050,7 +1075,10 @@ impl AndroidFrontend {
                 self.request_redraw();
             }
             MenuAction::LoadState => {
-                if self.load_active_slot() {
+                let outcome = self
+                    .exec(SessionCommand::LoadActiveSlot)
+                    .unwrap_or_default();
+                if outcome.executed {
                     match self.session.active_slot_id() {
                         Some(slot_id) => {
                             show_toast(&self.app, &format!("State loaded from slot {slot_id}"))
@@ -1058,14 +1086,17 @@ impl AndroidFrontend {
                         None => show_toast(&self.app, "State loaded"),
                     }
                 } else {
-                    show_toast(&self.app, "No save state to load");
+                    show_toast(&self.app, load_failure_text(outcome.slot_failure));
                 }
             }
             MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
             MenuAction::Reset => self.reset(),
             MenuAction::SaveState => {
-                if self.save_active_slot() {
+                let outcome = self
+                    .exec(SessionCommand::SaveActiveSlotOrNew)
+                    .unwrap_or_default();
+                if outcome.executed {
                     match self.session.active_slot_id() {
                         Some(slot_id) => {
                             show_toast(&self.app, &format!("State saved to slot {slot_id}"));
@@ -1073,7 +1104,7 @@ impl AndroidFrontend {
                         None => show_toast(&self.app, "State saved"),
                     }
                 } else {
-                    show_toast(&self.app, "Save state failed");
+                    show_toast(&self.app, save_failure_text(outcome.slot_failure));
                 }
             }
             MenuAction::TogglePause => self.toggle_pause(),
