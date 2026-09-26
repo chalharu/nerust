@@ -133,10 +133,11 @@ impl FrontendSession for State {
     fn toggle_pause(&mut self) {
         let _ = self.session.run_command(SessionCommand::TogglePause);
     }
-    fn save_active_slot(&mut self) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::SaveActiveSlotOrNew);
+    fn save_active_slot(&mut self) -> bool {
+        self.session
+            .run_command(SessionCommand::SaveActiveSlotOrNew)
+            .unwrap_or_default()
+            .executed
     }
     fn load_active_slot(&mut self) -> bool {
         self.session

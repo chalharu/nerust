@@ -256,13 +256,13 @@ impl SessionHandle {
             SessionCommand::Resume => self.cmd_resume(),
             SessionCommand::TogglePause => self.cmd_toggle_pause(),
             SessionCommand::Reset => self.cmd_reset(),
-            SessionCommand::CreateSlot => Ok(self.slot_op(|p, c| p.create_slot(c))),
+            SessionCommand::CreateSlot => Ok(self.slot_op_ok(|p, c| p.create_slot(c))),
             SessionCommand::SaveActiveSlotOrNew => {
-                Ok(self.slot_op(|p, c| p.save_active_slot_or_new(c)))
+                Ok(self.slot_op_ok(|p, c| p.save_active_slot_or_new(c)))
             }
             SessionCommand::LoadActiveSlot => Ok(self.load_slot_op(|p, c| p.load_active_slot(c))),
             SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
-            SessionCommand::SaveSlot(id) => Ok(self.slot_op(|p, c| p.save_slot(id, c, false))),
+            SessionCommand::SaveSlot(id) => Ok(self.slot_op_ok(|p, c| p.save_slot(id, c, false))),
             SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
             SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
             SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(true)),
@@ -336,6 +336,21 @@ impl SessionHandle {
         }
         SessionCommandOutcome {
             executed: true,
+            needs_redraw: false,
+        }
+    }
+
+    fn slot_op_ok(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+    ) -> SessionCommandOutcome {
+        let executed = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core)
+        } else {
+            false
+        };
+        SessionCommandOutcome {
+            executed,
             needs_redraw: false,
         }
     }
