@@ -202,6 +202,10 @@ impl ConsoleCore for GbaConsoleCore {
         }
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system = candidate;
+        // A replaced timeline must not play stale queued audio, and the
+        // backend may need re-asserting (mobile lifecycle); `start` is
+        // idempotent.
+        self.audio.start();
         Ok(())
     }
 
@@ -725,6 +729,45 @@ mod tests {
             test_emu_input(),
         );
         core.restart_audio();
+        assert!(started.load(SeqCst));
+    }
+
+    #[test]
+    fn load_state_starts_backend() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use nerust_core_traits::audio::{AudioBackend, StereoSample};
+
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+        impl AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, SeqCst);
+            }
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let mut core = GbaConsoleCore::new(
+            Box::new(StartProbe {
+                started: started.clone(),
+            }),
+            test_emu_input(),
+        );
+        core.load(
+            &rom(),
+            &CoreConfig {
+                region: None,
+                bios_paths: HashMap::new(),
+                controllers: HashMap::new(),
+                core_options: None,
+            },
+        )
+        .unwrap();
+        assert!(!started.load(SeqCst));
+        let state = core.save_state().unwrap();
+        core.load_state(&state).unwrap();
         assert!(started.load(SeqCst));
     }
 }

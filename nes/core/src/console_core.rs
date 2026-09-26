@@ -138,7 +138,12 @@ impl ConsoleCore for NesConsoleCore {
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
-        core.import_machine_state(data).map_err(CoreError::Core)
+        core.import_machine_state(data).map_err(CoreError::Core)?;
+        // A replaced timeline must not play stale queued audio, and the
+        // backend may need re-asserting (mobile lifecycle); `start` is
+        // idempotent.
+        self.audio.start();
+        Ok(())
     }
 
     fn set_volume(&mut self, volume: f32) {
@@ -299,6 +304,43 @@ mod tests {
             test_emu_input(),
         );
         core.restart_audio();
+        assert!(started.load(SeqCst));
+    }
+
+    #[test]
+    fn load_state_starts_backend() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use nerust_core_traits::audio::{AudioBackend, StereoSample};
+
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+        impl AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, SeqCst);
+            }
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let mut core = NesConsoleCore::new_empty(
+            ControllerCollection::new(vec![Box::new(MockController)]),
+            Box::new(StartProbe {
+                started: started.clone(),
+            }),
+            test_emu_input(),
+        );
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+        };
+        core.load(&test_rom(), &config).unwrap();
+        assert!(!started.load(SeqCst));
+        let state = core.save_state().unwrap();
+        core.load_state(&state).unwrap();
         assert!(started.load(SeqCst));
     }
 }
