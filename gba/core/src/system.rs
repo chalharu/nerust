@@ -161,12 +161,16 @@ impl GbaSystem {
 
     /// Quiet prefix length before the next cycle needing full processing:
     /// CPU bus access (0 when the CPU acts this cycle), device events and
-    /// IRQ pipeline deadlines.
+    /// IRQ pipeline deadlines. The device part reuses the bus skip budget
+    /// (`bus_quiet`): it is exact here because every consumption path
+    /// decrements it (skip ticks, batch jumps) and every mutation resets
+    /// it (writes, IRQ raises, halt/stop, HLE) — never stale-long, so a
+    /// fresh `quiet_cycles()` recompute per batch iteration is redundant.
     fn batch_horizon(&self) -> u64 {
         if !self.bus.dma_active() && !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
             return 0;
         }
-        let mut horizon = self.bus.quiet_cycles();
+        let mut horizon = self.bus.bus_quiet();
         if !self.bus.is_halted() && !self.bus.dma_active() {
             horizon = horizon.min(u64::from(self.cpu_cycles_remaining));
         }

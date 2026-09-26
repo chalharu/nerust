@@ -1010,6 +1010,14 @@ impl GbaMemoryBus {
         event.frame_complete
     }
 
+    /// Cached device-horizon remainder (see `bus_quiet` field): exact at
+    /// any batch/tick boundary — consumptions decrement it, mutations
+    /// reset it. Lets the batch driver skip a `quiet_cycles()` recompute.
+    #[inline]
+    pub(crate) fn bus_quiet(&self) -> u64 {
+        self.bus_quiet
+    }
+
     /// Batching horizon: quiet prefix length (in T-cycles) before the next
     /// cycle that needs full per-cycle processing. After `advance_idle(h)`
     /// plus one normal `tick`, state is bit-identical to h+1 per-cycle
