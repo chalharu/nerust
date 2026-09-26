@@ -638,7 +638,7 @@ fn hblank_dma_fires_on_vdraw_lines_only() {
     bus.write16(0x040000BA, 0x8000 | (1 << 9) | (2 << 12));
     let mut frames = 0;
     for _ in 0..300000 {
-        if bus.tick() {
+        if bus.tick().0 {
             frames += 1;
             break;
         }
@@ -969,14 +969,24 @@ fn batch_matches_per_cycle_on_seeded_io_programs() {
             }
             let horizon = b.quiet_cycles().min(total - cycle);
             if horizon == 0 {
-                assert_eq!(b.tick(), a.tick(), "divergence at cycle {cycle}");
-                cycle += 1;
+                // Lockstep single ticks (either side may fold DMA delay
+                // burns; same state folds identically — the tuples must
+                // match exactly, and cycle accounting follows the advance).
+                let (end_b, n_b) = b.tick();
+                let (end_a, n_a) = a.tick();
+                assert_eq!((end_b, n_b), (end_a, n_a), "divergence at cycle {cycle}");
+                cycle += n_a;
             } else {
-                // Reference: the span must be event-free.
-                for _ in 0..horizon {
-                    assert!(!a.tick(), "event inside batched span at cycle {cycle}");
-                    cycle += 1;
+                // Reference: the span must be event-free. `a` may fold
+                // DMA burns inside the span; accumulate its advance.
+                let mut span = 0u64;
+                while span < horizon {
+                    let (end_a, n_a) = a.tick();
+                    assert!(!end_a, "event inside batched span at cycle {cycle}");
+                    span += n_a;
+                    cycle += n_a;
                 }
+                assert_eq!(span, horizon, "fold overshoot at cycle {cycle}");
                 b.advance_idle(horizon);
             }
         }

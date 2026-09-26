@@ -128,7 +128,7 @@ impl GbaSystem {
     }
 
     pub fn run_frame(&mut self) -> &[u32] {
-        while !self.step_tcycle() {}
+        while !self.step_tcycle().0 {}
         self.frame_buffer()
     }
 
@@ -143,10 +143,13 @@ impl GbaSystem {
         while advanced < max {
             let horizon = self.batch_horizon();
             if horizon == 0 {
-                if self.step_tcycle() {
-                    return (advanced + 1, true);
+                // A single step may fold several event-free DMA delay
+                // ticks (returns its advance); account all of them.
+                let (frame_end, n) = self.step_tcycle();
+                if frame_end {
+                    return (advanced + n, true);
                 }
-                advanced += 1;
+                advanced += n;
             } else {
                 // Bound single jumps (hung states would otherwise advance
                 // astronomically; the loop still never terminates there,
@@ -218,44 +221,76 @@ impl GbaSystem {
     }
 
     /// CPUとバスを1 T-cycleだけ進行する。
-    pub fn step_tcycle(&mut self) -> bool {
+    /// Advance one T-cycle, returning `(frame_complete, advanced)`.
+    /// `advanced` is normally 1; DMA delay-burn folds may advance
+    /// several event-free cycles (CPU-stalled) in one call.
+    pub fn step_tcycle(&mut self) -> (bool, u64) {
         if self.bus.dma_active() {
             // HW behavior: the CPU is stalled for the whole burst;
             // only the bus advances, the in-flight op resumes afterwards.
-        } else {
-            if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
-                if self.bus.hle_bios_active() {
-                    self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
-                } else {
+            // The in-flight remainder stays frozen while stalled (it is
+            // only decremented on CPU-stepping ticks below). A delay-burn
+            // fold may advance several cycles: scale the other per-cycle
+            // bookkeeping (clocks, conflict window) by the reported
+            // advance. Latency takes stay single (their setters only run
+            // on unfolded transfer/write ticks).
+            let (frame_end, n) = self.bus.tick();
+            self.tick = self.tick.wrapping_add(n);
+            self.cpu
+                .registers_mut()
+                .tick_ldm_conflict_n(n.min(u64::from(u8::MAX)) as u8);
+            // IntrWait wake-exit latency (see `wake_latency`): burn as
+            // CPU-stall cycles so the staging IRQ line wins the race against
+            // the woken thread. Subsumed by any longer in-flight charge.
+            let wake_latency = self.bus.take_wake_latency();
+            if wake_latency > 0 {
+                self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
+            }
+            // DMA prefetch-collision arbitration (see `dma_stall_pending`):
+            // unlike wake latency this serializes with in-flight work (the
+            // bus arbitration cycle is extra, like Mesen's Step on Reset),
+            // so it adds instead of maxing.
+            let dma_stall = self.bus.take_dma_stall();
+            if dma_stall > 0 {
+                self.cpu_cycles_remaining += dma_stall;
+            }
+            return (frame_end, n);
+        }
+        if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+            if self.bus.hle_bios_active() {
+                self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
+            } else {
+                // Sample IRQ only at instruction boundaries; mid-instruction never samples.
+                // Falls through to the shared epilogue (decrement sets dispatch timing).
+                if !self.cpu.micro_pending() {
                     // Sample IRQ only at instruction boundaries; mid-instruction never samples.
                     // Falls through to the shared epilogue (decrement sets dispatch timing).
-                    if !self.cpu.micro_pending() {
-                        // Sample IRQ only at instruction boundaries; mid-instruction never samples.
-                        // Falls through to the shared epilogue (decrement sets dispatch timing).
-                        // Entry cost comes from service_irq (real refill waits + prologue count).
-                        if let Some(irq_entry_cycles) = self.cpu.service_irq(&mut self.bus) {
-                            self.cpu_cycles_remaining = irq_entry_cycles;
-                        } else if let Some(acc) = self.drain_micro() {
-                            self.cpu_cycles_remaining = acc.max(1) as u32;
-                        } else {
-                            // Unreachable: every instruction class expands,
-                            // so the first drain always yields an op.
-                            // Consume the tick safely.
-                            self.cpu_cycles_remaining = 1;
-                        }
+                    // Entry cost comes from service_irq (real refill waits + prologue count).
+                    if let Some(irq_entry_cycles) = self.cpu.service_irq(&mut self.bus) {
+                        self.cpu_cycles_remaining = irq_entry_cycles;
                     } else if let Some(acc) = self.drain_micro() {
                         self.cpu_cycles_remaining = acc.max(1) as u32;
                     } else {
-                        // Unreachable (queue was non-empty, so the first
-                        // pop succeeds); consume the tick safely.
+                        // Unreachable: every instruction class expands,
+                        // so the first drain always yields an op.
+                        // Consume the tick safely.
                         self.cpu_cycles_remaining = 1;
                     }
+                } else if let Some(acc) = self.drain_micro() {
+                    self.cpu_cycles_remaining = acc.max(1) as u32;
+                } else {
+                    // Unreachable (queue was non-empty, so the first
+                    // pop succeeds); consume the tick safely.
+                    self.cpu_cycles_remaining = 1;
                 }
             }
-            self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         }
+        self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
-        let frame_end = self.bus.tick();
+        // Single-cycle: folds only run with DMA active (handled above),
+        // so a CPU-stepping tick always advances exactly one cycle.
+        let (frame_end, n) = self.bus.tick();
+        debug_assert_eq!(n, 1, "bus fold outside DMA-active tick");
         // Age the post-LDM^ bank-conflict window once per T-cycle.
         self.cpu.registers_mut().tick_ldm_conflict();
         // IntrWait wake-exit latency (see `wake_latency`): burn as
@@ -273,7 +308,7 @@ impl GbaSystem {
         if dma_stall > 0 {
             self.cpu_cycles_remaining += dma_stall;
         }
-        frame_end
+        (frame_end, n)
     }
 }
 
