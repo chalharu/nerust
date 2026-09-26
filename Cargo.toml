@@ -124,7 +124,7 @@ gdk4-x11-sys = { version = "=0.11.5" }
 gio = { version = "=0.22.10" }
 gl = { default-features = false, version = "=0.14.0" }
 glutin = { version = "=0.32.3" }
-gtk = { package = "gtk4", version = "=0.11.4" }
+gtk = { package = "gtk4", version = "=0.11.5" }
 hound = { version = "=3.5.1" }
 iced = { default-features = false, features = [
   "thread-pool",
