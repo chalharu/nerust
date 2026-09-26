@@ -239,8 +239,8 @@ impl GbaApuState {
         if self.duty1 > 3 || self.duty2 > 3 {
             return Err("apu: duty latch out of range".to_string());
         }
-        self.sq1.validate()?;
-        self.sq2.validate()?;
+        self.sq1.validate(true)?;
+        self.sq2.validate(false)?;
         self.wave.validate()?;
         self.noise.validate()?;
         for (index, voice) in self.driver_voices.iter().enumerate() {
@@ -542,14 +542,70 @@ impl GbaApu {
     /// Advance channel timers, the 512Hz frame sequencer and the native
     /// mix grid by one CPU T-cycle. Returns true when a grid sample was
     /// pushed (driver voices fold into the tail on the bus side).
+    /// Batching horizon: quiet prefix length before the next cycle that
+    /// needs full per-cycle processing (sequencer step, mix point, or
+    /// channel phase hit). Interior cycles only decrement countdowns;
+    /// phases, banks, the LFSR, envelopes and the mix buffer are untouched
+    /// (their changes happen exactly at capped boundary cycles).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let mut horizon = INF;
+        horizon = horizon.min(self.seq_timer.saturating_sub(1));
+        horizon = horizon.min(self.mix_timer.saturating_sub(1));
+        if self.soundcnt_x & 0x80 != 0 {
+            for voice in [
+                self.sq1.timer_horizon(),
+                self.sq2.timer_horizon(),
+                self.wave.timer_horizon(),
+                self.noise.timer_horizon(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                horizon = horizon.min(u64::from(voice));
+            }
+        }
+        horizon
+    }
+
+    /// Advance countdowns by `n` cycles. Valid only for
+    /// `n <= quiet_cycles()` at the same state.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.seq_timer -= n;
+        self.mix_timer -= n;
+        if self.soundcnt_x & 0x80 != 0 {
+            let m = n as u32;
+            self.sq1.advance_timer(m);
+            self.sq2.advance_timer(m);
+            self.wave.advance_timer(m);
+            self.noise.advance_timer(m);
+        }
+    }
+
+    #[inline]
     pub fn tick(&mut self) -> bool {
         if self.soundcnt_x & 0x80 != 0 {
-            self.sq1.tick_timer(self.freq1, true);
-            self.sq2.tick_timer(self.freq2, false);
-            self.wave.tick_timer(self.freq3);
-            let r = (self.sound4cnt_hi & 7) as u8;
-            let s = ((self.sound4cnt_hi >> 4) & 7) as u8;
-            self.noise.tick_timer(r, s);
+            // Fast path: no active voice means the timers below are all
+            // frozen; only the sequencer/mixer countdowns advance. Checked
+            // once here instead of per-voice early returns.
+            let any_voice = self.sq1.core.active
+                || self.sq2.core.active
+                || self.wave.active
+                || self.noise.core.active;
+            if any_voice {
+                self.sq1.tick_timer(self.freq1, true);
+                self.sq2.tick_timer(self.freq2, false);
+                self.wave.tick_timer(self.freq3);
+                let r = (self.sound4cnt_hi & 7) as u8;
+                // NR43 shift is 4 bits (0-15); masking 3 dropped shift 8-15.
+                let s = ((self.sound4cnt_hi >> 4) & 15) as u8;
+                self.noise.tick_timer(r, s);
+            }
         }
         self.seq_timer -= 1;
         if self.seq_timer == 0 {
@@ -781,8 +837,18 @@ impl GbaApu {
     /// Each drained sample passes the stereo DC-block HPF
     /// (`nerust_sound_filter::IirFilter`, rebuilt on device-rate change).
     pub fn drain_resampled(&mut self, rate: u32) -> Vec<StereoSample> {
+        let mut out = Vec::new();
+        self.drain_resampled_into(rate, &mut out);
+        out
+    }
+
+    /// Hot-path half of [`drain_resampled`](Self::drain_resampled):
+    /// fills the caller-owned buffer (cleared first, capacity reused)
+    /// instead of allocating per frame. Bit-identical output.
+    pub fn drain_resampled_into(&mut self, rate: u32, out: &mut Vec<StereoSample>) {
+        out.clear();
         if self.mix_buffer.is_empty() || rate == 0 {
-            return Vec::new();
+            return;
         }
         if self.output_hpf_rate != rate {
             self.output_hpf_l = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
@@ -790,10 +856,14 @@ impl GbaApu {
             self.output_hpf_rate = rate;
         }
         let step = f64::from(MIX_RATE) / f64::from(rate);
-        let mut out = Vec::new();
         // Position relative to the current buffer head.
         let mut pos = self.rs_pos;
         let buf = &self.mix_buffer;
+        // Pre-size the output (one realloc-free push per sample): the
+        // resampler emits roughly one output per `step` grid samples.
+        // Capacity persists across frames via the caller-owned buffer.
+        let estimate = ((buf.len() as f64 - pos) / step) as usize + 1;
+        out.reserve(estimate);
         while (pos as usize) + 1 < buf.len() {
             let i = pos as usize;
             let frac = (pos - i as f64) as f32;
@@ -813,11 +883,10 @@ impl GbaApu {
         }
         self.rs_pos = pos - keep_from as f64;
         self.mix_buffer.drain(..keep_from);
-        for sample in &mut out {
+        for sample in out.iter_mut() {
             sample.left = self.output_hpf_l.step(sample.left);
             sample.right = self.output_hpf_r.step(sample.right);
         }
-        out
     }
     /// Mutable tail of the grid mix buffer (driver-voice fold-in).
     pub fn mix_tail_mut(&mut self) -> Option<&mut (f32, f32)> {
@@ -1043,5 +1112,104 @@ mod tests {
         let mut bad = restored.export_state().unwrap();
         bad.mix_timer = 0;
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn apu_state_round_trips_sounding_ch2() {
+        // ch2 has no sweep unit: a sounding ch2 keeps the never-written
+        // sweep pace 0. Saves from such moments must import (this scored
+        // "Save state is corrupt" on device for music-heavy games).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR22: envelope up. NR24: freq + trigger. (ch2 has no NR10:
+        // sweep pace stays at the never-written zero while sounding.)
+        apu.write_sound2cnt_lo(0x81F3);
+        apu.write_sound2cnt_hi(0x8385);
+        assert!(apu.sq2.core.active);
+        assert_eq!(apu.sq2.sweep_pace_for_test(), 0);
+        for _ in 0..4000 {
+            apu.tick();
+        }
+        assert!(apu.sq2.core.active);
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let bytes = rmp_serde::to_vec_named(&state).unwrap();
+        let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored.import_state(decoded).unwrap();
+        assert!(restored.sq2.core.active);
+    }
+
+    #[test]
+    fn noise_shift_uses_all_four_bits() {
+        // NR43 shift is 4 bits; masking 3 misread shift 8-15 as 0-7
+        // (wrong noise pitch for games using slow LFSR clocks).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // NR42: vol 15, envelope off. NR43: ratio 7, 15-bit, shift 15.
+        // NR44: trigger, length off.
+        apu.write_sound4cnt_lo(0xF000);
+        apu.write_sound4cnt_hi(0x80F7);
+        assert!(apu.noise.core.active);
+        apu.tick();
+        // Interval (64<<15)*7, minus the tick just consumed. The old
+        // 3-bit mask gave (64<<7)*7 - 1 = 57343.
+        assert_eq!(apu.noise.timer_horizon(), Some((64 << 15) * 7 - 1));
+        let _ = apu.drain_resampled(48_000);
+        let state = apu.export_state().unwrap();
+        state.validate().unwrap();
+        let mut restored = GbaApu::new();
+        restored
+            .import_state(rmp_serde::from_slice(&rmp_serde::to_vec_named(&state).unwrap()).unwrap())
+            .unwrap();
+        assert!(restored.noise.core.active);
+    }
+
+    #[test]
+    fn apu_state_round_trips_all_channels_at_extremes() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // ch1: sweep pace 7 / dec / shift 7, duty 3, env vol 15 up pace 3,
+        // len on, freq low (sweep runs without overflow-kill at this pitch).
+        apu.write_sound1cnt_lo(0x0077);
+        apu.write_sound1cnt_hi(0xFFF3);
+        apu.write_sound1cnt_x(0xC100);
+        // ch2: duty 3, env vol 15 down pace 7, freq max, len on.
+        apu.write_sound2cnt_lo(0xF7F3);
+        apu.write_sound2cnt_hi(0xFFFF);
+        // ch3: DAC on, dim64, bank 1, len max (256), rate max (rapid
+        // phase/bank cycling), len on, trigger.
+        apu.write_sound3cnt_lo(0x00E0);
+        apu.write_sound3cnt_hi(0x0000);
+        apu.write_sound3cnt_x(0x87FF);
+        // ch4: env vol 8 up pace 7, len max; ratio 7, 7-bit, shift 7,
+        // len on, trigger.
+        apu.write_sound4cnt_lo(0x8F00);
+        apu.write_sound4cnt_hi(0xC07F);
+        // FIFO A packed full (32) through the MMIO path.
+        for i in 0..8 {
+            apu.push_fifo(false, 0x11111111u32.wrapping_add(i), 4);
+        }
+        for i in 0..60000 {
+            apu.tick();
+            if i % 37 == 0 {
+                let _ = apu.drain_resampled(48_000);
+                let state = apu
+                    .export_state()
+                    .unwrap_or_else(|e| panic!("export failed at tick {i}: {e}"));
+                state
+                    .validate()
+                    .unwrap_or_else(|e| panic!("invalid at tick {i}: {e}"));
+                let bytes = rmp_serde::to_vec_named(&state).unwrap();
+                let decoded: GbaApuState = rmp_serde::from_slice(&bytes).unwrap();
+                decoded.validate().unwrap();
+                let mut restored = GbaApu::new();
+                restored
+                    .import_state(decoded)
+                    .unwrap_or_else(|e| panic!("import failed at tick {i}: {e}"));
+            }
+        }
     }
 }

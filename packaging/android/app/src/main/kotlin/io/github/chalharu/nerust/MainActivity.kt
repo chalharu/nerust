@@ -38,6 +38,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
+import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -127,6 +128,7 @@ private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
 private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
+private const val FPS_OVERLAY_TAG = "nerust-fps-overlay"
 private const val MENU_ACTION_EXIT = "exit"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_ROM = "open_rom"
@@ -237,6 +239,7 @@ class MainActivity :
     private var controlsScalePercent = 100
     private var controlsVerticalOffsetPercent = 0
     private var controlsHaptics = true
+    private var controlsShouldersVisible = true
     private lateinit var sensorManager: SensorManager
     private var accelerometer: Sensor? = null
     private var activityResumed = false
@@ -257,6 +260,10 @@ class MainActivity :
     private var drawerFullScreenPopup: PopupWindow? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
+    private var fpsOverlayView: TextView? = null
+    private var fpsOverlayPopup: PopupWindow? = null
+    private var fpsValue: Float = 0f
+    private var fpsVisible: Boolean = false
     private var composeDialog: Dialog? = null
     private var composeDialogRootView: View? = null
     private var composeDialogComposeView: View? = null
@@ -341,6 +348,8 @@ class MainActivity :
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BUTTON_A -> "button1"
                 KeyEvent.KEYCODE_BUTTON_B -> "button2"
+                KeyEvent.KEYCODE_BUTTON_L1 -> "button5"
+                KeyEvent.KEYCODE_BUTTON_R1 -> "button6"
                 KeyEvent.KEYCODE_BUTTON_START -> "start"
                 KeyEvent.KEYCODE_BUTTON_SELECT -> "select"
                 KeyEvent.KEYCODE_DPAD_UP -> "up"
@@ -495,12 +504,14 @@ class MainActivity :
         scalePercent: Int,
         verticalOffsetPercent: Int,
         haptics: Boolean,
+        shouldersVisible: Boolean,
     ) {
         controlsVisibility = visibility
         controlsOpacityPercent = opacityPercent.coerceIn(0, 100)
         controlsScalePercent = scalePercent.coerceIn(50, 150)
         controlsVerticalOffsetPercent = verticalOffsetPercent.coerceIn(-30, 30)
         controlsHaptics = haptics
+        controlsShouldersVisible = shouldersVisible
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
@@ -656,6 +667,76 @@ class MainActivity :
 
     fun floatingDpadStateForTest(): FloatArray? = (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
 
+    /**
+     * Show or refresh the small FPS label at the bottom-right corner.
+     *
+     * Called from Rust at ~2Hz while emulating. `visible` is false when no
+     * ROM is loaded or emulation is paused, hiding the label instead of
+     * showing stale numbers. Runs on the Java main thread.
+     *
+     * Rendered in a dedicated non-touchable popup (like the other chrome):
+     * a plain decorView child is not reliably composited above the native
+     * game surface.
+     */
+    fun updateFpsOverlay(fps: Float, visible: Boolean) {
+        Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
+        fpsValue = fps
+        fpsVisible = visible
+        if (!visible) {
+            fpsOverlayPopup?.dismiss()
+            fpsOverlayPopup = null
+            return
+        }
+        popupAnchor()?.let { ensureFpsOverlayPopup(it) } ?: scheduleChromeAttach()
+    }
+
+    private fun createFpsOverlayView(): TextView =
+        TextView(this).apply {
+            tag = FPS_OVERLAY_TAG
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(128, 0, 0, 0))
+            val padding = dp(4)
+            setPadding(padding, dp(2), padding, dp(2))
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+    private fun refreshFpsOverlayText() {
+        fpsOverlayView?.text = "%.1f fps".format(fpsValue)
+    }
+
+    private fun ensureFpsOverlayPopup(anchor: View): Boolean {
+        val existing = fpsOverlayPopup
+        if (existing?.isShowing == true && fpsOverlayView != null) {
+            refreshFpsOverlayText()
+            return true
+        }
+        fpsOverlayPopup?.dismiss()
+        val view = fpsOverlayView ?: createFpsOverlayView().also { fpsOverlayView = it }
+        refreshFpsOverlayText()
+        val popup =
+            PopupWindow(
+                view,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                false,
+            ).apply {
+                isTouchable = false
+                isFocusable = false
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
+        fpsOverlayPopup = popup
+        if (showPopupAtLocation("fps-overlay", popup, anchor, Gravity.BOTTOM or Gravity.END, dp(8), dp(8))) {
+            return true
+        }
+        fpsOverlayPopup = null
+        return false
+    }
+
     fun readSafFile(
         treeUri: String,
         relativePath: String,
@@ -791,6 +872,11 @@ class MainActivity :
                     drawerOverlayView.isShownInWindowForTest()
             }
 
+            FPS_OVERLAY_TAG -> {
+                fpsOverlayPopup?.isShowing == true &&
+                    fpsOverlayView.isShownInWindowForTest()
+            }
+
             SETTINGS_DIALOG_TAG,
             -> {
                 composeDialogTag == tag &&
@@ -821,6 +907,10 @@ class MainActivity :
                 drawerOverlayView
             }
 
+            FPS_OVERLAY_TAG -> {
+                fpsOverlayView
+            }
+
             SETTINGS_DIALOG_TAG,
             -> {
                 composeDialogRootView.takeIf { composeDialogTag == tag }
@@ -841,7 +931,8 @@ class MainActivity :
             "drawerCompose=${drawerComposeView.debugViewState()}, dialogTag=$composeDialogTag, " +
             "dialog=${composeDialog.debugDialogState()}, dialogRoot=${composeDialogRootView.debugViewState()}, " +
             "dialogCompose=${composeDialogComposeView.debugViewState()}, lastDrawer=$lastDrawerStateForTest, " +
-            "lastDialog=$lastDialogStateForTest"
+            "lastDialog=$lastDialogStateForTest, fpsVisible=$fpsVisible, fpsValue=$fpsValue, " +
+            "fpsPopup=${fpsOverlayPopup.debugPopupState()}, fpsView=${fpsOverlayView.debugViewState()}"
 
     fun dispatchMenuActionForTest(action: String) {
         dispatchMenuAction(action)
@@ -1055,12 +1146,13 @@ class MainActivity :
         installComposeOwners(anchor)
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
+        val fpsAttached = !fpsVisible || ensureFpsOverlayPopup(anchor)
         Log.i(
             TAG,
             "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
-                "anchor=${anchor.debugViewState()}",
+                "fpsAttached=$fpsAttached anchor=${anchor.debugViewState()}",
         )
-        if (!controlsAttached || !drawerAttached) {
+        if (!controlsAttached || !drawerAttached || !fpsAttached) {
             retryChromeAttach()
         }
     }
@@ -1181,6 +1273,7 @@ class MainActivity :
             controlsOpacityPercent,
             controlsScalePercent,
             controlsVerticalOffsetPercent,
+            controlsShouldersVisible,
         ).apply {
             tag = CONTROLS_OVERLAY_TAG
             layoutParams =
@@ -1467,6 +1560,9 @@ class MainActivity :
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        fpsOverlayPopup?.dismiss()
+        fpsOverlayPopup = null
+        fpsOverlayView = null
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -1895,6 +1991,7 @@ private fun settingsSectionLabel(id: String): String =
         "storage" -> "Storage"
         "system.nes" -> "Nintendo Entertainment System"
         "system.gbc" -> "Game Boy Color"
+        "system.gba" -> "Game Boy Advance"
         "general" -> "General"
         else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
     }
@@ -1963,6 +2060,7 @@ private class ControlsOverlayView(
     opacityPercent: Int,
     private val scalePercent: Int,
     private val verticalOffsetPercent: Int,
+    private val shouldersVisible: Boolean,
 ) : View(context) {
     private val opacity = opacityPercent.coerceIn(0, 100) / 100f
     private val fillPaint =
@@ -2027,7 +2125,7 @@ private class ControlsOverlayView(
 
         val joystick = floatingJoystickLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent)
         drawFloatingJoystick(canvas, joystick)
-        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent).forEach { zone ->
+        controlsLayout(viewWidth, viewHeight, scalePercent, verticalOffsetPercent, shouldersVisible).forEach { zone ->
             drawZone(canvas, zone.x, zone.y, zone.width, zone.height, zone.label)
         }
     }
@@ -2125,6 +2223,7 @@ internal fun controlsLayout(
     height: Float,
     scalePercent: Int = 100,
     verticalOffsetPercent: Int = 0,
+    shouldersVisible: Boolean = true,
 ): List<OverlayZoneSpec> {
     val portrait = height >= width
     val base = min(width, height)
@@ -2144,37 +2243,71 @@ internal fun controlsLayout(
     val centerStartX = (width - centerRowWidth) * 0.5f
     val centerTop =
         (if (portrait) controlTop + controlHeight * 0.16f else height * 0.82f) + verticalOffset
+    // Shoulder strip above the D-Pad activation area and the center row.
+    // Mirrors ProfileTouchOverlay in android.rs; keep the fractions in sync.
+    val shoulderWidth = base * 0.20f * scale
+    val shoulderHeight = base * 0.08f * scale
+    val shoulderMarginX = width * 0.02f
+    val shoulderTop = controlTop + base * 0.015f + verticalOffset
 
-    return listOf(
-        OverlayZoneSpec(
-            x = actionLeft,
-            y = actionTop,
-            width = actionSize,
-            height = actionSize,
-            label = "B",
-        ),
-        OverlayZoneSpec(
-            x = actionLeft + actionSize + actionGap,
-            y = actionTop,
-            width = actionSize,
-            height = actionSize,
-            label = "A",
-        ),
-        OverlayZoneSpec(
-            x = centerStartX,
-            y = centerTop,
-            width = centerButtonWidth,
-            height = centerButtonHeight,
-            label = "SELECT",
-        ),
-        OverlayZoneSpec(
-            x = centerStartX + centerButtonWidth + centerGap,
-            y = centerTop,
-            width = centerButtonWidth,
-            height = centerButtonHeight,
-            label = "START",
-        ),
-    )
+    return buildList {
+        add(
+            OverlayZoneSpec(
+                x = actionLeft,
+                y = actionTop,
+                width = actionSize,
+                height = actionSize,
+                label = "B",
+            ),
+        )
+        add(
+            OverlayZoneSpec(
+                x = actionLeft + actionSize + actionGap,
+                y = actionTop,
+                width = actionSize,
+                height = actionSize,
+                label = "A",
+            ),
+        )
+        if (shouldersVisible) {
+            add(
+                OverlayZoneSpec(
+                    x = shoulderMarginX,
+                    y = shoulderTop,
+                    width = shoulderWidth,
+                    height = shoulderHeight,
+                    label = "L",
+                ),
+            )
+            add(
+                OverlayZoneSpec(
+                    x = width - shoulderMarginX - shoulderWidth,
+                    y = shoulderTop,
+                    width = shoulderWidth,
+                    height = shoulderHeight,
+                    label = "R",
+                ),
+            )
+        }
+        add(
+            OverlayZoneSpec(
+                x = centerStartX,
+                y = centerTop,
+                width = centerButtonWidth,
+                height = centerButtonHeight,
+                label = "SELECT",
+            ),
+        )
+        add(
+            OverlayZoneSpec(
+                x = centerStartX + centerButtonWidth + centerGap,
+                y = centerTop,
+                width = centerButtonWidth,
+                height = centerButtonHeight,
+                label = "START",
+            ),
+        )
+    }
 }
 
 internal fun floatingJoystickLayout(

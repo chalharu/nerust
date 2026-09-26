@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::AudioBackend,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    audio::{AudioBackend, StereoSample},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -30,6 +31,9 @@ pub struct GbaConsoleCore {
     audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
+    /// Resample scratch reused every frame: `drain_resampled_into`
+    /// fills it instead of allocating a fresh Vec per frame.
+    resample_scratch: Vec<StereoSample>,
 }
 
 impl GbaConsoleCore {
@@ -39,6 +43,7 @@ impl GbaConsoleCore {
             audio,
             emu_input,
             paused: false,
+            resample_scratch: Vec::new(),
         }
     }
 
@@ -86,15 +91,18 @@ impl ConsoleCore for GbaConsoleCore {
             .0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system.bus.set_keyinput(input);
-        // Run one LCD frame (228 lines * 1232 cycles)
-        for _ in 0..280_896 {
-            if loaded.system.step_tcycle() {
-                break;
-            }
-        }
-        // Drain native-grid audio at the device rate.
+        // Run one LCD frame (228 lines * 1232 cycles), batched to the
+        // frame end. Bit-identical to per-cycle stepping.
+        loaded.system.step_batch(280_896);
+        // Drain native-grid audio at the device rate, reusing the
+        // frame scratch (no per-frame allocation).
         let rate = self.audio.sample_rate();
-        for sample in loaded.system.bus.apu_mut().drain_resampled(rate) {
+        loaded
+            .system
+            .bus
+            .apu_mut()
+            .drain_resampled_into(rate, &mut self.resample_scratch);
+        for sample in self.resample_scratch.iter().copied() {
             self.audio.push(sample);
         }
         if frame_slot.format() != &PixelFormat::Rgba {
@@ -199,6 +207,10 @@ impl ConsoleCore for GbaConsoleCore {
 
     fn set_volume(&mut self, volume: f32) {
         self.audio.set_volume(volume);
+    }
+
+    fn restart_audio(&mut self) {
+        self.audio.start();
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
@@ -687,5 +699,32 @@ mod tests {
         )
         .unwrap();
         assert!(b.load_state(&state).is_err());
+    }
+
+    #[test]
+    fn restart_audio_starts_backend() {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        use nerust_core_traits::audio::{AudioBackend, StereoSample};
+
+        struct StartProbe {
+            started: Arc<AtomicBool>,
+        }
+        impl AudioBackend for StartProbe {
+            fn start(&mut self) {
+                self.started.store(true, SeqCst);
+            }
+            fn pause(&mut self) {}
+            fn push(&mut self, _sample: StereoSample) {}
+        }
+        let started = Arc::new(AtomicBool::new(false));
+        let mut core = GbaConsoleCore::new(
+            Box::new(StartProbe {
+                started: started.clone(),
+            }),
+            test_emu_input(),
+        );
+        core.restart_audio();
+        assert!(started.load(SeqCst));
     }
 }

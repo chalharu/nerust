@@ -16,11 +16,11 @@ use std::collections::VecDeque;
 fn run_ops(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
-    ops: Vec<MicroOp>,
+    ops: super::MicroOpVec,
     pc: u32,
     is_thumb: bool,
 ) {
-    let mut queue: VecDeque<MicroOp> = ops.into();
+    let mut queue: VecDeque<MicroOp> = ops.into_iter().collect();
     while let Some(op) = queue.pop_front() {
         apply_op(regs, bus, op, pc, is_thumb);
     }
@@ -500,13 +500,14 @@ fn thumb_bl_bx_shapes_and_gates() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_cpsr(regs.cpsr() | (1 << 5));
     regs.set_lr(0x0300_0005);
-    // BL-high: single LR op. BL-low / BX: refill pair + commit.
+    // BL-high: single LR op. BL-low / BX: folded single commits
+    // (2-cycle refill in their cost).
     let bl_hi = expand_thumb(0xF000, &regs).expect("bl-hi expands");
     assert_eq!(bl_hi.len(), 1);
     let bl_lo = expand_thumb(0xF806, &regs).expect("bl-lo expands");
-    assert_eq!(bl_lo.len(), 3);
+    assert_eq!(bl_lo.len(), 1);
     let bx = expand_thumb(0x4770, &regs).expect("bx expands");
-    assert_eq!(bx.len(), 3);
+    assert_eq!(bx.len(), 1);
     // Hi-reg ADD beside BX is covered by the ALU-remainder branch
     // (asserted in thumb_alu_rest_shapes_and_gates).
 }
@@ -521,11 +522,11 @@ fn thumb_alu_rest_shapes_and_gates() {
         let ops = expand_thumb(instr, &regs).expect("alu form expands");
         assert_eq!(ops.len(), 1, "{instr:#06X}");
     }
-    // Register shift: commit + 1I. ADD PC: commit + 2I.
+    // Register shift / ADD PC: folded single commits (padding in cost).
     let ops = expand_thumb(0x41C1, &regs).expect("ror expands");
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 1);
     let ops = expand_thumb(0x4487, &regs).expect("add-pc expands");
-    assert_eq!(ops.len(), 3);
+    assert_eq!(ops.len(), 1);
     // MUL and BX keep their own branches; SWI now traps.
     assert!(expand_thumb_alu_rest(0x4341).is_none());
     assert!(expand_thumb_alu_rest(0x4708).is_none());
@@ -557,16 +558,16 @@ fn arm_singlerest_shapes() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(1, 0x0200_0000);
     regs.set_r(2, 4);
-    // Register offset: [Read, I, I].
+    // Register offset: single folded access op (base 3 in its cost).
     let ops = expand_arm(0xE791_0002, &regs).expect("reg-offset expands");
-    assert_eq!(ops.len(), 3);
-    // R15 load: +2 refill. R15 store: plain [Write, I].
+    assert_eq!(ops.len(), 1);
+    // R15 load: folded (base 5 in its cost). R15 store: folded.
     let ops = expand_arm(0xE59F_F000, &regs).expect("ldr-pc expands");
-    assert_eq!(ops.len(), 5);
+    assert_eq!(ops.len(), 1);
     let ops = expand_arm(0xE581_F004, &regs).expect("str-r15 expands");
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 1);
     let ops = expand_arm(0xE1DF_00B0, &regs).expect("ldrh-pc expands");
-    assert_eq!(ops.len(), 3);
+    assert_eq!(ops.len(), 1);
 }
 
 /// ARM halfword/single-transfer expansion shapes and gates.
@@ -575,7 +576,8 @@ fn arm_hwrest_shapes_and_gates() {
     let mut regs = CpuRegisters::post_bios();
     regs.set_r(1, 0x0200_0000);
     regs.set_r(2, 4);
-    // Signed/reg-offset forms expand like the unsigned-imm ones.
+    // Signed/reg-offset forms expand like the unsigned-imm ones
+    // (single folded access op; base cycles in its cost).
     for instr in [
         0xE1D1_00F0,
         0xE1D1_00D0,
@@ -584,10 +586,10 @@ fn arm_hwrest_shapes_and_gates() {
         0xE1DF_00F0,
     ] {
         let ops = expand_arm(instr, &regs).expect("halfword form expands");
-        assert_eq!(ops.len(), 3, "{instr:#010X}");
+        assert_eq!(ops.len(), 1, "{instr:#010X}");
     }
     let ops = expand_arm(0xE181_00B2, &regs).expect("strh-reg expands");
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 1);
     // Multiply/SWP keep the decoder-first routing.
     assert!(expand_arm_single(0xE000_0090, &regs).is_none());
     assert!(expand_arm_single(0xE102_0091, &regs).is_none());
@@ -614,9 +616,9 @@ fn arm_psrbx_shapes_and_gates() {
         let ops = expand_arm(instr, &regs).expect("psr expands");
         assert_eq!(ops.len(), 1, "{instr:#010X}");
     }
-    // ARM BX: refill pair + commit.
+    // ARM BX: folded single commit (2-cycle refill in its cost).
     let ops = expand_arm(0xE12F_FF13, &regs).expect("arm bx expands");
-    assert_eq!(ops.len(), 3);
+    assert_eq!(ops.len(), 1);
     // DP-imm with Rn==PC reads the execute-stage PC (bus-free).
     let ops = expand_arm(0xE28F_300C, &regs).expect("add-pc expands");
     assert_eq!(ops.len(), 1);

@@ -16,6 +16,8 @@ use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, DigitalControlId, GuiInput};
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoRenderProfile};
 
+use crate::session::commands::SlotOpFailure;
+
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, thiserror::Error)]
 pub enum CorePersistenceError {
@@ -25,6 +27,28 @@ pub enum CorePersistenceError {
     NoReply,
     #[error("{0}")]
     Core(String),
+}
+
+impl CorePersistenceError {
+    /// Best-effort UX classification of a state import/export failure.
+    /// Only drives the user-facing message; the full detail stays in
+    /// the error itself (and the logs).
+    pub fn slot_failure(&self) -> SlotOpFailure {
+        match self {
+            Self::WorkerUnavailable | Self::NoReply => SlotOpFailure::Unavailable,
+            Self::Core(message) => {
+                let message = message.to_lowercase();
+                if message.contains("mismatch")
+                    || message.contains("unsupported")
+                    || message.contains("version")
+                {
+                    SlotOpFailure::Incompatible
+                } else {
+                    SlotOpFailure::Corrupt
+                }
+            }
+        }
+    }
 }
 
 /// The persistence-relevant subset of EmuCore's interface.
@@ -172,6 +196,13 @@ impl EmuCore {
     pub fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::SetVolume(volume))
+            .map_err(|_| OperationError::WorkerUnavailable)
+    }
+
+    /// Re-assert the audio backend start on the emu thread (idempotent).
+    pub fn restart_audio(&self) -> Result<(), OperationError> {
+        self.emu
+            .send(EmuCommand::RestartAudio)
             .map_err(|_| OperationError::WorkerUnavailable)
     }
 

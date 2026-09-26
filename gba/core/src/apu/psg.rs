@@ -87,6 +87,25 @@ pub struct Square {
 }
 
 impl Square {
+    /// Batching support: first zero-hit is `timer + 1` ticks out (hit fires
+    /// when the timer reads 0 at tick start), so `timer` upcoming ticks are
+    /// hit-free. Interior advance only decrements; phase/bank stay put.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Decrement the phase timer. Valid only when no zero-hit occurs
+    /// inside the span (verified by the horizon): plain `-=` matches the
+    /// per-cycle behavior exactly, including dev-profile underflow panic.
+    /// Inactive voices are untouched, mirroring the `tick_timer` early
+    /// return.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {
         self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
@@ -102,6 +121,11 @@ impl Square {
 
     fn sweep_active(&self) -> bool {
         self.sweep_pace != 8 || self.sweep_shift != 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sweep_pace_for_test(&self) -> u8 {
+        self.sweep_pace
     }
 
     /// NR10 write (GBATEK sweep, incl. direction-flip zombie rule).
@@ -137,9 +161,14 @@ impl Square {
     }
 
     /// Frame-sequencer sweep steps (2, 6). Returns false when the sweep
-    /// overflows and kills the channel.
+    /// overflows and kills the channel. Pace 0 (NR10 never written) and    /// the pace-8 off-code both disable the unit: no timer movement, no
+    /// calculation. (Without this, pace 0 would underflow `sweep_timer`
+    /// on the reload-then-decrement below.)
     pub fn tick_sweep(&mut self) -> bool {
         if !self.core.active {
+            return true;
+        }
+        if self.sweep_pace == 0 || self.sweep_pace == 8 {
             return true;
         }
         if self.sweep_timer == 0 {
@@ -210,6 +239,19 @@ pub struct Wave {
 }
 
 impl Wave {
+    /// Batching support: see `Square::timer_horizon`.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(&mut self, init_len: u16, dimension_64: bool, seq_odd: bool) {
         if self.length == 0 {
             self.length = init_len;
@@ -295,6 +337,20 @@ pub struct Noise {
 }
 
 impl Noise {
+    /// Batching support: see `Square::timer_horizon`. The LFSR only shifts
+    /// on zero-hits, so capping at the first hit keeps it exact.
+    pub(crate) fn timer_horizon(&self) -> Option<u32> {
+        self.core.active.then_some(self.timer)
+    }
+
+    /// Batching support: see `Square::advance_timer`.
+    pub(crate) fn advance_timer(&mut self, n: u32) {
+        if !self.core.active {
+            return;
+        }
+        self.timer -= n;
+    }
+
     pub fn trigger(
         &mut self,
         init_len: u8,
@@ -314,8 +370,9 @@ impl Noise {
             return;
         }
         if self.timer == 0 {
-            // Interval form: (64 << shift), ratio 0 halves.
-            let mut interval = 64u32 << shift.min(12);
+            // Interval form: (64 << shift), ratio 0 halves. Shift is a
+            // full 4 bits (0-15); all positions are defined dividers.
+            let mut interval = 64u32 << shift.min(15);
             if ratio == 0 {
                 interval /= 2;
             } else {
@@ -367,7 +424,11 @@ impl LengthEnvelope {
 }
 
 impl Square {
-    pub(super) fn validate(&self) -> Result<(), String> {
+    /// Phase 10 import validation (bounds follow the trigger/write masks).
+    /// `has_sweep` is ch1-only: ch2 shares this struct but has no sweep
+    /// unit, so its sweep fields stay at the never-written zero and must
+    /// not be policed (an active ch2 with pace 0 is everyday state).
+    pub(super) fn validate(&self, has_sweep: bool) -> Result<(), String> {
         self.core.validate()?;
         // `tick_timer`: 16 * (2048 - base), base 11-bit.
         if self.timer > 0x8000 {
@@ -375,6 +436,9 @@ impl Square {
         }
         if self.phase > 7 {
             return Err(format!("apu: square phase out of range: {}", self.phase));
+        }
+        if !has_sweep {
+            return Ok(());
         }
         if self.sweep_shift > 7 {
             return Err(format!(
@@ -385,10 +449,11 @@ impl Square {
         if self.sweep_pace > 8 {
             return Err(format!("apu: sweep pace out of range: {}", self.sweep_pace));
         }
-        // A sounding channel with pace 0 would underflow `sweep_timer` in
-        // `tick_sweep` (the timer reloads pace, then decrements). Pace 0
-        // only exists pre-trigger (inactive), never on a live voice.
-        if self.core.active && self.sweep_pace == 0 {
+        // Pace 0 with no shift is the never-written shape (NR10 untouched:
+        // sweep off); `tick_sweep` treats it as disabled, so a live voice
+        // in that shape is legitimate. With a shift it is non-producible
+        // and would arm the sweep path, so keep rejecting that.
+        if self.core.active && self.sweep_pace == 0 && self.sweep_shift != 0 {
             return Err("apu: sounding channel with zero sweep pace".to_string());
         }
         if self.sweep_timer > 8 {
@@ -426,8 +491,8 @@ impl Wave {
 impl Noise {
     pub(super) fn validate(&self) -> Result<(), String> {
         self.core.validate()?;
-        // `tick_timer`: (64 << shift<=12) * ratio<=7.
-        if self.timer > 0x200_000 {
+        // `tick_timer`: (64 << shift<=15) * ratio<=7, max (64<<15)*7.
+        if self.timer > 0xE00_000 {
             return Err(format!("apu: noise timer out of range: {}", self.timer));
         }
         if self.lfsr > 0x7FFF {
@@ -519,12 +584,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_live_voice_with_zero_sweep_pace() {
-        // Pace 0 exists pre-trigger (inactive) but would underflow the
-        // sweep timer once sounding.
-        let idle = Square::default();
-        idle.validate().unwrap();
-        let live = Square {
+    fn validate_accepts_live_ch2_with_zero_sweep_pace() {
+        // ch2 has no sweep unit: pace stays at the never-written zero
+        // while sounding. This everyday state must import cleanly.
+        let live_ch2 = Square {
             core: LengthEnvelope {
                 active: true,
                 ..Default::default()
@@ -532,6 +595,41 @@ mod tests {
             sweep_pace: 0,
             ..Default::default()
         };
-        assert!(live.validate().is_err());
+        live_ch2.validate(false).unwrap();
+        // ch1 (sweep unit present) still rejects a live pace-0 voice
+        // once a shift arms the sweep path...
+        let armed = Square {
+            sweep_shift: 3,
+            ..live_ch2
+        };
+        assert!(armed.validate(true).is_err());
+        // ...but accepts the never-written shape (pace 0, no shift).
+        live_ch2.validate(true).unwrap();
+        // ...and the untouched default either way.
+        Square::default().validate(true).unwrap();
+        Square::default().validate(false).unwrap();
+    }
+
+    #[test]
+    fn tick_sweep_treats_pace_zero_and_off_code_as_disabled() {
+        for pace in [0u8, 8] {
+            let mut sq = Square {
+                core: LengthEnvelope {
+                    active: true,
+                    ..Default::default()
+                },
+                freq_shadow: 0x7F0,
+                sweep_shift: 1,
+                sweep_pace: pace,
+                sweep_timer: 0,
+                ..Default::default()
+            };
+            // No underflow panic, no overflow kill, no timer movement.
+            for _ in 0..300 {
+                assert!(sq.tick_sweep());
+            }
+            assert!(sq.core.active);
+            assert_eq!(sq.sweep_timer, 0);
+        }
     }
 }

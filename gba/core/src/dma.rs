@@ -209,6 +209,7 @@ impl GbaDma {
         }
     }
 
+    #[inline]
     pub fn tick_pending(&mut self) {
         for dma in &mut self.channels {
             if dma.pending > 0 {
@@ -223,6 +224,73 @@ impl GbaDma {
 
     pub fn has_pending(&self) -> bool {
         self.channels.iter().any(|dma| dma.pending > 0)
+    }
+
+    /// Delay ticks remaining before the priority active channel's next
+    /// word phase (its `delay` burns down, then the unit issues), or 0
+    /// when the next tick must run the word phase (no active channel,
+    /// delay exhausted, or a completion tick pending). Lets the bus
+    /// fold pure delay burns arithmetically.
+    pub(crate) fn burn_remaining(&self) -> u8 {
+        let Some(dma) = self.channels.iter().find(|dma| dma.active) else {
+            return 0;
+        };
+        if dma.completing || dma.delay == 0 {
+            return 0;
+        }
+        dma.delay
+    }
+
+    /// Burn `n` delay ticks on the priority active channel
+    /// (`n <= burn_remaining()` at the same state): exactly equivalent
+    /// to `n` per-tick `tick_delay` burns with no unit issued.
+    pub(crate) fn burn_delay(&mut self, n: u8) {
+        let dma = self
+            .channels
+            .iter_mut()
+            .find(|dma| dma.active)
+            .expect("burn target active");
+        debug_assert!(!dma.completing && dma.delay >= n);
+        dma.delay -= n;
+    }
+
+    /// Batching horizon: quiet prefix before the next startup-latency
+    /// expiry. An active channel forces per-cycle stepping (word side
+    /// effects stay on the exact path for now).
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        if self.is_active() {
+            return 0;
+        }
+        self.pending_quiet_cycles()
+    }
+
+    /// Pending-latency caps only, tolerating an active channel (for the
+    /// DMA-active fast path: word side effects stay per-tick in the DMA
+    /// phase, but a latency expiry still changes the phase mid-tick).
+    #[inline]
+    pub(crate) fn pending_quiet_cycles(&self) -> u64 {
+        let mut horizon = u64::MAX;
+        for dma in &self.channels {
+            if dma.pending > 0 {
+                horizon = horizon.min(u64::from(dma.pending) - 1);
+            }
+        }
+        horizon
+    }
+
+    /// Decrement startup latencies. Valid only with no activation inside
+    /// the span (verified by the horizon) and no active channel.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        for dma in &mut self.channels {
+            if dma.pending > 0 {
+                dma.pending -= n as u8;
+            }
+        }
     }
 
     /// Shorten a pending Immediate startup to 3 (prefetch overlaps one
@@ -253,7 +321,7 @@ impl GbaDma {
     /// Produce at most one bus transfer. Lower-numbered active channels have priority.
     /// `stall` maps an address to the display-controller contention wait
     /// (0 outside video RAM / VBlank); the bus owner pays it like the CPU.
-    pub fn step(&mut self, waitcnt: u16, stall: &dyn Fn(u32) -> u8) -> Option<DmaTransfer> {
+    pub fn step(&mut self, waitcnt: u16, stall: &mut dyn FnMut(u32) -> u8) -> Option<DmaTransfer> {
         let channel = self.channels.iter().position(|dma| dma.active)?;
         let dma = &mut self.channels[channel];
         if !tick_delay(dma) {
@@ -348,6 +416,7 @@ impl GbaDma {
         ))
     }
 
+    #[inline]
     pub fn take_completion_interrupts(&mut self) -> u16 {
         std::mem::take(&mut self.completion_interrupts)
     }
@@ -742,7 +811,7 @@ mod tests {
         let mut first = None;
         for _ in 0..30 {
             dma.tick_pending();
-            if let Some(t) = dma.step(0, &|_| 0) {
+            if let Some(t) = dma.step(0, &mut |_| 0) {
                 first = Some(t);
                 break;
             }
@@ -754,7 +823,7 @@ mod tests {
         );
         let mut second = None;
         for _ in 0..30 {
-            if let Some(t) = dma.step(0, &|_| 0) {
+            if let Some(t) = dma.step(0, &mut |_| 0) {
                 second = Some(t);
                 break;
             }
@@ -766,7 +835,7 @@ mod tests {
             if !dma.is_active() {
                 break;
             }
-            dma.step(0, &|_| 0);
+            dma.step(0, &mut |_| 0);
         }
         assert_eq!(dma.take_completion_interrupts(), 1 << (8 + second.channel));
         assert_eq!(dma.read(0x040000DE).unwrap() & 0x8000, 0);
@@ -789,7 +858,7 @@ mod tests {
         let mut units = Vec::new();
         for _ in 0..60 {
             dma.tick_pending();
-            if let Some(t) = dma.step(0, &|_| 0) {
+            if let Some(t) = dma.step(0, &mut |_| 0) {
                 units.push((t.source, t.destination, t.width));
             }
             if !dma.is_active() && !dma.has_pending() && units.len() >= 4 {
@@ -820,7 +889,7 @@ mod tests {
         let mut issued = 0;
         for _ in 0..30 {
             dma.tick_pending();
-            if dma.step(0, &|_| 0).is_some() {
+            if dma.step(0, &mut |_| 0).is_some() {
                 issued += 1;
                 break;
             }

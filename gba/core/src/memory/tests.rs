@@ -638,7 +638,7 @@ fn hblank_dma_fires_on_vdraw_lines_only() {
     bus.write16(0x040000BA, 0x8000 | (1 << 9) | (2 << 12));
     let mut frames = 0;
     for _ in 0..300000 {
-        if bus.tick() {
+        if bus.tick().0 {
             frames += 1;
             break;
         }
@@ -806,6 +806,39 @@ fn immediate_dma_transfers_memory_and_clears_enable() {
 }
 
 #[test]
+fn dma_delay_burn_fold_reports_exact_bus_advance() {
+    // Save states were unloadable on DMA-heavy games (Myst): the burn
+    // fold advanced `current_tcycle` once at tick entry plus `k` more
+    // while reporting only `k`, so the bus clock ran ahead of the
+    // system tick and state validation rejected the snapshot.
+    // Reported advances must equal clock movement.
+    let mut bus = GbaMemoryBus::new();
+    // 256-word immediate DMA from ROM: wait-state idle gaps force
+    // multi-tick delay burns between units.
+    bus.write32(0x040000D4, 0x08000000);
+    bus.write32(0x040000D8, 0x02000000);
+    bus.write32(0x040000DC, 0x84000100);
+    let start = bus.current_tcycle;
+    let mut credited = 0u64;
+    let mut folds = 0u32;
+    for _ in 0..1_000_000 {
+        let (_, n) = bus.tick();
+        credited += n;
+        folds += u32::from(n > 1);
+        if bus.read16(0x040000DE) & 0x8000 == 0 {
+            break;
+        }
+    }
+    assert_eq!(
+        bus.read16(0x040000DE) & 0x8000,
+        0,
+        "DMA transfer must complete"
+    );
+    assert!(folds > 0, "test needs burn folds to guard the accounting");
+    assert_eq!(bus.current_tcycle - start, credited);
+}
+
+#[test]
 fn timer_overflow_sets_if_and_cascades() {
     let mut bus = GbaMemoryBus::new();
     bus.write32(0x04000104, 0x00840000);
@@ -867,5 +900,142 @@ fn bus_state_rejects_accumulator_overflow_magnitudes() {
         let mut state = bus.export_state().unwrap();
         mutate(&mut state);
         assert!(state.validate().is_err());
+    }
+}
+
+/// Batching equivalence at bus level: `quiet_cycles` + `advance_idle` +
+/// boundary `tick` must reproduce per-cycle `tick` bit-exactly across
+/// timer/DMA/video/sound/SIO/IRQ traffic and mid-line PPU writes
+/// (scanline segments), including halt/stop spans. Deterministic
+/// xorshift (fixed seed): not flaky.
+#[test]
+fn batch_matches_per_cycle_on_seeded_io_programs() {
+    // (address, width) pool: timers, DMA control, sound incl. wave RAM
+    // and FIFOs, PPU regs, palette/VRAM/OAM windows, system/IRQ/SIO.
+    const WRITES: [(u32, u8); 31] = [
+        (0x04000100, 2),
+        (0x04000102, 2),
+        (0x04000104, 2),
+        (0x04000106, 2),
+        (0x040000BA, 2),
+        (0x040000C6, 2),
+        (0x04000060, 2),
+        (0x04000064, 2),
+        (0x04000070, 2),
+        (0x04000080, 2),
+        (0x04000084, 2),
+        (0x04000088, 2),
+        (0x04000090, 4),
+        (0x04000098, 4),
+        (0x040000A0, 4),
+        (0x04000000, 2),
+        (0x04000004, 2),
+        (0x04000008, 2),
+        (0x04000010, 2),
+        (0x04000028, 4),
+        (0x04000040, 2),
+        (0x04000044, 2),
+        (0x04000048, 2),
+        (0x0400004C, 2),
+        (0x04000050, 2),
+        (0x05000100, 2),
+        (0x06001000, 4),
+        (0x07000100, 4),
+        (0x04000200, 2),
+        (0x04000208, 2),
+        (0x04000128, 2),
+    ];
+    let mut rng = 0x2545F4914F6CDD1Du64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for _ in 0..24 {
+        let mut a = GbaMemoryBus::new();
+        let mut b = GbaMemoryBus::new();
+        for _ in 0..6 {
+            let (addr, width) = WRITES[(next() % WRITES.len() as u64) as usize];
+            let value = (next() & 0xFFFF_FFFF) as u32;
+            match width {
+                1 => {
+                    a.write8(addr, value as u8);
+                    b.write8(addr, value as u8);
+                }
+                4 => {
+                    a.write32(addr & !3, value);
+                    b.write32(addr & !3, value);
+                }
+                _ => {
+                    a.write16(addr & !1, value as u16);
+                    b.write16(addr & !1, value as u16);
+                }
+            }
+        }
+        let total = 300 + next() % 900;
+        let mut cycle = 0u64;
+        while cycle < total {
+            if next() % 5 == 0 {
+                let (addr, width) = WRITES[(next() % WRITES.len() as u64) as usize];
+                let value = (next() & 0xFFFF_FFFF) as u32;
+                match width {
+                    1 => {
+                        a.write8(addr, value as u8);
+                        b.write8(addr, value as u8);
+                    }
+                    4 => {
+                        a.write32(addr & !3, value);
+                        b.write32(addr & !3, value);
+                    }
+                    _ => {
+                        a.write16(addr & !1, value as u16);
+                        b.write16(addr & !1, value as u16);
+                    }
+                }
+            }
+            if next() % 53 == 0 {
+                // Timer counter + SIO status reads must match too
+                // (receive-pop and flag behavior included).
+                assert_eq!(a.read16(0x04000100), b.read16(0x04000100));
+                assert_eq!(a.read16(0x04000128), b.read16(0x04000128));
+            }
+            let horizon = b.quiet_cycles().min(total - cycle);
+            if horizon == 0 {
+                // Lockstep single ticks (either side may fold DMA delay
+                // burns; same state folds identically — the tuples must
+                // match exactly, and cycle accounting follows the advance).
+                let (end_b, n_b) = b.tick();
+                let (end_a, n_a) = a.tick();
+                assert_eq!((end_b, n_b), (end_a, n_a), "divergence at cycle {cycle}");
+                cycle += n_a;
+            } else {
+                // Reference: the span must be event-free. `a` may fold
+                // DMA burns inside the span; accumulate its advance.
+                let mut span = 0u64;
+                while span < horizon {
+                    let (end_a, n_a) = a.tick();
+                    assert!(!end_a, "event inside batched span at cycle {cycle}");
+                    span += n_a;
+                    cycle += n_a;
+                }
+                assert_eq!(span, horizon, "fold overshoot at cycle {cycle}");
+                b.advance_idle(horizon);
+            }
+        }
+        let bytes_a = rmp_serde::to_vec_named(&a.export_state().unwrap()).unwrap();
+        let bytes_b = rmp_serde::to_vec_named(&b.export_state().unwrap()).unwrap();
+        if bytes_a != bytes_b {
+            // `timers.current_cycle` is call-scoped scratch: every read
+            // path (`tick_timers`, `read_io`, `write_io`) refreshes it
+            // first, so trailing staleness from different set points is
+            // unobservable (saves happen at frame ends, post-boundary).
+            // Normalize before comparing.
+            a.timers.set_current_cycle(total);
+            b.timers.set_current_cycle(total);
+            let bytes_a = rmp_serde::to_vec_named(&a.export_state().unwrap()).unwrap();
+            let bytes_b = rmp_serde::to_vec_named(&b.export_state().unwrap()).unwrap();
+            assert_eq!(bytes_a, bytes_b, "final state diverged");
+        }
     }
 }

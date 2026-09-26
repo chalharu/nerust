@@ -144,4 +144,40 @@ mod tests {
         let factory = GbaFactory;
         assert_eq!(factory.resolve_label("any.id", "en"), None);
     }
+
+    fn minimal_gba_rom() -> Vec<u8> {
+        let mut rom = vec![0; 0xC0];
+        nerust_gba_core::cartridge::header::finalize_test_gba_rom(&mut rom);
+        rom
+    }
+
+    fn minimal_gbc_rom() -> Vec<u8> {
+        let mut rom = vec![0; 0x8000];
+        rom[0x0104..0x0134].copy_from_slice(&[
+            0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C,
+            0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6,
+            0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
+            0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+        ]);
+        let mut checksum = 0u8;
+        for byte in &rom[0x0134..=0x014C] {
+            checksum = checksum.wrapping_sub(*byte).wrapping_sub(1);
+        }
+        rom[0x014D] = checksum;
+        rom
+    }
+
+    #[test]
+    fn probe_media_accepts_minimal_gba_rom() {
+        assert!(GbaFactory.probe_media(&MediaObject::new(None, minimal_gba_rom())));
+    }
+
+    #[test]
+    fn probe_media_rejects_non_gba_media() {
+        assert!(!GbaFactory.probe_media(&MediaObject::new(None, b"NES\x1a".to_vec())));
+        assert!(!GbaFactory.probe_media(&MediaObject::new(None, minimal_gbc_rom())));
+        assert!(!GbaFactory.probe_media(&MediaObject::new(None, vec![])));
+        assert!(!GbaFactory.probe_media(&MediaObject::new(None, vec![0; 0xBF])));
+        assert!(!GbaFactory.probe_media(&MediaObject::new(None, vec![0; 0xC0])));
+    }
 }

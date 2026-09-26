@@ -23,6 +23,7 @@ nerust_gui_runtime.workspace = true
 nerust_gui_settings.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gbc_factory.workspace = true
+nerust_gba_factory.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_factory.workspace = true
 nerust_nes_settings.workspace = true
@@ -38,4 +39,6 @@ sha2.workspace = true
 winit = { features = ["android-native-activity"], workspace = true }
 
 [dev-dependencies]
+nerust_gba_core.workspace = true
+nerust_gba_settings.workspace = true
 nerust_gbc_settings.workspace = true

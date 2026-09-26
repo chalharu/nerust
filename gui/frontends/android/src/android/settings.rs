@@ -784,6 +784,8 @@ mod tests {
     use std::sync::Arc;
 
     use nerust_core_traits::factory::CoreFactory;
+    use nerust_gba_factory::GbaFactory;
+    use nerust_gba_settings::GbaSettings;
     use nerust_gbc_factory::GbcFactory;
     use nerust_gbc_settings::GbcSettings;
     use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -805,6 +807,10 @@ mod tests {
             GbcFactory.system_id(),
             Box::new(GbcSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
         );
+        shared.systems.insert(
+            GbaFactory.system_id(),
+            Box::new(GbaSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+        );
         SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
@@ -813,7 +819,11 @@ mod tests {
     }
 
     fn registry() -> SystemRegistry {
-        SystemRegistry::new(vec![Arc::new(NesFactory), Arc::new(GbcFactory)])
+        SystemRegistry::new(vec![
+            Arc::new(NesFactory),
+            Arc::new(GbcFactory),
+            Arc::new(GbaFactory),
+        ])
     }
 
     fn android_settings(snapshot: &SettingsSnapshot, registry: &SystemRegistry) -> AndroidSettings {
@@ -930,7 +940,15 @@ mod tests {
                 "0"
             ]
         );
-        assert_eq!(indices.len(), 20);
+        assert_eq!(indices.len(), 21);
+    }
+
+    #[test]
+    fn dialog_payload_contains_gba_system_key() {
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let keys = android.dialog_keys();
+        assert!(keys.iter().any(|key| key.starts_with("system.gba.")));
     }
 
     #[test]

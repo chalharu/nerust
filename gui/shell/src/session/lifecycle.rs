@@ -12,7 +12,7 @@ use crate::{
     emu_core::EmuCore,
     session::{
         SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome},
+        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
         persistence::PersistenceManager,
         title::window_title,
     },
@@ -85,6 +85,17 @@ impl SessionHandle {
 
     pub fn paused(&self) -> bool {
         self.metrics().paused
+    }
+
+    /// Re-assert the audio backend start (mobile OS lifecycle
+    /// transitions can wedge audio streams; the restart is idempotent).
+    /// No-op without a loaded core.
+    pub fn restart_audio(&mut self) {
+        if let Some(ref core) = self.emu_core
+            && let Err(error) = core.restart_audio()
+        {
+            log::warn!("restart_audio failed: {error}");
+        }
     }
 
     pub fn can_pause(&self) -> bool {
@@ -256,13 +267,13 @@ impl SessionHandle {
             SessionCommand::Resume => self.cmd_resume(),
             SessionCommand::TogglePause => self.cmd_toggle_pause(),
             SessionCommand::Reset => self.cmd_reset(),
-            SessionCommand::CreateSlot => Ok(self.slot_op(|p, c| p.create_slot(c))),
+            SessionCommand::CreateSlot => Ok(self.slot_op_ok(|p, c| p.create_slot(c))),
             SessionCommand::SaveActiveSlotOrNew => {
-                Ok(self.slot_op(|p, c| p.save_active_slot_or_new(c)))
+                Ok(self.slot_op_ok(|p, c| p.save_active_slot_or_new(c)))
             }
             SessionCommand::LoadActiveSlot => Ok(self.load_slot_op(|p, c| p.load_active_slot(c))),
             SessionCommand::SelectActiveSlot(id) => Ok(self.cmd_select_active_slot(id)),
-            SessionCommand::SaveSlot(id) => Ok(self.slot_op(|p, c| p.save_slot(id, c, false))),
+            SessionCommand::SaveSlot(id) => Ok(self.slot_op_ok(|p, c| p.save_slot(id, c, false))),
             SessionCommand::LoadSlot(id) => Ok(self.load_slot_op(|p, c| p.load_slot(id, c))),
             SessionCommand::DeleteSlot(id) => Ok(self.slot_op(|p, c| p.delete_slot(id, c))),
             SessionCommand::SelectNextSlot => Ok(self.cmd_adjacent_slot(true)),
@@ -278,6 +289,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         })
     }
 
@@ -289,6 +301,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: self.loaded(),
+            slot_failure: None,
         })
     }
 
@@ -305,6 +318,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         })
     }
 
@@ -313,6 +327,7 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         }
     }
 
@@ -320,6 +335,7 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: self.persistence.select_adjacent_slot(forward).is_some(),
             needs_redraw: false,
+            slot_failure: None,
         }
     }
 
@@ -337,22 +353,41 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
+        }
+    }
+
+    fn slot_op_ok(
+        &mut self,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
+    ) -> SessionCommandOutcome {
+        let slot_failure = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core).err()
+        } else {
+            Some(SlotOpFailure::Unavailable)
+        };
+        SessionCommandOutcome {
+            executed: slot_failure.is_none(),
+            needs_redraw: false,
+            slot_failure,
         }
     }
 
     fn load_slot_op(
         &mut self,
-        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
         let was_paused = self.paused();
-        let executed = if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core)
+        let slot_failure = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core).err()
         } else {
-            false
+            Some(SlotOpFailure::Empty)
         };
+        let executed = slot_failure.is_none();
         SessionCommandOutcome {
             executed,
             needs_redraw: executed && was_paused && !self.paused(),
+            slot_failure,
         }
     }
 

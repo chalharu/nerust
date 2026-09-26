@@ -44,6 +44,16 @@ pub struct GbaTimers {
     /// T-cycles. Middle-take entries key on it (storm grid-phase proxy).
     /// Reset on enable; the latest first-take wins (None = none yet).
     take1_latency: Option<u64>,
+    /// Fold mask for the idle paths: bit i set means channel i needs
+    /// per-tick counter folding (enabled, steady, non-cascade).
+    /// Refreshed by `refresh_fold_mask` after every config change
+    /// (writes, full steps, state import): quiet spans never change
+    /// channel config (writes reset the skip budget, transients only
+    /// resolve on the full path), so the mask stays exact across them.
+    /// Transient cache, excluded from wire state (rebuilt after import).
+    fold_mask: u8,
+    /// Prescaler shift per channel, valid where the mask is set.
+    fold_shifts: [u8; 4],
 }
 
 /// Phase 10 wire state: all four channels plus the free-running prescaler
@@ -131,6 +141,7 @@ impl GbaTimers {
                 self.take1_latency = None;
             }
         }
+        self.refresh_fold_mask();
         true
     }
 
@@ -205,6 +216,7 @@ impl GbaTimers {
             timer.reload_pending = Some(value);
             self.last_reload_cycle[channel] = Some(self.current_cycle);
         }
+        self.refresh_fold_mask();
         true
     }
 
@@ -213,10 +225,56 @@ impl GbaTimers {
         self.step_full().0
     }
 
+    /// True when no timer can change observable state this tick: every
+    /// channel disabled with no transient startup/landing bookkeeping.
+    /// The prescaler still advances (phase for future enables) and the
+    /// cycle clock is still stamped; nothing else can happen.
+    pub(crate) fn is_fully_idle(&self) -> bool {
+        self.channels.iter().all(|timer| {
+            timer.control & 0x80 == 0
+                && timer.start_delay == 0
+                && timer.pending_control.is_none()
+                && timer.reload_pending.is_none()
+        })
+    }
+
+    /// Advance only the free-running prescaler (fully-idle fast path).
+    pub(crate) fn bump_prescaler(&mut self) {
+        self.prescaler = self.prescaler.wrapping_add(1);
+    }
+
+    /// Recompute the idle-fold mask from channel config. Called after
+    /// every config change (both write widths, full steps) and after
+    /// state import; quiet spans never change config, so the mask stays
+    /// exact between refreshes. Rare-path cost only.
+    pub(crate) fn refresh_fold_mask(&mut self) {
+        let mut mask = 0u8;
+        let mut shifts = [0u8; 4];
+        for (index, timer) in self.channels.iter().enumerate() {
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                continue;
+            }
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            mask |= 1 << index;
+            shifts[index] = [0, 6, 8, 10][usize::from(timer.control & 3)];
+        }
+        self.fold_mask = mask;
+        self.fold_shifts = shifts;
+    }
+
     /// Advance one T-cycle, returning Timer IRQ bits 3..6 plus raw
     /// overflow bits 0..3. Overflows clock downstream hardware (sound
     /// FIFO sample drains, count-up timers) whether or not the timer's
     /// IRQ is enabled; only the IRQ bits may raise IF.
+    #[inline]
     pub fn step_full(&mut self) -> (u16, u16) {
         self.prescaler = self.prescaler.wrapping_add(1);
         let prescaler = self.prescaler;
@@ -236,6 +294,7 @@ impl GbaTimers {
                     self.overflows_since_enable[index].saturating_add(1);
             }
         }
+        self.refresh_fold_mask();
         (irq, overflow)
     }
 
@@ -244,6 +303,147 @@ impl GbaTimers {
         self.overflows_since_enable[channel]
     }
 
+    /// Batching horizon: quiet prefix length before the next cycle that
+    /// needs full per-cycle processing. After `advance_idle(h)` plus one
+    /// normal tick, state is bit-identical to h+1 per-cycle ticks.
+    ///
+    /// Interior cycles change only free-running counters (prescaler taps
+    /// and counter increments); overflows, reload landings, control takes
+    /// and start-delay expiry all cap the horizon and run through the
+    /// existing per-cycle path at the boundary.
+    #[inline]
+    pub(crate) fn quiet_cycles(&self) -> u64 {
+        const INF: u64 = u64::MAX;
+        let mut horizon = INF;
+        for index in 0..4 {
+            let timer = &self.channels[index];
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            // Transient enable/startup bookkeeping: drain per-cycle.
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                return 0;
+            }
+            // Count-up channels tick only on the lower channel's overflow,
+            // which caps the horizon itself; their own overflow can only
+            // follow one in the same or a later tick.
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            // All prescaler periods are powers of two: tap phase with AND,
+            // fire spacing with shifts (no division in the hot path).
+            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
+            let period = 1u64 << shift;
+            let mask = period - 1;
+            // Tap fires at upcoming tick j iff (prescaler + j) % period ==
+            // period - 1. Overflow needs (0x10000 - counter) fires.
+            let fires_needed = 0x1_0000u64 - u64::from(timer.counter);
+            let r = (u64::from(self.prescaler) + 1) & mask;
+            let first_fire = ((mask - r) & mask) + 1;
+            let overflow_tick = first_fire + (fires_needed - 1) * period;
+            horizon = horizon.min(overflow_tick - 1);
+        }
+        horizon
+    }
+
+    /// Advance free-running counters by `n` cycles. Valid only for
+    /// `n <= quiet_cycles()` measured at the same state: no overflows,
+    /// landings, takes or delay expiries occur inside the span (verified
+    /// by the horizon), so only prescaler taps and counter increments
+    /// need folding. Cascade channels are untouched (no lower overflow
+    /// interior); transient states are absent by the horizon contract.
+    #[inline]
+    pub(crate) fn advance_idle(&mut self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        // The tick-skip path advances exactly one cycle per call: fold
+        // with single-tap arithmetic instead of the general span math.
+        if n == 1 {
+            return self.advance_idle_1();
+        }
+        // NOTE: `current_cycle` is deliberately untouched: it is
+        // call-scoped scratch refreshed by `set_current_cycle` before
+        // every read path (bus `tick_timers`, `read_io`, `write_io`;
+        // direct steppers set it per tick). Mid-span staleness is
+        // unobservable by construction.
+        self.prescaler = self.prescaler.wrapping_add(n as u16);
+        let start_prescaler = self.prescaler.wrapping_sub(n as u16);
+        // The mask is exact here by the horizon contract (same predicate
+        // the guarded loop below evaluated, refreshed after every config
+        // change); shifts are precomputed from the same control bits.
+        let mask = self.fold_mask;
+        let shifts = self.fold_shifts;
+        for (index, timer) in self.channels.iter_mut().enumerate() {
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let shift = shifts[index];
+            let mask = (1u64 << shift) - 1;
+            let r = (u64::from(start_prescaler) + 1) & mask;
+            let first_fire = ((mask - r) & mask) + 1;
+            let fires = if n >= first_fire {
+                1 + ((n - first_fire) >> shift)
+            } else {
+                0
+            };
+            timer.counter = timer.counter.wrapping_add(fires as u16);
+        }
+    }
+
+    /// Single-cycle fold: the tap fires this tick iff the advanced
+    /// prescaler phase reads all-ones. Proof: the general path computes
+    /// `r = (start + 1) & mask` and `first_fire = ((mask - r) & mask) + 1`
+    /// with `fires(1) = 1` exactly when `first_fire == 1`; since
+    /// `0 <= mask - r <= mask`, `(mask - r) & mask == mask - r`, so that
+    /// holds exactly when `r == mask`. No overflow can complete inside a
+    /// horizon-capped span (same contract as `advance_idle`).
+    #[inline]
+    fn advance_idle_1(&mut self) {
+        let prescaler = self.prescaler.wrapping_add(1);
+        self.prescaler = prescaler;
+        // Masked unrolled folds: the mask is steady in practice, so the
+        // bit tests predict perfectly; masked-out channels cost one
+        // testable branch each instead of the full guard chain.
+        let mask = self.fold_mask;
+        if mask == 0 {
+            return;
+        }
+        let shifts = self.fold_shifts;
+        if mask & 1 != 0 {
+            let m = (1u16 << shifts[0]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[0].counter.wrapping_add(1);
+                self.channels[0].counter = counter;
+            }
+        }
+        if mask & 2 != 0 {
+            let m = (1u16 << shifts[1]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[1].counter.wrapping_add(1);
+                self.channels[1].counter = counter;
+            }
+        }
+        if mask & 4 != 0 {
+            let m = (1u16 << shifts[2]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[2].counter.wrapping_add(1);
+                self.channels[2].counter = counter;
+            }
+        }
+        if mask & 8 != 0 {
+            let m = (1u16 << shifts[3]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[3].counter.wrapping_add(1);
+                self.channels[3].counter = counter;
+            }
+        }
+    }
+
+    #[inline]
     fn step_channel(
         &mut self,
         index: usize,
@@ -474,6 +674,7 @@ impl GbaTimers {
         self.overflows_since_enable = state.overflows_since_enable;
         self.timer0_acks_since_enable = state.timer0_acks_since_enable;
         self.take1_latency = state.take1_latency;
+        self.refresh_fold_mask();
         Ok(())
     }
 }
@@ -571,5 +772,82 @@ mod tests {
         let mut bad = restored.export_state();
         bad.channels[0].start_delay = 6;
         assert!(bad.validate().is_err());
+    }
+
+    /// Batching equivalence: `quiet_cycles` + `advance_idle` + boundary
+    /// `step_full` must reproduce per-cycle stepping bit-exactly,
+    /// including overflow cycles, IRQ masks and all bookkeeping, across
+    /// enables, prescalers, cascades, reloads and mid-run writes.
+    /// Deterministic xorshift (fixed seed): not flaky.
+    #[test]
+    fn batch_matches_per_cycle_on_seeded_programs() {
+        let mut rng = 0x9E3779B97F4A7C15u64;
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for _ in 0..40 {
+            let mut a = GbaTimers::default();
+            let mut b = GbaTimers::default();
+            for _ in 0..8 {
+                let addr = 0x04000100 + 2 * (next() % 8) as u32;
+                let value = (next() & 0xFFFF) as u16;
+                a.write(addr, value);
+                b.write(addr, value);
+            }
+            let total = 200 + next() % 800;
+            let mut cycle = 0u64;
+            while cycle < total {
+                if next() % 7 == 0 {
+                    // Mirror production: writes observe a freshly synced
+                    // clock (`write_io` sets it at entry), so sync both
+                    // sides before the write pair.
+                    a.set_current_cycle(cycle);
+                    b.set_current_cycle(cycle);
+                    let addr = 0x04000100 + 2 * (next() % 8) as u32;
+                    let value = (next() & 0xFFFF) as u16;
+                    a.write(addr, value);
+                    b.write(addr, value);
+                }
+                b.set_current_cycle(cycle);
+                let horizon = b.quiet_cycles().min(total - cycle);
+                if horizon == 0 {
+                    a.set_current_cycle(cycle);
+                    let expected = a.step_full();
+                    b.set_current_cycle(cycle);
+                    let actual = b.step_full();
+                    assert_eq!(actual, expected, "divergence at cycle {cycle}");
+                    cycle += 1;
+                } else {
+                    // Reference: advance one cycle at a time; the span
+                    // must be event-free by the horizon contract.
+                    for _ in 0..horizon {
+                        a.set_current_cycle(cycle);
+                        assert_eq!(
+                            a.step_full(),
+                            (0, 0),
+                            "event inside batched span at cycle {cycle}"
+                        );
+                        cycle += 1;
+                    }
+                    b.advance_idle(horizon);
+                    // `advance_idle` folds counters only; re-sync the
+                    // scratch clock to the span end (production refreshes
+                    // it before the next read path).
+                    b.set_current_cycle(cycle);
+                }
+            }
+            // `current_cycle` is call-scoped scratch (stamps taken at
+            // boundaries/writes are identical; only the trailing value
+            // differs: the reference sets it per tick, the batch side
+            // once per span). Normalize before comparing.
+            a.set_current_cycle(total);
+            b.set_current_cycle(total);
+            let bytes_a = rmp_serde::to_vec_named(&a.export_state()).unwrap();
+            let bytes_b = rmp_serde::to_vec_named(&b.export_state()).unwrap();
+            assert_eq!(bytes_a, bytes_b, "final state diverged");
+        }
     }
 }

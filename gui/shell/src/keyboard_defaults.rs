@@ -53,5 +53,26 @@ pub fn default_system_bindings(attachment_id: &str, control_prefix: &str) -> Vec
     b.extend(p1("down", DpadDown));
     b.extend(p1("left", DpadLeft));
     b.extend(p1("right", DpadRight));
+    b.extend(p1("l", Button5));
+    b.extend(p1("r", Button6));
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shoulder_buttons_have_keyboard_defaults() {
+        let bindings = default_system_bindings("gba.attachment.player1", "gba.control");
+        let find = |control: &str| {
+            bindings
+                .iter()
+                .find(|b| b.control.as_str() == format!("gba.control.{control}"))
+                .unwrap_or_else(|| panic!("missing default binding for {control}"))
+                .key
+        };
+        assert_eq!(find("l"), Key::KeyA);
+        assert_eq!(find("r"), Key::KeyQ);
+    }
 }
