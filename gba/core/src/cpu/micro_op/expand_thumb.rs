@@ -21,15 +21,13 @@ pub fn expand_thumb(instr: u16, regs: &CpuRegisters) -> Option<MicroOpVec> {
     expand_thumb_into(instr, regs, &mut ops).map(|()| ops)
 }
 
-/// Hot-path expansion: build directly into `out` with no whole-buffer
-/// moves (return-by-value `SmallVec` chains codegen as per-instruction
-/// `memcpy` calls). Fallible leaves truncate `out` back to its entry
-/// length on `None`, so sequential attempts compose cleanly.
-pub(crate) fn expand_thumb_into(
-    instr: u16,
-    regs: &CpuRegisters,
-    out: &mut MicroOpVec,
-) -> Option<()> {
+/// Branch/trap head of [`expand_thumb_into`]: conditional B
+/// (cond < 0xE; 0xDE00/0xDF00 fall through to the UND/SWI traps
+/// below), unconditional B, long BL halves, BX, SWI, UND and the
+/// decoder gaps (0xB100-0xB3FF, 0xB600-0xBBFF, 0xBE00-0xBFFF).
+/// `Some` when the instruction was handled.
+#[inline]
+fn expand_thumb_branch_trap(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // Conditional B (cond < 0xE); 0xDE00/0xDF00 fall through to the
     // UND/SWI traps below.
     if instr >> 12 == 0xD && ((instr >> 8) & 0xF) < 0xE {
@@ -92,6 +90,14 @@ pub(crate) fn expand_thumb_into(
         out.push(MicroOp::TrapUnd);
         return Some(());
     }
+    None
+}
+
+/// MOV/CMP/ADD/SUB immediate + Thumb MUL head of [`expand_thumb_into`]
+/// (op 0xD in 0x4000..=0x43FF: m from the incoming Rd; other ALU ops
+/// expand via `expand_thumb_alu_rest` below). `Some` when handled.
+#[inline]
+fn expand_thumb_alu_imm_mul(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // MOV/CMP/ADD/SUB immediate.
     if instr >> 13 == 0b001 {
         let op = match (instr >> 11) & 0x3 {
@@ -124,6 +130,122 @@ pub(crate) fn expand_thumb_into(
         out.extend(core::iter::repeat_n(MicroOp::Internal, m as usize));
         return Some(());
     }
+    None
+}
+
+/// Nibble-0x4 arm of [`expand_thumb_into`]: 0x4000-0x47FF ALU/hi-reg
+/// via ALU-rest only, 0x4800-0x4FFF literal loads via PC-relative only.
+#[inline]
+fn expand_thumb_nibble_4(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if instr < 0x4800 {
+        if expand_thumb_alu_rest_into(instr, out).is_some() {
+            return Some(());
+        }
+    } else if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Nibble-0xB arm of [`expand_thumb_into`]: ADD-SP (ALU-rest) and
+/// PUSH/POP, in legacy order.
+#[inline]
+fn expand_thumb_nibble_b(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Fallback arm of [`expand_thumb_into`]: 0x2-0x3 (imm ALU, handled
+/// above) and 0xD-0xF (branches/traps, handled above) keep the legacy
+/// attempt order for exactness.
+#[inline]
+fn expand_thumb_fallback_arm(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_multiple_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Legacy tail chain of [`expand_thumb_into`]: attempts the remaining
+/// leaves after the nibble pre-dispatch falls through (each leaf
+/// truncates on failure; `base` makes that bulletproof).
+#[inline]
+fn expand_thumb_tail(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+) -> Option<()> {
+    if expand_thumb_alu_rest_into(instr, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_multiple_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+        return Some(());
+    }
+    out.truncate(base);
+    expand_thumb_load_store_into(instr, out)
+}
+
+/// Hot-path expansion: build directly into `out` with no whole-buffer
+/// moves (return-by-value `SmallVec` chains codegen as per-instruction
+/// `memcpy` calls). Fallible leaves truncate `out` back to its entry
+/// length on `None`, so sequential attempts compose cleanly.
+pub(crate) fn expand_thumb_into(
+    instr: u16,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+) -> Option<()> {
+    if expand_thumb_branch_trap(instr, regs, out).is_some() {
+        return Some(());
+    }
+    if expand_thumb_alu_imm_mul(instr, regs, out).is_some() {
+        return Some(());
+    }
     // Sequential attempts (not `or_else` chains): each link of an
     // `or_else` chain moves the whole inline buffer through a generic
     // `Option::or_else` instantiation, which codegen outlines as a
@@ -147,14 +269,9 @@ pub(crate) fn expand_thumb_into(
         // 0x4000-0x47FF ALU/hi-reg: ALU-rest only. 0x4800-0x4FFF
         // literal loads: PC-relative only.
         0x4 => {
-            if instr < 0x4800 {
-                if expand_thumb_alu_rest_into(instr, out).is_some() {
-                    return Some(());
-                }
-            } else if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+            if expand_thumb_nibble_4(instr, regs, out, base).is_some() {
                 return Some(());
             }
-            out.truncate(base);
         }
         // Register/imm/SP-relative transfers: load-store only.
         0x5..=0x9 => {
@@ -165,14 +282,9 @@ pub(crate) fn expand_thumb_into(
         }
         // ADD-SP (ALU-rest) and PUSH/POP, in legacy order.
         0xB => {
-            if expand_thumb_alu_rest_into(instr, out).is_some() {
+            if expand_thumb_nibble_b(instr, regs, out, base).is_some() {
                 return Some(());
             }
-            out.truncate(base);
-            if expand_thumb_push_pop_into(instr, regs, out).is_some() {
-                return Some(());
-            }
-            out.truncate(base);
         }
         // LDM/STM: multiple only.
         0xC => {
@@ -184,41 +296,12 @@ pub(crate) fn expand_thumb_into(
         // 0x2-0x3 (imm ALU, handled above), 0xD-0xF (branches/traps,
         // handled above): keep the legacy order for exactness.
         _ => {
-            if expand_thumb_alu_rest_into(instr, out).is_some() {
+            if expand_thumb_fallback_arm(instr, regs, out, base).is_some() {
                 return Some(());
             }
-            out.truncate(base);
-            if expand_thumb_push_pop_into(instr, regs, out).is_some() {
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_thumb_multiple_into(instr, regs, out).is_some() {
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_thumb_pcrel_into(instr, regs, out).is_some() {
-                return Some(());
-            }
-            out.truncate(base);
         }
     }
-    if expand_thumb_alu_rest_into(instr, out).is_some() {
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_thumb_push_pop_into(instr, regs, out).is_some() {
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_thumb_multiple_into(instr, regs, out).is_some() {
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_thumb_pcrel_into(instr, regs, out).is_some() {
-        return Some(());
-    }
-    out.truncate(base);
-    expand_thumb_load_store_into(instr, out)
+    expand_thumb_tail(instr, regs, out, base)
 }
 
 /// Thumb LDR (literal) 0x4800..=0x4FFF. Expands to [Read, I, I] (= 3),
