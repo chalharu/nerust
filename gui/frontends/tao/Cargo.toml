@@ -31,4 +31,4 @@ rfd.workspace = true
 tao.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
-gtk = "=0.18.2"
+gtk = "=0.19.0"
