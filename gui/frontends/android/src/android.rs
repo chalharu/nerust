@@ -185,6 +185,7 @@ fn show_toast(app: &AndroidApp, message: &str) {
 fn configure_controls_overlay(
     app: &AndroidApp,
     settings: &nerust_gui_settings::local::TouchOverlaySettings,
+    shoulders_visible: bool,
 ) {
     let visibility = match settings.visibility {
         nerust_gui_settings::local::TouchOverlayVisibility::Always => "always",
@@ -207,13 +208,14 @@ fn configure_controls_overlay(
             env.call_method(
                 &activity,
                 jni_str!("configureControlsOverlay"),
-                jni_sig!("(Ljava/lang/String;IIIZ)V"),
+                jni_sig!("(Ljava/lang/String;IIIZZ)V"),
                 &[
                     jni::objects::JValue::Object(visibility.as_ref()),
                     jni::objects::JValue::Int(opacity),
                     jni::objects::JValue::Int(scale),
                     jni::objects::JValue::Int(offset),
                     jni::objects::JValue::Bool(haptics),
+                    jni::objects::JValue::Bool(shoulders_visible),
                 ],
             )?;
             Ok(())
@@ -1407,6 +1409,14 @@ impl AndroidFrontend {
         let overlay_settings = &self.session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = self.session.touch_overlay_model(self.overlay_revision);
+        // Shoulder zones are drawn only for systems that have them
+        // (GBA); GBC/NES profiles expose no shoulder controls.
+        let shoulders_visible = model.controls.iter().any(|control| {
+            matches!(
+                control.role,
+                TouchControlRole::LeftShoulder | TouchControlRole::RightShoulder
+            )
+        });
         self.overlay = if overlay_settings.visibility
             == nerust_gui_settings::local::TouchOverlayVisibility::Hidden
         {
@@ -1420,7 +1430,7 @@ impl AndroidFrontend {
                 overlay_settings.vertical_offset_percent,
             ))
         };
-        configure_controls_overlay(&self.app, overlay_settings);
+        configure_controls_overlay(&self.app, overlay_settings, shoulders_visible);
     }
 
     fn render(&mut self) {
