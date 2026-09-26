@@ -22,25 +22,171 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
     expand_arm_into(instr, regs, &mut ops).map(|()| ops)
 }
 
+/// B/BL head of [`expand_arm_into`]: failed conditions retire in one
+/// sequential cycle; taken branches carry the 2-cycle refill in the
+/// commit op's own cost (padding ticks run no bus calls, so one drain
+/// round suffices). `Some` when the instruction was a branch.
+#[inline]
+fn expand_arm_branch(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
+    if (instr >> 25) & 0x7 != 0b101 {
+        return None;
+    }
+    let condition = (instr >> 28) as u8;
+    if !condition_passed(regs.cpsr(), condition) {
+        out.push(MicroOp::Internal);
+        return Some(());
+    }
+    let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
+    let offset = (offset << 6) >> 6;
+    out.push(MicroOp::TakenBranch(BranchEffect {
+        offset: offset as u32,
+        link: instr & (1 << 24) != 0,
+    }));
+    Some(())
+}
+
+/// SWI/UND trap head of [`expand_arm_into`]: class 111 with bit 24 set
+/// is SWI (trap number in bits 23-16 for HLE); the coprocessor data
+/// class (110) and class 111 without the SWI bit trap UND (the GBA has
+/// no coprocessor). Failed conditions retire as `[Internal]`.
+/// `Some` when the instruction was a trap class.
+#[inline]
+fn expand_arm_trap(
+    instr: u32,
+    regs: &CpuRegisters,
+    condition: u8,
+    out: &mut MicroOpVec,
+) -> Option<()> {
+    // SWI: class 111 with bit 24 set (any condition; the early return
+    // bypasses the wrapper below).
+    if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
+        if condition_passed(regs.cpsr(), condition) {
+            out.push(MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8));
+        } else {
+            out.push(MicroOp::Internal);
+        }
+        return Some(());
+    }
+    // UND: coprocessor data class (110) and class 111 without the SWI bit.
+    if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
+    {
+        if condition_passed(regs.cpsr(), condition) {
+            out.push(MicroOp::TrapUnd);
+        } else {
+            out.push(MicroOp::Internal);
+        }
+        return Some(());
+    }
+    None
+}
+
+/// Class 001 arm of [`expand_arm_into`]: data-processing immediate
+/// (minus MSR-immediate, which the leaf rejects and the PSR leaf takes).
+#[inline]
+fn expand_arm_class_001(
+    instr: u32,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+    condition: u8,
+) -> Option<()> {
+    if expand_arm_alu_imm_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_psr_into(instr, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Class 010/011 arm of [`expand_arm_into`]: single word/byte
+/// transfers (always decode; no other 010/011 leaf exists).
+#[inline]
+fn expand_arm_class_010_011(
+    instr: u32,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+    condition: u8,
+) -> Option<()> {
+    if expand_arm_single_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Class 100 arm of [`expand_arm_into`]: block transfers only.
+#[inline]
+fn expand_arm_class_100(
+    instr: u32,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+    condition: u8,
+) -> Option<()> {
+    if expand_arm_block_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
+/// Class 000 arm of [`expand_arm_into`]: halfword-tagged forms try the
+/// single leaf first (its exclusions route multiply/SWP/PSR/BX onward);
+/// untagged forms skip straight to DP-reg (which rejects the tag itself).
+#[inline]
+fn expand_arm_class_000(
+    instr: u32,
+    regs: &CpuRegisters,
+    out: &mut MicroOpVec,
+    base: usize,
+    condition: u8,
+) -> Option<()> {
+    if (instr & 0x00000090) == 0x00000090 && expand_arm_single_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_dp_reg_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_mul_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_swp_into(instr, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_psr_into(instr, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    if expand_arm_bx_into(instr, regs, out).is_some() {
+        finish_arm_condition(regs, condition, out, base);
+        return Some(());
+    }
+    out.truncate(base);
+    None
+}
+
 /// Hot-path expansion: build directly into `out` with no whole-buffer
 /// moves (see [`super::expand_thumb::expand_thumb_into`] for why).
 /// Fallible leaves truncate `out` to the entry length on `None`.
 pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
-    // B/BL: failed conditions retire in one sequential cycle; taken
-    // branches carry the 2-cycle refill in the commit op's own cost
-    // (padding ticks run no bus calls, so one drain round suffices).
-    if (instr >> 25) & 0x7 == 0b101 {
-        let condition = (instr >> 28) as u8;
-        if !condition_passed(regs.cpsr(), condition) {
-            out.push(MicroOp::Internal);
-            return Some(());
-        }
-        let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
-        let offset = (offset << 6) >> 6;
-        out.push(MicroOp::TakenBranch(BranchEffect {
-            offset: offset as u32,
-            link: instr & (1 << 24) != 0,
-        }));
+    if expand_arm_branch(instr, regs, out).is_some() {
         return Some(());
     }
     let condition = (instr >> 28) as u8;
@@ -50,27 +196,7 @@ pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOp
         out.push(MicroOp::Internal);
         return Some(());
     }
-    // SWI: class 111 with bit 24 set (any condition; the trap
-    // number is in bits 23-16 for HLE). Failed conditions retire as
-    // [Internal] here (the early return bypasses the wrapper below).
-    if (instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 1 {
-        if condition_passed(regs.cpsr(), condition) {
-            out.push(MicroOp::TrapSwi(((instr >> 16) & 0xFF) as u8));
-        } else {
-            out.push(MicroOp::Internal);
-        }
-        return Some(());
-    }
-    // UND: coprocessor data class (110) and class 111 without the SWI
-    // bit. The GBA has no coprocessor, so all such encodings trap
-    // (failed conditions still retire as [Internal]).
-    if (instr >> 25) & 0b111 == 0b110 || ((instr >> 25) & 0b111 == 0b111 && (instr >> 24) & 1 == 0)
-    {
-        if condition_passed(regs.cpsr(), condition) {
-            out.push(MicroOp::TrapUnd);
-        } else {
-            out.push(MicroOp::Internal);
-        }
+    if expand_arm_trap(instr, regs, condition, out).is_some() {
         return Some(());
     }
     let base = out.len();
@@ -82,76 +208,16 @@ pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOp
     match (instr >> 25) & 0b111 {
         // Data-processing immediate (minus MSR-immediate, which the leaf
         // rejects and the PSR leaf takes).
-        0b001 => {
-            if expand_arm_alu_imm_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_psr_into(instr, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            None
-        }
+        0b001 => expand_arm_class_001(instr, regs, out, base, condition),
         // Single word/byte transfers (always decode; no other 010/011
         // leaf exists).
-        0b010 | 0b011 => {
-            if expand_arm_single_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            None
-        }
+        0b010 | 0b011 => expand_arm_class_010_011(instr, regs, out, base, condition),
         // Block transfers only.
-        0b100 => {
-            if expand_arm_block_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            None
-        }
+        0b100 => expand_arm_class_100(instr, regs, out, base, condition),
         // Class 000: halfword-tagged forms try the single leaf first
         // (its exclusions route multiply/SWP/PSR/BX onward); untagged
         // forms skip straight to DP-reg (which rejects the tag itself).
-        0b000 => {
-            if (instr & 0x00000090) == 0x00000090
-                && expand_arm_single_into(instr, regs, out).is_some()
-            {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_dp_reg_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_mul_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_swp_into(instr, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_psr_into(instr, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            if expand_arm_bx_into(instr, regs, out).is_some() {
-                finish_arm_condition(regs, condition, out, base);
-                return Some(());
-            }
-            out.truncate(base);
-            None
-        }
+        0b000 => expand_arm_class_000(instr, regs, out, base, condition),
         // 101 (branch), 110/111 (UND/SWI) handled above; unreachable.
         _ => None,
     }

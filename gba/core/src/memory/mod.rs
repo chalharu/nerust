@@ -898,6 +898,193 @@ impl GbaMemoryBus {
         .stall(addr)
     }
 
+    /// Advance the PPU/APU/timer devices and the video/SIO countdowns
+    /// by `n` event-free cycles. Shared by every skip fold in [`tick`]:
+    /// completions and edges are capped out of spans by `quiet_cycles`,
+    /// so the arithmetic advance is identical to the per-cycle path.
+    #[inline]
+    fn advance_idle_devices(&mut self, n: u64) {
+        self.apu.advance_idle(n);
+        self.timers.advance_idle(n);
+        self.ppu.advance_idle(n);
+        if self.video_countdown > 0 {
+            self.video_countdown -= n as u8;
+        }
+        if self.sio_xfer_cycles > 0 {
+            self.sio_xfer_cycles -= n as u32;
+        }
+    }
+
+    /// Drain a pending DMA completion interrupt, if any.
+    #[inline]
+    fn drain_dma_completion(&mut self) {
+        let completion = self.dma.take_completion_interrupts();
+        if completion != 0 {
+            self.request_interrupt(completion);
+        }
+    }
+
+    /// Close an EEPROM serial burst once no DMA is in flight: the
+    /// buffered frame is decoded (and 512B/8KB latched) at burst end.
+    #[inline]
+    fn close_eeprom_burst_if_idle(&mut self) {
+        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
+            self.eeprom_burst_open = false;
+            if let Some(cart) = self.cartridge.as_mut() {
+                cart.eeprom_end_burst();
+            }
+        }
+    }
+
+    /// Refresh the skip budget from post-tick state. Cheap-zero
+    /// shortcut: an active HLE transfer, DMA in flight, a deferred
+    /// HBlank raise, or an open EEPROM burst all force the full path
+    /// next tick without paying for the horizon computation. The timer
+    /// fold mask and the DMA-device cache restart alongside the budget
+    /// (the full path covers every in-tick mutation: triggers,
+    /// completions, resolutions).
+    #[inline]
+    fn refresh_skip_budget(&mut self) {
+        self.bus_quiet = if self.hle_bios_active()
+            || self.dma.is_active()
+            || self.pending_hblank_irq
+            || self.eeprom_burst_open
+        {
+            0
+        } else {
+            self.quiet_cycles()
+        };
+        // The full path may resolve timer startup transients (start-delay
+        // expiry, reload landings, control takes inside `step_channel`),
+        // so refresh the idle-fold mask alongside the skip budget.
+        self.timers.refresh_fold_mask();
+        self.dma_device_quiet = 0;
+    }
+
+    /// Quiet-span fast path of [`tick`]: arithmetically identical to the
+    /// per-cycle path (same folded `advance_idle(1)`, verified by the
+    /// horizon contract), with no event evaluation. No IRQ, DMA
+    /// trigger/completion, line/frame edge, FIFO request, SIO or
+    /// video-capture completion can fire inside the span: every one
+    /// is capped by `quiet_cycles` at recompute time. Countdown
+    /// completions are capped the same way (a countdown of 1 forces
+    /// horizon 0), so these never land inside a span.
+    fn tick_quiet_span(&mut self) -> (bool, u64) {
+        self.bus_quiet -= 1;
+        self.dma.tick_pending();
+        self.advance_idle_devices(1);
+        if self.dma.is_active() {
+            // A startup latency expired on this tick: the per-cycle
+            // path runs the first DMA word on the activation tick
+            // itself, so finish this tick on the DMA phase (devices
+            // above are already advanced exactly once, like the full
+            // path's device phases before its DMA phase).
+            self.bus_quiet = 0;
+            self.dma_device_quiet = 0;
+            self.tick_dma();
+            self.drain_dma_completion();
+        }
+        (false, 1)
+    }
+
+    /// Pure DMA delay-burn fold of [`tick_dma_fast`]: `k` ticks with no
+    /// word phase and no completion (the priority channel still burns
+    /// delay afterwards, or a transfer/completion tick follows, all
+    /// handled per-tick below). Pending latencies stay clear of expiry
+    /// (`k` is capped by the allowance, which caps `pending - 1`),
+    /// countdowns stay clear of completion the same way, and no frame
+    /// edge is crossed (PPU-capped).
+    fn tick_dma_burn_fold(&mut self, allowance: u64, burn: u8) -> (bool, u64) {
+        let k = allowance.min(u64::from(burn) - 1);
+        self.dma_device_quiet -= k;
+        self.current_tcycle = self.current_tcycle.wrapping_add(k);
+        self.dma.advance_idle(k);
+        self.advance_idle_devices(k);
+        self.dma.burn_delay(k as u8);
+        // No completion can be produced without running the word
+        // phase, and none lingers across ticks (every per-tick
+        // path drains); take defensively so nothing ever goes
+        // stale-long.
+        self.drain_dma_completion();
+        (false, k)
+    }
+
+    /// DMA-active fast path of [`tick`]: no PPU/timer/APU/SIO/pipeline
+    /// event can fire inside the allowance (all capped by
+    /// `device_quiet_cycles`), so devices advance arithmetically
+    /// exactly like the quiet span above. Ordering matches the full
+    /// path (device phases before the DMA phase). The IRQ pipeline is
+    /// skipped for the same reason as the quiet span (a live device
+    /// remainder proves nothing is due; a fresh 0 recompute falls
+    /// through to the full path, which runs it below).
+    fn tick_dma_fast(&mut self) -> (bool, u64) {
+        let allowance = self.dma_device_quiet;
+        debug_assert!(allowance > 0);
+        let burn = self.dma.burn_remaining();
+        // A `delay` of `d` burns `d - 1` ticks, then the unit issues
+        // on the `d`th tick (`tick_delay` fires when the counter
+        // reaches 0 and the transfer proceeds the same tick), so a
+        // pure-burn fold covers at most `burn - 1` ticks; the
+        // issuing tick always runs the single word phase below.
+        if burn > 1 {
+            return self.tick_dma_burn_fold(allowance, burn);
+        }
+        // Single-tick word phase: transfer side effects land at exact
+        // ticks. Capped the same way as the quiet span: a countdown of
+        // 1 forces horizon 0, so neither completes inside this tick.
+        self.dma_device_quiet -= 1;
+        self.dma.tick_pending();
+        self.advance_idle_devices(1);
+        self.tick_dma();
+        self.drain_dma_completion();
+        // EEPROM bursts only close once no DMA is in flight (same
+        // rule as the full-path exit below).
+        self.close_eeprom_burst_if_idle();
+        if !self.dma.is_active() {
+            // Burst(s) completed this tick: rebuild the skip budget
+            // and the timer fold mask like the full-path exit.
+            // (While DMA stays active the budget stays 0, as today.)
+            self.bus_quiet = self.quiet_cycles();
+            self.timers.refresh_fold_mask();
+            self.dma_device_quiet = 0;
+        }
+        (false, 1)
+    }
+
+    /// Full per-cycle path of [`tick`]: runs the delayed interrupt
+    /// pipeline before devices (all fast paths above prove it a no-op
+    /// and skip it).
+    fn tick_full(&mut self) -> (bool, u64) {
+        self.process_irq_pipeline();
+        self.tick_sound_dma();
+        let event = self.tick_video();
+        let timer_irq = self.tick_timers();
+        let mut interrupt_mask = event.interrupt_mask | timer_irq;
+        // +1-tick HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
+        // edge stays immediate, but the IF raise waits a tick. Stash the
+        // HBlank bit for the next tick start instead of raising now.
+        if interrupt_mask & (1 << 1) != 0 {
+            interrupt_mask &= !(1 << 1);
+            self.pending_hblank_irq = true;
+        }
+        self.tick_sio();
+        // DMA step only while a transfer can be in flight. `dma.step`
+        // early-returns on no active channel, so skipping the call is
+        // exact (pending countdowns run separately in `tick_sound_dma`).
+        // The display-stall snapshot is built lazily inside `tick_dma`
+        // (only transfer ticks evaluate stalls; delay burns never do).
+        if self.dma.is_active() {
+            self.tick_dma();
+        }
+        interrupt_mask |= self.dma.take_completion_interrupts();
+        if interrupt_mask != 0 {
+            self.request_interrupt(interrupt_mask);
+        }
+        self.close_eeprom_burst_if_idle();
+        self.refresh_skip_budget();
+        (event.frame_complete, 1)
+    }
+
     /// Advance the LCD controller by exactly one T-cycle.
     ///
     /// Returns `(frame_complete, advanced)`: `advanced` is normally 1,
@@ -929,190 +1116,20 @@ impl GbaMemoryBus {
             // Delayed interrupt pipeline: yesterday's IE/IME/IF writes
             // and IRQ raises become effective before devices run this tick.
             self.process_irq_pipeline();
-        } else if tick_skip_enabled() && self.bus_quiet > 0 {
-            // The pipeline is a proven no-op on this branch: a nonzero
-            // budget means no entry is due (every deadline caps the
-            // horizon it was recomputed from, and only due entries mutate
-            // pipeline state), so running it would only re-peek empty or
-            // future queues. Skipped.
-            self.bus_quiet -= 1;
-            // Quiet-span advance: arithmetically identical to the per-cycle
-            // path (same folds `advance_idle(1)` applies, verified by the
-            // horizon contract), with no event evaluation. No IRQ, DMA
-            // trigger/completion, line/frame edge, FIFO request, SIO or
-            // video-capture completion can fire inside the span: every one
-            // is capped by `quiet_cycles` at recompute time.
-            self.dma.tick_pending();
-            self.apu.advance_idle(1);
-            self.timers.advance_idle(1);
-            self.ppu.advance_idle(1);
-            // Countdown completions are capped the same way (a countdown
-            // of 1 forces horizon 0), so these never land inside a span.
-            if self.video_countdown > 0 {
-                self.video_countdown -= 1;
-            }
-            if self.sio_xfer_cycles > 0 {
-                self.sio_xfer_cycles -= 1;
-            }
-            if self.dma.is_active() {
-                // A startup latency expired on this tick: the per-cycle
-                // path runs the first DMA word on the activation tick
-                // itself, so finish this tick on the DMA phase (devices
-                // above are already advanced exactly once, like the full
-                // path's device phases before its DMA phase).
-                self.bus_quiet = 0;
-                self.dma_device_quiet = 0;
-                self.tick_dma();
-                let completion = self.dma.take_completion_interrupts();
-                if completion != 0 {
-                    self.request_interrupt(completion);
-                }
-            }
-            return (false, 1);
-        } else if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_allowance() > 0 {
-            // DMA-active fast path: no PPU/timer/APU/SIO/pipeline event
-            // can fire inside the allowance (all capped by
-            // `device_quiet_cycles`), so devices advance arithmetically
-            // exactly like the quiet branch above. Ordering matches the
-            // full path (device phases before the DMA phase). The IRQ
-            // pipeline is skipped for the same reason as the quiet
-            // branch (a live device remainder proves nothing is due; a
-            // fresh 0 recompute falls through to the full path, which
-            // runs it below).
-            let allowance = self.dma_device_quiet;
-            debug_assert!(allowance > 0);
-            let burn = self.dma.burn_remaining();
-            // A `delay` of `d` burns `d - 1` ticks, then the unit issues
-            // on the `d`th tick (`tick_delay` fires when the counter
-            // reaches 0 and the transfer proceeds the same tick), so a
-            // pure-burn fold covers at most `burn - 1` ticks; the
-            // issuing tick always runs the single word phase below.
-            if burn > 1 {
-                // Fold pure delay burns: `k` ticks with no word phase and
-                // no completion (the priority channel still burns delay
-                // afterwards, or a transfer/completion tick follows, all
-                // handled per-tick below). Pending latencies stay clear
-                // of expiry (`k` is capped by the allowance, which caps
-                // `pending - 1`), countdowns stay clear of completion the
-                // same way, and no frame edge is crossed (PPU-capped).
-                let k = allowance.min(u64::from(burn) - 1);
-                self.dma_device_quiet -= k;
-                self.current_tcycle = self.current_tcycle.wrapping_add(k);
-                self.dma.advance_idle(k);
-                self.apu.advance_idle(k);
-                self.timers.advance_idle(k);
-                self.ppu.advance_idle(k);
-                if self.video_countdown > 0 {
-                    self.video_countdown -= k as u8;
-                }
-                if self.sio_xfer_cycles > 0 {
-                    self.sio_xfer_cycles -= k as u32;
-                }
-                self.dma.burn_delay(k as u8);
-                // No completion can be produced without running the word
-                // phase, and none lingers across ticks (every per-tick
-                // path drains); take defensively so nothing ever goes
-                // stale-long.
-                let completion = self.dma.take_completion_interrupts();
-                if completion != 0 {
-                    self.request_interrupt(completion);
-                }
-                return (false, k);
-            }
-            // Single-tick word phase: transfer side effects land at exact
-            // ticks.
-            self.dma_device_quiet -= 1;
-            self.dma.tick_pending();
-            self.apu.advance_idle(1);
-            self.timers.advance_idle(1);
-            self.ppu.advance_idle(1);
-            // Capped the same way as the quiet branch: a countdown of 1
-            // forces horizon 0, so neither completes inside this tick.
-            if self.video_countdown > 0 {
-                self.video_countdown -= 1;
-            }
-            if self.sio_xfer_cycles > 0 {
-                self.sio_xfer_cycles -= 1;
-            }
-            self.tick_dma();
-            let completion = self.dma.take_completion_interrupts();
-            if completion != 0 {
-                self.request_interrupt(completion);
-            }
-            // EEPROM bursts only close once no DMA is in flight (same
-            // rule as the full-path exit below).
-            if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
-                self.eeprom_burst_open = false;
-                if let Some(cart) = self.cartridge.as_mut() {
-                    cart.eeprom_end_burst();
-                }
-            }
-            if !self.dma.is_active() {
-                // Burst(s) completed this tick: rebuild the skip budget
-                // and the timer fold mask like the full-path exit.
-                // (While DMA stays active the budget stays 0, as today.)
-                self.bus_quiet = self.quiet_cycles();
-                self.timers.refresh_fold_mask();
-                self.dma_device_quiet = 0;
-            }
-            return (false, 1);
+            return self.tick_full();
         }
-        // Full path: run the delayed interrupt pipeline before devices
-        // (all fast paths above prove it a no-op and skip it).
-        self.process_irq_pipeline();
-        self.tick_sound_dma();
-        let event = self.tick_video();
-        let timer_irq = self.tick_timers();
-        let mut interrupt_mask = event.interrupt_mask | timer_irq;
-        // +1-tick HBlank IRQ (see `pending_hblank_irq`): the DISPSTAT flag
-        // edge stays immediate, but the IF raise waits a tick. Stash the
-        // HBlank bit for the next tick start instead of raising now.
-        if interrupt_mask & (1 << 1) != 0 {
-            interrupt_mask &= !(1 << 1);
-            self.pending_hblank_irq = true;
+        // The pipeline is a proven no-op on this branch: a nonzero
+        // budget means no entry is due (every deadline caps the
+        // horizon it was recomputed from, and only due entries mutate
+        // pipeline state), so running it would only re-peek empty or
+        // future queues. Skipped.
+        if tick_skip_enabled() && self.bus_quiet > 0 {
+            return self.tick_quiet_span();
         }
-        self.tick_sio();
-        // DMA step only while a transfer can be in flight. `dma.step`
-        // early-returns on no active channel, so skipping the call is
-        // exact (pending countdowns run separately in `tick_sound_dma`).
-        // The display-stall snapshot is built lazily inside `tick_dma`
-        // (only transfer ticks evaluate stalls; delay burns never do).
-        if self.dma.is_active() {
-            self.tick_dma();
+        if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_allowance() > 0 {
+            return self.tick_dma_fast();
         }
-        interrupt_mask |= self.dma.take_completion_interrupts();
-        if interrupt_mask != 0 {
-            self.request_interrupt(interrupt_mask);
-        }
-        // Close an EEPROM serial burst once no DMA is in flight: the
-        // buffered frame is decoded (and 512B/8KB latched) at burst end.
-        if self.eeprom_burst_open && !self.dma.is_active() && !self.dma.has_pending() {
-            self.eeprom_burst_open = false;
-            if let Some(cart) = self.cartridge.as_mut() {
-                cart.eeprom_end_burst();
-            }
-        }
-        // Refresh the skip budget from post-tick state. Cheap-zero
-        // shortcut: an active HLE transfer, DMA in flight, a deferred
-        // HBlank raise, or an open EEPROM burst all force the full path
-        // next tick without paying for the horizon computation.
-        self.bus_quiet = if self.hle_bios_active()
-            || self.dma.is_active()
-            || self.pending_hblank_irq
-            || self.eeprom_burst_open
-        {
-            0
-        } else {
-            self.quiet_cycles()
-        };
-        // The full path may resolve timer startup transients (start-delay
-        // expiry, reload landings, control takes inside `step_channel`),
-        // so refresh the idle-fold mask alongside the skip budget. The
-        // DMA-device cache restarts too (every in-tick mutation is
-        // covered: triggers, completions, resolutions all run above).
-        self.timers.refresh_fold_mask();
-        self.dma_device_quiet = 0;
-        (event.frame_complete, 1)
+        self.tick_full()
     }
 
     /// Cached device-horizon remainder (see `bus_quiet` field): exact at

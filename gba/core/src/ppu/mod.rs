@@ -1790,6 +1790,148 @@ mod tests {
         }
     }
 
+    /// Pattern memories for the span differential below: backdrop
+    /// blue, then red/green/white; tile 0 opaque red, tile 1 mixed
+    /// transparent/red, tile 2 opaque green (4bpp, CBB 0); BG0 map
+    /// (SBB 0) tile 0, flipped tile 1, tile 2; BG1 map (SBB 1) tile 2
+    /// left, tile 0 right; optional OBJ tile 0 + 8x8 sprite at (10,0)
+    /// and 16x16 sprite at (30,0).
+    fn pattern_memories(obj: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut vram = vec![0; 0x18000];
+        let mut palette = vec![0; 0x400];
+        let mut oam = vec![0; 0x400];
+        // Palette: backdrop blue, then red/green/white.
+        palette[0..2].copy_from_slice(&0x7C00u16.to_le_bytes());
+        palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
+        palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
+        palette[6..8].copy_from_slice(&0x7FFFu16.to_le_bytes());
+        // Tiles (4bpp, CBB 0): tile 0 opaque red, tile 1 mixed
+        // transparent/red, tile 2 opaque green.
+        for b in vram.iter_mut().take(32) {
+            *b = 0x11;
+        }
+        for (i, b) in vram.iter_mut().skip(32).take(32).enumerate() {
+            *b = if i % 2 == 0 { 0x10 } else { 0x01 };
+        }
+        for b in vram.iter_mut().skip(64).take(32) {
+            *b = 0x22;
+        }
+        // BG0 map (SBB 0): tile 0, flipped tile 1, tile 2.
+        vram[0..2].copy_from_slice(&0u16.to_le_bytes());
+        vram[2..4].copy_from_slice(&((1 | (1 << 10) | (1 << 11)) as u16).to_le_bytes());
+        vram[4..6].copy_from_slice(&2u16.to_le_bytes());
+        for i in 3..32 {
+            vram[2 * i..2 * i + 2].copy_from_slice(&((i % 3) as u16).to_le_bytes());
+        }
+        // BG1 map (SBB 1): tile 2 over the left half, tile 0 right.
+        for i in 0..32 {
+            let tile = if i < 16 { 2u16 } else { 0u16 };
+            vram[0x800 + 2 * i..0x800 + 2 * i + 2].copy_from_slice(&tile.to_le_bytes());
+        }
+        if obj {
+            // OBJ tile 0 (at 0x10000): opaque red.
+            for b in vram.iter_mut().skip(0x10000).take(32) {
+                *b = 0x11;
+            }
+            // Sprite 0: 8x8 at (10,0), tile 0; sprite 1: 16x16 at
+            // (30,0), tile 0.
+            oam[0..2].copy_from_slice(&0u16.to_le_bytes());
+            oam[2..4].copy_from_slice(&10u16.to_le_bytes());
+            oam[4..6].copy_from_slice(&0u16.to_le_bytes());
+            oam[8..10].copy_from_slice(&0u16.to_le_bytes());
+            oam[10..12].copy_from_slice(&(30u16 | (1 << 14)).to_le_bytes());
+            oam[12..14].copy_from_slice(&0u16.to_le_bytes());
+        }
+        (vram, palette, oam)
+    }
+
+    /// Build one span-differential case: program DISPCNT/BGs/mosaic
+    /// and park pixel 0 at its boundary tick (both paths start at x=1).
+    fn build_span_case(
+        dispcnt: u16,
+        bg0cnt: u16,
+        bg1cnt: u16,
+        hofs: u16,
+        vofs: u16,
+        mosaic: u16,
+        obj: bool,
+    ) -> (GbaPpu, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let (vram, palette, oam) = pattern_memories(obj);
+        let mut ppu = GbaPpu::new();
+        steady_dispcnt(&mut ppu, dispcnt, &vram, &palette);
+        if bg0cnt != 0 || dispcnt & 7 == 0 {
+            ppu.write_register(0x04000008, bg0cnt, &vram, &palette);
+        }
+        if bg1cnt != 0xFFFF {
+            ppu.write_register(0x0400000A, bg1cnt, &vram, &palette);
+        }
+        ppu.write_register(0x04000010, hofs, &vram, &palette);
+        ppu.write_register(0x04000012, vofs, &vram, &palette);
+        if mosaic != 0 {
+            ppu.write_register(0x0400004C, mosaic, &vram, &palette);
+        }
+        // Pixel 0 at its boundary tick (both paths start at x=1).
+        for _ in 0..FETCH_START_CYCLES {
+            ppu.step(&vram, &palette, &oam);
+        }
+        (ppu, vram, palette, oam)
+    }
+
+    /// Render one differential case through `render_span` vs the
+    /// per-pixel `render_pixel` loop and assert pixel- and
+    /// latch-identity. `obj` mirrors production (real working set iff
+    /// OBJ can appear).
+    fn check_span_case(
+        dispcnt: u16,
+        bg0cnt: u16,
+        bg1cnt: u16,
+        hofs: u16,
+        vofs: u16,
+        mosaic: u16,
+        obj: bool,
+    ) {
+        let (mut a, vram, palette, _) =
+            build_span_case(dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic, obj);
+        let (mut b, _, _, _) = build_span_case(dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic, obj);
+        assert!(a.span_applies(), "gate must apply: {dispcnt:#X}");
+        // Mirror production: real working set iff OBJ can appear.
+        if obj {
+            let cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
+            a.render_span(1, WIDTH, 0, &vram, &palette, &cache);
+        } else {
+            a.render_span(1, WIDTH, 0, &vram, &palette, &obj::ObjLineCache::empty());
+        }
+        let obj_cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
+        for x in 1..WIDTH {
+            b.render_pixel(x, 0, &vram, &palette, &obj_cache);
+        }
+        assert_eq!(
+            a.frame_buffer(),
+            b.frame_buffer(),
+            "frame diverged: dispcnt={dispcnt:#X}"
+        );
+        assert_eq!(a.bg_latch, b.bg_latch, "latch diverged: {dispcnt:#X}");
+    }
+
+    /// Assert the span gate rejects every disqualifier (OBJ is allowed).
+    fn assert_span_gate_rejects() {
+        let (vram, palette, _) = pattern_memories(false);
+        let mut ppu = GbaPpu::new();
+        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 12), &vram, &palette);
+        assert!(ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette); // forced blank
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 13), &vram, &palette); // WIN0
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000000, (1 << 8) | (1 << 12), &vram, &palette);
+        assert!(ppu.span_applies()); // OBJ allowed
+        ppu.write_register(0x04000050, 1, &vram, &palette); // bldcnt != 0
+        assert!(!ppu.span_applies());
+        ppu.write_register(0x04000050, 0, &vram, &palette);
+        ppu.write_register(0x04000002, 1, &vram, &palette); // greenswap
+        assert!(!ppu.span_applies());
+    }
+
     /// Span differential: `render_span` must be pixel- and
     /// latch-identical to the per-pixel `render_pixel` loop wherever
     /// the gate applies (goldens only cover shipped scenes; this pins
@@ -1800,55 +1942,6 @@ mod tests {
     /// later above-boundary fetches).
     #[test]
     fn span_matches_pixel_loop_where_gate_applies() {
-        fn pattern_memories(obj: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-            let mut vram = vec![0; 0x18000];
-            let mut palette = vec![0; 0x400];
-            let mut oam = vec![0; 0x400];
-            // Palette: backdrop blue, then red/green/white.
-            palette[0..2].copy_from_slice(&0x7C00u16.to_le_bytes());
-            palette[2..4].copy_from_slice(&0x001Fu16.to_le_bytes());
-            palette[4..6].copy_from_slice(&0x03E0u16.to_le_bytes());
-            palette[6..8].copy_from_slice(&0x7FFFu16.to_le_bytes());
-            // Tiles (4bpp, CBB 0): tile 0 opaque red, tile 1 mixed
-            // transparent/red, tile 2 opaque green.
-            for b in vram.iter_mut().take(32) {
-                *b = 0x11;
-            }
-            for (i, b) in vram.iter_mut().skip(32).take(32).enumerate() {
-                *b = if i % 2 == 0 { 0x10 } else { 0x01 };
-            }
-            for b in vram.iter_mut().skip(64).take(32) {
-                *b = 0x22;
-            }
-            // BG0 map (SBB 0): tile 0, flipped tile 1, tile 2.
-            vram[0..2].copy_from_slice(&0u16.to_le_bytes());
-            vram[2..4].copy_from_slice(&((1 | (1 << 10) | (1 << 11)) as u16).to_le_bytes());
-            vram[4..6].copy_from_slice(&2u16.to_le_bytes());
-            for i in 3..32 {
-                vram[2 * i..2 * i + 2].copy_from_slice(&((i % 3) as u16).to_le_bytes());
-            }
-            // BG1 map (SBB 1): tile 2 over the left half, tile 0 right.
-            for i in 0..32 {
-                let tile = if i < 16 { 2u16 } else { 0u16 };
-                vram[0x800 + 2 * i..0x800 + 2 * i + 2].copy_from_slice(&tile.to_le_bytes());
-            }
-            if obj {
-                // OBJ tile 0 (at 0x10000): opaque red.
-                for b in vram.iter_mut().skip(0x10000).take(32) {
-                    *b = 0x11;
-                }
-                // Sprite 0: 8x8 at (10,0), tile 0; sprite 1: 16x16 at
-                // (30,0), tile 0.
-                oam[0..2].copy_from_slice(&0u16.to_le_bytes());
-                oam[2..4].copy_from_slice(&10u16.to_le_bytes());
-                oam[4..6].copy_from_slice(&0u16.to_le_bytes());
-                oam[8..10].copy_from_slice(&0u16.to_le_bytes());
-                oam[10..12].copy_from_slice(&(30u16 | (1 << 14)).to_le_bytes());
-                oam[12..14].copy_from_slice(&0u16.to_le_bytes());
-            }
-            (vram, palette, oam)
-        }
-
         // (dispcnt, bg0cnt, bg1cnt-or-0xFFFF, hofs0, vofs0, mosaic, obj)
         let cases: [(u16, u16, u16, u16, u16, u16, bool); 6] = [
             // Single BG, scrolled.
@@ -1865,64 +1958,10 @@ mod tests {
             ((1 << 8) | (1 << 12), 1, 0xFFFF, 0, 0, 0, true),
         ];
         for (dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic, obj) in cases {
-            let build = || {
-                let (vram, palette, oam) = pattern_memories(obj);
-                let mut ppu = GbaPpu::new();
-                steady_dispcnt(&mut ppu, dispcnt, &vram, &palette);
-                if bg0cnt != 0 || dispcnt & 7 == 0 {
-                    ppu.write_register(0x04000008, bg0cnt, &vram, &palette);
-                }
-                if bg1cnt != 0xFFFF {
-                    ppu.write_register(0x0400000A, bg1cnt, &vram, &palette);
-                }
-                ppu.write_register(0x04000010, hofs, &vram, &palette);
-                ppu.write_register(0x04000012, vofs, &vram, &palette);
-                if mosaic != 0 {
-                    ppu.write_register(0x0400004C, mosaic, &vram, &palette);
-                }
-                // Pixel 0 at its boundary tick (both paths start at x=1).
-                for _ in 0..FETCH_START_CYCLES {
-                    ppu.step(&vram, &palette, &oam);
-                }
-                (ppu, vram, palette, oam)
-            };
-            let (mut a, vram, palette, _) = build();
-            let (mut b, _, _, _) = build();
-            assert!(a.span_applies(), "gate must apply: {dispcnt:#X}");
-            // Mirror production: real working set iff OBJ can appear.
-            if obj {
-                let cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
-                a.render_span(1, WIDTH, 0, &vram, &palette, &cache);
-            } else {
-                a.render_span(1, WIDTH, 0, &vram, &palette, &obj::ObjLineCache::empty());
-            }
-            let obj_cache = obj::line_cache(&b.registers, &b.line.oam[..], 0);
-            for x in 1..WIDTH {
-                b.render_pixel(x, 0, &vram, &palette, &obj_cache);
-            }
-            assert_eq!(
-                a.frame_buffer(),
-                b.frame_buffer(),
-                "frame diverged: dispcnt={dispcnt:#X}"
-            );
-            assert_eq!(a.bg_latch, b.bg_latch, "latch diverged: {dispcnt:#X}");
+            check_span_case(dispcnt, bg0cnt, bg1cnt, hofs, vofs, mosaic, obj);
         }
 
         // Gate rejects every disqualifier (OBJ is allowed).
-        let (vram, palette, _) = pattern_memories(false);
-        let mut ppu = GbaPpu::new();
-        steady_dispcnt(&mut ppu, (1 << 8) | (1 << 12), &vram, &palette);
-        assert!(ppu.span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 7), &vram, &palette); // forced blank
-        assert!(!ppu.span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 13), &vram, &palette); // WIN0
-        assert!(!ppu.span_applies());
-        ppu.write_register(0x04000000, (1 << 8) | (1 << 12), &vram, &palette);
-        assert!(ppu.span_applies()); // OBJ allowed
-        ppu.write_register(0x04000050, 1, &vram, &palette); // bldcnt != 0
-        assert!(!ppu.span_applies());
-        ppu.write_register(0x04000050, 0, &vram, &palette);
-        ppu.write_register(0x04000002, 1, &vram, &palette); // greenswap
-        assert!(!ppu.span_applies());
+        assert_span_gate_rejects();
     }
 }
