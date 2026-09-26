@@ -462,6 +462,13 @@ impl GbaPpu {
                 // No OBJ reach: skip the working-set build entirely.
                 self.render_span(start, end, y, vram, palette, &obj::ObjLineCache::empty());
             }
+        } else if self.blend_span_applies() {
+            if self.registers.dispcnt & (1 << 12) != 0 {
+                let cache = self.obj_span_cache(y);
+                self.render_blend_span(start, end, y, vram, palette, &cache);
+            } else {
+                self.render_blend_span(start, end, y, vram, palette, &obj::ObjLineCache::empty());
+            }
         } else {
             let cache = self.obj_span_cache(y);
             for x in start..end {
@@ -485,6 +492,13 @@ impl GbaPpu {
                 self.render_span(start, WIDTH, y, vram, palette, &cache);
             } else {
                 self.render_span(start, WIDTH, y, vram, palette, &obj::ObjLineCache::empty());
+            }
+        } else if self.blend_span_applies() {
+            if self.registers.dispcnt & (1 << 12) != 0 {
+                let cache = self.obj_span_cache(y);
+                self.render_blend_span(start, WIDTH, y, vram, palette, &cache);
+            } else {
+                self.render_blend_span(start, WIDTH, y, vram, palette, &obj::ObjLineCache::empty());
             }
         } else {
             let cache = self.obj_span_cache(y);
@@ -594,6 +608,104 @@ impl GbaPpu {
                 }
             }
             self.frame[y * WIDTH + x] = color::rgba8888(top_color);
+        }
+    }
+
+    /// Blend-span gate: the [`span_applies`](Self::span_applies)
+    /// conditions minus `bldcnt == 0` (any blend mode allowed). Without
+    /// windows the region mask is constantly 0x3F, so the effect arm
+    /// always runs; forced blank and greenswap stay excluded (they take
+    /// dedicated per-pixel paths in `render_pixel`).
+    fn blend_span_applies(&self) -> bool {
+        !self.forced_blank()
+            && (self.registers.dispcnt >> 13) & 7 == 0
+            && self.registers.greenswap & 1 == 0
+    }
+
+    /// Blend span render: pixel-identical to `render_pixel` under
+    /// [`blend_span_applies`](Self::blend_span_applies). The BG/OBJ
+    /// fetchers, top-two selection and effect application run the same
+    /// calls in the same order; only the window/blank/greenswap
+    /// machinery is hoisted (constant across the span), and the OBJ
+    /// working set decodes once per span instead of once per pixel.
+    fn render_blend_span(
+        &mut self,
+        start: usize,
+        end: usize,
+        y: usize,
+        vram: &[u8],
+        palette: &[u8],
+        cache: &obj::ObjLineCache,
+    ) {
+        // Layer enables gate on latched AND live (same as render_pixel).
+        // OBJ fetch keys off the live enable (same exception).
+        let enables = self.line.enable & self.registers.dispcnt;
+        let obj_on = self.registers.dispcnt & (1 << 12) != 0;
+        let backdrop = LayerPixel {
+            color: color::read_color(palette, 0),
+            priority: 4,
+            layer: 5,
+            semi_transparent: false,
+        };
+        // Decode the span's OBJ working set once (attrs are constant
+        // for the whole span). Undecodable entries stay out exactly
+        // like the per-pixel path's `continue`.
+        let mut decoded: smallvec::SmallVec<[(u8, obj::Object); 32]> = smallvec::SmallVec::new();
+        if obj_on {
+            for &(raw_index, attr0, attr1, attr2) in cache.cover[..cache.cover_len as usize].iter()
+            {
+                if let Some(object) = obj::decode_attrs(attr0, attr1, attr2, false) {
+                    decoded.push((raw_index, object));
+                }
+            }
+        }
+        for x in start..end {
+            // Top-two selection with stable-sort order (ties keep
+            // insertion order: backdrop, BG0-3, OBJ) — identical to
+            // `render_pixel`'s best/second update.
+            let mut best: Option<((u8, u8), LayerPixel)> = None;
+            let mut second: Option<((u8, u8), LayerPixel)> = None;
+            {
+                let key = (backdrop.priority, layer_rank(backdrop.layer));
+                consider_pixel(key, backdrop, &mut best, &mut second);
+            }
+            for bg_index in 0..4 {
+                if enables & (1 << (8 + bg_index)) != 0
+                    && let Some(pixel) = bg::pixel(
+                        &self.registers,
+                        (self.internal_x, self.internal_y),
+                        (vram, palette),
+                        bg_index,
+                        (x, y),
+                        &mut self.bg_latch,
+                        self.registers.mosaic,
+                    )
+                {
+                    let key = (pixel.priority, layer_rank(pixel.layer));
+                    consider_pixel(key, pixel, &mut best, &mut second);
+                }
+            }
+            if obj_on
+                && let Some(pixel) = obj::pixel_predecoded(
+                    &self.registers,
+                    (vram, palette, &self.line.oam[..]),
+                    (x, y),
+                    self.registers.mosaic,
+                    &decoded,
+                )
+            {
+                let key = (pixel.priority, layer_rank(pixel.layer));
+                consider_pixel(key, pixel, &mut best, &mut second);
+            }
+            let (top, second) = (
+                best.map(|(_, p)| p).expect("backdrop always present"),
+                second.map(|(_, p)| p),
+            );
+            // No windows: the region mask is 0x3F, so effects always run
+            // (same `apply_effect(top, second, true)` render_pixel calls
+            // with a full mask).
+            let output = self.apply_effect(top, second, true);
+            self.frame[y * WIDTH + x] = color::rgba8888(output);
         }
     }
 
@@ -1058,6 +1170,31 @@ fn sign_extend_28(value: u32) -> i32 {
 
 fn layer_rank(layer: u8) -> u8 {
     if layer == 4 { 0 } else { layer + 1 }
+}
+
+/// Top-two selection step with stable-sort order (ties keep insertion
+/// order). Shared by `render_pixel` and the blend-span path so the two
+/// can never diverge. Forced-inline: it runs per candidate per pixel.
+#[inline]
+fn consider_pixel(
+    key: (u8, u8),
+    pixel: LayerPixel,
+    best: &mut Option<((u8, u8), LayerPixel)>,
+    second: &mut Option<((u8, u8), LayerPixel)>,
+) {
+    match *best {
+        None => *best = Some((key, pixel)),
+        Some((best_key, _)) if key < best_key => {
+            *second = *best;
+            *best = Some((key, pixel));
+        }
+        _ => {
+            let second_key = second.map(|(k, _)| k);
+            if second_key.is_none_or(|k| key < k) {
+                *second = Some((key, pixel));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

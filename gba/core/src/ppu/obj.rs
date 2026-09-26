@@ -51,6 +51,47 @@ pub(crate) fn pixel(
     best.map(|(pixel, _)| pixel)
 }
 
+/// Sprite walk over a pre-decoded working set (same selection as
+/// [`pixel`]: index-order visit, strict-`<` on `(priority, index)`).
+/// The blend-span path decodes the cover once per span instead of once
+/// per pixel; the per-pixel work below is identical to `pixel`'s walk
+/// body. `decoded` carries `(raw OAM index, decoded attrs)`.
+/// Forced-inline into the blend-span pixel loop.
+#[inline]
+pub(crate) fn pixel_predecoded(
+    registers: &PpuRegisters,
+    memory: (&[u8], &[u8], &[u8]),
+    pos: (usize, usize),
+    mosaic: u16,
+    decoded: &[(u8, Object)],
+) -> Option<LayerPixel> {
+    let (vram, palette, oam) = memory;
+    let (x, y) = pos;
+    let mut best: Option<(LayerPixel, usize)> = None;
+    for &(raw_index, ref object) in decoded.iter() {
+        let index = usize::from(raw_index);
+        let Some((local_x, local_y)) = object.coordinates(oam, x, y, mosaic) else {
+            continue;
+        };
+        let Some(palette_index) = object.palette_index(registers, vram, local_x, local_y) else {
+            continue;
+        };
+        let candidate = LayerPixel {
+            color: read_color(palette, palette_index),
+            priority: ((object.attr2 >> 10) & 3) as u8,
+            layer: 4,
+            semi_transparent: object.mode == 1,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(old, old_index)| (candidate.priority, index) < (old.priority, *old_index))
+        {
+            best = Some((candidate, index));
+        }
+    }
+    best.map(|(pixel, _)| pixel)
+}
+
 /// Per-scanline OBJ working set, computed once per render span: the
 /// cycle-drop mask fused with the y-overlap prefilter. Only OBJs that
 /// can possibly cover the scanline are visited per pixel (typically a
@@ -132,7 +173,8 @@ pub(crate) fn line_cache(registers: &PpuRegisters, oam: &[u8], y: usize) -> ObjL
     }
 }
 
-struct Object {
+#[derive(Clone, Copy)]
+pub(crate) struct Object {
     attr0: u16,
     attr1: u16,
     attr2: u16,
@@ -158,7 +200,12 @@ fn decode_object(oam: &[u8], index: usize, window_only: bool) -> Option<Object> 
     )
 }
 
-fn decode_attrs(attr0: u16, attr1: u16, attr2: u16, window_only: bool) -> Option<Object> {
+pub(crate) fn decode_attrs(
+    attr0: u16,
+    attr1: u16,
+    attr2: u16,
+    window_only: bool,
+) -> Option<Object> {
     let affine = attr0 & (1 << 8) != 0;
     let mode = (attr0 >> 10) & 3;
     let shape = usize::from((attr0 >> 14) & 3);
