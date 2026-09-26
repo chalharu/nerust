@@ -38,6 +38,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
+import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -127,6 +128,7 @@ private const val CONTROLS_OVERLAY_TAG = "nerust-controls-overlay"
 private const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
 private const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
 private const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
+private const val FPS_OVERLAY_TAG = "nerust-fps-overlay"
 private const val MENU_ACTION_EXIT = "exit"
 private const val MENU_ACTION_LOAD_STATE = "load_state"
 private const val MENU_ACTION_OPEN_ROM = "open_rom"
@@ -257,6 +259,7 @@ class MainActivity :
     private var drawerFullScreenPopup: PopupWindow? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
+    private var fpsOverlayView: TextView? = null
     private var composeDialog: Dialog? = null
     private var composeDialogRootView: View? = null
     private var composeDialogComposeView: View? = null
@@ -657,6 +660,44 @@ class MainActivity :
     }
 
     fun floatingDpadStateForTest(): FloatArray? = (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
+
+    /**
+     * Show or refresh the small FPS label at the bottom-right corner.
+     *
+     * Called from Rust at ~2Hz while emulating. `visible` is false when no
+     * ROM is loaded or emulation is paused, hiding the label instead of
+     * showing stale numbers. Runs on the Java main thread.
+     */
+    fun updateFpsOverlay(fps: Float, visible: Boolean) {
+        var label = fpsOverlayView
+        if (label == null) {
+            label =
+                TextView(this).apply {
+                    tag = FPS_OVERLAY_TAG
+                    textSize = 11f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.argb(128, 0, 0, 0))
+                    val padding = dp(4)
+                    setPadding(padding, dp(2), padding, dp(2))
+                    isClickable = false
+                    isFocusable = false
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    layoutParams =
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            Gravity.BOTTOM or Gravity.END,
+                        ).apply {
+                            val margin = dp(8)
+                            setMargins(margin, margin, margin, margin)
+                        }
+                }
+            (window.decorView as? ViewGroup)?.addView(label)
+            fpsOverlayView = label
+        }
+        label.text = "%.1f fps".format(fps)
+        label.visibility = if (visible) View.VISIBLE else View.GONE
+    }
 
     fun readSafFile(
         treeUri: String,
