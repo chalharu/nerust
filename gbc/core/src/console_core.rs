@@ -235,10 +235,6 @@ impl ConsoleCore for GbcConsoleCore {
         .map_err(|error| CoreError::Core(Box::new(error)))?;
         self.loaded_mut()?.system = candidate.system;
         self.sync_rumble();
-        // A replaced timeline must not play stale queued audio, and the
-        // backend may need re-asserting (mobile lifecycle); `start` is
-        // idempotent.
-        self.audio.start();
         Ok(())
     }
 
@@ -585,36 +581,6 @@ mod tests {
             input(),
         );
         core.restart_audio();
-        assert!(started.load(SeqCst));
-    }
-
-    #[test]
-    fn load_state_starts_backend() {
-        use std::sync::atomic::Ordering::SeqCst;
-
-        use nerust_core_traits::audio::AudioBackend;
-
-        struct StartProbe {
-            started: Arc<AtomicBool>,
-        }
-        impl AudioBackend for StartProbe {
-            fn start(&mut self) {
-                self.started.store(true, SeqCst);
-            }
-            fn pause(&mut self) {}
-            fn push(&mut self, _sample: StereoSample) {}
-        }
-        let started = Arc::new(AtomicBool::new(false));
-        let mut core = GbcConsoleCore::new_empty(
-            Box::new(StartProbe {
-                started: started.clone(),
-            }),
-            input(),
-        );
-        core.load(&rom(), &config()).unwrap();
-        assert!(!started.load(SeqCst));
-        let state = core.save_state().unwrap();
-        core.load_state(&state).unwrap();
         assert!(started.load(SeqCst));
     }
 }
