@@ -44,6 +44,16 @@ pub struct GbaTimers {
     /// T-cycles. Middle-take entries key on it (storm grid-phase proxy).
     /// Reset on enable; the latest first-take wins (None = none yet).
     take1_latency: Option<u64>,
+    /// Fold mask for the idle paths: bit i set means channel i needs
+    /// per-tick counter folding (enabled, steady, non-cascade).
+    /// Refreshed by `refresh_fold_mask` after every config change
+    /// (writes, full steps, state import): quiet spans never change
+    /// channel config (writes reset the skip budget, transients only
+    /// resolve on the full path), so the mask stays exact across them.
+    /// Transient cache, excluded from wire state (rebuilt after import).
+    fold_mask: u8,
+    /// Prescaler shift per channel, valid where the mask is set.
+    fold_shifts: [u8; 4],
 }
 
 /// Phase 10 wire state: all four channels plus the free-running prescaler
@@ -131,6 +141,7 @@ impl GbaTimers {
                 self.take1_latency = None;
             }
         }
+        self.refresh_fold_mask();
         true
     }
 
@@ -205,6 +216,7 @@ impl GbaTimers {
             timer.reload_pending = Some(value);
             self.last_reload_cycle[channel] = Some(self.current_cycle);
         }
+        self.refresh_fold_mask();
         true
     }
 
@@ -231,6 +243,33 @@ impl GbaTimers {
         self.prescaler = self.prescaler.wrapping_add(1);
     }
 
+    /// Recompute the idle-fold mask from channel config. Called after
+    /// every config change (both write widths, full steps) and after
+    /// state import; quiet spans never change config, so the mask stays
+    /// exact between refreshes. Rare-path cost only.
+    pub(crate) fn refresh_fold_mask(&mut self) {
+        let mut mask = 0u8;
+        let mut shifts = [0u8; 4];
+        for (index, timer) in self.channels.iter().enumerate() {
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                continue;
+            }
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            mask |= 1 << index;
+            shifts[index] = [0, 6, 8, 10][usize::from(timer.control & 3)];
+        }
+        self.fold_mask = mask;
+        self.fold_shifts = shifts;
+    }
+
     /// Advance one T-cycle, returning Timer IRQ bits 3..6 plus raw
     /// overflow bits 0..3. Overflows clock downstream hardware (sound
     /// FIFO sample drains, count-up timers) whether or not the timer's
@@ -255,6 +294,7 @@ impl GbaTimers {
                     self.overflows_since_enable[index].saturating_add(1);
             }
         }
+        self.refresh_fold_mask();
         (irq, overflow)
     }
 
@@ -332,21 +372,16 @@ impl GbaTimers {
         // unobservable by construction.
         self.prescaler = self.prescaler.wrapping_add(n as u16);
         let start_prescaler = self.prescaler.wrapping_sub(n as u16);
-        for index in 0..4 {
-            let timer = &mut self.channels[index];
-            if timer.control & 0x80 == 0 {
+        // The mask is exact here by the horizon contract (same predicate
+        // the guarded loop below evaluated, refreshed after every config
+        // change); shifts are precomputed from the same control bits.
+        let mask = self.fold_mask;
+        let shifts = self.fold_shifts;
+        for (index, timer) in self.channels.iter_mut().enumerate() {
+            if mask & (1 << index) == 0 {
                 continue;
             }
-            if timer.start_delay != 0
-                || timer.pending_control.is_some()
-                || timer.reload_pending.is_some()
-            {
-                continue;
-            }
-            if index != 0 && timer.control & 4 != 0 {
-                continue;
-            }
-            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
+            let shift = shifts[index];
             let mask = (1u64 << shift) - 1;
             let r = (u64::from(start_prescaler) + 1) & mask;
             let first_fire = ((mask - r) & mask) + 1;
@@ -370,24 +405,40 @@ impl GbaTimers {
     fn advance_idle_1(&mut self) {
         let prescaler = self.prescaler.wrapping_add(1);
         self.prescaler = prescaler;
-        for index in 0..4 {
-            let timer = &mut self.channels[index];
-            if timer.control & 0x80 == 0 {
-                continue;
+        // Masked unrolled folds: the mask is steady in practice, so the
+        // bit tests predict perfectly; masked-out channels cost one
+        // testable branch each instead of the full guard chain.
+        let mask = self.fold_mask;
+        if mask == 0 {
+            return;
+        }
+        let shifts = self.fold_shifts;
+        if mask & 1 != 0 {
+            let m = (1u16 << shifts[0]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[0].counter.wrapping_add(1);
+                self.channels[0].counter = counter;
             }
-            if timer.start_delay != 0
-                || timer.pending_control.is_some()
-                || timer.reload_pending.is_some()
-            {
-                continue;
+        }
+        if mask & 2 != 0 {
+            let m = (1u16 << shifts[1]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[1].counter.wrapping_add(1);
+                self.channels[1].counter = counter;
             }
-            if index != 0 && timer.control & 4 != 0 {
-                continue;
+        }
+        if mask & 4 != 0 {
+            let m = (1u16 << shifts[2]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[2].counter.wrapping_add(1);
+                self.channels[2].counter = counter;
             }
-            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
-            let mask = (1u16 << shift) - 1;
-            if prescaler & mask == mask {
-                timer.counter = timer.counter.wrapping_add(1);
+        }
+        if mask & 8 != 0 {
+            let m = (1u16 << shifts[3]) - 1;
+            if prescaler & m == m {
+                let counter = self.channels[3].counter.wrapping_add(1);
+                self.channels[3].counter = counter;
             }
         }
     }
@@ -623,6 +674,7 @@ impl GbaTimers {
         self.overflows_since_enable = state.overflows_since_enable;
         self.timer0_acks_since_enable = state.timer0_acks_since_enable;
         self.take1_latency = state.take1_latency;
+        self.refresh_fold_mask();
         Ok(())
     }
 }
