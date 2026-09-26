@@ -14,8 +14,6 @@ pub mod expand_thumb;
 #[cfg(test)]
 mod tests;
 
-use std::collections::VecDeque;
-
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
 use crate::memory::GbaMemoryBus;
@@ -295,17 +293,21 @@ pub fn step_op(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
     pipeline: &mut [u32; 2],
-    queue: &mut VecDeque<MicroOp>,
+    ops: &mut MicroOpVec,
+    pos: &mut usize,
     is_thumb: bool,
     irq_return_stack: &mut IrqReturnStack,
 ) -> Option<i64> {
-    if queue.is_empty() {
-        refill_queue(regs, bus, pipeline, queue, is_thumb)?;
+    if *pos >= ops.len() {
+        refill_queue(regs, bus, pipeline, ops, pos, is_thumb)?;
     }
     let pc = regs.pc();
-    let op = queue.pop_front().expect("expansion never yields zero ops");
+    // Index drain (no pop/shift): the op is `Copy`, so this is a plain
+    // load; the consumed prefix is simply never revisited.
+    let op = ops[*pos];
+    *pos += 1;
     let cycles = apply_op(regs, bus, op, pc, is_thumb);
-    let epilogue = if queue.is_empty() {
+    let epilogue = if *pos >= ops.len() {
         retire_step(regs, bus, pipeline, pc, is_thumb, irq_return_stack)
     } else {
         0
@@ -315,26 +317,28 @@ pub fn step_op(
     Some(cycles + epilogue as i64 + bus.take_access_wait_cycles())
 }
 
-/// Fill the queue from the executing instruction. `None` = uncovered
-/// fill, queue untouched.
+/// Fill the op buffer from the executing instruction. `None` = uncovered
+/// fill, buffer untouched (still empty: refill only runs drained).
 fn refill_queue(
     regs: &mut CpuRegisters,
     bus: &mut GbaMemoryBus,
     pipeline: &mut [u32; 2],
-    queue: &mut VecDeque<MicroOp>,
+    ops: &mut MicroOpVec,
+    pos: &mut usize,
     is_thumb: bool,
 ) -> Option<()> {
     // Speculative pure decode FIRST (touching bus/pipeline before
     // coverage is known would double-advance the pipeline on an
-    // uncovered fill). Decodes straight into a stack scratch: no
-    // whole-buffer moves (return-by-value `SmallVec`s codegen as
-    // per-instruction `memcpy` calls).
-    let mut ops = MicroOpVec::new();
+    // uncovered fill). Decodes straight into the reused inline buffer:
+    // no SmallVec temp, no whole-buffer moves, no per-op queue pushes
+    // (`clear` keeps the inline/spilled capacity across instructions).
+    ops.clear();
     if is_thumb {
-        expand_thumb_into((pipeline[0] & 0xFFFF) as u16, regs, &mut ops)?;
+        expand_thumb_into((pipeline[0] & 0xFFFF) as u16, regs, ops)?;
     } else {
-        expand_arm_into(pipeline[0], regs, &mut ops)?;
+        expand_arm_into(pipeline[0], regs, ops)?;
     }
+    *pos = 0;
     regs.clear_pc_written();
     bus.take_access_wait_cycles();
     bus.set_current_pc(regs.pc());
@@ -347,11 +351,6 @@ fn refill_queue(
     pipeline[0] = pipeline[1];
     pipeline[1] = fetched;
     regs.clear_pc_written();
-    // Element-wise drain (not `queue.extend(ops)`): the bulk transfer
-    // form is the same whole-buffer-move idiom codegen outlines.
-    for op in ops {
-        queue.push_back(op);
-    }
     Some(())
 }
 

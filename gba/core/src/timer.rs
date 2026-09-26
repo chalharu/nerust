@@ -320,6 +320,11 @@ impl GbaTimers {
         if n == 0 {
             return;
         }
+        // The tick-skip path advances exactly one cycle per call: fold
+        // with single-tap arithmetic instead of the general span math.
+        if n == 1 {
+            return self.advance_idle_1();
+        }
         // NOTE: `current_cycle` is deliberately untouched: it is
         // call-scoped scratch refreshed by `set_current_cycle` before
         // every read path (bus `tick_timers`, `read_io`, `write_io`;
@@ -351,6 +356,39 @@ impl GbaTimers {
                 0
             };
             timer.counter = timer.counter.wrapping_add(fires as u16);
+        }
+    }
+
+    /// Single-cycle fold: the tap fires this tick iff the advanced
+    /// prescaler phase reads all-ones. Proof: the general path computes
+    /// `r = (start + 1) & mask` and `first_fire = ((mask - r) & mask) + 1`
+    /// with `fires(1) = 1` exactly when `first_fire == 1`; since
+    /// `0 <= mask - r <= mask`, `(mask - r) & mask == mask - r`, so that
+    /// holds exactly when `r == mask`. No overflow can complete inside a
+    /// horizon-capped span (same contract as `advance_idle`).
+    #[inline]
+    fn advance_idle_1(&mut self) {
+        let prescaler = self.prescaler.wrapping_add(1);
+        self.prescaler = prescaler;
+        for index in 0..4 {
+            let timer = &mut self.channels[index];
+            if timer.control & 0x80 == 0 {
+                continue;
+            }
+            if timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+            {
+                continue;
+            }
+            if index != 0 && timer.control & 4 != 0 {
+                continue;
+            }
+            let shift = [0u32, 6, 8, 10][usize::from(timer.control & 3)];
+            let mask = (1u16 << shift) - 1;
+            if prescaler & mask == mask {
+                timer.counter = timer.counter.wrapping_add(1);
+            }
         }
     }
 
