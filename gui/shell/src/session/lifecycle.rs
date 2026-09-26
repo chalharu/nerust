@@ -12,7 +12,7 @@ use crate::{
     emu_core::EmuCore,
     session::{
         SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome},
+        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
         persistence::PersistenceManager,
         title::window_title,
     },
@@ -278,6 +278,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         })
     }
 
@@ -289,6 +290,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: self.loaded(),
+            slot_failure: None,
         })
     }
 
@@ -305,6 +307,7 @@ impl SessionHandle {
         Ok(SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         })
     }
 
@@ -313,6 +316,7 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         }
     }
 
@@ -320,6 +324,7 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: self.persistence.select_adjacent_slot(forward).is_some(),
             needs_redraw: false,
+            slot_failure: None,
         }
     }
 
@@ -337,37 +342,41 @@ impl SessionHandle {
         SessionCommandOutcome {
             executed: true,
             needs_redraw: false,
+            slot_failure: None,
         }
     }
 
     fn slot_op_ok(
         &mut self,
-        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
-        let executed = if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core)
+        let slot_failure = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core).err()
         } else {
-            false
+            Some(SlotOpFailure::Unavailable)
         };
         SessionCommandOutcome {
-            executed,
+            executed: slot_failure.is_none(),
             needs_redraw: false,
+            slot_failure,
         }
     }
 
     fn load_slot_op(
         &mut self,
-        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> bool,
+        op: impl FnOnce(&mut PersistenceManager, &EmuCore) -> Result<(), SlotOpFailure>,
     ) -> SessionCommandOutcome {
         let was_paused = self.paused();
-        let executed = if let Some(ref core) = self.emu_core {
-            op(&mut self.persistence, core)
+        let slot_failure = if let Some(ref core) = self.emu_core {
+            op(&mut self.persistence, core).err()
         } else {
-            false
+            Some(SlotOpFailure::Empty)
         };
+        let executed = slot_failure.is_none();
         SessionCommandOutcome {
             executed,
             needs_redraw: executed && was_paused && !self.paused(),
+            slot_failure,
         }
     }
 

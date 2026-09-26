@@ -22,6 +22,17 @@ use nerust_persistence::{
 
 use crate::emu_core::CorePersistence;
 
+use super::commands::SlotOpFailure;
+
+/// Classify a persistence-layer failure for user-facing messages:
+/// transport problems are `Storage`, undecodable payloads `Corrupt`.
+fn storage_or_corrupt(error: &PersistenceError) -> SlotOpFailure {
+    match error {
+        PersistenceError::Io(_) => SlotOpFailure::Storage,
+        _ => SlotOpFailure::Corrupt,
+    }
+}
+
 /// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
 pub trait SlotBackend: Send {
     fn scan(
@@ -307,14 +318,14 @@ impl PersistenceManager {
         slot_id: u64,
         emu: &impl CorePersistence,
         make_active: bool,
-    ) -> bool {
+    ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
-            return false;
+            return Err(SlotOpFailure::Unavailable);
         };
         let Some(identity) = emu.canonical_media_identity() else {
             log::warn!("save_slot: no persistence identity available; cannot save slot {slot_id}");
-            return false;
+            return Err(SlotOpFailure::Unavailable);
         };
         log::info!(
             "save_slot: writing slot {slot_id} (make_active={make_active}) to {}",
@@ -341,89 +352,97 @@ impl PersistenceManager {
                         }
                         self.refresh_slots_inner(Some(&identity));
                         log::info!("save_slot: saved slot {slot_id}");
-                        true
+                        Ok(())
                     }
                     Err(error) => {
                         log::warn!("saving state slot failed: {error}");
-                        false
+                        Err(storage_or_corrupt(&error))
                     }
                 }
             }
             Err(error) => {
                 log::warn!("state export failed: {error}");
-                false
+                Err(SlotOpFailure::Unavailable)
             }
         }
     }
 
-    pub fn save_active_slot_or_new(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn save_active_slot_or_new(
+        &mut self,
+        emu: &impl CorePersistence,
+    ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
-            return false;
+            return Err(SlotOpFailure::Unavailable);
         };
-        let slot_id = self.active_slot_id.or_else(|| {
-            self.slot_backend
-                .allocate_next_id(dir)
-                .map_err(|error| {
+        let slot_id = match self.active_slot_id {
+            Some(slot_id) => slot_id,
+            None => match self.slot_backend.allocate_next_id(dir) {
+                Ok(slot_id) => slot_id,
+                Err(error) => {
                     log::warn!("allocating state slot failed: {error}");
-                    error
-                })
-                .ok()
-        });
-        match slot_id {
-            Some(slot_id) => {
-                log::info!("save_active_slot_or_new: saving to slot {slot_id}");
-                self.save_slot(slot_id, emu, true)
-            }
-            None => {
-                log::warn!("save_active_slot_or_new: failed to allocate slot id");
-                false
-            }
-        }
+                    return Err(storage_or_corrupt(&error));
+                }
+            },
+        };
+        log::info!("save_active_slot_or_new: saving to slot {slot_id}");
+        self.save_slot(slot_id, emu, true)
     }
 
-    pub fn create_slot(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn create_slot(&mut self, emu: &impl CorePersistence) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("create_slot: no states_dir configured; cannot create slot");
-            return false;
+            return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, true),
             Err(error) => {
                 log::warn!("allocating state slot failed: {error}");
-                false
+                Err(storage_or_corrupt(&error))
             }
         }
     }
 
-    pub fn load_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) -> bool {
+    pub fn load_slot(
+        &mut self,
+        slot_id: u64,
+        emu: &impl CorePersistence,
+    ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
             log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
-            return false;
+            return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
                 if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
                     log::warn!("state import failed: {error}");
-                    false
+                    Err(error.slot_failure())
                 } else {
                     self.active_slot_id = Some(slot_id);
                     let identity = emu.canonical_media_identity();
                     self.refresh_slots_inner(identity.as_ref());
-                    true
+                    Ok(())
                 }
             }
-            Ok(None) => false,
+            Ok(None) => {
+                log::warn!("load_slot: slot {slot_id} not found in {}", dir.display());
+                Err(SlotOpFailure::Missing)
+            }
             Err(error) => {
                 log::warn!("loading state slot failed: {error}");
-                false
+                Err(storage_or_corrupt(&error))
             }
         }
     }
 
-    pub fn load_active_slot(&mut self, emu: &impl CorePersistence) -> bool {
-        self.active_slot_id
-            .is_some_and(|slot_id| self.load_slot(slot_id, emu))
+    pub fn load_active_slot(&mut self, emu: &impl CorePersistence) -> Result<(), SlotOpFailure> {
+        match self.active_slot_id {
+            Some(slot_id) => self.load_slot(slot_id, emu),
+            None => {
+                log::debug!("load_active_slot: no active slot");
+                Err(SlotOpFailure::Empty)
+            }
+        }
     }
 
     pub fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
