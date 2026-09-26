@@ -27,7 +27,8 @@ pub fn expand_arm(instr: u32, regs: &CpuRegisters) -> Option<MicroOpVec> {
 /// Fallible leaves truncate `out` to the entry length on `None`.
 pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // B/BL: failed conditions retire in one sequential cycle; taken
-    // branches expose both refill cycles independently to the bus.
+    // branches carry the 2-cycle refill in the commit op's own cost
+    // (padding ticks run no bus calls, so one drain round suffices).
     if (instr >> 25) & 0x7 == 0b101 {
         let condition = (instr >> 28) as u8;
         if !condition_passed(regs.cpsr(), condition) {
@@ -36,8 +37,6 @@ pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOp
         }
         let offset = ((instr & 0x00FF_FFFF) as i32) << 2;
         let offset = (offset << 6) >> 6;
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
         out.push(MicroOp::TakenBranch(BranchEffect {
             offset: offset as u32,
             link: instr & (1 << 24) != 0,
@@ -279,14 +278,13 @@ fn expand_arm_psr_into(instr: u32, out: &mut MicroOpVec) -> Option<()> {
     Some(())
 }
 
-/// ARM BX: the exact decoder mask. Reuses the interworking branch
-/// op ([I, I, Bx]); retire flushes with the switched width.
+/// ARM BX: the exact decoder mask. Single interworking branch op
+/// (2-cycle refill folded into its cost); retire flushes with the
+/// switched width.
 fn expand_arm_bx_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     if (instr & 0x0FFFFFF0) != 0x012FFF10 {
         return None;
     }
-    out.push(MicroOp::Internal);
-    out.push(MicroOp::Internal);
     out.push(MicroOp::Bx(regs.r((instr & 0xF) as usize)));
     Some(())
 }
@@ -609,22 +607,18 @@ fn single_store_value(instr: u32, regs: &CpuRegisters) -> Option<u32> {
     }
 }
 
-/// Pad the pinned base: loads 3 (5 for R15), stores 2.
+/// Emit the single access op. The pinned base (loads 3, 5 for R15,
+/// stores 2) folds into the access op's own cost (see `apply_op`):
+/// padding ticks run no bus calls and sample no IRQ (boundaries only),
+/// so fewer drain rounds reach the identical total.
 /// Tiny (single call chain depth matters: 46% of ARM instructions);
 /// forced-inline into both callers.
 #[inline]
-fn single_ops_into(l: bool, rd: usize, acc: MemAccess, out: &mut MicroOpVec) {
+fn single_ops_into(l: bool, acc: MemAccess, out: &mut MicroOpVec) {
     if l {
         out.push(MicroOp::MemRead(acc));
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
-        if rd == 15 {
-            out.push(MicroOp::Internal);
-            out.push(MicroOp::Internal);
-        }
     } else {
         out.push(MicroOp::MemWrite(acc));
-        out.push(MicroOp::Internal);
     }
 }
 
@@ -656,7 +650,7 @@ fn single_word_into(instr: u32, regs: &CpuRegisters, dec: &SingleDecoded, out: &
         halfword_odd_quirk: false,
     };
     // Bus calls and order match the apply step, so totals agree by construction.
-    single_ops_into(dec.l, dec.rd, acc, out);
+    single_ops_into(dec.l, acc, out);
 }
 
 fn single_half_into(
@@ -698,6 +692,6 @@ fn single_half_into(
         store_value: dec.store_value,
         halfword_odd_quirk: false,
     };
-    single_ops_into(dec.l, dec.rd, acc, out);
+    single_ops_into(dec.l, acc, out);
     Some(())
 }

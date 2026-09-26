@@ -39,8 +39,6 @@ pub(crate) fn expand_thumb_into(
             return Some(());
         }
         let offset = ((instr & 0xFF) as i8 as i32) << 1;
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
         out.push(MicroOp::TakenBranch(BranchEffect {
             offset: offset as u32,
             link: false,
@@ -51,8 +49,6 @@ pub(crate) fn expand_thumb_into(
     if instr >> 11 == 0b11100 {
         let offset = ((instr & 0x7FF) as i32) << 1;
         let offset = (offset << 20) >> 20;
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
         out.push(MicroOp::TakenBranch(BranchEffect {
             offset: offset as u32,
             link: false,
@@ -68,16 +64,12 @@ pub(crate) fn expand_thumb_into(
     }
     if instr >> 11 == 0b11111 {
         let offset = ((instr & 0x7FF) as u32) << 1;
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
         out.push(MicroOp::BlLow(offset));
         return Some(());
     }
     // BX (the whole 0x4700 range is op 0b11): interworking branch.
     if (instr & 0xFF00) == 0x4700 {
         let rs = ((instr >> 3) & 0xF) as usize;
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
         out.push(MicroOp::Bx(regs.r(rs)));
         return Some(());
     }
@@ -236,12 +228,11 @@ fn expand_thumb_pcrel_into(instr: u16, regs: &CpuRegisters, out: &mut MicroOpVec
         return None;
     }
     let addr = (regs.pc() & !3).wrapping_add(((instr & 0xFF) as u32) << 2);
+    // Pinned base ([Read, I, I] = 3) folds into the op's own cost.
     out.push(MicroOp::PcRelRead(PcRelRead {
         addr,
         rd: ((instr >> 8) & 0x7) as usize,
     }));
-    out.push(MicroOp::Internal);
-    out.push(MicroOp::Internal);
     Some(())
 }
 
@@ -356,7 +347,25 @@ pub(crate) fn expand_thumb_alu_rest(instr: u16) -> Option<MicroOpVec> {
 /// Hot-path half of [`expand_thumb_alu_rest`]: see
 /// [`expand_thumb_into`] for the no-move discipline.
 fn expand_thumb_alu_rest_into(instr: u16, out: &mut MicroOpVec) -> Option<()> {
-    let trailing: usize = if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
+    // Class gate only: the cycle padding folds into the commit op's
+    // own cost (see `apply_op`), so no trailing Internals are emitted.
+    let known = instr <= 0x1FFF
+        || (0xA000..=0xB0FF).contains(&instr)
+        || ((0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD)
+        || ((0x4400..=0x47FF).contains(&instr) && (instr & 0xFF00) != 0x4700);
+    if !known {
+        return None;
+    }
+    out.push(MicroOp::CommitThumb(instr));
+    Some(())
+}
+
+/// Pinned-base padding for the Thumb ALU remainder (register shifts
+/// +1, hi-reg PC writes +2): pure function of the opcode, folded into
+/// the commit cost by `apply_op`. Single definition site (expand no
+/// longer emits it), so the two can never drift.
+pub(crate) fn thumb_alu_rest_trailing(instr: u16) -> u32 {
+    if instr <= 0x1FFF || (0xA000..=0xB0FF).contains(&instr) {
         0
     } else if (0x4000..=0x43FF).contains(&instr) && ((instr >> 6) & 0xF) != 0xD {
         let op = ((instr >> 6) & 0xF) as u8;
@@ -370,11 +379,8 @@ fn expand_thumb_alu_rest_into(instr: u16, out: &mut MicroOpVec) -> Option<()> {
             0
         }
     } else {
-        return None;
-    };
-    out.push(MicroOp::CommitThumb(instr));
-    out.extend(core::iter::repeat_n(MicroOp::Internal, trailing));
-    Some(())
+        0
+    }
 }
 
 /// Thumb PUSH/POP, including the empty forms (single PC word with
@@ -503,15 +509,13 @@ fn expand_thumb_push_pop_empty_into(
     ));
 }
 
-/// Shared immediate-form load/store shape: [Read, I, I] / [Write, I].
+/// Shared immediate-form load/store shape: the [Read, I, I] / [Write, I]
+/// pinned base folds into the access op's own cost (see `apply_op`).
 fn imm_access_ops_into(load: bool, acc: MemAccess, out: &mut MicroOpVec) {
     if load {
         out.push(MicroOp::MemRead(acc));
-        out.push(MicroOp::Internal);
-        out.push(MicroOp::Internal);
     } else {
         out.push(MicroOp::MemWrite(acc));
-        out.push(MicroOp::Internal);
     }
 }
 
