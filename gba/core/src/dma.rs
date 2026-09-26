@@ -226,6 +226,34 @@ impl GbaDma {
         self.channels.iter().any(|dma| dma.pending > 0)
     }
 
+    /// Delay ticks remaining before the priority active channel's next
+    /// word phase (its `delay` burns down, then the unit issues), or 0
+    /// when the next tick must run the word phase (no active channel,
+    /// delay exhausted, or a completion tick pending). Lets the bus
+    /// fold pure delay burns arithmetically.
+    pub(crate) fn burn_remaining(&self) -> u8 {
+        let Some(dma) = self.channels.iter().find(|dma| dma.active) else {
+            return 0;
+        };
+        if dma.completing || dma.delay == 0 {
+            return 0;
+        }
+        dma.delay
+    }
+
+    /// Burn `n` delay ticks on the priority active channel
+    /// (`n <= burn_remaining()` at the same state): exactly equivalent
+    /// to `n` per-tick `tick_delay` burns with no unit issued.
+    pub(crate) fn burn_delay(&mut self, n: u8) {
+        let dma = self
+            .channels
+            .iter_mut()
+            .find(|dma| dma.active)
+            .expect("burn target active");
+        debug_assert!(!dma.completing && dma.delay >= n);
+        dma.delay -= n;
+    }
+
     /// Batching horizon: quiet prefix before the next startup-latency
     /// expiry. An active channel forces per-cycle stepping (word side
     /// effects stay on the exact path for now).

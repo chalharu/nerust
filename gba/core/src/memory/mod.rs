@@ -899,7 +899,12 @@ impl GbaMemoryBus {
     }
 
     /// Advance the LCD controller by exactly one T-cycle.
-    pub fn tick(&mut self) -> bool {
+    ///
+    /// Returns `(frame_complete, advanced)`: `advanced` is normally 1,
+    /// but DMA delay-burn folds (see the fast path below) may advance
+    /// several event-free cycles in one call. Callers scale per-cycle
+    /// bookkeeping (clocks, cycle remainders) by `advanced`.
+    pub fn tick(&mut self) -> (bool, u64) {
         self.current_tcycle = self.current_tcycle.wrapping_add(1);
         // Deferred HBlank IRQ first (+1 tick): same pipeline visibility as
         // a same-tick raise (processed below), so CPU entry is unchanged.
@@ -914,7 +919,7 @@ impl GbaMemoryBus {
             // GBATEK Stop: CPU, system clock, video, sound, DMA and timers
             // are frozen; only an interrupt request wakes the machine.
             // (Wake-source subset and IF-not-set are not modeled.)
-            return false;
+            return (false, 1);
         }
         // HLE BIOS steps write through paths the horizon audit cannot see
         // statically (direct operation-scratch stores), so an active HLE
@@ -955,14 +960,56 @@ impl GbaMemoryBus {
                     self.request_interrupt(completion);
                 }
             }
-            return false;
-        } else if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_ready() {
+            return (false, 1);
+        } else if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_allowance() > 0 {
             // DMA-active fast path: no PPU/timer/APU/SIO/pipeline event
-            // can fire this tick (all capped by `device_quiet_cycles`),
-            // so devices advance arithmetically exactly like the quiet
-            // branch above; only the DMA word phase still runs per tick
-            // (transfer side effects land at exact ticks). Ordering
-            // matches the full path (device phases before the DMA phase).
+            // can fire inside the allowance (all capped by
+            // `device_quiet_cycles`), so devices advance arithmetically
+            // exactly like the quiet branch above. Ordering matches the
+            // full path (device phases before the DMA phase).
+            let allowance = self.dma_device_quiet;
+            debug_assert!(allowance > 0);
+            let burn = self.dma.burn_remaining();
+            // A `delay` of `d` burns `d - 1` ticks, then the unit issues
+            // on the `d`th tick (`tick_delay` fires when the counter
+            // reaches 0 and the transfer proceeds the same tick), so a
+            // pure-burn fold covers at most `burn - 1` ticks; the
+            // issuing tick always runs the single word phase below.
+            if burn > 1 {
+                // Fold pure delay burns: `k` ticks with no word phase and
+                // no completion (the priority channel still burns delay
+                // afterwards, or a transfer/completion tick follows, all
+                // handled per-tick below). Pending latencies stay clear
+                // of expiry (`k` is capped by the allowance, which caps
+                // `pending - 1`), countdowns stay clear of completion the
+                // same way, and no frame edge is crossed (PPU-capped).
+                let k = allowance.min(u64::from(burn) - 1);
+                self.dma_device_quiet -= k;
+                self.current_tcycle = self.current_tcycle.wrapping_add(k);
+                self.dma.advance_idle(k);
+                self.apu.advance_idle(k);
+                self.timers.advance_idle(k);
+                self.ppu.advance_idle(k);
+                if self.video_countdown > 0 {
+                    self.video_countdown -= k as u8;
+                }
+                if self.sio_xfer_cycles > 0 {
+                    self.sio_xfer_cycles -= k as u32;
+                }
+                self.dma.burn_delay(k as u8);
+                // No completion can be produced without running the word
+                // phase, and none lingers across ticks (every per-tick
+                // path drains); take defensively so nothing ever goes
+                // stale-long.
+                let completion = self.dma.take_completion_interrupts();
+                if completion != 0 {
+                    self.request_interrupt(completion);
+                }
+                return (false, k);
+            }
+            // Single-tick word phase: transfer side effects land at exact
+            // ticks.
+            self.dma_device_quiet -= 1;
             self.dma.tick_pending();
             self.apu.advance_idle(1);
             self.timers.advance_idle(1);
@@ -996,7 +1043,7 @@ impl GbaMemoryBus {
                 self.timers.refresh_fold_mask();
                 self.dma_device_quiet = 0;
             }
-            return false;
+            return (false, 1);
         }
         self.tick_sound_dma();
         let event = self.tick_video();
@@ -1050,7 +1097,7 @@ impl GbaMemoryBus {
         // covered: triggers, completions, resolutions all run above).
         self.timers.refresh_fold_mask();
         self.dma_device_quiet = 0;
-        event.frame_complete
+        (event.frame_complete, 1)
     }
 
     /// Cached device-horizon remainder (see `bus_quiet` field): exact at
@@ -1138,22 +1185,19 @@ impl GbaMemoryBus {
         horizon.min(self.pipeline_quiet())
     }
 
-    /// Fast-DMA gate: true when this DMA-active tick may advance devices
-    /// arithmetically. Consumes the cached device remainder one tick at
-    /// a time; recomputes it fresh at 0 (a 0 recompute means a device
-    /// event is due and the full path must run).
+    /// Fast-DMA gate: device-tick allowance for this DMA-active tick
+    /// (0 means a device event is due and the full path must run).
+    /// Returns the cached remainder when live, else recomputes the
+    /// device horizon fresh. Consumption happens in the caller (1 for a
+    /// word tick, up to the allowance for a delay-burn fold).
     #[inline]
-    fn dma_fast_ready(&mut self) -> bool {
+    fn dma_fast_allowance(&mut self) -> u64 {
         if self.dma_device_quiet > 0 {
-            self.dma_device_quiet -= 1;
-            return true;
+            return self.dma_device_quiet;
         }
         let horizon = self.device_quiet_cycles();
-        if horizon == 0 {
-            return false;
-        }
-        self.dma_device_quiet = horizon - 1;
-        true
+        self.dma_device_quiet = horizon;
+        horizon
     }
 
     /// Advance clocks and free-running counters by `n` cycles with no event
