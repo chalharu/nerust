@@ -75,47 +75,87 @@ pub(crate) fn expand_arm_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOp
         return Some(());
     }
     let base = out.len();
-    if expand_arm_alu_imm_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
+    // Class pre-dispatch on bits 27-25: the chained attempts below are
+    // class-disjoint (each leaf rejects every other class in its first
+    // bit tests), so routing straight to the matching leaf skips the
+    // failed attempts on the hot path. Relative order inside each route
+    // matches the legacy chain exactly.
+    match (instr >> 25) & 0b111 {
+        // Data-processing immediate (minus MSR-immediate, which the leaf
+        // rejects and the PSR leaf takes).
+        0b001 => {
+            if expand_arm_alu_imm_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_psr_into(instr, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            None
+        }
+        // Single word/byte transfers (always decode; no other 010/011
+        // leaf exists).
+        0b010 | 0b011 => {
+            if expand_arm_single_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            None
+        }
+        // Block transfers only.
+        0b100 => {
+            if expand_arm_block_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            None
+        }
+        // Class 000: halfword-tagged forms try the single leaf first
+        // (its exclusions route multiply/SWP/PSR/BX onward); untagged
+        // forms skip straight to DP-reg (which rejects the tag itself).
+        0b000 => {
+            if (instr & 0x00000090) == 0x00000090
+                && expand_arm_single_into(instr, regs, out).is_some()
+            {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_dp_reg_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_mul_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_swp_into(instr, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_psr_into(instr, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_arm_bx_into(instr, regs, out).is_some() {
+                finish_arm_condition(regs, condition, out, base);
+                return Some(());
+            }
+            out.truncate(base);
+            None
+        }
+        // 101 (branch), 110/111 (UND/SWI) handled above; unreachable.
+        _ => None,
     }
-    out.truncate(base);
-    if expand_arm_single_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_block_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_dp_reg_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_mul_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_swp_into(instr, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_psr_into(instr, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    if expand_arm_bx_into(instr, regs, out).is_some() {
-        finish_arm_condition(regs, condition, out, base);
-        return Some(());
-    }
-    out.truncate(base);
-    None
 }
 
 /// Condition gate for chained ARM attempts: a passed condition keeps

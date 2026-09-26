@@ -3,7 +3,8 @@ pub(crate) mod semantics;
 
 use crate::cpu::micro_op::HLE_IRQ_RETURN_TRAMPOLINE;
 use crate::cpu::micro_op::{
-    AluEffect, BlockEmptyEffect, BlockEndEffect, BlockWord, MemAccess, MicroOp, PcRelRead,
+    AluEffect, BlockEmptyEffect, BlockEndEffect, BlockWord, MemAccess, MicroOp, MicroOpVec,
+    PcRelRead,
 };
 use crate::cpu_pipeline::fill_pipeline;
 use crate::cpu_registers::CpuRegisters;
@@ -22,8 +23,11 @@ pub struct GbaCpu {
     /// Pending micro-ops of the in-flight instruction (per-cycle remodel
     /// slice 3b). Non-empty between the op-steps of one instruction;
     /// IRQ sampling and HLE entry only run at instruction boundaries
-    /// (empty queue).
-    micro_queue: std::collections::VecDeque<crate::cpu::micro_op::MicroOp>,
+    /// (empty queue). Index-drained (`micro_pos`): the consumed prefix
+    /// is never moved or revisited; `clear` on refill keeps the inline
+    /// (or spilled block-transfer) capacity across instructions.
+    micro_ops: MicroOpVec,
+    micro_pos: usize,
 }
 
 impl GbaCpu {
@@ -32,7 +36,8 @@ impl GbaCpu {
             regs: CpuRegisters::post_bios(),
             pipeline: [0; 2],
             irq_return_stack: Vec::new(),
-            micro_queue: std::collections::VecDeque::with_capacity(32),
+            micro_ops: MicroOpVec::new(),
+            micro_pos: 0,
         }
     }
 
@@ -43,14 +48,15 @@ impl GbaCpu {
     pub fn reset(&mut self, bus: &mut GbaMemoryBus) {
         self.regs = CpuRegisters::post_bios();
         self.irq_return_stack.clear();
-        self.micro_queue.clear();
+        self.micro_ops.clear();
+        self.micro_pos = 0;
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
 
     /// True while an instruction's micro-ops are still draining.
     pub(crate) fn micro_pending(&self) -> bool {
-        !self.micro_queue.is_empty()
+        self.micro_pos < self.micro_ops.len()
     }
 
     pub fn registers(&self) -> &CpuRegisters {
@@ -74,7 +80,8 @@ impl GbaCpu {
         self.regs.set_cpsr(cpsr);
         self.regs.set_pc(pc);
         self.pipeline = [0; 2];
-        self.micro_queue.clear();
+        self.micro_ops.clear();
+        self.micro_pos = 0;
         fill_pipeline(&mut self.regs, bus, &mut self.pipeline);
         bus.take_access_wait_cycles();
     }
@@ -195,7 +202,8 @@ impl GbaCpu {
             &mut self.regs,
             bus,
             &mut self.pipeline,
-            &mut self.micro_queue,
+            &mut self.micro_ops,
+            &mut self.micro_pos,
             is_thumb,
             &mut self.irq_return_stack,
         ) {
@@ -216,7 +224,8 @@ impl GbaCpu {
             &mut self.regs,
             bus,
             &mut self.pipeline,
-            &mut self.micro_queue,
+            &mut self.micro_ops,
+            &mut self.micro_pos,
             is_thumb,
             &mut self.irq_return_stack,
         )
@@ -231,12 +240,15 @@ impl Default for GbaCpu {
 
 /// Phase 10 wire state: registers, fetch pipeline, in-flight micro-ops and
 /// the HLE IRQ return stack. `#[cfg(test)]` helpers never enter the DTO.
+/// The op buffer stores only the not-yet-drained suffix (the consumed
+/// prefix is history), so it round-trips as a plain op sequence exactly
+/// like the old queue's remaining contents.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct GbaCpuState {
     regs: CpuRegisters,
     pipeline: [u32; 2],
     irq_return_stack: Vec<(u32, [u32; 5])>,
-    micro_queue: std::collections::VecDeque<MicroOp>,
+    micro_queue: Vec<MicroOp>,
 }
 
 impl GbaCpuState {
@@ -347,7 +359,12 @@ impl GbaCpu {
             regs: self.regs.clone(),
             pipeline: self.pipeline,
             irq_return_stack: self.irq_return_stack.clone(),
-            micro_queue: self.micro_queue.clone(),
+            micro_queue: self
+                .micro_ops
+                .iter()
+                .skip(self.micro_pos)
+                .copied()
+                .collect(),
         }
     }
 
@@ -356,7 +373,9 @@ impl GbaCpu {
         self.regs = state.regs;
         self.pipeline = state.pipeline;
         self.irq_return_stack = state.irq_return_stack;
-        self.micro_queue = state.micro_queue;
+        self.micro_ops.clear();
+        self.micro_ops.extend(state.micro_queue);
+        self.micro_pos = 0;
         Ok(())
     }
 }
@@ -496,7 +515,7 @@ mod tests {
         bus.take_access_wait_cycles();
         // Drain a single micro-op: the block transfer stays in flight.
         assert!(cpu.step_op(&mut bus).is_some());
-        assert!(!cpu.micro_queue.is_empty());
+        assert!(cpu.micro_pending());
         // A nested IRQ return slot is live as well.
         cpu.irq_return_stack.push((start + 8, [1, 2, 3, 4, 5]));
 
@@ -511,8 +530,9 @@ mod tests {
         assert_eq!(bytes, again);
         assert!(
             restored
-                .micro_queue
+                .micro_ops
                 .iter()
+                .skip(restored.micro_pos)
                 .any(|op| matches!(op, MicroOp::BlockWord(_)))
         );
         assert_eq!(restored.irq_return_stack.len(), 1);
@@ -536,7 +556,7 @@ mod tests {
         state = cpu.export_state();
         state
             .micro_queue
-            .push_back(MicroOp::MemRead(crate::cpu::micro_op::MemAccess {
+            .push(MicroOp::MemRead(crate::cpu::micro_op::MemAccess {
                 width: 3,
                 rd: 0,
                 rn: 0,

@@ -137,7 +137,79 @@ pub(crate) fn expand_thumb_into(
     // `Option::or_else` instantiation, which codegen outlines as a
     // `memcpy` call on the hot path. Leaves truncate on failure, and
     // the base/truncate below makes that bulletproof.
+    //
+    // Nibble pre-dispatch: the leaves are class-disjoint by top nibble
+    // (each leaf rejects every other nibble in its first bit tests), so
+    // each route below is the legacy attempt order with provably-dead
+    // attempts removed — identical outcomes, fewer failed attempts on
+    // the hot path.
     let base = out.len();
+    match instr >> 12 {
+        // Shift-imm / add-sub (0x0-0x1) and ADR (0xA): ALU-rest only.
+        0x0 | 0x1 | 0xA => {
+            if expand_thumb_alu_rest_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // 0x4000-0x47FF ALU/hi-reg: ALU-rest only. 0x4800-0x4FFF
+        // literal loads: PC-relative only.
+        0x4 => {
+            if instr < 0x4800 {
+                if expand_thumb_alu_rest_into(instr, out).is_some() {
+                    return Some(());
+                }
+            } else if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // Register/imm/SP-relative transfers: load-store only.
+        0x5..=0x9 => {
+            if expand_thumb_load_store_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // ADD-SP (ALU-rest) and PUSH/POP, in legacy order.
+        0xB => {
+            if expand_thumb_alu_rest_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // LDM/STM: multiple only.
+        0xC => {
+            if expand_thumb_multiple_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+        // 0x2-0x3 (imm ALU, handled above), 0xD-0xF (branches/traps,
+        // handled above): keep the legacy order for exactness.
+        _ => {
+            if expand_thumb_alu_rest_into(instr, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_thumb_push_pop_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_thumb_multiple_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+            if expand_thumb_pcrel_into(instr, regs, out).is_some() {
+                return Some(());
+            }
+            out.truncate(base);
+        }
+    }
     if expand_thumb_alu_rest_into(instr, out).is_some() {
         return Some(());
     }
