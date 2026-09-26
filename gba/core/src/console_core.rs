@@ -210,7 +210,7 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn restart_audio(&mut self) {
-        self.audio.start();
+        self.audio.reconnect();
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
@@ -702,29 +702,30 @@ mod tests {
     }
 
     #[test]
-    fn restart_audio_starts_backend() {
+    fn restart_audio_reconnects_backend() {
         use std::sync::atomic::Ordering::SeqCst;
 
         use nerust_core_traits::audio::{AudioBackend, StereoSample};
 
-        struct StartProbe {
-            started: Arc<AtomicBool>,
+        struct ReconnectProbe {
+            reconnected: Arc<AtomicBool>,
         }
-        impl AudioBackend for StartProbe {
-            fn start(&mut self) {
-                self.started.store(true, SeqCst);
-            }
+        impl AudioBackend for ReconnectProbe {
+            fn start(&mut self) {}
             fn pause(&mut self) {}
             fn push(&mut self, _sample: StereoSample) {}
+            fn reconnect(&mut self) {
+                self.reconnected.store(true, SeqCst);
+            }
         }
-        let started = Arc::new(AtomicBool::new(false));
+        let reconnected = Arc::new(AtomicBool::new(false));
         let mut core = GbaConsoleCore::new(
-            Box::new(StartProbe {
-                started: started.clone(),
+            Box::new(ReconnectProbe {
+                reconnected: reconnected.clone(),
             }),
             test_emu_input(),
         );
         core.restart_audio();
-        assert!(started.load(SeqCst));
+        assert!(reconnected.load(SeqCst));
     }
 }

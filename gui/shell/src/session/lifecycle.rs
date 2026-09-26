@@ -87,8 +87,8 @@ impl SessionHandle {
         self.metrics().paused
     }
 
-    /// Re-assert the audio backend start (mobile OS lifecycle
-    /// transitions can wedge audio streams; the restart is idempotent).
+    /// Re-acquire the audio backend stream (mobile OS lifecycle
+    /// transitions can kill audio streams; the re-acquire is idempotent).
     /// No-op without a loaded core.
     pub fn restart_audio(&mut self) {
         if let Some(ref core) = self.emu_core
