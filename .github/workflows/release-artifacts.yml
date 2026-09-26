@@ -239,7 +239,7 @@ jobs:
     name: Linux aarch64
     needs: [prepare-context]
     if: ${{ needs.prepare-context.outputs.should_run == 'true' }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     permissions:
       contents: read
@@ -363,7 +363,7 @@ jobs:
     name: Android arm64-v8a
     needs: [prepare-context]
     if: ${{ needs.prepare-context.outputs.should_run == 'true' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       contents: read
