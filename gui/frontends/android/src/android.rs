@@ -936,6 +936,11 @@ impl AndroidFrontend {
                         self.rebuild_renderer(window);
                     }
                 }
+                // Push touch-overlay (and FPS-label) settings to the live
+                // chrome: without this the saved snapshot and the visible
+                // overlay diverge, so a changed opacity/scale/visibility
+                // looks "ignored" until the next ROM load or resize.
+                self.rebuild_overlay();
                 self.request_redraw();
                 // Settings changed – refresh cached settings for sync dialogs.
                 settings::update_cached_settings(&android_settings);
