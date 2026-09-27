@@ -1499,6 +1499,15 @@ mod tests {
             assert!(apu.sq2.core.active);
             assert_eq!(apu.sq2.core.env_timer_for_test(), expected, "step {step}");
         }
+        // Pace 7 + extra tick parks the timer at 8: still a legal state
+        // that must export (not "corrupt").
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.seq_step = 6;
+        apu.write_sound2cnt_lo(0xF700);
+        apu.write_sound2cnt_hi(0x8700);
+        assert_eq!(apu.sq2.core.env_timer_for_test(), 8);
+        apu.export_state().unwrap().validate().unwrap();
     }
 
     #[test]
