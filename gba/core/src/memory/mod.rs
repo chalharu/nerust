@@ -38,10 +38,13 @@ fn ttrace_enabled() -> bool {
 
 /// Tick-skip escape hatch (perf A/B and exactness bisection): set
 /// `GBA_NO_SKIP` to force every tick through the full per-cycle path.
-/// Checked once per tick through a cached flag; negligible when unset.
-fn tick_skip_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("GBA_NO_SKIP").is_err())
+/// Read once per bus (ROM load), not per tick: the old process-wide
+/// `OnceLock` cost an atomic load on every one of the ~280k ticks/frame.
+/// A process-lifetime env change takes effect at the next load, which no
+/// test or frontend relies on.
+#[inline]
+fn tick_skip_for_new_bus() -> bool {
+    std::env::var("GBA_NO_SKIP").is_err()
 }
 
 const BIOS_SIZE: usize = 0x4000;
@@ -299,6 +302,11 @@ pub struct GbaMemoryBus {
     /// (plus the full-tick exit, which covers every in-tick mutation).
     /// Same contract: 0 is always valid, never stale-long.
     dma_device_quiet: u64,
+    /// Cached `GBA_NO_SKIP` escape hatch (see `tick_skip_for_new_bus`):
+    /// a plain field read replaces the per-tick `OnceLock` atomic load.
+    /// Pure perf hint, excluded from wire state by design (re-read at
+    /// every load; behavior is identical within a process lifetime).
+    tick_skip: bool,
     /// Test-ROM log sink behind the `mgba-debug-log` cargo feature. No
     /// hardware counterpart exists: zero waits, no prefetch/N-S side effects.
     #[cfg(feature = "mgba-debug-log")]
@@ -686,6 +694,7 @@ impl GbaMemoryBus {
             eeprom_burst_open: false,
             bus_quiet: 0,
             dma_device_quiet: 0,
+            tick_skip: tick_skip_for_new_bus(),
             #[cfg(feature = "mgba-debug-log")]
             mgba_debug_enable: false,
             #[cfg(feature = "mgba-debug-log")]
@@ -1130,10 +1139,10 @@ impl GbaMemoryBus {
         // horizon it was recomputed from, and only due entries mutate
         // pipeline state), so running it would only re-peek empty or
         // future queues. Skipped.
-        if tick_skip_enabled() && self.bus_quiet > 0 {
+        if self.tick_skip && self.bus_quiet > 0 {
             return self.tick_quiet_span();
         }
-        if tick_skip_enabled() && self.dma.is_active() && self.dma_fast_allowance() > 0 {
+        if self.tick_skip && self.dma.is_active() && self.dma_fast_allowance() > 0 {
             return self.tick_dma_fast();
         }
         self.tick_full()
