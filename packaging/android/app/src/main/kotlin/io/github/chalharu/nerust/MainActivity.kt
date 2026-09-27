@@ -6,6 +6,7 @@ import android.app.NativeActivity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -333,6 +334,41 @@ class MainActivity :
             updateCartridgeMotionRegistration()
             cancelCartridgeRumble()
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.i(TAG, "onConfigurationChanged: orientation=${newConfig.orientation}")
+        // The manifest handles rotation in-place (no Activity recreate),
+        // but PopupWindow chrome does not reliably survive it: the popup
+        // can keep a stale frame, lose its window, or fall behind the
+        // recreated native surface while still reporting isShowing=true,
+        // so the re-attach machinery never fires again and the touch
+        // controls stay invisible. Rebuild the popup chrome explicitly
+        // for the new configuration. The Compose settings dialog is a
+        // proper Dialog window that re-lays itself out, so it is left
+        // alone; an open navigation drawer is closed (one tap reopens).
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        drawerChromePopup?.dismiss()
+        drawerChromePopup = null
+        drawerChromeContainer = null
+        drawerEdgeHandleView = null
+        drawerFullScreenPopup?.setOnDismissListener(null)
+        drawerFullScreenPopup?.dismiss()
+        drawerFullScreenPopup = null
+        clearDrawerWindowReferences()
+        fpsOverlayPopup?.dismiss()
+        fpsOverlayPopup = null
+        fpsOverlayView = null
+        removePendingChromeAttachCallbacks()
+        scheduleChromeAttach()
+        // Tell Rust to rebuild its touch overlay (hit zones) for the new
+        // window size even if no winit Resized event arrives; the Rust
+        // side also re-pushes the overlay config, which converges with
+        // the re-attach above.
+        onMenuAction("orientation_changed")
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
