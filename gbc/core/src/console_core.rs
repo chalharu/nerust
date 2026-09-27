@@ -2,7 +2,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
-    audio::AudioBackend,
+    audio::{AudioBackend, RateController},
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -39,6 +39,10 @@ pub struct GbcConsoleCore {
     paused: bool,
     accelerometer: AccelerometerInputPort,
     rumble: RumbleOutputPort,
+    /// Dynamic rate control (see GBA `rate_controller`): stretches sample
+    /// generation to hold the backend queue near half-full. Host-side
+    /// only, never serialized.
+    rate_controller: RateController,
 }
 
 impl GbcConsoleCore {
@@ -61,6 +65,7 @@ impl GbcConsoleCore {
             paused: false,
             accelerometer,
             rumble,
+            rate_controller: RateController::new(),
         }
     }
 
@@ -133,6 +138,12 @@ impl ConsoleCore for GbcConsoleCore {
             .bus
             .set_cartridge_acceleration(self.accelerometer.latest());
         loaded.system.bus.set_joypad(input);
+        // Dynamic rate control: stretch this frame's sample generation
+        // to the backend queue level before stepping.
+        let ratio = self
+            .rate_controller
+            .update(self.audio.buffered(), self.audio.buffer_capacity());
+        loaded.system.bus.set_audio_rate_ratio(ratio);
         // LCD-off games do not produce a PPU frame event; cap one frontend
         // frame to the hardware frame duration so the emulation thread stays live.
         for _ in 0..70_224 {
@@ -166,6 +177,7 @@ impl ConsoleCore for GbcConsoleCore {
             .set_requested(loaded.identity.cartridge_type == 0x22);
         self.loaded = Some(loaded);
         self.paused = false;
+        self.rate_controller.reset();
         self.sync_rumble();
         Ok(())
     }
@@ -174,6 +186,7 @@ impl ConsoleCore for GbcConsoleCore {
         self.accelerometer.set_requested(false);
         self.loaded = None;
         self.paused = false;
+        self.rate_controller.reset();
         self.sync_rumble();
     }
 
@@ -190,6 +203,7 @@ impl ConsoleCore for GbcConsoleCore {
         cartridge.reset_runtime();
         reset.system.bus.set_cartridge(cartridge);
         current.system = reset.system;
+        self.rate_controller.reset();
         self.sync_rumble();
     }
 
@@ -234,6 +248,7 @@ impl ConsoleCore for GbcConsoleCore {
         )
         .map_err(|error| CoreError::Core(Box::new(error)))?;
         self.loaded_mut()?.system = candidate.system;
+        self.rate_controller.reset();
         self.sync_rumble();
         Ok(())
     }

@@ -44,10 +44,83 @@ pub trait AudioBackend: Send {
     /// no-op for backends that never lose their stream.
     fn reconnect(&mut self) {}
 
+    /// Samples currently queued for the device (device callback has not
+    /// consumed them yet). Drives dynamic rate control: cores stretch the
+    /// resample ratio to hold the queue near half of `buffer_capacity`.
+    /// Default 0 (unknown) disables rate control (see `RateController`).
+    fn buffered(&self) -> u64 {
+        0
+    }
+
+    /// Queue capacity in samples matching `buffered`. Default 0 (unknown).
+    fn buffer_capacity(&self) -> u64 {
+        0
+    }
+
     /// 再生音量を 0.0〜1.0 の範囲で設定する。
     ///
     /// デフォルト実装は no-op。`GainBackend` が `set_gain()` に委譲する。
     fn set_volume(&mut self, _volume: f32) {}
+}
+
+/// Dynamic rate control (RetroArch-style): holds the backend queue near
+/// half-full by stretching the core's resample ratio a few percent.
+/// When emulation runs slow the queue drains and the ratio rises above
+/// 1 (more device samples per emulated second: pitch rises slightly
+/// instead of gaping); when emulation runs ahead it falls below 1.
+/// Slew-limited so the pitch glides instead of jumping; clamped to
+/// ±5% (≈0.8 semitones worst case, transient only).
+#[derive(Debug, Clone)]
+pub struct RateController {
+    ratio: f32,
+    target_fill: f32,
+    max_adjust: f32,
+    gain: f32,
+    slew: f32,
+}
+
+impl Default for RateController {
+    fn default() -> Self {
+        Self {
+            ratio: 1.0,
+            target_fill: 0.5,
+            max_adjust: 0.05,
+            gain: 0.6,
+            slew: 0.003,
+        }
+    }
+}
+
+impl RateController {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Current output/input sample ratio (1.0 = nominal rate).
+    pub fn ratio(&self) -> f32 {
+        self.ratio
+    }
+
+    /// Back to nominal (call on load/unload: the queue no longer matches
+    /// the pre-switch emulation timeline).
+    pub fn reset(&mut self) {
+        self.ratio = 1.0;
+    }
+
+    /// Feed one frame's queue occupancy; returns the updated ratio.
+    /// Unknown backends (`capacity == 0`) pin the ratio at nominal.
+    pub fn update(&mut self, buffered: u64, capacity: u64) -> f32 {
+        if capacity == 0 {
+            self.ratio = 1.0;
+            return self.ratio;
+        }
+        let fill = (buffered as f32 / capacity as f32).clamp(0.0, 1.5);
+        let target = (1.0 + self.gain * (self.target_fill - fill))
+            .clamp(1.0 - self.max_adjust, 1.0 + self.max_adjust);
+        let delta = (target - self.ratio).clamp(-self.slew, self.slew);
+        self.ratio += delta;
+        self.ratio
+    }
 }
 
 /// Factory for creating and probing audio backends.
@@ -171,6 +244,14 @@ impl AudioBackend for GainBackend {
         self.inner.push(sample.scale(self.gain));
     }
 
+    fn buffered(&self) -> u64 {
+        self.inner.buffered()
+    }
+
+    fn buffer_capacity(&self) -> u64 {
+        self.inner.buffer_capacity()
+    }
+
     fn set_volume(&mut self, volume: f32) {
         self.gain = volume;
     }
@@ -237,5 +318,56 @@ mod tests {
         );
         backend.reconnect();
         assert!(reconnected.load(SeqCst));
+    }
+
+    #[test]
+    fn rate_controller_holds_nominal_without_capacity() {
+        let mut controller = RateController::new();
+        assert_eq!(controller.ratio(), 1.0);
+        // Unknown backend: pinned at nominal, no stale stretch.
+        assert_eq!(controller.update(0, 0), 1.0);
+        assert_eq!(controller.update(9999, 0), 1.0);
+    }
+
+    #[test]
+    fn rate_controller_speeds_up_when_starved() {
+        let mut controller = RateController::new();
+        // Empty queue: target saturates at +5%, approached at the slew rate.
+        assert_eq!(controller.update(0, 1000), 1.003);
+        for _ in 0..100 {
+            controller.update(0, 1000);
+        }
+        assert_eq!(controller.ratio(), 1.05);
+    }
+
+    #[test]
+    fn rate_controller_slows_down_when_flooded() {
+        let mut controller = RateController::new();
+        // Full queue: target saturates at -5%.
+        assert_eq!(controller.update(1000, 1000), 0.997);
+        for _ in 0..100 {
+            controller.update(1000, 1000);
+        }
+        assert_eq!(controller.ratio(), 0.95);
+    }
+
+    #[test]
+    fn rate_controller_rests_near_nominal_at_half_fill() {
+        let mut controller = RateController::new();
+        for _ in 0..100 {
+            controller.update(500, 1000);
+        }
+        assert!((controller.ratio() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn rate_controller_reset_returns_to_nominal() {
+        let mut controller = RateController::new();
+        for _ in 0..100 {
+            controller.update(0, 1000);
+        }
+        assert!(controller.ratio() > 1.0);
+        controller.reset();
+        assert_eq!(controller.ratio(), 1.0);
     }
 }

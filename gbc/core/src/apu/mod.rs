@@ -65,6 +65,11 @@ pub struct GbcApu {
     // Downsampling
     sample_accumulator: u32,
     sample_rate: u32,
+    /// Dynamic rate-control stretch (output/input sample ratio; 1.0 =
+    /// nominal). Host-side only: excluded from the wire, imports restart
+    /// from nominal (see `import_state`).
+    #[serde(skip)]
+    rate_ratio: f32,
     #[serde(skip)]
     output_buffer: Vec<StereoSample>,
 }
@@ -92,6 +97,9 @@ impl GbcApu {
         }
         state.output_buffer.clear();
         *self = state;
+        // Host-side stretch never survives an import (the wire skips it,
+        // so a foreign blob would otherwise park the ratio at 0.0).
+        self.rate_ratio = 1.0;
         Ok(())
     }
 
@@ -119,6 +127,7 @@ impl GbcApu {
 
             sample_accumulator: 0,
             sample_rate: DEFAULT_SAMPLE_RATE,
+            rate_ratio: 1.0,
             output_buffer: Vec::new(),
         }
     }
@@ -156,7 +165,9 @@ impl GbcApu {
             }
 
             // 2. Sample generation (44,100 Hz)
-            self.sample_accumulator += self.sample_rate;
+            // `rate_ratio` stretches device samples per emulated second
+            // (dynamic rate control); 1.0 keeps the exact legacy cadence.
+            self.sample_accumulator += (self.sample_rate as f32 * self.rate_ratio) as u32;
             if self.sample_accumulator >= MASTER_CLOCK {
                 self.sample_accumulator -= MASTER_CLOCK;
                 let sample = self.generate_sample();
@@ -267,6 +278,14 @@ impl GbcApu {
         self.sample_accumulator = 0;
         self.hpf_left = HighPassFilter::new(self.cgb, self.sample_rate);
         self.hpf_right = HighPassFilter::new(self.cgb, self.sample_rate);
+    }
+
+    /// Dynamic rate-control stretch from the console (`RateController`):
+    /// scales device samples per emulated second to hold the backend
+    /// queue near half-full. Clamped to the controller's ±5% band and
+    /// wider safety rails (the accumulator stays exact at 1.0).
+    pub fn set_rate_ratio(&mut self, ratio: f32) {
+        self.rate_ratio = ratio.clamp(0.5, 2.0);
     }
 
     /// Apply the post-boot register values.
@@ -515,6 +534,35 @@ impl Default for GbcApu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_ratio_stretches_sample_output() {
+        // Dynamic rate control: ratio > 1 emits more device samples per
+        // emulated frame, < 1 fewer; 1.0 keeps the legacy cadence exactly.
+        let mut apu = GbcApu::new();
+        apu.write_register(0xFF26, 0x80);
+        apu.write_register(0xFF12, 0xF0);
+        apu.write_register(0xFF11, 0x80);
+        apu.write_register(0xFF14, 0x80);
+        apu.step(70224);
+        let nominal = apu.flush_samples().len();
+        assert!(nominal > 0);
+
+        apu.set_rate_ratio(1.05);
+        apu.step(70224);
+        let fast = apu.flush_samples().len();
+        assert!(fast > nominal, "fast={fast} nominal={nominal}");
+
+        apu.set_rate_ratio(0.95);
+        apu.step(70224);
+        let slow = apu.flush_samples().len();
+        assert!(slow < nominal, "slow={slow} nominal={nominal}");
+
+        // Rails: absurd ratios clamp instead of stalling or flooding.
+        apu.set_rate_ratio(100.0);
+        apu.step(70224);
+        assert!(!apu.flush_samples().is_empty());
+    }
 
     #[test]
     fn register_write_read_with_masks() {
