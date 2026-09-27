@@ -255,10 +255,6 @@ impl AndroidSettings {
                     .map(|value| format!("{value} Hz")),
             ),
             "Off\tOn".to_string(),
-            "Off\tOn".to_string(),
-            "Off\tOn".to_string(),
-            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
-            "Auto\tHandset\tController".to_string(),
             "Auto Rotate\tPortrait\tLandscape".to_string(),
             "Next to ROM\tApp Storage\tCustom Directory".to_string(),
             "Always\tAuto\tHidden".to_string(),
@@ -270,6 +266,10 @@ impl AndroidSettings {
                 (OVERLAY_OFFSET_MIN..=OVERLAY_OFFSET_MAX).map(|value| format!("{value}%")),
             ),
             "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            "Off\tOn".to_string(),
+            join_tab_labels((0..=100).map(|value| format!("{value}%"))),
+            "Auto\tHandset\tController".to_string(),
         ];
         choices.extend(
             self.system_choices.iter().map(|choice| {
@@ -1056,6 +1056,53 @@ mod tests {
         assert_eq!(android.dialog_labels().len(), n);
         assert_eq!(android.dialog_choices().len(), n);
         assert_eq!(android.current_indices().len(), n);
+    }
+
+    #[test]
+    fn dialog_choices_align_with_keys() {
+        // Regression test: the choice list at each position must belong
+        // to the key at the same position. A past misalignment showed
+        // percentages on the visibility row and words on the opacity row,
+        // silently rejecting every save outside 0..=2.
+        let registry = registry();
+        let android = android_settings(&default_snapshot(), &registry);
+        let keys = android.dialog_keys();
+        let choices = android.dialog_choices();
+        let at = |key: &str| {
+            let index = keys.iter().position(|k| k == key).unwrap();
+            choices[index].clone()
+        };
+        assert_eq!(at("screen.orientation"), "Auto Rotate\tPortrait\tLandscape");
+        assert_eq!(
+            at("storage.policy"),
+            "Next to ROM\tApp Storage\tCustom Directory"
+        );
+        assert_eq!(at("controls.overlay.visibility"), "Always\tAuto\tHidden");
+        let opacity_str = at("controls.overlay.opacity");
+        let opacity: Vec<_> = opacity_str.split('\t').collect();
+        assert_eq!(opacity.len(), 101);
+        assert_eq!(opacity.first(), Some(&"0%"));
+        assert_eq!(opacity.last(), Some(&"100%"));
+        let scale_str = at("controls.overlay.scale");
+        let scale: Vec<_> = scale_str.split('\t').collect();
+        assert_eq!(scale.len(), 101);
+        assert_eq!(scale.first(), Some(&"50%"));
+        assert_eq!(scale.last(), Some(&"150%"));
+        let offset_str = at("controls.overlay.vertical_offset");
+        let offset: Vec<_> = offset_str.split('\t').collect();
+        assert_eq!(offset.len(), 61);
+        assert_eq!(offset.first(), Some(&"-30%"));
+        assert_eq!(offset.last(), Some(&"30%"));
+        assert_eq!(at("controls.overlay.haptics"), "Off\tOn");
+        assert_eq!(at("controls.cartridge.motion"), "Off\tOn");
+        assert_eq!(at("controls.cartridge.rumble"), "Off\tOn");
+        let strength_str = at("controls.cartridge.rumble_strength");
+        let strength: Vec<_> = strength_str.split('\t').collect();
+        assert_eq!(strength.len(), 101);
+        assert_eq!(
+            at("controls.cartridge.rumble_target"),
+            "Auto\tHandset\tController"
+        );
     }
 
     #[test]
