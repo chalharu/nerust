@@ -210,3 +210,50 @@ fn fft(values: &mut [Complex]) {
         block_size <<= 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sine_at_bin(sample_count: usize, bin: usize) -> Vec<f32> {
+        (0..sample_count)
+            .map(|i| (2.0 * PI * bin as f32 * i as f32 / sample_count as f32).sin())
+            .collect()
+    }
+
+    #[test]
+    fn bin_centered_sine_resolves_to_its_bin() {
+        // 3200Hz sits exactly on bin 100 at N = 1024, 32768Hz: no
+        // leakage, so the dominant search must land exactly.
+        let samples = sine_at_bin(1024, 100);
+        assert_eq!(dominant_frequency(&samples, 32_768.0), 3200.0);
+    }
+
+    #[test]
+    fn dc_is_removed_before_the_transform() {
+        // Mean removal kills pure DC entirely: no bin may carry energy.
+        let samples = vec![0.25f32; 1024];
+        let spectrum = power_spectrum(&samples);
+        assert!(spectrum.iter().all(|&p| p == 0.0));
+        assert_eq!(
+            peak_power_near_frequency(&spectrum, 32_768.0, 1000.0, 2),
+            0.0
+        );
+    }
+
+    #[test]
+    fn tolerance_is_one_and_half_bins() {
+        assert_eq!(dominant_frequency_tolerance(32_768.0, 8192), 6.0);
+    }
+
+    #[test]
+    fn capture_samples_collects_via_closure() {
+        let mut next = 0u32;
+        let out = capture_samples(5, || {
+            let v = next;
+            next += 1;
+            v as f32
+        });
+        assert_eq!(out, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    }
+}
