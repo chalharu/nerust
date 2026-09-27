@@ -7,3 +7,4 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+nerust_core_traits.workspace = true
