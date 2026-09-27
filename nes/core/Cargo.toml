@@ -26,4 +26,5 @@ ignored = ["serde_bytes"]
 
 [dev-dependencies]
 hound.workspace = true
+nerust_sound_spectrum.workspace = true
 strum.workspace = true
