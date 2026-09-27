@@ -137,7 +137,7 @@ iced_winit = { version = "=0.14.1" }
 jni = { version = "=0.22.4" }
 inventory = { version = "=0.3.24" }
 log = { default-features = false, version = "=0.4.34" }
-muda = { default-features = false, features = ["gtk"], version = "=0.19.3" }
+muda = { default-features = false, features = ["gtk"], version = "=0.20.0" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
 nerust_emu_thread = { path = "traits/emu-thread" }
