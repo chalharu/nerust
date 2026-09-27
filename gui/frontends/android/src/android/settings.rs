@@ -384,30 +384,6 @@ impl AndroidSettings {
         self.setting_defs().into_iter().map(|def| def.key).collect()
     }
 
-    /// Human-readable labels, one per key, in the same order.
-    pub(crate) fn dialog_labels(&self) -> Vec<String> {
-        self.setting_defs()
-            .into_iter()
-            .map(|def| def.label)
-            .collect()
-    }
-
-    /// Tab-separated choice labels, one string per setting, in key order.
-    pub(crate) fn dialog_choices(&self) -> Vec<String> {
-        self.setting_defs()
-            .into_iter()
-            .map(|def| join_tab_labels(def.choices))
-            .collect()
-    }
-
-    /// Index of the current choice for each setting, in key order, as strings.
-    pub(crate) fn current_indices(&self) -> Vec<String> {
-        self.setting_defs()
-            .into_iter()
-            .map(|def| def.current.to_string())
-            .collect()
-    }
-
     /// Build an `AndroidSettings` from a comma-separated list of choice indices
     /// (as returned by the Kotlin callback).
     ///
@@ -590,16 +566,6 @@ struct SettingsResultPayload {
     dismissed: bool,
     #[serde(default)]
     values: BTreeMap<String, usize>,
-}
-
-fn join_tab_labels(values: impl IntoIterator<Item = String>) -> String {
-    let mut labels = values.into_iter();
-    let mut joined = labels.next().unwrap_or_default();
-    for value in labels {
-        joined.push('\t');
-        joined.push_str(&value);
-    }
-    joined
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +866,15 @@ mod tests {
         choice.selected = SystemSettingsChoiceId(choice_id.to_string().into());
     }
 
+    /// Current choice indices in dialog order, via the single defs list.
+    fn def_currents(android: &AndroidSettings) -> Vec<usize> {
+        android
+            .setting_defs()
+            .into_iter()
+            .map(|def| def.current)
+            .collect()
+    }
+
     #[test]
     fn round_trips_default_snapshot() {
         let snapshot = default_snapshot();
@@ -991,15 +966,12 @@ mod tests {
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
-        let indices = android.current_indices();
+        let indices = def_currents(&android);
         // Default: not muted → 0; volume 100% → index 100; latency 50 ms → index 40;
         // sample rate 48000 → index 1; vsync on → 1; NtscComposite → index 1
         assert_eq!(
             &indices[..16],
-            [
-                "0", "100", "40", "1", "1", "0", "0", "1", "65", "50", "30", "1", "1", "1", "100",
-                "0"
-            ]
+            [0, 100, 40, 1, 1, 0, 0, 1, 65, 50, 30, 1, 1, 1, 100, 0]
         );
         assert_eq!(indices.len(), 21);
     }
@@ -1032,7 +1004,11 @@ mod tests {
             .apply_to_snapshot(&mut snapshot, &registry)
             .unwrap();
         let recovered = android_settings(&snapshot, &registry);
-        let indices_str = recovered.current_indices().join(",");
+        let indices_str = def_currents(&recovered)
+            .into_iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
 
         let parsed = AndroidSettings::from_choice_indices(&indices_str, &recovered).unwrap();
         assert_eq!(parsed, original);
@@ -1050,7 +1026,11 @@ mod tests {
         original.screen_orientation = ScreenOrientation::Portrait;
         set_system_choice(&mut original, "video.filter", "none");
 
-        let indices_str = original.current_indices().join(",");
+        let indices_str = def_currents(&original)
+            .into_iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         let parsed = AndroidSettings::from_choice_indices(&indices_str, &original).unwrap();
         assert_eq!(parsed, original);
     }
@@ -1069,24 +1049,24 @@ mod tests {
     fn dialog_choices_cover_full_android_audio_range() {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let choices = android.dialog_choices();
-        let volume_choices: Vec<_> = choices[1].split('\t').collect();
-        let latency_choices: Vec<_> = choices[2].split('\t').collect();
-        let sample_rate_choices: Vec<_> = choices[3].split('\t').collect();
+        let defs = android.setting_defs();
+        let volume_choices = &defs[1].choices;
+        let latency_choices = &defs[2].choices;
+        let sample_rate_choices = &defs[3].choices;
 
-        assert_eq!(volume_choices.first(), Some(&"0%"));
-        assert_eq!(volume_choices.last(), Some(&"100%"));
+        assert_eq!(volume_choices.first().map(String::as_str), Some("0%"));
+        assert_eq!(volume_choices.last().map(String::as_str), Some("100%"));
         assert_eq!(volume_choices.len(), 101);
 
-        assert_eq!(latency_choices.first(), Some(&"10 ms"));
-        assert_eq!(latency_choices.last(), Some(&"200 ms"));
+        assert_eq!(latency_choices.first().map(String::as_str), Some("10 ms"));
+        assert_eq!(latency_choices.last().map(String::as_str), Some("200 ms"));
         assert_eq!(latency_choices.len(), 191);
 
         assert!(
             !sample_rate_choices.is_empty(),
             "sample rate choices should be non-empty"
         );
-        for choice in &sample_rate_choices {
+        for choice in sample_rate_choices {
             let Some(rate_str) = choice.strip_suffix(" Hz") else {
                 panic!("sample rate choice '{choice}' must end with ' Hz'");
             };
@@ -1109,30 +1089,43 @@ mod tests {
     }
 
     #[test]
-    fn dialog_arrays_are_consistent_length() {
+    fn setting_defs_are_internally_consistent() {
+        // Structural replacement for the old parallel-arrays length check:
+        // every row must offer at least one choice, point at a valid one,
+        // and carry a unique key.
         let snapshot = default_snapshot();
         let registry = registry();
         let android = android_settings(&snapshot, &registry);
-        let n = android.dialog_keys().len();
-        assert_eq!(android.dialog_labels().len(), n);
-        assert_eq!(android.dialog_choices().len(), n);
-        assert_eq!(android.current_indices().len(), n);
+        let defs = android.setting_defs();
+        let mut keys = std::collections::BTreeSet::new();
+        for def in &defs {
+            assert!(keys.insert(def.key.clone()), "duplicate key {}", def.key);
+            assert!(!def.label.is_empty(), "empty label for {}", def.key);
+            assert!(!def.choices.is_empty(), "no choices for {}", def.key);
+            assert!(
+                def.current < def.choices.len(),
+                "current {} out of range for {}",
+                def.current,
+                def.key
+            );
+        }
     }
 
     #[test]
     fn dialog_choices_align_with_keys() {
-        // Regression test: the choice list at each position must belong
-        // to the key at the same position. A past misalignment showed
-        // percentages on the visibility row and words on the opacity row,
-        // silently rejecting every save outside 0..=2.
+        // Regression test: the choice list attached to each key must be
+        // that setting's own. A past misalignment showed percentages on
+        // the visibility row and words on the opacity row, silently
+        // rejecting every save outside 0..=2.
+        use std::collections::BTreeMap;
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
-        let keys = android.dialog_keys();
-        let choices = android.dialog_choices();
-        let at = |key: &str| {
-            let index = keys.iter().position(|k| k == key).unwrap();
-            choices[index].clone()
-        };
+        let owned: BTreeMap<String, Vec<String>> = android
+            .setting_defs()
+            .into_iter()
+            .map(|def| (def.key, def.choices))
+            .collect();
+        let at = |key: &str| owned.get(key).unwrap().join("\t");
         assert_eq!(at("screen.orientation"), "Auto Rotate\tPortrait\tLandscape");
         assert_eq!(
             at("storage.policy"),
@@ -1227,13 +1220,8 @@ mod tests {
         let registry = registry();
         let current = android_settings(&default_snapshot(), &registry);
         let mut values = BTreeMap::new();
-        for (key, value) in current
-            .dialog_keys()
-            .into_iter()
-            .zip(current.current_indices())
-            .rev()
-        {
-            values.insert(key, value.parse().unwrap());
+        for def in current.setting_defs().into_iter().rev() {
+            values.insert(def.key, def.current);
         }
 
         assert_eq!(
