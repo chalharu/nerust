@@ -110,13 +110,18 @@ fn tick_voice(bus: &mut impl SoundDriverBus, area: u32, index: usize) {
 }
 
 /// Mix one native-grid sample of driver voices into the APU buffer tail.
-/// Voice positions advance continuously at fr/playback_freq per grid tick.
+/// Voice positions advance at fr per grid second (`fr` is an effective
+/// sample rate in Hz; the grid runs at [`MIX_RATE`](crate::apu::MIX_RATE)).
+/// Advancing by `fr/playback_freq` here would replay every voice
+/// 32768/playback_freq times too fast (2.45x at the default 13379Hz):
+/// that quotient is per *driver output sample*, and this function runs
+/// once per *grid tick*, not once per driver tick.
 pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
     let area = bus.apu().sound_area;
     if area == 0 {
         return;
     }
-    let (channels, master, play_freq) = parse_mode(bus.apu().sound_mode);
+    let (channels, master, _) = parse_mode(bus.apu().sound_mode);
     let mut sum_l = 0.0f32;
     let mut sum_r = 0.0f32;
     for i in 0..channels {
@@ -137,7 +142,7 @@ pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
             continue;
         }
         // fr = rate / 2^((180-key-fine/256)/12): effective sample rate.
-        let mut pos = voice.pos + f64::from(fr) / f64::from(play_freq);
+        let mut pos = voice.pos + f64::from(fr) / f64::from(crate::apu::MIX_RATE);
         let mut idx = pos as u32;
         if idx >= size {
             if stat & 0x4000 != 0 {
@@ -168,6 +173,87 @@ pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Minimal `SoundDriverBus` over a byte map plus a real `GbaApu`.
+    struct MockBus {
+        apu: GbaApu,
+        mem: HashMap<u32, u8>,
+    }
+
+    impl MockBus {
+        fn new() -> Self {
+            Self {
+                apu: GbaApu::new(),
+                mem: HashMap::new(),
+            }
+        }
+
+        fn write32(&mut self, addr: u32, value: u32) {
+            for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+                self.mem.insert(addr + i as u32, byte);
+            }
+        }
+    }
+
+    impl SoundDriverBus for MockBus {
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.mem.get(&addr).copied().unwrap_or(0)
+        }
+
+        fn read16(&mut self, addr: u32) -> u16 {
+            u16::from_le_bytes([self.read8(addr), self.read8(addr + 1)])
+        }
+
+        fn read32(&mut self, addr: u32) -> u32 {
+            u32::from_le_bytes([
+                self.read8(addr),
+                self.read8(addr + 1),
+                self.read8(addr + 2),
+                self.read8(addr + 3),
+            ])
+        }
+
+        fn write_hle_bios8(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr, value);
+        }
+
+        fn apu(&self) -> &GbaApu {
+            &self.apu
+        }
+
+        fn apu_mut(&mut self) -> &mut GbaApu {
+            &mut self.apu
+        }
+    }
+
+    /// Set up one started voice: SndCh0 plays `fr`-Hz effective rate
+    /// from a 64-sample table at full volume, instant attack.
+    fn started_voice(bus: &mut MockBus, fr: u32) {
+        const AREA: u32 = 0x1000;
+        const WP: u32 = 0x2000;
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80); // start request
+        bus.mem.insert(base + 2, 255); // rv
+        bus.mem.insert(base + 3, 255); // lv
+        bus.mem.insert(base + 4, 255); // at (instant attack)
+        bus.mem.insert(base + 6, 255); // su
+        bus.write32(base + 12, fr);
+        bus.write32(base + 16, WP);
+        bus.write32(WP + 4, fr); // WaveData rate
+        bus.write32(WP + 12, 64); // size
+        for i in 0..64 {
+            bus.mem.insert(WP + 16 + i, 0x40);
+        }
+        sound_driver_main(bus);
+        assert!(bus.apu.driver_voices[0].started);
+        // Latch one real grid sample so `mix_tail_mut` has a fold-in
+        // target (512 T-cycles per native-grid sample).
+        for _ in 0..512 {
+            bus.apu.tick();
+        }
+    }
 
     #[test]
     fn mode_defaults_match_gbatek() {
@@ -179,5 +265,34 @@ mod tests {
         // channels=4, master=10, freq index 3 -> 10512Hz.
         let mode = (4 << 8) | (10 << 12) | (3 << 16);
         assert_eq!(parse_mode(mode), (4, 10, 10512));
+    }
+
+    #[test]
+    fn driver_voice_advances_at_fr_per_grid_second() {
+        // `fr` is an effective sample rate in Hz and `mix_driver_grid`
+        // runs once per 32768Hz grid tick, so one call must advance the
+        // position by fr/32768 — here 16384Hz -> exactly 0.5/call.
+        // (The old fr/playback_freq quotient replayed voices 2.45x fast
+        // at the default 13379Hz driver rate.)
+        let mut bus = MockBus::new();
+        started_voice(&mut bus, 16_384);
+        for _ in 0..4 {
+            mix_driver_grid(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].pos, 2.0);
+    }
+
+    #[test]
+    fn driver_voice_pitch_ignores_driver_mixer_rate() {
+        // Same voice under the fastest driver rate (index 12, 42048Hz)
+        // must advance identically: the grid rate, not the mixer rate,
+        // sets the per-call step.
+        let mut bus = MockBus::new();
+        bus.apu.sound_mode = 12 << 16;
+        started_voice(&mut bus, 16_384);
+        for _ in 0..4 {
+            mix_driver_grid(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].pos, 2.0);
     }
 }
