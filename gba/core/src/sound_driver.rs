@@ -295,4 +295,63 @@ mod tests {
         }
         assert_eq!(bus.apu.driver_voices[0].pos, 2.0);
     }
+
+    #[test]
+    fn driver_voice_sine_table_plays_at_fr_hz() {
+        // End-to-end pitch guard for the fr/MIX_RATE fix: a looped
+        // 64-sample sine table at fr = 32768 advances one table step per
+        // grid tick, i.e. a 512Hz tone. (The old fr/playback_freq step
+        // replayed it at ~1254Hz instead.)
+        use crate::apu::fft_test::{
+            FFT_SAMPLE_COUNT, GRID_RATE_HZ, average_band_power, dominant_frequency,
+            dominant_frequency_tolerance, power_spectrum,
+        };
+        use std::f64::consts::PI;
+
+        const AREA: u32 = 0x1000;
+        const WP: u32 = 0x2000;
+        let mut bus = MockBus::new();
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80); // start request
+        bus.mem.insert(base + 2, 255); // rv
+        bus.mem.insert(base + 3, 255); // lv
+        bus.mem.insert(base + 4, 255); // at (instant attack)
+        bus.mem.insert(base + 6, 255); // su (sustain holds env at 255)
+        bus.write32(base + 12, crate::apu::MIX_RATE);
+        bus.write32(base + 16, WP);
+        bus.mem.insert(WP + 2, 0x00);
+        bus.mem.insert(WP + 3, 0x40); // stat: loop
+        bus.write32(WP + 4, crate::apu::MIX_RATE);
+        bus.write32(WP + 8, 0); // loop start
+        bus.write32(WP + 12, 64); // size
+        for i in 0..64u32 {
+            let sine = (127.0 * (2.0 * PI * f64::from(i) / 64.0).sin()).round() as i8;
+            bus.mem.insert(WP + 16 + i, sine as u8);
+        }
+        sound_driver_main(&mut bus);
+        assert!(bus.apu.driver_voices[0].started);
+
+        while bus.apu.grid_buffer().len() < FFT_SAMPLE_COUNT {
+            if bus.apu.tick() {
+                mix_driver_grid(&mut bus);
+            }
+        }
+        let samples: Vec<f32> = bus
+            .apu
+            .grid_buffer()
+            .iter()
+            .take(FFT_SAMPLE_COUNT)
+            .map(|sample| sample.0)
+            .collect();
+        let dominant = dominant_frequency(&samples, GRID_RATE_HZ);
+        let tolerance = dominant_frequency_tolerance(GRID_RATE_HZ, FFT_SAMPLE_COUNT);
+        assert!(
+            (dominant - 512.0).abs() <= tolerance,
+            "driver voice should play 512Hz, got {dominant} (tol {tolerance})"
+        );
+        let spectrum = power_spectrum(&samples);
+        let energy = average_band_power(&spectrum, GRID_RATE_HZ, 100.0, 2000.0);
+        assert!(energy > 1e-6, "driver voice must sound, energy={energy}");
+    }
 }
