@@ -1061,6 +1061,32 @@ mod tests {
     }
 
     #[test]
+    fn ball_tray_ball_sequence_triggers_and_sounds() {
+        // se_ball_tray_ball (Pokemon Center ball placement): square_1_alt,
+        // sweep 0x24 (pace 2/inc/shift 4), duty 0, decay 2. The note is a
+        // by-design ~12ms blip (the arming sweep overflows at the second
+        // sequencer tick on HW too); assert it triggers and sounds at all.
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0x77FF);
+        apu.write_soundcnt_hi(0x0B0B);
+        apu.write_sound1cnt_lo(0x24);
+        // NR11 = duty 0/len 0, NR12 = vol 12/dec/pace 2 (halfword).
+        apu.write_sound1cnt_hi(0xC200);
+        apu.write_sound1cnt_x(0x8762);
+        assert!(apu.sq1.core.active);
+        for _ in 0..280896u32 {
+            apu.tick();
+        }
+        let out = apu.drain_resampled(48_000);
+        let energy: f32 = out
+            .iter()
+            .map(|s| s.left * s.left + s.right * s.right)
+            .sum();
+        assert!(energy > 0.05, "ball SE must sound, energy={energy}");
+    }
+
+    #[test]
     fn apu_state_round_trips_mid_note() {
         let mut apu = GbaApu::new();
         apu.write_soundcnt_x(0x80);
