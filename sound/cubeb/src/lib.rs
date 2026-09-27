@@ -132,14 +132,6 @@ impl AudioBackend for CubebAudio {
             }
         }
     }
-
-    fn buffered(&self) -> u64 {
-        self.data_sender.len() as u64
-    }
-
-    fn buffer_capacity(&self) -> u64 {
-        self.data_sender.capacity().unwrap_or(0) as u64
-    }
 }
 
 pub struct CubebFactory;

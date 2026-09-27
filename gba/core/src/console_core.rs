@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
-    audio::{AudioBackend, RateController, StereoSample},
+    audio::{AudioBackend, StereoSample},
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -34,10 +34,6 @@ pub struct GbaConsoleCore {
     /// Resample scratch reused every frame: `drain_resampled_into`
     /// fills it instead of allocating a fresh Vec per frame.
     resample_scratch: Vec<StereoSample>,
-    /// Dynamic rate control: stretches the resample ratio to hold the
-    /// backend queue near half-full (slow frames speed up slightly
-    /// instead of gaping). Host-side only, never serialized.
-    rate_controller: RateController,
 }
 
 impl GbaConsoleCore {
@@ -48,7 +44,6 @@ impl GbaConsoleCore {
             emu_input,
             paused: false,
             resample_scratch: Vec::new(),
-            rate_controller: RateController::new(),
         }
     }
 
@@ -99,18 +94,14 @@ impl ConsoleCore for GbaConsoleCore {
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
         // frame end. Bit-identical to per-cycle stepping.
         loaded.system.step_batch(280_896);
-        // Dynamic rate control: stretch this frame's resample ratio to
-        // the backend queue level (slow frames emit more samples instead
-        // of leaving the device to gape on silence).
+        // Drain native-grid audio at the device rate, reusing the
+        // frame scratch (no per-frame allocation).
         let rate = self.audio.sample_rate();
-        let ratio = self
-            .rate_controller
-            .update(self.audio.buffered(), self.audio.buffer_capacity());
-        loaded.system.bus.apu_mut().drain_resampled_into_with_ratio(
-            rate,
-            ratio,
-            &mut self.resample_scratch,
-        );
+        loaded
+            .system
+            .bus
+            .apu_mut()
+            .drain_resampled_into(rate, &mut self.resample_scratch);
         for sample in self.resample_scratch.iter().copied() {
             self.audio.push(sample);
         }
@@ -143,14 +134,12 @@ impl ConsoleCore for GbaConsoleCore {
         };
         self.loaded = Some(Self::create_loaded(rom, options)?);
         self.paused = false;
-        self.rate_controller.reset();
         Ok(())
     }
 
     fn unload(&mut self) {
         self.loaded = None;
         self.paused = false;
-        self.rate_controller.reset();
     }
 
     fn reset(&mut self) {
@@ -176,7 +165,6 @@ impl ConsoleCore for GbaConsoleCore {
             cart.gpio.set_solar_level(current.options.solar_light_level);
         }
         self.loaded = Some(fresh);
-        self.rate_controller.reset();
     }
 
     fn paused(&self) -> bool {
@@ -214,9 +202,6 @@ impl ConsoleCore for GbaConsoleCore {
         }
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system = candidate;
-        // The backend queue still holds pre-switch audio: restart the
-        // stretch from nominal instead of chasing a stale timeline.
-        self.rate_controller.reset();
         Ok(())
     }
 

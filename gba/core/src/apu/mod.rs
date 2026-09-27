@@ -848,21 +848,6 @@ impl GbaApu {
     /// fills the caller-owned buffer (cleared first, capacity reused)
     /// instead of allocating per frame. Bit-identical output.
     pub fn drain_resampled_into(&mut self, rate: u32, out: &mut Vec<StereoSample>) {
-        self.drain_resampled_into_with_ratio(rate, 1.0, out);
-    }
-
-    /// Ratio-stretched [`drain_resampled_into`](Self::drain_resampled_into):
-    /// `ratio` scales device samples per grid sample (dynamic rate
-    /// control: >1 produces more samples to refill a starved backend
-    /// queue, <1 fewer to drain a flooded one). 1.0 is bit-identical to
-    /// the fixed-rate drain; the grid buffer is consumed at the same
-    /// cursor, so switching ratios mid-stream never gaps or repeats.
-    pub fn drain_resampled_into_with_ratio(
-        &mut self,
-        rate: u32,
-        ratio: f32,
-        out: &mut Vec<StereoSample>,
-    ) {
         out.clear();
         if self.mix_buffer.is_empty() || rate == 0 {
             return;
@@ -872,8 +857,7 @@ impl GbaApu {
             self.output_hpf_r = IirFilter::get_highpass_filter(rate as f32, OUTPUT_HPF_CUTOFF_HZ);
             self.output_hpf_rate = rate;
         }
-        let ratio = ratio.clamp(0.5, 2.0);
-        let step = f64::from(MIX_RATE) / f64::from(rate) / f64::from(ratio);
+        let step = f64::from(MIX_RATE) / f64::from(rate);
         // Position relative to the current buffer head.
         let mut pos = self.rs_pos;
         let buf = &self.mix_buffer;
@@ -1026,43 +1010,6 @@ mod tests {
         let mut apu = GbaApu::new();
         apu.mix_buffer = vec![(level, level); frames];
         apu
-    }
-
-    #[test]
-    fn drain_ratio_scales_output_count_without_gaps() {
-        // Dynamic rate control: ratio > 1 emits more device samples per
-        // grid sample (refill), < 1 fewer (catch up); the cursor carries
-        // across ratios so back-to-back drains never gap or repeat.
-        let mut apu = GbaApu::new();
-        apu.write_soundcnt_x(0x80);
-        apu.write_sound2cnt_lo(0x81F3);
-        apu.write_sound2cnt_hi(0x8385);
-        for _ in 0..280896u32 {
-            apu.tick();
-        }
-        let nominal = apu.drain_resampled(48_000).len();
-        assert!(nominal > 700 && nominal < 900);
-
-        let mut apu = GbaApu::new();
-        apu.write_soundcnt_x(0x80);
-        apu.write_sound2cnt_lo(0x81F3);
-        apu.write_sound2cnt_hi(0x8385);
-        for _ in 0..280896u32 {
-            apu.tick();
-        }
-        let mut fast = Vec::new();
-        let mut slow = Vec::new();
-        apu.drain_resampled_into_with_ratio(48_000, 1.05, &mut fast);
-        assert!(fast.len() > nominal);
-        for _ in 0..280896u32 {
-            apu.tick();
-        }
-        apu.drain_resampled_into_with_ratio(48_000, 0.95, &mut slow);
-        assert!(slow.len() < nominal);
-        // Continuity: last fast sample flows into first slow sample
-        // (shared cursor, no reset between ratios).
-        assert!(fast.iter().all(|s| s.left.is_finite()));
-        assert!(slow.iter().all(|s| s.left.is_finite()));
     }
 
     #[test]
