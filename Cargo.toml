@@ -39,6 +39,7 @@ members = [
   "sound/cpal",
   "sound/cubeb",
   "sound/filter",
+  "sound/spectrum",
   "timer",
   "traits/core",
   "traits/emu-thread",
@@ -198,6 +199,7 @@ nerust_settings_traits = { path = "traits/settings" }
 nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }
 nerust_sound_filter = { path = "sound/filter" }
+nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_tao = { path = "gui/frontends/tao" }
 nerust_timer = { path = "timer" }
 objc2 = { default-features = false, version = "=0.6.4" }

@@ -3004,6 +3004,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_serialize",
  "nerust_sound_filter",
+ "nerust_sound_spectrum",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3287,6 +3288,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_serialize",
  "nerust_sound_filter",
+ "nerust_sound_spectrum",
  "rmp-serde",
  "serde",
  "serde_bytes",
@@ -3486,6 +3488,10 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
 ]
+
+[[package]]
+name = "nerust_sound_spectrum"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_tao"

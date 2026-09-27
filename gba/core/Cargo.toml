@@ -22,6 +22,9 @@ typetag.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
 
+[dev-dependencies]
+nerust_sound_spectrum.workspace = true
+
 [features]
 # Test-ROM log sink speaking the mGBA debug-log protocol (0x4FFF600
 # string buffer, 0x4FFF700 flags, 0x4FFF780 enable handshake). This is
