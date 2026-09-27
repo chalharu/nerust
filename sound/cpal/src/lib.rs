@@ -14,7 +14,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, Ordering},
     mpsc::{SyncSender, TrySendError, sync_channel},
 };
 
@@ -41,11 +41,6 @@ pub struct CpalAudio {
     data_sender: SyncSender<StereoSample>,
     playing: Arc<AtomicBool>,
     needs_clear: Arc<AtomicBool>,
-    /// Samples queued for the device callback (push adds, callback
-    /// consumes; cleared with the queue). Feeds `buffered()` for dynamic
-    /// rate control; transient ±1 races are harmless to the controller.
-    queued: Arc<AtomicUsize>,
-    queue_capacity: usize,
     sample_rate: u32,
     latency_ms: u16,
 }
@@ -91,8 +86,6 @@ impl CpalAudio {
         }
         let callback_playing = playing.clone();
         let callback_needs_clear = needs_clear.clone();
-        let queued = Arc::new(AtomicUsize::new(0));
-        let callback_queued = queued.clone();
 
         let device_name = device
             .description()
@@ -109,25 +102,11 @@ impl CpalAudio {
                 move |output: &mut [f32], _info: &cpal::OutputCallbackInfo| {
                     if callback_needs_clear.swap(false, Ordering::AcqRel) {
                         while data_receiver.try_recv().is_ok() {}
-                        callback_queued.store(0, Ordering::Release);
                     }
                     let active = callback_playing.load(Ordering::Acquire);
                     for frame in output.chunks_mut(channels as usize) {
                         let sample = if active {
-                            match data_receiver.try_recv() {
-                                Ok(sample) => {
-                                    // Saturating: a push landing between the
-                                    // clear-drain and its counter reset can
-                                    // leave a queued sample uncounted.
-                                    callback_queued
-                                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                                            v.checked_sub(1)
-                                        })
-                                        .ok();
-                                    sample
-                                }
-                                Err(_) => StereoSample::SILENCE,
-                            }
+                            data_receiver.try_recv().unwrap_or(StereoSample::SILENCE)
                         } else {
                             StereoSample::SILENCE
                         };
@@ -144,8 +123,6 @@ impl CpalAudio {
             data_sender,
             playing,
             needs_clear,
-            queued,
-            queue_capacity,
             sample_rate,
             latency_ms,
         })
@@ -171,22 +148,11 @@ impl AudioBackend for CpalAudio {
 
     fn push(&mut self, data: StereoSample) {
         match self.data_sender.try_send(data) {
-            Ok(()) => {
-                self.queued.fetch_add(1, Ordering::AcqRel);
-            }
-            Err(TrySendError::Full(_)) => {}
+            Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => {
                 log::warn!("cpal audio: channel send failed (receiver dropped)");
             }
         }
-    }
-
-    fn buffered(&self) -> u64 {
-        self.queued.load(Ordering::Acquire) as u64
-    }
-
-    fn buffer_capacity(&self) -> u64 {
-        self.queue_capacity as u64
     }
 
     fn reconnect(&mut self) {

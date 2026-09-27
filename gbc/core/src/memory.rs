@@ -796,12 +796,6 @@ impl GbcMemoryBus {
         self.apu.set_sample_rate(sample_rate);
     }
 
-    /// Dynamic rate-control stretch for the next frame's sample
-    /// generation (see `GbcApu::set_rate_ratio`).
-    pub fn set_audio_rate_ratio(&mut self, ratio: f32) {
-        self.apu.set_rate_ratio(ratio);
-    }
-
     pub fn render_frame(&self, fb: &mut nerust_render_traits::FrameBuffer) {
         self.ppu.render(fb);
     }
