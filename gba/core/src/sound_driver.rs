@@ -255,6 +255,23 @@ mod tests {
         }
     }
 
+    /// Start SndCh0 with the given ADSR bytes and hold the note: the
+    /// start bit is consumed by the first `sound_driver_main` call, and
+    /// any nonzero `sf` afterwards sustains until release/stop.
+    fn adsr_voice(bus: &mut MockBus, at: u8, de: u8, su: u8, re: u8) {
+        const AREA: u32 = 0x1000;
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80);
+        bus.mem.insert(base + 4, at);
+        bus.mem.insert(base + 5, de);
+        bus.mem.insert(base + 6, su);
+        bus.mem.insert(base + 7, re);
+        sound_driver_main(bus);
+        assert!(bus.apu.driver_voices[0].started);
+        bus.mem.insert(base, 0x01);
+    }
+
     #[test]
     fn mode_defaults_match_gbatek() {
         assert_eq!(parse_mode(0), (8, 15, 13379));
@@ -353,5 +370,68 @@ mod tests {
         let spectrum = power_spectrum(&samples);
         let energy = average_band_power(&spectrum, GRID_RATE_HZ, 100.0, 2000.0);
         assert!(energy > 1e-6, "driver voice must sound, energy={energy}");
+    }
+
+    #[test]
+    fn driver_voice_attack_climbs_linearly_then_holds() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 10, 0, 255, 0);
+        // The start call already attacked 0 -> 10.
+        let mut envs = Vec::new();
+        for _ in 0..24 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        let expected: Vec<f32> = (2..=25).map(|k| k as f32 * 10.0).collect();
+        assert_eq!(envs, expected);
+        // 250 + 10 clamps to 255, then sustain holds it there.
+        sound_driver_main(&mut bus);
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        for _ in 0..3 {
+            sound_driver_main(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+    }
+
+    #[test]
+    fn driver_voice_decay_overshoots_toward_sustain() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 255, 128, 100, 0);
+        // The start call attacked straight to 255.
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        let mut envs = Vec::new();
+        for _ in 0..3 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        // 255 -> 127.5 -> 100.0 (decay clamps at sustain), then the
+        // instant attack re-fires (100.0 < su + 1): the driver's decay
+        // pumps between sustain and full scale.
+        assert_eq!(envs, vec![127.5, 100.0, 255.0]);
+    }
+
+    #[test]
+    fn driver_voice_release_fades_to_stop() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 255, 0, 255, 128);
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        const AREA: u32 = 0x1000;
+        bus.mem.insert(AREA + SNDCH_BASE, 0x40);
+        let mut envs = Vec::new();
+        for _ in 0..8 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        assert_eq!(
+            envs,
+            vec![
+                127.5, 63.75, 31.875, 15.9375, 7.96875, 3.984375, 1.9921875, 0.99609375
+            ]
+        );
+        // 0.99609375 x 0.5 falls below 0.5: silence, channel stopped.
+        sound_driver_main(&mut bus);
+        assert_eq!(bus.apu.driver_voices[0].env, 0.0);
+        assert!(!bus.apu.driver_voices[0].started);
+        assert_eq!(bus.mem.get(&(AREA + SNDCH_BASE)), Some(&0));
     }
 }

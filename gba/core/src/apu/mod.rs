@@ -1013,6 +1013,7 @@ impl GbaApu {
 
 #[cfg(test)]
 mod tests {
+    use super::fft_test::{FFT_SAMPLE_COUNT, dominant_frequency, dominant_frequency_tolerance};
     use super::*;
 
     fn dc_apu(frames: usize, level: f32) -> GbaApu {
@@ -1247,6 +1248,169 @@ mod tests {
                     .import_state(decoded)
                     .unwrap_or_else(|e| panic!("import failed at tick {i}: {e}"));
             }
+        }
+    }
+
+    #[test]
+    fn channel_enables_gate_left_and_right() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        // ch2 on the right only: full volumes, R enable bit 9, no L enable.
+        apu.write(0x04000080, 0x0277);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        assert!(apu.sq2.core.active);
+        while apu.mix_buffer.len() < 2048 {
+            apu.tick();
+        }
+        assert!(
+            apu.mix_buffer.iter().all(|sample| sample.0 == 0.0),
+            "muted side must be exactly silent"
+        );
+        let energy: f32 = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.1 * sample.1)
+            .sum();
+        assert!(energy > 1e-6, "enabled side must sound, energy={energy}");
+    }
+
+    #[test]
+    fn master_volumes_scale_each_side() {
+        // L volume 0 (x1) vs R volume 7 (x8): peaks must carry the exact
+        // integer ratio, documenting the >>5 truncation asymmetry
+        // ((-60) >> 5 == -2 on the quiet side).
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFF07);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        while apu.mix_buffer.len() < 2048 {
+            apu.tick();
+        }
+        let peak_l = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.0.abs())
+            .fold(0.0f32, f32::max);
+        let peak_r = apu
+            .mix_buffer
+            .iter()
+            .map(|sample| sample.1.abs())
+            .fold(0.0f32, f32::max);
+        assert_eq!(peak_l, 2.0 / 512.0, "quiet side peak");
+        assert_eq!(peak_r, 15.0 / 512.0, "loud side peak");
+    }
+
+    #[test]
+    fn voices_route_to_left_and_right_independently() {
+        // ch1 512Hz left-only, ch2 256Hz right-only: each side must carry
+        // its own pitch.
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0x1277);
+        apu.write_soundcnt_hi(0x0003);
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF080);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8600);
+        assert!(apu.sq1.core.active);
+        assert!(apu.sq2.core.active);
+        while apu.mix_buffer.len() < FFT_SAMPLE_COUNT {
+            apu.tick();
+        }
+        let left: Vec<f32> = apu.mix_buffer.iter().map(|sample| sample.0).collect();
+        let right: Vec<f32> = apu.mix_buffer.iter().map(|sample| sample.1).collect();
+        let tolerance = dominant_frequency_tolerance(MIX_RATE as f32, FFT_SAMPLE_COUNT);
+        let pitch_l = dominant_frequency(&left, MIX_RATE as f32);
+        let pitch_r = dominant_frequency(&right, MIX_RATE as f32);
+        assert!(
+            (pitch_l - 512.0).abs() <= tolerance,
+            "left should carry ch1 512Hz, got {pitch_l}"
+        );
+        assert!(
+            (pitch_r - 256.0).abs() <= tolerance,
+            "right should carry ch2 256Hz, got {pitch_r}"
+        );
+    }
+
+    #[test]
+    fn mix_clips_at_upper_rail() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        // PSG x4, FIFO A x4 to L+R.
+        apu.write_soundcnt_hi(0x0307);
+        // ch1/ch2 maxed at duty 50%, ch3 full-volume 0xFF table, ch4 idle.
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF080);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.wave_ram.fill(0xFF);
+        apu.write_sound3cnt_lo(0x0080);
+        apu.write_sound3cnt_hi(0x2000);
+        apu.write_sound3cnt_x(0x8700);
+        apu.dac_a = 127;
+        // Square phase reaches a high step at sample 32 (phase 5).
+        while apu.mix_buffer.len() < 40 {
+            apu.tick();
+        }
+        let last = apu.mix_buffer[39];
+        // (15 + 15 + 7) * 32 >> 5 + 127 * 4 = 545; +512 bias = 1057,
+        // clamped to the 10-bit rail: 1023 / 512 - 1.
+        assert_eq!(last.0, 1023.0 / 512.0 - 1.0);
+        assert_eq!(last.1, 1023.0 / 512.0 - 1.0);
+    }
+
+    #[test]
+    fn mix_clips_at_lower_rail() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        // PSG x4, FIFO A x4 to L+R.
+        apu.write_soundcnt_hi(0x0307);
+        // ch1/ch2 maxed at duty 0 (low from phase 1), ch3 0x00 table.
+        apu.write_sound1cnt_lo(0x00);
+        apu.write_sound1cnt_hi(0xF000);
+        apu.write_sound1cnt_x(0x8700);
+        apu.write_sound2cnt_lo(0xF000);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.wave_ram.fill(0x00);
+        apu.write_sound3cnt_lo(0x0080);
+        apu.write_sound3cnt_hi(0x2000);
+        apu.write_sound3cnt_x(0x8700);
+        apu.dac_a = -128;
+        while apu.mix_buffer.is_empty() {
+            apu.tick();
+        }
+        let first = apu.mix_buffer[0];
+        // (-15 - 15 - 8) - 128 * 4 = -546; +512 bias = -34 < 0,
+        // clamped to the rail: silence at -1.0.
+        assert_eq!(first.0, -1.0);
+        assert_eq!(first.1, -1.0);
+    }
+
+    #[test]
+    fn soundbias_centers_silence() {
+        for (bias, expected) in [
+            (0x000u16, -1.0f32),
+            (0x200, 0.0),
+            (0x3FF, 1023.0 / 512.0 - 1.0),
+        ] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.write(0x04000080, 0x0077);
+            apu.write(0x04000088, bias);
+            while apu.mix_buffer.is_empty() {
+                apu.tick();
+            }
+            let sample = apu.mix_buffer[0];
+            assert_eq!(sample.0, expected, "bias {bias:#X} left");
+            assert_eq!(sample.1, expected, "bias {bias:#X} right");
         }
     }
 }
