@@ -371,7 +371,8 @@ impl GbaApu {
             self.sound4cnt_lo = 0;
             self.sound4cnt_hi = 0;
             self.soundcnt_lo = 0;
-            self.soundcnt_hi &= 0xFF00;
+            // SOUNDCNT_H (4000082h) is kept readable and intact while
+            // sound is off (GBATEK: only 4000060h..4000081h reset).
             self.fifo_a.clear();
             self.fifo_b.clear();
             self.dac_a = 0;
@@ -480,6 +481,11 @@ impl GbaApu {
             env,
             self.seq_step & 1 != 0,
         );
+        // Obscure: a trigger just before an envelope step (step 6 leads
+        // into step 7) reloads the envelope timer with pace + 1.
+        if self.seq_step == 6 {
+            self.sq1.core.envelope_extra_tick();
+        }
         // Dead envelope (DAC off) never starts the voice.
         if env & 0xF800 == 0 {
             self.sq1.core.active = false;
@@ -495,6 +501,9 @@ impl GbaApu {
             env,
             self.seq_step & 1 != 0,
         );
+        if self.seq_step == 6 {
+            self.sq2.core.envelope_extra_tick();
+        }
         if env & 0xF800 == 0 {
             self.sq2.core.active = false;
         }
@@ -526,6 +535,9 @@ impl GbaApu {
             self.sound4cnt_hi & (1 << 3) != 0,
             self.seq_step & 1 != 0,
         );
+        if self.seq_step == 6 {
+            self.noise.core.envelope_extra_tick();
+        }
         if env & 0xF800 == 0 {
             self.noise.core.active = false;
         }
@@ -685,9 +697,13 @@ impl GbaApu {
                 sum_r += out;
             }
         }
-        // (master+1)>>5: voices x mul x (vol) >> 5.
-        sum_l = (sum_l * psg_mul * l_vol) >> 5;
-        sum_r = (sum_r * psg_mul * r_vol) >> 5;
+        // GBATEK Max Output Levels: each PSG spans +/-80h of the 10-bit
+        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120,
+        // mGBA parity), each FIFO the full +/-200h (DAC x gain ~= +/-508).
+        // The summed signed value plus bias clips against the 10-bit rail
+        // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
+        sum_l = (sum_l * psg_mul * l_vol) >> 2;
+        sum_r = (sum_r * psg_mul * r_vol) >> 2;
         let fifo_gain = |fifo: bool| {
             if fifo {
                 if self.soundcnt_hi & (1 << 3) != 0 {
@@ -995,7 +1011,7 @@ impl GbaApu {
             0x04000080 => self.soundcnt_lo = value & 0xFF77,
             0x04000082 => self.write_soundcnt_hi(value),
             0x04000084 => self.write_soundcnt_x(value),
-            0x04000088 => self.soundbias = value & 0xC3FF,
+            0x04000088 => self.soundbias = value & 0xC3FE,
             0x04000090 => self.wave_write(0x90, value),
             0x04000092 => self.wave_write(0x92, value),
             0x04000094 => self.wave_write(0x94, value),
@@ -1279,8 +1295,8 @@ mod tests {
     #[test]
     fn master_volumes_scale_each_side() {
         // L volume 0 (x1) vs R volume 7 (x8): peaks must carry the exact
-        // integer ratio, documenting the >>5 truncation asymmetry
-        // ((-60) >> 5 == -2 on the quiet side).
+        // integer ratio, documenting the >>2 truncation asymmetry
+        // ((-60) >> 2 == -15 on the quiet side).
         let mut apu = GbaApu::new();
         apu.write_soundcnt_x(0x80);
         apu.write(0x04000080, 0xFF07);
@@ -1300,8 +1316,8 @@ mod tests {
             .iter()
             .map(|sample| sample.1.abs())
             .fold(0.0f32, f32::max);
-        assert_eq!(peak_l, 2.0 / 512.0, "quiet side peak");
-        assert_eq!(peak_r, 15.0 / 512.0, "loud side peak");
+        assert_eq!(peak_l, 15.0 / 512.0, "quiet side peak");
+        assert_eq!(peak_r, 120.0 / 512.0, "loud side peak");
     }
 
     #[test]
@@ -1355,15 +1371,16 @@ mod tests {
         apu.write_sound3cnt_hi(0x2000);
         apu.write_sound3cnt_x(0x8700);
         apu.dac_a = 127;
-        // Square phase reaches a high step at sample 32 (phase 5).
-        while apu.mix_buffer.len() < 40 {
+        // Square phase starts at step 0 (high for duty 50%): the very
+        // first grid sample already clips.
+        while apu.mix_buffer.is_empty() {
             apu.tick();
         }
-        let last = apu.mix_buffer[39];
-        // (15 + 15 + 7) * 32 >> 5 + 127 * 4 = 545; +512 bias = 1057,
+        let first = apu.mix_buffer[0];
+        // (15 + 15 + 15) * 32 >> 2 + 127 * 4 = 868; +512 bias = 1380,
         // clamped to the 10-bit rail: 1023 / 512 - 1.
-        assert_eq!(last.0, 1023.0 / 512.0 - 1.0);
-        assert_eq!(last.1, 1023.0 / 512.0 - 1.0);
+        assert_eq!(first.0, 1023.0 / 512.0 - 1.0);
+        assert_eq!(first.1, 1023.0 / 512.0 - 1.0);
     }
 
     #[test]
@@ -1388,7 +1405,7 @@ mod tests {
             apu.tick();
         }
         let first = apu.mix_buffer[0];
-        // (-15 - 15 - 8) - 128 * 4 = -546; +512 bias = -34 < 0,
+        // (-15 - 15 + 0) * 32 >> 2 - 128 * 4 = -752; +512 bias = -240,
         // clamped to the rail: silence at -1.0.
         assert_eq!(first.0, -1.0);
         assert_eq!(first.1, -1.0);
@@ -1399,12 +1416,14 @@ mod tests {
         for (bias, expected) in [
             (0x000u16, -1.0f32),
             (0x200, 0.0),
-            (0x3FF, 1023.0 / 512.0 - 1.0),
+            (0x3FF, 1022.0 / 512.0 - 1.0),
         ] {
             let mut apu = GbaApu::new();
             apu.write_soundcnt_x(0x80);
             apu.write(0x04000080, 0x0077);
             apu.write(0x04000088, bias);
+            // Bit 0 is not used (GBATEK bias level is bits 1-9).
+            assert_eq!(apu.soundbias, bias & 0xC3FE, "bias {bias:#X} mask");
             while apu.mix_buffer.is_empty() {
                 apu.tick();
             }
@@ -1451,7 +1470,7 @@ mod tests {
         assert!(!apu.sq2.core.active);
         assert_eq!(apu.sound1cnt_lo, 0);
         assert_eq!(apu.soundcnt_lo, 0);
-        assert_eq!(apu.soundcnt_hi, 0x0300);
+        assert_eq!(apu.soundcnt_hi, 0x030B);
         assert!(apu.fifo_a.is_empty());
         assert_eq!(apu.dac_a, 0);
         // ...while the frame sequencer free-runs from boot.
@@ -1466,5 +1485,44 @@ mod tests {
             apu.tick();
         }
         assert_eq!(apu.mix_buffer[0], (0.0, 0.0));
+    }
+
+    #[test]
+    fn trigger_before_envelope_step_reloads_timer_plus_one() {
+        // Envelope pace 2; step 6 leads into the step-7 envelope tick.
+        for (step, expected) in [(5u8, 2u8), (6, 3)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.seq_step = step;
+            apu.write_sound2cnt_lo(0xF200);
+            apu.write_sound2cnt_hi(0x8700);
+            assert!(apu.sq2.core.active);
+            assert_eq!(apu.sq2.core.env_timer_for_test(), expected, "step {step}");
+        }
+    }
+
+    #[test]
+    fn wave_64digit_starts_with_selected_bank() {
+        // Bank 0 replays 0xFF, bank 1 replays 0x00: the first grid
+        // sample must follow the NR30-selected bank (GBATEK: output
+        // starts by replaying the currently selected bank).
+        for (bank_bit, expected) in [(0x0000u16, 120.0 / 512.0), (0x0040, 0.0)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.write(0x04000080, 0x4477);
+            apu.write_soundcnt_hi(0x0002);
+            apu.wave_ram[..16].fill(0xFF);
+            apu.wave_ram[16..].fill(0x00);
+            apu.write_sound3cnt_lo(0x0080 | bank_bit | 0x0020);
+            apu.write_sound3cnt_hi(0x2000);
+            apu.write_sound3cnt_x(0x8700);
+            assert!(apu.wave.active);
+            assert_eq!(apu.wave.bank, (bank_bit != 0) as usize);
+            while apu.mix_buffer.is_empty() {
+                apu.tick();
+            }
+            assert_eq!(apu.mix_buffer[0].0, expected, "bank bit {bank_bit:#X}");
+            assert_eq!(apu.mix_buffer[0].1, expected, "bank bit {bank_bit:#X}");
+        }
     }
 }
