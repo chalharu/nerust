@@ -73,8 +73,8 @@ never pick a core yourself.
 - **Touch controls on Android.** On-screen buttons show up on
   their own. You can adjust their size, position, opacity, and
   haptics.
-- **ROM library on Android.** Nerust remembers imported games, so you
-  can jump back in without browsing for files again.
+- **Automatic resume on Android.** Nerust reopens your last game,
+  right where you left it, when you return to the app.
 
 ## Downloads
 
@@ -89,8 +89,10 @@ Find official release files on each
 | `nerust-vX.Y.Z-android-arm64-v8a.apk` | Android arm64 |
 
 Each desktop archive holds the `nerust` app, this README, and the
-license, plus a `.sha256` checksum file. The Android build ships as a
-signed APK. The macOS app carries an ad-hoc signature and lacks
+license, plus a `.sha256` checksum file. The Android build ships as an
+APK signed with the project's own key. Since it comes from outside
+Google Play, Android warns you each time you install it. Allow the
+install to proceed. The macOS app carries an ad-hoc signature and lacks
 notarization, so macOS may ask you to allow it in System Settings on
 first launch.
 
@@ -105,12 +107,12 @@ first launch.
 
 ## Getting started (Android)
 
-1. Install the APK and open Nerust. Android asks you to allow installs
-   from this source once, since you sideload the app instead of
-   installing it from a store.
-2. Import a game through the system file picker. Nerust keeps imported
-   games in its library. It needs no broad storage access.
-3. Tap a game to start. On-screen buttons show up on their own. Tune
+1. Install the APK and open Nerust. Since you sideload the app
+   instead of installing it from a store, Android shows a warning on
+   every install. Allow it to proceed.
+2. Open a game through the system file picker. Nerust needs no
+   broad storage access.
+3. Once the game starts, on-screen buttons show up on their own. Tune
    them (size, position, opacity, haptics) in Settings.
 
 ## Controls
@@ -144,9 +146,10 @@ Manage slots (create, select, save, load, or delete) under
   is not corrupt. Headerless or patched ROMs can fail detection.
 - **No sound, or choppy audio.** Check the audio settings. Make sure
   no other app holds exclusive control of the audio device.
-- **Android: the game list is empty after a reinstall.** The library
-  relies on file access you granted before. Re-import the game if the
-  system revoked that access.
+- **Android: the previous game does not reopen.** Nerust restores
+  your last game through the file access you granted before.
+  Open it again through the picker if the system revoked that
+  access.
 - **macOS: "app is damaged" or "can't be opened".** The release build
   lacks notarization. Right-click the app and pick Open, or allow it
   in System Settings → Privacy & Security.
