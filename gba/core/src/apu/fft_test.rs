@@ -218,6 +218,69 @@ fn solo_bus(apu: &mut GbaApu) {
 }
 
 #[test]
+fn square_ch1_sounds_at_register_pitch() {
+    let mut apu = GbaApu::new();
+    solo_bus(&mut apu);
+    // Sweep off (pace 0 decodes to the off-code 8, no shift).
+    apu.write_sound1cnt_lo(0x00);
+    // Duty 50%, length held (gate off), envelope frozen at 15.
+    apu.write_sound1cnt_hi(0xF080);
+    // freq 0x700 + trigger: 16.78MHz / (128 * (2048 - 0x700)) = 512Hz.
+    apu.write_sound1cnt_x(0x8700);
+    assert!(apu.sq1.core.active);
+
+    let samples = capture_grid_mono(&mut apu, FFT_SAMPLE_COUNT);
+    let dominant = dominant_frequency(&samples, GRID_RATE_HZ);
+    let tolerance = dominant_frequency_tolerance(GRID_RATE_HZ, FFT_SAMPLE_COUNT);
+    assert!(
+        (dominant - 512.0).abs() <= tolerance,
+        "square ch1 should sound 512Hz, got {dominant} (tol {tolerance})"
+    );
+}
+
+#[test]
+fn square_ch1_sweep_glides_upward_then_kills() {
+    let mut apu = GbaApu::new();
+    solo_bus(&mut apu);
+    // Sweep pace 7 / increment / shift 2: each calculation adds a quarter
+    // of the shadow, every 7th sequencer sweep tick (~55ms). From 0x300
+    // the trigger-time calculation jumps straight to 0x3C0 (~120Hz),
+    // periodic steps climb (~155Hz, ~239Hz), and the increment-mode
+    // one-step-ahead overflow check kills the voice mid-glide (~160ms).
+    apu.write_sound1cnt_lo(0x72);
+    apu.write_sound1cnt_hi(0xF080);
+    apu.write_sound1cnt_x(0x8300);
+    assert!(apu.sq1.core.active);
+
+    // 2048-sample windows (62.5ms each, 16Hz bins): the early window is
+    // dominated by the ~120Hz start, the later one by the ~239Hz step.
+    while apu.grid_buffer().len() < 5120 {
+        apu.tick();
+    }
+    let early: Vec<f32> = apu.grid_buffer()[0..2048]
+        .iter()
+        .map(|sample| sample.0)
+        .collect();
+    let late: Vec<f32> = apu.grid_buffer()[3072..5120]
+        .iter()
+        .map(|sample| sample.0)
+        .collect();
+    let early_pitch = dominant_frequency(&early, GRID_RATE_HZ);
+    let late_pitch = dominant_frequency(&late, GRID_RATE_HZ);
+    assert!(
+        late_pitch - early_pitch > 50.0,
+        "sweep should glide up: early={early_pitch}, late={late_pitch}"
+    );
+    while apu.grid_buffer().len() < 6144 {
+        apu.tick();
+    }
+    assert!(
+        !apu.sq1.core.active,
+        "sweep overflow should have killed the voice"
+    );
+}
+
+#[test]
 fn square_ch2_sounds_at_register_pitch() {
     let mut apu = GbaApu::new();
     solo_bus(&mut apu);
