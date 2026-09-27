@@ -123,7 +123,10 @@ impl DynamicRateFilter {
                 self.frac += f64::from(ratio);
                 while self.frac >= 1.0 {
                     self.frac -= 1.0;
-                    let t = (1.0 - self.frac) as f32;
+                    // Clamp: when the carry crosses two boundaries at once
+                    // the raw phase goes slightly negative (extrapolation
+                    // just past `prev`); pin it to a clean repeat instead.
+                    let t = (1.0 - self.frac).clamp(0.0, 1.0) as f32;
                     backend.push(StereoSample::new(
                         self.prev.left + (sample.left - self.prev.left) * t,
                         self.prev.right + (sample.right - self.prev.right) * t,
@@ -248,6 +251,23 @@ mod tests {
         assert!(backend.pushed.iter().all(|s| s.left.is_finite()));
         // No blast: first outputs track the first inputs.
         assert!((backend.pushed[0].left - input[0].left).abs() < 0.01);
+    }
+
+    #[test]
+    fn ratio_recovers_when_queue_returns_to_half() {
+        // Closed-loop recovery: starve first (ratio rails at 1.05), then
+        // hold half fill and watch the ratio glide back to nominal.
+        let mut filter = DynamicRateFilter::new();
+        let mut backend = Probe::new(0, 4800);
+        filter.push_frame(&ramp(20_000), &mut backend);
+        assert_eq!(filter.ratio(), 1.05);
+        backend.buffered = 2400;
+        filter.push_frame(&ramp(20_000), &mut backend);
+        assert!(
+            (filter.ratio() - 1.0).abs() < 0.01,
+            "ratio must recover, got {}",
+            filter.ratio()
+        );
     }
 
     #[test]

@@ -200,7 +200,8 @@ impl EmuCore {
             .map_err(|_| OperationError::WorkerUnavailable)
     }
 
-    /// Re-assert the audio backend start on the emu thread (idempotent).
+    /// Re-acquire the audio backend stream on the emu thread (idempotent;
+    /// the thread also restarts the rate-control filter from nominal).
     pub fn restart_audio(&self) -> Result<(), OperationError> {
         self.emu
             .send(EmuCommand::RestartAudio)
