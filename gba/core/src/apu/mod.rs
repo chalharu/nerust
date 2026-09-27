@@ -1413,4 +1413,58 @@ mod tests {
             assert_eq!(sample.1, expected, "bias {bias:#X} right");
         }
     }
+
+    #[test]
+    fn length_retrigger_quirk_follows_sequencer_parity() {
+        // The trigger-time quirk (extra length tick just before a length
+        // step) is wired to the live sequencer position.
+        for (step, expected) in [(0u8, 64u8), (1, 63)] {
+            let mut apu = GbaApu::new();
+            apu.write_soundcnt_x(0x80);
+            apu.seq_step = step;
+            apu.write_sound2cnt_lo(0xF000);
+            apu.write_sound2cnt_hi(0x8700);
+            assert!(apu.sq2.core.active);
+            assert_eq!(apu.sq2.core.length, expected, "seq_step {step}");
+        }
+    }
+
+    #[test]
+    fn soundcnt_x_off_resets_psg_and_fifos() {
+        let mut apu = GbaApu::new();
+        apu.write_soundcnt_x(0x80);
+        apu.write(0x04000080, 0xFFFF);
+        apu.write_soundcnt_hi(0x0B0B);
+        // A sounding voice, a loaded FIFO and a nonzero DAC latch.
+        apu.write_sound2cnt_lo(0xF080);
+        apu.write_sound2cnt_hi(0x8700);
+        apu.push_fifo(false, 0xAABBCCDD, 4);
+        apu.dac_a = 0x40;
+        assert!(apu.sq2.core.active);
+        assert_eq!(apu.fifo_len(false), 4);
+        // Clearing master enable resets voices, registers, FIFOs and
+        // DACs — but keeps the FIFO routing high byte (the reset bits
+        // 11/15 were already stripped at write time, so 0x0B0B stored
+        // as 0x030B).
+        apu.write_soundcnt_x(0x00);
+        assert_eq!(apu.soundcnt_x, 0);
+        assert!(!apu.sq2.core.active);
+        assert_eq!(apu.sound1cnt_lo, 0);
+        assert_eq!(apu.soundcnt_lo, 0);
+        assert_eq!(apu.soundcnt_hi, 0x0300);
+        assert!(apu.fifo_a.is_empty());
+        assert_eq!(apu.dac_a, 0);
+        // ...while the frame sequencer free-runs from boot.
+        let step = apu.seq_step;
+        for _ in 0..32768 {
+            apu.tick();
+        }
+        assert_eq!(apu.seq_step, (step + 1) & 7);
+        // Re-enable: silence at the bias center.
+        apu.write_soundcnt_x(0x80);
+        while apu.mix_buffer.is_empty() {
+            apu.tick();
+        }
+        assert_eq!(apu.mix_buffer[0], (0.0, 0.0));
+    }
 }

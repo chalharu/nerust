@@ -262,6 +262,7 @@ impl Wave {
         self.active = self.length != 0;
         self.timer = 0;
         self.phase = 0;
+        self.dimension_64 = dimension_64;
         if dimension_64 {
             self.bank = 0;
         }
@@ -563,6 +564,26 @@ mod tests {
     }
 
     #[test]
+    fn length_retrigger_quirk_consumes_extra_tick() {
+        // A trigger landing on an even sequencer step reloads the full
+        // length; one landing just before a length step (odd step)
+        // consumes an extra tick immediately.
+        let mut even = LengthEnvelope::default();
+        even.trigger(64, 8, 0, false);
+        assert_eq!(even.length, 64);
+        let mut odd = LengthEnvelope::default();
+        odd.trigger(64, 8, 0, true);
+        assert_eq!(odd.length, 63);
+        // The wave channel shares the quirk.
+        let mut wave = Wave::default();
+        wave.trigger(200, false, false);
+        assert_eq!(wave.length, 200);
+        let mut wave_odd = Wave::default();
+        wave_odd.trigger(200, false, true);
+        assert_eq!(wave_odd.length, 199);
+    }
+
+    #[test]
     fn sweep_increment_overflow_disables() {
         let mut sq = Square::default();
         sq.core.active = true;
@@ -574,6 +595,45 @@ mod tests {
         sq.sweep_dir_dec = false;
         assert!(!sq.tick_sweep());
         assert!(!sq.core.active);
+    }
+
+    #[test]
+    fn sweep_direction_flip_zombie_kills_channel() {
+        // Arm in decrement mode and run one calculation.
+        let mut sq = Square::default();
+        sq.core.active = true;
+        sq.freq_shadow = 0x200;
+        sq.write_sweep(0x19); // pace 1, decrement, shift 1
+        sq.sweep_timer = 1;
+        assert!(sq.tick_sweep());
+        // Flipping decrement -> increment kills the voice (zombie rule).
+        sq.write_sweep(0x11); // pace 1, increment, shift 1
+        assert!(!sq.core.active);
+    }
+
+    #[test]
+    fn sweep_direction_flip_without_history_spares_channel() {
+        // No calculation ran yet: flipping direction is harmless.
+        let mut sq = Square::default();
+        sq.core.active = true;
+        sq.freq_shadow = 0x200;
+        sq.write_sweep(0x19); // pace 1, decrement, shift 1
+        sq.write_sweep(0x11); // pace 1, increment, shift 1
+        assert!(sq.core.active);
+        // Same-direction rewrite after a calculation is harmless too.
+        sq.sweep_timer = 1;
+        assert!(sq.tick_sweep());
+        sq.write_sweep(0x11);
+        assert!(sq.core.active);
+        // Increment -> decrement flips are always safe.
+        let mut inc = Square::default();
+        inc.core.active = true;
+        inc.freq_shadow = 0x200;
+        inc.write_sweep(0x11);
+        inc.sweep_timer = 1;
+        assert!(inc.tick_sweep());
+        inc.write_sweep(0x19);
+        assert!(inc.core.active);
     }
 
     #[test]
@@ -598,6 +658,32 @@ mod tests {
         assert_eq!(w.nibble(&ram), 0xA);
         w.phase = 1;
         assert_eq!(w.nibble(&ram), 0xB);
+    }
+
+    #[test]
+    fn wave_64digit_mode_alternates_banks() {
+        let mut w = Wave::default();
+        w.trigger(255, true, false);
+        assert!(w.active);
+        assert_eq!(w.bank, 0);
+        // Bank 0 replays 0xFF (nibble 15 -> +7), bank 1 replays 0x00
+        // (nibble 0 -> -8): the output must follow the playing bank.
+        let mut ram = [0xFFu8; 0x20];
+        ram[16..].fill(0x00);
+        assert_eq!(w.output(&ram, 1, false), 7);
+        // Fastest rate: 8 T-cycles per digit, 32 digits per wrap.
+        for _ in 0..32 * 8 {
+            w.tick_timer(0x7FF);
+        }
+        assert_eq!(w.phase, 0);
+        assert_eq!(w.bank, 1);
+        assert_eq!(w.output(&ram, 1, false), -8);
+        for _ in 0..32 * 8 {
+            w.tick_timer(0x7FF);
+        }
+        assert_eq!(w.phase, 0);
+        assert_eq!(w.bank, 0);
+        assert_eq!(w.output(&ram, 1, false), 7);
     }
 
     #[test]
