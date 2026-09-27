@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(crate) mod fft_test;
 /// GBA APU owning sound registers, wave RAM and DirectSound FIFOs.
 /// Four PSG channels (sweep/duty/envelope/length timers, wave table,
 /// noise LFSR) mix with the two timer-clocked FIFO DAC latches at the
@@ -893,6 +895,13 @@ impl GbaApu {
     /// Mutable tail of the grid mix buffer (driver-voice fold-in).
     pub fn mix_tail_mut(&mut self) -> Option<&mut (f32, f32)> {
         self.mix_buffer.last_mut()
+    }
+
+    /// Buffered native-grid samples (test introspection: FFT capture and
+    /// the driver-voice grid loop drain without touching `mix_buffer`).
+    #[cfg(test)]
+    pub(crate) fn grid_buffer(&self) -> &[(f32, f32)] {
+        &self.mix_buffer
     }
 
     /// Wave RAM CPU access (GBATEK NR30): the CPU sees the bank NOT
