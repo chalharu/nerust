@@ -8,8 +8,9 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use nerust_core_traits::{ConsoleCore, EmuCommand, audio::AudioBackend};
+use nerust_core_traits::{ConsoleCore, EmuCommand, LoadCommand, audio::AudioBackend};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
+use nerust_sound_filter::dynamic_rate::DynamicRateFilter;
 use nerust_timer::Timer;
 use thiserror::Error;
 
@@ -83,7 +84,7 @@ impl EmuThread {
             // Session-owned audio transport: core-produced nominal samples
             // collect here, then stretch through the rate-control filter
             // into the backend (both reused every frame, no allocation).
-            let mut filter = nerust_sound_filter::dynamic_rate::DynamicRateFilter::new();
+            let mut filter = DynamicRateFilter::new();
             let mut audio_scratch: Vec<nerust_core_traits::audio::StereoSample> = Vec::new();
 
             let mut timer = Timer::new();
@@ -93,16 +94,8 @@ impl EmuThread {
                 if !loaded {
                     match cmd_rx.recv() {
                         Ok(cmd) => match cmd {
-                            EmuCommand::Load(mut cmd) => {
-                                // Stamp the authoritative device rate: the
-                                // core needs it as data (resamplers,
-                                // save-state validation), never the backend.
-                                cmd.config.audio_sample_rate = Some(audio.sample_rate());
-                                let result = core.load(&cmd.rom, &cmd.config);
-                                loaded = result.is_ok();
-                                filter.reset();
-                                // reply send failure: receiver dropped (timeout/abort) — expected
-                                let _ = cmd.reply.send(result);
+                            EmuCommand::Load(cmd) => {
+                                loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
                             }
                             EmuCommand::Quit => return,
                             _ => {}
@@ -114,13 +107,8 @@ impl EmuThread {
 
                 while let Ok(cmd) = cmd_rx.try_recv() {
                     match cmd {
-                        EmuCommand::Load(mut cmd) => {
-                            cmd.config.audio_sample_rate = Some(audio.sample_rate());
-                            let result = core.load(&cmd.rom, &cmd.config);
-                            loaded = result.is_ok();
-                            filter.reset();
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = cmd.reply.send(result);
+                        EmuCommand::Load(cmd) => {
+                            loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
                         }
                         EmuCommand::Unload => {
                             core.unload();
@@ -228,4 +216,23 @@ impl Drop for EmuThread {
     fn drop(&mut self) {
         self.join();
     }
+}
+
+/// Shared Load handling for the idle and running command loops:
+/// stamps the authoritative device rate (the core needs it as data —
+/// resamplers, save-state validation — never the backend), loads the
+/// ROM and restarts the rate filter. Returns whether a ROM is loaded.
+/// Reply send failure (receiver dropped) is expected during teardown.
+fn handle_load(
+    core: &mut dyn ConsoleCore,
+    audio: &mut dyn AudioBackend,
+    filter: &mut DynamicRateFilter,
+    mut cmd: LoadCommand,
+) -> bool {
+    cmd.config.audio_sample_rate = Some(audio.sample_rate());
+    let result = core.load(&cmd.rom, &cmd.config);
+    filter.reset();
+    let loaded = result.is_ok();
+    let _ = cmd.reply.send(result);
+    loaded
 }

@@ -156,14 +156,6 @@ pub trait ConsoleCore: Send {
     fn unload(&mut self);
     fn reset(&mut self);
 
-    // -- audio --
-    fn set_volume(&mut self, _volume: f32) {}
-
-    /// Re-establish the audio backend after OS lifecycle transitions
-    /// that can kill mobile audio streams (AAudio `Disconnected`); that
-    /// only a fresh stream recovers from. Default is a no-op.
-    fn restart_audio(&mut self) {}
-
     // -- pause --
     fn paused(&self) -> bool;
     fn set_paused(&mut self, paused: bool);
