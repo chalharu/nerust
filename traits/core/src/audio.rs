@@ -44,6 +44,19 @@ pub trait AudioBackend: Send {
     /// no-op for backends that never lose their stream.
     fn reconnect(&mut self) {}
 
+    /// Samples currently queued for the device (device callback has not
+    /// consumed them yet). Observed by the session-owned rate-control
+    /// filter (`nerust_sound_filter::dynamic_rate`), which holds the
+    /// queue near half of `buffer_capacity`. Default 0 (unknown).
+    fn buffered(&self) -> u64 {
+        0
+    }
+
+    /// Queue capacity in samples matching `buffered`. Default 0 (unknown).
+    fn buffer_capacity(&self) -> u64 {
+        0
+    }
+
     /// 再生音量を 0.0〜1.0 の範囲で設定する。
     ///
     /// デフォルト実装は no-op。`GainBackend` が `set_gain()` に委譲する。
@@ -169,6 +182,14 @@ impl AudioBackend for GainBackend {
 
     fn push(&mut self, sample: StereoSample) {
         self.inner.push(sample.scale(self.gain));
+    }
+
+    fn buffered(&self) -> u64 {
+        self.inner.buffered()
+    }
+
+    fn buffer_capacity(&self) -> u64 {
+        self.inner.buffer_capacity()
     }
 
     fn set_volume(&mut self, volume: f32) {
