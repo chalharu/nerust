@@ -10,18 +10,38 @@
 //! Cores stay bit-exact nominal producers and backends stay dumb sinks:
 //! all adaptation state lives here, owned by the session layer, so none
 //! of it can leak into machine states.
+//!
+//! Control law: a wall-clock feed-forward base ratio (device samples per
+//! wall second over nominal input samples per wall second, from cumulative
+//! counters — burst quantization in the queue level vanishes as the totals
+//! grow, so the base converges to the exact systematic offset and then
+//! sits dead still) plus a gentle centering trim on the smoothed queue
+//! fill. The trim is deliberately too weak to turn queue ripple into
+//! pitch: a proportional-on-level controller with real authority hunts
+//! audibly (±30 cents or more) under bursty device consumption.
+
+use std::time::Instant;
 
 use nerust_core_traits::audio::{AudioBackend, StereoSample};
 
-/// Proportional controller holding the backend queue near half-full.
+/// Rate estimator holding the backend queue near half-full.
 /// Output is the device-samples-per-core-sample ratio (1.0 = nominal).
 #[derive(Debug, Clone)]
 pub struct RateController {
     ratio: f32,
     target_fill: f32,
     max_adjust: f32,
-    gain: f32,
     slew: f32,
+    /// Nominal input samples produced since reset (feed-forward clock).
+    produced: u64,
+    /// Wall seconds accumulated alongside `produced` (frozen while the
+    /// session produces nothing, so pause/hiccups cannot skew the base).
+    elapsed: f64,
+    /// Smoothed queue fill feeding the centering trim only.
+    fill_smooth: f32,
+    fill_alpha: f32,
+    /// Trim authority per unit fill error — weak on purpose (see above).
+    trim_gain: f32,
 }
 
 impl Default for RateController {
@@ -30,8 +50,12 @@ impl Default for RateController {
             ratio: 1.0,
             target_fill: 0.5,
             max_adjust: 0.05,
-            gain: 0.6,
             slew: 0.003,
+            produced: 0,
+            elapsed: 0.0,
+            fill_smooth: 0.5,
+            fill_alpha: 0.1,
+            trim_gain: 0.02,
         }
     }
 }
@@ -50,20 +74,50 @@ impl RateController {
     /// load/unload/reset, backend reconnect).
     pub fn reset(&mut self) {
         self.ratio = 1.0;
+        self.produced = 0;
+        self.elapsed = 0.0;
+        self.fill_smooth = self.target_fill;
+    }
+
+    /// Record one production batch: `input_len` nominal input samples
+    /// took `dt_secs` wall seconds. Called once per pushed frame, before
+    /// the control steps that consume it.
+    pub fn note_production(&mut self, input_len: u64, dt_secs: f64) {
+        self.produced = self.produced.saturating_add(input_len);
+        if dt_secs > 0.0 && dt_secs.is_finite() {
+            self.elapsed += dt_secs;
+        }
     }
 
     /// Feed one control step's queue occupancy; returns the updated ratio.
     /// Unknown backends (`capacity == 0`) pin the ratio at nominal.
-    pub fn update(&mut self, buffered: u64, capacity: u64) -> f32 {
+    /// `device_rate` is the backend's nominal drain rate (samples/second).
+    pub fn update(&mut self, buffered: u64, capacity: u64, device_rate: u32) -> f32 {
         if capacity == 0 {
             self.ratio = 1.0;
             return self.ratio;
         }
+        // Feed-forward base: exact systematic offset, ripple-free. Fades
+        // in over 2..10s of production so startup stays bit-exact nominal.
+        let fade = ((self.elapsed - 2.0) / 8.0).clamp(0.0, 1.0);
+        let raw = if self.produced > 0 {
+            f64::from(device_rate) * self.elapsed / self.produced as f64
+        } else {
+            1.0
+        };
+        let base = 1.0 + fade * (raw - 1.0);
+        // Centering trim on the smoothed fill: walks the queue home over
+        // seconds after transients, inaudible under ripple.
         let fill = (buffered as f32 / capacity as f32).clamp(0.0, 1.5);
-        let target = (1.0 + self.gain * (self.target_fill - fill))
-            .clamp(1.0 - self.max_adjust, 1.0 + self.max_adjust);
-        let delta = (target - self.ratio).clamp(-self.slew, self.slew);
-        self.ratio += delta;
+        self.fill_smooth += (fill - self.fill_smooth) * self.fill_alpha;
+        let trim = f64::from(self.trim_gain * (self.target_fill - self.fill_smooth));
+        let target = (base + trim).clamp(
+            1.0 - f64::from(self.max_adjust),
+            1.0 + f64::from(self.max_adjust),
+        );
+        let delta =
+            (target - f64::from(self.ratio)).clamp(-f64::from(self.slew), f64::from(self.slew));
+        self.ratio = (f64::from(self.ratio) + delta) as f32;
         self.ratio
     }
 }
@@ -78,6 +132,7 @@ pub struct DynamicRateFilter {
     prev: StereoSample,
     frac: f64,
     since_update: u64,
+    last_call: Option<Instant>,
 }
 
 impl DynamicRateFilter {
@@ -87,6 +142,7 @@ impl DynamicRateFilter {
             prev: StereoSample::SILENCE,
             frac: 0.0,
             since_update: 0,
+            last_call: None,
         }
     }
 
@@ -100,22 +156,34 @@ impl DynamicRateFilter {
         self.prev = StereoSample::SILENCE;
         self.frac = 0.0;
         self.since_update = 0;
+        self.last_call = None;
     }
 
     /// Stretch one frame's nominal samples against the backend queue
     /// level and push the result. The control step runs about once per
     /// frame worth of pushed samples (`sample_rate / 60`); between steps
-    /// the last ratio holds.
+    /// the last ratio holds. Wall time per call feeds the controller's
+    /// feed-forward clock (see `RateController::note_production`).
     pub fn push_frame(&mut self, samples: &[StereoSample], backend: &mut dyn AudioBackend) {
+        let now = Instant::now();
+        let dt = self
+            .last_call
+            .replace(now)
+            .map(|last| now.duration_since(last).as_secs_f64())
+            .unwrap_or(0.0);
+        self.controller.note_production(samples.len() as u64, dt);
         let interval = (backend.sample_rate() / 60).max(1) as u64;
+        let device_rate = backend.sample_rate();
         let mut ratio = self.controller.ratio();
         for &sample in samples {
             self.since_update += 1;
             if self.since_update >= interval {
                 self.since_update = 0;
-                ratio = self
-                    .controller
-                    .update(backend.buffered(), backend.buffer_capacity());
+                ratio = self.controller.update(
+                    backend.buffered(),
+                    backend.buffer_capacity(),
+                    device_rate,
+                );
             }
             if ratio == 1.0 {
                 backend.push(sample);
@@ -254,39 +322,87 @@ mod tests {
     }
 
     #[test]
-    fn ratio_recovers_when_queue_returns_to_half() {
-        // Closed-loop recovery: starve first (ratio rails at 1.05), then
-        // hold half fill and watch the ratio glide back to nominal.
-        let mut filter = DynamicRateFilter::new();
-        let mut backend = Probe::new(0, 4800);
-        filter.push_frame(&ramp(20_000), &mut backend);
-        assert_eq!(filter.ratio(), 1.05);
-        backend.buffered = 2400;
-        filter.push_frame(&ramp(20_000), &mut backend);
+    fn controller_pins_nominal_without_capacity() {
+        let mut controller = RateController::new();
+        assert_eq!(controller.update(0, 0, 48_000), 1.0);
+        assert_eq!(controller.update(9999, 0, 44_100), 1.0);
+    }
+
+    #[test]
+    fn startup_stays_bit_exact() {
+        // Before 2s of production the feed-forward base is fully faded
+        // out and the trim sees a half-full queue: ratio exactly 1.0,
+        // so early frames pass through untouched.
+        let mut controller = RateController::new();
+        controller.note_production(800, 0.01);
+        assert_eq!(controller.update(2400, 4800, 48_000), 1.0);
+    }
+
+    #[test]
+    fn base_converges_to_systematic_offset_and_holds_steady() {
+        // Regression test for audible pitch wobble: a GBA-paced session
+        // produces 804 nominal samples per 1/60s while the device drains
+        // 799, with zero-mean ±150 burst ripple on the drain. A
+        // proportional-on-level law turns that ripple into ±30-cent pitch
+        // swings; the feed-forward base must sit still once converged.
+        let mut controller = RateController::new();
+        let mut queued = 2400.0f64;
+        let mut ratios = Vec::new();
+        for step in 0..7200 {
+            controller.note_production(804, 1.0 / 60.0);
+            let ratio = controller.update(queued as u64, 4800, 48_000);
+            ratios.push(ratio);
+            let drain = 799.0 + if step % 12 < 6 { 150.0 } else { -150.0 };
+            queued = (queued + 804.0 * f64::from(ratio) - drain).clamp(0.0, 4800.0);
+        }
+        let tail = &ratios[6000..];
+        let mean = tail.iter().sum::<f32>() / tail.len() as f32;
         assert!(
-            (filter.ratio() - 1.0).abs() < 0.01,
-            "ratio must recover, got {}",
-            filter.ratio()
+            (mean - 799.0 / 804.0).abs() < 0.0005,
+            "base must learn the systematic offset, mean={mean}"
+        );
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for &ratio in tail {
+            lo = lo.min(ratio);
+            hi = hi.max(ratio);
+        }
+        assert!(
+            hi - lo < 0.0015,
+            "steady-state wobble must stay under ~±1 cent: [{lo}, {hi}]"
         );
     }
 
     #[test]
-    fn controller_pins_nominal_without_capacity() {
+    fn trim_recenters_full_queue_without_drama() {
+        // Starting from a pinned-full queue, the trim walks the level
+        // home over minutes without ever railing the ratio.
         let mut controller = RateController::new();
-        assert_eq!(controller.update(0, 0), 1.0);
-        assert_eq!(controller.update(9999, 0), 1.0);
+        let mut queued = 4800.0f64;
+        for step in 0..3600 {
+            controller.note_production(804, 1.0 / 60.0);
+            let ratio = controller.update(queued as u64, 4800, 48_000);
+            assert!((0.96..=1.0).contains(&ratio), "step {step}: ratio={ratio}");
+            let drain = 799.0 + if step % 12 < 6 { 150.0 } else { -150.0 };
+            queued = (queued + 804.0 * f64::from(ratio) - drain).clamp(0.0, 4800.0);
+        }
+        let fill = queued / 4800.0;
+        assert!((0.3..0.7).contains(&fill), "fill={fill}");
     }
 
     #[test]
-    fn controller_saturates_at_both_rails() {
+    fn base_clamps_at_rails() {
         let mut controller = RateController::new();
-        assert_eq!(controller.update(0, 1000), 1.003);
-        for _ in 0..100 {
-            controller.update(0, 1000);
+        // Emulation far behind wall clock: raw base explodes, clamp and
+        // slew bound it at +5%.
+        for _ in 0..60 {
+            controller.note_production(80, 1.0);
+            controller.update(2400, 4800, 48_000);
         }
         assert_eq!(controller.ratio(), 1.05);
-        for _ in 0..100 {
-            controller.update(1000, 1000);
+        // ...and far ahead floors it at -5%.
+        for _ in 0..200 {
+            controller.note_production(480_000, 0.001);
+            controller.update(2400, 4800, 48_000);
         }
         assert_eq!(controller.ratio(), 0.95);
     }
