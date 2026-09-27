@@ -433,7 +433,9 @@ impl LengthEnvelope {
                 self.volume
             ));
         }
-        if self.env_timer > 7 {
+        // 8 is producible: pace 7 reloaded with the pre-envelope-step
+        // extra tick (not a corrupt import).
+        if self.env_timer > 8 {
             return Err(format!(
                 "apu: envelope timer out of range: {}",
                 self.env_timer
