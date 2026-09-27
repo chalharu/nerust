@@ -82,6 +82,11 @@ pub struct CoreConfig {
     /// System-specific options (e.g. serialized `CoreOptions` for NES).
     /// Interpreted by the `ConsoleCore` implementation.
     pub core_options: Option<Box<dyn CoreOptions>>,
+    /// Device sample rate for the core's internal resamplers, stamped by
+    /// the emu thread (which owns the audio backend) on `Load`. Cores
+    /// never touch the backend; they only need the rate as data.
+    /// `None` (unit tests) falls back to 48kHz.
+    pub audio_sample_rate: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +139,17 @@ pub enum EmuCommand {
 // ---------------------------------------------------------------------------
 
 pub trait ConsoleCore: Send {
-    // -- video --
+    // -- video + audio production --
     fn capabilities(&self) -> CoreCapabilities;
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError>;
+    /// Run one frame: video into `frame_slot`, nominal-rate audio into
+    /// `audio_out` (implementations clear it first, then append the
+    /// frame's samples). Transport (rate control, backend push) is the
+    /// session layer's job: cores never see the backend.
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<audio::StereoSample>,
+    ) -> Result<(), CoreError>;
 
     // -- lifecycle --
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError>;

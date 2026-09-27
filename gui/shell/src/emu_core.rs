@@ -131,6 +131,7 @@ impl EmuCore {
             Arc::clone(&shared_fb),
             Arc::clone(&frame_ready),
             parts.palette,
+            parts.audio,
         );
         (
             Self {
@@ -242,6 +243,9 @@ impl EmuCore {
                     bios_paths: HashMap::new(),
                     controllers: HashMap::new(),
                     core_options,
+                    // Stamped authoritatively by the emu thread from the
+                    // owned backend; None here just means "not yet known".
+                    audio_sample_rate: None,
                 },
                 reply: reply_tx,
             })))

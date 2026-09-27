@@ -24,9 +24,10 @@ pub(crate) fn create_core_and_adapter(
     let (render_profile, palette) = compute_render_profile(filter);
     let mut speaker = speaker;
     speaker.start();
-    let core = NesConsoleCore::new_empty(controller_collection, speaker, emu_input);
+    let core = NesConsoleCore::new_empty(controller_collection, emu_input);
     Ok(CoreParts {
         core: Box::new(core),
+        audio: speaker,
         gui_input,
         field_map,
         render_profile,
