@@ -41,6 +41,17 @@ impl LengthEnvelope {
         }
     }
 
+    /// Obscure Behavior (mirrors GBC `reload_timer`): a trigger landing
+    /// just before an envelope step reloads the timer with pace + 1.
+    pub(crate) fn envelope_extra_tick(&mut self) {
+        self.env_timer = self.env_timer.wrapping_add(1);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn env_timer_for_test(&self) -> u8 {
+        self.env_timer
+    }
+
     pub fn tick_envelope(&mut self, env_reg: u16) {
         if !self.active {
             return;
@@ -109,8 +120,9 @@ impl Square {
     pub fn trigger(&mut self, freq: u16, init_len: u8, init_vol: u8, env_reg: u16, seq_odd: bool) {
         self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
-        self.timer = 0;
-        self.phase = 0;
+        // The duty step is kept across triggers (only its timer restarts,
+        // Pan Docs + mGBA parity): the latched step plays a full period.
+        self.timer = 16 * u32::from(2048 - freq.min(2047));
         self.sweep_timer = self.sweep_pace;
         self.sweep_occurred = false;
         // Immediate overflow check when sweep is armed with a shift.
@@ -126,6 +138,11 @@ impl Square {
     #[cfg(test)]
     pub(crate) fn sweep_pace_for_test(&self) -> u8 {
         self.sweep_pace
+    }
+
+    #[cfg(test)]
+    pub(crate) fn phase_for_test(&self) -> u8 {
+        self.phase
     }
 
     /// NR10 write (GBATEK sweep, incl. direction-flip zombie rule).
@@ -262,10 +279,9 @@ impl Wave {
         self.active = self.length != 0;
         self.timer = 0;
         self.phase = 0;
+        // The start bank was latched from NR30 bit 6 by the caller:
+        // GBATEK plays the selected bank first in 64-digit mode too.
         self.dimension_64 = dimension_64;
-        if dimension_64 {
-            self.bank = 0;
-        }
         // Triggered retrigger latches the first nibble immediately.
     }
 
@@ -314,7 +330,10 @@ impl Wave {
         if !self.active {
             return 0;
         }
-        let base = i16::from(self.nibble(wave_ram)) - 8;
+        // Unipolar 0..15 like hardware (and mGBA): DC rides along and the
+        // output HPF strips it downstream. Full scale matches square
+        // voices (nibble 15 ~= square vol 15).
+        let base = i16::from(self.nibble(wave_ram));
         if force_75 {
             base * 3 / 4
         } else {
@@ -670,20 +689,20 @@ mod tests {
         // (nibble 0 -> -8): the output must follow the playing bank.
         let mut ram = [0xFFu8; 0x20];
         ram[16..].fill(0x00);
-        assert_eq!(w.output(&ram, 1, false), 7);
+        assert_eq!(w.output(&ram, 1, false), 15);
         // Fastest rate: 8 T-cycles per digit, 32 digits per wrap.
         for _ in 0..32 * 8 {
             w.tick_timer(0x7FF);
         }
         assert_eq!(w.phase, 0);
         assert_eq!(w.bank, 1);
-        assert_eq!(w.output(&ram, 1, false), -8);
+        assert_eq!(w.output(&ram, 1, false), 0);
         for _ in 0..32 * 8 {
             w.tick_timer(0x7FF);
         }
         assert_eq!(w.phase, 0);
         assert_eq!(w.bank, 0);
-        assert_eq!(w.output(&ram, 1, false), 7);
+        assert_eq!(w.output(&ram, 1, false), 15);
     }
 
     #[test]
@@ -734,5 +753,35 @@ mod tests {
             assert!(sq.core.active);
             assert_eq!(sq.sweep_timer, 0);
         }
+    }
+
+    #[test]
+    fn trigger_keeps_phase_and_reloads_timer() {
+        // The duty step survives retriggers (only its timer restarts):
+        // freq 0x700 reloads 4096 T-cycles, advancing every 4097th tick
+        // (the model's steady-state cadence).
+        let mut sq = Square::default();
+        sq.trigger(0x700, 64, 15, 0xF000, false);
+        assert_eq!(sq.phase_for_test(), 0);
+        assert_eq!(sq.timer_horizon(), Some(4096));
+        for _ in 0..4096 {
+            sq.tick_timer(0x700, false);
+        }
+        assert_eq!(sq.phase_for_test(), 0);
+        sq.tick_timer(0x700, false);
+        assert_eq!(sq.phase_for_test(), 1);
+        // Retrigger keeps step 1 and restarts its full period.
+        sq.trigger(0x700, 64, 15, 0xF000, false);
+        assert_eq!(sq.phase_for_test(), 1);
+        assert_eq!(sq.timer_horizon(), Some(4096));
+    }
+
+    #[test]
+    fn envelope_extra_tick_adds_one_to_reload() {
+        let mut le = LengthEnvelope::default();
+        le.trigger(64, 8, 0xF200, false);
+        assert_eq!(le.env_timer_for_test(), 2);
+        le.envelope_extra_tick();
+        assert_eq!(le.env_timer_for_test(), 3);
     }
 }
