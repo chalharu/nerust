@@ -1091,6 +1091,13 @@ impl AndroidFrontend {
             }
             MenuAction::OpenRom => self.request_open_rom(),
             MenuAction::OpenSettings => self.request_settings_dialog(),
+            MenuAction::OrientationChanged => {
+                // Screen rotation: rebuild the touch overlay (hit zones)
+                // for the new window size even if winit did not deliver
+                // a Resized event. Idempotent with the Resized path.
+                self.rebuild_overlay();
+                self.request_redraw();
+            }
             MenuAction::Reset => self.reset(),
             MenuAction::SaveState => {
                 let outcome = self
