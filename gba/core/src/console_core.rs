@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
-    audio::{AudioBackend, StereoSample},
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind, audio::StereoSample,
     identity::SystemIdentity,
 };
 use nerust_input_traits::EmuInput;
@@ -28,27 +27,26 @@ struct LoadedGba {
 
 pub struct GbaConsoleCore {
     loaded: Option<LoadedGba>,
-    audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
-    /// Resample scratch reused every frame: `drain_resampled_into`
-    /// fills it instead of allocating a fresh Vec per frame.
-    resample_scratch: Vec<StereoSample>,
+    /// Device sample rate for the APU resampler, stamped from
+    /// `CoreConfig::audio_sample_rate` at load (the core never sees the
+    /// backend; it only needs the rate as data).
+    sample_rate: u32,
 }
 
 impl GbaConsoleCore {
-    pub fn new(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
+    pub fn new(emu_input: EmuInput) -> Self {
         Self {
             loaded: None,
-            audio,
             emu_input,
             paused: false,
-            resample_scratch: Vec::new(),
+            sample_rate: 48_000,
         }
     }
 
-    pub fn new_empty(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
-        Self::new(audio, emu_input)
+    pub fn new_empty(emu_input: EmuInput) -> Self {
+        Self::new(emu_input)
     }
 
     fn create_loaded(rom: &[u8], options: GbaCoreOptions) -> Result<LoadedGba, CoreError> {
@@ -81,7 +79,11 @@ impl ConsoleCore for GbaConsoleCore {
         }
     }
 
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -94,17 +96,14 @@ impl ConsoleCore for GbaConsoleCore {
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
         // frame end. Bit-identical to per-cycle stepping.
         loaded.system.step_batch(280_896);
-        // Drain native-grid audio at the device rate, reusing the
-        // frame scratch (no per-frame allocation).
-        let rate = self.audio.sample_rate();
+        // Nominal-rate audio production only: the caller (session layer)
+        // owns transport through the rate-control filter to the backend.
+        let rate = self.sample_rate;
         loaded
             .system
             .bus
             .apu_mut()
-            .drain_resampled_into(rate, &mut self.resample_scratch);
-        for sample in self.resample_scratch.iter().copied() {
-            self.audio.push(sample);
-        }
+            .drain_resampled_into(rate, audio_out);
         if frame_slot.format() != &PixelFormat::Rgba {
             frame_slot.set_format(PixelFormat::Rgba);
         }
@@ -134,6 +133,7 @@ impl ConsoleCore for GbaConsoleCore {
         };
         self.loaded = Some(Self::create_loaded(rom, options)?);
         self.paused = false;
+        self.sample_rate = config.audio_sample_rate.unwrap_or(48_000);
         Ok(())
     }
 
@@ -181,7 +181,7 @@ impl ConsoleCore for GbaConsoleCore {
             &loaded.system,
             loaded.identity.clone(),
             loaded.options,
-            self.audio.sample_rate(),
+            self.sample_rate,
         )
         .map_err(|e| CoreError::Core(Box::new(e)))
     }
@@ -193,7 +193,7 @@ impl ConsoleCore for GbaConsoleCore {
             &loaded.rom,
             &loaded.identity,
             loaded.options,
-            self.audio.sample_rate(),
+            self.sample_rate,
         )
         .map_err(|e| CoreError::Core(Box::new(e)))?;
         // Solar level lives in options; re-apply it onto the restored GPIO.
@@ -203,14 +203,6 @@ impl ConsoleCore for GbaConsoleCore {
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system = candidate;
         Ok(())
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-        self.audio.set_volume(volume);
-    }
-
-    fn restart_audio(&mut self) {
-        self.audio.reconnect();
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
@@ -250,7 +242,7 @@ mod tests {
         sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
-    use nerust_core_traits::{CoreConfig, audio::NullAudio};
+    use nerust_core_traits::CoreConfig;
     use nerust_input_traits::{EmuInput, InputStateBuffer};
 
     use super::*;
@@ -299,7 +291,7 @@ mod tests {
 
     #[test]
     fn capabilities_are_correct() {
-        let core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let core = GbaConsoleCore::new(test_emu_input());
         let caps = core.capabilities();
         assert_eq!(caps.output_formats.len(), 1);
     }
@@ -319,12 +311,13 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
         let rom_data = sram_rom();
-        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut a = GbaConsoleCore::new(test_emu_input());
         a.load(&rom_data, &config).unwrap();
         // No backup chip on the plain header ROM -> no save payload.
-        let mut plain = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut plain = GbaConsoleCore::new(test_emu_input());
         plain.load(&rom(), &config).unwrap();
         assert_eq!(plain.mapper_save().unwrap(), None);
         // SRAM chip: write, export, re-import into a fresh core, read back.
@@ -335,7 +328,7 @@ mod tests {
             .bus
             .write8(0x0E000123, 0x5A);
         let payload = a.mapper_save().unwrap().expect("SRAM save payload");
-        let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut b = GbaConsoleCore::new(test_emu_input());
         b.load(&rom_data, &config).unwrap();
         b.import_mapper_save(&payload).unwrap();
         assert_eq!(
@@ -346,7 +339,7 @@ mod tests {
 
     #[test]
     fn load_render_and_state_round_trip() {
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(
             &rom(),
             &CoreConfig {
@@ -354,6 +347,7 @@ mod tests {
                 bios_paths: HashMap::new(),
                 controllers: HashMap::new(),
                 core_options: None,
+                audio_sample_rate: None,
             },
         )
         .unwrap();
@@ -362,11 +356,11 @@ mod tests {
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         assert_eq!((frame.width(), frame.height()), (240, 160));
         let state = core.save_state().unwrap();
         // Advance a frame, then restore: the re-export must match exactly.
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         core.load_state(&state).unwrap();
         let again = core.save_state().unwrap();
         assert_eq!(state, again);
@@ -374,7 +368,7 @@ mod tests {
 
     #[test]
     fn failed_import_leaves_system_untouched() {
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(
             &rom(),
             &CoreConfig {
@@ -382,6 +376,7 @@ mod tests {
                 bios_paths: HashMap::new(),
                 controllers: HashMap::new(),
                 core_options: None,
+                audio_sample_rate: None,
             },
         )
         .unwrap();
@@ -390,7 +385,7 @@ mod tests {
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         let before = core.save_state().unwrap();
         // Garbage and truncated payloads must not panic or mutate state.
         assert!(core.load_state(&[0xDE, 0xAD, 0xBE, 0xEF]).is_err());
@@ -417,13 +412,14 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
         let rom_data = sram_rom();
-        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut a = GbaConsoleCore::new(test_emu_input());
         a.load(&rom_data, &config).unwrap();
         let payload = a.mapper_save().unwrap().expect("SRAM save payload");
         // A foreign ROM (different CRC) must refuse the envelope.
-        let mut other = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut other = GbaConsoleCore::new(test_emu_input());
         let mut rom2 = rom_data.clone();
         rom2[0x200] ^= 1;
         crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
@@ -458,15 +454,16 @@ mod tests {
             core_options: Some(Box::new(GbaCoreOptions {
                 solar_light_level: 0x20,
             })),
+            audio_sample_rate: None,
         };
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(&sram_rom(), &config).unwrap();
         let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
             240,
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         // Battery RAM, GPIO attachment and solar level are set pre-reset.
         // The solar level comes from options (the only production source);
         // reset must not clobber the options-applied level.
@@ -510,6 +507,7 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
         for (name, tag) in [
             ("plain", None),
@@ -517,14 +515,14 @@ mod tests {
             ("flash", Some(b"FLASH_V130".as_slice())),
             ("eeprom", Some(b"EEPROM_V124".as_slice())),
         ] {
-            let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+            let mut core = GbaConsoleCore::new(test_emu_input());
             core.load(&sized_rom(tag), &config).unwrap();
             let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
                 240,
                 160,
                 nerust_render_traits::PixelFormat::Rgba,
             );
-            core.render_frame(&mut frame).unwrap();
+            core.render_frame(&mut frame, &mut Vec::new()).unwrap();
             let state = core.save_state().unwrap();
             // Recorded for the Phase 12 rewind fixed-MAX decision. The
             // assert is a sanity ceiling only (RAM images ≈ 420KB).
@@ -540,7 +538,7 @@ mod tests {
     #[test]
     fn continued_emulation_matches_uninterrupted_run() {
         // End-to-end fidelity: load-then-run must equal never-having-saved.
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(
             &rom(),
             &CoreConfig {
@@ -548,6 +546,7 @@ mod tests {
                 bios_paths: HashMap::new(),
                 controllers: HashMap::new(),
                 core_options: None,
+                audio_sample_rate: None,
             },
         )
         .unwrap();
@@ -556,14 +555,14 @@ mod tests {
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         let saved = core.save_state().unwrap();
-        core.render_frame(&mut frame).unwrap();
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         let reference = core.save_state().unwrap();
         core.load_state(&saved).unwrap();
-        core.render_frame(&mut frame).unwrap();
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         assert_eq!(core.save_state().unwrap(), reference);
     }
 
@@ -576,15 +575,16 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(&rom(), &config).unwrap();
         let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
             240,
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         let saved = core.save_state().unwrap();
         // Reload the same ROM under a different solar level: the payload
         // pins the old options, so import must refuse atomically.
@@ -596,6 +596,7 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: Some(Box::new(options)),
+            audio_sample_rate: None,
         };
         core.load(&rom(), &config).unwrap();
         assert!(core.load_state(&saved).is_err());
@@ -618,15 +619,16 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         };
-        let mut core = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut core = GbaConsoleCore::new(test_emu_input());
         core.load(&sram_rom(), &config).unwrap();
         let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
             240,
             160,
             nerust_render_traits::PixelFormat::Rgba,
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         // Battery RAM plus an attached GPIO device travel in the envelope.
         core.loaded
             .as_mut()
@@ -650,7 +652,7 @@ mod tests {
             .system
             .bus
             .write8(0x0E000123, 0x00);
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         core.load_state(&saved).unwrap();
         // NOTE: no bus reads before the re-export below. `bus.read8` is
         // not side-effect-free: it accumulates wait cycles and advances
@@ -672,7 +674,7 @@ mod tests {
 
     #[test]
     fn rejects_machine_state_from_another_rom() {
-        let mut a = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut a = GbaConsoleCore::new(test_emu_input());
         a.load(
             &rom(),
             &CoreConfig {
@@ -680,11 +682,12 @@ mod tests {
                 bios_paths: HashMap::new(),
                 controllers: HashMap::new(),
                 core_options: None,
+                audio_sample_rate: None,
             },
         )
         .unwrap();
         let state = a.save_state().unwrap();
-        let mut b = GbaConsoleCore::new(Box::new(NullAudio), test_emu_input());
+        let mut b = GbaConsoleCore::new(test_emu_input());
         let mut rom2 = rom();
         rom2[0x100] ^= 1;
         crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
@@ -695,6 +698,7 @@ mod tests {
                 bios_paths: HashMap::new(),
                 controllers: HashMap::new(),
                 core_options: None,
+                audio_sample_rate: None,
             },
         )
         .unwrap();
@@ -702,30 +706,28 @@ mod tests {
     }
 
     #[test]
-    fn restart_audio_reconnects_backend() {
-        use std::sync::atomic::Ordering::SeqCst;
-
-        use nerust_core_traits::audio::{AudioBackend, StereoSample};
-
-        struct ReconnectProbe {
-            reconnected: Arc<AtomicBool>,
-        }
-        impl AudioBackend for ReconnectProbe {
-            fn start(&mut self) {}
-            fn pause(&mut self) {}
-            fn push(&mut self, _sample: StereoSample) {}
-            fn reconnect(&mut self) {
-                self.reconnected.store(true, SeqCst);
-            }
-        }
-        let reconnected = Arc::new(AtomicBool::new(false));
-        let mut core = GbaConsoleCore::new(
-            Box::new(ReconnectProbe {
-                reconnected: reconnected.clone(),
-            }),
-            test_emu_input(),
+    fn render_frame_produces_nominal_audio() {
+        // Transport separation: the core appends nominal-rate samples for
+        // the session layer instead of pushing to a backend.
+        use nerust_core_traits::ConsoleCore;
+        let config = CoreConfig {
+            region: None,
+            bios_paths: HashMap::new(),
+            controllers: HashMap::new(),
+            core_options: None,
+            audio_sample_rate: Some(48_000),
+        };
+        let mut core = GbaConsoleCore::new(test_emu_input());
+        core.load(&rom(), &config).unwrap();
+        let mut frame = nerust_render_traits::FrameBuffer::with_capacity(
+            240,
+            160,
+            nerust_render_traits::PixelFormat::Rgba,
         );
-        core.restart_audio();
-        assert!(reconnected.load(SeqCst));
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        // One LCD frame yields ~800 device samples at 48kHz.
+        assert!((700..900).contains(&audio.len()), "len={}", audio.len());
+        assert!(audio.iter().all(|s| s.left.is_finite()));
     }
 }

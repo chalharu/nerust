@@ -32,6 +32,10 @@ pub enum FactoryError {
 /// Raw parts produced by a system factory before EmuCore wrapping.
 pub struct CoreParts {
     pub core: Box<dyn crate::ConsoleCore>,
+    /// Session-owned audio backend: the emu thread (not the core) pushes
+    /// through the rate-control filter into this. Factories start it;
+    /// cores never see it.
+    pub audio: Box<dyn crate::audio::AudioBackend>,
     pub gui_input: GuiInput,
     /// (attachment, control) → absolute field index
     pub field_map: HashMap<(AttachmentId, DigitalControlId), usize>,

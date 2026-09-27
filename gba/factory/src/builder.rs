@@ -74,12 +74,13 @@ pub(crate) fn create_core_and_adapter_with_inputs(
         height: 160,
     };
     // The audio backend only emits pushed samples after `start`
-    // (CPAL/cubeb hold the stream silent until then); NES/GBC start it
-    // here, so GBA must too or playback stays silent forever.
+    // (CPAL/cubeb hold the stream silent until then); the emu thread
+    // owns it from here (transport separation).
     speaker.start();
-    let core = GbaConsoleCore::new(speaker, emu_input);
+    let core = GbaConsoleCore::new(emu_input);
     Ok(CoreParts {
         core: Box::new(core),
+        audio: speaker,
         gui_input,
         field_map,
         render_profile: VideoRenderProfile {

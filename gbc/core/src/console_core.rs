@@ -2,7 +2,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
     ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
-    audio::AudioBackend,
+    audio::StereoSample,
     identity::SystemIdentity,
     peripheral::{
         AccelerometerInputPort, RumbleOutputPort, RumbleState, accelerometer_channel,
@@ -34,33 +34,35 @@ struct LoadedGbc {
 
 pub struct GbcConsoleCore {
     loaded: Option<LoadedGbc>,
-    audio: Box<dyn AudioBackend>,
     emu_input: EmuInput,
     paused: bool,
     accelerometer: AccelerometerInputPort,
     rumble: RumbleOutputPort,
+    /// Device sample rate for the APU resampler, stamped from
+    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
+    /// lives in the session layer).
+    sample_rate: u32,
 }
 
 impl GbcConsoleCore {
-    pub fn new_empty(audio: Box<dyn AudioBackend>, emu_input: EmuInput) -> Self {
+    pub fn new_empty(emu_input: EmuInput) -> Self {
         let (_, accelerometer) = accelerometer_channel();
         let (_, rumble) = rumble_channel();
-        Self::with_peripherals(audio, emu_input, accelerometer, rumble)
+        Self::with_peripherals(emu_input, accelerometer, rumble)
     }
 
     pub fn with_peripherals(
-        audio: Box<dyn AudioBackend>,
         emu_input: EmuInput,
         accelerometer: AccelerometerInputPort,
         rumble: RumbleOutputPort,
     ) -> Self {
         Self {
             loaded: None,
-            audio,
             emu_input,
             paused: false,
             accelerometer,
             rumble,
+            sample_rate: 48_000,
         }
     }
 
@@ -119,7 +121,11 @@ impl ConsoleCore for GbcConsoleCore {
         }
     }
 
-    fn render_frame(&mut self, frame_slot: &mut FrameBuffer) -> Result<(), CoreError> {
+    fn render_frame(
+        &mut self,
+        frame_slot: &mut FrameBuffer,
+        audio_out: &mut Vec<StereoSample>,
+    ) -> Result<(), CoreError> {
         self.emu_input.take();
         let input = self
             .emu_input
@@ -140,9 +146,10 @@ impl ConsoleCore for GbcConsoleCore {
                 break;
             }
         }
-        for sample in loaded.system.bus.flush_audio() {
-            self.audio.push(sample);
-        }
+        // Nominal-rate audio production only: the caller (session layer)
+        // owns transport through the rate-control filter to the backend.
+        audio_out.clear();
+        audio_out.extend(loaded.system.bus.flush_audio());
         if frame_slot.format() != &PixelFormat::Rgba {
             frame_slot.set_format(PixelFormat::Rgba);
         }
@@ -161,7 +168,8 @@ impl ConsoleCore for GbcConsoleCore {
         } else {
             GbcCoreOptions::default()
         };
-        let loaded = Self::create_loaded(rom, options, self.audio.sample_rate())?;
+        let loaded = Self::create_loaded(rom, options, config.audio_sample_rate.unwrap_or(48_000))?;
+        self.sample_rate = config.audio_sample_rate.unwrap_or(48_000);
         self.accelerometer
             .set_requested(loaded.identity.cartridge_type == 0x22);
         self.loaded = Some(loaded);
@@ -178,7 +186,7 @@ impl ConsoleCore for GbcConsoleCore {
     }
 
     fn reset(&mut self) {
-        let sample_rate = self.audio.sample_rate();
+        let sample_rate = self.sample_rate;
         let Some(current) = self.loaded.as_mut() else {
             return;
         };
@@ -191,14 +199,6 @@ impl ConsoleCore for GbcConsoleCore {
         reset.system.bus.set_cartridge(cartridge);
         current.system = reset.system;
         self.sync_rumble();
-    }
-
-    fn set_volume(&mut self, volume: f32) {
-        self.audio.set_volume(volume);
-    }
-
-    fn restart_audio(&mut self) {
-        self.audio.reconnect();
     }
 
     fn paused(&self) -> bool {
@@ -222,7 +222,7 @@ impl ConsoleCore for GbcConsoleCore {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
-        let sample_rate = self.audio.sample_rate();
+        let sample_rate = self.sample_rate;
         let loaded = self.loaded_ref()?;
         let mut candidate = Self::create_loaded(&loaded.rom, loaded.options, sample_rate)?;
         persistence::import_machine_state(
@@ -271,7 +271,6 @@ mod tests {
 
     use nerust_core_traits::{
         CoreOptions,
-        audio::StereoSample,
         peripheral::{AccelerationSample, RumbleState, accelerometer_channel, rumble_channel},
     };
     use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
@@ -294,28 +293,6 @@ mod tests {
         fn clear(&mut self) {}
 
         fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
-    }
-
-    #[derive(Debug, Default)]
-    struct AudioState {
-        volume: f32,
-        samples: Vec<StereoSample>,
-    }
-
-    struct TestAudio(Arc<Mutex<AudioState>>);
-
-    impl AudioBackend for TestAudio {
-        fn start(&mut self) {}
-
-        fn pause(&mut self) {}
-
-        fn push(&mut self, sample: StereoSample) {
-            self.0.lock().unwrap().samples.push(sample);
-        }
-
-        fn set_volume(&mut self, volume: f32) {
-            self.0.lock().unwrap().volume = volume;
-        }
     }
 
     fn input() -> EmuInput {
@@ -369,6 +346,7 @@ mod tests {
             bios_paths: HashMap::new(),
             controllers: HashMap::new(),
             core_options: None,
+            audio_sample_rate: None,
         }
     }
 
@@ -381,8 +359,7 @@ mod tests {
 
     #[test]
     fn load_render_and_state_round_trip() {
-        let mut core =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let mut core = GbcConsoleCore::new_empty(input());
         core.load(&rom(), &config()).unwrap();
         let mut frame = FrameBuffer::with_capacity(
             160,
@@ -391,7 +368,7 @@ mod tests {
                 palette: vec![0; 4].into_boxed_slice(),
             },
         );
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         assert_eq!((frame.width(), frame.height()), (160, 144));
         assert_eq!(frame.format(), &PixelFormat::Rgba);
 
@@ -402,18 +379,15 @@ mod tests {
 
     #[test]
     fn render_frame_delivers_finite_stereo_samples() {
-        let audio_state = Arc::new(Mutex::new(AudioState::default()));
-        let mut core =
-            GbcConsoleCore::new_empty(Box::new(TestAudio(Arc::clone(&audio_state))), input());
+        let mut core = GbcConsoleCore::new_empty(input());
         core.load(&rom(), &config()).unwrap();
         let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-        core.render_frame(&mut frame).unwrap();
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
 
-        let state = audio_state.lock().unwrap();
-        assert!(!state.samples.is_empty());
+        assert!(!audio.is_empty());
         assert!(
-            state
-                .samples
+            audio
                 .iter()
                 .all(|sample| sample.left.is_finite() && sample.right.is_finite())
         );
@@ -421,20 +395,17 @@ mod tests {
 
     #[test]
     fn empty_core_reports_no_rom() {
-        let core =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let core = GbcConsoleCore::new_empty(input());
         assert!(matches!(core.save_state(), Err(CoreError::NoRomLoaded)));
     }
 
     #[test]
     fn rejects_machine_state_from_another_rom() {
-        let mut source =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let mut source = GbcConsoleCore::new_empty(input());
         source.load(&rom(), &config()).unwrap();
         let state = source.save_state().unwrap();
 
-        let mut target =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let mut target = GbcConsoleCore::new_empty(input());
         target.load(&distinct_rom(), &config()).unwrap();
         let identity_before = target.identity().unwrap();
         assert!(target.load_state(&state).is_err());
@@ -442,16 +413,12 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_capabilities_and_volume_delegate() {
-        let audio_state = Arc::new(Mutex::new(AudioState::default()));
-        let mut core =
-            GbcConsoleCore::new_empty(Box::new(TestAudio(Arc::clone(&audio_state))), input());
+    fn lifecycle_capabilities() {
+        let mut core = GbcConsoleCore::new_empty(input());
         let capabilities = core.capabilities();
         assert_eq!(capabilities.video_signal, VideoSignalKind::Lcd);
         assert_eq!(capabilities.output_formats, vec![PixelFormat::Rgba]);
 
-        core.set_volume(0.25);
-        assert_eq!(audio_state.lock().unwrap().volume, 0.25);
         assert!(!core.paused());
         core.set_paused(true);
         assert!(core.paused());
@@ -468,8 +435,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_rom_options_and_input_type() {
-        let mut core =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let mut core = GbcConsoleCore::new_empty(input());
         assert!(matches!(
             core.load(&[], &config()),
             Err(CoreError::RomParse(_))
@@ -479,22 +445,19 @@ mod tests {
             Err(CoreError::InvalidCoreOptions)
         ));
 
-        let mut core = GbcConsoleCore::new_empty(
-            Box::new(nerust_core_traits::audio::NullAudio),
-            wrong_input(),
-        );
+        let mut core = GbcConsoleCore::new_empty(wrong_input());
         core.load(&rom(), &config()).unwrap();
         let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        let mut audio = Vec::new();
         assert!(matches!(
-            core.render_frame(&mut frame),
+            core.render_frame(&mut frame, &mut audio),
             Err(CoreError::Core(_))
         ));
     }
 
     #[test]
     fn non_battery_rom_has_no_mapper_save() {
-        let mut core =
-            GbcConsoleCore::new_empty(Box::new(nerust_core_traits::audio::NullAudio), input());
+        let mut core = GbcConsoleCore::new_empty(input());
         core.load(&rom(), &config()).unwrap();
         assert!(core.mapper_save().unwrap().is_none());
     }
@@ -503,17 +466,12 @@ mod tests {
     fn mbc7_requests_and_latches_live_acceleration() {
         let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
         let (_, rumble_port) = rumble_channel();
-        let mut core = GbcConsoleCore::with_peripherals(
-            Box::new(nerust_core_traits::audio::NullAudio),
-            input(),
-            accelerometer_port,
-            rumble_port,
-        );
+        let mut core = GbcConsoleCore::with_peripherals(input(), accelerometer_port, rumble_port);
         core.load(&mapper_rom(0x22), &config()).unwrap();
         assert!(accelerometer_handle.demand().requested);
         accelerometer_handle.publish(AccelerationSample::new(1.0, -1.0));
         let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
 
         let bus = &mut core.loaded.as_mut().unwrap().system.bus;
         bus.write(0, 0x0A);
@@ -537,16 +495,11 @@ mod tests {
     fn mbc5_rumble_tracks_frame_pause_resume_and_unload() {
         let (_, accelerometer_port) = accelerometer_channel();
         let (rumble_handle, rumble_port) = rumble_channel();
-        let mut core = GbcConsoleCore::with_peripherals(
-            Box::new(nerust_core_traits::audio::NullAudio),
-            input(),
-            accelerometer_port,
-            rumble_port,
-        );
+        let mut core = GbcConsoleCore::with_peripherals(input(), accelerometer_port, rumble_port);
         core.load(&mapper_rom(0x1C), &config()).unwrap();
         core.loaded.as_mut().unwrap().system.bus.write(0x4000, 0x08);
         let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-        core.render_frame(&mut frame).unwrap();
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
 
         core.set_paused(true);
@@ -555,33 +508,5 @@ mod tests {
         assert_eq!(rumble_handle.snapshot().state, RumbleState::FULL);
         core.unload();
         assert_eq!(rumble_handle.snapshot().state, RumbleState::OFF);
-    }
-
-    #[test]
-    fn restart_audio_reconnects_backend() {
-        use std::sync::atomic::Ordering::SeqCst;
-
-        use nerust_core_traits::audio::AudioBackend;
-
-        struct ReconnectProbe {
-            reconnected: Arc<AtomicBool>,
-        }
-        impl AudioBackend for ReconnectProbe {
-            fn start(&mut self) {}
-            fn pause(&mut self) {}
-            fn push(&mut self, _sample: StereoSample) {}
-            fn reconnect(&mut self) {
-                self.reconnected.store(true, SeqCst);
-            }
-        }
-        let reconnected = Arc::new(AtomicBool::new(false));
-        let mut core = GbcConsoleCore::new_empty(
-            Box::new(ReconnectProbe {
-                reconnected: reconnected.clone(),
-            }),
-            input(),
-        );
-        core.restart_audio();
-        assert!(reconnected.load(SeqCst));
     }
 }
