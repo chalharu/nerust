@@ -652,7 +652,9 @@ impl GbaApu {
     /// 0..0x3FF and centered.
     fn mix_grid(&mut self) -> (f32, f32) {
         if self.soundcnt_x & 0x80 == 0 {
-            let bias = f32::from((self.soundbias >> 1) & 0x1FF);
+            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center,
+            // mgba parity); an unwritten bias parks the DAC at mid-rail.
+            let bias = f32::from(self.soundbias & 0x3FF);
             let out = (bias - 512.0) / 512.0;
             return (out, out);
         }
@@ -715,7 +717,7 @@ impl GbaApu {
         if b_on_r {
             sum_r += db;
         }
-        let bias = i32::from((self.soundbias >> 1) & 0x1FF);
+        let bias = i32::from(self.soundbias & 0x3FF);
         let to_f32 = |sum: i32| (sum + bias).clamp(0, 0x3FF) as f32 / 512.0 - 1.0;
         (to_f32(sum_l), to_f32(sum_r))
     }
@@ -984,7 +986,7 @@ impl GbaApu {
             0x04000080 => self.soundcnt_lo = value & 0xFF77,
             0x04000082 => self.write_soundcnt_hi(value),
             0x04000084 => self.write_soundcnt_x(value),
-            0x04000088 => self.soundbias = value & 0xC3FE,
+            0x04000088 => self.soundbias = value & 0xC3FF,
             0x04000090 => self.wave_write(0x90, value),
             0x04000092 => self.wave_write(0x92, value),
             0x04000094 => self.wave_write(0x94, value),

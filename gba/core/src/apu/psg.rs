@@ -1,10 +1,10 @@
-/// GBA PSG channels; clocks are CPU T-cycles (16.78MHz square/wave/noise
-/// periods with a 512Hz frame sequencer, per GBATEK).
+/// Square duty patterns (HW-pinned, mgba parity): 12.5% has a single
+/// high step, 25% two, 50% four, 75% six. Phase 0 is the trigger start.
 const DUTY: [[i8; 8]; 4] = [
+    [0, 0, 0, 0, 0, 0, 0, 1],
     [1, 0, 0, 0, 0, 0, 0, 1],
-    [1, 1, 0, 0, 0, 0, 0, 1],
-    [1, 1, 1, 1, 0, 0, 0, 0],
-    [0, 0, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 1, 1, 1],
+    [0, 1, 1, 1, 1, 1, 1, 0],
 ];
 
 /// Shared length/envelope core for square/noise channels.
@@ -511,11 +511,28 @@ mod tests {
         let mut sq = Square::default();
         sq.core.active = true;
         sq.core.volume = 12;
+        // Duty 0 (12.5%): only phase 7 high.
+        sq.phase = 7;
+        assert_eq!(sq.output(0), 12);
         sq.phase = 0;
-        // Duty 2 (50%): phases 0-3 high.
+        assert_eq!(sq.output(0), -12);
+        // Duty 1 (25%): phases 0 and 7 high.
+        sq.phase = 0;
+        assert_eq!(sq.output(1), 12);
+        sq.phase = 7;
+        assert_eq!(sq.output(1), 12);
+        sq.phase = 3;
+        assert_eq!(sq.output(1), -12);
+        // Duty 2 (50%): phases 0, 5, 6, 7 high.
+        sq.phase = 5;
         assert_eq!(sq.output(2), 12);
         sq.phase = 4;
         assert_eq!(sq.output(2), -12);
+        // Duty 3 (75%): only phases 0 and 7 low.
+        sq.phase = 0;
+        assert_eq!(sq.output(3), -12);
+        sq.phase = 3;
+        assert_eq!(sq.output(3), 12);
         sq.core.active = false;
         assert_eq!(sq.output(2), 0);
     }
