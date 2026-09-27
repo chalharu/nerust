@@ -1121,19 +1121,37 @@ impl GbaPpu {
     }
 
     fn apply_effect(&mut self, top: LayerPixel, second: Option<LayerPixel>, enabled: bool) -> u16 {
-        // Tonc gfx §13.2.2: with windows in use, blending needs the region's
-        // color-effect bit (WININ/WINOUT bit 5/13) — including for
-        // semi-transparent OBJs. GBATEK's semi-transparency paragraph only
-        // overrides BLDCNT bits 4/6-7, not the window gate, so a disabled
-        // region shows the top pixel opaque.
-        if !enabled {
-            return top.color;
-        }
         let first_mask = self.registers.bldcnt & 0x3F;
         let second_mask = (self.registers.bldcnt >> 8) & 0x3F;
         let top_bit = 1 << top.layer;
         let mode = (self.registers.bldcnt >> 6) & 3;
-        if (top.semi_transparent || mode == 1 && first_mask & top_bit != 0)
+        // Semi-transparent OBJs are the alpha-blend 1st target regardless
+        // of BLDCNT and of the window color-effect gate: HW blends them
+        // whenever a valid 2nd target is below (GBATEK "regardless of
+        // BLDCNT register", mgba parity, RadDad772 HW tests). Emerald's
+        // Rusturf Tunnel fog relies on this: the field keeps windows
+        // enabled with the effect bit clear, so gating on `enabled`
+        // renders the fog opaque.
+        if top.semi_transparent
+            && let Some(second) = second
+            && second_mask & (1 << second.layer) != 0
+        {
+            let eva = (self.registers.bldalpha & 0x1F).min(16) as u8;
+            let evb = ((self.registers.bldalpha >> 8) & 0x1F).min(16) as u8;
+            return self
+                .blend_cache
+                .alpha_blend(top.color, second.color, eva, evb);
+        }
+        // Tonc gfx §13.2.2: with windows in use, blending needs the region's
+        // color-effect bit (WININ/WINOUT bit 5/13) for non-semi-transparent
+        // tops. GBATEK's semi-transparency paragraph only overrides BLDCNT
+        // bits 4/6-7, not the window gate, so a disabled region shows the
+        // top pixel opaque — except for the semi-transparent case above.
+        if !enabled {
+            return top.color;
+        }
+        if mode == 1
+            && first_mask & top_bit != 0
             && let Some(second) = second
             && second_mask & (1 << second.layer) != 0
         {
@@ -1449,6 +1467,116 @@ mod tests {
         assert_eq!(
             ppu.frame_buffer()[20 * WIDTH + 20].to_le_bytes(),
             [0, 0, 0, 255]
+        );
+    }
+
+    #[test]
+    fn semitransparent_obj_blends_without_window_effect() {
+        // Emerald Rusturf Tunnel fog: semi-transparent OBJ over a BG1
+        // floor, BLDCNT alpha with BG1-3/OBJ 2nd targets, BLDALPHA
+        // (12, 8) — but the field keeps windows enabled with the
+        // color-effect bit clear, so `enabled` is false. HW still blends
+        // (GBATEK "regardless of BLDCNT register", mgba parity).
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        ppu.write_register(0x04000050, 0x1E4E, &vram, &palette);
+        ppu.write_register(0x04000052, 12 | (8 << 8), &vram, &palette);
+        let top = LayerPixel {
+            color: 0x7FFF,
+            priority: 2,
+            layer: 4,
+            semi_transparent: true,
+        };
+        let second = LayerPixel {
+            color: 0x001F,
+            priority: 3,
+            layer: 1,
+            semi_transparent: false,
+        };
+        let output = ppu.apply_effect(top, Some(second), false);
+        assert_eq!(
+            output,
+            crate::ppu::color::alpha_blend(0x7FFF, 0x001F, 12, 8)
+        );
+        assert_ne!(output, top.color, "fog must not render opaque");
+        assert_ne!(output, second.color);
+    }
+
+    #[test]
+    fn opaque_top_stays_opaque_without_window_effect() {
+        // Guard: a normal (non-semi-transparent) top never blends when
+        // the window color-effect bit is clear, even with TGT1 set.
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        ppu.write_register(0x04000050, 0x1E4E | (1 << 4), &vram, &palette);
+        ppu.write_register(0x04000052, 12 | (8 << 8), &vram, &palette);
+        let top = LayerPixel {
+            color: 0x7FFF,
+            priority: 2,
+            layer: 4,
+            semi_transparent: false,
+        };
+        let second = LayerPixel {
+            color: 0x001F,
+            priority: 3,
+            layer: 1,
+            semi_transparent: false,
+        };
+        assert_eq!(ppu.apply_effect(top, Some(second), false), top.color);
+    }
+
+    #[test]
+    fn semitransparent_without_second_target_stays_opaque() {
+        // The bypass still needs a valid 2nd target below: backdrop is
+        // not in TGT2 here, so the fog pixel stays opaque.
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        ppu.write_register(0x04000050, 0x1E4E, &vram, &palette);
+        ppu.write_register(0x04000052, 12 | (8 << 8), &vram, &palette);
+        let top = LayerPixel {
+            color: 0x7FFF,
+            priority: 2,
+            layer: 4,
+            semi_transparent: true,
+        };
+        let backdrop = LayerPixel {
+            color: 0x0000,
+            priority: 4,
+            layer: 5,
+            semi_transparent: false,
+        };
+        assert_eq!(ppu.apply_effect(top, Some(backdrop), true), top.color);
+        assert_eq!(ppu.apply_effect(top, Some(backdrop), false), top.color);
+    }
+
+    #[test]
+    fn semitransparent_blends_regardless_of_bldcnt_mode() {
+        // mgba parity: a semi-transparent top alpha-blends even when
+        // BLDCNT selects no effect (mode 0), with the window gate clear.
+        let mut ppu = GbaPpu::new();
+        let vram = vec![0; 0x18000];
+        let palette = vec![0; 0x400];
+        ppu.write_register(0x04000050, 0x1E0E, &vram, &palette);
+        ppu.write_register(0x04000052, 12 | (8 << 8), &vram, &palette);
+        let top = LayerPixel {
+            color: 0x7FFF,
+            priority: 2,
+            layer: 4,
+            semi_transparent: true,
+        };
+        let second = LayerPixel {
+            color: 0x001F,
+            priority: 3,
+            layer: 1,
+            semi_transparent: false,
+        };
+        let output = ppu.apply_effect(top, Some(second), false);
+        assert_eq!(
+            output,
+            crate::ppu::color::alpha_blend(0x7FFF, 0x001F, 12, 8)
         );
     }
 
