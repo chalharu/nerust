@@ -101,6 +101,12 @@ debug = false
 [profile.release.package.nerust_nes_core]
 codegen-units = 1
 
+# GBA core: single codegen unit lets the per-T-cycle hot path
+# (bus tick, timers, DMA, APU) inline across modules; measurable on
+# mobile CPUs where the ~280k ticks/frame dominate Pokemon Emerald.
+[profile.release.package.nerust_gba_core]
+codegen-units = 1
+
 [workspace.package]
 authors = ["chalharu"]
 description = "NES emulator written in Rust"
