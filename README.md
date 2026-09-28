@@ -77,16 +77,13 @@ Each desktop archive ships with a `.sha256` checksum file.
 
 ## Building from source
 
-Install Cargo with a recent Rust toolchain. Check `rust-version` in
-`Cargo.toml` for the minimum version.
-
 ```sh
 # Desktop app (official Tao frontend)
 cargo build --features tao --release
 ./target/release/nerust [ROM file]
 
 # GTK4 frontend (build-health only, not a release artifact)
-cargo build -p nerust_gtk --release
+cargo build --features gtk --release
 ```
 
 Linux needs system libraries for the frontend you build:
