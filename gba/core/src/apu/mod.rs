@@ -381,6 +381,8 @@ impl GbaApu {
             self.sq2.core.active = false;
             self.wave.active = false;
             self.noise.core.active = false;
+            self.sq1.clear_blep();
+            self.sq2.clear_blep();
         }
         self.soundcnt_x = value & 0x80;
     }
@@ -628,8 +630,10 @@ impl GbaApu {
                 || self.wave.active
                 || self.noise.core.active;
             if any_voice {
-                self.sq1.tick_timer(self.freq1, true);
-                self.sq2.tick_timer(self.freq2, false);
+                self.sq1
+                    .tick_timer(self.freq1, true, self.duty1, self.mix_timer as u32);
+                self.sq2
+                    .tick_timer(self.freq2, false, self.duty2, self.mix_timer as u32);
                 self.wave.tick_timer(self.freq3);
                 let r = (self.sound4cnt_hi & 7) as u8;
                 // NR43 shift is 4 bits (0-15); masking 3 dropped shift 8-15.
@@ -720,6 +724,55 @@ impl GbaApu {
         // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
         sum_l = (sum_l * psg_mul * l_vol) >> 2;
         sum_r = (sum_r * psg_mul * r_vol) >> 2;
+        // PolyBLEP square-edge corrections (Kleimola 2-tap): naive
+        // per-sample synthesis folds edge harmonics back as inharmonic
+        // aliases (metallic harshness); the `after` tap joins the sample
+        // being pushed while each `retro` tap reaches back to the
+        // previously pushed sample (still buffered: this frame has not
+        // drained yet). Integer voice mix above is untouched; corrections
+        // ride a parallel float layer in the same post-scale units.
+        let (after1, retro1, nretro1) = self.sq1.take_blep();
+        let (after2, retro2, nretro2) = self.sq2.take_blep();
+        let mut corr_l = 0.0f32;
+        let mut corr_r = 0.0f32;
+        if en_l & 1 != 0 {
+            corr_l += after1;
+        }
+        if en_r & 1 != 0 {
+            corr_r += after1;
+        }
+        if en_l & 2 != 0 {
+            corr_l += after2;
+        }
+        if en_r & 2 != 0 {
+            corr_r += after2;
+        }
+        let post_l = psg_mul as f32 * l_vol as f32 / 4.0;
+        let post_r = psg_mul as f32 * r_vol as f32 / 4.0;
+        if nretro1 + nretro2 > 0 {
+            // Retro taps land on already-normalized samples
+            // ((sum + bias) / 512 - 1), so they scale by post/512.
+            if let Some(prev) = self.mix_buffer.last_mut() {
+                for &(t, h) in &retro1[..nretro1 as usize] {
+                    let c = h * 0.5 * (1.0 - t) * (1.0 - t);
+                    if en_l & 1 != 0 {
+                        prev.0 += c * post_l / 512.0;
+                    }
+                    if en_r & 1 != 0 {
+                        prev.1 += c * post_r / 512.0;
+                    }
+                }
+                for &(t, h) in &retro2[..nretro2 as usize] {
+                    let c = h * 0.5 * (1.0 - t) * (1.0 - t);
+                    if en_l & 2 != 0 {
+                        prev.0 += c * post_l / 512.0;
+                    }
+                    if en_r & 2 != 0 {
+                        prev.1 += c * post_r / 512.0;
+                    }
+                }
+            }
+        }
         let fifo_gain = |fifo: bool| {
             if fifo {
                 if self.soundcnt_hi & (1 << 3) != 0 {
@@ -752,8 +805,13 @@ impl GbaApu {
             sum_r += db;
         }
         let bias = i32::from(self.soundbias & 0x3FF);
-        let to_f32 = |sum: i32| (sum + bias).clamp(0, 0x3FF) as f32 / 512.0 - 1.0;
-        (to_f32(sum_l), to_f32(sum_r))
+        let to_f32 = |sum: i32, corr: f32| {
+            (sum as f32 + corr + bias as f32).clamp(0.0, 0x3FF as f32) / 512.0 - 1.0
+        };
+        (
+            to_f32(sum_l, corr_l * post_l),
+            to_f32(sum_r, corr_r * post_r),
+        )
     }
 
     /// Phase 10 export. `drain_resampled` always leaves the interpolation

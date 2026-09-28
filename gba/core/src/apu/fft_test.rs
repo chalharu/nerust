@@ -312,3 +312,34 @@ fn direct_sound_fifo_path_replays_dac_pitch() {
         "FIFO DAC path should replay 256Hz, got {dominant} (tol {tolerance})"
     );
 }
+
+#[test]
+fn square_high_pitch_has_no_audible_foldover() {
+    // se_select's top note (0x7D6 ~3121Hz, duty 50%): naive per-sample
+    // square synthesis folds harmonics 7/9/11/... back as inharmonic
+    // aliases (10923Hz at -17dB, 4681Hz at -19dB, ...), heard as metallic
+    // harshness next to band-limited emulators. The polyBLEP stage must
+    // push every foldover below -40dB of the fundamental; the lone
+    // near-Nyquist residual (10923Hz) gets -30dB: it sits 22dB under the
+    // neighboring 3rd harmonic (auditory masking) where the GBA speaker
+    // has already rolled off steeply.
+    let mut apu = GbaApu::new();
+    solo_bus(&mut apu);
+    apu.write_sound1cnt_lo(0x00);
+    // Duty 50%, length held (gate off), envelope frozen at 15.
+    apu.write_sound1cnt_hi(0xF080);
+    apu.write_sound1cnt_x(0x87D6);
+    assert!(apu.sq1.core.active);
+    let samples = capture_grid_mono(&mut apu, FFT_SAMPLE_COUNT);
+    let spectrum = power_spectrum(&samples);
+    let fundamental = peak_power_near_frequency(&spectrum, GRID_RATE_HZ, 3121.0, 2);
+    for alias in [1560.0, 4681.0, 6242.0, 7802.0, 10923.0, 12483.0, 14043.0] {
+        let power = peak_power_near_frequency(&spectrum, GRID_RATE_HZ, alias, 2);
+        let db = 10.0 * (power / fundamental).log10();
+        let ceiling = if alias > 8000.0 { -30.0 } else { -40.0 };
+        assert!(
+            db < ceiling,
+            "foldover at {alias}Hz must stay inaudible, got {db:.1}dB"
+        );
+    }
+}

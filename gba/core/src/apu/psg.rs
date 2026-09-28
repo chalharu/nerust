@@ -7,6 +7,11 @@ const DUTY: [[i8; 8]; 4] = [
     [0, 1, 1, 1, 1, 1, 1, 0],
 ];
 
+/// PolyBLEP edge slots per square voice per grid period (12 output edges
+/// need a sub-85-T-cycle phase step, i.e. fundamentals above ~24kHz;
+/// extras saturate there, where the fundamental itself is inaudible).
+const BLEP_MAX_EDGES: usize = 12;
+
 /// Shared length/envelope core for square/noise channels.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct LengthEnvelope {
@@ -95,6 +100,20 @@ pub struct Square {
     sweep_timer: u8,
     sweep_dir_dec: bool,
     sweep_occurred: bool,
+    /// PolyBLEP edge backlog for the grid period being accumulated:
+    /// `(t, h)` = (fraction from period start, baked step height in
+    /// naive output units). Transient (sub-sample timing): skipped by
+    /// serde so save format and old saves are untouched; a load simply
+    /// skips one retro tap (inaudible).
+    #[serde(skip)]
+    blep_edges: [(f32, f32); BLEP_MAX_EDGES],
+    #[serde(skip)]
+    blep_len: u8,
+    /// False after a trigger/reconfig inside the current period: pending
+    /// retro taps would mix pre/post-trigger state, so they are dropped
+    /// once (after taps still apply).
+    #[serde(skip)]
+    blep_clean: bool,
 }
 
 impl Square {
@@ -125,6 +144,7 @@ impl Square {
         self.timer = 16 * u32::from(2048 - freq.min(2047));
         self.sweep_timer = self.sweep_pace;
         self.sweep_occurred = false;
+        self.clear_blep();
         // Immediate overflow check when sweep is armed with a shift.
         if self.sweep_active() {
             self.sweep_calc(true);
@@ -160,8 +180,10 @@ impl Square {
     }
 
     /// `freq` is the live register value for ch2; ch1 (sweep) uses the
-    /// shadow once the sweep unit has run.
-    pub fn tick_timer(&mut self, freq: u16, use_shadow: bool) {
+    /// shadow once the sweep unit has run. `duty` resolves output edges
+    /// for polyBLEP recording; `mix_left` is the grid countdown remaining
+    /// (1..=512), fixing each edge's fractional position in the period.
+    pub fn tick_timer(&mut self, freq: u16, use_shadow: bool, duty: u8, mix_left: u32) {
         if !self.core.active {
             return;
         }
@@ -172,9 +194,55 @@ impl Square {
                 freq & 0x7FF
             };
             self.timer = 16 * u32::from(2048 - base.min(2047));
+            let from = self.phase;
             self.phase = (self.phase + 1) & 7;
+            // Band-limited synthesis: a duty-boundary crossing is a step
+            // discontinuity; naive per-sample synthesis folds its harmonics
+            // back as inharmonic aliases (metallic harshness next to
+            // blip_buf emulators). Record `(t, h)` for the Kleimola
+            // 2-tap polyBLEP consumed at the next grid push.
+            let pat = &DUTY[(duty & 3) as usize];
+            let step = f32::from(pat[self.phase as usize] - pat[from as usize]);
+            if step != 0.0 && (self.blep_len as usize) < BLEP_MAX_EDGES {
+                let period = super::T_CYCLES_PER_MIX as f32;
+                let t = (period - mix_left.min(super::T_CYCLES_PER_MIX as u32) as f32) / period;
+                let h = step * 2.0 * f32::from(self.core.volume);
+                self.blep_edges[self.blep_len as usize] = (t, h);
+                self.blep_len += 1;
+            }
         }
         self.timer -= 1;
+    }
+
+    /// Drain recorded polyBLEP edges for the grid sample being pushed.
+    /// Returns `(after, retros, retro_len)`: `after` corrects the current
+    /// sample (`-h/2 * t^2` per edge, naive output units); `retros` holds
+    /// `(t, h)` pairs correcting the previously pushed sample with
+    /// `+h/2 * (1-t)^2` (empty when a trigger/reconfig dirtied the
+    /// period). Bookkeeping resets for the next period.
+    pub(crate) fn take_blep(&mut self) -> (f32, [(f32, f32); BLEP_MAX_EDGES], u8) {
+        let mut after = 0.0f32;
+        let mut retros = [(0.0f32, 0.0f32); BLEP_MAX_EDGES];
+        let mut retro_len = 0u8;
+        for i in 0..self.blep_len as usize {
+            let (t, h) = self.blep_edges[i];
+            after += -h * 0.5 * t * t;
+            if self.blep_clean {
+                retros[retro_len as usize] = (t, h);
+                retro_len += 1;
+            }
+        }
+        self.blep_len = 0;
+        self.blep_clean = true;
+        (after, retros, retro_len)
+    }
+
+    /// Drop polyBLEP bookkeeping (trigger starts a fresh note; master-off
+    /// parks the voices). Pending retro taps would mix states, so the
+    /// next drain skips them once.
+    pub(crate) fn clear_blep(&mut self) {
+        self.blep_len = 0;
+        self.blep_clean = false;
     }
 
     /// Frame-sequencer sweep steps (2, 6). Returns false when the sweep
@@ -767,10 +835,10 @@ mod tests {
         assert_eq!(sq.phase_for_test(), 0);
         assert_eq!(sq.timer_horizon(), Some(4096));
         for _ in 0..4096 {
-            sq.tick_timer(0x700, false);
+            sq.tick_timer(0x700, false, 0, 512);
         }
         assert_eq!(sq.phase_for_test(), 0);
-        sq.tick_timer(0x700, false);
+        sq.tick_timer(0x700, false, 0, 512);
         assert_eq!(sq.phase_for_test(), 1);
         // Retrigger keeps step 1 and restarts its full period.
         sq.trigger(0x700, 64, 15, 0xF000, false);
