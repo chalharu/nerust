@@ -56,25 +56,10 @@ never pick a core yourself.
 
 - **Automatic system detection.** Open any supported ROM. Nerust
   selects the right core.
-- **Save states.** Freeze the game at any point and resume later.
-  Each game can hold multiple slots. See Controls for shortcuts.
-- **In-game saves.** Battery-backed saves (SRAM/Flash/EEPROM) behave
-  like real hardware. Nerust stores them next to your ROM file.
-  Nerust detects GBA save types on its own. You configure nothing
-  per game.
-- **Pause and reset** from the Emulation menu.
-- **Remappable controls.** Change keyboard bindings per system in
-  Settings.
-- **Video options.** Toggle fullscreen, scaling modes, and vsync.
 - **Rumble and motion-sensor options** for cartridges that support
   them (e.g. GBC rumble titles).
 - **Real-time clock support** for games with a built-in clock
   (Pokémon Gold/Silver/Crystal, GBA RTC titles).
-- **Touch controls on Android.** On-screen buttons show up on
-  their own. You can adjust their size, position, opacity, and
-  haptics.
-- **Automatic resume on Android.** Nerust reopens your last game,
-  right where you left it, when you return to the app.
 
 ## Downloads
 
@@ -88,71 +73,7 @@ Find official release files on each
 | `nerust-vX.Y.Z-macos-aarch64.app.zip` | macOS Apple Silicon |
 | `nerust-vX.Y.Z-android-arm64-v8a.apk` | Android arm64 |
 
-Each desktop archive holds the `nerust` app, this README, and the
-license, plus a `.sha256` checksum file. The Android build ships as an
-APK signed with the project's own key. Since it comes from outside
-Google Play, Android warns you each time you install it. Allow the
-install to proceed. The macOS app carries an ad-hoc signature and lacks
-notarization, so macOS may ask you to allow it in System Settings on
-first launch.
-
-## Getting started (desktop)
-
-1. Download and unpack the archive for your platform.
-2. Launch `nerust`. To jump straight into a game, pass a ROM path:
-   `nerust "path/to/game.gba"`.
-3. Pick `File → Open ROM...` and choose your game.
-4. Play with the default controls below, or open `File → Settings...`
-   to remap them.
-
-## Getting started (Android)
-
-1. Install the APK and open Nerust. Since you sideload the app
-   instead of installing it from a store, Android shows a warning on
-   every install. Allow it to proceed.
-2. Open a game through the system file picker. Nerust needs no
-   broad storage access.
-3. Once the game starts, on-screen buttons show up on their own. Tune
-   them (size, position, opacity, haptics) in Settings.
-
-## Controls
-
-Default keyboard layout. Remap it fully in Settings.
-
-| Button | NES | Game Boy / Game Boy Color | Game Boy Advance |
-| --- | --- | --- | --- |
-| D-Pad | Arrow keys | Arrow keys | Arrow keys |
-| A | `Z` | `Z` | `Z` |
-| B | `X` | `X` | `X` |
-| L | — | — | `A` |
-| R | — | — | `Q` |
-| Select | `C` | `C` | `C` |
-| Start | `V` | `V` | `V` |
-
-Useful shortcuts:
-
-| Action | Shortcut |
-| --- | --- |
-| Save to active slot | `F5` |
-| Load active slot | `F8` |
-
-Manage slots (create, select, save, load, or delete) under
-`Emulation → Save States`.
-
-## Troubleshooting
-
-- **A ROM fails to load, or the wrong system is detected.** Check the
-  file extension (`.nes`, `.gb`, `.gbc`, `.gba`). Check that the file
-  is not corrupt. Headerless or patched ROMs can fail detection.
-- **No sound, or choppy audio.** Check the audio settings. Make sure
-  no other app holds exclusive control of the audio device.
-- **Android: the previous game does not reopen.** Nerust restores
-  your last game through the file access you granted before.
-  Open it again through the picker if the system revoked that
-  access.
-- **macOS: "app is damaged" or "can't be opened".** The release build
-  lacks notarization. Right-click the app and pick Open, or allow it
-  in System Settings → Privacy & Security.
+Each desktop archive ships with a `.sha256` checksum file.
 
 ## Building from source
 
