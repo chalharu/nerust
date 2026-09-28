@@ -3237,6 +3237,20 @@ impl GbaMemoryBus {
     }
 
     fn write_internal(&mut self, addr: u32, width: u8, value: u32, bios: bool) {
+        if addr >> 24 == 3 && !self.block_batching {
+            // IWRAM stores have a fixed single-cycle bus cost and never
+            // contend with the display or ROM bus. Keep the prefetch
+            // erase/idle and bus-order accounting of the generic path.
+            self.access_wait_cycles += i64::from(self.prefetch_erase_delta(addr, 1, false));
+            self.fetch_buffer_idle(1);
+            self.dma_bus_valid = false;
+            self.write_iwram(addr, width, value);
+            self.prev_addr = Some(addr);
+            self.prev_width = width;
+            self.prev_data_addr = self.last_data_addr;
+            self.last_data_addr = Some(addr);
+            return;
+        }
         // Test-ROM log sink (only with the `mgba-debug-log` feature; see
         // field docs). Without the feature these addresses fall through
         // to the open-bus default below.
