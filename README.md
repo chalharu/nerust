@@ -80,7 +80,6 @@ Each desktop archive ships with a `.sha256` checksum file.
 ```sh
 # Desktop app (official Tao frontend)
 cargo build --features tao --release
-./target/release/nerust [ROM file]
 
 # GTK4 frontend (build-health only, not a release artifact)
 cargo build --features gtk --release
