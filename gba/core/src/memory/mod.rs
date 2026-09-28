@@ -2981,6 +2981,22 @@ impl GbaMemoryBus {
 
     #[inline]
     fn read_internal(&mut self, addr: u32, width: u8, is_opcode: bool) -> (u32, u8) {
+        // IWRAM opcode fetches are one-cycle, never touch the ROM
+        // prefetcher or the CPU data latch. Myst (and many games) runs
+        // its hot loop here: avoid the general bus/prefetch dispatch but
+        // keep every fetch-stream and open-bus latch update intact.
+        if is_opcode && addr >> 24 == 3 {
+            let raw = self.read_iwram(addr, width);
+            self.last_opcode_addr = Some(addr);
+            self.prev_addr = Some(addr);
+            self.prev_width = width;
+            self.fetch_addr = Some(addr);
+            self.fetch_width = width;
+            self.prefetch_win = [self.prefetch_win[1], raw];
+            self.prefetch_thumb = width == 2;
+            self.last_prefetch = raw;
+            return (raw, 1);
+        }
         // Test-ROM log sink (only with the `mgba-debug-log` feature; see
         // field docs). Without the feature these addresses fall through
         // to plain open bus below.
