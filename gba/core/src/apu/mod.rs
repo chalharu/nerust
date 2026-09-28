@@ -681,20 +681,9 @@ impl GbaApu {
         }
     }
 
-    /// One native-grid stereo sample. Integer 10-bit mix: PSG voices
-    /// scaled by SOUNDCNT_H/L, FIFO latches x2/x4, plus bias, clipped to
-    /// 0..0x3FF and centered.
-    fn mix_grid(&mut self) -> (f32, f32) {
-        if self.soundcnt_x & 0x80 == 0 {
-            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center);
-            // an unwritten bias parks the DAC at mid-rail.
-            let bias = f32::from(self.soundbias & 0x3FF);
-            let out = (bias - 512.0) / 512.0;
-            return (out, out);
-        }
-        let psg_mul = [1i32, 2, 4, 4][(self.soundcnt_hi & 3) as usize];
-        let l_vol = ((self.soundcnt_lo >> 4) & 7) as i32 + 1;
-        let r_vol = (self.soundcnt_lo & 7) as i32 + 1;
+    /// Raw PSG voice sums per side, before the SOUNDCNT_H/L post-scale.
+    /// Branchless routing: each voice joins the sides its enable bit names.
+    fn psg_voice_sums(&mut self, en_l: u16, en_r: u16) -> (i32, i32) {
         let outs = [
             self.sq1.output(self.duty1) as i32,
             self.sq2.output(self.duty2) as i32,
@@ -705,8 +694,6 @@ impl GbaApu {
             ) as i32,
             self.noise.output() as i32,
         ];
-        let en_l = (self.soundcnt_lo >> 12) & 0xF;
-        let en_r = (self.soundcnt_lo >> 8) & 0xF;
         let mut sum_l = 0i32;
         let mut sum_r = 0i32;
         for (i, out) in outs.iter().enumerate() {
@@ -717,22 +704,17 @@ impl GbaApu {
                 sum_r += out;
             }
         }
-        // GBATEK Max Output Levels: each PSG spans +/-80h of the 10-bit
-        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120:
-        // squares bipolar, wave bipolar around digit 8, noise unipolar
-        // with DC stripped downstream), each FIFO the full +/-200h
-        // +/-200h (DAC x gain ~= +/-508).
-        // The summed signed value plus bias clips against the 10-bit rail
-        // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
-        sum_l = (sum_l * psg_mul * l_vol) >> 2;
-        sum_r = (sum_r * psg_mul * r_vol) >> 2;
-        // PolyBLEP square-edge corrections (Kleimola 2-tap): naive
-        // per-sample synthesis folds edge harmonics back as inharmonic
-        // aliases (metallic harshness); the `after` tap joins the sample
-        // being pushed while each `retro` tap reaches back to the
-        // previously pushed sample (still buffered: this frame has not
-        // drained yet). Integer voice mix above is untouched; corrections
-        // ride a parallel float layer in the same post-scale units.
+        (sum_l, sum_r)
+    }
+
+    /// PolyBLEP square-edge corrections (Kleimola 2-tap): naive
+    /// per-sample synthesis folds edge harmonics back as inharmonic
+    /// aliases (metallic harshness); the `after` tap joins the sample
+    /// being pushed while each `retro` tap reaches back to the
+    /// previously pushed sample (still buffered: this frame has not
+    /// drained yet). Integer voice mix is untouched; corrections ride a
+    /// parallel float layer in the same post-scale units.
+    fn blep_corrections(&mut self, en_l: u16, en_r: u16, post_l: f32, post_r: f32) -> (f32, f32) {
         let (after1, retro1, nretro1) = self.sq1.take_blep();
         let (after2, retro2, nretro2) = self.sq2.take_blep();
         let mut corr_l = 0.0f32;
@@ -749,63 +731,118 @@ impl GbaApu {
         if en_r & 2 != 0 {
             corr_r += after2;
         }
-        let post_l = psg_mul as f32 * l_vol as f32 / 4.0;
-        let post_r = psg_mul as f32 * r_vol as f32 / 4.0;
         if nretro1 + nretro2 > 0 {
             // Retro taps land on already-normalized samples
             // ((sum + bias) / 512 - 1), so they scale by post/512.
             if let Some(prev) = self.mix_buffer.last_mut() {
-                for &(t, h) in &retro1[..nretro1 as usize] {
-                    let c = h * 0.5 * (1.0 - t) * (1.0 - t);
-                    if en_l & 1 != 0 {
-                        prev.0 += c * post_l / 512.0;
-                    }
-                    if en_r & 1 != 0 {
-                        prev.1 += c * post_r / 512.0;
-                    }
-                }
-                for &(t, h) in &retro2[..nretro2 as usize] {
-                    let c = h * 0.5 * (1.0 - t) * (1.0 - t);
-                    if en_l & 2 != 0 {
-                        prev.0 += c * post_l / 512.0;
-                    }
-                    if en_r & 2 != 0 {
-                        prev.1 += c * post_r / 512.0;
-                    }
-                }
+                Self::apply_retro(
+                    prev,
+                    &retro1[..nretro1 as usize],
+                    en_l,
+                    en_r,
+                    1,
+                    post_l,
+                    post_r,
+                );
+                Self::apply_retro(
+                    prev,
+                    &retro2[..nretro2 as usize],
+                    en_l,
+                    en_r,
+                    2,
+                    post_l,
+                    post_r,
+                );
             }
         }
-        let fifo_gain = |fifo: bool| {
-            if fifo {
-                if self.soundcnt_hi & (1 << 3) != 0 {
-                    4
-                } else {
-                    2
-                }
-            } else if self.soundcnt_hi & (1 << 2) != 0 {
-                4
-            } else {
-                2
+        (corr_l, corr_r)
+    }
+
+    /// One voice's retro taps onto the previously pushed sample.
+    fn apply_retro(
+        prev: &mut (f32, f32),
+        retros: &[(f32, f32)],
+        en_l: u16,
+        en_r: u16,
+        voice_bit: u16,
+        post_l: f32,
+        post_r: f32,
+    ) {
+        for &(t, h) in retros {
+            let c = h * 0.5 * (1.0 - t) * (1.0 - t);
+            if en_l & voice_bit != 0 {
+                prev.0 += c * post_l / 512.0;
             }
+            if en_r & voice_bit != 0 {
+                prev.1 += c * post_r / 512.0;
+            }
+        }
+    }
+
+    /// Signed FIFO contributions per side (DAC latch x2/x4 by the
+    /// SOUNDCNT_H volume bits, routed by the enable bits).
+    fn fifo_sums(&self) -> (i32, i32) {
+        let gain_a = if self.soundcnt_hi & (1 << 2) != 0 {
+            4
+        } else {
+            2
         };
-        let a_on_l = self.soundcnt_hi & (1 << 8) != 0;
-        let a_on_r = self.soundcnt_hi & (1 << 9) != 0;
-        let b_on_l = self.soundcnt_hi & (1 << 12) != 0;
-        let b_on_r = self.soundcnt_hi & (1 << 13) != 0;
-        let da = i32::from(self.dac_a) * fifo_gain(false);
-        let db = i32::from(self.dac_b) * fifo_gain(true);
-        if a_on_l {
+        let gain_b = if self.soundcnt_hi & (1 << 3) != 0 {
+            4
+        } else {
+            2
+        };
+        let da = i32::from(self.dac_a) * gain_a;
+        let db = i32::from(self.dac_b) * gain_b;
+        let mut sum_l = 0i32;
+        let mut sum_r = 0i32;
+        if self.soundcnt_hi & (1 << 8) != 0 {
             sum_l += da;
         }
-        if a_on_r {
+        if self.soundcnt_hi & (1 << 9) != 0 {
             sum_r += da;
         }
-        if b_on_l {
+        if self.soundcnt_hi & (1 << 12) != 0 {
             sum_l += db;
         }
-        if b_on_r {
+        if self.soundcnt_hi & (1 << 13) != 0 {
             sum_r += db;
         }
+        (sum_l, sum_r)
+    }
+
+    /// One native-grid stereo sample. Integer 10-bit mix: PSG voices
+    /// scaled by SOUNDCNT_H/L, FIFO latches x2/x4, plus bias, clipped to
+    /// 0..0x3FF and centered.
+    fn mix_grid(&mut self) -> (f32, f32) {
+        if self.soundcnt_x & 0x80 == 0 {
+            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center);
+            // an unwritten bias parks the DAC at mid-rail.
+            let bias = f32::from(self.soundbias & 0x3FF);
+            let out = (bias - 512.0) / 512.0;
+            return (out, out);
+        }
+        let psg_mul = [1i32, 2, 4, 4][(self.soundcnt_hi & 3) as usize];
+        let l_vol = ((self.soundcnt_lo >> 4) & 7) as i32 + 1;
+        let r_vol = (self.soundcnt_lo & 7) as i32 + 1;
+        let en_l = (self.soundcnt_lo >> 12) & 0xF;
+        let en_r = (self.soundcnt_lo >> 8) & 0xF;
+        let (mut sum_l, mut sum_r) = self.psg_voice_sums(en_l, en_r);
+        // GBATEK Max Output Levels: each PSG spans +/-80h of the 10-bit
+        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120:
+        // squares bipolar, wave bipolar around digit 8, noise unipolar
+        // with DC stripped downstream), each FIFO the full +/-200h
+        // (DAC x gain ~= +/-508).
+        // The summed signed value plus bias clips against the 10-bit rail
+        // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
+        sum_l = (sum_l * psg_mul * l_vol) >> 2;
+        sum_r = (sum_r * psg_mul * r_vol) >> 2;
+        let post_l = psg_mul as f32 * l_vol as f32 / 4.0;
+        let post_r = psg_mul as f32 * r_vol as f32 / 4.0;
+        let (corr_l, corr_r) = self.blep_corrections(en_l, en_r, post_l, post_r);
+        let (fifo_l, fifo_r) = self.fifo_sums();
+        sum_l += fifo_l;
+        sum_r += fifo_r;
         let bias = i32::from(self.soundbias & 0x3FF);
         let to_f32 = |sum: i32, corr: f32| {
             (sum as f32 + corr + bias as f32).clamp(0.0, 0x3FF as f32) / 512.0 - 1.0
