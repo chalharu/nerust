@@ -1128,7 +1128,7 @@ impl GbaPpu {
         // Semi-transparent OBJs are the alpha-blend 1st target regardless
         // of BLDCNT and of the window color-effect gate: HW blends them
         // whenever a valid 2nd target is below (GBATEK "regardless of
-        // BLDCNT register", mgba parity, RadDad772 HW tests). Emerald's
+        // BLDCNT register", RadDad772 HW tests). Emerald's
         // Rusturf Tunnel fog relies on this: the field keeps windows
         // enabled with the effect bit clear, so gating on `enabled`
         // renders the fog opaque.
@@ -1476,7 +1476,7 @@ mod tests {
         // floor, BLDCNT alpha with BG1-3/OBJ 2nd targets, BLDALPHA
         // (12, 8) — but the field keeps windows enabled with the
         // color-effect bit clear, so `enabled` is false. HW still blends
-        // (GBATEK "regardless of BLDCNT register", mgba parity).
+        // (GBATEK "regardless of BLDCNT register").
         let mut ppu = GbaPpu::new();
         let vram = vec![0; 0x18000];
         let palette = vec![0; 0x400];
@@ -1554,7 +1554,7 @@ mod tests {
 
     #[test]
     fn semitransparent_blends_regardless_of_bldcnt_mode() {
-        // mgba parity: a semi-transparent top alpha-blends even when
+        // HW behavior: a semi-transparent top alpha-blends even when
         // BLDCNT selects no effect (mode 0), with the window gate clear.
         let mut ppu = GbaPpu::new();
         let vram = vec![0; 0x18000];
