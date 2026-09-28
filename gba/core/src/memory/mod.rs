@@ -3522,15 +3522,18 @@ impl GbaMemoryBus {
                 }
             }
             0x040000B0..=0x040000DE => self.read_io_dma(aligned),
+            // APU CNT staging latches keep the full halfword so byte-lane
+            // writes merge losslessly; the bus masks reads back to the
+            // GBATEK R bits here (unchanged observable behavior).
             0x04000060 => self.apu.sound1cnt_lo,
-            0x04000062 => self.apu.sound1cnt_hi,
-            0x04000064 => self.apu.sound1cnt_x,
-            0x04000068 => self.apu.sound2cnt_lo,
-            0x0400006C => self.apu.sound2cnt_hi,
+            0x04000062 => self.apu.sound1cnt_hi & 0xFFC0,
+            0x04000064 => self.apu.sound1cnt_x & 0x4000,
+            0x04000068 => self.apu.sound2cnt_lo & 0xFFC0,
+            0x0400006C => self.apu.sound2cnt_hi & 0x4000,
             0x04000070 => self.apu.sound3cnt_lo,
-            0x04000072 => self.apu.sound3cnt_hi,
-            0x04000074 => self.apu.sound3cnt_x,
-            0x04000078 => self.apu.sound4cnt_lo,
+            0x04000072 => self.apu.sound3cnt_hi & 0xE000,
+            0x04000074 => self.apu.sound3cnt_x & 0x4000,
+            0x04000078 => self.apu.sound4cnt_lo & 0xFF00,
             0x0400007C => self.apu.sound4cnt_hi,
             0x04000080 => self.apu.soundcnt_lo,
             0x04000082 => self.apu.soundcnt_hi,
@@ -3959,7 +3962,13 @@ impl GbaMemoryBus {
         let cur = if (0x040000B0..=0x040000DE).contains(&aligned) {
             u32::from(self.dma.read(aligned).unwrap_or(0))
         } else {
-            self.read_io(aligned, 2)
+            // APU CNT latches merge against the raw staging value (full
+            // halfword); the R-masked CPU read would drop the lane being
+            // preserved (frequency low bytes, NR11 duty/length, ...).
+            match self.apu.read_staging(aligned) {
+                Some(staged) => u32::from(staged),
+                None => self.read_io(aligned, 2),
+            }
         };
         ((cur & !(0xFF << shift)) | lane) as u16
     }
@@ -3985,9 +3994,9 @@ impl GbaMemoryBus {
                 }
             }
             // 0x04000006 VCOUNT は RO
-            // APU readable-bit masks are applied at write time (GBATEK
-            // R/W maps): unreadable bits never persist, so reads return
-            // the stored value.
+            // APU CNT latches stage the full halfword (byte-lane merges
+            // must round-trip); the R-bit masks apply at read time in
+            // `read_io_low`, so reads return the masked stored value.
             // mgba-suite io-read pins write-0xFFFF -> each mask.
             0x04000060 => self.apu.write_sound1cnt_lo(v16),
             0x04000062 => self.apu.write_sound1cnt_hi(v16),

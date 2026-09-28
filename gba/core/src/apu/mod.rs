@@ -401,9 +401,13 @@ impl GbaApu {
 
     /// NR11/12 write: length + duty latch (W-only), envelope stays live.
     /// Envelope 0 (bits 11-15 clear) powers the DAC off and stops the
-    /// channel at once (Pan Docs DAC power).
+    /// channel at once (Pan Docs DAC power). The full halfword is staged:
+    /// M4A programs CGB voices with byte stores (NR11 then NR12 alone on
+    /// envelope steps), and the bus merges a byte lane against the staged
+    /// value — dropping length/duty here would reset them mid-note.
+    /// CPU reads still mask to the R bits (see `read`).
     pub fn write_sound1cnt_hi(&mut self, value: u16) {
-        self.sound1cnt_hi = value & 0xFFC0;
+        self.sound1cnt_hi = value;
         self.len1 = 64 - (value & 0x3F) as u8;
         self.duty1 = ((value >> 6) & 3) as u8;
         if value & 0xF800 == 0 {
@@ -412,16 +416,21 @@ impl GbaApu {
     }
 
     /// NR13/14 write: frequency latch, restart on bit 15 (W-only).
+    /// The latch keeps frequency + length (trigger never persists); byte
+    /// stores of NR13/NR14 merge against it, so the low byte must survive
+    /// until the high byte lands. CPU reads mask to the R bit (0x4000).
     pub fn write_sound1cnt_x(&mut self, value: u16) {
         self.freq1 = value & 0x7FF;
-        self.sound1cnt_x = value & 0x4000;
+        self.sound1cnt_x = value & 0x7FFF;
         if value & 0x8000 != 0 {
             self.trigger_ch1();
         }
     }
 
+    /// NR21/22 write: same staging rule as NR11/12 (full halfword kept
+    /// for byte-lane merges; CPU reads mask to 0xFFC0).
     pub fn write_sound2cnt_lo(&mut self, value: u16) {
-        self.sound2cnt_lo = value & 0xFFC0;
+        self.sound2cnt_lo = value;
         self.len2 = 64 - (value & 0x3F) as u8;
         self.duty2 = ((value >> 6) & 3) as u8;
         if value & 0xF800 == 0 {
@@ -429,32 +438,39 @@ impl GbaApu {
         }
     }
 
+    /// NR23/24 write: same staging rule as NR13/14 (frequency + length
+    /// kept, trigger never persists; CPU reads mask to 0x4000).
     pub fn write_sound2cnt_hi(&mut self, value: u16) {
         self.freq2 = value & 0x7FF;
-        self.sound2cnt_hi = value & 0x4000;
+        self.sound2cnt_hi = value & 0x7FFF;
         if value & 0x8000 != 0 {
             self.trigger_ch2();
         }
     }
 
-    /// NR31 write: wave length latch (W-only).
+    /// NR31 write: wave length latch (W-only). Full halfword is staged:
+    /// M4A writes NR32 alone on volume steps, which must not reset the
+    /// length latch. CPU reads mask to 0xE000 (see `read`).
     pub fn write_sound3cnt_hi(&mut self, value: u16) {
-        self.sound3cnt_hi = value & 0xE000;
+        self.sound3cnt_hi = value;
         self.len3 = 256 - (value & 0xFF);
     }
 
-    /// NR33/34 write: rate latch, restart on bit 15 (W-only).
+    /// NR33/34 write: rate latch, restart on bit 15 (W-only). Same
+    /// staging rule as NR13/14 (CPU reads mask to 0x4000).
     pub fn write_sound3cnt_x(&mut self, value: u16) {
         self.freq3 = value & 0x7FF;
-        self.sound3cnt_x = value & 0x4000;
+        self.sound3cnt_x = value & 0x7FFF;
         if value & 0x8000 != 0 {
             self.trigger_ch3();
         }
     }
 
     /// NR41 write: noise length latch (W-only); envelope 0 kills DAC.
+    /// Full halfword is staged (same byte-merge rule as NR11/12;
+    /// CPU reads mask to 0xFF00).
     pub fn write_sound4cnt_lo(&mut self, value: u16) {
-        self.sound4cnt_lo = value & 0xFF00;
+        self.sound4cnt_lo = value;
         self.len4 = 64 - (value & 0x3F) as u8;
         if value & 0xF800 == 0 {
             self.noise.core.active = false;
@@ -920,6 +936,13 @@ impl GbaApu {
         &self.mix_buffer
     }
 
+    /// Latched ch1 duty (test introspection: bus byte-lane merges must
+    /// not reset NR11 duty on mid-note NR12 writes).
+    #[cfg(test)]
+    pub(crate) fn duty1_for_test(&self) -> u8 {
+        self.duty1
+    }
+
     /// Wave RAM CPU access (GBATEK NR30): the CPU sees the bank NOT
     /// selected for playback (bit 6). `aligned` is the 0x90-0x9E address.
     fn wave_cpu_base(&self) -> usize {
@@ -965,17 +988,34 @@ impl GbaApu {
         }
     }
 
-    pub fn read(&self, addr: u32) -> Option<u16> {
+    /// Raw CNT staging latches: the full halfword, unlike the R-masked
+    /// CPU `read`. The bus byte-lane merge reads through here so NR13
+    /// low bytes (etc.) survive until the high byte lands; CPU-visible
+    /// reads stay masked. `None` for addresses without a wide latch.
+    pub fn read_staging(&self, addr: u32) -> Option<u16> {
         Some(match addr {
-            0x04000060 => self.sound1cnt_lo,
             0x04000062 => self.sound1cnt_hi,
             0x04000064 => self.sound1cnt_x,
             0x04000068 => self.sound2cnt_lo,
             0x0400006C => self.sound2cnt_hi,
-            0x04000070 => self.sound3cnt_lo,
             0x04000072 => self.sound3cnt_hi,
             0x04000074 => self.sound3cnt_x,
             0x04000078 => self.sound4cnt_lo,
+            _ => return None,
+        })
+    }
+
+    pub fn read(&self, addr: u32) -> Option<u16> {
+        Some(match addr {
+            0x04000060 => self.sound1cnt_lo,
+            0x04000062 => self.sound1cnt_hi & 0xFFC0,
+            0x04000064 => self.sound1cnt_x & 0x4000,
+            0x04000068 => self.sound2cnt_lo & 0xFFC0,
+            0x0400006C => self.sound2cnt_hi & 0x4000,
+            0x04000070 => self.sound3cnt_lo,
+            0x04000072 => self.sound3cnt_hi & 0xE000,
+            0x04000074 => self.sound3cnt_x & 0x4000,
+            0x04000078 => self.sound4cnt_lo & 0xFF00,
             0x0400007C => self.sound4cnt_hi,
             0x04000080 => self.soundcnt_lo,
             0x04000082 => self.soundcnt_hi,
@@ -995,8 +1035,9 @@ impl GbaApu {
     }
 
     pub fn write(&mut self, addr: u32, value: u16) -> bool {
-        // Write-time R/W masks (GBATEK R/W maps).
-        // Unreadable bits never persist, so reads return the stored value.
+        // Write-time staging: CNT latches keep the full halfword (minus
+        // the trigger strobe) so bus byte-lane merges round-trip; the
+        // R-bit masks apply at read time (`read`, bus `read_io_low`).
         match addr {
             0x04000060 => self.write_sound1cnt_lo(value),
             0x04000062 => self.write_sound1cnt_hi(value),

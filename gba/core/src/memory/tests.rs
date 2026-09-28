@@ -1039,3 +1039,109 @@ fn batch_matches_per_cycle_on_seeded_io_programs() {
         }
     }
 }
+
+/// M4A (Emerald's music driver) programs CGB voices with byte stores:
+/// `CgbSound` writes NR13, NR14, NR12, NR14|0x80 as separate bytes, and
+/// rewrites NR12 alone on every envelope step. The I/O bus merges each
+/// byte lane against the staged CNT latch, so the latch must keep the
+/// full halfword — dropping frequency low bytes detuned every M4A CGB
+/// note to its high bits (se_select's 0x7D6 ~3121Hz collapsed to 0x700
+/// = 512Hz: the menu confirm SE lost its rise), and dropping NR11
+/// length/duty reset them mid-note.
+fn cgb_solo_bus() -> GbaMemoryBus {
+    let mut bus = GbaMemoryBus::new();
+    bus.write16(0x04000084, 0x0080); // master enable
+    bus.write16(0x04000080, 0xFFFF); // all PSG to L+R
+    bus.write16(0x04000082, 0x0003); // PSG gain
+    bus
+}
+
+#[test]
+fn cgb_byte_writes_preserve_frequency_low_byte() {
+    use crate::apu::fft_test::{GRID_RATE_HZ, capture_grid_mono, dominant_frequency};
+    let mut bus = cgb_solo_bus();
+    bus.write8(0x04000060, 0x00); // NR10: sweep off
+    bus.write8(0x04000062, 0x80); // NR11: duty 2, length hold
+    bus.write8(0x04000063, 0xF0); // NR12: vol 15, frozen
+    bus.write8(0x04000064, 0xD6); // NR13: freq low of 0x7D6
+    bus.write8(0x04000065, 0x07); // NR14: freq high, length off
+    bus.write8(0x04000065, 0x87); // NR14 + trigger
+    let samples = capture_grid_mono(&mut bus.apu, 4096);
+    let dominant = dominant_frequency(&samples, GRID_RATE_HZ);
+    assert!(
+        (dominant - 3121.0).abs() < 60.0,
+        "byte-written 0x7D6 should sound ~3121Hz, got {dominant}"
+    );
+}
+
+#[test]
+fn cgb_envelope_byte_write_preserves_duty_and_length() {
+    let mut bus = cgb_solo_bus();
+    bus.write8(0x04000060, 0x00); // NR10: sweep off
+    bus.write8(0x04000062, 0x80 | 60); // NR11: duty 2, length 4 ticks
+    bus.write8(0x04000063, 0xF0); // NR12: vol 15, frozen
+    bus.write8(0x04000064, 0xD6); // NR13: freq low
+    bus.write8(0x04000065, 0x47 | 0x80); // NR14: high + length gate + trigger
+    assert_eq!(bus.apu.duty1_for_test(), 2);
+    // Mid-note envelope step (NR12 alone, as M4A's sustain re-fire does):
+    // duty must stay 2 and the length countdown must continue.
+    for _ in 0..5000 {
+        bus.apu.tick();
+    }
+    bus.write8(0x04000063, 0xF0);
+    assert_eq!(bus.apu.duty1_for_test(), 2);
+    // Length 4 ticks at 256Hz (~15.6ms = ~262k T-cycles): the voice must
+    // be gone well before 300k ticks. A length reset to 64 would keep it
+    // alive for ~4.2M ticks instead.
+    for _ in 0..300_000 {
+        bus.apu.tick();
+    }
+    assert_eq!(
+        bus.apu.soundcnt_x_read() & 1,
+        0,
+        "gated note must expire on its latched length"
+    );
+}
+
+#[test]
+fn se_select_note_sequence_ascends() {
+    use crate::apu::fft_test::{GRID_RATE_HZ, dominant_frequency};
+    // Emerald's menu confirm SE: note 94 on the sweep-up square voice
+    // (sweep 0x77 = pace 7/inc/shift 7, duty 2), then note 103 on the
+    // plain square voice. Real M4A CGB freq values (MidiKeyToCgbFreq):
+    // 94 -> 0x7B9 (~1846Hz), 103 -> 0x7D6 (~3121Hz).
+    let mut bus = cgb_solo_bus();
+    bus.write8(0x04000060, 0x77); // NR10: sweep up (voice 87)
+    bus.write8(0x04000062, 0x80); // NR11: duty 2, hold
+    bus.write8(0x04000063, 0xF0); // NR12: vol 15
+    bus.write8(0x04000064, 0xB9); // NR13: 0x7B9 low
+    bus.write8(0x04000065, 0x07); // NR14: high
+    bus.write8(0x04000065, 0x87); // NR14 + trigger
+    while bus.apu.grid_buffer().len() < 4096 {
+        bus.apu.tick();
+    }
+    // Second note (voice 88: sweep off), retriggered over the first.
+    bus.write8(0x04000060, 0x00);
+    bus.write8(0x04000062, 0x80);
+    bus.write8(0x04000063, 0xF0);
+    bus.write8(0x04000064, 0xD6);
+    bus.write8(0x04000065, 0x07);
+    bus.write8(0x04000065, 0x87);
+    while bus.apu.grid_buffer().len() < 8192 {
+        bus.apu.tick();
+    }
+    let early: Vec<f32> = bus.apu.grid_buffer()[0..2048]
+        .iter()
+        .map(|sample| sample.0)
+        .collect();
+    let late: Vec<f32> = bus.apu.grid_buffer()[6144..8192]
+        .iter()
+        .map(|sample| sample.0)
+        .collect();
+    let early_pitch = dominant_frequency(&early, GRID_RATE_HZ);
+    let late_pitch = dominant_frequency(&late, GRID_RATE_HZ);
+    assert!(
+        late_pitch - early_pitch > 400.0,
+        "se_select should rise 94 -> 103: early={early_pitch}, late={late_pitch}"
+    );
+}
