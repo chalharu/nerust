@@ -1,4 +1,4 @@
-/// Square duty patterns (HW-pinned, mgba parity): 12.5% has a single
+/// Square duty patterns (HW-pinned): 12.5% has a single
 /// high step, 25% two, 50% four, 75% six. Phase 0 is the trigger start.
 const DUTY: [[i8; 8]; 4] = [
     [0, 0, 0, 0, 0, 0, 0, 1],
@@ -140,7 +140,7 @@ impl Square {
         self.freq_shadow = freq;
         self.core.trigger(init_len, init_vol, env_reg, seq_odd);
         // The duty step is kept across triggers (only its timer restarts,
-        // Pan Docs + mGBA parity): the latched step plays a full period.
+        // Pan Docs): the latched step plays a full period.
         self.timer = 16 * u32::from(2048 - freq.min(2047));
         self.sweep_timer = self.sweep_pace;
         self.sweep_occurred = false;
@@ -398,18 +398,20 @@ impl Wave {
         if !self.active {
             return 0;
         }
-        // Unipolar 0..15 like hardware (and mGBA): DC rides along and the
-        // output HPF strips it downstream. Full scale matches square
-        // voices (nibble 15 ~= square vol 15).
-        let base = i16::from(self.nibble(wave_ram));
+        // Bipolar DAC model (GBATEK's +/-80h per-PSG span): the 4-bit
+        // digit centers on 8, so a full-swing table carries the same
+        // amplitude as a full-volume square voice. DC rides along and
+        // the output HPF strips it downstream.
+        let base = i16::from(self.nibble(wave_ram)) - 8;
+        let full = base * 2;
         if force_75 {
-            base * 3 / 4
+            full * 3 / 4
         } else {
             match vol_code & 3 {
                 0 => 0,
-                1 => base,
-                2 => base / 2,
-                _ => base / 4,
+                1 => full,
+                2 => full >> 1,
+                _ => full >> 2,
             }
         }
     }
@@ -480,9 +482,13 @@ impl Noise {
         if !self.core.active {
             return 0;
         }
-        // GBATEK: carry-out drives HIGH.
+        // Unipolar DAC model (DMG DAC hardware: the LFSR bit gates
+        // volume-or-zero; the output HPF strips the DC downstream).
+        // A bipolar model would double noise against the documented
+        // +/-80h per-channel span. Polarity (HIGH on clear bit 0) is
+        // inaudible for white noise.
         let vol = i16::from(self.core.volume);
-        if self.lfsr & 1 == 0 { vol } else { -vol }
+        if self.lfsr & 1 == 0 { vol } else { 0 }
     }
 }
 
@@ -736,6 +742,44 @@ mod tests {
     }
 
     #[test]
+    fn noise_output_is_unipolar() {
+        // HW DAC model: the LFSR bit gates volume-or-zero (a bipolar
+        // model would double noise against the documented +/-80h
+        // per-channel span).
+        let mut nz = Noise::default();
+        nz.trigger(64, 10, 0, false, false);
+        nz.lfsr = 0x4000; // bit 0 clear -> HIGH.
+        assert_eq!(nz.output(), 10);
+        nz.lfsr = 0x4001; // bit 0 set -> gated.
+        assert_eq!(nz.output(), 0);
+        nz.core.active = false;
+        assert_eq!(nz.output(), 0);
+    }
+
+    #[test]
+    fn wave_output_is_bipolar_centered_on_8() {
+        // Full-swing nibbles must span like a full-volume square voice
+        // (+14/-16 ~= +/-15), not the unipolar 0..15 half-amplitude.
+        let mut w = Wave {
+            active: true,
+            ..Default::default()
+        };
+        let mut ram = [0u8; 0x20];
+        ram[0] = 0xF0; // digits 15, 0.
+        w.phase = 0;
+        assert_eq!(w.output(&ram, 1, false), 14);
+        w.phase = 1;
+        assert_eq!(w.output(&ram, 1, false), -16);
+        // Volume codes divide the bipolar swing; mute stays silent.
+        w.phase = 0;
+        assert_eq!(w.output(&ram, 2, false), 7);
+        assert_eq!(w.output(&ram, 3, false), 3);
+        assert_eq!(w.output(&ram, 0, false), 0);
+        w.active = false;
+        assert_eq!(w.output(&ram, 1, false), 0);
+    }
+
+    #[test]
     fn wave_nibble_order_is_msb_first() {
         let mut w = Wave {
             active: true,
@@ -755,24 +799,24 @@ mod tests {
         w.trigger(255, true, false);
         assert!(w.active);
         assert_eq!(w.bank, 0);
-        // Bank 0 replays 0xFF (nibble 15 -> +7), bank 1 replays 0x00
-        // (nibble 0 -> -8): the output must follow the playing bank.
+        // Bank 0 replays 0xFF (nibble 15 -> +14 bipolar), bank 1 replays
+        // 0x00 (nibble 0 -> -16): the output must follow the playing bank.
         let mut ram = [0xFFu8; 0x20];
         ram[16..].fill(0x00);
-        assert_eq!(w.output(&ram, 1, false), 15);
+        assert_eq!(w.output(&ram, 1, false), 14);
         // Fastest rate: 8 T-cycles per digit, 32 digits per wrap.
         for _ in 0..32 * 8 {
             w.tick_timer(0x7FF);
         }
         assert_eq!(w.phase, 0);
         assert_eq!(w.bank, 1);
-        assert_eq!(w.output(&ram, 1, false), 0);
+        assert_eq!(w.output(&ram, 1, false), -16);
         for _ in 0..32 * 8 {
             w.tick_timer(0x7FF);
         }
         assert_eq!(w.phase, 0);
         assert_eq!(w.bank, 0);
-        assert_eq!(w.output(&ram, 1, false), 15);
+        assert_eq!(w.output(&ram, 1, false), 14);
     }
 
     #[test]

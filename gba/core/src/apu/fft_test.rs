@@ -62,6 +62,69 @@ fn load_sine_wave_banks(apu: &mut GbaApu) {
     }
 }
 
+fn rms(samples: &[f32]) -> f32 {
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
+/// 32-digit full-swing table (nibbles alternate 0/15) into BOTH banks.
+fn load_full_swing_wave_banks(apu: &mut GbaApu) {
+    for bank_bit in [0x0040u16, 0x0000] {
+        apu.write_sound3cnt_lo(0x0080 | bank_bit);
+        for word in 0..8u32 {
+            apu.wave_write(0x90 + word * 2, 0x0F0F);
+        }
+    }
+}
+
+#[test]
+fn psg_relative_levels_match_hardware() {
+    // Hardware voice balance (GBATEK +/-80h per PSG: full-swing wave
+    // a full-swing wave table carries the same RMS as a full-volume
+    // square, while unipolar-DAC noise carries ~1/sqrt(2) of it. The old
+    // unipolar wave model halved BGM wave content; the old bipolar noise
+    // model doubled drums/explosions.
+    let square_rms = {
+        let mut apu = GbaApu::new();
+        solo_bus(&mut apu);
+        // Duty 50%, length held (gate off), envelope frozen at 15.
+        apu.write_sound2cnt_lo(0xF080);
+        // freq 0x700 + trigger: 512Hz, 128 exact cycles in the window.
+        apu.write_sound2cnt_hi(0x8700);
+        rms(&capture_grid_mono(&mut apu, FFT_SAMPLE_COUNT))
+    };
+    let wave_rms = {
+        let mut apu = GbaApu::new();
+        solo_bus(&mut apu);
+        load_full_swing_wave_banks(&mut apu);
+        apu.write_sound3cnt_lo(0x0080);
+        // Length 256 held (gate off), volume 100%.
+        apu.write_sound3cnt_hi(0x2000);
+        // rate 0x700 + trigger: 256Hz, 64 exact cycles in the window.
+        apu.write_sound3cnt_x(0x8700);
+        rms(&capture_grid_mono(&mut apu, FFT_SAMPLE_COUNT))
+    };
+    let noise_rms = {
+        let mut apu = GbaApu::new();
+        solo_bus(&mut apu);
+        // Volume 15, envelope off.
+        apu.write_sound4cnt_lo(0xF000);
+        // Trigger, length off, ratio 1, 15-bit, shift 3: one LFSR step
+        // per grid sample, ~50/50 density over the window.
+        apu.write_sound4cnt_hi(0x8031);
+        rms(&capture_grid_mono(&mut apu, FFT_SAMPLE_COUNT))
+    };
+    let wave_ratio = wave_rms / square_rms;
+    assert!(
+        (0.9..=1.1).contains(&wave_ratio),
+        "wave RMS must match square RMS, got wave={wave_rms}, square={square_rms}"
+    );
+    let noise_ratio = noise_rms / square_rms;
+    assert!(
+        (0.6..=0.8).contains(&noise_ratio),
+        "noise RMS must be ~1/sqrt(2) of square RMS, got noise={noise_rms}, square={square_rms}"
+    );
+}
+
 #[test]
 fn square_ch1_sounds_at_register_pitch() {
     let mut apu = GbaApu::new();

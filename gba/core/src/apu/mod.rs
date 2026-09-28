@@ -686,8 +686,8 @@ impl GbaApu {
     /// 0..0x3FF and centered.
     fn mix_grid(&mut self) -> (f32, f32) {
         if self.soundcnt_x & 0x80 == 0 {
-            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center,
-            // mgba parity); an unwritten bias parks the DAC at mid-rail.
+            // SOUNDBIAS is a 10-bit level (default 0x200 = silence center);
+            // an unwritten bias parks the DAC at mid-rail.
             let bias = f32::from(self.soundbias & 0x3FF);
             let out = (bias - 512.0) / 512.0;
             return (out, out);
@@ -718,8 +718,10 @@ impl GbaApu {
             }
         }
         // GBATEK Max Output Levels: each PSG spans +/-80h of the 10-bit
-        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120,
-        // mGBA parity), each FIFO the full +/-200h (DAC x gain ~= +/-508).
+        // range at full settings (voice +/-15 x mul x vol >> 2 ~= +/-120:
+        // squares bipolar, wave bipolar around digit 8, noise unipolar
+        // with DC stripped downstream), each FIFO the full +/-200h
+        // +/-200h (DAC x gain ~= +/-508).
         // The summed signed value plus bias clips against the 10-bit rail
         // below, matching hardware (voices + FIFOs reach ~+/-600h hot).
         sum_l = (sum_l * psg_mul * l_vol) >> 2;
@@ -1611,10 +1613,11 @@ mod tests {
 
     #[test]
     fn wave_64digit_starts_with_selected_bank() {
-        // Bank 0 replays 0xFF, bank 1 replays 0x00: the first grid
-        // sample must follow the NR30-selected bank (GBATEK: output
-        // starts by replaying the currently selected bank).
-        for (bank_bit, expected) in [(0x0000u16, 120.0 / 512.0), (0x0040, 0.0)] {
+        // Bank 0 replays 0xFF (nibble 15 -> +14 bipolar), bank 1 replays
+        // 0x00 (nibble 0 -> -16): the first grid sample must follow the
+        // NR30-selected bank (GBATEK: output starts by replaying the
+        // currently selected bank).
+        for (bank_bit, expected) in [(0x0000u16, 112.0 / 512.0), (0x0040, -128.0 / 512.0)] {
             let mut apu = GbaApu::new();
             apu.write_soundcnt_x(0x80);
             apu.write(0x04000080, 0x4477);

@@ -247,9 +247,8 @@ impl GbaSystem {
                 self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
             }
             // DMA prefetch-collision arbitration (see `dma_stall_pending`):
-            // unlike wake latency this serializes with in-flight work (the
-            // bus arbitration cycle is extra, like Mesen's Step on Reset),
-            // so it adds instead of maxing.
+            // unlike wake latency this serializes after in-flight work, so
+            // the bus arbitration cycle is extra: it adds instead of maxing.
             let dma_stall = self.bus.take_dma_stall();
             if dma_stall > 0 {
                 self.cpu_cycles_remaining += dma_stall;
@@ -301,9 +300,8 @@ impl GbaSystem {
             self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
         }
         // DMA prefetch-collision arbitration (see `dma_stall_pending`):
-        // unlike wake latency this serializes with in-flight work (the
-        // bus arbitration cycle is extra, like Mesen's Step on Reset),
-        // so it adds instead of maxing.
+        // unlike wake latency this serializes after in-flight work, so
+        // the bus arbitration cycle is extra: it adds instead of maxing.
         let dma_stall = self.bus.take_dma_stall();
         if dma_stall > 0 {
             self.cpu_cycles_remaining += dma_stall;
