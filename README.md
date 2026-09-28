@@ -20,8 +20,8 @@ never pick a core yourself.
 | System | File types | Notes |
 | --- | --- | --- |
 | Nintendo Entertainment System (NES) | `.nes` | See the mapper list below |
-| Game Boy / Game Boy Color | `.gb`, `.gbc` | DMG and CGB hardware models, MBC3 real-time clock |
-| Game Boy Advance | `.gba` | No BIOS file required (built-in BIOS); save type auto-detection |
+| Game Boy / Game Boy Color | `.gb`, `.gbc` | DMG/CGB models, MBC3 clock |
+| Game Boy Advance | `.gba` | No BIOS needed, save auto-detect |
 
 ### NES mappers
 
