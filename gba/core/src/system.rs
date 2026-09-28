@@ -474,11 +474,30 @@ mod tests {
             let hash = system.frame_buffer().iter().fold(0u64, |acc, &pixel| {
                 acc.wrapping_mul(0x100000001b3) ^ u64::from(pixel)
             });
+            // Pin representative stages (boot, playback and later frames)
+            // so this opt-in benchmark is also a deterministic ROM check.
+            if let Some((_, pc, expected_hash)) = [
+                (0, 0x0300_4db0, 0xdcd4_6167_5f1c_ae00),
+                (29, 0x0300_4dd4, 0xbff3_7acb_5a00_5ec0),
+                (59, 0x0300_0280, 0x70b5_e46d_addd_cc7c),
+                (89, 0x0300_4ec8, 0x42bd_8b8d_6c08_69c0),
+                (119, 0x0300_01e0, 0xc4b3_864f_20d8_bddc),
+            ]
+            .iter()
+            .find(|(n, _, _)| *n == frame)
+            {
+                assert_eq!(system.cpu.registers().pc(), *pc, "frame {frame} PC");
+                assert_eq!(hash, *expected_hash, "frame {frame} framebuffer");
+            }
             println!(
                 "frame={frame} pc={:#010x} hash={hash:016x}",
                 system.cpu.registers().pc()
             );
         }
-        println!("Myst: {frames} frames in {:?}, {:.2} fps", started.elapsed(), frames as f64 / started.elapsed().as_secs_f64());
+        println!(
+            "Myst: {frames} frames in {:?}, {:.2} fps",
+            started.elapsed(),
+            frames as f64 / started.elapsed().as_secs_f64()
+        );
     }
 }
