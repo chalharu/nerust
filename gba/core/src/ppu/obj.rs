@@ -148,6 +148,15 @@ pub(crate) fn line_cache(registers: &PpuRegisters, oam: &[u8], y: usize) -> ObjL
         if shape == 3 || mode == 3 || (!affine && attr0 & (1 << 9) != 0) {
             continue;
         }
+        if (registers.dispcnt & 7) >= 3
+            && shape == 0
+            && attr1 >> 14 == 0
+            && attr2 & 0x3FF < 512
+        {
+            // 8x8 OBJs never leave their base tile, even when affine.
+            // Budget accounting above still includes invisible OBJs.
+            continue;
+        }
         // Y-overlap (mirrors coordinates() up to the field-bounds
         // check, a necessary condition for any pixel of this OBJ to
         // render on this scanline regardless of mosaic/affine/flip).
@@ -243,16 +252,6 @@ pub(crate) struct PreparedObj {
 }
 
 impl Object {
-    /// In bitmap BG modes the lower half of OBJ tile numbers is
-    /// inaccessible. An 8x8 sprite cannot step to another tile (even
-    /// when affine/double-size), so a base below 512 is always invisible.
-    pub(crate) fn bitmap_tile_unreachable(&self, registers: &PpuRegisters) -> bool {
-        (registers.dispcnt & 7) >= 3
-            && self.width == 8
-            && self.height == 8
-            && (self.attr2 & 0x3FF) < 512
-    }
-
     /// Per-scanline prepared coordinates: everything in [`coordinates`]
     /// that is constant across the scanline (origins, y-side bounds and
     /// mosaic, affine matrix rows) is resolved once per span; the
@@ -736,19 +735,31 @@ mod tests {
                     let attr0 = (u16::from(color256) << 13)
                         | (u16::from(affine) << 8)
                         | (u16::from(doubled) << 9);
-                    let below = decode_attrs(attr0, 0, 511, false).unwrap();
-                    let above = decode_attrs(attr0, 0, 512, false).unwrap();
-                    assert!(below.bitmap_tile_unreachable(&regs));
-                    assert!(!above.bitmap_tile_unreachable(&regs));
+                    let mut oam = [0u8; 1024];
+                    // Disable all other objects so the cache only reports OBJ0.
+                    for object in oam.chunks_exact_mut(8).skip(1) {
+                        object[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
+                    }
+                    oam[0..2].copy_from_slice(&attr0.to_le_bytes());
+                    oam[4..6].copy_from_slice(&511u16.to_le_bytes());
+                    assert_eq!(line_cache(&regs, &oam, 0).cover_len, 0);
+                    oam[4..6].copy_from_slice(&512u16.to_le_bytes());
+                    assert_eq!(line_cache(&regs, &oam, 0).cover_len, 1);
                     regs.dispcnt = 0;
-                    assert!(!below.bitmap_tile_unreachable(&regs));
+                    oam[4..6].copy_from_slice(&511u16.to_le_bytes());
+                    assert_eq!(line_cache(&regs, &oam, 0).cover_len, 1);
                     regs.dispcnt = 3;
                 }
             }
         }
         // A larger OBJ can step from tile 511 into the accessible bank.
-        let wider = decode_attrs(0, 1 << 14, 511, false).unwrap();
-        assert!(!wider.bitmap_tile_unreachable(&regs));
+        let mut oam = [0u8; 1024];
+        for object in oam.chunks_exact_mut(8).skip(1) {
+            object[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
+        }
+        oam[2..4].copy_from_slice(&(1u16 << 14).to_le_bytes());
+        oam[4..6].copy_from_slice(&511u16.to_le_bytes());
+        assert_eq!(line_cache(&regs, &oam, 0).cover_len, 1);
     }
 
     #[test]
