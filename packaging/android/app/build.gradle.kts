@@ -86,8 +86,8 @@ kotlin {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.08.00")
-    val documentFileVersion = "1.0.0"
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val documentFileVersion = "1.1.0"
     val lifecycleVersion = "2.11.0"
 
     implementation(composeBom)
