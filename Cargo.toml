@@ -98,6 +98,9 @@ opt-level = 3
 
 [profile.release]
 debug = false
+# ThinLTO improves Myst's release frame throughput in the core benchmark;
+# fat LTO was slower in the same benchmark.
+lto = "thin"
 
 [profile.release.package.nerust_nes_core]
 codegen-units = 1
