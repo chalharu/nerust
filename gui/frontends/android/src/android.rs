@@ -990,13 +990,27 @@ impl AndroidFrontend {
         self.renderer = None;
         self.overlay = None;
         self.reset_touch_tracking();
-        self.physical_pressed.clear();
+        self.release_physical_tracking();
         self.shell.needs_redraw = true;
     }
 
     fn reset_touch_tracking(&mut self) {
+        // Surface loss must not strand pressed buttons inside the
+        // emulator: release everything still tracked before forgetting
+        // it. A stranded extra bit breaks exact-equality key checks
+        // such as Pokemon Emerald's evolution cancel
+        // (heldKeys == B_BUTTON).
+        for (attachment, control) in self.active_touches.values() {
+            self.session
+                .apply_input_event(DigitalInputEvent::released(*attachment, *control));
+        }
         self.active_touches.clear();
-        self.floating_dpad = None;
+        if let Some(state) = self.floating_dpad.take() {
+            for (attachment, control) in state.targets {
+                self.session
+                    .apply_input_event(DigitalInputEvent::released(attachment, control));
+            }
+        }
         update_floating_dpad_visual(
             &self.app,
             false,
@@ -1123,6 +1137,31 @@ impl AndroidFrontend {
         }
     }
 
+    fn control_for_physical_key(
+        &self,
+        key: AbstractKey,
+    ) -> Option<(AttachmentId, DigitalControlId)> {
+        let role = match key {
+            AbstractKey::Button1 => TouchControlRole::FaceButton1,
+            AbstractKey::Button2 => TouchControlRole::FaceButton2,
+            AbstractKey::Button5 => TouchControlRole::LeftShoulder,
+            AbstractKey::Button6 => TouchControlRole::RightShoulder,
+            AbstractKey::Start => TouchControlRole::Start,
+            AbstractKey::Select => TouchControlRole::Select,
+            AbstractKey::DpadUp => TouchControlRole::DpadUp,
+            AbstractKey::DpadDown => TouchControlRole::DpadDown,
+            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
+            AbstractKey::DpadRight => TouchControlRole::DpadRight,
+            _ => return None,
+        };
+        let model = self.session.touch_overlay_model(self.overlay_revision);
+        model
+            .controls
+            .into_iter()
+            .find(|control| control.role == role)
+            .map(|control| (control.attachment_id, control.control_id))
+    }
+
     fn apply_physical_controller_input(&mut self, device_id: i32, key: AbstractKey, pressed: bool) {
         let changed = if pressed {
             self.physical_pressed.insert((device_id, key))
@@ -1136,33 +1175,26 @@ impl AndroidFrontend {
             .physical_pressed
             .iter()
             .any(|(_, pressed_key)| *pressed_key == key);
-        let role = match key {
-            AbstractKey::Button1 => TouchControlRole::FaceButton1,
-            AbstractKey::Button2 => TouchControlRole::FaceButton2,
-            AbstractKey::Button5 => TouchControlRole::LeftShoulder,
-            AbstractKey::Button6 => TouchControlRole::RightShoulder,
-            AbstractKey::Start => TouchControlRole::Start,
-            AbstractKey::Select => TouchControlRole::Select,
-            AbstractKey::DpadUp => TouchControlRole::DpadUp,
-            AbstractKey::DpadDown => TouchControlRole::DpadDown,
-            AbstractKey::DpadLeft => TouchControlRole::DpadLeft,
-            AbstractKey::DpadRight => TouchControlRole::DpadRight,
-            _ => return,
-        };
-        let model = self.session.touch_overlay_model(self.overlay_revision);
-        let Some(control) = model
-            .controls
-            .into_iter()
-            .find(|control| control.role == role)
-        else {
+        let Some((attachment, control)) = self.control_for_physical_key(key) else {
             return;
         };
         let event = if effective_pressed {
-            DigitalInputEvent::pressed(control.attachment_id, control.control_id)
+            DigitalInputEvent::pressed(attachment, control)
         } else {
-            DigitalInputEvent::released(control.attachment_id, control.control_id)
+            DigitalInputEvent::released(attachment, control)
         };
         self.session.apply_input_event(event);
+    }
+
+    /// Release every physically held button before forgetting it, so a
+    /// surface reset cannot strand pressed bits inside the emulator.
+    fn release_physical_tracking(&mut self) {
+        for (_, key) in std::mem::take(&mut self.physical_pressed) {
+            if let Some((attachment, control)) = self.control_for_physical_key(key) {
+                self.session
+                    .apply_input_event(DigitalInputEvent::released(attachment, control));
+            }
+        }
     }
 
     fn ensure_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
