@@ -948,10 +948,9 @@ impl GbaMemoryBus {
     /// Refresh the skip budget from post-tick state. Cheap-zero
     /// shortcut: an active HLE transfer, DMA in flight, a deferred
     /// HBlank raise, or an open EEPROM burst all force the full path
-    /// next tick without paying for the horizon computation. The timer
-    /// fold mask and the DMA-device cache restart alongside the budget
-    /// (the full path covers every in-tick mutation: triggers,
-    /// completions, resolutions).
+    /// next tick without paying for the horizon computation. Timer
+    /// fold masks are maintained by timer steps and register writes;
+    /// the DMA-device cache restarts after any full-tick mutation.
     #[inline]
     fn refresh_skip_budget(&mut self) {
         self.bus_quiet = if self.hle_bios_active()
@@ -963,10 +962,6 @@ impl GbaMemoryBus {
         } else {
             self.quiet_cycles()
         };
-        // The full path may resolve timer startup transients (start-delay
-        // expiry, reload landings, control takes inside `step_channel`),
-        // so refresh the idle-fold mask alongside the skip budget.
-        self.timers.refresh_fold_mask();
         self.dma_device_quiet = 0;
     }
 
@@ -1058,10 +1053,10 @@ impl GbaMemoryBus {
         self.close_eeprom_burst_if_idle();
         if !self.dma.is_active() {
             // Burst(s) completed this tick: rebuild the skip budget
-            // and the timer fold mask like the full-path exit.
+            // like the full-path exit. Timer counters were advanced through
+            // their own `advance_idle`/`step_full` paths above.
             // (While DMA stays active the budget stays 0, as today.)
             self.bus_quiet = self.quiet_cycles();
-            self.timers.refresh_fold_mask();
             self.dma_device_quiet = 0;
         }
         (false, 1)
@@ -2986,7 +2981,18 @@ impl GbaMemoryBus {
         // its hot loop here: avoid the general bus/prefetch dispatch but
         // keep every fetch-stream and open-bus latch update intact.
         if is_opcode && addr >> 24 == 3 {
-            let raw = self.read_iwram(addr, width);
+            // Both opcode widths are aligned; the mirrored offset is
+            // always inside the 32 KiB IWRAM allocation, including the
+            // final halfword/word. One native load avoids the generic
+            // slice-width and out-of-bounds checks on every instruction.
+            let off = (addr as usize & 0x7FFF) & !(usize::from(width) - 1);
+            let raw = if width == 4 {
+                u32::from_le_bytes(self.iwram[off..off + 4].try_into().unwrap())
+            } else {
+                u32::from(u16::from_le_bytes(
+                    self.iwram[off..off + 2].try_into().unwrap(),
+                ))
+            };
             self.last_opcode_addr = Some(addr);
             self.prev_addr = Some(addr);
             self.prev_width = width;
