@@ -733,7 +733,7 @@ mod tests {
                         | (u16::from(doubled) << 9);
                     let mut oam = [0u8; 1024];
                     // Disable all other objects so the cache only reports OBJ0.
-                    for object in oam.chunks_exact_mut(8).skip(1) {
+                    for object in oam.as_chunks_mut::<8>().0.iter_mut().skip(1) {
                         object[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
                     }
                     oam[0..2].copy_from_slice(&attr0.to_le_bytes());
@@ -750,7 +750,7 @@ mod tests {
         }
         // A larger OBJ can step from tile 511 into the accessible bank.
         let mut oam = [0u8; 1024];
-        for object in oam.chunks_exact_mut(8).skip(1) {
+        for object in oam.as_chunks_mut::<8>().0.iter_mut().skip(1) {
             object[0..2].copy_from_slice(&0x0200u16.to_le_bytes());
         }
         oam[2..4].copy_from_slice(&(1u16 << 14).to_le_bytes());
