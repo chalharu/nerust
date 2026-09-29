@@ -665,6 +665,7 @@ impl GbaPpu {
             for &(raw_index, attr0, attr1, attr2) in cache.cover[..cache.cover_len as usize].iter()
             {
                 if let Some(object) = obj::decode_attrs(attr0, attr1, attr2, false)
+                    && !object.bitmap_tile_unreachable(&self.registers)
                     && let Some(prepared) =
                         object.prepare(&self.line.oam[..], y, self.registers.mosaic)
                 {

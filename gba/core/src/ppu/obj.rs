@@ -243,6 +243,16 @@ pub(crate) struct PreparedObj {
 }
 
 impl Object {
+    /// In bitmap BG modes the lower half of OBJ tile numbers is
+    /// inaccessible. An 8x8 sprite cannot step to another tile (even
+    /// when affine/double-size), so a base below 512 is always invisible.
+    pub(crate) fn bitmap_tile_unreachable(&self, registers: &PpuRegisters) -> bool {
+        (registers.dispcnt & 7) >= 3
+            && self.width == 8
+            && self.height == 8
+            && (self.attr2 & 0x3FF) < 512
+    }
+
     /// Per-scanline prepared coordinates: everything in [`coordinates`]
     /// that is constant across the scanline (origins, y-side bounds and
     /// mosaic, affine matrix rows) is resolved once per span; the
@@ -711,6 +721,34 @@ mod tests {
             )
             .is_some()
         );
+    }
+
+    #[test]
+    fn bitmap_unreachable_filter_only_rejects_wholly_inaccessible_objs() {
+        let mut regs = regs_2d();
+        regs.dispcnt = 3;
+        for color256 in [false, true] {
+            for affine in [false, true] {
+                for doubled in [false, true] {
+                    if doubled && !affine {
+                        continue;
+                    }
+                    let attr0 = (u16::from(color256) << 13)
+                        | (u16::from(affine) << 8)
+                        | (u16::from(doubled) << 9);
+                    let below = decode_attrs(attr0, 0, 511, false).unwrap();
+                    let above = decode_attrs(attr0, 0, 512, false).unwrap();
+                    assert!(below.bitmap_tile_unreachable(&regs));
+                    assert!(!above.bitmap_tile_unreachable(&regs));
+                    regs.dispcnt = 0;
+                    assert!(!below.bitmap_tile_unreachable(&regs));
+                    regs.dispcnt = 3;
+                }
+            }
+        }
+        // A larger OBJ can step from tile 511 into the accessible bank.
+        let wider = decode_attrs(0, 1 << 14, 511, false).unwrap();
+        assert!(!wider.bitmap_tile_unreachable(&regs));
     }
 
     #[test]
