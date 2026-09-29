@@ -42,7 +42,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             // fast path when |num| < |den| (trivial quotient 0); slow
             // path 226 for 13+-bit divisors with +107 below (extra
             // normalization for small divisors). IWRAM callers observe
-            // -3 on the fast/slow paths (mgba anchors); the base,
+            // -3 on the fast/slow paths (suite Timing anchors); the base,
             // PeterLemon's 13-bit path, and div_e2 stay put.
             let num = regs.r(0) as i32;
             let den = regs.r(1) as i32;
@@ -70,8 +70,7 @@ pub fn handle_swi(regs: &mut CpuRegisters, bus: &mut GbaMemoryBus, swi: u8) -> S
             SwiResult::Return(charge.saturating_add_signed(bus.swi_region_adjust()))
         }
         0x09 => {
-            // ArcTan: IWRAM callers observe base 0x63 (mgba positive
-            // anchor) with +7 for negative inputs (keeps the fedcba98
+            // ArcTan: IWRAM callers observe base 0x63 (positive anchor) with +7 for negative inputs (keeps the fedcba98
             // 0x6A pin: 0x63 + 7); other callers keep 0x66 + 4.
             let i = regs.r(0) as i32;
             let (base, sign) = if bus.swi_caller_is_iwram() {

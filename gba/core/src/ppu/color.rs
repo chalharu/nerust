@@ -5,12 +5,35 @@ pub(crate) fn read_color(palette: &[u8], index: usize) -> u16 {
 
 /// Expand BGR555 to RGBA8888 with bit-repeat (`v<<3|v>>2`), close to `v*255/31`.
 pub(crate) fn rgba8888(color: u16) -> u32 {
-    let r = ((((color) & 0x1F) << 3) | (((color) & 0x1F) >> 2)) as u8;
-    let g = ((((color >> 5) & 0x1F) << 3) | (((color >> 5) & 0x1F) >> 2)) as u8;
-    let b = ((((color >> 10) & 0x1F) << 3) | (((color >> 10) & 0x1F) >> 2)) as u8;
-    u32::from_le_bytes([r, g, b, 0xFF])
+    RGBA_LUT[usize::from(color & 0x7FFF)]
 }
 
+const fn expand_channel(value: u16) -> u8 {
+    (((value & 0x1F) << 3) | ((value & 0x1F) >> 2)) as u8
+}
+
+const fn build_rgba_lut() -> [u32; 32768] {
+    let mut table = [0u32; 32768];
+    let mut color = 0usize;
+    while color < 32768 {
+        let c = color as u16;
+        let r = expand_channel(c);
+        let g = expand_channel(c >> 5);
+        let b = expand_channel(c >> 10);
+        table[color] = u32::from_le_bytes([r, g, b, 0xFF]);
+        color += 1;
+    }
+    table
+}
+
+/// Bit-repeat expansion is a pure function of 15 bits: a compile-time
+/// table replaces ~15 ALU ops per pixel with one load (bit-exact: the
+/// same formula, evaluated at compile time).
+static RGBA_LUT: [u32; 32768] = build_rgba_lut();
+
+/// Reference direct-form blend (production uses [`BlendCache`];
+/// kept under test-gate as the differential oracle).
+#[cfg(test)]
 pub(crate) fn alpha_blend(first: u16, second: u16, eva: u8, evb: u8) -> u16 {
     // Blend rounds to nearest (not truncation). The hardware
     // also keeps a 6th green bit through the blend; its exact source
@@ -24,14 +47,109 @@ pub(crate) fn alpha_blend(first: u16, second: u16, eva: u8, evb: u8) -> u16 {
     blend(0) | blend(5) | blend(10)
 }
 
+/// Per-channel blend of two 5-bit values (same formula as
+/// `alpha_blend`'s inner closure, factored for tabulation).
+const fn blend_channel(a: u16, b: u16, eva: u8, evb: u8) -> u16 {
+    let v = (a as u32 * eva as u32 + b as u32 * evb as u32 + 8) >> 4;
+    (if v > 31 { 31 } else { v }) as u16
+}
+
+/// Cached blend tables: the per-(factor) tables below rebuild when
+/// their key changes (factor writes are rare; pixels in between hit
+/// L1-cached loads instead of multiplies). Bit-exact: tables evaluate
+/// the same formulas as the direct functions.
+#[derive(Clone, Debug)]
+pub(crate) struct BlendCache {
+    alpha_key: (u8, u8),
+    alpha: [u16; 1024],
+    bright_key: u8,
+    bright: [u16; 32],
+    dark_key: u8,
+    dark: [u16; 32],
+}
+
+impl BlendCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            alpha_key: (0xFF, 0xFF),
+            alpha: [0; 1024],
+            bright_key: 0xFF,
+            bright: [0; 32],
+            dark_key: 0xFF,
+            dark: [0; 32],
+        }
+    }
+
+    fn rebuild_alpha(&mut self, eva: u8, evb: u8) {
+        for a in 0..32u16 {
+            for b in 0..32u16 {
+                self.alpha[(a as usize) << 5 | b as usize] = blend_channel(a, b, eva, evb);
+            }
+        }
+        self.alpha_key = (eva, evb);
+    }
+
+    fn rebuild_bright(&mut self, amount: u8) {
+        for v in 0..32u16 {
+            self.bright[v as usize] = (v + (((31 - v) * u16::from(amount)) >> 4)).min(31);
+        }
+        self.bright_key = amount;
+    }
+
+    fn rebuild_dark(&mut self, amount: u8) {
+        for v in 0..32u16 {
+            self.dark[v as usize] = v - ((v * u16::from(amount)) >> 4);
+        }
+        self.dark_key = amount;
+    }
+
+    pub(crate) fn alpha_blend(&mut self, first: u16, second: u16, eva: u8, evb: u8) -> u16 {
+        if self.alpha_key != (eva, evb) {
+            self.rebuild_alpha(eva, evb);
+        }
+        let table = &self.alpha;
+        let r = table[((first & 0x1F) << 5 | (second & 0x1F)) as usize];
+        let g = table[(((first >> 5) & 0x1F) << 5 | ((second >> 5) & 0x1F)) as usize];
+        let b = table[(((first >> 10) & 0x1F) << 5 | ((second >> 10) & 0x1F)) as usize];
+        r | g << 5 | b << 10
+    }
+
+    pub(crate) fn brighten(&mut self, color: u16, amount: u8) -> u16 {
+        if self.bright_key != amount {
+            self.rebuild_bright(amount);
+        }
+        let table = &self.bright;
+        table[(color & 0x1F) as usize]
+            | table[((color >> 5) & 0x1F) as usize] << 5
+            | table[((color >> 10) & 0x1F) as usize] << 10
+    }
+
+    pub(crate) fn darken(&mut self, color: u16, amount: u8) -> u16 {
+        if self.dark_key != amount {
+            self.rebuild_dark(amount);
+        }
+        let table = &self.dark;
+        table[(color & 0x1F) as usize]
+            | table[((color >> 5) & 0x1F) as usize] << 5
+            | table[((color >> 10) & 0x1F) as usize] << 10
+    }
+}
+
+/// Reference direct-form brightness (production uses [`BlendCache`];
+/// kept under test-gate as the differential oracle).
+#[cfg(test)]
 pub(crate) fn brighten(color: u16, amount: u8) -> u16 {
     change_brightness(color, amount, true)
 }
 
+/// Reference direct-form brightness (production uses [`BlendCache`];
+/// kept under test-gate as the differential oracle).
+#[cfg(test)]
 pub(crate) fn darken(color: u16, amount: u8) -> u16 {
     change_brightness(color, amount, false)
 }
 
+#[cfg(test)]
 fn change_brightness(color: u16, amount: u8, brighter: bool) -> u16 {
     let adjust = |shift: u32| {
         let value = u32::from((color >> shift) & 0x1F);
@@ -117,6 +235,40 @@ mod tests {
         assert_eq!(alpha_blend(0x001F, 0x001F, 16, 16), 0x001F);
         assert_eq!(brighten(0, 16), 0x7FFF);
         assert_eq!(darken(0x7FFF, 16), 0);
+    }
+
+    #[test]
+    fn blend_cache_matches_direct_forms() {
+        // Exhaustive differential: cached tables must equal the direct
+        // formulas for every factor pair and channel combination.
+        let mut cache = BlendCache::new();
+        for eva in 0..=16u8 {
+            for evb in 0..=16u8 {
+                for a in 0..32u16 {
+                    for b in 0..32u16 {
+                        let table = blend_channel(a, b, eva, evb);
+                        // Direct formula, mirrored from `alpha_blend`.
+                        let direct = (((a as u32 * eva as u32 + b as u32 * evb as u32 + 8) >> 4)
+                            .min(31)) as u16;
+                        assert_eq!(table, direct);
+                    }
+                }
+                // Spot-check assembled pixels through the cache entry.
+                let first = 0x1234u16;
+                let second = 0x5678u16;
+                assert_eq!(
+                    cache.alpha_blend(first, second, eva, evb),
+                    alpha_blend(first, second, eva, evb)
+                );
+            }
+        }
+        for amount in 0..=16u8 {
+            for v in 0..32u16 {
+                let color = v | (v << 5) | (v << 10);
+                assert_eq!(cache.brighten(color, amount), brighten(color, amount));
+                assert_eq!(cache.darken(color, amount), darken(color, amount));
+            }
+        }
     }
 
     #[test]

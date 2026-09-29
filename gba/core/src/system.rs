@@ -128,8 +128,75 @@ impl GbaSystem {
     }
 
     pub fn run_frame(&mut self) -> &[u32] {
-        while !self.step_tcycle() {}
+        while !self.step_tcycle().0 {}
         self.frame_buffer()
+    }
+
+    /// Advance up to `max` T-cycles with horizon batching, returning
+    /// `(advanced, frame_complete)`. Cycles that need full per-cycle
+    /// processing (CPU bus access, device events, pipeline deadlines) run
+    /// through the untouched `step_tcycle` body; quiet spans advance
+    /// clocks and free-running counters arithmetically. Bit-identical to
+    /// the equivalent number of `step_tcycle` calls.
+    pub fn step_batch(&mut self, max: u64) -> (u64, bool) {
+        let mut advanced = 0u64;
+        while advanced < max {
+            let horizon = self.batch_horizon();
+            if horizon == 0 {
+                // A single step may fold several event-free DMA delay
+                // ticks (returns its advance); account all of them.
+                let (frame_end, n) = self.step_tcycle();
+                if frame_end {
+                    return (advanced + n, true);
+                }
+                advanced += n;
+            } else {
+                // Bound single jumps (hung states would otherwise advance
+                // astronomically; the loop still never terminates there,
+                // exactly like the per-cycle version).
+                let take = (max - advanced).min(horizon).min(u64::from(u32::MAX));
+                self.advance_idle(take, !self.bus.dma_active());
+                advanced += take;
+            }
+        }
+        (advanced, false)
+    }
+
+    /// Quiet prefix length before the next cycle needing full processing:
+    /// CPU bus access (0 when the CPU acts this cycle), device events and
+    /// IRQ pipeline deadlines. The device part reuses the bus skip budget
+    /// (`bus_quiet`): it is exact here because every consumption path
+    /// decrements it (skip ticks, batch jumps) and every mutation resets
+    /// it (writes, IRQ raises, halt/stop, HLE) — never stale-long, so a
+    /// fresh `quiet_cycles()` recompute per batch iteration is redundant.
+    fn batch_horizon(&self) -> u64 {
+        if !self.bus.dma_active() && !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+            return 0;
+        }
+        let mut horizon = self.bus.bus_quiet();
+        if !self.bus.is_halted() && !self.bus.dma_active() {
+            horizon = horizon.min(u64::from(self.cpu_cycles_remaining));
+        }
+        horizon
+    }
+
+    /// Advance clocks and free-running counters by `n` cycles with no event
+    /// processing. Valid only for `n <= batch_horizon()` at the same state.
+    /// `fold_remaining` mirrors `step_tcycle`, which skips the remainder
+    /// decrement while DMA owns the bus (unreachable here by the horizon,
+    /// kept for exactness).
+    fn advance_idle(&mut self, n: u64, fold_remaining: bool) {
+        debug_assert!(n > 0);
+        self.tick += n;
+        if fold_remaining {
+            self.cpu_cycles_remaining = self
+                .cpu_cycles_remaining
+                .saturating_sub(n.min(u64::from(u32::MAX)) as u32);
+        }
+        self.cpu
+            .registers_mut()
+            .tick_ldm_conflict_n(n.min(u64::from(u8::MAX)) as u8);
+        self.bus.advance_idle(n);
     }
 
     /// Drain micro-ops within one tick: run ops while they cost nothing
@@ -137,6 +204,8 @@ impl GbaSystem {
     /// raw tick budget (possibly zero/negative; the caller floors once
     /// per instruction at retire, exactly like the legacy step), or None
     /// on an uncovered fill (queue empty there by construction).
+    /// Single caller (`step_tcycle`): forced-inline.
+    #[inline]
     fn drain_micro(&mut self) -> Option<i64> {
         let mut acc = 0i64;
         loop {
@@ -152,44 +221,80 @@ impl GbaSystem {
     }
 
     /// CPUとバスを1 T-cycleだけ進行する。
-    pub fn step_tcycle(&mut self) -> bool {
+    /// Advance one T-cycle, returning `(frame_complete, advanced)`.
+    /// `advanced` is normally 1; DMA delay-burn folds may advance
+    /// several event-free cycles (CPU-stalled) in one call.
+    pub fn step_tcycle(&mut self) -> (bool, u64) {
         if self.bus.dma_active() {
             // HW behavior: the CPU is stalled for the whole burst;
             // only the bus advances, the in-flight op resumes afterwards.
-        } else {
-            if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
-                if self.bus.hle_bios_active() {
-                    self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
-                } else {
+            // The in-flight remainder stays frozen while stalled (it is
+            // only decremented on CPU-stepping ticks below). A delay-burn
+            // fold may advance several cycles: scale the other per-cycle
+            // bookkeeping (clocks, conflict window) by the reported
+            // advance. Latency takes stay single (their setters only run
+            // on unfolded transfer/write ticks).
+            let (frame_end, n) = self.bus.tick();
+            self.tick = self.tick.wrapping_add(n);
+            self.cpu
+                .registers_mut()
+                .tick_ldm_conflict_n(n.min(u64::from(u8::MAX)) as u8);
+            // IntrWait wake-exit latency (see `wake_latency`): burn as
+            // CPU-stall cycles so the staging IRQ line wins the race against
+            // the woken thread. Subsumed by any longer in-flight charge.
+            let wake_latency = self.bus.take_wake_latency();
+            if wake_latency > 0 {
+                self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
+            }
+            // DMA prefetch-collision arbitration (see `dma_stall_pending`):
+            // unlike wake latency this serializes after in-flight work, so
+            // the bus arbitration cycle is extra: it adds instead of maxing.
+            let dma_stall = self.bus.take_dma_stall();
+            if dma_stall > 0 {
+                self.cpu_cycles_remaining += dma_stall;
+            }
+            return (frame_end, n);
+        }
+        if !self.bus.is_halted() && self.cpu_cycles_remaining == 0 {
+            if self.bus.hle_bios_active() {
+                self.cpu_cycles_remaining = self.bus.step_hle_bios().max(1);
+            } else {
+                // Sample IRQ only at instruction boundaries; mid-instruction never samples.
+                // Falls through to the shared epilogue (decrement sets dispatch timing).
+                if !self.cpu.micro_pending() {
                     // Sample IRQ only at instruction boundaries; mid-instruction never samples.
                     // Falls through to the shared epilogue (decrement sets dispatch timing).
-                    if !self.cpu.micro_pending() {
-                        // Sample IRQ only at instruction boundaries; mid-instruction never samples.
-                        // Falls through to the shared epilogue (decrement sets dispatch timing).
-                        // Entry cost comes from service_irq (real refill waits + prologue count).
-                        if let Some(irq_entry_cycles) = self.cpu.service_irq(&mut self.bus) {
-                            self.cpu_cycles_remaining = irq_entry_cycles;
-                        } else if let Some(acc) = self.drain_micro() {
-                            self.cpu_cycles_remaining = acc.max(1) as u32;
-                        } else {
-                            // Unreachable: every instruction class expands,
-                            // so the first drain always yields an op.
-                            // Consume the tick safely.
-                            self.cpu_cycles_remaining = 1;
-                        }
+                    // Entry cost comes from service_irq (real refill waits + prologue count).
+                    let irq_entry = if self.bus.irq_pending() {
+                        self.cpu.service_irq(&mut self.bus)
+                    } else {
+                        None
+                    };
+                    if let Some(irq_entry_cycles) = irq_entry {
+                        self.cpu_cycles_remaining = irq_entry_cycles;
                     } else if let Some(acc) = self.drain_micro() {
                         self.cpu_cycles_remaining = acc.max(1) as u32;
                     } else {
-                        // Unreachable (queue was non-empty, so the first
-                        // pop succeeds); consume the tick safely.
+                        // Unreachable: every instruction class expands,
+                        // so the first drain always yields an op.
+                        // Consume the tick safely.
                         self.cpu_cycles_remaining = 1;
                     }
+                } else if let Some(acc) = self.drain_micro() {
+                    self.cpu_cycles_remaining = acc.max(1) as u32;
+                } else {
+                    // Unreachable (queue was non-empty, so the first
+                    // pop succeeds); consume the tick safely.
+                    self.cpu_cycles_remaining = 1;
                 }
             }
-            self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         }
+        self.cpu_cycles_remaining = self.cpu_cycles_remaining.saturating_sub(1);
         self.tick = self.tick.wrapping_add(1);
-        let frame_end = self.bus.tick();
+        // Single-cycle: folds only run with DMA active (handled above),
+        // so a CPU-stepping tick always advances exactly one cycle.
+        let (frame_end, n) = self.bus.tick();
+        debug_assert_eq!(n, 1, "bus fold outside DMA-active tick");
         // Age the post-LDM^ bank-conflict window once per T-cycle.
         self.cpu.registers_mut().tick_ldm_conflict();
         // IntrWait wake-exit latency (see `wake_latency`): burn as
@@ -200,14 +305,13 @@ impl GbaSystem {
             self.cpu_cycles_remaining = self.cpu_cycles_remaining.max(wake_latency);
         }
         // DMA prefetch-collision arbitration (see `dma_stall_pending`):
-        // unlike wake latency this serializes with in-flight work (the
-        // bus arbitration cycle is extra, like Mesen's Step on Reset),
-        // so it adds instead of maxing.
+        // unlike wake latency this serializes after in-flight work, so
+        // the bus arbitration cycle is extra: it adds instead of maxing.
         let dma_stall = self.bus.take_dma_stall();
         if dma_stall > 0 {
             self.cpu_cycles_remaining += dma_stall;
         }
-        frame_end
+        (frame_end, n)
     }
 }
 
@@ -350,5 +454,93 @@ mod tests {
 
         rom[0xB2] = 0;
         assert!(GbaSystem::from_test_rom(rom).is_none());
+    }
+
+    #[test]
+    #[ignore = "requires the optional PeterLemon Myst ROM"]
+    fn myst_batch_matches_per_cycle_state() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
+        );
+        let rom = std::fs::read(path).expect("Myst.gba not found");
+        let mut batched = GbaSystem::from_test_rom(rom.clone()).unwrap();
+        let mut stepped = GbaSystem::from_test_rom(rom).unwrap();
+        for frame in 0..4 {
+            let (n, complete) = batched.step_batch(280_896);
+            assert_eq!((n, complete), (280_896, true));
+            let mut elapsed = 0;
+            while elapsed < n {
+                let (complete, amount) = stepped.step_tcycle();
+                elapsed += amount;
+                assert_eq!(complete, elapsed == n);
+            }
+            // The frontend drains the native-grid audio at each frame
+            // boundary; state export rejects a pending mix buffer.
+            let mut audio_a = Vec::new();
+            let mut audio_b = Vec::new();
+            batched
+                .bus
+                .apu_mut()
+                .drain_resampled_into(48_000, &mut audio_a);
+            stepped
+                .bus
+                .apu_mut()
+                .drain_resampled_into(48_000, &mut audio_b);
+            assert_eq!(audio_a, audio_b, "audio differs after frame {frame}");
+            let a = rmp_serde::to_vec_named(&batched.export_state().unwrap()).unwrap();
+            let b = rmp_serde::to_vec_named(&stepped.export_state().unwrap()).unwrap();
+            assert_eq!(a, b, "machine state differs after frame {frame}");
+        }
+    }
+
+    /// Run explicitly with `cargo test -p nerust_gba_core --release
+    /// myst_frame_benchmark -- --ignored --nocapture`. Keep timing out of
+    /// assertions; the per-frame signatures allow before/after comparison.
+    #[test]
+    #[ignore = "requires the optional PeterLemon Myst ROM"]
+    fn myst_frame_benchmark() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
+        );
+        let rom = std::fs::read(path).expect("Myst.gba not found");
+        let mut system = GbaSystem::from_test_rom(rom).expect("invalid Myst ROM");
+        let frames = std::env::var("GBA_BENCH_FRAMES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(12);
+        let started = std::time::Instant::now();
+        for frame in 0..frames {
+            let (cycles, complete) = system.step_batch(280_896);
+            assert!(complete && cycles == 280_896);
+            let hash = system.frame_buffer().iter().fold(0u64, |acc, &pixel| {
+                acc.wrapping_mul(0x100000001b3) ^ u64::from(pixel)
+            });
+            // Pin representative stages (boot, playback and later frames)
+            // so this opt-in benchmark is also a deterministic ROM check.
+            if let Some((_, pc, expected_hash)) = [
+                (0, 0x0300_4db0, 0xdcd4_6167_5f1c_ae00),
+                (29, 0x0300_4dd4, 0xbff3_7acb_5a00_5ec0),
+                (59, 0x0300_0280, 0x70b5_e46d_addd_cc7c),
+                (89, 0x0300_4ec8, 0x42bd_8b8d_6c08_69c0),
+                (119, 0x0300_01e0, 0xc4b3_864f_20d8_bddc),
+            ]
+            .iter()
+            .find(|(n, _, _)| *n == frame)
+            {
+                assert_eq!(system.cpu.registers().pc(), *pc, "frame {frame} PC");
+                assert_eq!(hash, *expected_hash, "frame {frame} framebuffer");
+            }
+            println!(
+                "frame={frame} pc={:#010x} hash={hash:016x}",
+                system.cpu.registers().pc()
+            );
+        }
+        println!(
+            "Myst: {frames} frames in {:?}, {:.2} fps",
+            started.elapsed(),
+            frames as f64 / started.elapsed().as_secs_f64()
+        );
     }
 }

@@ -8,6 +8,8 @@ pub enum TouchControlRole {
     DpadRight,
     FaceButton1,
     FaceButton2,
+    LeftShoulder,
+    RightShoulder,
     Start,
     Select,
 }

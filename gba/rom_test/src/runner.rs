@@ -118,10 +118,14 @@ fn run_fixed_cycles(
 ) -> Result<(), RomTestError> {
     let mut next_input = 0;
     let mut completion_tracker = CompletionTracker::default();
-    for cycle in 0..selected.case.cycles {
+    // Cycle-counted loop (not call-counted): a single step may fold
+    // several event-free DMA delay ticks. Inputs apply at the first
+    // boundary at or after their cycle (catch-up, never skipped).
+    let mut cycle = 0usize;
+    while cycle < selected.case.cycles {
         // Apply input at this cycle
-        if next_input < selected.case.inputs.len()
-            && selected.case.inputs[next_input].cycle == cycle
+        while next_input < selected.case.inputs.len()
+            && selected.case.inputs[next_input].cycle <= cycle
         {
             let keyinput = selected.case.inputs[next_input]
                 .buttons
@@ -131,8 +135,9 @@ fn run_fixed_cycles(
             next_input += 1;
         }
 
-        system.step_tcycle();
-        *executed_tcycles = cycle + 1;
+        let (_, n) = system.step_tcycle();
+        cycle += n as usize;
+        *executed_tcycles = cycle;
         if let Some(completion) = selected.completion
             && cycle.is_multiple_of(completion.poll_interval)
             && completion_tracker.observe(
@@ -176,8 +181,8 @@ fn run_script(
                         selected.case.id
                     )));
                 }
-                system.step_tcycle();
-                *executed_tcycles += 1;
+                let (_, n) = system.step_tcycle();
+                *executed_tcycles += n as usize;
                 logs.extend(system.bus.drain_mgba_debug_logs());
                 let fresh = logs[scanned..].iter().any(|log| log.text.contains(marker));
                 scanned = logs.len();
@@ -192,8 +197,8 @@ fn run_script(
                     .saturating_mul(CYCLES_PER_FRAME),
             );
             while *executed_tcycles < target && *executed_tcycles < selected.case.cycles {
-                system.step_tcycle();
-                *executed_tcycles += 1;
+                let (_, n) = system.step_tcycle();
+                *executed_tcycles += n as usize;
                 logs.extend(system.bus.drain_mgba_debug_logs());
             }
         }
@@ -203,8 +208,8 @@ fn run_script(
             if *executed_tcycles >= selected.case.cycles {
                 break;
             }
-            system.step_tcycle();
-            *executed_tcycles += 1;
+            let (_, n) = system.step_tcycle();
+            *executed_tcycles += n as usize;
             logs.extend(system.bus.drain_mgba_debug_logs());
         }
         scanned = logs.len();

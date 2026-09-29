@@ -110,13 +110,18 @@ fn tick_voice(bus: &mut impl SoundDriverBus, area: u32, index: usize) {
 }
 
 /// Mix one native-grid sample of driver voices into the APU buffer tail.
-/// Voice positions advance continuously at fr/playback_freq per grid tick.
+/// Voice positions advance at fr per grid second (`fr` is an effective
+/// sample rate in Hz; the grid runs at [`MIX_RATE`](crate::apu::MIX_RATE)).
+/// Advancing by `fr/playback_freq` here would replay every voice
+/// 32768/playback_freq times too fast (2.45x at the default 13379Hz):
+/// that quotient is per *driver output sample*, and this function runs
+/// once per *grid tick*, not once per driver tick.
 pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
     let area = bus.apu().sound_area;
     if area == 0 {
         return;
     }
-    let (channels, master, play_freq) = parse_mode(bus.apu().sound_mode);
+    let (channels, master, _) = parse_mode(bus.apu().sound_mode);
     let mut sum_l = 0.0f32;
     let mut sum_r = 0.0f32;
     for i in 0..channels {
@@ -137,7 +142,7 @@ pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
             continue;
         }
         // fr = rate / 2^((180-key-fine/256)/12): effective sample rate.
-        let mut pos = voice.pos + f64::from(fr) / f64::from(play_freq);
+        let mut pos = voice.pos + f64::from(fr) / f64::from(crate::apu::MIX_RATE);
         let mut idx = pos as u32;
         if idx >= size {
             if stat & 0x4000 != 0 {
@@ -168,6 +173,104 @@ pub fn mix_driver_grid(bus: &mut impl SoundDriverBus) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Minimal `SoundDriverBus` over a byte map plus a real `GbaApu`.
+    struct MockBus {
+        apu: GbaApu,
+        mem: HashMap<u32, u8>,
+    }
+
+    impl MockBus {
+        fn new() -> Self {
+            Self {
+                apu: GbaApu::new(),
+                mem: HashMap::new(),
+            }
+        }
+
+        fn write32(&mut self, addr: u32, value: u32) {
+            for (i, byte) in value.to_le_bytes().into_iter().enumerate() {
+                self.mem.insert(addr + i as u32, byte);
+            }
+        }
+    }
+
+    impl SoundDriverBus for MockBus {
+        fn read8(&mut self, addr: u32) -> u8 {
+            self.mem.get(&addr).copied().unwrap_or(0)
+        }
+
+        fn read16(&mut self, addr: u32) -> u16 {
+            u16::from_le_bytes([self.read8(addr), self.read8(addr + 1)])
+        }
+
+        fn read32(&mut self, addr: u32) -> u32 {
+            u32::from_le_bytes([
+                self.read8(addr),
+                self.read8(addr + 1),
+                self.read8(addr + 2),
+                self.read8(addr + 3),
+            ])
+        }
+
+        fn write_hle_bios8(&mut self, addr: u32, value: u8) {
+            self.mem.insert(addr, value);
+        }
+
+        fn apu(&self) -> &GbaApu {
+            &self.apu
+        }
+
+        fn apu_mut(&mut self) -> &mut GbaApu {
+            &mut self.apu
+        }
+    }
+
+    /// Set up one started voice: SndCh0 plays `fr`-Hz effective rate
+    /// from a 64-sample table at full volume, instant attack.
+    fn started_voice(bus: &mut MockBus, fr: u32) {
+        const AREA: u32 = 0x1000;
+        const WP: u32 = 0x2000;
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80); // start request
+        bus.mem.insert(base + 2, 255); // rv
+        bus.mem.insert(base + 3, 255); // lv
+        bus.mem.insert(base + 4, 255); // at (instant attack)
+        bus.mem.insert(base + 6, 255); // su
+        bus.write32(base + 12, fr);
+        bus.write32(base + 16, WP);
+        bus.write32(WP + 4, fr); // WaveData rate
+        bus.write32(WP + 12, 64); // size
+        for i in 0..64 {
+            bus.mem.insert(WP + 16 + i, 0x40);
+        }
+        sound_driver_main(bus);
+        assert!(bus.apu.driver_voices[0].started);
+        // Latch one real grid sample so `mix_tail_mut` has a fold-in
+        // target (512 T-cycles per native-grid sample).
+        for _ in 0..512 {
+            bus.apu.tick();
+        }
+    }
+
+    /// Start SndCh0 with the given ADSR bytes and hold the note: the
+    /// start bit is consumed by the first `sound_driver_main` call, and
+    /// any nonzero `sf` afterwards sustains until release/stop.
+    fn adsr_voice(bus: &mut MockBus, at: u8, de: u8, su: u8, re: u8) {
+        const AREA: u32 = 0x1000;
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80);
+        bus.mem.insert(base + 4, at);
+        bus.mem.insert(base + 5, de);
+        bus.mem.insert(base + 6, su);
+        bus.mem.insert(base + 7, re);
+        sound_driver_main(bus);
+        assert!(bus.apu.driver_voices[0].started);
+        bus.mem.insert(base, 0x01);
+    }
 
     #[test]
     fn mode_defaults_match_gbatek() {
@@ -179,5 +282,156 @@ mod tests {
         // channels=4, master=10, freq index 3 -> 10512Hz.
         let mode = (4 << 8) | (10 << 12) | (3 << 16);
         assert_eq!(parse_mode(mode), (4, 10, 10512));
+    }
+
+    #[test]
+    fn driver_voice_advances_at_fr_per_grid_second() {
+        // `fr` is an effective sample rate in Hz and `mix_driver_grid`
+        // runs once per 32768Hz grid tick, so one call must advance the
+        // position by fr/32768 — here 16384Hz -> exactly 0.5/call.
+        // (The old fr/playback_freq quotient replayed voices 2.45x fast
+        // at the default 13379Hz driver rate.)
+        let mut bus = MockBus::new();
+        started_voice(&mut bus, 16_384);
+        for _ in 0..4 {
+            mix_driver_grid(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].pos, 2.0);
+    }
+
+    #[test]
+    fn driver_voice_pitch_ignores_driver_mixer_rate() {
+        // Same voice under the fastest driver rate (index 12, 42048Hz)
+        // must advance identically: the grid rate, not the mixer rate,
+        // sets the per-call step.
+        let mut bus = MockBus::new();
+        bus.apu.sound_mode = 12 << 16;
+        started_voice(&mut bus, 16_384);
+        for _ in 0..4 {
+            mix_driver_grid(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].pos, 2.0);
+    }
+
+    #[test]
+    fn driver_voice_sine_table_plays_at_fr_hz() {
+        // End-to-end pitch guard for the fr/MIX_RATE fix: a looped
+        // 64-sample sine table at fr = 32768 advances one table step per
+        // grid tick, i.e. a 512Hz tone. (The old fr/playback_freq step
+        // replayed it at ~1254Hz instead.)
+        use crate::apu::fft_test::{
+            FFT_SAMPLE_COUNT, GRID_RATE_HZ, average_band_power, dominant_frequency,
+            dominant_frequency_tolerance, power_spectrum,
+        };
+        use std::f64::consts::PI;
+
+        const AREA: u32 = 0x1000;
+        const WP: u32 = 0x2000;
+        let mut bus = MockBus::new();
+        bus.apu.sound_area = AREA;
+        let base = AREA + SNDCH_BASE;
+        bus.mem.insert(base, 0x80); // start request
+        bus.mem.insert(base + 2, 255); // rv
+        bus.mem.insert(base + 3, 255); // lv
+        bus.mem.insert(base + 4, 255); // at (instant attack)
+        bus.mem.insert(base + 6, 255); // su (sustain holds env at 255)
+        bus.write32(base + 12, crate::apu::MIX_RATE);
+        bus.write32(base + 16, WP);
+        bus.mem.insert(WP + 2, 0x00);
+        bus.mem.insert(WP + 3, 0x40); // stat: loop
+        bus.write32(WP + 4, crate::apu::MIX_RATE);
+        bus.write32(WP + 8, 0); // loop start
+        bus.write32(WP + 12, 64); // size
+        for i in 0..64u32 {
+            let sine = (127.0 * (2.0 * PI * f64::from(i) / 64.0).sin()).round() as i8;
+            bus.mem.insert(WP + 16 + i, sine as u8);
+        }
+        sound_driver_main(&mut bus);
+        assert!(bus.apu.driver_voices[0].started);
+
+        while bus.apu.grid_buffer().len() < FFT_SAMPLE_COUNT {
+            if bus.apu.tick() {
+                mix_driver_grid(&mut bus);
+            }
+        }
+        let samples: Vec<f32> = bus
+            .apu
+            .grid_buffer()
+            .iter()
+            .take(FFT_SAMPLE_COUNT)
+            .map(|sample| sample.0)
+            .collect();
+        let dominant = dominant_frequency(&samples, GRID_RATE_HZ);
+        let tolerance = dominant_frequency_tolerance(GRID_RATE_HZ, FFT_SAMPLE_COUNT);
+        assert!(
+            (dominant - 512.0).abs() <= tolerance,
+            "driver voice should play 512Hz, got {dominant} (tol {tolerance})"
+        );
+        let spectrum = power_spectrum(&samples);
+        let energy = average_band_power(&spectrum, GRID_RATE_HZ, 100.0, 2000.0);
+        assert!(energy > 1e-6, "driver voice must sound, energy={energy}");
+    }
+
+    #[test]
+    fn driver_voice_attack_climbs_linearly_then_holds() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 10, 0, 255, 0);
+        // The start call already attacked 0 -> 10.
+        let mut envs = Vec::new();
+        for _ in 0..24 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        let expected: Vec<f32> = (2..=25).map(|k| k as f32 * 10.0).collect();
+        assert_eq!(envs, expected);
+        // 250 + 10 clamps to 255, then sustain holds it there.
+        sound_driver_main(&mut bus);
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        for _ in 0..3 {
+            sound_driver_main(&mut bus);
+        }
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+    }
+
+    #[test]
+    fn driver_voice_decay_overshoots_toward_sustain() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 255, 128, 100, 0);
+        // The start call attacked straight to 255.
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        let mut envs = Vec::new();
+        for _ in 0..3 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        // 255 -> 127.5 -> 100.0 (decay clamps at sustain), then the
+        // instant attack re-fires (100.0 < su + 1): the driver's decay
+        // pumps between sustain and full scale.
+        assert_eq!(envs, vec![127.5, 100.0, 255.0]);
+    }
+
+    #[test]
+    fn driver_voice_release_fades_to_stop() {
+        let mut bus = MockBus::new();
+        adsr_voice(&mut bus, 255, 0, 255, 128);
+        assert_eq!(bus.apu.driver_voices[0].env, 255.0);
+        const AREA: u32 = 0x1000;
+        bus.mem.insert(AREA + SNDCH_BASE, 0x40);
+        let mut envs = Vec::new();
+        for _ in 0..8 {
+            sound_driver_main(&mut bus);
+            envs.push(bus.apu.driver_voices[0].env);
+        }
+        assert_eq!(
+            envs,
+            vec![
+                127.5, 63.75, 31.875, 15.9375, 7.96875, 3.984375, 1.9921875, 0.99609375
+            ]
+        );
+        // 0.99609375 x 0.5 falls below 0.5: silence, channel stopped.
+        sound_driver_main(&mut bus);
+        assert_eq!(bus.apu.driver_voices[0].env, 0.0);
+        assert!(!bus.apu.driver_voices[0].started);
+        assert_eq!(bus.mem.get(&(AREA + SNDCH_BASE)), Some(&0));
     }
 }
