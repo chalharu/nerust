@@ -230,6 +230,12 @@ impl GbaTimers {
     /// The prescaler still advances (phase for future enables) and the
     /// cycle clock is still stamped; nothing else can happen.
     pub(crate) fn is_fully_idle(&self) -> bool {
+        // A steady, enabled non-cascade timer is certainly not idle.
+        // In audio-heavy games timer0 is nearly always in this mask;
+        // avoid scanning the other channels on every event tick.
+        if self.fold_mask != 0 {
+            return false;
+        }
         self.channels.iter().all(|timer| {
             timer.control & 0x80 == 0
                 && timer.start_delay == 0
@@ -276,8 +282,43 @@ impl GbaTimers {
     /// IRQ is enabled; only the IRQ bits may raise IF.
     #[inline]
     pub fn step_full(&mut self) -> (u16, u16) {
+        // A steady timer tick only changes counters. Rebuild the fold
+        // mask when an enable/stop/reload transient can land this tick;
+        // writes and state import refresh it at their own mutation sites.
+        let transient = self.channels.iter().any(|timer| {
+            timer.start_delay != 0
+                || timer.pending_control.is_some()
+                || timer.reload_pending.is_some()
+        });
         self.prescaler = self.prescaler.wrapping_add(1);
         let prescaler = self.prescaler;
+        if self.fold_mask == 1
+            && self.channels[1..]
+                .iter()
+                .all(|timer| timer.control & 0x80 == 0)
+        {
+            // The common audio setup is a single steady timer0. Its
+            // prescaler tap and overflow still run at the same tick;
+            // three disabled channels have no per-cycle effects.
+            let mask = (1u16 << self.fold_shifts[0]) - 1;
+            if prescaler & mask != mask {
+                return (0, 0);
+            }
+            let overflow = increment(&mut self.channels[0]);
+            if !overflow {
+                return (0, 0);
+            }
+            if self.overflows_since_enable[0] == 0 {
+                self.last_ovf1_cycle[0] = Some(self.current_cycle);
+            }
+            self.overflows_since_enable[0] = self.overflows_since_enable[0].saturating_add(1);
+            let irq = if self.channels[0].control & (1 << 6) != 0 {
+                1 << 3
+            } else {
+                0
+            };
+            return (irq, 1);
+        }
         let mut irq = 0;
         let mut overflow = 0;
         let mut cascade = false;
@@ -294,7 +335,9 @@ impl GbaTimers {
                     self.overflows_since_enable[index].saturating_add(1);
             }
         }
-        self.refresh_fold_mask();
+        if transient {
+            self.refresh_fold_mask();
+        }
         (irq, overflow)
     }
 
@@ -772,6 +815,31 @@ mod tests {
         let mut bad = restored.export_state();
         bad.channels[0].start_delay = 6;
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn timer0_steady_fast_path_matches_general_path() {
+        for prescale in 0..4 {
+            let mut fast = GbaTimers::default();
+            fast.channels[0].control = 0xC0 | prescale;
+            fast.channels[0].reload = 0xFFFD;
+            fast.channels[0].counter = 0xFFFD;
+            fast.refresh_fold_mask();
+            assert_eq!(fast.fold_mask, 1);
+            let mut general = GbaTimers::default();
+            general.import_state(fast.export_state()).unwrap();
+            // Test-only force the general channel loop: it reads live
+            // timer registers and never relies on the fold mask.
+            general.fold_mask = 0;
+            for cycle in 1..=8192 {
+                fast.set_current_cycle(cycle);
+                general.set_current_cycle(cycle);
+                assert_eq!(fast.step_full(), general.step_full(), "cycle {cycle}");
+            }
+            let a = rmp_serde::to_vec_named(&fast.export_state()).unwrap();
+            let b = rmp_serde::to_vec_named(&general.export_state()).unwrap();
+            assert_eq!(a, b, "prescale {prescale}");
+        }
     }
 
     /// Batching equivalence: `quiet_cycles` + `advance_idle` + boundary

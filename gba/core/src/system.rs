@@ -456,6 +456,44 @@ mod tests {
         assert!(GbaSystem::from_test_rom(rom).is_none());
     }
 
+    #[test]
+    #[ignore = "requires the optional PeterLemon Myst ROM"]
+    fn myst_batch_matches_per_cycle_state() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
+        );
+        let rom = std::fs::read(path).expect("Myst.gba not found");
+        let mut batched = GbaSystem::from_test_rom(rom.clone()).unwrap();
+        let mut stepped = GbaSystem::from_test_rom(rom).unwrap();
+        for frame in 0..4 {
+            let (n, complete) = batched.step_batch(280_896);
+            assert_eq!((n, complete), (280_896, true));
+            let mut elapsed = 0;
+            while elapsed < n {
+                let (complete, amount) = stepped.step_tcycle();
+                elapsed += amount;
+                assert_eq!(complete, elapsed == n);
+            }
+            // The frontend drains the native-grid audio at each frame
+            // boundary; state export rejects a pending mix buffer.
+            let mut audio_a = Vec::new();
+            let mut audio_b = Vec::new();
+            batched
+                .bus
+                .apu_mut()
+                .drain_resampled_into(48_000, &mut audio_a);
+            stepped
+                .bus
+                .apu_mut()
+                .drain_resampled_into(48_000, &mut audio_b);
+            assert_eq!(audio_a, audio_b, "audio differs after frame {frame}");
+            let a = rmp_serde::to_vec_named(&batched.export_state().unwrap()).unwrap();
+            let b = rmp_serde::to_vec_named(&stepped.export_state().unwrap()).unwrap();
+            assert_eq!(a, b, "machine state differs after frame {frame}");
+        }
+    }
+
     /// Run explicitly with `cargo test -p nerust_gba_core --release
     /// myst_frame_benchmark -- --ignored --nocapture`. Keep timing out of
     /// assertions; the per-frame signatures allow before/after comparison.
