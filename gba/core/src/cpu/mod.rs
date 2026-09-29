@@ -218,6 +218,7 @@ impl GbaCpu {
     /// Single micro-op step for the system driver (per-op ticks). Returns
     /// the op's true cost without any floor; `None` only on an uncovered
     /// fill (queue untouched, caller falls back).
+    #[inline]
     pub(crate) fn step_op(&mut self, bus: &mut GbaMemoryBus) -> Option<i64> {
         let is_thumb = self.regs.cpsr_t();
         crate::cpu::micro_op::step_op(
