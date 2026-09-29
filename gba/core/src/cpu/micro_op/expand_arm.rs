@@ -619,6 +619,7 @@ pub(crate) fn expand_arm_single(instr: u32, regs: &CpuRegisters) -> Option<Micro
 }
 
 /// Hot-path half of [`expand_arm_single`].
+#[inline]
 fn expand_arm_single_into(instr: u32, regs: &CpuRegisters, out: &mut MicroOpVec) -> Option<()> {
     // Class predicates first: the snapshot below costs a register
     // read, so failed attempts (the common case in the chain) must
