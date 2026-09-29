@@ -808,6 +808,27 @@ impl GbaMemoryBus {
         self.align_read(addr, 4, data)
     }
 
+    /// Refill both ARM pipeline words from IWRAM in one bus operation.
+    /// Both accesses have zero wait contribution, so only the final fetch
+    /// stream tags and the last two opcode latches remain observable.
+    pub(crate) fn fetch_iwram_arm_pair(&mut self, pc: u32) -> Option<[u32; 2]> {
+        let next = pc.wrapping_add(4);
+        if pc >> 24 != 3 || next >> 24 != 3 {
+            return None;
+        }
+        let first = self.read_iwram(pc, 4);
+        let second = self.read_iwram(next, 4);
+        self.last_opcode_addr = Some(next);
+        self.prev_addr = Some(next);
+        self.prev_width = 4;
+        self.fetch_addr = Some(next);
+        self.fetch_width = 4;
+        self.prefetch_win = [first, second];
+        self.prefetch_thumb = false;
+        self.last_prefetch = second;
+        Some([first, second])
+    }
+
     /// Wait cycles for a data access.
     pub fn cycles_for(&self, addr: u32, width: u8) -> u8 {
         self.cycles_for_access(addr, width, false)
