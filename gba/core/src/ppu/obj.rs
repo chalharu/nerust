@@ -148,11 +148,7 @@ pub(crate) fn line_cache(registers: &PpuRegisters, oam: &[u8], y: usize) -> ObjL
         if shape == 3 || mode == 3 || (!affine && attr0 & (1 << 9) != 0) {
             continue;
         }
-        if (registers.dispcnt & 7) >= 3
-            && shape == 0
-            && attr1 >> 14 == 0
-            && attr2 & 0x3FF < 512
-        {
+        if (registers.dispcnt & 7) >= 3 && shape == 0 && attr1 >> 14 == 0 && attr2 & 0x3FF < 512 {
             // 8x8 OBJs never leave their base tile, even when affine.
             // Budget accounting above still includes invisible OBJs.
             continue;
